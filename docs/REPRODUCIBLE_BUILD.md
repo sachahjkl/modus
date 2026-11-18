@@ -60,7 +60,7 @@ A deterministic compiler is necessary and not sufficient: the build itself must 
 - **An empty folder for each build.** The tool resets the folder of the objects and the folder of the LLVM IR before it compiles, so no file of an earlier build enters the link.
 - **A fixed order.** The boot image holds the modules in the order of the module table (`module_builds`), not in the order in which the processes end.
 - **A pinned compiler.** The flake pins the compiler by one commit of a fork of Odin and the hash of its sources: the release `dev-2026-11a`, then 9 commits that add the option `-debug-info`. The flake applies no patch file: the changes are commits of the fork. The compiler links LLVM 18 with one commit of LLVM 21, which the flake fetches by its hash (section 9). `llc` comes from that LLVM. `flake.lock` pins the other tools.
-- **A kind of debug information that adds no instruction.** The compile of a module passes `-debug-info:same-code`, not `-debug` (`module_compile_command`). Reason: `-debug` makes the compiler add instructions that only help a debugger, and it sets the constant `ODIN_DEBUG`, which a source can read. Both make another program. With `same-code` the compiler gives LLVM the code of a build with no debug information (section 8).
+- **A kind of debug information that adds no instruction.** The compile of a module passes `-debug-info:same-code`, not `-debug` (`module_compile_command`). Reason: `-debug` makes the compiler add instructions that only help a debugger, and it sets the constant `ODIN_DEBUG`, which a source can read. Both make another process. With `same-code` the compiler gives LLVM the code of a build with no debug information (section 8).
 - **One direction of the instruction scheduler.** `llc` gets `-misched-topdown` (`module_object_command`). Reason: in its bottom-up direction, the scheduler of machine instructions of LLVM 18 orders some register copies in another way when debug instructions stand in the block. The two builds of the kernel then differ with and without debug information. In the top-down direction they are the same bytes (section 8).
 - **No path of the host in a debug object.** A source path in a debug object is from the root of the repository or of the Odin installation. The tool refuses to write a debug object that holds an absolute path or the folder of the build (section 8).
 - **No unwind table.** After `llc` the tool removes the section `.eh_frame` from the object of a module (`llvm-objcopy`). No part of the system reads it: the converter leaves it out of the module, and a stack trace walks the frame pointers. With debug information `llc` writes an entry for more functions, so the section has another size and the code after it has other addresses: a module was not the same bytes with and without debug information.
@@ -73,7 +73,7 @@ The rule of this document is that the same inputs give the same bytes. The incre
 Three facts keep the two rules apart:
 
 - **The proof never rests on a kept output.** A check that compares two builds must run the compiler two times. `check` and `repeat` build whole (`screenshots` takes the second build of `check` from the check of the flake), and the procedures of the second build (`outputs_same_after_second_build`, `modules_same_without_debug_information`) set the whole build themselves. A build that kept its outputs would compare a file with itself.
-- **A kept output is as sound as the list of the inputs.** The rule of the same bytes says nothing about an input that the build key does not hold. So the key of the compile step of a module holds each file that the compiler lists, every file of the folder of each package, the commands with each flag, the programs of the build and the sources of the tool; the key of its conversion holds that key, the linked file and the module file of each import; and the tool builds in every case of doubt. The compile step reads no file of an import, so its key holds none (`TOOLS.md`, "The incremental build", has the reason for each way in which an import reaches an importer).
+- **A kept output is as sound as the list of the inputs.** The rule of the same bytes says nothing about an input that the build key does not hold. So the key of the compile step of a module holds each file that the compiler lists, every file of the folder of each package, the commands with each flag, the processes of the build and the sources of the tool; the key of its conversion holds that key, the linked file and the module file of each import; and the tool builds in every case of doubt. The compile step reads no file of an import, so its key holds none (`TOOLS.md`, "The incremental build", has the reason for each way in which an import reaches an importer).
 - **A compiler that loses the rule is still caught.** With a compiler that is not deterministic, a kept module is one of the distinct results of its inputs: a valid module, with a valid hash, and each module that imports it names that hash. The next full check builds whole two times and finds the difference.
 
 A boot volume is kept by the same rule, each with its own build key and its own build record. A command that boots some volumes only builds those; a volume that it does not build can be the volume of older sources, so the tool starts a machine only from a volume that the build of the same process built or kept. The second build of a check builds the main boot volume again in its own process, with no record read.
@@ -154,8 +154,8 @@ Not proved:
 - That debug information never changes the machine code. For the code that the compiler gives to LLVM it is the rule of the option. For the machine code that LLVM makes from it, it is a measure on the modules of this system: the third build of each full check is the proof (section 8).
 - Another version of the Odin compiler or of LLVM. A new version needs `repeat all` again.
 - Another host, or another count of processors.
-- The wait for an `#soa` type with no worker. No small program of the tests reached that case, and two of them crash the stock compiler too.
-- The tool `modustool` itself. With the default count of threads, 6 builds gave 6 distinct files. It is not a module: no program of the system names it by its hash, so the rule does not cover it.
+- The wait for an `#soa` type with no worker. No small process of the tests reached that case, and two of them crash the stock compiler too.
+- The tool `modustool` itself. With the default count of threads, 6 builds gave 6 distinct files. It is not a module: no process of the system names it by its hash, so the rule does not cover it.
 
 ## 6a. The release dev-2026-11a of the compiler
 
@@ -188,7 +188,7 @@ The tool compiles each module with debug information, for the tables of its debu
 
 ### The option of the compiler
 
-The option `-debug` of the Odin compiler does three things: it writes debug information, it defines the constant `ODIN_DEBUG`, and it makes `-o:none` the default. With it the compiler also adds instructions that only help a debugger. So a build with `-debug` is not the program of a build without it. The fork of the compiler that the flake pins makes the first of the three things an option of its own:
+The option `-debug` of the Odin compiler does three things: it writes debug information, it defines the constant `ODIN_DEBUG`, and it makes `-o:none` the default. With it the compiler also adds instructions that only help a debugger. So a build with `-debug` is not the process of a build without it. The fork of the compiler that the flake pins makes the first of the three things an option of its own:
 
 | Value | What the compiler writes |
 |---|---|
@@ -238,7 +238,7 @@ The kind `same-code` gives a debugger less than `full`. For this system, which b
 - `inspect`: the same count of variables and the same count with a location. The locations of the local variables cover 0.3 % fewer bytes (631808 against 633745).
 - The line tables have the same count of rows.
 
-In general, for a program that uses the compiler with this kind:
+In general, for a process that uses the compiler with this kind:
 
 - A variable that is not in a stack slot of its own can read as "optimized out" where its value is not live: a pointer parameter, a parameter passed by pointer, the context, a named result.
 - A label has no block of its own.
@@ -272,7 +272,7 @@ A buffer declared inside a loop of `console` gave another LLVM IR and another ob
 | Test | Distinct LLVM IR | What it shows |
 |---|---|---|
 | The compiler as the build runs it, 10 builds | 6 | The fault |
-| The same, with no address randomization (`setarch -R`) | 6 | The cause is not the place of the program in memory |
+| The same, with no address randomization (`setarch -R`) | 6 | The cause is not the place of the process in memory |
 | The same, with `-thread-count:1` | 5 | The flag does not remove it; with this release it still leaves two threads (section 6a) |
 | `-o:none -use-single-module`, so no optimization pass runs, 8 builds | 1 | The IR that the compiler gives to the optimizer is the same at each build |
 | `opt -passes="function(declare-to-assign),default<O3>"` on that IR, 8 runs | 1 | The passes alone give one result from one input in one thread |

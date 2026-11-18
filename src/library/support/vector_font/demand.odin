@@ -4,7 +4,7 @@ import "modus:contract/demand_cache"
 import "modus:contract/glyph_cache"
 
 // The glyphs of a character past the glyph cache, drawn at the request of
-// a program into the demand cache (src/md/features/glyphs_on_demand.md). The
+// a process into the demand cache (src/md/features/glyphs_on_demand.md). The
 // font service draws them with the renderer and the style of the build:
 // the same font file gives the same words as the glyph cache of the face.
 

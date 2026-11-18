@@ -1,7 +1,7 @@
-// A program drives its own virtual memory (docs/ARCHITECTURE.md, "The
-// virtual memory of a program").
+// A process drives its own virtual memory (docs/ARCHITECTURE.md, "The
+// virtual memory of a process").
 //
-// At its start the program runs its cases, with their numbers:
+// At its start the process runs its cases, with their numbers:
 //   an arena: a range of 1 GiB of addresses with no memory behind it, whose
 //     pages are committed as the arena grows, with tables of 1, 16 and 256
 //     ranges for each kernel entry;
@@ -9,8 +9,8 @@
 //   decommit: the frames and the pages return to the budget at once, and a
 //     page committed again is zero;
 //   protection: a part of a mapping becomes read only, with the time of the
-//     shoot-down when 1, 2 or 4 processors run threads of the program;
-//   a guard page: a child program writes down its stack into a page with no
+//     shoot-down when 1, 2 or 4 processors run threads of the process;
+//   a guard page: a child process writes down its stack into a page with no
 //     access, and the kernel stops it there;
 //   large pages: random reads over 64 MiB of one object, through a mapping
 //     of large pages and through a mapping of pages of 4 KiB;
@@ -21,22 +21,22 @@
 // line "address_space: ok, ..." when each check holds. The checks do not
 // depend on the load of the host.
 //
-// The program needs the machine with the right Inspect (its own mappings)
+// The process needs the machine with the right Inspect (its own mappings)
 // and the boot image (its child).
 //
-// **What it is for.** A program that manages its own memory (an arena, a
+// **What it is for.** A process that manages its own memory (an arena, a
 // sparse table, a stack with a guard) needs to reserve addresses with no
 // memory behind them, [commit](term:committed-page) and
 // [decommit](term:decommit) pages, change their
 // [protection](term:page-protection), and use
-// [large pages](term:large-page). This program does each of these with the
+// [large pages](term:large-page). This process does each of these with the
 // kernel operations of the virtual memory, and checks that the budget pays
-// only for what the program uses, and gets each page back.
+// only for what the process uses, and gets each page back.
 //
 // **How to start it.** From the start menu, or with
 // `start("address_space")` in the console.
 //
-// **Its budget** from the root service holds 40960 pages and 2 programs:
+// **Its budget** from the root service holds 40960 pages and 2 processes:
 // 64 MiB of large pages, two ranges of 1 GiB with their page tables, and
 // the child of the guard page.
 //
@@ -56,9 +56,9 @@ import "modus:support/system"
 
 // 64 MiB of large pages, two ranges of 1 GiB with their page tables, and
 // a child. With the counted parts, the pages are above the largest budget
-// of a program: the root service has an exception for it
+// of a process: the root service has an exception for it
 // (src/modules/system/root/budgets.odin).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 40530, programs = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 40530, processes = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 960
 HEIGHT :: 640
@@ -72,7 +72,7 @@ LARGE_OBJECT_PAGES :: 16384 // 64 MiB.
 LARGE_ADDRESS :: 0x0000_4000_0000_0000 // Aligned on 2 MiB: the mapping of large pages.
 SMALL_ADDRESS :: 0x0000_4100_0000_1000 // Not aligned: the same object with pages of 4 KiB.
 GUARD_ADDRESS :: 0x0000_4200_0000_0000 // The stack of the child: the guard page, then 63 pages.
-// Places of this program's own choice: outside the band of the fixed
+// Places of this process's own choice: outside the band of the fixed
 // ranges of the system, which grows by its end.
 #assert(LARGE_ADDRESS >= fixed_addresses.OWN_CHOICE_START && SMALL_ADDRESS >= fixed_addresses.OWN_CHOICE_START && GUARD_ADDRESS >= fixed_addresses.OWN_CHOICE_START)
 GUARD_STACK_PAGES :: 64
@@ -80,8 +80,8 @@ RANDOM_READS :: 4_000_000
 VALUE_ROLE :: 0 // The context of the child: 1.
 
 machine: system.Handle
-program_generator: random.Generator // The seeds of the children (docs/RANDOMNESS.md).
-self_index: u64 // The slot of this program, for its report of mappings.
+process_generator: random.Generator // The seeds of the children (docs/RANDOMNESS.md).
+self_index: u64 // The slot of this process, for its report of mappings.
 
 // The results of the cases, for the log and the window.
 batch_sizes := [3]u64{1, 16, 256}
@@ -94,8 +94,8 @@ decommit_returned, decommit_expected: u64
 decommit_microseconds: u64
 recommit_zero: bool
 // The middle of one batch of PROTECT_CALLS, with 1, 2 and 4 processors
-// running the program: the least and the most of PROTECT_BATCHES batches.
-// The program cannot know the load of the host: it shows the spread.
+// running the process: the least and the most of PROTECT_BATCHES batches.
+// The process cannot know the load of the host: it shows the spread.
 shootdown_least, shootdown_most: [3]u64
 guard_address, guard_vector: u64
 guard_right: bool
@@ -122,12 +122,12 @@ fail :: proc "contextless" (what: string) {
 	right = false
 }
 
-own_mappings :: proc "contextless" () -> (report: op.Program_Mapping_Report) {
-	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program_Mappings), self_index, u64(uintptr(&report)), size_of(report))
+own_mappings :: proc "contextless" () -> (report: op.Process_Mapping_Report) {
+	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process_Mappings), self_index, u64(uintptr(&report)), size_of(report))
 	return report
 }
 
-mapping_at :: proc "contextless" (report: ^op.Program_Mapping_Report, address: u64) -> ^op.Program_Mapping {
+mapping_at :: proc "contextless" (report: ^op.Process_Mapping_Report, address: u64) -> ^op.Process_Mapping {
 	for &mapping in report.mappings[:report.count] {
 		if mapping.address == address {
 			return &mapping
@@ -136,11 +136,11 @@ mapping_at :: proc "contextless" (report: ^op.Program_Mapping_Report, address: u
 	return nil
 }
 
-// find_self finds the slot of this program by its name in the reports.
+// find_self finds the slot of this process by its name in the reports.
 find_self :: proc "contextless" () {
 	for index in u64(1) ..< 64 {
-		report: op.Program_Report
-		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), index, u64(uintptr(&report)), size_of(report)); status != .Ok {
+		report: op.Process_Report
+		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), index, u64(uintptr(&report)), size_of(report)); status != .Ok {
 			continue
 		}
 		if system.name_of(report.name[:]) == "address_space" && report.state != .Stopped && report.state != .None {
@@ -284,7 +284,7 @@ sparse :: proc "contextless" () {
 	}
 }
 
-// Threads that run the program on other processors: they hold its page
+// Threads that run the process on other processors: they hold its page
 // table, so each protection change waits for them (the shoot-down).
 Runner :: struct #align (64) {
 	stop: u32,
@@ -383,20 +383,20 @@ guard_page :: proc "contextless" (ctx: ^system.Context) {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 1
-	program, start := system.program_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&program_generator, values), {pages = 2048, programs = 1, threads = 1, processor = 100_000, log_records = 10})
+	process, start := system.process_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
 	if start != .Ok {
 		fail("the guard page: the child did not start")
 		return
 	}
-	defer system.close(program)
+	defer system.close(process)
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		state, _ := system.program_state(program)
+		state, _ := system.process_state(process)
 		if state == .Stopped {
 			break
 		}
 		system.sleep(system.time() + 10)
 	}
-	report := system.program_stop_report(program)
+	report := system.process_stop_report(process)
 	guard_address, guard_vector = report.address, u64(report.vector)
 	guard_right = guard_vector == 14 && guard_address >= GUARD_ADDRESS && guard_address < GUARD_ADDRESS + system.PAGE_SIZE
 	if !guard_right {
@@ -487,7 +487,7 @@ refuse :: proc "contextless" () {
 // kernel did something wrong once, and that must stay right. Each one logs
 // a line and sets its result.
 EDGE_CASES :: 14
-edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the sums of the frames", "an unmap ends the protection of parts: the object is mapped again", "large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "a decommit wakes a thread that waits on a word of the page", "a word in the second 4 KiB of a large page is its own word", "an object with parts of their own protection is not mapped again", "a small uncommitted object costs a page", "a part cannot get more than its mapping", "a page that is not committed stops with its own code", "a revocation of a large uncommitted mapping wakes its waiter", "an uncommitted object of 1 GiB ends with few pages walked", "a thread whose first instruction is not an address of a program is refused", "a map with a flag that the kernel does not know is refused"}
+edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the sums of the frames", "an unmap ends the protection of parts: the object is mapped again", "large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "a decommit wakes a thread that waits on a word of the page", "a word in the second 4 KiB of a large page is its own word", "an object with parts of their own protection is not mapped again", "a small uncommitted object costs a page", "a part cannot get more than its mapping", "a page that is not committed stops with its own code", "a revocation of a large uncommitted mapping wakes its waiter", "an uncommitted object of 1 GiB ends with few pages walked", "a thread whose first instruction is not an address of a process is refused", "a map with a flag that the kernel does not know is refused"}
 edge_case_results: [EDGE_CASES]bool
 
 Waiter :: struct #align (64) {
@@ -515,7 +515,7 @@ waiter_start :: proc "contextless" (word: ^u32) -> system.Thread {
 	thread, _ := system.thread_start(wait_run, nil)
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
 		results, _ := system.call(.Thread_State, u64(thread.handle))
-		if op.Program_State(results[0]) == .Waiting {
+		if op.Process_State(results[0]) == .Waiting {
 			break
 		}
 		system.sleep(system.time() + 1)
@@ -694,7 +694,7 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 }
 
 // A child waits on a word of a mapping of 1 GiB of an Uncommitted object of
-// this program; this program revokes the object in the child. The kernel
+// this process; this process revokes the object in the child. The kernel
 // wakes the waiter before the frames of the object leave the child: the
 // revocation looks for the frames of the words with one sorted search over
 // the frames of the object, not with one walk of the object for each word,
@@ -750,32 +750,32 @@ revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
 	grants[GRANT_REVOCATION_BOARD] = {board_memory, {.Read, .Write}}
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 4
-	program, start := system.program_start(system.image_find(image, "address_space"), "address_space waiter", grants, random.values_with_seed(&program_generator, values), {pages = 2048, programs = 1, threads = 1, processor = 100_000, log_records = 10})
+	process, start := system.process_start(system.image_find(image, "address_space"), "address_space waiter", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
 	if start != .Ok {
 		return false
 	}
-	defer system.close(program)
+	defer system.close(process)
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; intrinsics.atomic_load(&board.ready) == 0 && system.time() < deadline; {
 		system.word_wait(&board.ready, 0, system.time() + 100)
 	}
 	// The revocation must find the child in its wait: its one thread is
 	// not Ready.
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		states, _ := system.call(.Program_State, u64(program))
-		if op.Program_State(states[0]) == .Waiting {
+		states, _ := system.call(.Process_State, u64(process))
+		if op.Process_State(states[0]) == .Waiting {
 			break
 		}
 		system.sleep(system.time() + 1)
 	}
 	revoke_start := system.nanoseconds()
-	system.handle_revoke(object, program)
+	system.handle_revoke(object, process)
 	revoke_time := system.nanoseconds() - revoke_start
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; intrinsics.atomic_load(&board.woken) == 0 && system.time() < deadline; {
 		system.word_wait(&board.woken, 0, system.time() + 100)
 	}
 	woke := intrinsics.atomic_load(&board.woken) != 0
 	system.log("address_space: a revocation of a mapping of 1 GiB with a thread that waits on a word of it: ", revoke_time / 1000, " us; the waiter ", woke ? "woke" : "did not wake")
-	system.call(.Program_Stop, u64(program), 0)
+	system.call(.Process_Stop, u64(process), 0)
 	return woke
 }
 
@@ -821,18 +821,18 @@ child_stop_code :: proc "contextless" (ctx: ^system.Context, role: u64) -> u32 {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = role
-	program, start := system.program_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&program_generator, values), {pages = 2048, programs = 1, threads = 1, processor = 100_000, log_records = 10})
+	process, start := system.process_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
 	if start != .Ok {
 		return 0
 	}
-	defer system.close(program)
+	defer system.close(process)
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		if state, _ := system.program_state(program); state == .Stopped {
+		if state, _ := system.process_state(process); state == .Stopped {
 			break
 		}
 		system.sleep(system.time() + 10)
 	}
-	_, code := system.program_state(program)
+	_, code := system.process_state(process)
 	return code
 }
 
@@ -845,8 +845,8 @@ child_not_committed :: proc "contextless" () -> ! {
 }
 
 // The delegation of a commit (docs/ARCHITECTURE.md, "Who pays a commit"): this
-// program A makes a child budget and an uncommitted object on it, and gives
-// a second program B the object (Read, Write) and the child budget with the
+// process A makes a child budget and an uncommitted object on it, and gives
+// a second process B the object (Read, Write) and the child budget with the
 // right Commit only. B runs the cases of the amendment of the read, one at
 // a time on a board that the two map; A acts between them (revocations, a
 // decommit, the end of the child budget). Each case logs its line with the
@@ -987,12 +987,12 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	grants[GRANT_DELEGATION_SPEND] = {spend_budget, {.Spend}}
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 2
-	program, start := system.program_start(system.image_find(image, "address_space"), "address_space delegate", grants, random.values_with_seed(&program_generator, values), {pages = 512, programs = 1, threads = 1, processor = 100_000, log_records = 50})
+	process, start := system.process_start(system.image_find(image, "address_space"), "address_space delegate", grants, random.values_with_seed(&process_generator, values), {pages = 512, processes = 1, threads = 1, processor = 100_000, log_records = 50})
 	if start != .Ok {
 		fail("the delegation: B did not start")
 		return
 	}
-	defer system.close(program)
+	defer system.close(process)
 
 	result := delegation_run(board, 1)
 	delegation_note(1, result.status == .No_Budget && result.record.kind == i64(errors.Kind.Budget_Hidden), result, "32 pages committed; the 33rd: ")
@@ -1009,8 +1009,8 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	result = delegation_run(board, 10)
 	made := result.status == .Ok
 	// 5: A revokes the two budget handles of B.
-	system.handle_revoke(child_budget, program)
-	system.handle_revoke(spend_budget, program)
+	system.handle_revoke(child_budget, process)
+	system.handle_revoke(spend_budget, process)
 	held, _ := system.budget_read(child_budget)
 	result = delegation_run(board, 5)
 	delegation_note(5, result.status == .Bad_Handle && result.record.kind == i64(errors.Kind.Handle_Ended) && held.pages == 0, result, "the 32 pages stay committed and paid (the child budget holds 0); a commit: ")
@@ -1019,7 +1019,7 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	// not the objects that were made with it.
 	delegation_note(10, made && result.value == 1, nil, made && result.value == 1 ? "the object of 1 page that B made with it lives on after the revocation, paid by the child budget, and A cannot end it: the narrow right Commit makes no object" : "the object did not stay")
 	// 6: A revokes the object of B (B is unmapped), then decommits.
-	system.handle_revoke(object, program)
+	system.handle_revoke(object, process)
 	before, _ := system.budget_read(child_budget)
 	everything := [1]op.Page_Range{{first = 0, page_count = DELEGATION_OBJECT_PAGES}}
 	returned, decommit := system.memory_decommit(object, everything[:])
@@ -1035,7 +1035,7 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	delegation_note(8, old == .Bad_Handle && now == .Ok && committed == 1, nil, now == .Ok ? "a commit with the budget of A: 1 page; with the old handle: refused" : "the commit with the budget of A was refused")
 	system.close(object)
 	system.close(spend_budget)
-	system.call(.Program_Stop, u64(program), 0)
+	system.call(.Process_Stop, u64(process), 0)
 	system.memory_unmap(board_address)
 	system.close(board_memory)
 }
@@ -1071,10 +1071,10 @@ addresses_reused :: proc "contextless" () {
 }
 
 // The page tables that a mapping made return to the budget with its unmap
-// (docs/ARCHITECTURE.md, "The page tables of a program"). The addresses are
+// (docs/ARCHITECTURE.md, "The page tables of a process"). The addresses are
 // SPREAD_STRIDE apart: 512 GiB, 1 GiB and 2 MiB, so each one has its own
 // entry of the top table, of the third level and of the second level, and a
-// mapping there needs three new tables. No other mapping of this program is
+// mapping there needs three new tables. No other mapping of this process is
 // in that band.
 SPREAD_ADDRESS :: 0x0000_4400_0000_0000
 SPREAD_STRIDE :: 0x0000_0080_4020_0000
@@ -1095,7 +1095,7 @@ neighbour: Neighbour
 
 // neighbour_touch writes and reads a word of a page in the same table of the
 // last level as the pages that the other thread maps and unmaps. A fault
-// here stops this program: the line "ok" never comes.
+// here stops this process: the line "ok" never comes.
 neighbour_touch :: proc "c" (parameter: rawptr) -> ! {
 	for intrinsics.atomic_load(&neighbour.stop) == 0 {
 		value := intrinsics.atomic_load(&neighbour.touches) + 1
@@ -1281,7 +1281,7 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	interface.column_take(&column, 8)
 	interface.cell_text(frame, interface.column_take(&column, 16), "refusals, each with its error record", graphics.colors.dim)
 	for &item in refusals {
-		color: graphics.Color = item.status == item.expected ? graphics.colors.program : graphics.colors.failed
+		color: graphics.Color = item.status == item.expected ? graphics.colors.process : graphics.colors.failed
 		interface.cell_text(frame, interface.column_take(&column, 16), item.name, graphics.colors.text)
 		// Two lines, cut at a space.
 		first := min(item.count, 52)
@@ -1309,7 +1309,7 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	interface.cell_text(frame, interface.column_take(&column, 16), "a child writes down its stack into a guard page:", graphics.colors.dim)
 	if guard_right {
 		buffer: [48]u8
-		interface.cell_text(frame, interface.column_take(&column, 16), system.format(buffer[:], "stopped: page fault at ", system.Hex(guard_address)), graphics.colors.program)
+		interface.cell_text(frame, interface.column_take(&column, 16), system.format(buffer[:], "stopped: page fault at ", system.Hex(guard_address)), graphics.colors.process)
 	} else {
 		interface.cell_text(frame, interface.column_take(&column, 16), done ? "not stopped in its guard page" : "not measured yet", done ? graphics.colors.failed : graphics.colors.dim)
 	}
@@ -1330,7 +1330,7 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	}
 	marks := interface.column_take(&column, 16)
 	for step in 1 ..= DELEGATION_CASES {
-		color: graphics.Color = delegation_line_counts[step] == 0 ? graphics.colors.track : delegation_right[step] ? graphics.colors.program : graphics.colors.failed
+		color: graphics.Color = delegation_line_counts[step] == 0 ? graphics.colors.track : delegation_right[step] ? graphics.colors.process : graphics.colors.failed
 		interface.mark(frame, marks.x + (step - 1) * 16, marks.y + 4, 8, color)
 	}
 	interface.cell_text(frame, {marks.x + 168, marks.y, marks.width - 168, 16}, system.format(cases_line[:], cases_right, " of 10 as expected"), graphics.colors.text)
@@ -1341,7 +1341,7 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	line(frame, &column, "edge cases", edge_count, " of ", u64(EDGE_CASES), " right")
 	interface.column_take(&column, 8)
 	status_text := done ? (right ? "ok: each check holds" : problem) : "the cases run"
-	interface.cell_text(frame, interface.column_take(&column, 16), status_text, done ? (right ? graphics.colors.program : graphics.colors.failed) : graphics.colors.boot_program)
+	interface.cell_text(frame, interface.column_take(&column, 16), status_text, done ? (right ? graphics.colors.process : graphics.colors.failed) : graphics.colors.boot_program)
 }
 
 frame_draw :: proc "contextless" (window: ^display.Window) {
@@ -1353,7 +1353,7 @@ frame_draw :: proc "contextless" (window: ^display.Window) {
 // entry runs each case once, checks its counts against the budget and the
 // mappings that the kernel reports, writes one log line for each case and
 // the summary (`address_space: ok, ...` or `address_space: wrong: <the
-// first problem>`), then keeps the window open until the program is
+// first problem>`), then keeps the window open until the process is
 // stopped. When the context names the role of the child, it only writes
 // down its stack into the guard page, and the kernel stops it there.
 @(export, link_name = "entry")
@@ -1370,7 +1370,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if ctx.values[VALUE_ROLE] == 2 {
 		child_delegate(ctx)
 	}
-	random.generator_from_context(&program_generator, ctx)
+	random.generator_from_context(&process_generator, ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "address_space")
 	if !ok {
 		system.stop(1)
@@ -1385,7 +1385,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	sparse()
 	system.log("address_space: sparse table: ", sparse_committed, " pages committed of ", u64(GIGABYTE_PAGES), ", ", sparse_present, " with a frame; decommit: ", decommit_returned, " pages back in the budget at once, in ", decommit_microseconds, " us; a page committed again is zero: ", u64(recommit_zero))
 	protection()
-	system.log("address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls, least and most of 5 batches: ", shootdown_least[0], " to ", shootdown_most[0], " ns with 1 processor running the program, ", shootdown_least[1], " to ", shootdown_most[1], " ns with 2, ", shootdown_least[2], " to ", shootdown_most[2], " ns with 4")
+	system.log("address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls, least and most of 5 batches: ", shootdown_least[0], " to ", shootdown_most[0], " ns with 1 processor running the process, ", shootdown_least[1], " to ", shootdown_most[1], " ns with 2, ", shootdown_least[2], " to ", shootdown_most[2], " ns with 4")
 	guard_page(ctx)
 	system.log("address_space: guard page: the child stopped with vector ", guard_vector, " at ", system.Hex(guard_address), ", in its guard page: ", u64(guard_right))
 	large_pages()
@@ -1399,7 +1399,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for &item in refusals {
 		system.log("address_space: refused: ", item.name, ": ", string(item.sentence[:item.count]))
 	}
-	// Each page returned, except what this program still maps: the boot
+	// Each page returned, except what this process still maps: the boot
 	// image, which each case that starts a child maps, and its page tables.
 	end_budget, _ := system.budget_read()
 	tables := start_budget.pages - end_budget.pages

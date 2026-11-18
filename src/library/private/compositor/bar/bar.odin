@@ -1,11 +1,11 @@
-// The bar of the desktop: the names of the programs, and the place of each
+// The bar of the desktop: the names of the processes, and the place of each
 // button of the bar and of each line of its two menus, the menu of the
-// programs and the menu of the windows. The compositor draws them; the
+// processes and the menu of the windows. The compositor draws them; the
 // modus tool clicks them in the machine test. The two read this one table.
 // The palette (src/library/private/compositor/palette) lists the same names.
 package bar
 
-import program_page "modus:contract/disk_program_page"
+import process_page "modus:contract/disk_process_page"
 import "modus:contract/glyph_cache"
 import "modus:support/mark"
 import "modus:support/text_shaping"
@@ -82,7 +82,7 @@ rows :: proc "contextless" () -> int {
 }
 
 // button gives the place of the button of the bar that opens the menu of
-// the programs: its label and a padding on each side.
+// the processes: its label and a padding on each side.
 button :: proc "contextless" (layout: Layout) -> (x, y, width, height: int) {
 	return START, BUTTON_Y, layout.label_width + 2 * PADDING, BUTTON_HEIGHT
 }
@@ -122,11 +122,11 @@ button_center :: proc "contextless" (layout: Layout) -> (center_x, center_y: int
 	return x + width / 2, y + height / 2
 }
 
-// center gives the middle of the line of a program in the menu. ok is
-// false if the menu does not have the program.
-center :: proc "contextless" (layout: Layout, program: string) -> (center_x, center_y: int, ok: bool) {
+// center gives the middle of the line of a process in the menu. ok is
+// false if the menu does not have the process.
+center :: proc "contextless" (layout: Layout, process: string) -> (center_x, center_y: int, ok: bool) {
 	for name, index in names {
-		if name == program {
+		if name == process {
 			x, y, width, height := line(layout, index)
 			return x + width / 2, y + height / 2, true
 		}
@@ -138,17 +138,17 @@ center :: proc "contextless" (layout: Layout, program: string) -> (center_x, cen
 // on a line brings the window to the front.
 WINDOWS_LABEL :: "windows"
 WINDOWS_GAP :: 8 // Between the two buttons.
-// The line of a disk program in the menu of the windows: its nickname, this
+// The line of a disk process in the menu of the windows: its nickname, this
 // gap, then its hash prefix in the font of the cells, faded
-// (modus:contract/disk_program_page).
+// (modus:contract/disk_process_page).
 WINDOWS_HASH_GAP :: 8
-WINDOWS_HASH_WIDTH :: program_page.HASH_PREFIX_DIGITS * CHARACTER_WIDTH
+WINDOWS_HASH_WIDTH :: process_page.HASH_PREFIX_DIGITS * CHARACTER_WIDTH
 // The room of a title in the menu of the windows, in pixels: a title is
 // cut to it in the font that draws it. It is the room of the larger of two
 // lines in the font of the cells: the 32 cells of the longest title of a
 // window (system.Name), and the longest nickname with its hash prefix. So
 // the menu has one width in both fonts.
-WINDOWS_TITLE_ROOM :: max(32 * CHARACTER_WIDTH, program_page.NICKNAME_LIMIT * CHARACTER_WIDTH + WINDOWS_HASH_GAP + WINDOWS_HASH_WIDTH)
+WINDOWS_TITLE_ROOM :: max(32 * CHARACTER_WIDTH, process_page.NICKNAME_LIMIT * CHARACTER_WIDTH + WINDOWS_HASH_GAP + WINDOWS_HASH_WIDTH)
 // The place of a title in its line: after the square that marks the window
 // with the focus.
 WINDOWS_TITLE_X :: 24

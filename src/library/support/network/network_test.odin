@@ -29,7 +29,7 @@ known_checksums :: proc(t: ^testing.T) {
 	testing.expect_value(t, byte_order.internet_checksum_end(byte_order.internet_checksum_add(0, header)), 0)
 }
 
-// udp_example writes a frame as the two parts write it: the program writes
+// udp_example writes a frame as the two parts write it: the process writes
 // the header and the checksum of the datagram, the network service the
 // headers of IPv4 and Ethernet.
 @(private = "file")
@@ -51,7 +51,7 @@ udp_written_then_read :: proc(t: ^testing.T) {
 	testing.expect_value(t, packet.destination_port, 7)
 	testing.expect_value(t, packet.source_address, LOCAL_ADDRESS)
 	testing.expect_value(t, packet.destination_address, GATEWAY_ADDRESS)
-	// The packet holds the whole datagram: the program reads its data, and
+	// The packet holds the whole datagram: the process reads its data, and
 	// checks its checksum with the two addresses.
 	testing.expect_value(t, len(packet.data), UDP_HEADER + len("a datagram"))
 	data, ok := udp_data_read(packet.data, LOCAL_ADDRESS, GATEWAY_ADDRESS, .Verify)
@@ -71,12 +71,12 @@ udp_written_then_read :: proc(t: ^testing.T) {
 	testing.expect_value(t, ipv4_frame(frame[:100], GATEWAY, LOCAL, LOCAL_ADDRESS, GATEWAY_ADDRESS, PROTOCOL_UDP, 88, 2), 0)
 }
 
-// The checksum of a datagram is for the program: parse gives a datagram
+// The checksum of a datagram is for the process: parse gives a datagram
 // with a wrong checksum to the endpoint of its port, and udp_data_read
 // refuses it with the rule Verify. The pseudo-header counts: the same
 // bytes with another address are refused too.
 @(test)
-udp_checksum_is_checked_by_the_program :: proc(t: ^testing.T) {
+udp_checksum_is_checked_by_the_process :: proc(t: ^testing.T) {
 	frame: [128]u8
 	length := udp_example(frame[:], "a datagram")
 	frame[IPV4_DATA + UDP_HEADER + 3] ~= 1 // One bit of the data.
@@ -369,7 +369,7 @@ tcp_malformed :: proc(t: ^testing.T) {
 	}
 }
 
-// The checksum of a segment is for TCP in the program: parse gives a
+// The checksum of a segment is for TCP in the process: parse gives a
 // segment with a wrong checksum to the endpoint of its port.
 @(test)
 tcp_checksum_is_not_checked_here :: proc(t: ^testing.T) {

@@ -45,7 +45,7 @@ Comment_Rule :: struct {
 @(rodata)
 comment_rules := [Comment_Rule_Form]Comment_Rule {
 	.Property_Number             = {"the caller owns all memory (property 14).", "a property by its number"},
-	.Property_Short_Label        = {"a program must not pay for the work of another (P20).", "a property by its short label"},
+	.Property_Short_Label        = {"a process must not pay for the work of another (P20).", "a property by its short label"},
 	.Choice_Number               = {"copy the name before the checks (choice 186).", "a choice by its number"},
 	.Step_Number                 = {"the faults that a read found (the step after 309).", "a step by its number"},
 	.Review_Finding              = {"the argument and why (finding W8).", "a finding of a review by its label"},

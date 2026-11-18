@@ -26,7 +26,7 @@ blend_error_against_srgb :: proc(t: ^testing.T) {
 	Pair :: struct {
 		front, back: Color,
 	}
-	pairs := [?]Pair{{DARK_TEXT, DARK_CARD_BOTTOM}, {DARK_DIM, DARK_BACKGROUND}, {DARK_PROGRAM, DARK_CARD_TOP}, {DARK_BACKGROUND, DARK_TEXT}}
+	pairs := [?]Pair{{DARK_TEXT, DARK_CARD_BOTTOM}, {DARK_DIM, DARK_BACKGROUND}, {DARK_PROCESS, DARK_CARD_TOP}, {DARK_BACKGROUND, DARK_TEXT}}
 	for pair in pairs {
 		worst_gamma_two, worst_plain: f64
 		for coverage in u32(0) ..= 255 {
@@ -168,7 +168,7 @@ fast_blend_is_the_reference :: proc(t: ^testing.T) {
 	defer delete(second)
 	a := Canvas{pixels = raw_data(first), width = WIDTH, height = 48, stride = WIDTH}
 	b := Canvas{pixels = raw_data(second), width = WIDTH, height = 48, stride = WIDTH}
-	text_colors := [?]Color{DARK_TEXT, DARK_DIM, DARK_PROGRAM, DARK_BACKGROUND, COLOR_WHITE}
+	text_colors := [?]Color{DARK_TEXT, DARK_DIM, DARK_PROCESS, DARK_BACKGROUND, COLOR_WHITE}
 	differences := 0
 	for background in Speed_Background {
 		for order in Subpixel_Order {

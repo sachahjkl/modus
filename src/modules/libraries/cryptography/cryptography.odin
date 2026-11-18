@@ -21,7 +21,7 @@
 // - **The copies of secrets that the module makes are erased**, and so is the
 //   stack below each export after the work (`erase_stack_below_the_caller`).
 //
-// A program says which cryptography it runs by the hash of this module: the
+// A process says which cryptography it runs by the hash of this module: the
 // hash names exactly the code that runs. The names of the algorithms stay as
 // their standards write them.
 package cryptography

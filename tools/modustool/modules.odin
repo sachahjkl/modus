@@ -68,17 +68,17 @@ Module_Build :: struct {
 	entry:   bool,
 	image:   bool,
 	// Settings of the compiler for this module only (-define): a kernel
-	// for one machine of the test, and each program that draws its window
+	// for one machine of the test, and each process that draws its window
 	// through the drawing module (DRAWING_THROUGH_MODULE).
 	defines: []string,
 	// A library module (docs/MODULE_CONTRACT.md, "A library as a module"):
-	// many programs import it, each at another address. The conversion
+	// many processes import it, each at another address. The conversion
 	// refuses a segment that is read-only after the load: with none, the
 	// module is one shared copy at each address, and takes one place in the
 	// table of prepared modules of a starter, not one for each importer.
 	library: bool,
-	// A program that a disk holds: it is built as each program, with the
-	// system library, and no boot image gets its file (disk_programs.odin).
+	// A process that a disk holds: it is built as each process, with the
+	// system library, and no boot image gets its file (disk_processes.odin).
 	disk:    bool,
 	// The one boot image of a test that holds the module, and no other
 	// image: the modules of the operation sequences. "": the module is in
@@ -98,7 +98,7 @@ module_in_a_boot_image :: proc(build: Module_Build) -> bool {
 	return module_in_boot_image(build) || build.image && !build.disk && build.only_in_image != ""
 }
 
-// The drawing module, and the setting of a program that draws its window
+// The drawing module, and the setting of a process that draws its window
 // through it (src/library/support/interface, window_drawing.odin). A module with the
 // setting imports the module: a host test checks it
 // (import_declarations_test.odin).
@@ -112,13 +112,13 @@ module_builds := [?]Module_Build {
 	{name = "test_caller", source = TEST_MODULE_SOURCES + "test_caller", imports = {"test_callee"}},
 	{name = "kernel", source = SOURCE_FOLDER_KERNEL, kernel = true},
 	// The same kernel with the check of the instruction address before a
-	// return to a program skipped, for one machine of `test return_fault`
+	// return to a process skipped, for one machine of `test return_fault`
 	// only: its boot volume is BOOT_VOLUME_WITHOUT_RETURN_CHECK, and
 	// machine_test refuses the line of this kernel in every other machine.
 	{name = "kernel_without_return_check", source = SOURCE_FOLDER_KERNEL, kernel = true, defines = {"TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true"}},
 	{name = "root", source = SYSTEM_MODULE_SOURCES + "root", entry = true, image = true},
 	{name = "input", source = SYSTEM_MODULE_SOURCES + "input", entry = true, image = true},
-	// The drawing of a window, for each program below that imports it.
+	// The drawing of a window, for each process below that imports it.
 	{name = DRAWING_MODULE, source = LIBRARY_MODULE_SOURCES + "drawing", image = true, library = true},
 	// It draws its screen in parts, one call of the drawing module for each
 	// part (src/md/api/picture.md).
@@ -222,18 +222,18 @@ module_builds := [?]Module_Build {
 	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", entry = true, image = true},
 	{name = "settings", source = SYSTEM_MODULE_SOURCES + "settings", entry = true, image = true},
 	{name = "date", source = SYSTEM_MODULE_SOURCES + "date", entry = true, image = true},
-	// The program of the operation sequences and its runner: only the boot
+	// The process of the operation sequences and its runner: only the boot
 	// image of the operation sequences holds them, and the root service
 	// starts nothing else there.
 	{name = OPERATION_SEQUENCE_RUNNER_MODULE, source = TEST_MODULE_SOURCES + OPERATION_SEQUENCE_RUNNER_MODULE, entry = true, image = true, only_in_image = BOOT_IMAGE_OPERATION_SEQUENCES},
 	{name = OPERATION_FUZZING_MODULE, source = TEST_MODULE_SOURCES + OPERATION_FUZZING_MODULE, entry = true, image = true, only_in_image = BOOT_IMAGE_OPERATION_SEQUENCES},
 	// It is not in the boot image: the tool writes its file in the store
 	// `module_files` of a data disk, and the root service starts it from there
-	// (disk_programs.odin).
+	// (disk_processes.odin).
 	{name = DISK_MODULE_NAME, source = TEST_MODULE_SOURCES + DISK_MODULE_NAME, entry = true, image = true, disk = true},
-	// A library module and a program that imports it, both in the store
+	// A library module and a process that imports it, both in the store
 	// `module_files` only: the root service finds the import by the hash of
-	// its bytes (disk_programs.odin).
+	// its bytes (disk_processes.odin).
 	{name = STORE_LIBRARY_MODULE, source = TEST_MODULE_SOURCES + STORE_LIBRARY_MODULE, image = true, library = true, disk = true},
 	{name = STORE_IMPORTER_MODULE, source = TEST_MODULE_SOURCES + STORE_IMPORTER_MODULE, entry = true, imports = {STORE_LIBRARY_MODULE}, image = true, disk = true},
 }
@@ -298,7 +298,7 @@ build_modules :: proc() -> bool {
 	build_measure_step("the glyph caches", step_started)
 	step_started = time.tick_now()
 	// The pages of the links of the documentation of the modules: one more
-	// resource, for the program manual (manual_link_pages.odin).
+	// resource, for the process manual (manual_link_pages.odin).
 	link_pages := build_manual_pages() or_return
 	build_measure_step("the link pages of the manual", step_started)
 	step_started = time.tick_now()
@@ -308,8 +308,8 @@ build_modules :: proc() -> bool {
 	append(&all_resources, link_pages)
 	// The second boot image has no compositor: with it, the start fails.
 	// The third has no input service: the root service starts only the
-	// program shortage (the test of the shortage of frames).
-	// The fifth holds the program of the operation sequences, which no
+	// process shortage (the test of the shortage of frames).
+	// The fifth holds the process of the operation sequences, which no
 	// other image holds.
 	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:]) && build_boot_image(BOOT_IMAGE_OPERATION_SEQUENCES, "", all_resources[:])
 	if images_built {
@@ -330,7 +330,7 @@ build_modules :: proc() -> bool {
 // library_modules_measure_print prints, for each library module of the
 // table, the size of its file, then the size of the file of each module
 // that imports it and their sum: a measure, to compare with the build
-// before a program became an importer. It checks nothing, and a file that
+// before a process became an importer. It checks nothing, and a file that
 // cannot be read only ends the line of its library.
 library_modules_measure_print :: proc() {
 	for library in module_builds {
@@ -431,7 +431,7 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 	// segments only, and `check` proves that each module is the same bytes
 	// without it.
 	// The kind of debug information that never changes the code: the build
-	// gives the compiler the same program as a build with none. A plain
+	// gives the compiler the same process as a build with none. A plain
 	// `-debug` adds aids for a debugger that are instructions, and it sets
 	// a constant that a source can read.
 	if debug_information {
@@ -467,7 +467,7 @@ module_object_command :: proc(build: Module_Build) -> []string {
 	append(&llc, "llc", "-O3", "-misched-topdown", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj")
 	if build.kernel {
 		// The kernel has no x87, SSE or AVX instruction: the registers of a
-		// program stay live through each kernel entry, and only the switch
+		// process stay live through each kernel entry, and only the switch
 		// of threads saves them (docs/ARCHITECTURE.md, "The extended state
 		// of the processor").
 		append(&llc, KERNEL_TARGET_FEATURES)
@@ -481,7 +481,7 @@ module_object_command :: proc(build: Module_Build) -> []string {
 }
 
 // module_assembly_files gives the assembly files that a module links: the
-// copies and the fills, the files of its folder, and for a program the
+// copies and the fills, the files of its folder, and for a process the
 // files of the system library, which has instructions of its own.
 module_assembly_files :: proc(build: Module_Build) -> (files: []string, ok: bool) {
 	assembly := make([dynamic]string, context.temp_allocator)
@@ -873,7 +873,7 @@ test_descriptions :: proc() -> bool {
 			import_sizes := budget_import_memory_sizes(build) or_return
 			counted, counted_ok := budget_count(described.budget.parts, head.memory_size, import_sizes)
 			if !counted_ok || request != counted.request {
-				fmt.eprintfln("modustool: test failed: the budget that %s asks for, %d pages, %d programs, %d threads, is not its stated budget and its counted parts: %s", build.name, request.pages, request.programs, request.threads, budget_count_line(counted))
+				fmt.eprintfln("modustool: test failed: the budget that %s asks for, %d pages, %d processes, %d threads, is not its stated budget and its counted parts: %s", build.name, request.pages, request.processes, request.threads, budget_count_line(counted))
 				return false
 			}
 			test_passed_print("the budget that %s asks for is its stated budget and its counted parts: %s", build.name, budget_count_line(counted))

@@ -53,7 +53,7 @@ fuzz_input_arena_make :: proc(limit: int) -> (arena: Fuzz_Input_Arena, ok: bool)
 }
 
 // The mailbox of the child, for the handler of the faults: a handler gets
-// no argument of the program.
+// no argument of the process.
 fuzz_fault_mailbox: ^Fuzz_Mailbox
 
 // The stack of the handler: a fault of a stack that overflowed still runs

@@ -7,30 +7,30 @@
 // and from `modustool call`.
 //
 // The time zone (src/md/features/time_zone.md) is a fixed offset from UTC,
-// "+08:00". This program writes it on the settings page; the program `date`
+// "+08:00". This process writes it on the settings page; the process `date`
 // copies it into the date page, and the root service then moves the
-// appearance in force when the new local time asks for it. So this program
+// appearance in force when the new local time asks for it. So this process
 // computes the appearance in force with the zone of the date page, never
 // with the zone that it writes.
 //
-// This program is the one writer of the values of the settings page
+// This process is the one writer of the values of the settings page
 // (modus:contract/settings). A change is written first to its private
 // store, as one record in one object (one commit), then to the page, with
 // the appearance in force that the setting `appearance` gives now
 // (src/md/features/appearance.md); the page wakes the compositor, which
 // gives the new font, pointer theme and appearance to each window: every
-// program draws again, with no code of its own for it. With the setting
+// process draws again, with no code of its own for it. With the setting
 // `auto`, the root service changes the appearance in force at 07:00 and at
-// 19:00: this program runs only while its window is open.
+// 19:00: this process runs only while its window is open.
 //
-// At boot the root service starts this program for one pass with no window
+// At boot the root service starts this process for one pass with no window
 // (the context value VALUE_BOOT_PASS): it reads the record of its store,
 // writes the page, and stops.
 //
 // **What it is for.** It shows that a choice of the principal is state like
 // any other: kept in a private store with no save action, and seen by every
-// program at once through one page that each reads and only one writes. No
-// program reads a configuration file, and no program needs code to follow a
+// process at once through one page that each reads and only one writes. No
+// process reads a configuration file, and no process needs code to follow a
 // change.
 //
 // **Start**: `start("settings")` in the console, or the bar of the desktop.
@@ -40,7 +40,7 @@
 //
 // **Grants**, as the root service gives them:
 //
-// - **Settings**: the settings page with the right Write. No other program
+// - **Settings**: the settings page with the right Write. No other process
 //   can write it.
 // - **Store**: its private store, which keeps the record of the settings
 //   across a stop of the machine.
@@ -55,7 +55,7 @@
 // is: "settings: the appearance in force is dark: auto, light from 07:00 to
 // 19:00 of the local time; the local time is 01:04 with a zone of 0 s, at
 // 1794791040 s since 1970".
-package settings_program
+package settings_process
 
 import "modus:contract/date"
 import "modus:contract/errors"
@@ -74,7 +74,7 @@ HEIGHT :: 560
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"): the keys of the focus of the interface package.
 // A procedure, not a global array: an item is made by a call, and a
-// freestanding program runs no call before its entry.
+// freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [3]interface.Action_Bar_Item {
 	return {
 		interface.action_bar_item("next button", 3, "Tab"),
@@ -142,7 +142,7 @@ keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
 		storage.error_text(&writer, &store, &error)
-		system.log_in("programs", .Warning, "settings: the store did not keep the settings: ", system.written(&writer))
+		system.log_in("processes", .Warning, "settings: the store did not keep the settings: ", system.written(&writer))
 		return false
 	}
 	return true
@@ -152,7 +152,7 @@ keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -
 // the setting `appearance`, with `auto` by the rule of the day over the
 // date page (src/md/features/appearance.md). It writes the sentence of the
 // rule in buffer. The zone is the one of the date page: the root service
-// writes the appearance of a new zone after the program `date` copies it,
+// writes the appearance of a new zone after the process `date` copies it,
 // so the page never holds the appearance of a zone that the date page does
 // not have yet.
 in_force_now :: proc "contextless" (choice: settings.Choice, buffer: []u8) -> (settings.Appearance_In_Force, string) {
@@ -176,19 +176,19 @@ page_write :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: 
 	system.word_wake(&page.change_count, 64)
 }
 
-// page_choice reads the page that this program writes. A refused page (a
-// word that names no value: no write of this program makes one) is said on
+// page_choice reads the page that this process writes. A refused page (a
+// word that names no value: no write of this process makes one) is said on
 // the log, and gives the defaults, which the next change writes over it.
 page_choice :: proc "contextless" () -> (choice: settings.Choice, ok: bool) {
 	choice, ok = settings.read(page)
 	if !ok && choice.change_count & 1 == 0 {
-		system.log_in("programs", .Warning, "settings: the settings page holds a value that its setting does not have, or was never stable: the defaults")
+		system.log_in("processes", .Warning, "settings: the settings page holds a value that its setting does not have, or was never stable: the defaults")
 	}
 	return choice, ok
 }
 
 // change keeps the values and the zone, then writes them on the page and
-// wakes the compositor and the program `date`.
+// wakes the compositor and the process `date`.
 change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -> bool {
 	current, current_ok := page_choice()
 	zone := settings.zone_offset_minutes_valid(zone_offset_minutes)
@@ -311,7 +311,7 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 
 // get gives the value of a setting of the system as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit"), get("keyboard_layout"), get("appearance"), get("time_zone").
 //
-// It reads the settings page, which each program can read too: so it needs no grant, and each caller gets the
+// It reads the settings page, which each process can read too: so it needs no grant, and each caller gets the
 // value.
 //
 // - **name**: the name of a setting, 32 bytes at most.
@@ -340,7 +340,7 @@ get :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i
 	if !found {
 		return errors.fail(error, ERROR_NAME, .Absent, .None, 1)
 	}
-	// A refused page gives the defaults, which each program draws with.
+	// A refused page gives the defaults, which each process draws with.
 	current, _ := settings.read(page)
 	values := settings.values_of(current)
 	// The count of the whole text: a caller with a smaller buffer sees that
@@ -521,18 +521,18 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	vector := choice.font == .Vector && graphics.text_vector_drawn()
 	sample := interface.card(&frame, {8, top, WIDTH - 16, HEIGHT - top - 8 - interface.ACTION_BAR_ROW_HEIGHT}, "THE TEXT OF THE SYSTEM", vector ? "the vector font, from the glyph cache" : "Spleen 8x16, the fallback", graphics.colors.machine)
 	lines := [?]string {
-		"> print(monitor.programs())   31 programs",
+		"> print(monitor.processes())   31 processes",
 		"compositor   12.4 ms   2 418 pages   runs",
 		"{fill} [rings] gi Rb 0O 1lI  ok: 0x4F3A",
 	}
 	for line, index in lines {
 		interface.draw_text(frame.table, sample.x, sample.y + index * 16, line, graphics.colors.text)
 	}
-	interface.draw_text(frame.table, sample.x, sample.y + 56, "EEVDF fair", graphics.colors.program, interface.FONT_MEDIUM)
+	interface.draw_text(frame.table, sample.x, sample.y + 56, "EEVDF fair", graphics.colors.process, interface.FONT_MEDIUM)
 	after := interface.large_number(&frame, sample.x, sample.y + 88, "12 345", graphics.colors.text)
 	interface.draw_text(frame.table, after + 16, sample.y + 112, "wakes in one second", graphics.colors.dim)
 	// The sizes of the caches are in their headers; the hash is that of the
-	// font file, in the header of the cache that this program validated.
+	// font file, in the header of the cache that this process validated.
 	facts: interface.Text_Builder
 	with_grid_fit_size := display.glyph_cache_valid[.On] ? display.glyph_caches[.On].header.file_size : 0
 	without_grid_fit_size := display.glyph_cache_valid[.Off] ? display.glyph_caches[.Off].header.file_size : 0
@@ -576,7 +576,7 @@ draw_with_bar :: proc "contextless" (window: ^display.Window) {
 //
 // The entry maps the settings page; with no page it writes "settings: no
 // settings page" and stops with the code 1. It opens its private store; a
-// program with no store still runs, and says "NOT kept: no store".
+// process with no store still runs, and says "NOT kept: no store".
 //
 // - **The boot pass** (the context value `VALUE_BOOT_PASS` is not 0): it
 //   reads the record of its store, writes the page, wakes the compositor,

@@ -1,4 +1,4 @@
-// The block contract: what a program and a block service agree on. A block
+// The block contract: what a process and a block service agree on. A block
 // service is the device service of one disk. The first one drives a virtio
 // block device (src/modules/system/block); a driver of another device class (NVMe)
 // serves the same contract.

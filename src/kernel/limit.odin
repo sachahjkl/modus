@@ -2,10 +2,10 @@ package kernel
 
 import "base:intrinsics"
 
-// The limits of a budget: processor time and log records. A program cannot
+// The limits of a budget: processor time and log records. A process cannot
 // take all the processor time or fill the log: each resource has a limit.
 //
-// Pages, programs and threads are things that a budget holds: they move
+// Pages, processes and threads are things that a budget holds: they move
 // from a budget to a new budget, and they return. The log records of each
 // second move in the same way: a new budget takes its records of each
 // second from the budget that it came from, and gives them back at its end,
@@ -154,7 +154,7 @@ budget_log_count_to_parent :: proc "contextless" (index: u32, parent: u32) {
 	}
 }
 
-// budget_log counts the log records of one Log of a program in the budget
+// budget_log counts the log records of one Log of a process in the budget
 // that pays for it: all of them, or none. false: the budget has not that
 // many records left in this second. The word
 // `logged` holds the second in its high 32 bits and the count of that
@@ -165,11 +165,11 @@ budget_log_count_to_parent :: proc "contextless" (index: u32, parent: u32) {
 // pages: Budget_Create moves them to the new budget, and the end of the
 // budget gives them back. So a budget counts only its own records, and the
 // records of a tree of budgets are still at most the amount of its top. A
-// count in each budget above would tell a program, by a refusal, that the
+// count in each budget above would tell a process, by a refusal, that the
 // others wrote much (src/md/features/log_side_channels.md).
 budget_log :: proc "contextless" (index: u32, records: u64) -> bool {
 	// Budget 0 is no budget: it holds what returned to no budget, and a
-	// program whose budgets all ended counts nowhere, as a processor time
+	// process whose budgets all ended counts nowhere, as a processor time
 	// that no budget charges.
 	if index == 0 {
 		return true

@@ -47,7 +47,7 @@ LISTEN_PORT :: 7100
 // The one remote address that the listen grant of the remote service
 // admits: the host, at the gateway of the network of the machine
 // (10.0.2.2). The network service drops a datagram of another address
-// before the program sees it.
+// before the process sees it.
 HOST_ADDRESS :: 0x0A000202
 
 // The application protocol (ALPN) of a connection to the remote service: a

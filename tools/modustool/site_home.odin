@@ -67,7 +67,7 @@ site_boot_stage_texts := [?]Site_Boot_Stage_Text {
 	},
 	{
 		stage = "kernel: root service",
-		does = "The kernel builds the root service from the module `root` of the boot image and gives it every handle that exists at the start. The root service is the first program: it starts each other program with the grants of its role.",
+		does = "The kernel builds the root service from the module `root` of the boot image and gives it every handle that exists at the start. The root service is the first process: it starts each other process with the grants of its role.",
 		runs = "The kernel, then the root service.",
 		guide = "docs/ARCHITECTURE.md",
 		heading = "U2. Root service",
@@ -230,7 +230,7 @@ site_boot_timeline_write :: proc(site: ^Site, b: ^strings.Builder, from_page: st
 		strings.write_string(b, "<p class=\"missing\">" + SITE_NOT_MEASURED + "</p>\n</section>\n")
 		return
 	}
-	strings.write_string(b, "<p class=\"boot-scale\">From the start of the machine to the first program: ")
+	strings.write_string(b, "<p class=\"boot-scale\">From the start of the machine to the first process: ")
 	site_value(b, .Time, site_milliseconds_text(total), false)
 	strings.write_string(b, ". One scale: a width is a time.</p>\n<svg class=\"boot-bar boot-bar-whole\" aria-hidden=\"true\">")
 	whole := site_boot_whole_segments(stages)
@@ -344,11 +344,11 @@ Site_Measure_Chart :: struct {
 site_measure_charts := [?]Site_Measure_Chart {
 	{
 		pattern = "locks: kernel entries in one second",
-		title = "Kernel entries in one second, by the count of programs",
+		title = "Kernel entries in one second, by the count of processes",
 		unit = "kernel entries in one second",
 		kind = .Number,
-		about = "Each program enters the kernel again and again and takes only the locks of its own objects. A count that grows with the programs shows that the kernel serves several processors at once.",
-		bars = {{"1 program", "1 locker "}, {"2 programs", "2 lockers "}, {"4 programs", "4 lockers "}, {}, {}},
+		about = "Each process enters the kernel again and again and takes only the locks of its own objects. A count that grows with the processes shows that the kernel serves several processors at once.",
+		bars = {{"1 process", "1 locker "}, {"2 processes", "2 lockers "}, {"4 processes", "4 lockers "}, {}, {}},
 	},
 	{
 		pattern = "vector_glyphs: one glyph from its outline",
@@ -356,7 +356,7 @@ site_measure_charts := [?]Site_Measure_Chart {
 		unit = "nanoseconds",
 		unit_after = " ns",
 		kind = .Time,
-		about = "A glyph of the vector font drawn from its outline at three scales, the same glyph copied from the glyph cache, and a glyph of the bitmap font. The difference is the work that the glyph cache saves each program.",
+		about = "A glyph of the vector font drawn from its outline at three scales, the same glyph copied from the glyph cache, and a glyph of the bitmap font. The difference is the work that the glyph cache saves each process.",
 		bars = {{"Outline, scale 1", "scale 1 "}, {"Outline, scale 2", "scale 2 "}, {"Outline, scale 3", "scale 3 "}, {"Glyph cache", "from the glyph cache: "}, {"Bitmap font", "Spleen 8x16: "}},
 	},
 }

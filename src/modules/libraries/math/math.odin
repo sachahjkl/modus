@@ -1,5 +1,5 @@
 // A module of commands: each command is a function with typed parameters,
-// not a program that parses text. It is not a program: it has no entry.
+// not a process that parses text. It is not a process: it has no entry.
 // The console loads it and calls its exports with the call form
 // (docs/MODULE_CONTRACT.md, section 4). The tool makes the description of each
 // export from this source: the name, the parameters, the result, and the
@@ -20,7 +20,7 @@
 // square_root(-4)                 an error record: Too_Small
 // ```
 //
-// `isolate("math")` gives the same answers through a sandboxed program.
+// `isolate("math")` gives the same answers through a sandboxed process.
 //
 // **What it does not do**: no export checks an overflow of 64 bits, except
 // fibonacci, which stops at the last number that fits, and gcd, which

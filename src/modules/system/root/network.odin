@@ -8,32 +8,32 @@ import "modus:contract/ring"
 import "modus:support/system"
 
 // The network. The network service is the one client of the frame service of
-// the network device; it starts when a program with the grant Network starts
-// (on demand, as the storage service). This service gives each such program
+// the network device; it starts when a process with the grant Network starts
+// (on demand, as the storage service). This service gives each such process
 // one endpoint (src/library/contract/datagram): a datagram ring that it gives to the two
-// programs, and a grant that it names on the control ring of the network
-// service. The program cannot choose its remote or its local port: it has
+// processes, and a grant that it names on the control ring of the network
+// service. The process cannot choose its remote or its local port: it has
 // no ambient network, and no port is a global name.
 
 // The right Inspect of the grant of an endpoint (the facts of the network
 // of the machine: the frames that no endpoint owns, the kernel entries of
-// the two services) goes only to a program that holds the machine with the
-// right Inspect: it reads the facts of all programs already, and no other
-// program learns of the traffic of another.
+// the two services) goes only to a process that holds the machine with the
+// right Inspect: it reads the facts of all processes already, and no other
+// process learns of the traffic of another.
 
 QUIC_ECHO_PORT :: 4433 // The UDP port of quic_echo: the port of the examples of RFC 9000 implementations.
 
-// endpoint_of gives the grant of the endpoint of a program (docs/NETWORK.md):
+// endpoint_of gives the grant of the endpoint of a process (docs/NETWORK.md):
 //   net     a datagram endpoint: the echo server of the test, 10.0.2.2 port 7.
 //   remote  a datagram endpoint with a listen grant: the UDP port
 //           remote.LISTEN_PORT, and only the remotes of the address of the
 //           host (10.0.2.2) that send a datagram of 1200 bytes to it: QUIC
-//           in the program (docs/QUIC.md, section 7).
+//           in the process (docs/QUIC.md, section 7).
 //   server  a segment endpoint with a listen grant: the TCP port 80, and the
 //           remotes that send a segment to it.
 //   fetch   a segment endpoint with a client grant: 10.0.2.100 port 80, the
 //           web server of the test (the tool behind QEMU user networking).
-//   programs  the same client grant: the module file service fetches a
+//   processes  the same client grant: the module file service fetches a
 //           module file from the web server that QEMU gives that address.
 //   quic_echo  a datagram endpoint with a listen grant: the UDP port 4433,
 //           and the remotes that send a datagram of 1200 bytes to it.
@@ -56,33 +56,33 @@ endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
 // network_service gives the network service that runs, or starts it.
 network_service :: proc "contextless" () -> (service: ^Started, status: system.Status) {
 	for &item in started {
-		if item.program != 0 && item.network.head != nil {
+		if item.process != 0 && item.network.head != nil {
 			return &item, .Ok
 		}
 	}
 	start("network") or_return
 	for &item in started {
-		if item.program != 0 && item.network.head != nil {
+		if item.process != 0 && item.network.head != nil {
 			return &item, .Ok
 		}
 	}
 	return nil, .Bad_State
 }
 
-// endpoint_open makes the endpoint of a program that starts: the datagram
+// endpoint_open makes the endpoint of a process that starts: the datagram
 // ring and the datagram region, given to the network service with the
-// grant. This service makes the region, not the program: a region of the
-// program would let the program revoke the mapping of the network service,
-// which would stop on a page fault for all programs. The network service
+// grant. This service makes the region, not the process: a region of the
+// process would let the process revoke the mapping of the network service,
+// which would stop on a page fault for all processes. The network service
 // gets the region with Give: it gives it to the frame service with Read
 // only, and the device reads the data of each send there
 // (src/md/infrastructure/network_data_path.md, "The send with no copy").
 // When the unit of the IOMMU of the network device gives device windows, the
 // region is not contiguous: the kernel gives the device a window where its
 // pages follow each other, and a machine with fragmented memory still
-// starts the program. Else (no IOMMU, a device that no unit covers, a unit
+// starts the process. Else (no IOMMU, a device that no unit covers, a unit
 // of too few bits) it is contiguous, as the device needs one address. It
-// gives the two handles: give them to the program, then close them.
+// gives the two handles: give them to the process, then close them.
 endpoint_open :: proc "contextless" (slot: ^Started, name: string) -> (ring_memory, region_memory: system.Handle, status: system.Status) {
 	service := network_service() or_return
 	ring_memory = system.memory_create(ring.pages(datagram.RING_CAPACITY)) or_return
@@ -114,18 +114,18 @@ endpoint_open :: proc "contextless" (slot: ^Started, name: string) -> (ring_memo
 	return ring_memory, region_memory, .Ok
 }
 
-// endpoint_close ends the endpoint of a program that stopped.
+// endpoint_close ends the endpoint of a process that stopped.
 endpoint_close :: proc "contextless" (item: ^Started) {
-	if item.endpoint != 0 && item.network_service != nil && item.network_service.program != 0 {
+	if item.endpoint != 0 && item.network_service != nil && item.network_service.process != 0 {
 		system.send(&item.network_service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Remove), values = {0 = u64(item.endpoint)}})
 	}
 	item.endpoint, item.network_service = 0, nil
 }
 
 // endpoint_revoke ends the grant of an endpoint: the network service refuses
-// each request that names a remote, and no datagram reaches the program.
+// each request that names a remote, and no datagram reaches the process.
 endpoint_revoke :: proc "contextless" (item: ^Started) -> (count: u64) {
-	if item.endpoint != 0 && item.network_service != nil && item.network_service.program != 0 {
+	if item.endpoint != 0 && item.network_service != nil && item.network_service.process != 0 {
 		if system.send(&item.network_service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Grant), values = {0 = u64(item.endpoint), 1 = 0}}) {
 			return 1
 		}
@@ -137,7 +137,7 @@ endpoint_revoke :: proc "contextless" (item: ^Started) -> (count: u64) {
 // service: a refused endpoint goes on the log.
 network_answers :: proc "contextless" (wait: ^system.Wait) {
 	for &item in started {
-		if item.program == 0 || item.network.head == nil {
+		if item.process == 0 || item.network.head == nil {
 			continue
 		}
 		for record in system.receive(&item.network.completions) {
@@ -146,7 +146,7 @@ network_answers :: proc "contextless" (wait: ^system.Wait) {
 				text: [240]u8
 				writer := system.Writer{buffer = text[:]}
 				system.ring_error_text(&writer, &error, "datagram", datagram.control_name(error.operation), datagram.control_argument_name(error.operation, error.argument))
-				system.log_in("programs", .Warning, "root: the network service refused a command of its control ring: ", system.written(&writer))
+				system.log_in("processes", .Warning, "root: the network service refused a command of its control ring: ", system.written(&writer))
 			}
 		}
 		if wait != nil {

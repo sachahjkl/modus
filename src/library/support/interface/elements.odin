@@ -84,7 +84,7 @@ label_value_lines :: proc "contextless" (frame: ^Frame, column: ^Column, label, 
 	return two_texts_lines(frame, column, label, FONT_INTERFACE, graphics.colors.dim, value, value_color.? or_else graphics.colors.text, value_x, line, -1)
 }
 
-// case_lines draws one case of a table of cases: what a program asked, and
+// case_lines draws one case of a table of cases: what a process asked, and
 // at answer_x the answer that it got, both in the font of the cells and
 // each on the lines that it needs, over a band on every second case (the
 // band is 8 pixels wider than the column on each side). It takes its
@@ -480,7 +480,7 @@ List_Row :: struct {
 	right_text:     string, // A dim text at the right of the row: what the entry is, in words.
 	name_in_cells:  bool, // The name is code: it is in the font of the cells.
 	name_color:     graphics.Color, // The color of the name on a row that is not chosen. 0: the text color.
-	detail:         string, // A quiet text right after the name, in the font of the cells: the parameters and the result of a command, or the hash prefix of the file of a disk program. It is cut to its room.
+	detail:         string, // A quiet text right after the name, in the font of the cells: the parameters and the result of a command, or the hash prefix of the file of a disk process. It is cut to its room.
 }
 
 // List_Rows_Options: what a list of rows shows beside its rows.

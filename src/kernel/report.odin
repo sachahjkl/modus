@@ -94,30 +94,30 @@ boot_report :: proc "contextless" (report: ^op.Boot_Report) {
 	}
 }
 
-// The reports of a developer tool (docs/TOOLS.md): what one program has, for
+// The reports of a developer tool (docs/TOOLS.md): what one process has, for
 // a holder of the machine with the right Inspect. They give counts, places
-// and states, never a byte of the memory of the program: reading the memory
-// of another program is a separate grant, which these reports do not need.
+// and states, never a byte of the memory of the process: reading the memory
+// of another process is a separate grant, which these reports do not need.
 
-// program_mappings_report writes the mappings of program slot `index`, in
+// process_mappings_report writes the mappings of process slot `index`, in
 // the order of their addresses. The caller holds the control lock; this
-// procedure takes the program lock of the program. The present pages are
+// procedure takes the process lock of the process. The present pages are
 // the count that each mapping keeps (Mapping.present_page_count): one read
 // for each mapping, no walk of the page table.
-program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Report, index: u32) {
+process_mappings_report :: proc "contextless" (report: ^op.Process_Mapping_Report, index: u32) {
 	report^ = {}
-	if index == 0 || index >= PROGRAM_CAPACITY {
+	if index == 0 || index >= PROCESS_CAPACITY {
 		return
 	}
-	about := &programs[index]
-	taken := program_lock(index)
-	defer program_unlock(index, taken)
+	about := &processes[index]
+	taken := process_lock(index)
+	defer process_unlock(index, taken)
 	if about.state == .None {
 		return
 	}
-	// The serial also for a stopped program, which has no page table and no
+	// The serial also for a stopped process, which has no page table and no
 	// mapping now.
-	report.program_serial = u64(about.serial)
+	report.process_serial = u64(about.serial)
 	if about.table == 0 {
 		return
 	}
@@ -125,7 +125,7 @@ program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Repor
 		if mapping.page_count == 0 || report.count == op.MAPPING_REPORT_CAPACITY {
 			continue
 		}
-		item := op.Program_Mapping {
+		item := op.Process_Mapping {
 			address    = mapping.address,
 			page_count = mapping.page_count,
 			first      = mapping.first,
@@ -157,7 +157,7 @@ program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Repor
 			item.region_pages = region.page_count
 			item.region_serial = region.serial
 			item.references = intrinsics.atomic_load(&region.references)
-			// Under the program lock: the committed pages change under the
+			// Under the process lock: the committed pages change under the
 			// region lock and the frame lock; one word, read whole.
 			item.committed = region.uncommitted ? intrinsics.volatile_load(&region.committed) : region.page_count
 			if region.uncommitted {
@@ -187,25 +187,25 @@ program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Repor
 	}
 }
 
-// stop_report_for_inspect writes the stop report of program slot `index`
+// stop_report_for_inspect writes the stop report of process slot `index`
 // for a holder of the machine with Inspect (op.Inspect_Kind.Stop): only the
-// frames that a module record of the program holds, and the address of the
+// frames that a module record of the process holds, and the address of the
 // fault only in the first page or in such a record. The other values can be
-// words of the memory of the program. The caller holds the control lock.
+// words of the memory of the process. The caller holds the control lock.
 stop_report_for_inspect :: proc "contextless" (report: ^op.Stop_Report, index: u32) {
 	report^ = {}
-	if index == 0 || index >= PROGRAM_CAPACITY {
+	if index == 0 || index >= PROCESS_CAPACITY {
 		return
 	}
-	about := &programs[index]
-	taken := program_lock(index)
-	defer program_unlock(index, taken)
+	about := &processes[index]
+	taken := process_lock(index)
+	defer process_unlock(index, taken)
 	if about.state == .None {
-		return // A free slot keeps the stop of its old program: not given.
+		return // A free slot keeps the stop of its old process: not given.
 	}
 	report^ = about.stop
-	report.program_serial = u64(about.serial)
-	in_module :: proc "contextless" (about: ^Program, address: u64) -> bool {
+	report.process_serial = u64(about.serial)
+	in_module :: proc "contextless" (about: ^Process, address: u64) -> bool {
 		for record in about.modules {
 			if record.size != 0 && address >= record.base && address - record.base < record.size {
 				return true
@@ -231,18 +231,18 @@ stop_report_for_inspect :: proc "contextless" (report: ^op.Stop_Report, index: u
 	}
 }
 
-// threads_report writes the threads of program slot `index`. The caller
-// holds the control lock: no thread of the program starts or ends. The
+// threads_report writes the threads of process slot `index`. The caller
+// holds the control lock: no thread of the process starts or ends. The
 // fields of the scheduler are read with no run lock, each one whole.
 threads_report :: proc "contextless" (report: ^op.Thread_Table_Report, index: u32) {
 	report^ = {}
-	if index == 0 || index >= PROGRAM_CAPACITY || programs[index].state == .None {
+	if index == 0 || index >= PROCESS_CAPACITY || processes[index].state == .None {
 		return
 	}
-	report.program_serial = u64(programs[index].serial)
+	report.process_serial = u64(processes[index].serial)
 	for &thread, slot in threads[1:] {
 		state := intrinsics.atomic_load(&thread.state)
-		if state == .None || thread.program != index || report.count == op.THREAD_REPORT_CAPACITY {
+		if state == .None || thread.process != index || report.count == op.THREAD_REPORT_CAPACITY {
 			continue
 		}
 		report.threads[report.count] = {
@@ -265,11 +265,11 @@ threads_report :: proc "contextless" (report: ^op.Thread_Table_Report, index: u3
 	}
 }
 
-// pages_report writes which of 64 pages of the program that asks have a
+// pages_report writes which of 64 pages of the process that asks have a
 // frame, from its page table: it gives no frame to a page. The caller holds
-// the program lock of that program (execute_locked), and checked the
+// the process lock of that process (execute_locked), and checked the
 // address: aligned, and its 64 pages in the user half.
-pages_report :: proc "contextless" (report: ^op.Page_Report, about: ^Program) {
+pages_report :: proc "contextless" (report: ^op.Page_Report, about: ^Process) {
 	report.present, report.mapped = 0, 0
 	if about.state == .None || about.table == 0 {
 		return

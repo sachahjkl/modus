@@ -362,7 +362,7 @@ action_bar_list_by_pointer_and_by_keys :: proc(t: ^testing.T) {
 	bar_frame(&table, &state, &input, &bar, items[:])
 	outcome := action_bar_key(&bar, {code = display.KEY_ESCAPE})
 	testing.expect(t, outcome.taken && !outcome.ran && !bar.open)
-	// Another key closes it and stays for the program.
+	// Another key closes it and stays for the process.
 	bar.open = true
 	outcome = action_bar_key(&bar, {character = 'x'})
 	testing.expect(t, !outcome.taken && !bar.open)

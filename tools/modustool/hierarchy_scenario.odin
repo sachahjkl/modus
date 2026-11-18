@@ -1,6 +1,6 @@
 package modustool
 
-// The trees of a store (docs/STORAGE.md): the program `hierarchy` makes
+// The trees of a store (docs/STORAGE.md): the process `hierarchy` makes
 // 100000 objects in trees inside trees, lists them in pages, renames,
 // removes a tree, and checks that a share reaches nothing outside its tree.
 // A second machine starts on the same disk: the open of the disk walks

@@ -72,7 +72,7 @@ Do not use: slot, PCR (alone, for this register).
 
 ### TPM service
 
-The TPM service is the program `tpm`: the device service of the TPM of the machine, which seals 32 secret bytes to the values of PCR 7 and PCR 11 and unseals them only while those registers hold the same values.
+The TPM service is the process `tpm`: the device service of the TPM of the machine, which seals 32 secret bytes to the values of PCR 7 and PCR 11 and unseals them only while those registers hold the same values.
 
 The root service starts it at boot, before `unlock`, only when the trust record says `Measured`. `unlock` reaches it with the start grant `Tpm`, through a ring of two commands, `Seal` and `Unseal` (`src/library/contract/tpm_service`). The service builds each command of TPM 2.0 itself, so no client extends a register or clears the TPM. It is not a driver in the kernel, and the boot program does not use it: the boot program talks to the TPM through the firmware, before the kernel starts.
 

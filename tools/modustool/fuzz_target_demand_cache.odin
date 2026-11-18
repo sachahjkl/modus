@@ -9,7 +9,7 @@ import "modus:contract/text_encoding"
 
 // The fuzz target of the demand cache (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): the font service writes it while each
-// program with text reads it. A reader copies each entry once and checks
+// process with text reads it. A reader copies each entry once and checks
 // it against the constants of the contract, so a wrong entry draws the
 // replacement glyph and is never a read outside the cache.
 

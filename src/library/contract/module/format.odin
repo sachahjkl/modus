@@ -14,7 +14,7 @@
 //
 // Who uses it: the build tool writes modules; the boot program checks the
 // kernel and the root service; the kernel loads the root service;
-// `src/library/support/system` loads every other module; the console, the program
+// `src/library/support/system` loads every other module; the console, the process
 // `manual` and the site read the descriptions of the exports. The parts:
 //
 // - `Header`, `Table_Kind`, `Table_Entry`: the frame of a file.
@@ -23,7 +23,7 @@
 // - `Function`, `Type`, `Direction`, `Record`, `Field`, `Table_Place`: the
 //   call form of an export (docs/MODULE_CONTRACT.md, section 4).
 // - `Documentation`: the help of the module and of each export.
-// - `Budget_Request`: the budget that the module asks for its program
+// - `Budget_Request`: the budget that the module asks for its process
 //   (`budget_request`).
 // - `Load_Error`, `Load_Stage`, `Difference` (`error.odin`) and `Error`
 //   (`load.odin`): why a load failed.
@@ -53,7 +53,7 @@ Machine :: enum u32 {
 // The first 48 bytes of a module file. A loader reads it first and refuses
 // the file when one field is not one that it takes (`validate`).
 //
-// Example: the header of a program starts with the bytes "MODULE", the
+// Example: the header of a process starts with the bytes "MODULE", the
 // version 2, the machine `X86_64`, and `entry_export` the index of its
 // export `main`.
 Header :: struct {
@@ -173,7 +173,7 @@ Type :: enum u8 {
 	// larger buffer.
 	Record  = 3, // The address of a record: bytes with a fixed size and described fields (Record).
 	// A record holds values only, and no address: its bytes mean the same
-	// in each program. The detail of the parameter is the index of the
+	// in each process. The detail of the parameter is the index of the
 	// description of the record, in the record table.
 	// A Record result: the caller gives one more argument after the
 	// parameters, the address of the memory of the record. The callee
@@ -333,7 +333,7 @@ Record :: struct {
 // at an offset that is a multiple of its size. A Text field holds its
 // bytes in the record: UTF-8, and zero bytes after the text; the text ends
 // at the first zero byte or at the end of the field. It holds no address,
-// so a record still means the same in each program. The fields are in the
+// so a record still means the same in each process. The fields are in the
 // order of their offsets, and no two fields share a byte.
 //
 // An Integer field can state what it counts, as an Integer parameter does:
@@ -341,7 +341,7 @@ Record :: struct {
 // Integer field"). A reader shows the value in the color of that kind, with
 // its unit.
 //
-// Example: the field `time` of the record `Program` of the monitor is an
+// Example: the field `time` of the record `Process` of the monitor is an
 // Integer of 8 bytes with the integer unit `{.Time, Milliseconds}`.
 Field :: struct {
 	name_offset:  u32, // In the string table.
@@ -379,7 +379,7 @@ Documentation :: struct {
 
 // The budget that a module asks for: record 1 of the table Budget
 // (docs/MODULE_CONTRACT.md, "The budget that a module asks for"). It is a
-// request, never a grant: the starter of the program accepts it, limits it
+// request, never a grant: the starter of the process accepts it, limits it
 // or widens it. A part that is 0 asks for the least budget of that part, and
 // a file with no table Budget asks for the least budget. No loader reads it.
 // The build writes it: the parts that the source states (system.Stated_Budget)
@@ -389,11 +389,11 @@ Documentation :: struct {
 // The record can gain fields at its end: a reader reads a part that a
 // shorter record does not have as 0, the least.
 //
-// Example: `{pages = 4096, programs = 1, threads = 2}` asks for 16 MiB, the
-// program itself and no child, and two threads.
+// Example: `{pages = 4096, processes = 1, threads = 2}` asks for 16 MiB, the
+// process itself and no child, and two threads.
 Budget_Request :: struct {
 	pages:    u64, // Pages of memory: its modules, its stacks, its pictures and its working memory.
-	programs: u64, // Program slots: the program itself, and each child that runs at one time.
+	processes: u64, // Process slots: the process itself, and each child that runs at one time.
 	threads:  u64, // Thread slots: each thread that runs at one time, the first one included, and the threads of its children.
 }
 #assert(size_of(Budget_Request) == 24)

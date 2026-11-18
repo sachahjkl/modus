@@ -1,22 +1,22 @@
-// The display protocol, and the code that a program uses to show a surface.
+// The display protocol, and the code that a process uses to show a surface.
 //
-// A program and the compositor share one ring. The program sends command
+// A process and the compositor share one ring. The process sends command
 // records; the compositor sends input as completion records. The pixels of
-// the surface are memory that the program creates and grants to the
+// the surface are memory that the process creates and grants to the
 // compositor. No pixel goes through the ring or through the kernel.
 //
-// The memory of a surface has two pictures. The program draws one while
+// The memory of a surface has two pictures. The process draws one while
 // the compositor reads the other, and Present names the picture that is
 // complete: the screen never shows a picture that is being drawn. After a
 // Present, `window.canvas` is the other picture, which holds the frame of
-// two frames before: a program that draws by hand draws the whole canvas.
-// The program draws only when the compositor took the last Present
+// two frames before: a process that draws by hand draws the whole canvas.
+// The process draws only when the compositor took the last Present
 // (`canvas_free`, `canvas_wait`).
 //
-// Who uses it: each program with a window (`open`, `next_event`,
+// Who uses it: each process with a window (`open`, `next_event`,
 // `present`), the compositor (the other side of the ring, and the rings
 // `Control` and `Input`), and `src/library/support/interface`, which draws with it. It
-// also loads the text settings of the program: the glyph caches and the
+// also loads the text settings of the process: the glyph caches and the
 // setting of the font (`text_settings_open`, `interface_font_open`).
 //
 // ```odin
@@ -33,8 +33,8 @@
 // }
 // ```
 //
-// A window is fixed unless its program calls `resizable_set`: the
-// principal can then drag its edges, the program gets the event `Resized`
+// A window is fixed unless its process calls `resizable_set`: the
+// principal can then drag its edges, the process gets the event `Resized`
 // and calls `surface_resize`, which makes the surface of the new size
 // (src/md/features/window_resize.md).
 //
@@ -59,7 +59,7 @@ import "modus:contract/settings"
 import "modus:contract/text_encoding"
 import "modus:support/system"
 
-// A command of a program to the compositor, on the ring of its window.
+// A command of a process to the compositor, on the ring of its window.
 Command :: enum u32 {
 	None           = 0, // Not a command.
 	Surface_Create = 1, // values: memory handle (in the compositor), width, height, title (4 values)
@@ -75,12 +75,12 @@ Command :: enum u32 {
 	// act_name_hash of each act name. The set replaces the set before. The
 	// window layer sends it when the set of a frame changes (act_names_send).
 	Act_Names      = 4,
-	// A change of the window waits for its next picture: the program draws
+	// A change of the window waits for its next picture: the process draws
 	// it at a time of its own clock, or when the compositor took the last
 	// picture. values[0]: 1 when a picture is due, 0 when it is no longer
 	// due. A Present ends it too. The compositor gives it in windows(), so
 	// a reader of the screen knows that the window is not its last picture
-	// while the program waits (picture_due_set).
+	// while the process waits (picture_due_set).
 	Picture_Due    = 5,
 	// The window is resizable within its size limits; with no such record
 	// it is fixed (src/md/features/window_resize.md). values: the least
@@ -96,11 +96,11 @@ Command :: enum u32 {
 	// (in the compositor), width, height (surface_resize).
 	Surface_Resize = 7,
 	// The other answer to the event Resized: the window keeps its size,
-	// after a refused budget, or because the program does not take the
+	// after a refused budget, or because the process does not take the
 	// event (present_rectangle sends it then). No values.
 	Resize_Declined = 8,
 	// The answer to the event Copy_Asked: the content of the copy, a
-	// memory object of this program that the compositor reads with Read
+	// memory object of this process that the compositor reads with Read
 	// and lends with Give (src/md/features/clipboard.md). values: memory
 	// handle (in the compositor), the Clipboard_Kind, the count of bytes,
 	// the serial of the Copy_Asked that it answers (copy_send).
@@ -109,7 +109,7 @@ Command :: enum u32 {
 	// refused its text or its budget. values: the serial of the Copy_Asked
 	// (copy_decline).
 	Copy_Declined   = 10,
-	// The answer to the event Pasted: the program copied the content, and
+	// The answer to the event Pasted: the process copied the content, and
 	// closed the handle. The compositor revokes the lent handle. values:
 	// the serial of the Pasted (paste_read, paste_refuse).
 	Paste_Taken     = 11,
@@ -142,7 +142,7 @@ Clipboard_Problem :: enum {
 	Too_Large, // Past CLIPBOARD_TEXT_LIMIT, or past the room of the field that pastes.
 	Not_Text, // A byte that starts no well-formed sequence of UTF-8, or a control character.
 	Hidden_Character, // A character that a reader does not see, or that changes the order of the text (character_hidden).
-	Unknown_Kind, // A kind that this program does not read.
+	Unknown_Kind, // A kind that this process does not read.
 	Not_Given, // The handle of a paste is not memory with Read that the compositor gave through the ring.
 	Too_Small, // The memory of a paste does not hold its count of bytes.
 	Ring_Full, // The command ring of the window is full: nothing was made.
@@ -233,14 +233,14 @@ act_names_send :: proc "contextless" (window: ^Window, hashes: []u64) -> bool {
 	return system.send(&window.ring.commands, record)
 }
 
-// What the compositor tells a program, as the kind of a completion record of
+// What the compositor tells a process, as the kind of a completion record of
 // its ring, and as the kind of an `Event`.
 Event_Kind :: enum u32 {
 	None             = 0, // No event.
 	Key              = 1, // values: code, character, 1 when pressed, modifiers, then at KEY_EVENT_SERIAL the serial of the key (0: the compositor does not measure it)
 	Pointer          = 2, // values: x, y in the surface (signed), buttons, wheel notches (signed: WHEEL_TOWARD_THE_END for each notch toward the end of the content)
 	// The settings of the owner changed (modus:contract/settings): next_event
-	// already gave the new font to src/library/support/graphics; the program draws its
+	// already gave the new font to src/library/support/graphics; the process draws its
 	// window again. values: the change count of the settings page.
 	Settings_Changed = 3,
 	// The palette goes to an element of this window: the compositor raised
@@ -249,17 +249,17 @@ Event_Kind :: enum u32 {
 	// (src/library/support/interface, window_events).
 	Go_To            = 4,
 	// The principal dragged an edge of the window to a new size: the
-	// program makes its surface of that size (surface_resize), or ignores
+	// process makes its surface of that size (surface_resize), or ignores
 	// the event and keeps its size. Only a resizable window gets it.
 	// values: the width, the height of the surface.
 	Resized          = 5,
-	// The principal pressed the key of a copy: the program answers once,
+	// The principal pressed the key of a copy: the process answers once,
 	// with copy_send or copy_decline. A newer Copy_Asked replaces it.
 	// values: the serial of the key, never 0.
 	Copy_Asked       = 6,
 	// The principal pressed the key of a paste: a handle with Read to the
-	// content, lent until the program answers (paste_read). values: the
-	// handle (in this program), the Clipboard_Kind, the count of bytes,
+	// content, lent until the process answers (paste_read). values: the
+	// handle (in this process), the Clipboard_Kind, the count of bytes,
 	// the serial of the key, never 0.
 	Pasted           = 7,
 }
@@ -268,22 +268,22 @@ Event_Kind :: enum u32 {
 Control :: enum u32 {
 	None          = 0, // Not a command.
 	// root to compositor. values: ring memory handle (in the compositor). For
-	// a disk program, values 1 to 3 hold its nickname, as the root ring
+	// a disk process, values 1 to 3 hold its nickname, as the root ring
 	// carries a name of 23 bytes, and value 4 the first 8 bytes of the hash
-	// of its file (modus:contract/disk_program_page, hash_head); for another
-	// program, values 1 to 4 are 0.
+	// of its file (modus:contract/disk_process_page, hash_head); for another
+	// process, values 1 to 4 are 0.
 	Client_Add    = 1,
 	Client_Remove = 2, // root to compositor. values: the same handle
 	Start         = 3, // compositor to root. values: name (4 values)
 	Stop          = 4, // compositor to root. values: the handle of the client
-	// root to compositor: a program is the palette provider. values: the
+	// root to compositor: a process is the palette provider. values: the
 	// handle of its ring, then the handle of its entry table, read-only
 	// (modus:contract/palette_table), both in the compositor.
 	Palette_Provider_Add    = 5,
 	Palette_Provider_Remove = 6, // root to compositor: the palette provider ended. values: the same two handles.
-	// root to compositor: the program of a window started. values: the
+	// root to compositor: the process of a window started. values: the
 	// handle of Client_Add, then the time of the system, in nanoseconds,
-	// when the root service called system.program_start: the start of the
+	// when the root service called system.process_start: the start of the
 	// measure of the start of a window
 	// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
 	Client_Started          = 7,
@@ -340,7 +340,7 @@ SURFACE_LIMIT :: 2048 // The largest width and height.
 RESIZABLE_LEAST_WIDTH :: 160
 RESIZABLE_LEAST_HEIGHT :: 64
 
-// The sizes between which the principal can resize a window: its program
+// The sizes between which the principal can resize a window: its process
 // states them (resizable_set), the compositor keeps the drag inside them.
 Size_Limits :: struct {
 	least_width, least_height:     int,
@@ -398,7 +398,7 @@ size_inside :: proc "contextless" (limits: Size_Limits, width, height: int) -> b
 Event :: struct {
 	kind:      Event_Kind, // What happened.
 	code:      u32, // A key: its code (`KEY_` constants).
-	character: rune, // A key: its character as a code point, or 0. A program that keeps it writes its UTF-8.
+	character: rune, // A key: its character as a code point, or 0. A process that keeps it writes its UTF-8.
 	pressed:   bool, // A key: true when it went down, false when it went up.
 	modifiers: u32, // A key: the `MODIFIER_` bits.
 	x, y:      int, // The pointer: its place in the surface, in pixels; it can be outside the surface.
@@ -410,16 +410,16 @@ Event :: struct {
 	clipboard_kind: Clipboard_Kind, // Pasted: the kind of the content, never None.
 	byte_count:     int, // Pasted: the bytes of the content, 1 to CLIPBOARD_TEXT_LIMIT.
 	clipboard_serial: u64, // Copy_Asked and Pasted: the serial of the key, never 0; the answer names it.
-	key_serial: u64, // A key: the serial that the compositor gave it, or 0. A program that shows the key names it (key_shown).
+	key_serial: u64, // A key: the serial that the compositor gave it, or 0. A process that shows the key names it (key_shown).
 }
 
-// One window of a program: its ring to the compositor and its surface.
-// `open` makes it; the program draws in `canvas` and calls `present`.
+// One window of a process: its ring to the compositor and its surface.
+// `open` makes it; the process draws in `canvas` and calls `present`.
 Window :: struct {
 	ring_memory: system.Handle, // The memory of the ring to the compositor.
 	ring:        ring.Ring, // The ring, mapped.
 	surface:     system.Handle, // The memory of the pixels of the surface.
-	canvas:      graphics.Canvas, // Where the program draws now.
+	canvas:      graphics.Canvas, // Where the process draws now.
 	pictures:    [2]graphics.Canvas, // The two pictures of the surface.
 	picture:     int, // The index of canvas in pictures.
 	presented:   u32, // The count of commands after the last Present.
@@ -458,7 +458,7 @@ picture_begin :: proc "contextless" (window: ^Window) {
 }
 
 // picture_end ends the measure of a picture: present calls it, and a
-// program that draws nothing in a frame (no damage) calls it.
+// process that draws nothing in a frame (no damage) calls it.
 picture_end :: proc "contextless" (window: ^Window) {
 	if window.picture_started != 0 && window.picture_count < PICTURES_MEASURED {
 		window.picture_time += system.nanoseconds() - window.picture_started
@@ -471,7 +471,7 @@ picture_end :: proc "contextless" (window: ^Window) {
 	window.picture_started = 0
 }
 
-// open creates a surface of two pictures and shows it. The program draws in
+// open creates a surface of two pictures and shows it. The process draws in
 // window.canvas, then calls present, which changes window.canvas to the
 // other picture. The compositor shows the surface after the first present.
 //
@@ -517,7 +517,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	window.canvas = window.pictures[0]
 
 	// The compositor maps the ring when the root service tells it of this
-	// program. Until then, the grant has no receiver.
+	// process. Until then, the grant has no receiver.
 	granted: system.Handle
 	for attempt in 0 ..< 200 {
 		granted, status = system.give(window.ring_memory, window.surface, {.Read}, attempt == 199 ? error : nil) // The compositor reads the surface.
@@ -544,7 +544,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 OPEN_ARGUMENTS := [?]string{"ctx", "width", "height", "title"}
 
 // The pictures of a surface: the one that the compositor reads and the one
-// that the program draws. The compositor refuses a surface with less
+// that the process draws. The compositor refuses a surface with less
 // memory.
 PICTURE_COUNT :: 2
 
@@ -563,7 +563,7 @@ present :: proc "contextless" (window: ^Window) -> bool {
 // command ring was full: the compositor did not get the present, and the
 // canvas stays the same.
 present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: int) -> bool {
-	// A program that presents with a request that it did not answer keeps
+	// A process that presents with a request that it did not answer keeps
 	// its size: the answer goes before the picture, so that the compositor
 	// takes a drag of the window again.
 	if window.resize_asked && !resize_decline(window) {
@@ -583,13 +583,13 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 	// test waits for this line before a picture of the new size.
 	if window.resized_picture_due {
 		window.resized_picture_due = false
-		system.log_in("programs", .Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.canvas.width), "x", u64(window.canvas.height), " after a resize")
+		system.log_in("processes", .Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.canvas.width), "x", u64(window.canvas.height), " after a resize")
 	}
 	return true
 }
 
 // key_shown says that the next picture of the window shows the key of a
-// serial (Event.key_serial) and each key before it: the program calls it
+// serial (Event.key_serial) and each key before it: the process calls it
 // when the key changed what it draws, as the console when a character goes
 // into its line. Each Present names the newest serial, and the compositor
 // measures the time of those keys to the screen at the flip of that
@@ -599,8 +599,8 @@ key_shown :: proc "contextless" (window: ^Window, serial: u64) {
 }
 
 // resizable_set makes the window resizable within limits: the principal
-// can then drag its edges, and the program gets the event Resized. With no
-// call the window is fixed. A program that draws with constant sizes stays
+// can then drag its edges, and the process gets the event Resized. With no
+// call the window is fixed. A process that draws with constant sizes stays
 // fixed; one whose texts need a width states that width as its least.
 //
 // The limits must hold for the size of the surface now
@@ -622,11 +622,11 @@ resizable_set :: proc "contextless" (window: ^Window, limits: Size_Limits) -> (p
 }
 
 // surface_resize gives the window a surface of a new size, after the event
-// Resized: the program calls it, then draws its next frame in
+// Resized: the process calls it, then draws its next frame in
 // window.canvas, which the compositor does not read yet. The compositor
 // shows the old surface until the first Present of the new one.
 //
-// The new surface is memory of this program, paid by its budget. This
+// The new surface is memory of this process, paid by its budget. This
 // procedure unmaps and closes the old one, which the compositor still maps
 // until that Present: the budget pays for both until then, and the old
 // memory ends when the compositor unmaps it.
@@ -680,7 +680,7 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 		}
 	}
 	if status != .Ok {
-		system.log_in("programs", .Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height))
+		system.log_in("processes", .Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height))
 		// A full ring keeps the request: the next present declines it.
 		resize_decline(window)
 		return status
@@ -708,12 +708,12 @@ resize_decline :: proc "contextless" (window: ^Window) -> bool {
 		return false
 	}
 	window.resize_asked = false
-	system.log_in("programs", .Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
+	system.log_in("processes", .Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
 	return true
 }
 
 // picture_due_set tells the compositor that a change of the window waits
-// for its next picture (due), or that no picture is due any more. A program
+// for its next picture (due), or that no picture is due any more. A process
 // that draws on its own clock, or that waits for the compositor to take its
 // last picture, calls it before it waits with a change that it did not
 // draw: the wait then does not look like a window with nothing to draw. A
@@ -732,18 +732,18 @@ picture_due_set :: proc "contextless" (window: ^Window, due: bool) {
 // pointer_shape_set asks the compositor for a pointer shape over the
 // surface of the window. The compositor shows it while the pointer is over
 // this surface and the surface is in front at that place, never over
-// another surface, the bar or a frame: a program changes the pointer only
+// another surface, the bar or a frame: a process changes the pointer only
 // over its own window. The shape stays until
 // the next request; the shape of a new surface is the arrow.
 pointer_shape_set :: proc "contextless" (window: ^Window, shape: pointer_pictures.Pointer_Shape) {
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Pointer_Shape), values = {0 = u64(shape)}})
 }
 
-// canvas_free says if the program can draw in window.canvas. The compositor
+// canvas_free says if the process can draw in window.canvas. The compositor
 // reads the other picture only after it took the last Present: until then,
-// it can still read this one. A program that must never wait asks it
+// it can still read this one. A process that must never wait asks it
 // before it builds a frame. After a no, wait_events also ends when the
-// compositor has read the ring of the window: the program asks again.
+// compositor has read the ring of the window: the process asks again.
 canvas_free :: proc "contextless" (window: ^Window) -> bool {
 	free := compositor_took_the_last_present(window)
 	window.wake_when_free = !free
@@ -767,14 +767,14 @@ compositor_took_the_last_present :: proc "contextless" (window: ^Window) -> bool
 // (docs/TOOLS.md, "The bounds of the tests").
 CANVAS_WAIT_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
 
-// canvas_wait waits until the program can draw in window.canvas: until the
+// canvas_wait waits until the process can draw in window.canvas: until the
 // compositor took the last Present. The thread waits on the count of the
 // records that the compositor read; the compositor wakes it. true: draw.
 //
 // false: the compositor did not take the Present within the bound. The
-// program draws nothing in this turn. The log has one line, and the next
+// process draws nothing in this turn. The log has one line, and the next
 // calls give false at once, with no wait, until the compositor reads
-// again: a compositor that does not read costs a program one bound.
+// again: a compositor that does not read costs a process one bound.
 //
 // One thread owns a window: the flag of the ring that this wait sets is
 // cleared after the wait, so a second thread that waits on the same window
@@ -804,7 +804,7 @@ canvas_wait :: proc "contextless" (window: ^Window) -> bool {
 	}
 	if !free {
 		window.compositor_late = true
-		system.log_in("programs", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor did not take a picture in ", u64(CANVAS_WAIT_BOUND_MILLISECONDS), " ms: this window draws no picture until it does")
+		system.log_in("processes", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor did not take a picture in ", u64(CANVAS_WAIT_BOUND_MILLISECONDS), " ms: this window draws no picture until it does")
 	}
 	return free
 }
@@ -823,7 +823,7 @@ canvas_wait :: proc "contextless" (window: ^Window) -> bool {
 // When the canvas is free at this read, no word is added: the list is
 // marked full, which ends the wait at once with no kernel entry. The mark
 // of the "no" is cleared: one "no" of canvas_free gives one wake, so a
-// program that does not ask again does not turn with no sleep.
+// process that does not ask again does not turn with no sleep.
 @(private)
 canvas_event_wait :: proc "contextless" (list: ^system.Wait, window: ^Window) {
 	counters := window.ring.commands.counters
@@ -871,7 +871,7 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		record := system.receive(&window.ring.completions) or_return
 		read, read_ok := event_of_record(record)
 		if !read_ok {
-			system.log_in("programs", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor sent a record of the kind ", u64(record.kind), ", which names no event or has a size out of its range: it is refused")
+			system.log_in("processes", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor sent a record of the kind ", u64(record.kind), ", which names no event or has a size out of its range: it is refused")
 			continue
 		}
 		if read.kind == .Settings_Changed {
@@ -965,7 +965,7 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 	return event, true
 }
 
-// The settings page of this program (modus:contract/settings), or nil.
+// The settings page of this process (modus:contract/settings), or nil.
 settings_page: ^settings.Page
 
 // The text state of the graphics package has its table of the blend: the
@@ -973,7 +973,7 @@ settings_page: ^settings.Page
 @(private)
 text_state_started: bool
 
-// The two glyph caches of this program, each validated once: with the grid fit
+// The two glyph caches of this process, each validated once: with the grid fit
 // and without it (the setting "grid_fit").
 glyph_caches: [settings.Grid_Fit]glyph_cache.Cache
 glyph_cache_valid: [settings.Grid_Fit]bool
@@ -981,23 +981,23 @@ glyph_cache_valid: [settings.Grid_Fit]bool
 // text_settings_open finds the settings page in the context, validates the
 // glyph caches once (a font file and a cache are hostile input), and
 // applies the choice of the owner. With no page, or a cache that the
-// validation refuses, the text of the program is Spleen 8x16, with a line
+// validation refuses, the text of the process is Spleen 8x16, with a line
 // on the log. The compositor calls it too.
 //
 // Why one validation is enough: the drawing code reads the counts and the
 // offsets of a cache again at each glyph, so the bytes must not change
-// after `validate`. A program trusts its starter, which already chooses
+// after `validate`. A process trusts its starter, which already chooses
 // its grants, its mappings and its budget: the starter states in the
 // context which fixed ranges it mapped (modus:contract/fixed_addresses) and maps
 // the memory there; the cache states its own size in its header. So a
 // starter that sets a bit with no mapping, or maps less than the header
-// states, makes this program fault, and a starter that keeps that memory
+// states, makes this process fault, and a starter that keeps that memory
 // with Write could change it. The root service is the starter of each
-// program with a surface. It maps each cache from the boot image with the
-// right Read only, for every program, and the one handle of the boot image,
-// its own, has no right Write. So under the root service no program can
-// write the bytes of a cache, nor point this program at other bytes. The
-// settings page, which the program `settings` writes, gives choices only.
+// process with a surface. It maps each cache from the boot image with the
+// right Read only, for every process, and the one handle of the boot image,
+// its own, has no right Write. So under the root service no process can
+// write the bytes of a cache, nor point this process at other bytes. The
+// settings page, which the process `settings` writes, gives choices only.
 text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 	problems, loaded := text_settings_load(ctx)
 	if !loaded {
@@ -1007,21 +1007,21 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 		switch {
 		case problem.kind == .None:
 		case problem.kind == .Not_Mapped:
-			system.log_in("programs", .Warning, "display: no glyph cache with the grid fit ", settings.descriptions[.Grid_Fit].value_names[grid_fit], ": that text is Spleen 8x16")
+			system.log_in("processes", .Warning, "display: no glyph cache with the grid fit ", settings.descriptions[.Grid_Fit].value_names[grid_fit], ": that text is Spleen 8x16")
 		case problems.cells_of_another_font[grid_fit]:
-			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": that text is Spleen 8x16")
+			system.log_in("processes", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": that text is Spleen 8x16")
 		case:
-			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": that text is Spleen 8x16")
+			system.log_in("processes", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": that text is Spleen 8x16")
 		}
 	}
 	if problems.bold.kind != .None && problems.bold.kind != .Not_Mapped {
-		system.log_in("programs", .Warning, "display: the bold glyph cache is refused: ", glyph_cache.problem_sentences[problems.bold.kind], ": the titles are the regular weight")
+		system.log_in("processes", .Warning, "display: the bold glyph cache is refused: ", glyph_cache.problem_sentences[problems.bold.kind], ": the titles are the regular weight")
 	}
 	if problems.outlines.kind != .None && problems.outlines.kind != .Not_Mapped {
-		system.log_in("programs", .Warning, "display: the font outlines are refused: ", font_outlines.problem_sentences[problems.outlines.kind], ", value ", problems.outlines.value, ": the characters past the glyph caches draw the replacement glyph")
+		system.log_in("processes", .Warning, "display: the font outlines are refused: ", font_outlines.problem_sentences[problems.outlines.kind], ", value ", problems.outlines.value, ": the characters past the glyph caches draw the replacement glyph")
 	}
 	if problems.fonts_missing != {} {
-		system.log_in("programs", .Warning, "display: the font outlines lack ", u64(card(problems.fonts_missing)), " fonts of the fallback chains, or the renderer refuses them: the chains skip them")
+		system.log_in("processes", .Warning, "display: the font outlines lack ", u64(card(problems.fonts_missing)), " fonts of the fallback chains, or the renderer refuses them: the chains skip them")
 	}
 }
 
@@ -1031,22 +1031,22 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 Text_Settings_Problems :: struct {
 	cells:                 [settings.Grid_Fit]glyph_cache.Problem, // The cache of each grid fit.
 	cells_of_another_font: [settings.Grid_Fit]bool, // The cache is valid, and cannot draw cells (graphics.cell_cache_problem).
-	bold:                  glyph_cache.Problem, // The cache of the bold weight. Not_Mapped: the program has none.
-	outlines:              font_outlines.Problem, // The font outlines. Not_Mapped: the program has none.
+	bold:                  glyph_cache.Problem, // The cache of the bold weight. Not_Mapped: the process has none.
+	outlines:              font_outlines.Problem, // The font outlines. Not_Mapped: the process has none.
 	fonts_missing:         fallback_glyphs.Outline_Fonts, // The fonts of the chains that the outlines lack or that the renderer refuses.
 }
 
 // text_settings_load does the work of text_settings_open and writes no
-// line: the problems are values. loaded is false when the program has no
+// line: the problems are values. loaded is false when the process has no
 // settings page, or when the settings were loaded before: nothing was done.
 //
 // Why it is apart: the drawing module loads the text settings of the
-// program that runs it, into its own data, and the program has already
+// process that runs it, into its own data, and the process has already
 // written the lines. The module must also hold no table of sentences: a
 // table of texts has addresses that the loader writes
 // (docs/MODULE_CONTRACT.md, "A library as a module").
 text_settings_load :: proc "contextless" (ctx: ^system.Context) -> (problems: Text_Settings_Problems, loaded: bool) {
-	// The table of the blend once, at the start of the program, also with
+	// The table of the blend once, at the start of the process, also with
 	// no settings page: the draw records with alpha blend with it.
 	if !text_state_started {
 		graphics.text_state_start()
@@ -1096,7 +1096,7 @@ Interface_Font :: struct {
 // interface_font_open validates the two glyph caches of the interface font
 // that the starter mapped at their fixed ranges (settings.glyph_cache_open:
 // the same rule as the caches of the text of cells). ok is false when one
-// is absent or refused, with a line on the log: the program then draws its
+// is absent or refused, with a line on the log: the process then draws its
 // text with the font of the cells. Each cache must be of a proportional
 // font: graphics.text_proportional draws it.
 interface_font_open :: proc "contextless" (ctx: ^system.Context) -> (font: Interface_Font, ok: bool) {
@@ -1109,47 +1109,47 @@ interface_font_open :: proc "contextless" (ctx: ^system.Context) -> (font: Inter
 			problem = {kind = .Bad_Flags, value = u64(caches[index].header.flags), limit = glyph_cache.FLAG_PROPORTIONAL}
 		}
 		if problem.kind == .Not_Mapped {
-			// A program that its starter gave no interface font: its
+			// A process that its starter gave no interface font: its
 			// elements draw in the font of the cells, with no line on the log.
 			return {}, false
 		}
 		if problem.kind != .None {
-			system.log_in("programs", .Warning, "display: the glyph cache of the interface font is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value)
+			system.log_in("processes", .Warning, "display: the glyph cache of the interface font is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value)
 			return {}, false
 		}
 	}
 	return {regular = caches[0], bold = caches[1]}, true
 }
 
-// The interface font of this program, validated once by open: the elements
+// The interface font of this process, validated once by open: the elements
 // of src/library/support/interface draw their names, titles and labels in it
 // (docs/FONTS.md, section 12.6). Absent: they draw in the font of the
 // cells.
-program_interface_font: Interface_Font
-program_interface_font_given: bool
+process_interface_font: Interface_Font
+process_interface_font_given: bool
 
-// interface_font_load validates the interface font of this program once:
+// interface_font_load validates the interface font of this process once:
 // open calls it, and the compositor, which draws with no window of its own.
 interface_font_load :: proc "contextless" (ctx: ^system.Context) {
-	if !program_interface_font_given {
-		program_interface_font, program_interface_font_given = interface_font_open(ctx)
+	if !process_interface_font_given {
+		process_interface_font, process_interface_font_given = interface_font_open(ctx)
 	}
 }
 
-// interface_font_of gives the interface font of this program, or nil.
+// interface_font_of gives the interface font of this process, or nil.
 interface_font_of :: proc "contextless" () -> ^Interface_Font {
-	return program_interface_font_given ? &program_interface_font : nil
+	return process_interface_font_given ? &process_interface_font : nil
 }
 
 // appearance_apply gives the appearance in force of the settings page to
 // src/library/support/graphics. It gives true when the appearance changed:
 // the caller then draws its whole window, so that no picture shows two
-// appearances. With no page the program keeps the dark appearance.
+// appearances. With no page the process keeps the dark appearance.
 appearance_apply :: proc "contextless" () -> (changed: bool) {
 	if settings_page == nil {
 		return false
 	}
-	// A refused page gives the defaults: the program draws with them, as
+	// A refused page gives the defaults: the process draws with them, as
 	// with a page that never stays stable.
 	choice, _ := settings.read(settings_page)
 	return appearance_of_choice_use(choice)
@@ -1176,7 +1176,7 @@ text_settings_apply :: proc "contextless" () {
 	if settings_page == nil {
 		return
 	}
-	// A refused page gives the defaults: the program draws with them, as
+	// A refused page gives the defaults: the process draws with them, as
 	// with a page that never stays stable.
 	choice, _ := settings.read(settings_page)
 	_ = appearance_of_choice_use(choice)

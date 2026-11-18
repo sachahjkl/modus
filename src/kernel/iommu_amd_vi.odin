@@ -55,7 +55,7 @@ AMD_EVENT_RECORD_READS :: 64
 #assert(op.MESSAGE_CAPACITY * iommu.AMD_INTERRUPT_TABLE_SPACING <= PAGE_SIZE)
 
 // amd_unit_check reads the registers of a unit of AMD-Vi, and refuses a
-// unit that the kernel does not program, with one line.
+// unit that the kernel does not process, with one line.
 amd_unit_check :: proc "contextless" (unit: ^Iommu_Unit, block: iommu.Amd_Unit) -> bool {
 	requester := block.requester
 	// A mode that the firmware left on: the kernel would take over a unit

@@ -4,7 +4,7 @@ package system
 import "base:intrinsics"
 import "modus:contract/operation"
 
-// A host test links the procedures of a program that can enter the kernel,
+// A host test links the procedures of a process that can enter the kernel,
 // when the test drives a procedure that calls them on another path. The
 // host has no kernel: these two procedures give the linker the names, and
 // stop the test at once if a test takes such a path by mistake. A stop here

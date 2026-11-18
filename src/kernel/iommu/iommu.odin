@@ -45,7 +45,7 @@ SCOPE_ENDPOINT :: 1 // A function of PCI.
 SCOPE_BRIDGE :: 2 // A bridge of PCI: the function of the bridge, and the buses behind it.
 
 // The bounds of what the kernel keeps of a table DMAR. A table past one of
-// them leaves the IOMMU off: the kernel would otherwise program a part of
+// them leaves the IOMMU off: the kernel would otherwise process a part of
 // the units, and a device of a unit that is off can write the tables of the
 // others.
 UNIT_CAPACITY :: 4 // A machine of Intel has 2 or 3: one for its graphics device, one for every other device.

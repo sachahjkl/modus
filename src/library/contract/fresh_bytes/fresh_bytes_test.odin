@@ -59,8 +59,8 @@ a_change_in_progress_gives_nothing :: proc(t: ^testing.T) {
 	testing.expect_value(t, count, u32(0))
 }
 
-// A clear makes the page of a new program: no bytes, the change count 0,
-// so the new program reads nothing that the program before it read.
+// A clear makes the page of a new process: no bytes, the change count 0,
+// so the new process reads nothing that the process before it read.
 @(test)
 a_clear_gives_no_bytes :: proc(t: ^testing.T) {
 	page := new(Page)
@@ -74,10 +74,10 @@ a_clear_gives_no_bytes :: proc(t: ^testing.T) {
 	testing.expect(t, !fresh)
 }
 
-// The page of a program is at its fixed range only when the bit of the
+// The page of a process is at its fixed range only when the bit of the
 // range is set.
 @(test)
-the_page_of_a_program :: proc(t: ^testing.T) {
+the_page_of_a_process :: proc(t: ^testing.T) {
 	ctx: op.Context
 	testing.expect(t, page_of(&ctx) == nil)
 	fixed_addresses.range_mapped_add(&ctx.values, .Fresh_Bytes_Page)

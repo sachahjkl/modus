@@ -9,7 +9,7 @@
 // files as tiles, and the count of its files with no tile. A name is whole
 // or absent: a tile is as wide as its name.
 //
-// The boot program, the root service and the program `boot` compute the
+// The boot program, the root service and the process `boot` compute the
 // card with this package. It uses integers only and allocates nothing,
 // because the boot program has no allocator.
 package image_card

@@ -28,11 +28,11 @@
 ; before it writes for 64 bytes or less, so the small forms also move.
 ;
 ; The registers: rax, rcx, rdx, rsi, rdi, r8 to r10, xmm0 to xmm4. No AVX:
-; the same file runs in the boot program and in every program, also on a
+; the same file runs in the boot program and in every process, also on a
 ; processor where the kernel does not enable AVX.
 ;
 ; The kernel form (WITHOUT_VECTOR_REGISTERS defined): no x87, SSE or AVX
-; register, because the registers of the program stay live through each
+; register, because the registers of the process stay live through each
 ; kernel entry (docs/ARCHITECTURE.md, "The extended state of the
 ; processor"). It moves 17 to 64 bytes in general registers, rbx included
 ; (saved on the stack), and more with rep movsb and rep stosb; a copy down
@@ -357,13 +357,13 @@ erase_secret_bytes:
 ;
 ; It writes from the top down, 8 bytes at a time: the first byte past the
 ; bottom of the stack of the thread is in the unmapped page under the
-; stack, so the program stops there, before any byte of the mapping under
-; that page (a ring, a region that another program shares) is written. A
+; stack, so the process stops there, before any byte of the mapping under
+; that page (a ring, a region that another process shares) is written. A
 ; thread that calls the module cryptography or draws random bytes needs
 ; STACK_ERASE_SIZE of stack below its frame at the call, and its own frames:
 ; 24 KiB in all is the least (docs/CRYPTOGRAPHY.md, section 6); the threads
 ; of the system have 64 KiB (system.THREAD_STACK_PAGES) and the main thread
-; 256 KiB. With less, the program stops at the guard page: no other memory
+; 256 KiB. With less, the process stops at the guard page: no other memory
 ; is written.
 ;
 ; Why 16 KiB: the largest frames below an export of the module cryptography
@@ -375,8 +375,8 @@ erase_secret_bytes:
 ; deepest frame chooses the size in the end.
 ;
 ; Writing below the stack pointer is safe here: the interrupts and the
-; kernel entries of a program use the kernel stack, so nothing lives below
-; the stack pointer of a program. No string instruction is used, so the
+; kernel entries of a process use the kernel stack, so nothing lives below
+; the stack pointer of a process. No string instruction is used, so the
 ; direction flag is not changed.
 %ifndef STACK_ERASE_SIZE
 %define STACK_ERASE_SIZE 16384

@@ -39,7 +39,7 @@ module_build_outputs :: proc(build: Module_Build) -> [4]Build_Output {
 	}
 }
 
-// The outputs of the boot program: the program, and the object that Odin made.
+// The outputs of the boot program: the process, and the object that Odin made.
 BOOT_PROGRAM_OUTPUTS :: [2]Build_Output{{kind = "boot program", path = BOOT_PROGRAM}, {kind = "object", path = BOOT_PROGRAM_OBJECT}}
 
 // One output over several builds: each distinct content, in the order of its

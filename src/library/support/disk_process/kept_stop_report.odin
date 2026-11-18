@@ -1,10 +1,10 @@
-package disk_program
+package disk_process
 
 import op "modus:contract/operation"
 
-// The stop reports of the disk programs that stopped on a fault
-// (src/md/features/debug_object_of_a_disk_program.md). The root service
-// holds the only handle of a disk program and closes it at the reap, so
+// The stop reports of the disk processes that stopped on a fault
+// (src/md/features/debug_object_of_a_disk_process.md). The root service
+// holds the only handle of a disk process and closes it at the reap, so
 // the stop report would leave the kernel with it. The root service keeps a
 // copy here, and gives it to the debugger service, which names its frames
 // with the debug object of the store `module_files`.
@@ -14,7 +14,7 @@ import op "modus:contract/operation"
 // KEPT_STOP_REPORTS_OF_ONE_PRINCIPAL places gives its own oldest place;
 // else a new report takes a free place, or the place of the oldest.
 KEPT_STOP_REPORT_CAPACITY :: 8
-// The places that one principal holds at most: the faults of the programs
+// The places that one principal holds at most: the faults of the processes
 // of one principal never take the reports of another principal past the
 // other half of the table.
 KEPT_STOP_REPORTS_OF_ONE_PRINCIPAL :: 4
@@ -23,15 +23,15 @@ KEPT_STOP_REPORTS_OF_ONE_PRINCIPAL :: 4
 // What the root service gives the debugger service, in one page that the
 // service can read only.
 Kept_Stop_Report :: struct {
-	module_hash: [HASH_SIZE]u8, // The hash of the module file of the program: its debug object is the object of the store with this hash as its name.
+	module_hash: [HASH_SIZE]u8, // The hash of the module file of the process: its debug object is the object of the store with this hash as its name.
 	report:      op.Stop_Report, // As stop_report_hide left it.
 }
 
 // One place of the table.
 Kept_Stop_Report_Place :: struct {
 	sequence:   u64, // The order of the keeps: the lowest is the oldest. 0: the place is free.
-	principal:  u64, // The principal whose session ran the program.
-	name:       [NAME_LIMIT]u8, // The nickname of the program.
+	principal:  u64, // The principal whose session ran the process.
+	name:       [NAME_LIMIT]u8, // The nickname of the process.
 	name_count: int,
 	kept:       Kept_Stop_Report,
 }
@@ -41,22 +41,22 @@ Kept_Stop_Reports :: struct {
 	last_sequence: u64,
 }
 
-// The first page of the addresses of a program: the kernel maps nothing
-// there, so an address in it is no word of the memory of the program. A
+// The first page of the addresses of a process: the kernel maps nothing
+// there, so an address in it is no word of the memory of the process. A
 // null pointer read gives an address in it.
 FIRST_PAGE_BYTES :: 4096
 
-// stop_report_hide takes out of a whole stop report, as Program_State gives
-// it to the holder of the program handle, each value that can be a word of
-// the memory of the program, and counts them in `hidden_value_count`. It
+// stop_report_hide takes out of a whole stop report, as Process_State gives
+// it to the holder of the process handle, each value that can be a word of
+// the memory of the process, and counts them in `hidden_value_count`. It
 // keeps what Inspect gives to a holder of the machine: a frame that a
 // module record holds (its base is not 0), the instruction when a module
 // record holds it, and the address of a page fault in the first page or
 // in the module of the instruction. The kernel also keeps the address of a
-// page fault in another module of the program; the report holds no other
+// page fault in another module of the process; the report holds no other
 // module with its size, so here such an address is hidden.
 stop_report_hide :: proc "contextless" (report: ^op.Stop_Report) {
-	report.program_serial = 0
+	report.process_serial = 0
 	module := report.module
 	in_module :: proc "contextless" (module: op.Module_Record, address: u64) -> bool {
 		return module.size != 0 && address >= module.base && address - module.base < module.size
@@ -85,9 +85,9 @@ stop_report_hide :: proc "contextless" (report: ^op.Stop_Report) {
 	}
 }
 
-// kept_stop_report_keep keeps the report of a disk program that stopped on
+// kept_stop_report_keep keeps the report of a disk process that stopped on
 // a fault. The caller hid the report first (stop_report_hide). A name that
-// is no name of a disk program keeps nothing.
+// is no name of a disk process keeps nothing.
 kept_stop_report_keep :: proc "contextless" (table: ^Kept_Stop_Reports, principal: u64, name: string, module_hash: [HASH_SIZE]u8, report: ^op.Stop_Report) -> bool {
 	if len(name) == 0 || len(name) > NAME_LIMIT {
 		return false
@@ -123,7 +123,7 @@ kept_stop_report_keep :: proc "contextless" (table: ^Kept_Stop_Reports, principa
 	return true
 }
 
-// kept_stop_report_find gives the kept report of the program of a
+// kept_stop_report_find gives the kept report of the process of a
 // principal with a name, or nil.
 kept_stop_report_find :: proc "contextless" (table: ^Kept_Stop_Reports, principal: u64, name: string) -> ^Kept_Stop_Report {
 	if place := kept_stop_report_place(table, principal, name); place != nil {
@@ -132,7 +132,7 @@ kept_stop_report_find :: proc "contextless" (table: ^Kept_Stop_Reports, principa
 	return nil
 }
 
-// kept_stop_report_forget frees the place of the program of a principal
+// kept_stop_report_forget frees the place of the process of a principal
 // with a name: the last run of that nickname ended with no fault, and an
 // older fault no longer tells how it ended.
 kept_stop_report_forget :: proc "contextless" (table: ^Kept_Stop_Reports, principal: u64, name: string) {

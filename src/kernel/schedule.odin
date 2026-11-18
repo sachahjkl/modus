@@ -26,8 +26,8 @@ import op "modus:contract/operation"
 //
 // A thread that a processor runs belongs to that processor. Another
 // processor that ends it sets stop_requested; the processor ends it in
-// schedule. A program ends when the last processor that ran one of its
-// threads leaves it after a stop (program_leave).
+// schedule. A process ends when the last processor that ran one of its
+// threads leaves it after a stop (process_leave).
 
 Run_Queue :: struct #align (64) {
 	lock:     Lock,
@@ -197,7 +197,7 @@ queue_pick :: proc "contextless" (home: u32, cpu: ^Processor) -> u32 {
 	intrinsics.atomic_store(&cpu.current, index)
 	// A stop that marks this thread sees it on this processor, and
 	// counts it in `holds`.
-	intrinsics.atomic_add(&programs[thread.program].holds, 1)
+	intrinsics.atomic_add(&processes[thread.process].holds, 1)
 	cpu.picks += 1
 	cpu.pick_cycles += cycles_now() - start
 	return index
@@ -329,13 +329,13 @@ thread_ready_held :: proc "contextless" (thread: ^Thread) -> (queued: bool, pree
 	home := processors[thread.home]
 	if running := home.current; running != 0 {
 		// At most one wake preemption of a processor in each millisecond
-		// by a thread of another program, because a program must not pay
+		// by a thread of another process, because a process must not pay
 		// for the work of another: the interrupt and the pass
 		// through schedule are paid by the thread that runs there. A
-		// thread of the same program preempts with no limit: its program
+		// thread of the same process preempts with no limit: its process
 		// pays. With no preemption the woken thread waits at most for a
 		// tick, where its strategy ends the turn when it says so.
-		other := threads[running].program != thread.program
+		other := threads[running].process != thread.process
 		now := intrinsics.atomic_load(&time_milliseconds) + 1
 		if !other || home.preempted_at != now {
 			preempts = queue_strategy_wake_preempts(queue, thread.home, &threads[running], thread)
@@ -367,7 +367,7 @@ thread_wake :: proc "contextless" (thread: ^Thread, deadline_before := max(u64))
 // this code, or, when that processor is not in the placement that the
 // thread got from its creator, in the queue of a processor of that set.
 // No other processor writes the placement of a thread that is in no queue
-// yet: its creation holds the program lock of its program.
+// yet: its creation holds the process lock of its process.
 thread_queue :: proc "contextless" (thread: ^Thread) {
 	home := processor_self().index
 	if thread.placement_restricted {
@@ -484,11 +484,11 @@ schedule :: proc "contextless" () -> ! {
 	cpu := processor_self()
 	spent := budget_charge(cpu)
 	// The thread that this processor leaves, for the record of a switch.
-	left_program, left_number: u32
+	left_process, left_number: u32
 	if cpu.current != 0 {
 		index := cpu.current
 		thread := &threads[index]
-		left_program, left_number = thread.program, thread.number
+		left_process, left_number = thread.process, thread.number
 		// The x87, SSE and AVX registers of the thread are still live: no
 		// code of the kernel changed them since the thread entered. They
 		// go to its area now, before any other processor can take the
@@ -508,7 +508,7 @@ schedule :: proc "contextless" () -> ! {
 		if thread.counting {
 			thread_counters_unload(thread)
 		}
-		program := thread.program
+		process := thread.process
 		home := run_lock(thread)
 		// A thread whose placement lost this processor moves to a
 		// processor of its set now, where it leaves this one: the run
@@ -556,7 +556,7 @@ schedule :: proc "contextless" () -> ! {
 		serial := thread.serial
 		if ended {
 			// This processor owns the thread: it ends it (thread_stop,
-			// program_stop).
+			// process_stop).
 			thread.state = .Stopped
 			intrinsics.atomic_add(&thread.wait_serial, 1)
 		} else if thread.state == .Ready && !held {
@@ -573,14 +573,14 @@ schedule :: proc "contextless" () -> ! {
 			// processor, or an idle one of its set, looks at it.
 			kick(target, thread)
 		}
-		cleanup := program_leave(program)
+		cleanup := process_leave(process)
 		if ended || cleanup {
 			control_take()
 			if ended {
 				thread_finish(index, serial)
 			}
 			if cleanup {
-				program_cleanup(program)
+				process_cleanup(process)
 			}
 			control_free()
 		}
@@ -613,15 +613,15 @@ schedule :: proc "contextless" () -> ! {
 			}
 			// The event point of a switch of threads (events.odin). The
 			// thread is the current thread of this processor now.
-			if event_wanted(cpu, OBSERVED_SWITCH, .Switch, thread.program) {
-				event_record(cpu, .Switch, thread.program, thread.number, 0, u64(left_program), u64(left_number))
+			if event_wanted(cpu, OBSERVED_SWITCH, .Switch, thread.process) {
+				event_record(cpu, .Switch, thread.process, thread.number, 0, u64(left_process), u64(left_number))
 			}
 			run(cpu, thread)
 		}
 		// No thread was taken: the next one follows the idle wait.
-		left_program, left_number = 0, 0
+		left_process, left_number = 0, 0
 		if intrinsics.atomic_load(&root_started) && !threads_alive() {
-			log("kernel: no program is left")
+			log("kernel: no process is left")
 			machine_stop(.Normal_End)
 		}
 		// Idle: a processor that makes a thread ready sees the flag and sends
@@ -657,16 +657,16 @@ schedule :: proc "contextless" () -> ! {
 	}
 }
 
-// run gives the processor to its current thread. The program of the
+// run gives the processor to its current thread. The process of the
 // thread stays while the thread is on this processor (`holds`). The
 // registers of the extended state of the thread are live already: a
 // thread that continues after an entry kept them, and schedule restored a
 // thread that it took from a queue.
 run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
-	// The one place before each return to a program: a frame that the
-	// processor would refuse stops the program here, as its own fault.
+	// The one place before each return to a process: a frame that the
+	// processor would refuse stops the process here, as its own fault.
 	if refusal, value := return_frame_prepare(&thread.frame); refusal != .None {
-		program_return_refused(thread, refusal, value, 0)
+		process_return_refused(thread, refusal, value, 0)
 		schedule_on_a_fresh_stack(cpu)
 	}
 	if cpu.preempt_from != 0 {
@@ -674,16 +674,16 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 		cpu.interrupt_preemptions += 1
 		cpu.preempt_from = 0
 	}
-	program := &programs[thread.program]
-	ports_switch(cpu, intrinsics.atomic_load(&program.has_ports) ? thread.program : 0)
-	if cpu.table != program.table {
+	process := &processes[thread.process]
+	ports_switch(cpu, intrinsics.atomic_load(&process.has_ports) ? thread.process : 0)
+	if cpu.table != process.table {
 		// The store comes before the load of the table: an unmap that does
 		// not see it cleared its entries before this load.
-		intrinsics.atomic_store(&cpu.table, program.table)
-		control_register_3_write(program.table)
+		intrinsics.atomic_store(&cpu.table, process.table)
+		control_register_3_write(process.table)
 	}
-	// Two programs have thread records at the same address. The test is on
-	// the thread, so a program that changes its gs register harms only itself.
+	// Two processes have thread records at the same address. The test is on
+	// the thread, so a process that changes its gs register harms only itself.
 	if cpu.record_thread != cpu.current || cpu.record_serial != thread.serial {
 		cpu.record_thread = cpu.current
 		cpu.record_serial = thread.serial

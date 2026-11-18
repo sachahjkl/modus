@@ -108,7 +108,7 @@ single_step_end:
 ; kernel. A trap that the processor gives at the first instruction of the
 ; kernel arrives on a stack of its own, and the kernel drops it there
 ; (docs/ARCHITECTURE.md, "The windows of the entry and of the return").
-; Each trap that the program sees must be a record of this program, between
+; Each trap that the process sees must be a record of this process, between
 ; mov_ss_then_syscall and mov_ss_then_syscall_end. The syscall has rdi 0: a
 ; kernel entry with no wait.
 global mov_ss_then_syscall
@@ -160,7 +160,7 @@ mov_ss_then_int3_end:
 ; one of the debug exception, on its own interrupt stack. A processor that
 ; gives the held trap at the first instruction of that stub puts its frame
 ; where the frame of int1 was: the kernel then cannot return to the thread,
-; and stops the program with the stop code of a debug exception and the
+; and stops the process with the stop code of a debug exception and the
 ; instruction address 0. A processor that does not gives debug records
 ; between mov_ss_then_int1 and mov_ss_then_int1_end.
 global mov_ss_then_int1

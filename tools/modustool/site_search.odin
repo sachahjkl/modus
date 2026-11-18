@@ -72,9 +72,9 @@ Site_Search_Kind_Description :: struct {
 // The one table of the kinds of entries. The chart of the docs home tells
 // the kinds apart by their icons and their colors, so the kinds with many
 // entries have looks of their own: a page is a file of the site, a term
-// has the kind of the glossary, an export (a procedure that a program
+// has the kind of the glossary, an export (a procedure that a process
 // calls in a module) the arrow into a box of a call, a license row the
-// mark of what a license grants. A module and a program share the look of
+// mark of what a license grants. A module and a process share the look of
 // the one page that lists both.
 site_search_kinds := [Site_Search_Kind]Site_Search_Kind_Description {
 	.Page            = {name = "page", value_kind = .File, folder = ""},
@@ -146,7 +146,7 @@ Site_Search_Match_Order :: struct {
 }
 
 site_search_match_names := [?]Site_Search_Match_Name {
-	{"system", "monitor.programs", 0},
+	{"system", "monitor.processes", 0},
 	{"system", "monitor.counts", 0},
 	{"system", "monitor.count", 0},
 	{"system", "monitor.counts_named", 0},

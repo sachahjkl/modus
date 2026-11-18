@@ -1,8 +1,8 @@
 // A check and a measure of the time page.
 //
-// The kernel writes the time in one page. Each program has this page and
-// can only read it: a program reads the time with one load from memory.
-// This program reads the time in the two ways: from the time page, and
+// The kernel writes the time in one page. Each process has this page and
+// can only read it: a process reads the time with one load from memory.
+// This process reads the time in the two ways: from the time page, and
 // with a kernel entry. It counts the kernel entries of each way. The check
 // reads a fixed count of times. In a [measure run](term:measure-run) it
 // reads as often as it can for one second, and writes the reads in one
@@ -29,7 +29,7 @@
 // entries for one million reads`).
 //
 // **Its grant**: **Inspect**: the machine handle reads the kernel entries
-// of this program (its program report), which the measure counts.
+// of this process (its process report), which the measure counts.
 //
 // **What it does not prove.** The rates are measures of the host of the
 // run: no test compares them to a bound.
@@ -67,7 +67,7 @@ LARGEST_HEIGHT :: 640
 // least budget of 2048 pages less its window of 816 x 336 (2 193 408
 // bytes, 536 pages), 1512 pages, for its module, its stack, the glyphs
 // that it draws itself and its tables. 1520 + 1512 = 3032.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3032, programs = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3032, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 
 Measure :: struct {
 	name:    string,
@@ -95,12 +95,12 @@ refused: bool // The kernel refused to remove the time page.
 checked: bool
 
 machine: system.Handle
-slot: u64 // The slot of this program in the kernel.
+slot: u64 // The slot of this process in the kernel.
 
-// entries gives the times that this program entered the kernel.
+// entries gives the times that this process entered the kernel.
 entries :: proc "contextless" () -> u64 {
-	report: op.Program_Report
-	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&report)), size_of(report))
+	report: op.Process_Report
+	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report))
 	return report.entries
 }
 
@@ -171,9 +171,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 	width, height := window.canvas.width, window.canvas.height
 	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, width, height})
-	content := interface.card(&frame, {8, 8, width - 16, height - 16}, "THE TIME PAGE", "Time_Record: one page that each program reads", graphics.colors.kernel)
+	content := interface.card(&frame, {8, 8, width - 16, height - 16}, "THE TIME PAGE", "Time_Record: one page that each process reads", graphics.colors.kernel)
 	column := interface.column_of(content)
-	interface.cell_text(&frame, interface.column_take(&column, LINE), "the kernel writes the time in one page. each program reads it: no kernel entry.", graphics.colors.dim)
+	interface.cell_text(&frame, interface.column_take(&column, LINE), "the kernel writes the time in one page. each process reads it: no kernel entry.", graphics.colors.dim)
 	builder: interface.Text_Builder
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "since boot", clock_text(&builder, system.time()), graphics.colors.text, 120)
 	interface.column_take(&column, 8)
@@ -226,7 +226,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 			{" ms behind and ", graphics.colors.dim},
 			{interface.number_text(&numbers[4], ahead), ahead <= AHEAD_LIMIT ? graphics.colors.text : graphics.colors.failed},
 			{" ms ahead.", graphics.colors.dim})
-		sentence(&frame, interface.column_take(&column, LINE), {refused ? "the kernel refuses to remove the time page of this program." : "the kernel removed the time page.", refused ? graphics.colors.dim : graphics.colors.failed})
+		sentence(&frame, interface.column_take(&column, LINE), {refused ? "the kernel refuses to remove the time page of this process." : "the kernel removed the time page.", refused ? graphics.colors.dim : graphics.colors.failed})
 	}
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
@@ -242,7 +242,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	// The limits are constants of this program that size_limits_of_words
+	// The limits are constants of this process that size_limits_of_words
 	// takes: a refusal is a fault of this source, which the line says.
 	// The ring holds the one record of the surface: a full ring is a fault
 	// of the compositor, which the line says too.
@@ -254,10 +254,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
-	for index in 1 ..< report.program_slots {
-		program: op.Program_Report
-		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), index, u64(uintptr(&program)), size_of(program))
-		if program.state != .None && program.state != .Stopped && system.name_of(program.name[:]) == "clock" {
+	for index in 1 ..< report.process_slots {
+		process: op.Process_Report
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), index, u64(uintptr(&process)), size_of(process))
+		if process.state != .None && process.state != .Stopped && system.name_of(process.name[:]) == "clock" {
 			slot = index
 		}
 	}

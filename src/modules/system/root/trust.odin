@@ -13,10 +13,10 @@ import "modus:support/system"
 // record. This service reads the record in the boot record of the kernel,
 // takes the system description of the boot image only when its hash is the
 // one that the boot program verified, and checks every module and resource
-// of the boot image against it once, before it starts the first program.
+// of the boot image against it once, before it starts the first process.
 //
 // Once is enough: the kernel gives this service the pages of the boot image
-// with the right Read and no Write, so no program can change a module
+// with the right Read and no Write, so no process can change a module
 // between this check and its start. The kernel itself is not in the boot
 // image: only the boot program checks it. The kernel does not read the
 // description.
@@ -46,7 +46,7 @@ trust_check :: proc "contextless" () {
 		found_digits := system_description.hexadecimal(result.found_hash)
 		buffer: [256]u8
 		text := system.format(buffer[:], system_description.name_of(&result.name), ": ", system_description.fault_sentences[result.fault])
-		system.log_in("programs", .Error, "root: ", text, ": expected ", string(expected[:]), ", found ", string(found_digits[:]))
+		system.log_in("processes", .Error, "root: ", text, ": expected ", string(expected[:]), ", found ", string(found_digits[:]))
 		switch result.fault {
 		case .Name_Differs, .Kind_Differs, .Outside_Image, .Size_Differs, .Hash_Differs, .Stated_Hash_Differs:
 			screen_data.failed_name = system_description.name_of(&result.name)
@@ -60,7 +60,7 @@ trust_check :: proc "contextless" () {
 		system.log("root: the boot program checked the signature and every hash in ", system.Duration{trust.check_cycles * 1_000_000 / report.cycle_frequency, .Microseconds})
 	}
 	if trust.key_kind == .Test {
-		system.log_in("programs", .Warning, "root: the system description is signed by the test signing key, whose private key is published: this system is not trusted")
+		system.log_in("processes", .Warning, "root: the system description is signed by the test signing key, whose private key is published: this system is not trusted")
 	}
 	if trust.verifier == .Boot_Program {
 		system.log("root: verified by the boot program, which the firmware did not verify")
@@ -74,11 +74,11 @@ trust_check :: proc "contextless" () {
 	case .No_Tpm:
 		system.log("root: the system description is not measured into the TPM: the firmware has no TPM")
 	case .Refused:
-		system.log_in("programs", .Warning, "root: the TPM refused the measure of the system description: status ", system.Hex(trust.measure_status), ", after ", trust.measure_tries, " tries: PCR ", trust.measure_register, " does not hold it")
+		system.log_in("processes", .Warning, "root: the TPM refused the measure of the system description: status ", system.Hex(trust.measure_status), ", after ", trust.measure_tries, " tries: PCR ", trust.measure_register, " does not hold it")
 	case .Not_Read:
-		system.log_in("programs", .Warning, "root: the system description is measured, but the read of PCR ", trust.measure_register, " failed: status ", system.Hex(trust.measure_status))
+		system.log_in("processes", .Warning, "root: the system description is measured, but the read of PCR ", trust.measure_register, " failed: status ", system.Hex(trust.measure_status))
 	case .None:
-		system.log_in("programs", .Warning, "root: the boot program did not try the measure")
+		system.log_in("processes", .Warning, "root: the boot program did not try the measure")
 	}
 	// The TPM floors that the boot program compared
 	// (src/md/features/rollback_floors.md).
@@ -88,16 +88,16 @@ trust_check :: proc "contextless" () {
 		// word that names no state is said, never read as a state.
 		state, state_known := info.floor_state_of_word(word)
 		if !state_known {
-			system.log_in("programs", .Warning, "root: the boot record names the floor state ", word, ", which names no state")
+			system.log_in("processes", .Warning, "root: the boot record names the floor state ", word, ", which names no state")
 			continue
 		}
 		switch state {
 		case .None, .Absent, .Held:
 			// A floor that the boot program read or wrote: the line above says it.
 		case .Foreign, .Never_Written, .Read_Refused:
-			system.log_in("programs", .Warning, "root: an index of a TPM floor was not a floor that the boot program could read: another system defined or planted it, or PCR 7 changed; the boot program took it as 0, and replaced it with Secure Boot on")
+			system.log_in("processes", .Warning, "root: an index of a TPM floor was not a floor that the boot program could read: another system defined or planted it, or PCR 7 changed; the boot program took it as 0, and replaced it with Secure Boot on")
 		case .Not_Read:
-			system.log_in("programs", .Warning, "root: the boot program could not read a TPM floor: status ", system.Hex(trust.floor_status), "; it took it as 0")
+			system.log_in("processes", .Warning, "root: the boot program could not read a TPM floor: status ", system.Hex(trust.floor_status), "; it took it as 0")
 		}
 	}
 }

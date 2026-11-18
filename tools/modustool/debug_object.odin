@@ -15,7 +15,7 @@ import "core:sync"
 // procedure table comes from its symbol table, the line table from the line
 // program of DWARF that the compiler wrote with its debug information, the types and the
 // variables from the entries of .debug_info (debug_information.odin). The
-// tool writes the tables of modus:contract/debug_object, which a program reads
+// tool writes the tables of modus:contract/debug_object, which a process reads
 // with no parser of DWARF. The DWARF stays in the linked file, for a
 // debugger of the host.
 
@@ -569,11 +569,11 @@ elf_code_range :: proc(elf: []u8, header: Elf_Header) -> (start, end: u64) {
 		if at > u64(len(elf)) || size_of(Elf_Program_Header) > u64(len(elf)) - at {
 			break
 		}
-		program: Elf_Program_Header
-		mem.copy(&program, raw_data(elf[at:]), size_of(program))
-		if program.type == ELF_PROGRAM_LOAD && program.flags & ELF_PROGRAM_EXECUTE != 0 {
-			start = min(start, program.address)
-			end = max(end, program.address + program.memory_size)
+		process: Elf_Program_Header
+		mem.copy(&process, raw_data(elf[at:]), size_of(process))
+		if process.type == ELF_PROGRAM_LOAD && process.flags & ELF_PROGRAM_EXECUTE != 0 {
+			start = min(start, process.address)
+			end = max(end, process.address + process.memory_size)
 		}
 	}
 	return start, end

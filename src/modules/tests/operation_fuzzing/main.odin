@@ -1,5 +1,5 @@
-// The program that runs operation sequences (src/md/infrastructure/kernel_fuzzing.md,
-// "The programs in the machine").
+// The process that runs operation sequences (src/md/infrastructure/kernel_fuzzing.md,
+// "The processes in the machine").
 //
 // **What it is for.** It takes each operation sequence that the tool writes
 // in its mailbox, runs it in a new runner with a new budget, and writes the
@@ -19,11 +19,11 @@ import "modus:contract/operation_sequence"
 import "modus:support/random"
 import "modus:support/system"
 
-// The budget of each sequence, from the budget of this program: the
+// The budget of each sequence, from the budget of this process: the
 // runner, its areas, its results and what its steps create.
 SEQUENCE_AMOUNTS :: system.Budget_Amounts {
 	pages       = 2048,
-	programs    = 8,
+	processes    = 8,
 	threads     = 16,
 	log_records = 100,
 }
@@ -32,7 +32,7 @@ SEQUENCE_AMOUNTS :: system.Budget_Amounts {
 // sequence beside it.
 RUNNER_AMOUNTS :: system.Budget_Amounts {
 	pages       = 1024,
-	programs    = 4,
+	processes    = 4,
 	threads     = 8,
 	log_records = 50,
 }
@@ -45,7 +45,7 @@ prepared: system.Prepared_Modules // The shared code of the runners.
 header: ^operation_sequence.Mailbox_Header
 mailbox: []u8
 // The copy of the sequence that the tool wrote: the tool can change the
-// mailbox at any time, so this program checks the copy.
+// mailbox at any time, so this process checks the copy.
 sequence_copy: [operation_sequence.SEQUENCE_BYTES_MOST]u8
 sequence: operation_sequence.Sequence
 
@@ -144,12 +144,12 @@ execute :: proc "contextless" () {
 
 amounts_of :: proc "contextless" (budget: system.Handle) -> operation_sequence.Mailbox_Amounts {
 	amounts, _ := system.budget_read(budget)
-	return {pages = amounts.pages, programs = amounts.programs, threads = amounts.threads}
+	return {pages = amounts.pages, processes = amounts.processes, threads = amounts.threads}
 }
 
 // runner_run makes the objects of the runner from the budget of the
 // sequence, starts it, waits for its stop, and copies its results. Each
-// handle of this program to an object of the runner is closed before it
+// handle of this process to an object of the runner is closed before it
 // returns, so the budget then holds again what it held before.
 runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^operation_sequence.Runner_Results) -> (outcome: operation_sequence.Execution_Outcome, stop_code: u32, start_status: system.Status) {
 	grants: [op.CONTEXT_HANDLES]system.Grant
@@ -185,7 +185,7 @@ runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^
 	grants[op.CONTEXT_LOG] = {system.context_record().handles[op.CONTEXT_LOG], {.Write}}
 	values: [op.CONTEXT_VALUES]u64
 	values[operation_sequence.RUNNER_VALUE_SEQUENCE_BYTES] = u64(len(bytes))
-	// This program reads the results through its own mapping, read-only,
+	// This process reads the results through its own mapping, read-only,
 	// which it removes before it reads the budget again.
 	view, viewed := system.memory_map(results_memory, {})
 	if viewed != .Ok {
@@ -193,7 +193,7 @@ runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^
 	}
 	defer system.memory_unmap(view)
 	load_error: module.Load_Error
-	runner, started := system.program_start(runner_file, operation_sequence.RUNNER_NAME, grants, random.values_with_seed(&generator, values), amounts_with_processor(RUNNER_AMOUNTS), mappings[:2 + sequence.area_count], &prepared, {image = image}, &load_error, budget)
+	runner, started := system.process_start(runner_file, operation_sequence.RUNNER_NAME, grants, random.values_with_seed(&generator, values), amounts_with_processor(RUNNER_AMOUNTS), mappings[:2 + sequence.area_count], &prepared, {image = image}, &load_error, budget)
 	if started != .Ok {
 		return .Not_Started, 0, started
 	}
@@ -207,19 +207,19 @@ runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^
 	outcome = .Hung
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for system.time() < deadline {
-		// The stop of a program that this program holds adds one to its
+		// The stop of a process that this process holds adds one to its
 		// event word: the wait ends then.
 		wait := system.wait_begin()
-		if state, _ := system.program_state(runner); state == .Stopped {
+		if state, _ := system.process_state(runner); state == .Stopped {
 			outcome = .Stopped
 			break
 		}
 		system.wait_end(&wait, deadline)
 	}
 	if outcome == .Hung {
-		system.call(.Program_Stop, u64(runner), 0)
+		system.call(.Process_Stop, u64(runner), 0)
 	}
-	_, stop_code = system.program_state(runner)
+	_, stop_code = system.process_state(runner)
 	system.close(runner)
 	results^ = (^operation_sequence.Runner_Results)(view)^
 	if outcome == .Stopped && stop_code == operation_sequence.RUNNER_END_CODE && results.steps_run == u64(sequence.step_count) {
@@ -243,7 +243,7 @@ object_with :: proc "contextless" (budget: system.Handle, pages: u64, bytes: []u
 }
 
 // amounts_with_processor gives amounts with the processor limit of the
-// budget of this program: a budget with no processor time would never run
+// budget of this process: a budget with no processor time would never run
 // its runner.
 amounts_with_processor :: proc "contextless" (amounts: system.Budget_Amounts) -> system.Budget_Amounts {
 	own, _ := system.budget_read()

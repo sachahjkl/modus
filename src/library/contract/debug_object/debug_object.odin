@@ -40,7 +40,7 @@
 // and no other byte. The reader refuses every other form (check).
 //
 // Who uses it: the modus tool writes the debug objects (`encode`) into the
-// debug image; the program `errors`, the console and the developer tools
+// debug image; the process `errors`, the console and the developer tools
 // read them through `system.Debug_Names` to name the frames of a stop
 // report (`check`, `place_of`). A debugger reads the variables
 // (`variable_range_of_offset`, `variable_at`, `variable_by_name_at`,

@@ -8,7 +8,7 @@
 // Physical only, and a copy of the configuration of the device. The root
 // service found the device, enabled it and set its interrupt
 // (src/library/support/pci). The kernel has no code for this device: the code that
-// knows a device is a program or a library. The code that each virtio
+// knows a device is a process or a library. The code that each virtio
 // device service shares is in src/library/support/virtio.
 //
 // The device reads and writes the data region of the client: the kernel is
@@ -16,24 +16,24 @@
 // service enters the kernel
 // to wait, and to wake its client; one entry serves many requests.
 //
-// **What it is for.** It shows two things: a disk driver is a program
+// **What it is for.** It shows two things: a disk driver is a process
 // with no right beyond its one device, and the data of a disk moves with
-// no copy and no kernel entry for each block. The program that uses the
+// no copy and no kernel entry for each block. The process that uses the
 // disk (its client) holds a [data region](term:data-region); the client
 // lends it once with `Attach`, and the device then reads and writes it
 // directly.
 //
 // **Who uses it.** The root service starts a block service when it starts
-// a program with a grant of a disk, for the device at the place of that
+// a process with a grant of a disk, for the device at the place of that
 // disk on the bus. It gives the [block ring](term:block-ring) to that one
 // client, and takes the device back when the block service stops:
 //
 // - the [data disk](term:data-disk), to the storage service (the grant
 //   **Data_Disk**);
-// - the [disk of the measures](term:disk-of-the-measures), to the program
+// - the [disk of the measures](term:disk-of-the-measures), to the process
 //   `disk` (the grant **Scratch_Disk**).
 //
-// No other program can name the device or the ring.
+// No other process can name the device or the ring.
 //
 // **The commands of the block ring** (`src/library/contract/block`), each answered by
 // one completion with the same tag:
@@ -74,7 +74,7 @@ import "modus:support/virtio"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module and its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 179, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 179, processes = 1, threads = 1}
 
 FEATURE_FLUSH :: 9 // The device has a cache for writes, and the request Flush.
 

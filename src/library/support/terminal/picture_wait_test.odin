@@ -6,9 +6,9 @@ import "core:testing"
 // The decision gives a due picture for each change that waits, and the
 // wait that fits it. The case that made the rule: a record came while the
 // terminal drew its last picture, and the terminal then waits for its next
-// frame. That picture is due: else each program waits, no window says that
+// frame. That picture is due: else each process waits, no window says that
 // a picture is due, and the machine test takes the picture before the
-// record. The loop of the program `terminal`, which sends the decision
+// record. The loop of the process `terminal`, which sends the decision
 // before each wait, is outside this test.
 @(test)
 the_decision_gives_a_due_picture_for_each_change_that_waits :: proc(t: ^testing.T) {

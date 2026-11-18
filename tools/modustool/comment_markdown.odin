@@ -81,7 +81,7 @@ markdown_italic_close :: proc(text: string, from: int) -> int {
 // markdown_inline_plain gives the text of a line of Markdown with its marks
 // removed: bold and italics lose their stars, a link becomes its label, a
 // line feed becomes a space. A code span keeps its backticks when
-// keep_code_marks is true: in a text that a program draws with one font,
+// keep_code_marks is true: in a text that a process draws with one font,
 // the backticks are the only sign of code.
 markdown_inline_plain :: proc(text: string, keep_code_marks: bool) -> string {
 	b := strings.builder_make(context.temp_allocator)

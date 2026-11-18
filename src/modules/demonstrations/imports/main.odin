@@ -3,7 +3,7 @@
 //
 // The module agenda imports the module calendar. calendar has a fault: the
 // year 2000 has 365 days. calendar_fixed has the correction and the same
-// description; calendar_changed has another description. This program loads
+// description; calendar_changed has another description. This process loads
 // agenda in its own memory with the loader of the system, with no
 // replacement and with each replacement, and shows what the loader answers.
 // It also imports calendar itself: the root service gave it the
@@ -15,7 +15,7 @@
 // same description is accepted, and one with another description is a
 // [load error](term:load-error) that names the export and its difference.
 // It also shows that the import of a module is a direct call through an
-// import slot, with its cost measured, and that two programs that import
+// import slot, with its cost measured, and that two processes that import
 // one module share one copy of its code.
 //
 // **What a reader sees.** Start it from the start menu, or with
@@ -32,11 +32,11 @@
 // `calendar` for two loads.
 //
 // **The module record of its starter.** The root service wrote the module
-// record of this program. The program tries to remove it, to replace it with
+// record of this process. The process tries to remove it, to replace it with
 // the hash of `agenda`, to unmap its first segment and to map memory at its
 // base: the kernel refuses each change with `No_Right` and the error kind
-// `Starter_Module`. A module that the program loads itself has a record of
-// the writer `program` (src/md/features/module_record_writer.md).
+// `Starter_Module`. A module that the process loads itself has a record of
+// the writer `process` (src/md/features/module_record_writer.md).
 //
 // **The replacements of the machine** apply to its own import of
 // `calendar`: after `replace("calendar", "calendar_fixed")` in the console,
@@ -58,8 +58,8 @@ import op "modus:contract/operation"
 import "modus:support/random"
 import "modus:support/system"
 
-// Itself and two programs that import calendar.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 808, programs = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
+// Itself and two processes that import calendar.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 808, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -89,7 +89,7 @@ HEIGHT :: 582
 #assert(112 * graphics.CELL_WIDTH <= WIDTH - 2 * LEFT)
 
 
-// One case: what the program asked the loader, and the answer.
+// One case: what the process asked the loader, and the answer.
 Case :: struct {
 	text:   string,
 	answer: string,
@@ -173,7 +173,7 @@ measure_calls :: proc "contextless" (space: ^system.Module_Space, place: int) ->
 }
 sink: i64
 
-VALUE_CHILD :: 8 // Not 0: this program waits, so that its code stays mapped.
+VALUE_CHILD :: 8 // Not 0: this process waits, so that its code stays mapped.
 shared_pages, shared_mappings: u64
 
 // code_segments gives the count of segments of a module that the loader
@@ -186,7 +186,7 @@ code_segments :: proc "contextless" (file: []u8) -> (count: u64) {
 	return count
 }
 
-// measure_binds binds agenda again, in memory of this program, BINDS times:
+// measure_binds binds agenda again, in memory of this process, BINDS times:
 // the cost of the bind with the import that the space gave.
 measure_binds :: proc "contextless" (space: ^system.Module_Space, place: int) -> u64 {
 	item := &space.modules[place]
@@ -218,14 +218,14 @@ measure_binds :: proc "contextless" (space: ^system.Module_Space, place: int) ->
 }
 
 // own_modules reads the module records that the kernel keeps for this
-// program into module_report. false: no program of this name runs.
+// process into module_report. false: no process of this name runs.
 own_modules :: proc "contextless" () -> bool {
 	report: op.System_Report
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
-	for slot in 1 ..< report.program_slots {
-		program: op.Program_Report
-		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&program)), size_of(program))
-		if system.name_of(program.name[:]) != "imports" || program.state == .None || program.state == .Stopped {
+	for slot in 1 ..< report.process_slots {
+		process: op.Process_Report
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process))
+		if system.name_of(process.name[:]) != "imports" || process.state == .None || process.state == .Stopped {
 			continue
 		}
 		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Modules), slot, u64(uintptr(&module_report)), size_of(module_report))
@@ -235,35 +235,35 @@ own_modules :: proc "contextless" () -> bool {
 }
 module_report: op.Module_Report
 
-// own_replaced says if the loader of this program gave it a module in place
+// own_replaced says if the loader of this process gave it a module in place
 // of an import: the module records that the kernel keeps for it.
 own_replaced :: proc "contextless" () -> (replaced: bool, found: bool) {
 	if !own_modules() {
 		return false, false
 	}
-	for item in module_report.modules[:min(module_report.count, op.PROGRAM_MODULE_CAPACITY)] {
+	for item in module_report.modules[:min(module_report.count, op.PROCESS_MODULE_CAPACITY)] {
 		replaced ||= item.replaces != {}
 	}
 	return replaced, true
 }
 
-// The changes of the module record of this program that the program tries:
+// The changes of the module record of this process that the process tries:
 // a removal, a replacement with another hash, an unmap of its first segment
 // and a map at its base.
 STARTER_CHANGES :: 4
 
-// What the program finds of the module records of its starter.
+// What the process finds of the module records of its starter.
 Starter_Records :: struct {
 	refused:        u64, // The changes refused with No_Right and the error kind Starter_Module.
-	program_writer: op.Module_Writer, // The writer of the record of this program.
-	program_found:  bool,
-	own_writer:     op.Module_Writer, // The writer of the record of calendar, loaded by this program.
+	process_writer: op.Module_Writer, // The writer of the record of this process.
+	process_found:  bool,
+	own_writer:     op.Module_Writer, // The writer of the record of calendar, loaded by this process.
 	own_found:      bool,
-	released:       bool, // The program removed the record of its own load.
+	released:       bool, // The process removed the record of its own load.
 }
 
 // starter_records_check tries each change of the record that the root
-// service wrote for the module of this program, then loads calendar in a
+// service wrote for the module of this process, then loads calendar in a
 // space of its own, reads the writer of both records from the report of the
 // kernel, and unloads calendar.
 starter_records_check :: proc "contextless" () -> (found: Starter_Records) {
@@ -273,17 +273,17 @@ starter_records_check :: proc "contextless" () -> (found: Starter_Records) {
 	own_file := system.image_find(image, "imports")
 	head, _ := module.header(own_file)
 	error: errors.Error_Record
-	removal := op.Module_Record{base = op.PROGRAM_BASE}
-	_, status := system.call_with_error(&error, .Program_Module, 0, u64(uintptr(&removal)))
+	removal := op.Module_Record{base = op.PROCESS_BASE}
+	_, status := system.call_with_error(&error, .Process_Module, 0, u64(uintptr(&removal)))
 	found.refused += refused_by_starter_module(status, &error)
-	forged := op.Module_Record{base = op.PROGRAM_BASE, size = head.memory_size, hash = hash_of("agenda")}
-	_, status = system.call_with_error(&error, .Program_Module, 0, u64(uintptr(&forged)))
+	forged := op.Module_Record{base = op.PROCESS_BASE, size = head.memory_size, hash = hash_of("agenda")}
+	_, status = system.call_with_error(&error, .Process_Module, 0, u64(uintptr(&forged)))
 	found.refused += refused_by_starter_module(status, &error)
 	segment, _ := module.record(own_file, .Segments, 1, module.Segment)
-	_, status = system.call_with_error(&error, .Memory_Unmap, 0, op.PROGRAM_BASE + segment.memory_offset)
+	_, status = system.call_with_error(&error, .Memory_Unmap, 0, op.PROCESS_BASE + segment.memory_offset)
 	found.refused += refused_by_starter_module(status, &error)
 	if memory_object, created := system.memory_create(1); created == .Ok {
-		_, status = system.call_with_error(&error, .Memory_Map, u64(memory_object), 0, op.PROGRAM_BASE, 0, 0, 1)
+		_, status = system.call_with_error(&error, .Memory_Map, u64(memory_object), 0, op.PROCESS_BASE, 0, 0, 1)
 		found.refused += refused_by_starter_module(status, &error)
 		system.close(memory_object)
 	}
@@ -296,15 +296,15 @@ starter_records_check :: proc "contextless" () -> (found: Starter_Records) {
 	}
 	own_base := space.modules[place].base
 	if own_modules() {
-		for item in module_report.modules[:min(module_report.count, op.PROGRAM_MODULE_CAPACITY)] {
+		for item in module_report.modules[:min(module_report.count, op.PROCESS_MODULE_CAPACITY)] {
 			// A word that names no writer is not found: the case then fails.
 			writer, writer_ok := op.module_writer_of_word(item.writer)
 			if !writer_ok {
 				system.log("imports: the module record at ", item.base, " has the writer word ", item.writer, ", which names no writer")
 				continue
 			}
-			if item.base == op.PROGRAM_BASE {
-				found.program_writer, found.program_found = writer, true
+			if item.base == op.PROCESS_BASE {
+				found.process_writer, found.process_found = writer, true
 			}
 			if item.base == own_base {
 				found.own_writer, found.own_found = writer, true
@@ -315,22 +315,22 @@ starter_records_check :: proc "contextless" () -> (found: Starter_Records) {
 	return found
 }
 
-// The random generator of this program (src/library/support/random).
-program_generator: random.Generator
+// The random generator of this process (src/library/support/random).
+process_generator: random.Generator
 
 // entry runs each load case once with the loader of the system, calls
 // `agenda` and `calendar` through their import slots, measures the calls
 // and the bind, writes the lines on the log, then keeps the window open
-// until the program is stopped. With no window, it stops with the code 1.
+// until the process is stopped. With no window, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	// The random generator of this program, from the seed that its starter
-	// gave: it gives the seed of each program that this one starts.
-	if !random.generator_from_context(&program_generator, ctx) {
+	// The random generator of this process, from the seed that its starter
+	// gave: it gives the seed of each process that this one starts.
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("imports: no random seed in the context")
 		system.stop(1)
 	}
-	// A program that this program started to share calendar: it waits.
+	// A process that this process started to share calendar: it waits.
 	if ctx.values[VALUE_CHILD] != 0 {
 		for {
 			system.sleep(max(u64))
@@ -397,7 +397,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	difference, parameter, expected, given := module.functions_compare(math, module.export_find(math, "number"), math, module.export_find(math, "fibonacci"))
 	note("the check of number against fibonacci (math)", difference == .Parameter_Type && parameter == 1 && expected.type == u8(module.Type.Text) && given.type == u8(module.Type.Integer), "parameter 1: Integer, not Text")
 
-	// 4. An import that is not in what the program was granted.
+	// 4. An import that is not in what the process was granted.
 	// With a table of error details: one load error for each import that is
 	// missing, and the record of the load is the first of them.
 	lonely := space_of(4, nil)
@@ -425,17 +425,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		note("unload agenda, then calendar", left == 1 && used(&shared) == 0, "1 module stays, then 0")
 	}
 
-	// 7. Two programs that import calendar, at two places: this program,
+	// 7. Two processes that import calendar, at two places: this process,
 	// started again, and agenda. With one table of prepared modules, the
 	// code of calendar is one memory object that the two map.
 	{
 		table: system.Prepared_Modules
 		values: [op.CONTEXT_VALUES]u64
 		values[VALUE_CHILD] = 1
-		amounts := system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 10_000, log_records = 10}
+		amounts := system.Budget_Amounts{pages = 256, processes = 1, threads = 1, processor = 10_000, log_records = 10}
 		own := system.image_find(image, "imports")
-		first_program, first_status := system.program_start(own, "imports child", {}, random.values_with_seed(&program_generator, values), amounts, nil, &table, {image = image}, &error)
-		second_program, second_status := system.program_start(agenda, "agenda", {}, random.values_with_seed(&program_generator, {}), amounts, nil, &table, {image = image}, &error)
+		first_process, first_status := system.process_start(own, "imports child", {}, random.values_with_seed(&process_generator, values), amounts, nil, &table, {image = image}, &error)
+		second_process, second_status := system.process_start(agenda, "agenda", {}, random.values_with_seed(&process_generator, {}), amounts, nil, &table, {image = image}, &error)
 		copies, mappings, pages: u64
 		for &item in table.modules {
 			if item.memory != 0 && item.hash == hash_of("calendar") && item.part == .Code {
@@ -444,14 +444,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				pages = item.pages
 			}
 		}
-		// The place of calendar: after the module of the program.
+		// The place of calendar: after the module of the process.
 		own_head, _ := module.header(own)
 		agenda_head, _ := module.header(agenda)
 		segments := code_segments(system.image_find(image, "calendar"))
-		note("two programs import calendar at two places", first_status == .Ok && second_status == .Ok && copies == 1 && mappings == 2 * segments && own_head.memory_size != agenda_head.memory_size, copies, " copy of its code, ", pages, " pages, ", mappings, " mappings")
+		note("two processes import calendar at two places", first_status == .Ok && second_status == .Ok && copies == 1 && mappings == 2 * segments && own_head.memory_size != agenda_head.memory_size, copies, " copy of its code, ", pages, " pages, ", mappings, " mappings")
 		shared_pages, shared_mappings = pages, mappings
-		system.close(first_program)
-		system.close(second_program)
+		system.close(first_process)
+		system.close(second_process)
 		for item in table.modules {
 			if item.memory != 0 {
 				system.close(item.memory)
@@ -459,18 +459,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 
-	// 8. This program: the root service loaded calendar for its import, or
+	// 8. This process: the root service loaded calendar for its import, or
 	// the module of the replacement of the machine.
 	own_days := days_in_month(2, 2000)
 	own, found := own_replaced()
-	note("this program: days_in_month(2, 2000)", found && own_days == (own ? 29 : 28), own_days, own ? ": the root service gave calendar_fixed" : ": calendar, no replacement")
+	note("this process: days_in_month(2, 2000)", found && own_days == (own ? 29 : 28), own_days, own ? ": the root service gave calendar_fixed" : ": calendar, no replacement")
 
-	// 9. The module record that the root service wrote for this program:
-	// the program cannot change it. Its own load is a record of its own.
+	// 9. The module record that the root service wrote for this process:
+	// the process cannot change it. Its own load is a record of its own.
 	starter := starter_records_check()
-	starter_right := starter.refused == STARTER_CHANGES && starter.program_found && starter.program_writer == .Starter && starter.own_found && starter.own_writer == .Program && starter.released
+	starter_right := starter.refused == STARTER_CHANGES && starter.process_found && starter.process_writer == .Starter && starter.own_found && starter.own_writer == .Process && starter.released
 	note("the module record of the root service", starter_right, starter.refused, " of ", u64(STARTER_CHANGES), " changes refused; calendar loaded here: ", (starter.own_found ? op.module_writer_name(starter.own_writer) : "not found"))
-	system.log("imports: the module record of the root service: ", starter.refused, " of ", u64(STARTER_CHANGES), " changes refused with Starter_Module, writer ", (starter.program_found ? op.module_writer_name(starter.program_writer) : "not found"), "; calendar, loaded by this program: writer ", (starter.own_found ? op.module_writer_name(starter.own_writer) : "not found"))
+	system.log("imports: the module record of the root service: ", starter.refused, " of ", u64(STARTER_CHANGES), " changes refused with Starter_Module, writer ", (starter.process_found ? op.module_writer_name(starter.process_writer) : "not found"), "; calendar, loaded by this process: writer ", (starter.own_found ? op.module_writer_name(starter.own_writer) : "not found"))
 
 	wrong: u64
 	for item in cases[:case_count] {
@@ -490,7 +490,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	load_whole, _ := tenths(load_direct, 1)
 	load_replaced_whole, _ := tenths(load_replaced, 1)
 	system.log("imports: the bind of agenda: ", bind_whole, ".", bind_tenth, " ns, and ", checked_whole, ".", checked_tenth, " ns with the check of the replacement; the load of agenda and its import: ", load_whole / 1000, " us, and ", load_replaced_whole / 1000, " us")
-	system.log("imports: two programs import calendar at two places: one copy of its code, ", shared_pages, " pages, mapped ", shared_mappings, " times")
+	system.log("imports: two processes import calendar at two places: one copy of its code, ", shared_pages, " pages, mapped ", shared_mappings, " times")
 
 	for {
 		frame := interface.window_frame_start(&window_memory, &window)
@@ -500,14 +500,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		y += LINE
 		interface.draw_text(table, 12, y, "the loader gives a replacement only if each export that agenda uses is the same.", graphics.colors.dim)
 		y += LINE + LINE / 2
-		interface.draw_text(table, LEFT, y, "the program asks the loader", graphics.colors.dim)
+		interface.draw_text(table, LEFT, y, "the process asks the loader", graphics.colors.dim)
 		interface.draw_text(table, LEFT + ANSWER_X, y, "the answer", graphics.colors.dim)
 		// The cases: each answer whole, on the lines that it needs. Then
 		// one line for the count of the cases with no room.
 		column := interface.column_of({LEFT, CASES_Y - 3, WIDTH - 2 * LEFT, CASES_HEIGHT})
 		not_shown := 0
 		for item, index in cases[:case_count] {
-			if _, drawn := interface.case_lines(&frame, &column, index, item.text, item.answer, ANSWER_X, graphics.colors.text, item.right ? graphics.colors.program : graphics.colors.failed, LINE); !drawn {
+			if _, drawn := interface.case_lines(&frame, &column, index, item.text, item.answer, ANSWER_X, graphics.colors.text, item.right ? graphics.colors.process : graphics.colors.failed, LINE); !drawn {
 				not_shown += 1
 			}
 		}

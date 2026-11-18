@@ -8,7 +8,7 @@ import "core:testing"
 // of its fixed width; the parts fill the band, in order.
 @(test)
 band_folds_gaps :: proc(t: ^testing.T) {
-	mappings := [?]op.Program_Mapping {
+	mappings := [?]op.Process_Mapping {
 		{address = 0x400000, page_count = 10},
 		{address = 0x40A000, page_count = 30}, // Right after the first.
 		{address = 0x7FFF_0000_0000, page_count = 4}, // Far away: one folded gap.

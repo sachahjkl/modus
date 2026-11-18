@@ -16,7 +16,7 @@ import "modus:contract/value_kinds"
 //   release   resume        `release` closes a handle of the console
 //   memory    debug_memory  `memory` gives the memory of the machine
 //
-// and `hold` is the name of the service too: `stop` stops a whole program.
+// and `hold` is the name of the service too: `stop` stops a whole process.
 
 debug_attach :: proc "contextless" (arguments: []Value) -> Value {
 	return bound_call("debugger", "attach", arguments)
@@ -109,16 +109,16 @@ debug_stop_report :: proc "contextless" (arguments: []Value) -> Value {
 // debugger_commands_start lists the commands of the debugger. The comment
 // above each command is its documentation on the site.
 debugger_commands_start :: proc "contextless" () {
-	// Makes the service `debugger` the debugger of a program for the
-	// console, and gives one row: the program, its slot, its threads, its
+	// Makes the service `debugger` the debugger of a process for the
+	// console, and gives one row: the process, its slot, its threads, its
 	// modules and how many of them have a debug object. It is the export
 	// `attach` of the service.
 	//
-	// - `program`: the name of a program that runs.
+	// - `process`: the name of a process that runs.
 	//
 	// The root service gives the debug access when the console acts for
-	// the principal whose session runs the program, and when each grant of
-	// the program is a grant that the console holds itself. A service is
+	// the principal whose session runs the process, and when each grant of
+	// the process is a grant that the console holds itself. A service is
 	// refused. The grant is `debug` in `grants("console")`, and
 	// `revoke("console", "debug")` ends it.
 	//
@@ -127,31 +127,31 @@ debugger_commands_start :: proc "contextless" () {
 	// ```
 	//
 	// Errors: those of `connect("debugger")`, and those of the export.
-	command("debug", {.Text}, .Table, "debug a program: debugger.attach()", debug_attach)
-	// Ends the debugging: the program gets back each thread that the
-	// debugger held, with no breakpoint. It gives one row: the program, the
+	command("debug", {.Text}, .Table, "debug a process: debugger.attach()", debug_attach)
+	// Ends the debugging: the process gets back each thread that the
+	// debugger held, with no breakpoint. It gives one row: the process, the
 	// breakpoints that the debugger had and the threads that it held.
 	command("detach", {}, .Table, "end the debugging: debugger.detach()", debug_detach)
-	// Gives one row for each thread of the debugged program: its number,
+	// Gives one row for each thread of the debugged process: its number,
 	// its state, and the instruction of a thread that is held or stopped,
 	// with its procedure, its file and its line.
-	command("threads", {}, .Table, "the threads of the debugged program: debugger.threads()", debug_threads)
-	// Stops one thread of the debugged program, and gives its row. The
-	// command `stop` stops a whole program by its name: this one holds one
+	command("threads", {}, .Table, "the threads of the debugged process: debugger.threads()", debug_threads)
+	// Stops one thread of the debugged process, and gives its row. The
+	// command `stop` stops a whole process by its name: this one holds one
 	// thread, which runs again with `resume` or `continue_all`.
 	//
 	// - `thread`: the number of a thread, as `threads()` gives it.
-	command("hold", {.Integer}, .Table, "hold one thread of the debugged program: debugger.hold()", debug_hold)
+	command("hold", {.Integer}, .Table, "hold one thread of the debugged process: debugger.hold()", debug_hold)
 	// Lets one thread run again, and gives its row: a thread that `hold`
 	// stopped, or that a breakpoint, a watch or a step stopped. It is the
 	// export `release` of the service; `release` in the console closes a
 	// handle.
 	//
 	// - `thread`: the number of a thread that is held or stopped.
-	command("resume", {.Integer}, .Table, "let one thread of the debugged program run: debugger.release()", debug_resume)
-	// Lets each thread of the debugged program run again, and gives one row
+	command("resume", {.Integer}, .Table, "let one thread of the debugged process run: debugger.release()", debug_resume)
+	// Lets each thread of the debugged process run again, and gives one row
 	// for each thread.
-	command("continue_all", {}, .Table, "let each thread of the debugged program run: debugger.continue_all()", debug_continue_all)
+	command("continue_all", {}, .Table, "let each thread of the debugged process run: debugger.continue_all()", debug_continue_all)
 	// Gives one row for each register of a held thread: the 16 general
 	// registers, `rip` with its procedure and its line, and `rflags` with
 	// the flags that are set.
@@ -204,7 +204,7 @@ debugger_commands_start :: proc "contextless" () {
 	//
 	// - `number`: the number of a breakpoint, as `breaks()` gives it.
 	command("break_remove", {.Integer}, .Table, "remove a breakpoint: debugger.break_remove()", debug_break_remove)
-	// Sets a data breakpoint on bytes that the program writes, and gives
+	// Sets a data breakpoint on bytes that the process writes, and gives
 	// one row for each breakpoint of the debugger.
 	//
 	// - `place`: an address (`0x403010`), or the path of a global with its
@@ -227,34 +227,34 @@ debugger_commands_start :: proc "contextless" () {
 	//
 	// - `thread`: the number of a thread that is held or stopped.
 	command("step_over", {.Integer}, .Table, "a held thread, to its next source line, over each call: debugger.step_over()", debug_step_over)
-	// Gives the bytes of the debugged program from an address, sixteen in
+	// Gives the bytes of the debugged process from an address, sixteen in
 	// each row. It is the export `memory` of the service; `memory` in the
 	// console gives the memory of the machine.
 	//
 	// - `place`: an address (`0x403010`), or the path of a global with its
 	//   package.
 	// - `count`: 1 to 4096 bytes.
-	command("debug_memory", {.Text, .Integer}, .Table, "the bytes of the debugged program: debugger.memory()", debug_memory, {{}, value_kinds.size_in(.Bytes)})
+	command("debug_memory", {.Text, .Integer}, .Table, "the bytes of the debugged process: debugger.memory()", debug_memory, {{}, value_kinds.size_in(.Bytes)})
 	// Gives one row for each stop of a thread since the last call: the
 	// thread, the kind (`breakpoint N`, `watch N`, `step`), and the
 	// instruction with its procedure and its line.
-	command("events", {}, .Table, "the stops of the debugged program: debugger.events()", debug_events)
-	// Waits until a thread of the debugged program stops, at most the
+	command("events", {}, .Table, "the stops of the debugged process: debugger.events()", debug_events)
+	// Waits until a thread of the debugged process stops, at most the
 	// given milliseconds (3000 at most), and gives the rows of
 	// `events`.
 	//
 	// - `milliseconds`: the longest wait.
-	command("wait_stop", {.Integer}, .Table, "wait for a stop of the debugged program: debugger.wait_stop()", debug_wait_stop, {value_kinds.time_in(.Milliseconds)})
-	// Gives one row for each frame of the stop report of a disk program
+	command("wait_stop", {.Integer}, .Table, "wait for a stop of the debugged process: debugger.wait_stop()", debug_wait_stop, {value_kinds.time_in(.Milliseconds)})
+	// Gives one row for each frame of the stop report of a disk process
 	// that stopped on a fault: the module, the procedure, the file and the
 	// line, from the debug object of its module in the store `module_files`.
-	// It needs no `debug`: the program stopped, and the root service kept
+	// It needs no `debug`: the process stopped, and the root service kept
 	// its report. Row 0 also says what stopped it.
 	//
-	// - `program`: the nickname of the disk program.
+	// - `process`: the nickname of the disk process.
 	//
 	// ```
 	// > stop_report("visitor")
 	// ```
-	command("stop_report", {.Text}, .Table, "the frames of a disk program that faulted, named: debugger.stop_report()", debug_stop_report)
+	command("stop_report", {.Text}, .Table, "the frames of a disk process that faulted, named: debugger.stop_report()", debug_stop_report)
 }

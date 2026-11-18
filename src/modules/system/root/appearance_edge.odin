@@ -9,7 +9,7 @@ import "modus:support/system"
 // The appearance in force at each edge of the rule of the day
 // (src/md/features/appearance.md, "Who writes the appearance in force, and
 // when"). With the setting `auto`, the appearance changes at 07:00 and at
-// 19:00 of the local time, and the program `settings` runs only while its
+// 19:00 of the local time, and the process `settings` runs only while its
 // window is open. This service runs always and holds both pages: its loop
 // has the next edge as one more deadline, and wakes when the date changes.
 // It writes the one word of the appearance in force, and only when the rule
@@ -26,7 +26,7 @@ appearance_open :: proc "contextless" () {
 	}
 	address, status := system.memory_map(date_memory, flags = {})
 	if status != .Ok {
-		system.log_in("programs", .Warning, "root: the date page is not mapped in this service (status ", status, "): the setting appearance auto is dark")
+		system.log_in("processes", .Warning, "root: the date page is not mapped in this service (status ", status, "): the setting appearance auto is dark")
 		return
 	}
 	appearance_date_page = (^date.Page)(address)
@@ -37,10 +37,10 @@ appearance_open :: proc "contextless" () {
 // when the settings page holds another one, sets the deadline of the next
 // edge, and adds the change count of the date page to the wait: a date that
 // comes after the boot pass of `settings`, and a new time zone, change the
-// rule. The program `date` writes both, and wakes this word for them
+// rule. The process `date` writes both, and wakes this word for them
 // (src/md/features/time_zone.md).
 //
-// The program `settings` writes the values and their appearance in one
+// The process `settings` writes the values and their appearance in one
 // change, and can write between the read of this service and its store.
 // So after its store this service reads the change count again: when it
 // moved, it reads the page again and writes the rule of the new values.

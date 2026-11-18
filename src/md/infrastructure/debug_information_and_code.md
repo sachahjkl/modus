@@ -8,7 +8,7 @@ How the build asks for this and how the check proves it is in [`docs/REPRODUCIBL
 
 ## Constraints
 
-- The option `-debug` of the compiler makes another program. It defines a constant that a source can read, it changes the default optimization mode, and at eight places the compiler makes code only when debug information is written.
+- The option `-debug` of the compiler makes another process. It defines a constant that a source can read, it changes the default optimization mode, and at eight places the compiler makes code only when debug information is written.
 - The system calls the code generator of LLVM itself, after the compiler. A difference that LLVM makes is outside the reach of the compiler.
 - The same sources with the same options give the same bytes. The fault here is not a fault of the reproducible build: it is a difference between two sets of options.
 - Other users of the compiler want the aids for a debugger that `-debug` gives them.
@@ -19,7 +19,7 @@ How the build asks for this and how the check proves it is in [`docs/REPRODUCIBL
 
 - **The rule.** For any other flags, the code that the compiler gives to LLVM with `same-code` is the code with `none`. The rule has no exception for an optimization mode. One predicate in the compiler says "debug information keeps the code", and each of the eight places asks it.
 - **The default is untouched.** With no such option, the fork builds what the release builds: `full` with `-debug`, `none` without. So the change can go to the project of the compiler as an addition, and a user of the compiler who does not ask loses nothing.
-- **An option of its own, not a value of `-debug`.** `-debug` does three things, and two of them change the program by design: the constant and the default optimization mode. The option names only the third: what is written.
+- **An option of its own, not a value of `-debug`.** `-debug` does three things, and two of them change the process by design: the constant and the default optimization mode. The option names only the third: what is written.
 - **The build of the system asks for it.** The compile of a module passes `same-code`. The build with no debug information passes nothing.
 - **The code generator gets one direction of its instruction scheduler**, top-down, in both builds. With the default direction, two modules of 88 still differ at the optimization mode of the build.
 - **The third build stays a condition of the full check.** The rule of the option ends at the input of LLVM. Only a build proves the machine code.
@@ -41,7 +41,7 @@ How the build asks for this and how the check proves it is in [`docs/REPRODUCIBL
 - **The variance of the scheduler is inside LLVM.** For the two modules that differ, the compiler gives the same input and the optimizer gives the same output. The scheduler of machine instructions, bottom-up, orders register copies in another way when debug instructions stand between them. LLVM also has a variance in its inliner, which no module of the system shows today.
 - **The check is the proof.** For the machine code, the rule is a measure on the modules of the system with one version of LLVM. A change of a source, of a flag or of LLVM can show a new difference. The full check then fails and names the module.
 - **A hash of a deployed module changes** when the option or the flag of the code generator changes. The top-down direction changes the code of 79 of 88 modules against the default direction. The effect on speed is not measured.
-- **What a debugger loses.** A variable that is not in a stack slot of its own can read as "optimized out". A label has no block. For the system at the optimization mode of its build, the loss was measured on two modules: none for the kernel, and 0.3 % of the location coverage of the local variables for one program. It was measured by counts of the debug information, not in a session of the debugger of the system.
+- **What a debugger loses.** A variable that is not in a stack slot of its own can read as "optimized out". A label has no block. For the system at the optimization mode of its build, the loss was measured on two modules: none for the kernel, and 0.3 % of the location coverage of the local variables for one process. It was measured by counts of the debug information, not in a session of the debugger of the system.
 - **The comparison of the study is on objects**, before the link and the conversion. The check of the system compares module files.
 - **A debug object holds paths of sources**, from the root of the repository. A move of a source changes the debug object and not the module. See [repository_layout.md](repository_layout.md).
 

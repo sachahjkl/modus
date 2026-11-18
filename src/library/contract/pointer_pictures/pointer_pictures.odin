@@ -61,8 +61,8 @@ Pointer_Shape :: enum u32 {
 	Move                         = 3, // Over a thing that moves when dragged.
 	Grab                         = 4, // Over a thing that the input can take.
 	Grabbing                     = 5, // While the input holds a thing.
-	Wait                         = 6, // The program cannot take input now.
-	Busy_With_Arrow              = 7, // The program works, and takes input.
+	Wait                         = 6, // The process cannot take input now.
+	Busy_With_Arrow              = 7, // The process works, and takes input.
 	Forbidden                    = 8, // The action under the pointer is not allowed.
 	Help                         = 9, // Over a thing that has help.
 	Crosshair                    = 10, // A precise place: a picker of pixels.

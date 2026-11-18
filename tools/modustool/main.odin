@@ -1,4 +1,4 @@
-// modustool: all the automation of the project, in one program.
+// modustool: all the automation of the project, in one process.
 //
 //   nix develop -c modustool <command>
 //
@@ -6,8 +6,8 @@
 // compiles itself again when its sources changed (tool_build.odin).
 //
 // The project has no scripts. Each build step, each test and each call to a
-// third-party program is a command of this tool, so that the way a third-party
-// program is run is written in one place.
+// third-party process is a command of this tool, so that the way a third-party
+// process is run is written in one place.
 //
 // The development shell of flake.nix supplies what this tool needs:
 //   on the path: odin, lld-link, ld.lld, nasm, qemu-system-x86_64, swtpm
@@ -60,7 +60,7 @@ BUILD_FOLDER :: "build"
 //   contract   what two parties agree on: records, numbers, and the code
 //              that reads them. It uses no kernel operation. The kernel
 //              imports these packages and its own kernel parts only.
-//   support    what a program compiles in to use the contracts.
+//   support    what a process compiles in to use the contracts.
 // The kernel parts are a second source library, "kernel:iommu". The names,
 // the folders and the flags of the two libraries are in
 // source_folders.odin; the rule of the kernel is held by
@@ -86,7 +86,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_PRIVATE + "/cryptography/cryptography_primitives",
 	SOURCE_FOLDER_SUPPORT + "/quic",
 	SOURCE_FOLDER_CONTRACT + "/date",
-	SOURCE_FOLDER_CONTRACT + "/disk_program_page",
+	SOURCE_FOLDER_CONTRACT + "/disk_process_page",
 	SOURCE_FOLDER_KERNEL + "/iommu",
 	SOURCE_FOLDER_CONTRACT + "/bridge_requester",
 	SOURCE_FOLDER_KERNEL + "/debug_exception",
@@ -98,7 +98,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_PRIVATE + "/storage/storage_retention",
 	SOURCE_FOLDER_SUPPORT + "/principals",
 	SOURCE_FOLDER_SUPPORT + "/tpm2",
-	SOURCE_FOLDER_SUPPORT + "/disk_program",
+	SOURCE_FOLDER_SUPPORT + "/disk_process",
 	SOURCE_FOLDER_SUPPORT + "/calendar",
 	SOURCE_FOLDER_SUPPORT + "/line_editor",
 	SOURCE_FOLDER_PRIVATE + "/console/console_language",
@@ -217,7 +217,7 @@ TEST_OUTPUT_SELF_TEST :: BUILD_FOLDER + "/test_output_self_test_%d.txt"
 // bus). The data disk keeps the stores of the storage service: `run` uses
 // one that stays from run to run; each part of the test makes a new one of
 // its own (Test_Part_Run). The disk of the measures holds no data that a
-// program keeps: `run` uses SCRATCH_DISK, and a test machine a new one
+// process keeps: `run` uses SCRATCH_DISK, and a test machine a new one
 // beside its log.
 DATA_DISK :: BUILD_FOLDER + "/data_disk.img"
 SCRATCH_DISK :: BUILD_FOLDER + "/scratch_disk.img"
@@ -273,11 +273,11 @@ Command :: struct {
 // it is what `modustool help` prints, one line for each command. The comment
 // above each command is its documentation on the site.
 //
-// `modustool` is the one program of the automation of the project: the
+// `modustool` is the one process of the automation of the project: the
 // build, the machine tests, the pictures, the measures, the changelog, the
 // news and the site. The project has no script: each step of the work, by
 // hand or in a workflow, is a command here, so each call of a third-party
-// program (the compiler, the linker, QEMU) is written in one place.
+// process (the compiler, the linker, QEMU) is written in one place.
 //
 // Run a command from the root of the repository, in the development shell
 // of the flake, which gives the tool its compilers, QEMU and the firmware:
@@ -421,16 +421,16 @@ COMMANDS :: [?]Command {
 	// prints are measures, never conditions of the test.
 	//
 	// Each machine is a measure run: its boot image holds the resource
-	// `measure_run`, and a program then measures its rates over a duration.
+	// `measure_run`, and a process then measures its rates over a duration.
 	// The modules are those of the test.
 	//
-	// - no argument: the program `locks` on a machine where only the desktop
+	// - no argument: the process `locks` on a machine where only the desktop
 	//   runs: the kernel entries in one second with 1, 2 and 4 lockers, in
 	//   `build/test_output_measure.txt`.
-	// - `scheduler N`: N machines that run the program `scheduler` alone, in
+	// - `scheduler N`: N machines that run the process `scheduler` alone, in
 	//   `build/test_output_scheduler_<n>.txt`.
-	// - `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, in
-	//   `build/test_output_measure_<program>.txt`; the command prints its
+	// - `clock`, `crowd`, `disk`, `flow`, `limits`: the process alone, in
+	//   `build/test_output_measure_<process>.txt`; the command prints its
 	//   lines.
 	// - `windows`: each window of the interface package, alone, and a table of
 	//   the time of its pictures.
@@ -438,9 +438,9 @@ COMMANDS :: [?]Command {
 	// - `without_checks ...`: the same, on the build with no check in the
 	//   kernel.
 	//
-	// The tool checks no speed: a program checks its counts, and the numbers
+	// The tool checks no speed: a process checks its counts, and the numbers
 	// are printed for a reader (docs/TOOLS.md, "The bounds of the tests").
-	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, then the frame at 1920x1080 of processor_frame, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure clock|crowd|disk|flow|limits`: the program alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
+	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other process, then the frame at 1920x1080 of processor_frame, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the process scheduler N times; `measure clock|crowd|disk|flow|limits`: the process alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	// Builds, starts a machine that runs the scenario of a film, and films
 	// it: the pictures of the screen, taken while the scenario types, become
 	// a film with ffmpeg, which must be on the path. The film is for the
@@ -448,7 +448,7 @@ COMMANDS :: [?]Command {
 	//
 	// - no argument, or `terminal`: the film of the terminal.
 	// - `palette`: the film of the palette.
-	// - `heron`: the film of the program heron.
+	// - `heron`: the film of the process heron.
 	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4, " + FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of the development log " + DEVELOPMENT_LOG_NAME + " beside the main working tree, and " + FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = run_film},
 	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
 	// `FONT_SOURCE`) to Odin data in `src/library/support/graphics/font.odin`. The result
@@ -501,14 +501,14 @@ COMMANDS :: [?]Command {
 	// pictures of the mark").
 	{name = "mark", about = "draw one file of the mark: still | frame | animation | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --format png|ico|svg|apng|json, --entry <variant>:<cell>:<pixels>, --dark-rule yes|no, --out <file>", run = run_mark},
 	// Converts each picture of `resources/hall_of_fame/CREDITS.md` to the
-	// pixels of a portrait of the program `hall_of_fame`, in
+	// pixels of a portrait of the process `hall_of_fame`, in
 	// `src/modules/demonstrations/hall_of_fame/portraits`. The result is in the
 	// repository, so a build decodes no PNG file.
 	{name = "portraits", about = "convert the pictures of " + HALL_OF_FAME_CREDITS_FILE + " to the portraits of " + HALL_OF_FAME_PORTRAIT_FOLDER, run = run_portraits},
 	// Calls an export of a service of the machine that `modustool run`
 	// started, from the host, and prints the typed result.
 	//
-	// - `key`: the public key of the program `remote`, as its window shows it.
+	// - `key`: the public key of the process `remote`, as its window shows it.
 	//   The QUIC client of the tool pins it: a machine with another key is
 	//   refused.
 	// - `call`: one call in the language of the console, in quotes.
@@ -518,9 +518,9 @@ COMMANDS :: [?]Command {
 	// principal. A table prints as rows, with its count.
 	//
 	// ```
-	// nix develop -c modustool call <key> "monitor.counts_named([(\"programs\"), (\"processors\")])"
+	// nix develop -c modustool call <key> "monitor.counts_named([(\"processes\"), (\"processors\")])"
 	// ```
-	{name = "call", about = "call <key> \"service.export(arguments)\": call an export of a service of the machine that `run` started, through the program remote over QUIC (key: the public key of remote, from its window), and print the typed result; the peer of `run` takes the call on a socket that only this user reaches", run = run_call},
+	{name = "call", about = "call <key> \"service.export(arguments)\": call an export of a service of the machine that `run` started, through the process remote over QUIC (key: the public key of remote, from its window), and print the typed result; the peer of `run` takes the call on a socket that only this user reaches", run = run_call},
 	// Builds one module again and again, with no machine, and counts the
 	// distinct results: one distinct module, LLVM IR file and object each is a
 	// build that gives the same bytes every time.
@@ -554,7 +554,7 @@ COMMANDS :: [?]Command {
 	// of the kernel operations against the properties, no call of an
 	// allocator in a source of the system, and an error record from each
 	// export that fails.
-	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a program or a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, and that no cast of a word to an enum skips its border", run = run_rule_checks},
+	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a process or a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, and that no cast of a word to an enum skips its border", run = run_rule_checks},
 	{name = "library-imports", about = "check that each import of each source file of src/ follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of core: starts with the build line of the host", run = run_library_imports},
 	// Measures how similar the code pieces of the Odin sources are, and
 	// proposes where to factor them. It reads `src/` and `tools/`, gives a
@@ -1047,16 +1047,16 @@ screenshots_copy :: proc() -> bool {
 
 TEST_OUTPUT_MEASURE :: BUILD_FOLDER + "/test_output_measure.txt"
 
-// run_measure runs the measures of the program `locks` on a machine where
-// only the desktop runs: the numbers have no load of the other programs of
-// the test. The program checks its counts; the tool does not check a speed.
+// run_measure runs the measures of the process `locks` on a machine where
+// only the desktop runs: the numbers have no load of the other processes of
+// the test. The process checks its counts; the tool does not check a speed.
 // The same machine then runs processor_frame, whose lines the tool reads
 // for their form only (processor_frame_measure.odin).
 // The machine is a measure run: its boot image holds the resource
-// `measure_run`, so each program measures its rates over a duration
-// (measure_runs.odin). `measure <program>`: one program of
-// `measure_programs`, alone, and its lines.
-// `measure scheduler N`: N machines that run only the program scheduler
+// `measure_run`, so each process measures its rates over a duration
+// (measure_runs.odin). `measure <process>`: one process of
+// `measure_processes`, alone, and its lines.
+// `measure scheduler N`: N machines that run only the process scheduler
 // with the desktop; the numbers are in build/test_output_scheduler_<n>.txt.
 run_measure :: proc(args: []string) -> int {
 	args := args
@@ -1081,10 +1081,10 @@ run_measure :: proc(args: []string) -> int {
 	if len(args) >= 1 && args[0] == "address_space" {
 		return machine_test(&part, scenario_measure_address_space[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) ? 0 : EXIT_FAILURE
 	}
-	// `measure <program>`: one program that measures itself, alone.
+	// `measure <process>`: one process that measures itself, alone.
 	if len(args) == 1 {
-		if program, found := measure_program_find(args[0]); found {
-			return measure_program_run(&part, program) ? 0 : EXIT_FAILURE
+		if process, found := measure_process_find(args[0]); found {
+			return measure_process_run(&part, process) ? 0 : EXIT_FAILURE
 		}
 	}
 	if shortage {
@@ -1282,7 +1282,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	// Each machine starts from a new disk of the measures, of the first
 	// size: the machine of AMD gives that disk a new size during its test
 	// (iommu_scenario.odin), and a machine that kept the file would see that
-	// size. The disk holds no data that a program keeps. A test machine has
+	// size. The disk holds no data that a process keeps. A test machine has
 	// its files beside its log: machines that run at the same time share no
 	// file that QEMU writes.
 	scratch_disk := test_output != "" ? machine_file(test_output, SCRATCH_DISK_SUFFIX) : SCRATCH_DISK
@@ -1343,7 +1343,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-cpu",
 		processor_models[processor],
 		// The main test keeps about 30 windows open, each with two
-		// pictures, and then starts a program that maps 164 MiB.
+		// pictures, and then starts a process that maps 164 MiB.
 		"-m",
 		fmt.tprintf("%d", MACHINE_MEMORY_MIB),
 		"-smp",
@@ -1406,7 +1406,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// a lock for writing on each image that it opens for writing: the
 		// second machine would not start. With snapshot=on QEMU opens the
 		// volume to read only, with a shared lock, and keeps each write of
-		// the machine in a temporary file of its own. No program of the
+		// the machine in a temporary file of its own. No process of the
 		// system writes its boot volume (the block service serves the data
 		// disk and the disk of the measures), and the firmware is not ours:
 		// a write that it makes stays private, and no machine reads one.
@@ -1573,7 +1573,7 @@ network_device_problem :: proc(device: string) -> string {
 	return ""
 }
 
-// run starts a program with the terminal of this tool and waits for its end.
+// run starts a process with the terminal of this tool and waits for its end.
 run :: proc(command: []string) -> bool {
 	host_process, err := os.process_start({command = command, stdin = os.stdin, stdout = os.stdout, stderr = os.stderr})
 	if err != nil {

@@ -1,42 +1,42 @@
-// A system tool: the memory of the machine and the programs that run, as a
+// A system tool: the memory of the machine and the processes that run, as a
 // picture that changes twice per second. It needs the grant to inspect the machine.
 //
-// It is also a service: programs(), counts() and count() give the same
+// It is also a service: processes(), counts() and count() give the same
 // facts as tables of records (exports.odin).
 //
 // **What it is for.** It shows what the machine does now, from the reports
-// of the kernel and not from a program that counts for itself: the memory
+// of the kernel and not from a process that counts for itself: the memory
 // in use and reserved, the kernel entries, the interrupts, the waits of the
-// locks of the kernel, and one row for each program with its pages and its
-// share of the processor in the last half second. A disk program shows its
+// locks of the kernel, and one row for each process with its pages and its
+// share of the processor in the last half second. A disk process shows its
 // nickname, with the hash prefix of its file faded under it, from the
-// [disk program page](term:disk-program-page) of the root service; the log
-// has one line for each one: "monitor: the disk program visitor, hash
+// [disk process page](term:disk-process-page) of the root service; the log
+// has one line for each one: "monitor: the disk process visitor, hash
 // prefix 5f0c…, the file 5f0c…, from the root service". The export
-// programs() gives the whole hash of the file in the field `hash`.
+// processes() gives the whole hash of the file in the field `hash`.
 //
 // **Start**: the bar of the desktop, or `start("monitor")` in the console.
 // The log has "monitor: ok" after the first picture. From the console,
-// `connect("monitor")`, then `monitor.programs()` or
+// `connect("monitor")`, then `monitor.processes()` or
 // `monitor.count("free pages")`.
 //
 // **Grants**, as the root service gives them:
 //
 // - **Inspect**: the machine with the right Inspect, for the system report
-//   and the report of each program. With no such grant, the window says
+//   and the report of each process. With no such grant, the window says
 //   "no grant to inspect the machine" and the log has the same line.
 // - **Serve**: its exports, for the console and for the host through the
 //   remote service.
 //
-// With the right Inspect the root service also maps the disk program page,
+// With the right Inspect the root service also maps the disk process page,
 // read-only: no handle and no right to act.
 //
-// **What it does not prove**: the share of a program is its processor time
-// over the elapsed time of one processor, so a program with several
+// **What it does not prove**: the share of a process is its processor time
+// over the elapsed time of one processor, so a process with several
 // threads on several processors shows 100% at most.
 package monitor
 
-import program_page "modus:contract/disk_program_page"
+import process_page "modus:contract/disk_process_page"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -47,43 +47,43 @@ import "modus:support/system"
 window_memory: interface.Window_Memory(512, 8192)
 
 WIDTH :: 520
-// The rows of about 20 programs, and one last line that counts the programs
+// The rows of about 20 processes, and one last line that counts the processes
 // whose rows do not fit.
 HEIGHT :: 560
 INTERVAL :: 500
 LINE :: 20
-// The column of the name holds a nickname of a disk program on one line; a
-// longer name of a program goes on more lines inside it.
-NAME_ROOM :: program_page.NICKNAME_LIMIT * graphics.CELL_WIDTH
+// The column of the name holds a nickname of a disk process on one line; a
+// longer name of a process goes on more lines inside it.
+NAME_ROOM :: process_page.NICKNAME_LIMIT * graphics.CELL_WIDTH
 PAGES_X :: 10 + NAME_ROOM + 8
 BAR_X :: PAGES_X + 68
 BAR_WIDTH :: 190
 // The share at the right of its bar: "100%" in the font of the cells.
 #assert(BAR_X + BAR_WIDTH + 8 + 4 * graphics.CELL_WIDTH <= WIDTH)
 
-PROGRAM_SLOTS :: 64
+PROCESS_SLOTS :: 64
 
-previous_run_time: [PROGRAM_SLOTS]u64
-// The program serial, plus one, of the disk program of each slot whose line
-// the log has: one line for each disk program, not one at each picture.
-logged_disk_program: [PROGRAM_SLOTS]u64
-disk_programs: ^program_page.Page
+previous_run_time: [PROCESS_SLOTS]u64
+// The process serial, plus one, of the disk process of each slot whose line
+// the log has: one line for each disk process, not one at each picture.
+logged_disk_process: [PROCESS_SLOTS]u64
+disk_processes: ^process_page.Page
 
-// disk_program_log writes one line for each disk program that the monitor
+// disk_process_log writes one line for each disk process that the monitor
 // shows: its nickname, its hash prefix and the whole hash of its file, as
-// the root service wrote them in the disk program page. A program that
-// stops and starts again in the same slot has another program serial, and
+// the root service wrote them in the disk process page. A process that
+// stops and starts again in the same slot has another process serial, and
 // another line.
-disk_program_log :: proc "contextless" (slot: u64, program_serial: u64, nickname: string, row: program_page.Row) {
+disk_process_log :: proc "contextless" (slot: u64, process_serial: u64, nickname: string, row: process_page.Row) {
 	// The serial plus one: a slot with no line holds 0, also for a serial 0.
-	if slot >= PROGRAM_SLOTS || logged_disk_program[slot] == program_serial + 1 {
+	if slot >= PROCESS_SLOTS || logged_disk_process[slot] == process_serial + 1 {
 		return
 	}
-	logged_disk_program[slot] = program_serial + 1
-	prefix: [program_page.HASH_PREFIX_DIGITS]u8
-	program_page.hash_prefix_write(&prefix, row.hash[0])
-	hash := transmute([program_page.HASH_SIZE]u8)row.hash
-	system.log("monitor: the disk program ", nickname, ", hash prefix ", string(prefix[:]), ", the file ", system.Hash{hash[:]}, ", from the root service")
+	logged_disk_process[slot] = process_serial + 1
+	prefix: [process_page.HASH_PREFIX_DIGITS]u8
+	process_page.hash_prefix_write(&prefix, row.hash[0])
+	hash := transmute([process_page.HASH_SIZE]u8)row.hash
+	system.log("monitor: the disk process ", nickname, ", hash prefix ", string(prefix[:]), ", the file ", system.Hash{hash[:]}, ", from the root service")
 }
 
 // The entry of the monitor: it opens its window and its service, then draws
@@ -93,9 +93,9 @@ disk_program_log :: proc "contextless" (slot: u64, program_serial: u64, nickname
 // With no window it stops with the code 1. Each turn of the loop:
 //
 // 1. asks the kernel for the system report, then the report of each
-//    program slot that is in use;
+//    process slot that is in use;
 // 2. draws the memory bar, the counters, the locks and one row for each
-//    program; the first picture writes "monitor: ok";
+//    process; the first picture writes "monitor: ok";
 // 3. waits until the next picture, and runs each call of a caller as it
 //    comes: a caller never waits for a picture.
 //
@@ -107,7 +107,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
-	disk_programs = program_page.page_of(ctx)
+	disk_processes = process_page.page_of(ctx)
 	service, _ = system.service_open(ctx)
 	previous_time: u64
 	logged := false
@@ -168,32 +168,32 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_text(table, x, y, op.LOCK_KIND_NAMES[most_kind], graphics.colors.text)
 			}
 			y += LINE + 6
-			interface.draw_text(table, 10, y, "program", graphics.colors.dim)
+			interface.draw_text(table, 10, y, "process", graphics.colors.dim)
 			interface.draw_text(table, PAGES_X, y, "pages", graphics.colors.dim)
 			interface.draw_text(table, BAR_X, y, "processor", graphics.colors.dim)
 			y += LINE
 
 			text_line := interface.line_height({})
-			hidden: u64 // The programs whose rows do not fit in the window.
-			for slot in 1 ..< min(report.program_slots, PROGRAM_SLOTS) {
-				program: op.Program_Report
-				system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&program)), size_of(program))
-				if program.state == .None {
+			hidden: u64 // The processes whose rows do not fit in the window.
+			for slot in 1 ..< min(report.process_slots, PROCESS_SLOTS) {
+				process: op.Process_Report
+				system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process))
+				if process.state == .None {
 					previous_run_time[slot] = 0
 					continue
 				}
-				share := min((program.run_time - min(previous_run_time[slot], program.run_time)) * 100 / elapsed, 100)
-				previous_run_time[slot] = program.run_time
-				// A disk program: the nickname and the hash that the root
+				share := min((process.run_time - min(previous_run_time[slot], process.run_time)) * 100 / elapsed, 100)
+				previous_run_time[slot] = process.run_time
+				// A disk process: the nickname and the hash that the root
 				// service checked, from its page, by the slot and the serial
-				// that the kernel reports. Another program that took the
-				// name of a disk program has no row.
-				name := system.name_of(program.name[:])
-				row, from_disk := program_page.row_find(disk_programs, slot, program.program_serial)
-				nickname: program_page.Nickname
+				// that the kernel reports. Another process that took the
+				// name of a disk process has no row.
+				name := system.name_of(process.name[:])
+				row, from_disk := process_page.row_find(disk_processes, slot, process.process_serial)
+				nickname: process_page.Nickname
 				if from_disk {
-					nickname = program_page.nickname_of(row.nickname)
-					name = program_page.nickname_text(&nickname)
+					nickname = process_page.nickname_of(row.nickname)
+					name = process_page.nickname_text(&nickname)
 				}
 				// One line of the grid of the rows for a row with one line of
 				// text; each more line of text adds its height. A row that
@@ -206,23 +206,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 				name_lines := interface.draw_text_wrapped(table, 10, y, NAME_ROOM, name, graphics.colors.text)
 				if from_disk {
-					prefix: [program_page.HASH_PREFIX_DIGITS]u8
-					program_page.hash_prefix_write(&prefix, row.hash[0])
+					prefix: [process_page.HASH_PREFIX_DIGITS]u8
+					process_page.hash_prefix_write(&prefix, row.hash[0])
 					interface.draw_text(table, 10, y + name_lines * text_line, string(prefix[:]), graphics.colors.dim)
-					disk_program_log(slot, program.program_serial, name, row)
+					disk_process_log(slot, process.process_serial, name, row)
 				}
-				interface.draw_unsigned(table, PAGES_X, y, program.present_pages, graphics.colors.text)
+				interface.draw_unsigned(table, PAGES_X, y, process.present_pages, graphics.colors.text)
 				interface.draw_rectangle(table, BAR_X, y + 2, BAR_WIDTH, 10, graphics.colors.track)
-				// The share of the processor that a program took: a measure
-				// of a program.
-				interface.draw_rectangle(table, BAR_X, y + 2, int(share) * BAR_WIDTH / 100, 10, graphics.colors.program)
+				// The share of the processor that a process took: a measure
+				// of a process.
+				interface.draw_rectangle(table, BAR_X, y + 2, int(share) * BAR_WIDTH / 100, 10, graphics.colors.process)
 				x = interface.draw_unsigned(table, BAR_X + BAR_WIDTH + 8, y, share, graphics.colors.text)
 				interface.draw_text(table, x, y, "%", graphics.colors.text)
 				y += row_height
 			}
 			if hidden > 0 {
 				x = interface.draw_unsigned(table, 10, y, hidden, graphics.colors.text)
-				interface.draw_text(table, x, y, " more programs: monitor.programs() gives them", graphics.colors.dim)
+				interface.draw_text(table, x, y, " more processes: monitor.processes() gives them", graphics.colors.dim)
 			}
 		}
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)

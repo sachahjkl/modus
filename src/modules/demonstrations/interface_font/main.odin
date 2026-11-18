@@ -35,7 +35,7 @@
 // boot image gives no valid cache of the interface font`.
 //
 // **Its grants**: none. The root service maps the glyph caches, the font
-// outlines and the demand cache into each program that it starts.
+// outlines and the demand cache into each process that it starts.
 package interface_font
 
 import "modus:contract/demand_cache"
@@ -130,7 +130,7 @@ greek_lines_make :: proc "contextless" () {
 // cache, from the fallback chain of the interface: each Greek letter of the
 // subset of B612, each box-drawing character from Paper Mono, and the
 // replacement glyph for the characters that no font of the chain has. The
-// program draws each glyph as its frame drew it, from its own private
+// process draws each glyph as its frame drew it, from its own private
 // glyph cache or from the demand cache.
 fallback_lines_tell :: proc "contextless" () {
 	FAULT :: "interface_font: the fallback chain of the interface is wrong: "
@@ -140,7 +140,7 @@ fallback_lines_tell :: proc "contextless" () {
 	fallback_told = true
 	face := fallback_glyphs.face_of_cache(&regular_cache)
 	if face != .Interface {
-		system.log_in("programs", .Warning, FAULT, "the glyph cache of B612 Regular has no fallback face; the font outlines are not given")
+		system.log_in("processes", .Warning, FAULT, "the glyph cache of B612 Regular has no fallback face; the font outlines are not given")
 		return
 	}
 	drawn, from_demand, missing: u64
@@ -162,13 +162,13 @@ fallback_lines_tell :: proc "contextless" () {
 	if drawn == subset && missing == 0 {
 		system.log("interface_font: each Greek letter of B612 is drawn: ", drawn, " letters, ", from_demand, " from the demand cache")
 	} else {
-		system.log_in("programs", .Warning, "interface_font: not each Greek letter of B612 is drawn: ", drawn, " of ", subset, ", ", missing, " with no glyph")
+		system.log_in("processes", .Warning, "interface_font: not each Greek letter of B612 is drawn: ", drawn, " of ", subset, ", ", missing, " with no glyph")
 	}
 	for character in BOX_CHARACTERS {
 		entry, _, source := fallback_glyphs.glyph(face, character, 1, 0)
 		font := fallback_glyphs.font_of(face, character)
 		if font != .Paper_Mono || source != .Private_Cache || entry.row_count == 0 {
-			system.log_in("programs", .Warning, FAULT, "the character ", u64(character), " comes from the font ", fallback_glyphs.outline_font_name(font), ", with ", u64(entry.row_count), " rows of ink")
+			system.log_in("processes", .Warning, FAULT, "the character ", u64(character), " comes from the font ", fallback_glyphs.outline_font_name(font), ", with ", u64(entry.row_count), " rows of ink")
 			return
 		}
 	}
@@ -176,13 +176,13 @@ fallback_lines_tell :: proc "contextless" () {
 	for character in MISSING_CHARACTERS {
 		_, _, source := fallback_glyphs.glyph(face, character, 1, 0)
 		if fallback_glyphs.has(face, character) || source != .Missing {
-			system.log_in("programs", .Warning, FAULT, "the character ", u64(character), " has a glyph, and no font of the chain has it")
+			system.log_in("processes", .Warning, FAULT, "the character ", u64(character), " has a glyph, and no font of the chain has it")
 			return
 		}
 		// Its advance is the advance of the replacement glyph: the shaper
 		// gives it no fallback glyph.
 		if _, found := fallback_glyphs.advance(face, character, 1); found {
-			system.log_in("programs", .Warning, FAULT, "the character ", u64(character), " has an advance of a font")
+			system.log_in("processes", .Warning, FAULT, "the character ", u64(character), " has an advance of a font")
 			return
 		}
 	}
@@ -260,7 +260,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	for number, index in NUMBERS {
 		y := content.y + DIGITS_TOP + index * 20
 		line_draw(canvas, column_right - line_width(number, &regular_spacing), y, number, &regular_spacing, &regular_cache, 1, graphics.colors.text)
-		line_draw(canvas, bold_right - line_width(number, &bold_spacing), y, number, &bold_spacing, &bold_cache, 1, graphics.colors.program)
+		line_draw(canvas, bold_right - line_width(number, &bold_spacing), y, number, &bold_spacing, &bold_cache, 1, graphics.colors.process)
 	}
 	// The characters past the glyph cache: each one from its font of the
 	// fallback chain, or the replacement glyph; the frame never waits.
@@ -294,7 +294,7 @@ measure :: proc "contextless" () {
 
 // entry opens the window, opens the glyph caches of the interface font,
 // measures one line, writes the lines on the log, then draws the window at
-// each event until the program is stopped. With no window, it stops with
+// each event until the process is stopped. With no window, it stops with
 // the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {

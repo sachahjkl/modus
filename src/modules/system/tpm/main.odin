@@ -7,7 +7,7 @@
 // Secure Boot into PCR 7. A key that this service sealed opens again only
 // on the same system, with the same state of Secure Boot: an older system,
 // a changed system, or a copy of the disk on another machine opens nothing.
-// The program `unlock` seals the machine key with it (docs/PRINCIPALS.md,
+// The process `unlock` seals the machine key with it (docs/PRINCIPALS.md,
 // "The machine key sealed by the TPM"), and the keys of a named principal
 // and the machine key under a machine passphrase, with an authorization
 // value from the passphrase whose wrong tries the TPM counts
@@ -61,7 +61,7 @@ import "modus:support/tpm2"
 // One thread serves the ring, one request at a time. Its working memory
 // holds the ring, the region of its client and the buffers of one TPM
 // command and its answer, each at most one page.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 16, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 16, processes = 1, threads = 1}
 
 // The registers of locality 0 of the CRB interface, from the start of its
 // page (TCG PC Client Platform TPM Profile, the CRB interface).
@@ -528,7 +528,7 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	return {status = .Ok, values = {0 = tpm2.SECRET_SIZE}}
 }
 
-// The generator of this program: it gives the lockout authorization value.
+// The generator of this process: it gives the lockout authorization value.
 generator: random.Generator
 
 // properties_read reads values of the properties of the TPM from the
@@ -603,11 +603,11 @@ lockout_authorization_check :: proc "contextless" (seeded: bool) {
 	defer erase(command_bytes[:])
 	error: errors.Error_Record
 	if !seeded {
-		system.log_in("devices", .Warning, "tpm: the lockout hierarchy keeps its empty authorization value: this program has no seed, and another system can reset the count of the TPM")
+		system.log_in("devices", .Warning, "tpm: the lockout hierarchy keeps its empty authorization value: this process has no seed, and another system can reset the count of the TPM")
 		return
 	}
 	if !random.fill_for_a_key(&generator, value[:], .Processor, &error) {
-		system.log_in("devices", .Warning, "tpm: the lockout hierarchy keeps its empty authorization value: the seed of this program is too weak for a key, and another system can reset the count of the TPM")
+		system.log_in("devices", .Warning, "tpm: the lockout hierarchy keeps its empty authorization value: the seed of this process is too weak for a key, and another system can reset the count of the TPM")
 		return
 	}
 	count := tpm2.lockout_authorization_change_command(command_bytes[:], value[:])

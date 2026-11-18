@@ -32,7 +32,7 @@ grant_put_refuses_a_slot_that_is_taken :: proc(t: ^testing.T) {
 	grant_put(&kept, op.CONTEXT_HANDLES, first)
 	testing.expect_value(t, kept.refusal, Context_Refusal{refused = true, place = -1})
 	shared := [?][2]int {
-		{GRANT_ROOT, GRANT_TERMINAL_PROGRAM},
+		{GRANT_ROOT, GRANT_TERMINAL_PROCESS},
 		{GRANT_LOG_RECORDS, GRANT_TERMINAL_TEXT},
 		{GRANT_TERMINAL_RING, GRANT_DEVICE_RING},
 		{GRANT_DEVICE_RING, GRANT_DATE_PAGE},
@@ -89,7 +89,7 @@ value_put_refuses_an_index_that_is_taken :: proc(t: ^testing.T) {
 		testing.expect_value(t, context_values.refusal, Context_Refusal{refused = true, place = index})
 	}
 	// The unlock mode and the rows of a terminal share the index 5: one
-	// program never holds both, and a start that wrote both loses none.
+	// process never holds both, and a start that wrote both loses none.
 	testing.expect_value(t, GRANT_VALUE_UNLOCK_MODE, GRANT_VALUE_TERMINAL_ROWS)
 	twice: Context_Values
 	testing.expect(t, value_put(&twice, GRANT_VALUE_UNLOCK_MODE, 1))

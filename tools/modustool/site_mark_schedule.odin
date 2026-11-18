@@ -4,7 +4,7 @@
 // mark_tile_map.odin.
 //
 // The rule of the choice and the still times are in src/library/support/mark
-// (play.odin): the program `heron` of the system plays by the same rule.
+// (play.odin): the process `heron` of the system plays by the same rule.
 // The rule is written a second time in mark_animation.js, which the page
 // runs. The two stay in agreement by one list: the tool runs the rule of
 // src/library/support/mark with a generator of a fixed seed and writes the steps into

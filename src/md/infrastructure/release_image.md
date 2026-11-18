@@ -16,7 +16,7 @@ The guide for a reader is [`docs/INSTALL.md`](../../../docs/INSTALL.md), "1. The
 - **The production keys come from the environment.** They never enter the repository. The release command refuses to run with no key of the publisher: it never falls back to the test keys, as `build` does.
 - **The release ships the bytes that the tests ran.** The modules and the kernel of the image are those of the build that the machine tests boot: the build with the checks of the kernel. No other kind of build exists for a release.
 - **A published image holds only what the system may redistribute.** The Posy pointer theme is under CC-BY-NC-4.0: nixpkgs marks it not redistributable, and a NonCommercial license is not the permissive license of the reuse rule of [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md). A release image holds the pointer theme of the system only, under the license of the repository. A build of a developer may keep the Posy theme.
-- **The tool uses the Odin standard library only**, with the source library of the system (`AGENTS.md`). The compression runs a program of the development shell, as the signature of the boot program runs `sbsign`.
+- **The tool uses the Odin standard library only**, with the source library of the system (`AGENTS.md`). The compression runs a process of the development shell, as the signature of the boot program runs `sbsign`.
 
 ## The chosen form
 
@@ -61,7 +61,7 @@ The machine test runs with one theme or two. The window `pointers` puts the butt
 
 The release signature covers the bytes of the release signature context `modus release checksums 1` and an end of line, then the bytes of `SHA256SUMS.txt`. The context binds the signature to this one use, as the label of the signed message of a system description does: a signature that the release signing key makes for another use is never a release signature.
 
-The forms of the key and of the signature are those of the package `signing` of gui_toolkit and of the `.sig` files of its package `update`: a private key is the 32-byte seed in base64url with no padding, a public key is its 32 bytes in base64url with no padding, a signature covers its context then the bytes. One form serves every program of the publisher. A host test checks the key form against a vector of that package.
+The forms of the key and of the signature are those of the package `signing` of gui_toolkit and of the `.sig` files of its package `update`: a private key is the 32-byte seed in base64url with no padding, a public key is its 32 bytes in base64url with no padding, a signature covers its context then the bytes. One form serves every process of the publisher. A host test checks the key form against a vector of that package.
 
 ### The release signing key, a third key
 
@@ -120,11 +120,11 @@ Each action is pinned by the commit of its version, with the version in a commen
 
 ## Refused forms
 
-- **Import the package `signing` of gui_toolkit, or use `core:crypto/ed25519`.** The tool links the copy of the Ed25519 code of the system (`src/library/support/cryptography/ed25519`) through the system description, the replacement rows and QUIC. Its package name is `ed25519`, as in the standard library, and the compiler refuses two packages of one name in one build ("A package name must be unique"). The tool signs with the copy, which is the code of `core:crypto/ed25519` with only its imports changed, and keeps the forms of gui_toolkit. The reason is the clash of two package names in one build, not a rule against gui_toolkit: gui_toolkit is the toolkit of rich programs, which are outside modules ([../features/desktop_to_browser.md](../features/desktop_to_browser.md), "The toolkit of rich programs"). The tool and the code of the system still import none of its packages.
+- **Import the package `signing` of gui_toolkit, or use `core:crypto/ed25519`.** The tool links the copy of the Ed25519 code of the system (`src/library/support/cryptography/ed25519`) through the system description, the replacement rows and QUIC. Its package name is `ed25519`, as in the standard library, and the compiler refuses two packages of one name in one build ("A package name must be unique"). The tool signs with the copy, which is the code of `core:crypto/ed25519` with only its imports changed, and keeps the forms of gui_toolkit. The reason is the clash of two package names in one build, not a rule against gui_toolkit: gui_toolkit is the toolkit of rich processes, which are outside modules ([../features/desktop_to_browser.md](../features/desktop_to_browser.md), "The toolkit of rich processes"). The tool and the code of the system still import none of its packages.
 - **Publish the boot volume with no partition table.** Some firmware does not start a disk with no partition table.
 - **Publish the main volume as the tests build it.** Its boot program is unsigned, so Secure Boot refuses it, and the seal of the machine key needs Secure Boot.
-- **Sign the image itself.** One signature over a list covers any count of files, and `sha256sum -c` checks the list with a program that each system has.
-- **GPG, minisign or signify.** Each needs a program that a principal installs, and a key form unlike the other programs of the publisher. OpenSSL is on most systems, and the tool verifies with no other program.
+- **Sign the image itself.** One signature over a list covers any count of files, and `sha256sum -c` checks the list with a process that each system has.
+- **GPG, minisign or signify.** Each needs a process that a principal installs, and a key form unlike the other processes of the publisher. OpenSSL is on most systems, and the tool verifies with no other process.
 - **The release signing key as the signing key.** A key that decides which system a machine starts would sign files on a host for downloads, and its replacement would need a new boot program on each machine.
 - **The key values in the workflow file, or a script that writes them.** The repository has no script, and a workflow step calls the tool.
 - **A release from the measure build.** Its kernel has no checks and is not the kernel that the tests ran.

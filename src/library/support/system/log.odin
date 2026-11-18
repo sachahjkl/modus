@@ -3,7 +3,7 @@ package system
 import op "modus:contract/operation"
 import "base:intrinsics"
 
-// A reader of the records of the log (operation.Log_Record). The program
+// A reader of the records of the log (operation.Log_Record). The process
 // needs the memory object of the log with the right Read.
 //
 // The reader reads the records in order with `log_next`, and waits for the

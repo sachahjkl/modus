@@ -9,7 +9,7 @@ package console
 // The command runs in the second thread, with its own tables: the first
 // thread keeps its list. Each measure is the least time of
 // COMPLETION_MEASURE_BATCHES batches of COMPLETION_MEASURE_KEYS keys: a
-// batch that an interrupt or another program cut is longer, and the least
+// batch that an interrupt or another process cut is longer, and the least
 // one is the time of the work.
 
 import "modus:support/line_editor"

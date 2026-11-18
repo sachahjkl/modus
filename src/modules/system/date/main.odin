@@ -1,18 +1,18 @@
-// The date of the machine: this service reads the real-time clock of the machine (the CMOS clock, ports 0x70 and 0x71) at its start and each 10 seconds, and writes in the date page the date of the time 0 of the system. Each program reads the date from the page and the time page, with no kernel entry and no call (src/library/contract/date).
+// The date of the machine: this service reads the real-time clock of the machine (the CMOS clock, ports 0x70 and 0x71) at its start and each 10 seconds, and writes in the date page the date of the time 0 of the system. Each process reads the date from the page and the time page, with no kernel entry and no call (src/library/contract/date).
 //
-// A driver of a clock is a program, not a part of the kernel: the root service gives this program the two ports and the page with the right Write, and nothing else.
+// A driver of a clock is a process, not a part of the kernel: the root service gives this process the two ports and the page with the right Write, and nothing else.
 //
 // The clock gives whole seconds. The service waits for the clock to change its second, so the date of the time 0 is exact to about one millisecond. The clock of the machine keeps UTC (QEMU: -rtc base=utc). Leap seconds are not counted. The year has two digits: the dates are from 2020 to 2099 (src/library/support/calendar, clock_seconds).
 //
 // **What it is for.** It gives the system a [date](term:date) with no
 // kernel entry for a read: the service writes once, in the
 // [date page](term:date-page), the date of the time 0 of the system; a
-// program adds the time of the [time page](term:time-page) to it. The bar
+// process adds the time of the [time page](term:time-page) to it. The bar
 // of the compositor shows the date and the time this way.
 //
 // **The time zone** (src/md/features/time_zone.md). The principal chooses
-// it with the setting `time_zone` of the program `settings`. This program
-// waits on the settings page, which it reads as each program does, and
+// it with the setting `time_zone` of the process `settings`. This process
+// waits on the settings page, which it reads as each process does, and
 // copies the zone into the date page: the page then holds the whole local
 // time, and the root service, which waits on the date page, moves the next
 // edge of the rule of the day at once.
@@ -30,7 +30,7 @@
 //
 // **Its grants**: **Clock**, the date page with the right Write and the two
 // ports of the clock (the one writer of the date), and **Serve**, its
-// export `now`. The settings page, read-only, as each program that is not
+// export `now`. The settings page, read-only, as each process that is not
 // a terminal.
 //
 // ```
@@ -66,8 +66,8 @@ STABLE_READS_LIMIT :: 8
 
 // register_read reads one register of the clock. Bit 7 of the index is 0,
 // so the non-maskable interrupt stays on. The grant of the two ports lets
-// this program write any index and read any byte of the memory of the
-// clock: the processor gives a program a port, not a value of a port.
+// this process write any index and read any byte of the memory of the
+// clock: the processor gives a process a port, not a value of a port.
 register_read :: proc "contextless" (register: u8) -> u8 {
 	system.port_write_8(PORT_INDEX, register)
 	return system.port_read_8(PORT_DATA)
@@ -151,7 +151,7 @@ zone_follow :: proc "contextless" () {
 	system.word_wake(&page.change_count, system.WAKE_ALL)
 }
 
-// now gives the date and the time of day in UTC, from the date page and the time page: the same value that each program reads with no call. All zero: the machine has no date.
+// now gives the date and the time of day in UTC, from the date page and the time page: the same value that each process reads with no call. All zero: the machine has no date.
 //
 // **What it is for.** A caller with no date page (the console, the host
 // through the remote service) reads the date as one record, with its

@@ -12,7 +12,7 @@ import "modus:support/system"
 
 // The fuzz target of the root ring (src/md/infrastructure/fuzzing.md, "The
 // targets, in order of value"): the decision of the dispatch of the root
-// service, which a hostile program feeds with each record of its root
+// service, which a hostile process feeds with each record of its root
 // ring, and the pure borders and refusal records behind it. Each case of
 // an input is one record with the role of its sender: the target gives it
 // to root_ring.dispatch_decide, to the border of each word of the commands
@@ -87,7 +87,7 @@ fuzz_root_ring_role_of :: proc(word: u64) -> (role: bit_set[start_grant.Grant]) 
 // fuzz_root_ring_sender_model says who sends a command, written by hand
 // from the guides and not from the table of the contract, so a wrong row
 // of ROOT_COMMAND_SENDERS breaks the oracle:
-// - a program receives a root ring only with Root_Ring, Connect,
+// - a process receives a root ring only with Root_Ring, Connect,
 //   Principals or Debugger (src/md/api/root_ring.md, "The chosen form");
 // - `unlock`, with Principals, alone sends Principal_Record,
 //   Principal_Unlock, Machine_Key and Principal_Change_End

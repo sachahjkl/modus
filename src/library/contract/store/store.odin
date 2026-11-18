@@ -1,6 +1,6 @@
 // The format of the data disk: what the storage service writes, and what a
 // tool reads to check or to damage a disk. A disk lives longer than the
-// program that wrote it, so its format is a contract. The model (objects,
+// process that wrote it, so its format is a contract. The model (objects,
 // trees, stores) is in docs/STORAGE.md.
 //
 // The disk is a row of blocks of 4096 bytes. Blocks 0 and 1 are the two
@@ -63,7 +63,7 @@
 //
 // Who uses it: the storage service (`src/modules/system/storage`, with
 // `src/library/private/storage/storage_tree` and `src/library/private/storage/storage_object`), and the tools that
-// check or damage a disk in the tests. A program never reads the disk: it
+// check or damage a disk in the tests. A process never reads the disk: it
 // calls the storage service. The parts:
 //
 // - `Root`, `Store_Entry`: the root block, the one place that changes.
@@ -201,7 +201,7 @@ Entry_Name :: [ENTRY_NAME_CAPACITY]u8
 // What an entry names.
 //
 // The record of a leaf, after its name. The storage service writes it at a
-// commit, and gives its fields to a program as the state of an object or of
+// commit, and gives its fields to a process as the state of an object or of
 // a tree. 104 bytes. See [entry](term:entry).
 Entry :: struct {
 	kind:       u64, // An object or a tree: the word of an Entry_Kind, read through entry_kind_of_word.
@@ -384,7 +384,7 @@ name_of :: proc "contextless" (key: ^Entry_Name) -> string {
 
 // removal_name gives the name of an entry of the removal queue: the number
 // of the remove, big-endian, so that the queue is in the order of the
-// removes. It is no name of an entry that a program makes: it has zero
+// removes. It is no name of an entry that a process makes: it has zero
 // bytes.
 removal_name :: proc "contextless" (number: u64) -> (key: Entry_Name) {
 	for index in 0 ..< 8 {

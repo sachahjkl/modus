@@ -4,7 +4,7 @@ import "core:slice"
 import "core:testing"
 import "modus:contract/blake3"
 import format "modus:contract/store"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import "modus:support/principals"
 import "modus:private/storage/storage_mount"
 
@@ -47,7 +47,7 @@ test_file_bytes :: proc(count: int, seed: u8) -> []u8 {
 @(private = "file")
 stored_module :: proc(contents: ^Disk_Contents, name: string) -> ^Stored_Object {
 	for &item in contents.objects {
-		if item.store == disk_program.STORE_NAME && item.name == name {
+		if item.store == disk_process.STORE_NAME && item.name == name {
 			return &item
 		}
 	}
@@ -90,7 +90,7 @@ the_storage_open_takes_the_disk_of_the_tool :: proc(t: ^testing.T) {
 	testing.expect_value(t, hashes_wrong(&contents), 0)
 	// The limit of the store is the limit that the root service grants for
 	// a read: a read then writes no root.
-	testing.expect_value(t, state.root.stores[0].limit, u64(disk_program.STORE_BLOCKS_LIMIT))
+	testing.expect_value(t, state.root.stores[0].limit, u64(disk_process.STORE_BLOCKS_LIMIT))
 	// The blocks: 1, 1, 2 with one node, 70 with two nodes of level 1 and
 	// one of level 2; one leaf and the store block.
 	testing.expect_value(t, state.root.stores[0].used, u64(1 + 1 + 3 + 73 + 2))
@@ -111,7 +111,7 @@ the_storage_open_takes_the_disk_of_the_tool :: proc(t: ^testing.T) {
 @(test)
 the_store_of_the_module_files_of_a_named_principal :: proc(t: ^testing.T) {
 	buffer: [32]u8
-	testing.expect(t, principals.store_name_write(&buffer, disk_program.STORE_NAME, 1, false))
+	testing.expect(t, principals.store_name_write(&buffer, disk_process.STORE_NAME, 1, false))
 	testing.expect_value(t, string(buffer[:len(PRINCIPAL_MODULE_FILES_STORE)]), PRINCIPAL_MODULE_FILES_STORE)
 	testing.expect_value(t, buffer[len(PRINCIPAL_MODULE_FILES_STORE)], u8(0))
 	files := [?]Module_File{{"one", test_file_bytes(100, 1)}, {"two", test_file_bytes(200, 2)}}
@@ -213,13 +213,13 @@ a_debug_object_beside_its_module_file :: proc(t: ^testing.T) {
 	// only the refusals that need no build are checked, and the name.
 	refused, accepted := module_debug_object_file("small", module_file, test_file_bytes(200, 8))
 	testing.expect(t, !accepted && refused.name == "")
-	digits: [disk_program.HASH_DIGITS]u8
-	disk_program.debug_object_name_write(&digits, blake3.hash(module_file))
+	digits: [disk_process.HASH_DIGITS]u8
+	disk_process.debug_object_name_write(&digits, blake3.hash(module_file))
 	// An object larger than a module file may be, and under the limit of a
 	// debug object.
-	large := test_file_bytes(disk_program.FILE_BYTES_LIMIT + format.BLOCK_SIZE, 9)
+	large := test_file_bytes(disk_process.FILE_BYTES_LIMIT + format.BLOCK_SIZE, 9)
 	files := [?]Module_File{{"small", module_file}, {string(digits[:]), large}}
-	image, encoded := module_disk_encode(files[:], 2 * disk_program.FILE_BYTES_LIMIT)
+	image, encoded := module_disk_encode(files[:], 2 * disk_process.FILE_BYTES_LIMIT)
 	if !testing.expect(t, encoded) {
 		return
 	}
@@ -237,13 +237,13 @@ a_debug_object_beside_its_module_file :: proc(t: ^testing.T) {
 		testing.expect_value(t, stored.size, u64(len(large)))
 		testing.expect(t, !stored.damaged)
 	}
-	over := [?]Module_File{{string(digits[:]), test_file_bytes(disk_program.DEBUG_OBJECT_BYTES_LIMIT + 1, 3)}}
-	_, over_encoded := module_disk_encode(over[:], 4 * disk_program.DEBUG_OBJECT_BYTES_LIMIT)
+	over := [?]Module_File{{string(digits[:]), test_file_bytes(disk_process.DEBUG_OBJECT_BYTES_LIMIT + 1, 3)}}
+	_, over_encoded := module_disk_encode(over[:], 4 * disk_process.DEBUG_OBJECT_BYTES_LIMIT)
 	testing.expect(t, !over_encoded)
 }
 
 // The writer refuses what the root service would refuse: a name that is no
-// name of a disk program, two files of one name, a file with no byte, and
+// name of a disk process, two files of one name, a file with no byte, and
 // more files than one leaf holds.
 @(test)
 the_writer_refuses_a_wrong_store :: proc(t: ^testing.T) {

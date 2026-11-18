@@ -10,28 +10,28 @@ import "modus:support/system"
 
 // The exports of the debugger service: each one gives a table of records.
 // A caller that does not act for the principal gets a refusal; each export
-// but `attach` needs a program that the same caller attached to.
+// but `attach` needs a process that the same caller attached to.
 
-// The program that the service debugs now: attach().
+// The process that the service debugs now: attach().
 Attached :: struct {
-	program:   [32]u8,
-	slot:      i64, // The place of the program in the kernel.
+	process:   [32]u8,
+	slot:      i64, // The place of the process in the kernel.
 	threads:   i64, // Its threads.
 	modules:   i64, // Its module records.
 	described: i64, // The modules that have a debug object: the others show addresses only.
 }
 
-// What a detach gave back to the program: detach().
+// What a detach gave back to the process: detach().
 Detached :: struct {
-	program:     [32]u8,
+	process:     [32]u8,
 	breakpoints: i64, // The breakpoints that the debugger had.
 	threads:     i64, // The threads that the debugger held.
 }
 
-// One thread of the program: threads(), hold(), release(), continue_all(),
+// One thread of the process: threads(), hold(), release(), continue_all(),
 // step(), step_line().
 Thread_Row :: struct {
-	thread:      i64, // The number of the thread in its program.
+	thread:      i64, // The number of the thread in its process.
 	state:       [12]u8, // ready or waiting: it runs. held: the debugger stopped it. stopped: a breakpoint, a watch or a step stopped it.
 	instruction: [20]u8, // The address of its next instruction, when its registers can be read.
 	module:      [32]u8, // The module of the instruction.
@@ -75,7 +75,7 @@ Value_Row :: struct {
 	name:    [48]u8, // The field, "[n]" for an element, or the path for a value with no part.
 	type:    [48]u8,
 	value:   [96]u8,
-	address: [20]u8, // Where the part is in the memory of the program; empty for a value in a register.
+	address: [20]u8, // Where the part is in the memory of the process; empty for a value in a register.
 }
 
 // The source line of a frame: source().
@@ -96,7 +96,7 @@ Break_Row :: struct {
 	place:   [160]u8, // The text that named it, whole.
 }
 
-// Sixteen bytes of the memory of the program: memory().
+// Sixteen bytes of the memory of the process: memory().
 Memory_Row :: struct {
 	address: [20]u8,
 	bytes:   [48]u8, // In hexadecimal, a space between two bytes.
@@ -116,7 +116,7 @@ Event_Row :: struct {
 }
 
 @(rodata)
-thread_states := [op.Program_State]string {
+thread_states := [op.Process_State]string {
 	.None    = "",
 	.Created = "created",
 	.Ready   = "ready",
@@ -136,9 +136,9 @@ Flag_Name :: struct {
 @(rodata)
 flag_names := [9]Flag_Name{{0, "carry"}, {2, "parity"}, {4, "adjust"}, {6, "zero"}, {7, "sign"}, {8, "trap"}, {9, "interrupt"}, {10, "direction"}, {11, "overflow"}}
 
-PROGRAM_NAME_LIMIT :: 31 // The bytes of the name of a program in a command of the root ring.
+PROCESS_NAME_LIMIT :: 31 // The bytes of the name of a process in a command of the root ring.
 
-// The bytes of one `memory`: memory of this program, not of its stack.
+// The bytes of one `memory`: memory of this process, not of its stack.
 memory_bytes: [MEMORY_COUNT_LIMIT]u8
 
 // thread_row_fill writes the row of one thread: its state, and its
@@ -146,7 +146,7 @@ memory_bytes: [MEMORY_COUNT_LIMIT]u8
 thread_row_fill :: proc "contextless" (row: ^Thread_Row, item: ^op.Thread_Report) {
 	row^ = {thread = i64(item.number)}
 	number := u64(item.number)
-	state := item.state <= max(op.Program_State) ? thread_states[item.state] : ""
+	state := item.state <= max(op.Process_State) ? thread_states[item.state] : ""
 	if number < THREAD_CAPACITY {
 		if session.threads[number].waits {
 			state = "stopped"
@@ -158,7 +158,7 @@ thread_row_fill :: proc "contextless" (row: ^Thread_Row, item: ^op.Thread_Report
 	if !thread_stopped(number) {
 		return
 	}
-	registers, status := system.thread_registers_read(session.program, number)
+	registers, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
 		return
 	}
@@ -166,7 +166,7 @@ thread_row_fill :: proc "contextless" (row: ^Thread_Row, item: ^op.Thread_Report
 	place_columns(place_of_address(registers.rip), row.module[:], row.procedure[:], &row.offset, row.file[:], &row.line)
 }
 
-// thread_rows writes the rows of the threads of the program: each one, or
+// thread_rows writes the rows of the threads of the process: each one, or
 // the one with the number `only`. It gives the count of rows.
 thread_rows :: proc "contextless" (result: ^[]Thread_Row, only: i64 = -1, pending: i64 = 0) -> i64 {
 	total := 0
@@ -183,37 +183,37 @@ thread_rows :: proc "contextless" (result: ^[]Thread_Row, only: i64 = -1, pendin
 	return i64(total)
 }
 
-// attach makes the service the debugger of the program with this name, for the caller, and gives one row: the program, its slot, its threads, its module records and how many of them have a debug object.
+// attach makes the service the debugger of the process with this name, for the caller, and gives one row: the process, its slot, its threads, its module records and how many of them have a debug object.
 //
-// The service asks the root service for the handle of the program with the
+// The service asks the root service for the handle of the process with the
 // right Debug, on behalf of the caller. The root service gives it when the
-// caller acts for the principal whose session runs the program, and when
-// each grant of the program is a grant that the caller holds itself; a
+// caller acts for the principal whose session runs the process, and when
+// each grant of the process is a grant that the caller holds itself; a
 // service is refused for each caller (docs/TOOLS.md, "Who can debug which
-// program").
+// process").
 //
-// For a disk program, the service also reads the debug object of its
+// For a disk process, the service also reads the debug object of its
 // module from the store `module_files`, where it is beside the module file,
 // through a connection that the root service gives with the debug access
-// (docs/MODULE_CONTRACT.md, "The debug object of a disk program"). A read
+// (docs/MODULE_CONTRACT.md, "The debug object of a disk process"). A read
 // that fails is one line of the log, and `described` does not count the
 // module.
 //
-// - **program**: the name of a program that runs, at most 31 bytes.
+// - **process**: the name of a process that runs, at most 31 bytes.
 //
 // **Errors**:
 //
 // - `No_Grant`, `Acts_For_Principal` (-1): the caller does not act for the
 //   principal.
-// - `Full`, `Debugged_Programs` (-3): the service debugs a program
+// - `Full`, `Debugged_Processes` (-3): the service debugs a process
 //   already; `detach()` first.
 // - (-4) the record of the root service: `No_Grant`, `Debug_Access` when a
-//   start grant of the program refuses, with 1 + its number in `found`
-//   (the sentence names it: "the grant Store of the program refuses it"); `Absent`,
-//   `Programs` when no program has the name; `No_Answer` when the root
+//   start grant of the process refuses, with 1 + its number in `found`
+//   (the sentence names it: "the grant Store of the process refuses it"); `Absent`,
+//   `Processes` when no process has the name; `No_Answer` when the root
 //   service did not answer; `Refused` with the status of the kernel.
-// - `Absent`, `Programs` (-13): the program stopped during the attach.
-// - `Bad_Value`, `Programs` (-14): two programs that run have this name
+// - `Absent`, `Processes` (-13): the process stopped during the attach.
+// - `Bad_Value`, `Processes` (-14): two processes that run have this name
 //   and this module.
 // - `Too_Long`, `Bytes` (-15): the name has no byte or more than 31.
 //
@@ -222,24 +222,24 @@ thread_rows :: proc "contextless" (result: ^[]Thread_Row, only: i64 = -1, pendin
 // debugger.attach("clock")
 // ```
 @(export, link_name = "attach")
-attach :: proc "c" (program: ^string, result: ^[]Attached, error: ^errors.Error_Record) -> i64 {
+attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_Record) -> i64 {
 	caller := system.service_caller()
 	if caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	buffer: [PROGRAM_NAME_LIMIT]u8
-	name, fits := text_copy(buffer[:], program)
+	buffer: [PROCESS_NAME_LIMIT]u8
+	name, fits := text_copy(buffer[:], process)
 	if !fits || name == "" {
-		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(program^)), PROGRAM_NAME_LIMIT)
+		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(process^)), PROCESS_NAME_LIMIT)
 	}
 	// A session whose debug access ended holds nothing.
 	if session.attached {
-		if kind, _, _ := system.handle_state(session.program); kind != .Program {
+		if kind, _, _ := system.handle_state(session.process); kind != .Process {
 			session_end("the debug access was revoked")
 		}
 	}
 	if session.attached {
-		return errors.fail(error, ERROR_BUSY, .Full, .Debugged_Programs, 0, 0, 1)
+		return errors.fail(error, ERROR_BUSY, .Full, .Debugged_Processes, 0, 0, 1)
 	}
 	completion, answered := root_debug(name, caller.ring_memory)
 	if !answered {
@@ -253,25 +253,25 @@ attach :: proc "c" (program: ^string, result: ^[]Attached, error: ^errors.Error_
 		}
 		return ERROR_REFUSED
 	}
-	// The handle is a number from another program: it must be a program
+	// The handle is a number from another process: it must be a process
 	// handle with Debug that came through the ring to the root service.
 	handle := system.Handle(completion.values[0])
-	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Program || .Debug not_in rights || !through {
+	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Process || .Debug not_in rights || !through {
 		root_debug_end(name, caller.ring_memory)
 		return refused(error, .Bad_Handle)
 	}
 	hash := transmute([32]u8)[4]u64{completion.values[1], completion.values[2], completion.values[3], completion.values[4]}
-	slot, program_serial, matches := slot_find(name, hash)
+	slot, process_serial, matches := slot_find(name, hash)
 	if matches != 1 {
 		system.close(handle)
 		root_debug_end(name, caller.ring_memory)
 		if matches == 0 {
-			return errors.fail(error, ERROR_ENDED, .Absent, .Programs, 1)
+			return errors.fail(error, ERROR_ENDED, .Absent, .Processes, 1)
 		}
-		system.log("debugger: ", u64(matches), " programs have the name ", system.Module_Name{name}, " and the same module: the service cannot tell which one its handle names")
-		return errors.fail(error, ERROR_AMBIGUOUS, .Bad_Value, .Programs, 1, i64(matches), 1)
+		system.log("debugger: ", u64(matches), " processes have the name ", system.Module_Name{name}, " and the same module: the service cannot tell which one its handle names")
+		return errors.fail(error, ERROR_AMBIGUOUS, .Bad_Value, .Processes, 1, i64(matches), 1)
 	}
-	// The records of an earlier debugging are of no thread of this program.
+	// The records of an earlier debugging are of no thread of this process.
 	for {
 		if _, more := record_next_ready(); !more {
 			break
@@ -284,20 +284,20 @@ attach :: proc "c" (program: ^string, result: ^[]Attached, error: ^errors.Error_
 	}
 	session = {
 		attached       = true,
-		program        = handle,
+		process        = handle,
 		caller_ring    = caller.ring_memory,
 		slot           = slot,
-		program_serial = program_serial,
+		process_serial = process_serial,
 	}
 	session.name_count = copy(session.name[:], name)
 	reports_read()
-	// The module of a disk program has its debug object in the store
+	// The module of a disk process has its debug object in the store
 	// `module_files`, beside its module file, and not in the debug image.
 	if disk_hash, from_disk := disk_module_of(); from_disk {
 		disk_debug_object_read(name, caller.ring_memory, disk_hash, completion.values[5])
 	}
 	described := 0
-	module_count := int(min(report_modules.count, op.PROGRAM_MODULE_CAPACITY))
+	module_count := int(min(report_modules.count, op.PROCESS_MODULE_CAPACITY))
 	for &record in report_modules.modules[:module_count] {
 		if debug_object_for(record.hash) != nil {
 			described += 1
@@ -308,21 +308,21 @@ attach :: proc "c" (program: ^string, result: ^[]Attached, error: ^errors.Error_
 	if len(result^) > 0 {
 		row := &result[0]
 		row^ = {slot = i64(slot), threads = i64(thread_count), modules = i64(module_count), described = i64(described)}
-		system.format(row.program[:], name)
+		system.format(row.process[:], name)
 	}
 	return 1
 }
 
-// detach ends the debugging of the program, and gives one row: the program, the breakpoints that the debugger had and the threads that it held.
+// detach ends the debugging of the process, and gives one row: the process, the breakpoints that the debugger had and the threads that it held.
 //
 // The kernel removes the breakpoints of each thread, clears the trap flag
 // that the debugger wrote, takes back the stops that the debugger made, and
-// resumes each thread that waited for its answer: the program runs again.
+// resumes each thread that waited for its answer: the process runs again.
 // The root service forgets the debug access.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2), the caller attached to no program; `Absent`,
-// `Programs` (-13), the program stopped: the debugging ended with it.
+// `Debugged_Processes` (-2), the caller attached to no process; `Absent`,
+// `Processes` (-13), the process stopped: the debugging ended with it.
 //
 // ```
 // debugger.detach()
@@ -343,11 +343,11 @@ detach :: proc "c" (result: ^[]Detached, error: ^errors.Error_Record) -> i64 {
 			held += 1
 		}
 	}
-	status := system.debug_detach(session.program)
+	status := system.debug_detach(session.process)
 	if len(result^) > 0 {
 		row := &result[0]
 		row^ = {breakpoints = i64(breakpoints), threads = i64(held)}
-		system.format(row.program[:], session_name())
+		system.format(row.process[:], session_name())
 	}
 	session_end("the caller detached")
 	if status != .Ok {
@@ -356,7 +356,7 @@ detach :: proc "c" (result: ^[]Detached, error: ^errors.Error_Record) -> i64 {
 	return 1
 }
 
-// threads gives one row for each thread of the program: its number, its state, and for a thread that the debugger holds or that stopped, its instruction with its module, its procedure, its file and its line.
+// threads gives one row for each thread of the process: its number, its state, and for a thread that the debugger holds or that stopped, its instruction with its module, its procedure, its file and its line.
 //
 // The state is `ready` or `waiting` for a thread that runs, `held` for a
 // thread that `hold` stopped, and `stopped` for a thread that a
@@ -364,7 +364,7 @@ detach :: proc "c" (result: ^[]Detached, error: ^errors.Error_Record) -> i64 {
 // runs cannot be read: its row has no instruction.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Absent`, `Programs` (-13).
+// `Debugged_Processes` (-2); `Absent`, `Processes` (-13).
 //
 // ```
 // debugger.threads()
@@ -377,14 +377,14 @@ threads :: proc "c" (result: ^[]Thread_Row, error: ^errors.Error_Record) -> i64 
 	return thread_rows(result)
 }
 
-// hold stops one thread of the program, and gives its row: the thread runs no instruction until `release` or `continue_all`.
+// hold stops one thread of the process, and gives its row: the thread runs no instruction until `release` or `continue_all`.
 //
 // - **thread**: the number of a thread, as `threads()` gives it.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4), with the status of the
-// kernel; `Absent`, `Threads` (-5), the program has no thread with this
-// number; `Absent`, `Programs` (-13).
+// `Debugged_Processes` (-2); `Refused` (-4), with the status of the
+// kernel; `Absent`, `Threads` (-5), the process has no thread with this
+// number; `Absent`, `Processes` (-13).
 //
 // ```
 // debugger.hold(0)
@@ -399,7 +399,7 @@ hold :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Recor
 		return failure
 	}
 	if !session.threads[number].held {
-		if _, status := system.thread_control_stop(session.program, number); status != .Ok {
+		if _, status := system.thread_control_stop(session.process, number); status != .Ok {
 			return refused(error, status)
 		}
 		session.threads[number].held = true
@@ -415,9 +415,9 @@ hold :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Recor
 // - **thread**: the number of a thread that is held or stopped.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4); `Absent`, `Threads` (-5), no
+// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` (-5), no
 // thread has this number; `Absent`, `Held_Threads` (-5), the thread runs;
-// `Absent`, `Programs` (-13).
+// `Absent`, `Processes` (-13).
 //
 // ```
 // debugger.release(0)
@@ -437,14 +437,14 @@ release :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Re
 	return thread_rows(result, thread)
 }
 
-// continue_all lets each thread of the program run again, and gives one row for each thread.
+// continue_all lets each thread of the process run again, and gives one row for each thread.
 //
 // It first writes the breakpoints of the debugger in each thread: a
-// thread that the program made after the last breakpoint was set has none
+// thread that the process made after the last breakpoint was set has none
 // until then.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4); `Absent`, `Programs` (-13).
+// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Processes` (-13).
 //
 // ```
 // debugger.continue_all()
@@ -475,8 +475,8 @@ continue_all :: proc "c" (result: ^[]Thread_Row, error: ^errors.Error_Record) ->
 // - **thread**: the number of a thread that is held or stopped.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4); `Absent`, `Threads` or
-// `Held_Threads` (-5); `Absent`, `Programs` (-13).
+// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
+// `Held_Threads` (-5); `Absent`, `Processes` (-13).
 //
 // ```
 // debugger.registers(0)
@@ -490,7 +490,7 @@ registers :: proc "c" (thread: i64, result: ^[]Register_Row, error: ^errors.Erro
 	if failure != 0 {
 		return failure
 	}
-	image_of_thread, status := system.thread_registers_read(session.program, number)
+	image_of_thread, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
 		return refused(error, status)
 	}
@@ -534,7 +534,7 @@ registers :: proc "c" (thread: i64, result: ^[]Register_Row, error: ^errors.Erro
 // caller: its line is the line of the call. The walk follows the frame
 // pointers: the word at the frame pointer is the frame pointer of the
 // caller, and the next word is the return address. It ends at a frame
-// pointer that is 0, that is not a multiple of 8, that the program does
+// pointer that is 0, that is not a multiple of 8, that the process does
 // not map, or that is not above the one before it, at a return address 0,
 // and after 32 frames. At the first instruction of a procedure, the return
 // address is read at the stack pointer: the procedure has no frame yet.
@@ -542,8 +542,8 @@ registers :: proc "c" (thread: i64, result: ^[]Register_Row, error: ^errors.Erro
 // - **thread**: the number of a thread that is held or stopped.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4); `Absent`, `Threads` or
-// `Held_Threads` (-5); `Absent`, `Programs` (-13).
+// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
+// `Held_Threads` (-5); `Absent`, `Processes` (-13).
 //
 // ```
 // debugger.stack(0)
@@ -668,10 +668,10 @@ variable_locate_in_frame :: proc "contextless" (place: Frame_Place, variable: de
 // - **frame**: the number of a frame, as `stack` gives it.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4); `Absent`, `Threads` or
+// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
 // `Held_Threads` (-5); `Absent`, `Debug_Objects` (-6), the module of the
 // frame has no debug object; `Absent`, `Stack_Frames` (-7); `Absent`,
-// `Programs` (-13).
+// `Processes` (-13).
 //
 // ```
 // debugger.locals(0, 0)
@@ -737,9 +737,9 @@ Named_Value :: struct {
 }
 
 // global_find gives the global with a name, in the first module of the
-// program whose debug object has it.
+// process whose debug object has it.
 global_find :: proc "contextless" (name: string) -> (value: Named_Value, found: bool) {
-	for &record in report_modules.modules[:min(report_modules.count, op.PROGRAM_MODULE_CAPACITY)] {
+	for &record in report_modules.modules[:min(report_modules.count, op.PROCESS_MODULE_CAPACITY)] {
 		object := debug_object_for(record.hash)
 		if object == nil {
 			continue
@@ -815,15 +815,15 @@ path_value :: proc "contextless" (thread: i64, frame: i64, text: string, argumen
 // - **path**: at most 160 bytes, and 8 steps.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4); `Absent`, `Threads` or
+// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
 // `Held_Threads` (-5); `Absent`, `Stack_Frames` (-7); `Absent`,
 // `Readable_Variables` (-8), no variable and no global has the name, or
 // the variable is not readable at this instruction; `Bad_Byte` (-9), the
 // text is not a path, with the offset of the byte; `Bad_Value` (-9), a
 // step names nothing: `value` is the step from 1 and `found` says why (1
 // no such field, 2 not a record, 3 not an array, 4 an index past the end,
-// 5 not a pointer, 6 a pointer of 0, 7 memory that the program does not
-// map); `Absent`, `Programs` (-13); `Too_Long`, `Bytes` (-15).
+// 5 not a pointer, 6 a pointer of 0, 7 memory that the process does not
+// map); `Absent`, `Processes` (-13); `Too_Long`, `Bytes` (-15).
 //
 // ```
 // debugger.value(0, 0, "pair.next^.first")
@@ -879,10 +879,10 @@ value :: proc "c" (thread: i64, frame: i64, path: ^string, result: ^[]Value_Row,
 // - **thread**, **frame**: as for `locals`.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4); `Absent`, `Threads` or
+// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
 // `Held_Threads` (-5); `Absent`, `Debug_Objects` (-6); `Absent`,
 // `Stack_Frames` (-7); `Absent`, `Source_Places` (-10), the instruction has
-// no source line; `Absent`, `Programs` (-13).
+// no source line; `Absent`, `Processes` (-13).
 //
 // ```
 // debugger.source(0, 0)
@@ -935,7 +935,7 @@ break_rows :: proc "contextless" (result: ^[]Break_Row) -> i64 {
 }
 
 // break_set takes a free breakpoint, writes the breakpoints in each thread
-// of the program, and gives the rows. A failure gives the result of the
+// of the process, and gives the rows. A failure gives the result of the
 // export.
 break_set :: proc "contextless" (kind: op.Thread_Breakpoint_Kind, address: u64, length: u32, place: string, result: ^[]Break_Row, error: ^errors.Error_Record) -> i64 {
 	free := -1
@@ -965,19 +965,19 @@ break_set :: proc "contextless" (kind: op.Thread_Breakpoint_Kind, address: u64, 
 // breakpoint is at its first instruction. Or it is a file and a line
 // (`src/modules/demonstrations/fault/main.odin:15`): the breakpoint is at the lowest
 // instruction of the first row of the line table with that file and that
-// line. The debug objects of the modules of the program give both. A
-// breakpoint is a debug register of each thread of the program, not a
+// line. The debug objects of the modules of the process give both. A
+// breakpoint is a debug register of each thread of the process, not a
 // byte in the code: the debugger has four, for breakpoints and watches
 // together.
 //
 // - **place**: at most 160 bytes.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4), the kernel refused the
-// breakpoints; `Absent`, `Debug_Objects` (-6), no module of the program
+// `Debugged_Processes` (-2); `Refused` (-4), the kernel refused the
+// breakpoints; `Absent`, `Debug_Objects` (-6), no module of the process
 // has a debug object; `Absent`, `Source_Places` (-10), no procedure and no
 // line has this place; `Full`, `Breakpoints` (-11), the four breakpoints
-// are in use; `Absent`, `Programs` (-13); `Too_Long`, `Bytes` (-15).
+// are in use; `Absent`, `Processes` (-13); `Too_Long`, `Bytes` (-15).
 //
 // ```
 // debugger.break_at("fault::three")
@@ -998,7 +998,7 @@ break_at :: proc "c" (place: ^string, result: ^[]Break_Row, error: ^errors.Error
 		return errors.fail(error, ERROR_PLACE, .Absent, .Source_Places, 1)
 	}
 	described := 0
-	for &record in report_modules.modules[:min(report_modules.count, op.PROGRAM_MODULE_CAPACITY)] {
+	for &record in report_modules.modules[:min(report_modules.count, op.PROCESS_MODULE_CAPACITY)] {
 		object := debug_object_for(record.hash)
 		if object == nil {
 			continue
@@ -1040,21 +1040,21 @@ address_of_text :: proc "contextless" (text: string, argument: i64, error: ^erro
 	return named.located.address, 0
 }
 
-// watch sets a data breakpoint on the bytes that the program writes, and gives one row for each breakpoint of the debugger.
+// watch sets a data breakpoint on the bytes that the process writes, and gives one row for each breakpoint of the debugger.
 //
 // A thread that writes one of the bytes stops after the instruction of
-// the write. An access that the kernel makes for the program is not seen.
+// the write. An access that the kernel makes for the process is not seen.
 //
 // - **place**: an address in hexadecimal (`0x403010`) or in decimal, or
 //   the path of a global with its package (`debug_target::rounds`).
 // - **length**: 1, 2, 4 or 8 bytes; the address is a multiple of it.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4); `Absent`, `Readable_Variables`
+// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Readable_Variables`
 // (-8), no global has the name; `Bad_Byte` or `Bad_Value` (-9), the path;
 // `Full`, `Breakpoints` (-11); `Bad_Value` (-12), a length that is not 1,
 // 2, 4 or 8; `Not_Multiple` (-12), the address is not a multiple of the
-// length; `Absent`, `Programs` (-13); `Too_Long`, `Bytes` (-15).
+// length; `Absent`, `Processes` (-13); `Too_Long`, `Bytes` (-15).
 //
 // ```
 // debugger.watch("debug_target::rounds", 8)
@@ -1085,7 +1085,7 @@ watch :: proc "c" (place: ^string, length: value_kinds.Size_In_Bytes, result: ^[
 // breaks gives one row for each breakpoint of the debugger: its number, its kind (`execute` or `write`), its address, the bytes of a watch, and the text that named it.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Absent`, `Programs` (-13).
+// `Debugged_Processes` (-2); `Absent`, `Processes` (-13).
 //
 // ```
 // debugger.breaks()
@@ -1098,13 +1098,13 @@ breaks :: proc "c" (result: ^[]Break_Row, error: ^errors.Error_Record) -> i64 {
 	return break_rows(result)
 }
 
-// break_remove removes one breakpoint of the debugger from each thread of the program, and gives one row for each breakpoint that stays.
+// break_remove removes one breakpoint of the debugger from each thread of the process, and gives one row for each breakpoint that stays.
 //
 // - **number**: the number of a breakpoint, as `breaks()` gives it.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4); `Absent`, `Breakpoints` (-11),
-// the number names no breakpoint; `Absent`, `Programs` (-13).
+// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Breakpoints` (-11),
+// the number names no breakpoint; `Absent`, `Processes` (-13).
 //
 // ```
 // debugger.break_remove(0)
@@ -1135,12 +1135,12 @@ break_remove :: proc "c" (number: i64, result: ^[]Break_Row, error: ^errors.Erro
 // only when its wait ends; its stop then comes as an event.
 step_one :: proc "contextless" (number: u64, deadline: u64) -> (stepped: bool, at_breakpoint: bool, status: system.Status) {
 	image_of_thread: op.Thread_Registers
-	image_of_thread, status = system.thread_registers_read(session.program, number)
+	image_of_thread, status = system.thread_registers_read(session.process, number)
 	if status != .Ok {
 		return false, false, status
 	}
 	image_of_thread.rflags |= FLAG_TRAP
-	status = system.thread_registers_write(session.program, number, image_of_thread)
+	status = system.thread_registers_write(session.process, number, image_of_thread)
 	if status != .Ok {
 		return false, false, status
 	}
@@ -1173,8 +1173,8 @@ step_one :: proc "contextless" (number: u64, deadline: u64) -> (stepped: bool, a
 // - **thread**: the number of a thread that is held or stopped.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Refused` (-4); `Absent`, `Threads` or
-// `Held_Threads` (-5); `Absent`, `Programs` (-13).
+// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
+// `Held_Threads` (-5); `Absent`, `Processes` (-13).
 //
 // ```
 // debugger.step(0)
@@ -1203,7 +1203,7 @@ step :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Recor
 // the thread reaches before the line changes ends the export there: the
 // row is the row of the thread at the breakpoint, with `pending` 0, and
 // the stop is also an event. The whole export has two
-// bounds: 4096 instructions, and 2000 ms, because the debugged program
+// bounds: 4096 instructions, and 2000 ms, because the debugged process
 // chooses how long one of its instructions takes and the service serves
 // each caller with one thread. At a bound the row has `pending` 1: the
 // line did not change yet. When its state is `stopped`, call `step_line`
@@ -1226,7 +1226,7 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 	if failure != 0 {
 		return failure
 	}
-	image_of_thread, status := system.thread_registers_read(session.program, number)
+	image_of_thread, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
 		return refused(error, status)
 	}
@@ -1251,7 +1251,7 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 			pending = 0
 			break
 		}
-		image_of_thread, status = system.thread_registers_read(session.program, number)
+		image_of_thread, status = system.thread_registers_read(session.process, number)
 		if status != .Ok {
 			return refused(error, status)
 		}
@@ -1278,7 +1278,7 @@ call_return_of :: proc "contextless" (before, after: op.Thread_Registers) -> (re
 		return 0, false
 	}
 	bytes: [8]u8
-	if !program_memory_read(nil, after.rsp, bytes[:]) {
+	if !process_memory_read(nil, after.rsp, bytes[:]) {
 		return 0, false
 	}
 	return_address = transmute(u64)bytes
@@ -1341,7 +1341,7 @@ call_run_to_return :: proc "contextless" (number: u64, return_address: u64, stac
 				break
 			}
 		}
-		registers, read := system.thread_registers_read(session.program, number)
+		registers, read := system.thread_registers_read(session.process, number)
 		if read != .Ok {
 			return false, false, read
 		}
@@ -1381,7 +1381,7 @@ call_run_to_return :: proc "contextless" (number: u64, return_address: u64, stac
 // calls a procedure, the debugger puts a breakpoint at the instruction
 // after the call and lets the thread run to it: the thread does not stop
 // inside the call. The breakpoint takes one of the four places of the
-// breakpoints of the program, and leaves it when the thread is back. With
+// breakpoints of the process, and leaves it when the thread is back. With
 // no free place, the thread stops at the first line of the call, as with
 // `step_line`.
 //
@@ -1415,7 +1415,7 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 			return refused(error, status)
 		}
 	}
-	registers, status := system.thread_registers_read(session.program, number)
+	registers, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
 		return refused(error, status)
 	}
@@ -1439,7 +1439,7 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 			pending = 0
 			break
 		}
-		registers, status = system.thread_registers_read(session.program, number)
+		registers, status = system.thread_registers_read(session.process, number)
 		if status != .Ok {
 			return refused(error, status)
 		}
@@ -1457,7 +1457,7 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 				// The call runs past the deadline.
 				break
 			}
-			registers, status = system.thread_registers_read(session.program, number)
+			registers, status = system.thread_registers_read(session.process, number)
 			if status != .Ok {
 				return refused(error, status)
 			}
@@ -1471,21 +1471,21 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 	return thread_rows(result, thread, pending)
 }
 
-// memory gives the bytes of the program from an address, sixteen in each row: the address, the bytes in hexadecimal, and their printable characters.
+// memory gives the bytes of the process from an address, sixteen in each row: the address, the bytes in hexadecimal, and their printable characters.
 //
-// The kernel reads only the pages that the program maps, can read and
+// The kernel reads only the pages that the process maps, can read and
 // that have a frame: the table ends before the first page that is not so.
-// The read changes nothing of the program.
+// The read changes nothing of the process.
 //
 // - **place**: an address in hexadecimal (`0x403010`) or in decimal, or
 //   the path of a global with its package.
 // - **count**: 1 to 4096 bytes.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Absent`, `Readable_Variables` (-8); `Bad_Byte`
+// `Debugged_Processes` (-2); `Absent`, `Readable_Variables` (-8); `Bad_Byte`
 // or `Bad_Value` (-9), the path; `Bad_Value` (-12), a count that is not 1
-// to 4096; `Bad_Address` (-12), the program does not map the first byte;
-// `Absent`, `Programs` (-13); `Too_Long`, `Bytes` (-15).
+// to 4096; `Bad_Address` (-12), the process does not map the first byte;
+// `Absent`, `Processes` (-13); `Too_Long`, `Bytes` (-15).
 //
 // ```
 // debugger.memory("debug_target::table", 64)
@@ -1511,7 +1511,7 @@ memory :: proc "c" (place: ^string, count: value_kinds.Size_In_Bytes, result: ^[
 	copied: u64
 	status := system.Status.Bad_State
 	if has_thread {
-		copied, status = system.thread_memory_read(session.program, thread, address, memory_bytes[:int(count)])
+		copied, status = system.thread_memory_read(session.process, thread, address, memory_bytes[:int(count)])
 	}
 	if status != .Ok || copied == 0 {
 		return errors.fail(error, ERROR_ADDRESS, .Bad_Address, .None, 1, i64(address), i64(count))
@@ -1575,7 +1575,7 @@ event_rows :: proc "contextless" (result: ^[]Event_Row) -> i64 {
 // a step it is the next one. The service keeps 32 stops.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Programs` (-2); `Absent`, `Programs` (-13).
+// `Debugged_Processes` (-2); `Absent`, `Processes` (-13).
 //
 // ```
 // debugger.events()
@@ -1588,7 +1588,7 @@ events :: proc "c" (result: ^[]Event_Row, error: ^errors.Error_Record) -> i64 {
 	return event_rows(result)
 }
 
-// wait_stop waits until a thread of the program stops, at most the given milliseconds and 3000, and gives the rows of `events`.
+// wait_stop waits until a thread of the process stops, at most the given milliseconds and 3000, and gives the rows of `events`.
 //
 // A caller learns of a stop with this export, with no loop of `events()`:
 // the call returns at once when a stop waits already, at the next stop,
@@ -1622,7 +1622,7 @@ wait_stop :: proc "c" (milliseconds: value_kinds.Time_In_Milliseconds, result: ^
 }
 
 // The step that describes the records reads a size as a number, not as a
-// name. These lines keep each number equal to the size that the program
+// name. These lines keep each number equal to the size that the process
 // uses when it fills the field.
 #assert(size_of(Thread_Row{}.procedure) == PROCEDURE_NAME_SIZE)
 #assert(size_of(Thread_Row{}.file) == SOURCE_PATH_SIZE)

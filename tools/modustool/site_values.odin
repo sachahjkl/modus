@@ -36,7 +36,7 @@ Site_Value_Kind_Description :: struct {
 
 // The one table of the titles and the meanings of the kinds: what only the
 // site shows. The color of each kind and its icon are in the tables of the
-// system, which the programs read too (src/library/support/graphics/value_colors.odin,
+// system, which the processes read too (src/library/support/graphics/value_colors.odin,
 // src/library/support/kind_icons).
 site_value_kinds := [value_kinds.Value_Kind]Site_Value_Kind_Description {
 	.None = {},
@@ -50,13 +50,13 @@ site_value_kinds := [value_kinds.Value_Kind]Site_Value_Kind_Description {
 		title = "Time", meaning = "A duration, a date or a time.",
 	},
 	.Handle = {
-		title = "Handle", meaning = "A handle of a kernel object, held by a program.",
+		title = "Handle", meaning = "A handle of a kernel object, held by a process.",
 	},
 	.Value = {
-		title = "Value", meaning = "A plain value of the context of a program: not a handle.",
+		title = "Value", meaning = "A plain value of the context of a process: not a handle.",
 	},
 	.Grant = {
-		title = "Grant", meaning = "What the root service gives a program, or records and can revoke.",
+		title = "Grant", meaning = "What the root service gives a process, or records and can revoke.",
 	},
 	.Status = {
 		title = "Status", meaning = "A status, an error kind or the state of a property.",
@@ -65,13 +65,13 @@ site_value_kinds := [value_kinds.Value_Kind]Site_Value_Kind_Description {
 		title = "Type", meaning = "A type: of the contract, a wire form of the module contract, a record of a module, or a basic type.",
 	},
 	.Operation = {
-		title = "Operation", meaning = "An operation that a program asks the kernel.",
+		title = "Operation", meaning = "An operation that a process asks the kernel.",
 	},
 	.Command = {
 		title = "Command", meaning = "A command of the console or of modustool.",
 	},
 	.Module = {
-		title = "Module", meaning = "A module or a program of the boot image or of the build.",
+		title = "Module", meaning = "A module or a process of the boot image or of the build.",
 	},
 	.File = {
 		title = "File", meaning = "A file or a folder of the repository.",

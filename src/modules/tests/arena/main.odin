@@ -1,11 +1,11 @@
 // The test of an arena paid by the budget (src/md/features/memory_without_a_bound.md).
 //
-// The program reserves an arena a little larger than its whole budget,
+// The process reserves an arena a little larger than its whole budget,
 // and pushes one page at a time until the budget refuses a commit. Then it
 // checks:
 //
 // - the refusal is the status `No_Budget` with its error record, and the
-//   program still runs;
+//   process still runs;
 // - the refused push changed nothing in the arena, and the budget holds no
 //   page;
 // - each page that a push gave read zero before its first write;
@@ -14,7 +14,7 @@
 // - after the end of the arena, the budget holds again each page that it
 //   held before the reservation.
 //
-// **What it is for.** It proves on a machine that a program can hold data
+// **What it is for.** It proves on a machine that a process can hold data
 // with no known bound and read a lack of memory as a value: the
 // [arena](term:arena) grows by an explicit commit, the kernel refuses the
 // commit that the budget cannot pay, and the end of the arena returns
@@ -28,7 +28,7 @@
 // refused the commit with No_Budget, the arena kept its state, a reset
 // took the same pages again with no commit, and its end gave every page
 // back to the budget: as it must", or a line "arena: WRONG: ...". The
-// program stops with the code 0.
+// process stops with the code 0.
 package arena
 
 import "base:intrinsics"
@@ -75,7 +75,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	refusal_is_of_the_budget := refused == .No_Budget && (record.kind == i64(errors.Kind.Budget) || record.kind == i64(errors.Kind.Budget_Hidden))
 	system.log("arena: grew to ", arena.committed_pages, " pages in ", arena.commit_count, " commits, in a reservation of ", reservation, " pages, and gave ", pushes, " pushes of one page; the budget held ", before.pages, " pages before, and ", held.pages, " after the refusal")
 
-	// A second refused push: the program still runs, and nothing changed.
+	// A second refused push: the process still runs, and nothing changed.
 	_, again := system.arena_push(&arena, system.PAGE_SIZE, system.PAGE_SIZE)
 	unchanged := again == .No_Budget && arena == kept
 

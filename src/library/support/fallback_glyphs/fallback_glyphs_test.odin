@@ -18,7 +18,7 @@ paper_mono_file := #load("../../../../resources/fonts/paper_mono.ttf")
 @(private = "file")
 paper_mono_semibold_file := #load("../../../../resources/fonts/paper_mono_semibold.ttf")
 
-// The state and the private cache of the package are one per program, as
+// The state and the private cache of the package are one per process, as
 // in the system, but the runner runs tests on several threads of one
 // process: each test holds this lock from its first line to its end.
 @(private = "file")
@@ -56,7 +56,7 @@ resource_of :: proc(t: ^testing.T, fonts: []font_outlines.Font_Input) -> (outlin
 }
 
 // outlines_open opens a resource of fonts in a state of all zero: the
-// state of a program at its start. The caller frees the words.
+// state of a process at its start. The caller frees the words.
 @(private = "file")
 outlines_open :: proc(t: ^testing.T, fonts: []font_outlines.Font_Input, demand_base: uintptr = 0) -> (missing: Outline_Fonts, words: []u64) {
 	outlines: font_outlines.Outlines
@@ -396,7 +396,7 @@ a_fallback_glyph_stands_in_the_frame_of_the_first_font :: proc(t: ^testing.T) {
 }
 
 // The first font of a face draws the bytes of the demand cache: the glyph
-// that this program draws in its private glyph cache is the glyph that the
+// that this process draws in its private glyph cache is the glyph that the
 // font service draws for the same face, at each scale and position. So a
 // picture does not depend on which layer drew a glyph.
 @(test)

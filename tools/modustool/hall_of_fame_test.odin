@@ -6,7 +6,7 @@ import "core:testing"
 
 // Each row of the credits file names a picture of the resources, the
 // pixels that `modustool portraits` made from it, and a credit that the
-// program shows: its author and its license are texts of the program.
+// process shows: its author and its license are texts of the process.
 @(test)
 hall_of_fame_credits_match_the_pictures_and_the_module :: proc(t: ^testing.T) {
 	credits, problem := hall_of_fame_credits_read()
@@ -28,7 +28,7 @@ hall_of_fame_credits_match_the_pictures_and_the_module :: proc(t: ^testing.T) {
 	}
 }
 
-// A row with a missing cell, a name that is not a PNG file of the program
+// A row with a missing cell, a name that is not a PNG file of the process
 // folder, and a source with no address are refused; the address ends at
 // the end of its cell.
 @(test)

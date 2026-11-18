@@ -36,11 +36,11 @@ command_of_word_refuses_a_word_that_names_no_command :: proc(t: ^testing.T) {
 // A role with no start grant of ROOT_RING_GRANTS has no root ring, and
 // sends no command: each start grant alone outside them is tried, then all
 // of them together, then the grant Store alone, then no grant. The rule
-// takes no name. That a command gives a disk program no grant of a root
-// ring is the test no_command_gives_a_disk_program_a_root_ring of
-// modus:support/disk_program.
+// takes no name. That a command gives a disk process no grant of a root
+// ring is the test no_command_gives_a_disk_process_a_root_ring of
+// modus:support/disk_process.
 @(test)
-a_program_with_no_ring_grant_sends_no_command :: proc(t: ^testing.T) {
+a_process_with_no_ring_grant_sends_no_command :: proc(t: ^testing.T) {
 	without_a_ring: bit_set[start_grant.Grant]
 	for grant in start_grant.Grant {
 		if grant in ROOT_RING_GRANTS {
@@ -50,14 +50,14 @@ a_program_with_no_ring_grant_sends_no_command :: proc(t: ^testing.T) {
 		role := bit_set[start_grant.Grant]{grant}
 		testing.expectf(t, !root_ring_given(role), "the start grant %v gives a root ring", grant)
 		for command in Root_Command {
-			testing.expectf(t, !sender_allowed(command, role), "a program with only %v sends %v", grant, command)
+			testing.expectf(t, !sender_allowed(command, role), "a process with only %v sends %v", grant, command)
 		}
 	}
 	roles := [?]bit_set[start_grant.Grant]{{}, without_a_ring, {.Store}}
 	for role in roles {
 		testing.expect(t, !root_ring_given(role))
 		for command in Root_Command {
-			testing.expectf(t, !sender_allowed(command, role), "a program with %v and no ring sends %v", role, command)
+			testing.expectf(t, !sender_allowed(command, role), "a process with %v and no ring sends %v", role, command)
 		}
 	}
 }
@@ -171,7 +171,7 @@ the_dispatch_refuses_at_its_first_step_that_refuses :: proc(t: ^testing.T) {
 }
 
 // The names of a command that an error record numbers: the number comes
-// from another program. Each number that names no command gives "an
+// from another process. Each number that names no command gives "an
 // unknown command" and no argument name; then each command has a name, and
 // the argument 1 has a name for each command.
 @(test)

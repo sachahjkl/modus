@@ -90,7 +90,7 @@ the_moment_of_a_date_page :: proc(t: ^testing.T) {
 	testing.expect_value(t, moment_of(&page, 0).zone_offset_seconds, -date.ZONE_OFFSET_SECONDS_LIMIT)
 }
 
-// The zone that the program `date` writes is the zone of the moment, and
+// The zone that the process `date` writes is the zone of the moment, and
 // it moves the rule: 01:04 of UTC is 09:04 at +08:00, in the day, where
 // UTC is in the night. This is the case of the machine test.
 @(test)

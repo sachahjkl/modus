@@ -5,8 +5,8 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-// The modules that a program can see, and the replacements of the
-// machine. Today: the boot image that the program was granted
+// The modules that a process can see, and the replacements of the
+// machine. Today: the boot image that the process was granted
 // (system.GRANT_IMAGE), and the records of the replacement table
 // (system.GRANT_REPLACEMENTS, system.replacements_read). A module store
 // gives the same functions another source later. The zero value is a
@@ -485,35 +485,35 @@ segments :: proc "contextless" (catalog: Catalog, name: string, rows: []Segment)
 // The field writer of a row holds each word of op.module_writer_name.
 #assert(size_of(Running) - offset_of(Running, writer) == op.MODULE_WRITER_NAME_CAPACITY)
 
-// running fills one row for each module that runs in a program: the
+// running fills one row for each module that runs in a process: the
 // module records that each loader gave to the kernel (operation
-// Program_Module), with the hash that a replacement changed and the module
-// writer of each record (the starter or the program itself). The kernel
-// gives them to a holder of the machine with the right Inspect: a program
-// sees what runs only with that grant, because a program sees no other
-// program. The kernel has the
-// records of each program, also of programs that the root service did not
+// Process_Module), with the hash that a replacement changed and the module
+// writer of each record (the starter or the process itself). The kernel
+// gives them to a holder of the machine with the right Inspect: a process
+// sees what runs only with that grant, because a process sees no other
+// process. The kernel has the
+// records of each process, also of processes that the root service did not
 // start. problem: Refused, with the status of the kernel.
 running :: proc "contextless" (machine: system.Handle, catalog: Catalog, rows: []Running) -> (count: int, problem: Problem) {
 	slots: u64
-	if slots, problem = program_slots(machine); problem.kind != .None {
+	if slots, problem = process_slots(machine); problem.kind != .None {
 		return 0, problem
 	}
 	for slot in 1 ..< slots {
-		program: op.Program_Report
+		process: op.Process_Report
 		modules: op.Module_Report
 		runs: bool
-		if runs, problem = program_modules(machine, slot, &program, &modules); problem.kind != .None {
+		if runs, problem = process_modules(machine, slot, &process, &modules); problem.kind != .None {
 			return count, problem
 		}
 		if !runs {
 			continue
 		}
-		for record in modules.modules[:min(modules.count, op.PROGRAM_MODULE_CAPACITY)] {
+		for record in modules.modules[:min(modules.count, op.PROCESS_MODULE_CAPACITY)] {
 			if count < len(rows) {
 				row := &rows[count]
 				row^ = {slot = i64(slot), base = i64(record.base), size = i64(record.size)}
-				text_put(row.program[:], system.name_of(program.name[:]))
+				text_put(row.process[:], system.name_of(process.name[:]))
 				if found, known := find_hash(catalog, record.hash); known {
 					text_put(row.module[:], found.name)
 				}
@@ -527,7 +527,7 @@ running :: proc "contextless" (machine: system.Handle, catalog: Catalog, rows: [
 				if writer, writer_ok := op.module_writer_of_word(record.writer); writer_ok {
 					text_put(row.writer[:], op.module_writer_name(writer))
 				} else {
-					system.log("information: the module record at ", record.base, " of the program slot ", slot, " has the writer word ", record.writer, ", which names no writer")
+					system.log("information: the module record at ", record.base, " of the process slot ", slot, " has the writer word ", record.writer, ", which names no writer")
 				}
 			}
 			count += 1
@@ -536,26 +536,26 @@ running :: proc "contextless" (machine: system.Handle, catalog: Catalog, rows: [
 	return count, {}
 }
 
-// program_slots gives the count of program slots of the machine. problem:
+// process_slots gives the count of process slots of the machine. problem:
 // Refused, with the status of the kernel.
 @(private)
-program_slots :: proc "contextless" (machine: system.Handle) -> (slots: u64, problem: Problem) {
+process_slots :: proc "contextless" (machine: system.Handle) -> (slots: u64, problem: Problem) {
 	report: op.System_Report
 	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
 		return 0, {kind = .Refused, value = u64(status)}
 	}
-	return u64(report.program_slots), {}
+	return u64(report.process_slots), {}
 }
 
-// program_modules reads the report and the module records of the program
-// of a slot. runs is false for an empty slot and for a stopped program: a
-// stopped program runs no module.
+// process_modules reads the report and the module records of the process
+// of a slot. runs is false for an empty slot and for a stopped process: a
+// stopped process runs no module.
 @(private)
-program_modules :: proc "contextless" (machine: system.Handle, slot: u64, program: ^op.Program_Report, modules: ^op.Module_Report) -> (runs: bool, problem: Problem) {
-	program^ = {}
+process_modules :: proc "contextless" (machine: system.Handle, slot: u64, process: ^op.Process_Report, modules: ^op.Module_Report) -> (runs: bool, problem: Problem) {
+	process^ = {}
 	modules^ = {}
-	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(program)), size_of(program^))
-	if program.state == .None || program.state == .Stopped {
+	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(process)), size_of(process^))
+	if process.state == .None || process.state == .Stopped {
 		return false, {}
 	}
 	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Modules), slot, u64(uintptr(modules)), size_of(modules^)); status != .Ok {
@@ -564,53 +564,53 @@ program_modules :: proc "contextless" (machine: system.Handle, slot: u64, progra
 	return true, {}
 }
 
-// edges fills one row for each import edge of each program that runs (see
+// edges fills one row for each import edge of each process that runs (see
 // Edge): the module records of the kernel, as running() reads them, and
 // the imports of the module files of the catalog. It is the graph of the
-// modules as it runs now: which program holds which module, who imports
+// modules as it runs now: which process holds which module, who imports
 // it, and which replacement put it there. problem: Refused, with the
 // status of the kernel.
 edges :: proc "contextless" (machine: system.Handle, catalog: Catalog, rows: []Edge) -> (count: int, problem: Problem) {
 	slots: u64
-	if slots, problem = program_slots(machine); problem.kind != .None {
+	if slots, problem = process_slots(machine); problem.kind != .None {
 		return 0, problem
 	}
 	for slot in 1 ..< slots {
-		program: op.Program_Report
+		process: op.Process_Report
 		modules: op.Module_Report
 		runs: bool
-		if runs, problem = program_modules(machine, slot, &program, &modules); problem.kind != .None {
+		if runs, problem = process_modules(machine, slot, &process, &modules); problem.kind != .None {
 			return count, problem
 		}
 		if !runs {
 			continue
 		}
-		count = program_edges(catalog, system.name_of(program.name[:]), i64(slot), modules.modules[:min(modules.count, op.PROGRAM_MODULE_CAPACITY)], rows, count)
+		count = process_edges(catalog, system.name_of(process.name[:]), i64(slot), modules.modules[:min(modules.count, op.PROCESS_MODULE_CAPACITY)], rows, count)
 	}
 	return count, {}
 }
 
-// program_edges adds the rows of the edges of one program after `count`
+// process_edges adds the rows of the edges of one process after `count`
 // rows, and gives the new count. A module record is what the loader of the
-// program asserted to the kernel; the imports come from the module files of
+// process asserted to the kernel; the imports come from the module files of
 // the catalog, each file checked before its tables are read.
 //
-// The rule of an edge: module A of the program imports module B of the
-// program when an import of A holds the hash that B replaces, or holds the
-// hash of B and no module of the program replaces that hash. A loader gives
+// The rule of an edge: module A of the process imports module B of the
+// process when an import of A holds the hash that B replaces, or holds the
+// hash of B and no module of the process replaces that hash. A loader gives
 // a replacement in place of each import of the replaced hash, so the second
-// part keeps a module that the program loaded by its name (a replacement
+// part keeps a module that the process loaded by its name (a replacement
 // does not apply to it) from taking the edges of its replacement. A module
 // that imports B twice gives one row.
-program_edges :: proc "contextless" (catalog: Catalog, program: string, slot: i64, records: []op.Module_Record, rows: []Edge, count: int) -> int {
+process_edges :: proc "contextless" (catalog: Catalog, process: string, slot: i64, records: []op.Module_Record, rows: []Edge, count: int) -> int {
 	count := count
 	for record in records {
 		if record.size == 0 {
 			continue
 		}
-		replaced_in_program := false
+		replaced_in_process := false
 		for other in records {
-			replaced_in_program ||= other.size != 0 && other.replaces != {} && other.replaces == record.hash
+			replaced_in_process ||= other.size != 0 && other.replaces != {} && other.replaces == record.hash
 		}
 		importer_count := 0
 		for importer in records {
@@ -624,12 +624,12 @@ program_edges :: proc "contextless" (catalog: Catalog, program: string, slot: i6
 			for index in 1 ..< module.count(found.file, .Imports) {
 				imported, _ := module.record(found.file, .Imports, index, module.Import)
 				through_replacement := record.replaces != {} && imported.hash == record.replaces
-				direct := imported.hash == record.hash && !replaced_in_program
+				direct := imported.hash == record.hash && !replaced_in_process
 				if !through_replacement && !direct {
 					continue
 				}
 				if count < len(rows) {
-					edge_row(catalog, program, slot, record, importer.hash, true, &rows[count])
+					edge_row(catalog, process, slot, record, importer.hash, true, &rows[count])
 				}
 				count += 1
 				importer_count += 1
@@ -638,7 +638,7 @@ program_edges :: proc "contextless" (catalog: Catalog, program: string, slot: i6
 		}
 		if importer_count == 0 {
 			if count < len(rows) {
-				edge_row(catalog, program, slot, record, {}, false, &rows[count])
+				edge_row(catalog, process, slot, record, {}, false, &rows[count])
 			}
 			count += 1
 		}
@@ -647,9 +647,9 @@ program_edges :: proc "contextless" (catalog: Catalog, program: string, slot: i6
 }
 
 @(private)
-edge_row :: proc "contextless" (catalog: Catalog, program: string, slot: i64, record: op.Module_Record, importer: [32]u8, imported: bool, row: ^Edge) {
+edge_row :: proc "contextless" (catalog: Catalog, process: string, slot: i64, record: op.Module_Record, importer: [32]u8, imported: bool, row: ^Edge) {
 	row^ = {slot = slot}
-	text_put(row.program[:], program)
+	text_put(row.process[:], process)
 	module_name_put(catalog, record.hash, row.module[:])
 	hash_text(record.hash, &row.hash)
 	if imported {

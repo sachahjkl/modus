@@ -443,7 +443,7 @@ SYSTEM_ACCENTS := [pointer_pictures.Pointer_Shape]string {
 	.Grabbing                     = "",
 	.Wait                         = "title", // The dot that turns.
 	.Busy_With_Arrow              = "title", // The dot that turns.
-	.Forbidden                    = "stop_program", // The slash.
+	.Forbidden                    = "stop_process", // The slash.
 	.Help                         = "title", // The question mark.
 	.Crosshair                    = "boot_program", // The dot at the hot spot.
 	.Resize_Left_Right            = "",
@@ -560,7 +560,7 @@ manifest_errors_name_the_place :: proc(t: ^testing.T) {
 	triangle :: "layer edge\ncontour 0 0 line 1 0 line 0 1\n"
 	coordinate :: "a coordinate from 0 to 12 with at most 3 decimals"
 	paint :: "a paint \"fill\", \"accent\", \"edge\" or \"clear\""
-	accent :: "the name of an accent: \"title\", \"stop_program\" or \"boot_program\""
+	accent :: "the name of an accent: \"title\", \"stop_process\" or \"boot_program\""
 	cases := [?]Case {
 		{"license MIT\n", "m:1:1: expected the statement \"theme\" first; found \"license\""},
 		{head + "shape arow hot 0 0\n", "m:4:7: expected a pointer shape name such as \"arrow\"; found \"arow\""},

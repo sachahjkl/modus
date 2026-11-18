@@ -245,7 +245,7 @@ site_author_of_the_site :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(home, "<meta name=\"author\" content=\"Ada Example\">"))
 	testing.expect(t, strings.contains(home, "\"@type\":\"Person\",\"@id\":\"" + TEST_ADDRESS + "/#author\",\"name\":\"Ada Example\",\"url\":\"" ))
 	testing.expect(t, strings.contains(home, "\"publisher\":" + author_reference))
-	testing.expect_value(t, strings.count(home, "\"author\":" + author_reference), 2) // The program and its source code.
+	testing.expect_value(t, strings.count(home, "\"author\":" + author_reference), 2) // The process and its source code.
 	testing.expect_value(t, strings.count(written[TEST_GUIDE_A], "\"author\":" + author_reference), 3)
 	testing.expect_value(t, strings.count(written["news/index.html"], "\"author\":" + author_reference), 3)
 	testing.expect_value(t, len(site_check_metadata(TEST_ADDRESS, site.pages[:], written, site_sitemap(&site), site.picture_sizes)), 0)
@@ -709,7 +709,7 @@ metadata_test_files :: proc() -> map[string]int {
 // build; the canonical addresses are folders and all different; the
 // sitemap, the search index and the guides before and after use the new
 // addresses; a redirect page at each old path of both generations names
-// its page straight, and nothing that other programs read names an old
+// its page straight, and nothing that other processes read names an old
 // address.
 @(test)
 site_addresses_of_every_page :: proc(t: ^testing.T) {

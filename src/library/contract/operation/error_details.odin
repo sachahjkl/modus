@@ -5,7 +5,7 @@ import "modus:contract/errors"
 
 // The table of error details of a kernel command (docs/MODULE_CONTRACT.md,
 // "Kernel operations"). A command whose kind has this bit names, in its
-// last value, a table place of error records in memory of the program.
+// last value, a table place of error records in memory of the process.
 // When the kernel refuses the command, it writes one error detail for each
 // argument that it finds wrong: the error record of the completion first,
 // then the others, in the order of the arguments. A command that succeeds
@@ -30,7 +30,7 @@ ERROR_DETAILS_MOST :: 1 + ERROR_DETAILS_VALUE
 // to the count of the full answer: a count above the capacity says that
 // details did not fit.
 Error_Details_Place :: struct {
-	address:  u64, // The first record, in memory of the program.
+	address:  u64, // The first record, in memory of the process.
 	count:    u64, // On the command, the records already there; after a refusal, the count of the full answer.
 	capacity: u64, // The records that fit at `address`.
 }
@@ -106,7 +106,7 @@ argument_is_read :: proc "contextless" (operation: Operation, index: int, values
 		return false
 	}
 	switch operation {
-	case .None, .Log, .Memory_Create, .Memory_Map, .Memory_Unmap, .Memory_Size, .Program_Create, .Program_Start, .Program_Stop, .Program_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Program_Module, .Strategy_Set, .Memory_Protect, .Fault_Answer, .Events_Set, .Guest_Run, .Log_Read:
+	case .None, .Log, .Memory_Create, .Memory_Map, .Memory_Unmap, .Memory_Size, .Process_Create, .Process_Start, .Process_Stop, .Process_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Memory_Protect, .Fault_Answer, .Events_Set, .Guest_Run, .Log_Read:
 		// Each argument of these is read when its form says so. A new
 		// operation stops the build here, and its author says which of its
 		// arguments it reads.
@@ -132,7 +132,7 @@ argument_is_read :: proc "contextless" (operation: Operation, index: int, values
 @(private = "file")
 count_limit_holds :: proc "contextless" (operation: Operation, index: int, values: [7]u64) -> bool {
 	switch operation {
-	case .None, .Log, .Memory_Map, .Memory_Unmap, .Memory_Size, .Program_Create, .Program_Start, .Program_Stop, .Program_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Program_Module, .Strategy_Set, .Memory_Commit, .Memory_Protect, .Fault_Handler_Set, .Fault_Answer, .Thread_Control, .Guest_Run, .Log_Read:
+	case .None, .Log, .Memory_Map, .Memory_Unmap, .Memory_Size, .Process_Create, .Process_Start, .Process_Stop, .Process_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Memory_Commit, .Memory_Protect, .Fault_Handler_Set, .Fault_Answer, .Thread_Control, .Guest_Run, .Log_Read:
 		// The limit of the form of each count of these holds alone. A new
 		// operation stops the build here.
 	case .Memory_Create:

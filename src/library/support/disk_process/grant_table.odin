@@ -1,8 +1,8 @@
-package disk_program
+package disk_process
 
 // The disk grant table of one principal: each row binds a nickname to the
 // hash of one module file, and holds the grants of that file
-// (docs/MODULE_CONTRACT.md, "The grants of a disk program").
+// (docs/MODULE_CONTRACT.md, "The grants of a disk process").
 //
 // The root service keeps one table for each principal and applies the rules
 // of this file; the console checks a nickname and a grant with them before
@@ -12,7 +12,7 @@ package disk_program
 //
 // The table also holds the client keys of `remote` that its principal
 // allowed (src/md/features/remote_client_keys.md), so such a grant lasts
-// across a restart under the same tag as the grants of the disk programs.
+// across a restart under the same tag as the grants of the disk processes.
 // The client table of the root service is the form of these keys while the
 // machine runs.
 //
@@ -24,7 +24,7 @@ import "modus:contract/remote"
 import "modus:contract/start_grant"
 import blake2 "modus:support/cryptography/_blake2"
 
-// The rows of one table: the disk programs with a grant, of one principal.
+// The rows of one table: the disk processes with a grant, of one principal.
 ROW_CAPACITY :: 16
 
 // The client keys of `remote` in one table: as many as the client table
@@ -33,7 +33,7 @@ CLIENT_KEY_CAPACITY :: remote.CLIENT_ROWS_OF_ONE_PRINCIPAL
 // The bytes of a client key: an Ed25519 public key.
 CLIENT_KEY_SIZE :: 32
 
-// The grants that a command gives to a disk program.
+// The grants that a command gives to a disk process.
 Disk_Grant :: enum u8 {
 	Store = 0, // An isolated store of its own, attached to its nickname.
 }
@@ -46,18 +46,18 @@ disk_grant_names := [Disk_Grant]string {
 }
 
 // The prefix of the name of the store of a nickname. The name of a module
-// has no byte '-', so no store of a program of the boot image has it.
+// has no byte '-', so no store of a process of the boot image has it.
 STORE_PREFIX :: "disk-"
 
 // What a command can do with a start grant (start_grant.Grant), for a disk
-// program: the result of `grant_by_command`.
+// process: the result of `grant_by_command`.
 Command_Answer :: enum u8 {
 	Given, // A command gives it: `given` is its Disk_Grant.
 	Never, // No command ever gives it: it reaches the whole machine, a device, or the principal.
 	Not_Built, // A command could give it, and none does yet.
 }
 
-// grant_by_command says if a command gives a start grant to a disk program.
+// grant_by_command says if a command gives a start grant to a disk process.
 // The ring of the root service, a right over the machine or a device, and
 // the right to act for the principal are Never: each one is the whole
 // machine, or the principal.
@@ -92,10 +92,10 @@ nickname_grant_problem :: proc "contextless" (nickname: string) -> (problem: Nam
 	return .None, 0
 }
 
-// store_program_name writes the name that the root service gives the
+// store_process_name writes the name that the root service gives the
 // storage service for the store of a nickname, before the ending of the
 // principal: STORE_PREFIX and the nickname. It fits: 5 + 23 bytes.
-store_program_name :: proc "contextless" (out: ^[32]u8, nickname: string) -> string {
+store_process_name :: proc "contextless" (out: ^[32]u8, nickname: string) -> string {
 	out^ = {}
 	count := copy(out^[:], STORE_PREFIX)
 	count += copy(out^[count:len(out^) - 1], nickname)
@@ -178,7 +178,7 @@ start_file :: proc "contextless" (table: ^Grant_Table, nickname: string, asked: 
 }
 
 // table_allow gives a grant to the file that a nickname names: hash is the
-// hash of its row, or with no row the hash of the program that runs. A new
+// hash of its row, or with no row the hash of the process that runs. A new
 // row starts with the global setting.
 table_allow :: proc "contextless" (table: ^Grant_Table, nickname: string, hash: [HASH_SIZE]u8, grant: Disk_Grant) -> Table_Problem {
 	if hash == {} {
@@ -348,7 +348,7 @@ table_key_derive :: proc "contextless" (secret: ^[KEY_SIZE]u8, text: string) -> 
 
 // table_key_of_machine_key gives the key of the tag of the disk grant table
 // of principal 0: keyed BLAKE2b of the machine key over TABLE_KEY_TEXT. The
-// program `unlock` computes it, and gives only this key to the root service
+// process `unlock` computes it, and gives only this key to the root service
 // (docs/PRINCIPALS.md, "Principal 0 and its machine passphrase").
 table_key_of_machine_key :: proc "contextless" (machine_key: ^[KEY_SIZE]u8) -> (key: [KEY_SIZE]u8) {
 	return table_key_derive(machine_key, TABLE_KEY_TEXT)
@@ -356,7 +356,7 @@ table_key_of_machine_key :: proc "contextless" (machine_key: ^[KEY_SIZE]u8) -> (
 
 // table_key_of_principal_key gives the key of the tag of the disk grant
 // table of a named principal: keyed BLAKE2b of its secret unlock key
-// (X25519) over PRINCIPAL_TABLE_KEY_TEXT. The program `unlock` computes it
+// (X25519) over PRINCIPAL_TABLE_KEY_TEXT. The process `unlock` computes it
 // when the passphrase opens the seal, and gives only this key to the root
 // service (docs/PRINCIPALS.md, "The disk grant table of a named
 // principal"). Each principal has its own unlock key, so a table of one

@@ -24,9 +24,9 @@ The terms.
 
 ### Handle
 
-A handle names an object of the kernel in a table of a program.
+A handle names an object of the kernel in a table of a process.
 
-A program passes a handle to an operation.
+A process passes a handle to an operation.
 
 | Field | Meaning |
 |---|---|
@@ -120,7 +120,7 @@ manual_link_pages_of_a_term_and_of_a_guide :: proc(t: ^testing.T) {
 	handle, found := page_of(pages, "term:handle")
 	testing.expect(t, found)
 	testing.expect_value(t, handle.title, "Handle")
-	testing.expect_value(t, handle.text, "A handle names an object of the kernel in a table of a program.\n\nA program passes a handle to an operation.\n\n- Field; Meaning\n- rights; what it allows")
+	testing.expect_value(t, handle.text, "A handle names an object of the kernel in a table of a process.\n\nA process passes a handle to an operation.\n\n- Field; Meaning\n- rights; what it allows")
 	ring, ring_found := page_of(pages, "term:Ring")
 	testing.expect(t, ring_found)
 	testing.expect_value(t, ring.text, "A ring is a queue of records in shared memory.")

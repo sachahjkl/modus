@@ -310,7 +310,7 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 
 	documentation := [2]module.Documentation{}
 	documentation[1].about_offset, documentation[1].about_count = fuzz_module_name_add(&strings_bytes, &choices, 'd')
-	budget := [2]module.Budget_Request{{}, {pages = u64(fuzz_choice_below(&choices, 64)), programs = 1, threads = 1}}
+	budget := [2]module.Budget_Request{{}, {pages = u64(fuzz_choice_below(&choices, 64)), processes = 1, threads = 1}}
 
 	// A rare broken field, chosen by the choices.
 	broken_kind := module.Table_Kind.None

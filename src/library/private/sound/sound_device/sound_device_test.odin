@@ -195,7 +195,7 @@ a_refused_attach_closes_the_handle_that_the_client_gave :: proc(t: ^testing.T) {
 		refusal:  Attach_Refusal,
 	} {
 		{.Memory, true, true, .Attached_Already},
-		{.Program, true, false, .Not_Memory},
+		{.Process, true, false, .Not_Memory},
 		{.None, true, false, .Not_Memory},
 		{.Memory, false, false, .No_Read},
 	}

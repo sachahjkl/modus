@@ -154,7 +154,7 @@ Fuzz_Register_Field :: enum u8 {
 
 // fuzz_register_image_write fills a register image: any general register,
 // an instruction address and a stack address below USER_END, the required
-// flags with some of the allowed ones, and the two selectors of a program.
+// flags with some of the allowed ones, and the two selectors of a process.
 fuzz_register_image_write :: proc(choices: ^Fuzz_Choices, form: Fuzz_Record_Form) -> (registers: operation.Thread_Registers) {
 	general := ([^]u8)(&registers)[:int(offset_of(operation.Thread_Registers, rip))]
 	fuzz_choice_fill(choices, general)
@@ -199,8 +199,8 @@ Fuzz_Breakpoint_Field :: enum u8 {
 }
 
 // fuzz_breakpoint_image_write fills the breakpoints of a thread: each
-// place has a kind; an execute breakpoint has an address of a program; a
-// data breakpoint has a length of 1, 2, 4 or 8 and an address of a program
+// place has a kind; an execute breakpoint has an address of a process; a
+// data breakpoint has a length of 1, 2, 4 or 8 and an address of a process
 // that is a multiple of it; an empty place is zero.
 fuzz_breakpoint_image_write :: proc(choices: ^Fuzz_Choices, form: Fuzz_Record_Form) -> (image: operation.Thread_Breakpoints) {
 	kinds := [?]operation.Thread_Breakpoint_Kind{.None, .Execute, .Write, .Read_Or_Write}
@@ -392,7 +392,7 @@ fuzz_step_records_write :: proc(choices: ^Fuzz_Choices, sequence: ^operation_seq
 				form := fuzz_record_form_choose(choices)
 				area := fuzz_extended_state_write(choices, form)
 				fuzz_record_place(&place, .Extended_State_Area, form, area[:])
-			case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+			case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
 				// No record type is described for these commands yet, or
 				// the command reads no record.
 			}

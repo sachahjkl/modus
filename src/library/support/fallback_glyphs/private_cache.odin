@@ -6,8 +6,8 @@ import "modus:support/vector_font"
 // The private glyph cache (src/md/features/glyphs_on_demand.md, "Layer 2:
 // the private glyph cache"): the glyphs that this copy of the package drew,
 // in its own memory,
-// which the budget of the program pays. No other program reads it, so its
-// content and its evictions tell nothing to another program.
+// which the budget of the process pays. No other process reads it, so its
+// content and its evictions tell nothing to another process.
 //
 // An entry is one glyph: its key (the face, the scale, the position and
 // the code point) and its glyph entry in the form of a glyph cache. Its
@@ -63,7 +63,7 @@ Private_Cache :: struct {
 	counts:          Private_Counts,
 }
 
-// The counts of a private glyph cache, since the start of the program.
+// The counts of a private glyph cache, since the start of the process.
 Private_Counts :: struct {
 	drawn:          u64, // The glyphs drawn into the cache.
 	refused:        u64, // The outlines that the renderer refused.

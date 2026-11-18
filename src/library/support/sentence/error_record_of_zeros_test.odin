@@ -20,5 +20,5 @@ a_record_of_zeros_says_that_the_call_wrote_none :: proc(t: ^testing.T) {
 	writer = Writer{buffer = buffer[:]}
 	record = {kind = past_the_kinds}
 	error_text(&writer, &record, "storage.read", "")
-	testing.expect_value(t, written(&writer), fmt.tprintf("storage.read: an error of the kind %d, which this program does not know", past_the_kinds))
+	testing.expect_value(t, written(&writer), fmt.tprintf("storage.read: an error of the kind %d, which this process does not know", past_the_kinds))
 }

@@ -7,7 +7,7 @@ import "core:testing"
 import "core:time"
 import "modus:contract/glyph_cache"
 
-// The cost of a glyph that a program draws for itself, past the glyph
+// The cost of a glyph that a process draws for itself, past the glyph
 // cache (src/md/features/glyphs_on_demand.md, "The measures"): the time of
 // the renderer for one glyph at each scale, and the words that the glyph
 // keeps. It prints measures and asserts nothing. It measures only when the

@@ -6,7 +6,7 @@ import "core:fmt"
 import "core:strconv"
 import "core:strings"
 
-// The names of the procedures of a stack trace. A program that has the
+// The names of the procedures of a stack trace. A process that has the
 // debug image names each frame itself: "fault::three + 0x8 in fault
 // (src/modules/demonstrations/fault/main.odin:15)". The kernel gives a frame as "module +
 // offset" (docs/MODULE_CONTRACT.md, section 8); the tool names such a
@@ -61,7 +61,7 @@ trace_check :: proc(line: string, names: string) -> (found: string, ok: bool) {
 	return found, strings.has_prefix(found, names)
 }
 
-// The source file of the program fault, as its debug object names it.
+// The source file of the process fault, as its debug object names it.
 FAULT_SOURCE_FILE :: DEMONSTRATION_MODULE_SOURCES + "fault/main.odin"
 
 // source_lines_of_procedure gives the first and the last line (from 1) of a

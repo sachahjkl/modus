@@ -5,12 +5,12 @@ Formats of the network, of the TPM and of the files of the system hold numbers i
 ## Constraints
 
 - Each copy of a shift is a place for a fault of a shift. Before this package, eleven copies had two signatures, and the checksum had two forms that a reader had to compare.
-- The kernel, the contract packages, the support packages, the programs and the boot program must all reach it. The import rule of the tool lets each folder import a contract package, and a contract package imports no support package ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The imports of the sources of the system").
+- The kernel, the contract packages, the support packages, the processes and the boot program must all reach it. The import rule of the tool lets each folder import a contract package, and a contract package imports no support package ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The imports of the sources of the system").
 
 ## The chosen form
 
 - A contract package, for the import rule alone: it has no party. Its folder changes with the layout of the library, not its form.
-- Each procedure takes a slice and the offset of the first byte. A slice too short stops the program on the check of the bounds of the slice, so each caller checks its lengths first.
+- Each procedure takes a slice and the offset of the first byte. A slice too short stops the process on the check of the bounds of the slice, so each caller checks its lengths first.
 - The checksum sum does not fold: a caller adds the parts (the pseudo-header, the header, the data) in 64 bits and folds once in `internet_checksum_end`. Each part but the last has an even count of bytes. Folding early or once gives the same 16 bits, so the two old forms are one.
 - The little-endian procedures serve the history file, the files of the principals, the disk grant table, the manual pages and the event log of the boot program.
 
@@ -22,4 +22,4 @@ Formats of the network, of the TPM and of the files of the system hold numbers i
 
 ## State
 
-Built: the package, its host tests, and its callers in the network, the TPM, the boot program, the line editor, the principals, the disk program and the manual pages. Left: `src/library/support/vector_font` and `src/kernel/iommu` keep their own reads.
+Built: the package, its host tests, and its callers in the network, the TPM, the boot program, the line editor, the principals, the disk process and the manual pages. Left: `src/library/support/vector_font` and `src/kernel/iommu` keep their own reads.

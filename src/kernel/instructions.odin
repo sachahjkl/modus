@@ -5,7 +5,7 @@ package kernel
 // puts the instructions in place at each call, in the registers that the
 // template names, with no call and no return. src/kernel/processor.asm keeps
 // the code that owns the stack or the frame: the entries, the return to a
-// program, the stubs, the save and the restore of the extended state, and
+// process, the stubs, the save and the restore of the extended state, and
 // the two procedures with hlt (docs/ARCHITECTURE.md, "The instructions of
 // the kernel").
 //
@@ -26,7 +26,7 @@ package kernel
 // result of a comparison in the flags across the instruction.
 //
 // No template here names an x87, MMX, SSE or AVX register: the registers of
-// a program stay live through each kernel entry (docs/ARCHITECTURE.md, "The
+// a process stay live through each kernel entry (docs/ARCHITECTURE.md, "The
 // extended state of the processor", section 3a).
 
 // out and in have no operand in a template: the processor takes the port
@@ -130,7 +130,7 @@ control_register_0_write :: asm(value: u64) [#volatile, #clobber memory, #clobbe
 // (which breakpoints are on), and the four address registers 0 to 3. The
 // start of a processor writes 6 and 7; the switch to a thread that has
 // breakpoints writes 0 to 3 and 7, the switch away writes 7, and a debug
-// exception of a program reads and writes 6 (breakpoints.odin).
+// exception of a process reads and writes 6 (breakpoints.odin).
 debug_register_6_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {
 	mov %dr6, value
 }
@@ -231,12 +231,12 @@ copy_bytes_upward :: asm(destination: u64, source: u64, count: u64) -> (destinat
 	movsb
 }
 
-// The same copy, with the use of the memory of programs allowed during it
+// The same copy, with the use of the memory of processes allowed during it
 // (stac sets the flag AC, clac clears it). With the guard on (SMAP), the
-// processor refuses the memory of programs to the kernel everywhere else.
+// processor refuses the memory of processes to the kernel everywhere else.
 // An interrupt in the copy clears AC in interrupt_common, and its iretq
 // gives back the flags of the copy.
-copy_bytes_upward_with_program_access :: asm(destination: u64, source: u64, count: u64) -> (destination_end: u64, source_end: u64, count_left: u64) [
+copy_bytes_upward_with_process_access :: asm(destination: u64, source: u64, count: u64) -> (destination_end: u64, source_end: u64, count_left: u64) [
 	destination -> destination_end = %rdi,
 	source -> source_end           = %rsi,
 	count -> count_left            = %rcx,
@@ -251,13 +251,13 @@ copy_bytes_upward_with_program_access :: asm(destination: u64, source: u64, coun
 	clac
 }
 
-// user_copy is the one place where the kernel uses the memory of a program
-// at the addresses of the program. The caller checks the range first
+// user_copy is the one place where the kernel uses the memory of a process
+// at the addresses of the process. The caller checks the range first
 // (user_range). stac and clac exist only on a processor with SMAP: without
 // the guard, the copy has neither.
 user_copy :: #force_inline proc "contextless" (destination: rawptr, source: rawptr, count: u64) {
 	if user_access_guard != 0 {
-		_, _, _ = copy_bytes_upward_with_program_access(u64(uintptr(destination)), u64(uintptr(source)), count)
+		_, _, _ = copy_bytes_upward_with_process_access(u64(uintptr(destination)), u64(uintptr(source)), count)
 	} else {
 		_, _, _ = copy_bytes_upward(u64(uintptr(destination)), u64(uintptr(source)), count)
 	}

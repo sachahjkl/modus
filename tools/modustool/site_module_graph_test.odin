@@ -78,7 +78,7 @@ site_graph_layout_rules :: proc(t: ^testing.T) {
 	testing.expect_value(t, layout.band_count, 2)
 	// The band is under the layers, the kernel first.
 	testing.expect(t, layout.nodes[3].y > layout.nodes[2].y && layout.band_top > layout.nodes[1].y)
-	testing.expect(t, layout.nodes[4].row == 0 && layout.nodes[3].row == 1, "the band is by kind: the kernel before the programs")
+	testing.expect(t, layout.nodes[4].row == 0 && layout.nodes[3].row == 1, "the band is by kind: the kernel before the processes")
 	// A bar follows the bytes; a module of no known size has the least bar.
 	testing.expect_value(t, layout.nodes[4].bar_width, SITE_GRAPH_BAR_MOST)
 	testing.expect_value(t, layout.nodes[3].bar_width, SITE_GRAPH_BAR_LEAST)

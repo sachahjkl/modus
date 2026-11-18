@@ -1,8 +1,8 @@
-// The relay: what the programs of the `rings` demonstration agree on.
+// The relay: what the processes of the `rings` demonstration agree on.
 //
-// The demonstration has one program per node, and one ring from each node to
+// The demonstration has one process per node, and one ring from each node to
 // the next. A node takes a record from the ring before it, keeps it for some
-// time, and puts it in the ring after it. The `rings` program starts the
+// time, and puts it in the ring after it. The `rings` process starts the
 // nodes and shows them. It reads the same memory as the nodes: it shows the
 // real content of each ring.
 package relay
@@ -12,7 +12,7 @@ NODE_COUNT :: 6 // The nodes of the demonstration.
 // The roles of the context of a node.
 GRANT_BEFORE :: 0 // Memory: the ring from the node before. This node reads its command queue.
 GRANT_AFTER :: 1 // Memory: the ring to the node after. This node writes its command queue.
-GRANT_CONTROL :: 2 // Memory: the ring from the `rings` program.
+GRANT_CONTROL :: 2 // Memory: the ring from the `rings` process.
 GRANT_STATE :: 3 // Memory: one State record. This node writes it.
 VALUE_WORK_TIME :: 0 // Milliseconds that the node keeps a record.
 

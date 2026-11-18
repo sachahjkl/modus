@@ -4,9 +4,9 @@ import "core:mem"
 import "core:slice"
 import op "modus:contract/operation"
 import "modus:contract/settings"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 
-// The fuzz targets of the records that a program keeps
+// The fuzz targets of the records that a process keeps
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"):
 // the record of the settings in the private store of `settings`, with the
 // page that it writes and the text of a zone; and the stop reports that the
@@ -216,14 +216,14 @@ Fuzz_Stop_Report_Step :: enum u8 {
 @(private = "file")
 Fuzz_Stop_Report_Model :: struct {
 	kept:    [FUZZ_STOP_REPORT_PRINCIPALS][FUZZ_STOP_REPORT_NAMES]bool,
-	reports: [FUZZ_STOP_REPORT_PRINCIPALS][FUZZ_STOP_REPORT_NAMES]disk_program.Kept_Stop_Report,
+	reports: [FUZZ_STOP_REPORT_PRINCIPALS][FUZZ_STOP_REPORT_NAMES]disk_process.Kept_Stop_Report,
 }
 
 // fuzz_stop_report_name gives the nickname of a number: names of one and of
 // NAME_LIMIT bytes.
 @(private = "file")
 fuzz_stop_report_name :: proc(number: int) -> string {
-	@(static) long_name: [disk_program.NAME_LIMIT]u8
+	@(static) long_name: [disk_process.NAME_LIMIT]u8
 	if number == FUZZ_STOP_REPORT_NAMES - 1 {
 		for &value in long_name {
 			value = 'z'
@@ -254,7 +254,7 @@ fuzz_stop_report_of :: proc(choices: ^Fuzz_Choices) -> (report: op.Stop_Report) 
 		frame.base = fuzz_choice_flag(choices) ? report.module.base : fuzz_choice_word(choices, 8)
 		frame.address = frame.base + fuzz_choice_word(choices, 2) - u64(fuzz_choice_byte(choices))
 	}
-	report.program_serial = fuzz_choice_word(choices, 8)
+	report.process_serial = fuzz_choice_word(choices, 8)
 	report.hidden_value_count = u64(fuzz_choice_byte(choices))
 	return report
 }
@@ -267,10 +267,10 @@ fuzz_stop_report_hidden_check :: proc(report: ^op.Stop_Report) -> Fuzz_Verdict {
 	in_module := proc(record: op.Module_Record, address: u64) -> bool {
 		return record.size != 0 && address >= record.base && address - record.base < record.size
 	}
-	if report.program_serial != 0 || report.frame_count > op.STOP_FRAME_CAPACITY {
-		return fuzz_broken(.Contract, "a hidden report keeps the serial %d and %d frames", report.program_serial, report.frame_count)
+	if report.process_serial != 0 || report.frame_count > op.STOP_FRAME_CAPACITY {
+		return fuzz_broken(.Contract, "a hidden report keeps the serial %d and %d frames", report.process_serial, report.frame_count)
 	}
-	if report.address >= disk_program.FIRST_PAGE_BYTES && !in_module(module, report.address) {
+	if report.address >= disk_process.FIRST_PAGE_BYTES && !in_module(module, report.address) {
 		return fuzz_broken(.Contract, "a hidden report keeps the address %x outside its module", report.address)
 	}
 	if report.instruction != 0 && !in_module(module, report.instruction) {
@@ -297,7 +297,7 @@ fuzz_stop_report_hidden_check :: proc(report: ^op.Stop_Report) -> Fuzz_Verdict {
 // a wrong name changes nothing.
 fuzz_kept_stop_reports_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	choices := fuzz_choices_of(input)
-	table: disk_program.Kept_Stop_Reports
+	table: disk_process.Kept_Stop_Reports
 	model: Fuzz_Stop_Report_Model
 	for _ in 0 ..< fuzz_choice_below(&choices, FUZZ_STOP_REPORT_STEPS + 1) {
 		principal := fuzz_choice_below(&choices, FUZZ_STOP_REPORT_PRINCIPALS)
@@ -308,38 +308,38 @@ fuzz_kept_stop_reports_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		switch enum_member_at(Fuzz_Stop_Report_Step, fuzz_choice_below(&choices, len(Fuzz_Stop_Report_Step))) {
 		case .Keep:
 			report := fuzz_stop_report_of(&choices)
-			disk_program.stop_report_hide(&report)
+			disk_process.stop_report_hide(&report)
 			if verdict := fuzz_stop_report_hidden_check(&report); verdict.oracle != .None {
 				return verdict
 			}
 			hidden_again := report
-			disk_program.stop_report_hide(&hidden_again)
+			disk_process.stop_report_hide(&hidden_again)
 			if hidden_again != report {
 				return fuzz_broken(.Contract, "a hidden report changes when it is hidden again")
 			}
-			hash: [disk_program.HASH_SIZE]u8
+			hash: [disk_process.HASH_SIZE]u8
 			fuzz_choice_fill(&choices, hash[:])
-			if !disk_program.kept_stop_report_keep(&table, u64(principal), name, hash, &report) {
+			if !disk_process.kept_stop_report_keep(&table, u64(principal), name, hash, &report) {
 				return fuzz_broken(.Contract, "kept_stop_report_keep refuses the name %q", name)
 			}
 			model.kept[principal][number] = true
 			model.reports[principal][number] = {module_hash = hash, report = report}
 			// The report just kept is found at once: a keep never gives
 			// away the place that it wrote.
-			if found := disk_program.kept_stop_report_find(&table, u64(principal), name); found == nil || found^ != model.reports[principal][number] {
+			if found := disk_process.kept_stop_report_find(&table, u64(principal), name); found == nil || found^ != model.reports[principal][number] {
 				return fuzz_broken(.Model, "the report just kept for the principal %d is not found as it was kept", principal)
 			}
 			eviction_allowed = true
 		case .Forget:
-			disk_program.kept_stop_report_forget(&table, u64(principal), name)
+			disk_process.kept_stop_report_forget(&table, u64(principal), name)
 			model.kept[principal][number] = false
 		case .Find:
 		case .Keep_A_Wrong_Name:
 			before := table
 			report := fuzz_stop_report_of(&choices)
-			too_long: [disk_program.NAME_LIMIT + 1]u8
+			too_long: [disk_process.NAME_LIMIT + 1]u8
 			for wrong in ([2]string{"", string(too_long[:])}) {
-				if disk_program.kept_stop_report_keep(&table, u64(principal), wrong, {}, &report) {
+				if disk_process.kept_stop_report_keep(&table, u64(principal), wrong, {}, &report) {
 					return fuzz_broken(.Contract, "kept_stop_report_keep keeps a name of %d bytes", len(wrong))
 				}
 			}
@@ -359,12 +359,12 @@ fuzz_kept_stop_reports_execute :: proc(input: []u8) -> Fuzz_Verdict {
 // place of one other report, so after a keep (eviction_allowed) at most one
 // report of the model is missing, and the model forgets it.
 @(private = "file")
-fuzz_stop_reports_model_check :: proc(table: ^disk_program.Kept_Stop_Reports, model: ^Fuzz_Stop_Report_Model, eviction_allowed: bool) -> Fuzz_Verdict {
+fuzz_stop_reports_model_check :: proc(table: ^disk_process.Kept_Stop_Reports, model: ^Fuzz_Stop_Report_Model, eviction_allowed: bool) -> Fuzz_Verdict {
 	missing := 0
 	for principal in 0 ..< FUZZ_STOP_REPORT_PRINCIPALS {
 		held := 0
 		for number in 0 ..< FUZZ_STOP_REPORT_NAMES {
-			found := disk_program.kept_stop_report_find(table, u64(principal), fuzz_stop_report_name(number))
+			found := disk_process.kept_stop_report_find(table, u64(principal), fuzz_stop_report_name(number))
 			if found == nil {
 				if model.kept[principal][number] {
 					missing += 1
@@ -384,7 +384,7 @@ fuzz_stop_reports_model_check :: proc(table: ^disk_program.Kept_Stop_Reports, mo
 				return fuzz_broken(.Model, "the table finds another report than the last one kept")
 			}
 		}
-		if held > disk_program.KEPT_STOP_REPORTS_OF_ONE_PRINCIPAL {
+		if held > disk_process.KEPT_STOP_REPORTS_OF_ONE_PRINCIPAL {
 			return fuzz_broken(.Contract, "the principal %d holds %d places", principal, held)
 		}
 	}

@@ -4,11 +4,11 @@ This guide describes the line that is typed at the console: the language that th
 
 ## About this guide
 
-**The idea in plain words.** The console is the program in which the principal calls the functions of the system directly, with typed values, in place of a shell that passes text to programs. Each name that it can call comes from the description of a module, so the console can complete every name and show the signature of every call while the line is typed, with no code in the called program.
+**The idea in plain words.** The console is the process in which the principal calls the functions of the system directly, with typed values, in place of a shell that passes text to processes. Each name that it can call comes from the description of a module, so the console can complete every name and show the signature of every call while the line is typed, with no code in the called process.
 
 **For whom.** A reader who uses the console, and a reader who changes `src/modules/system/console`, `src/library/support/line_editor` or `src/library/support/terminal`.
 
-**Read before.** `PROPERTIES.md`, "19. A command is a function: no text between programs". The terms edit line, line editor, hint line, free row, completion list, chosen row, fuzzy match, line history, history search, terminal, result drawer and short name of an export are in `glossary/communication.md`; log record and value run are in `glossary/running_code.md`.
+**Read before.** `PROPERTIES.md`, "19. A command is a function: no text between processes". The terms edit line, line editor, hint line, free row, completion list, chosen row, fuzzy match, line history, history search, terminal, result drawer and short name of an export are in `glossary/communication.md`; log record and value run are in `glossary/running_code.md`.
 
 **The map of this guide.**
 
@@ -35,11 +35,11 @@ This guide describes the line that is typed at the console: the language that th
 
 ## What the console owns
 
-The console owns the line that the input edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The terminal holds a surface, the two memory objects that it shares with its program (the terminal ring and the text region), and a handle that reads the state of the program. A line is UTF-8: a key of the layout of France types é in its two bytes, and each key moves the caret over a whole character, or removes a whole character (`docs/glossary/text.md`, "Text encoding"). The procedures that change the line are in `src/library/support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`src/library/support/line_editor/line_editor_test.odin`). The console uses them in `src/modules/system/console/main.odin` and `src/modules/system/console/completion.odin`.
+The console owns the line that the input edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The terminal holds a surface, the two memory objects that it shares with its process (the terminal ring and the text region), and a handle that reads the state of the process. A line is UTF-8: a key of the layout of France types é in its two bytes, and each key moves the caret over a whole character, or removes a whole character (`docs/glossary/text.md`, "Text encoding"). The procedures that change the line are in `src/library/support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`src/library/support/line_editor/line_editor_test.odin`). The console uses them in `src/modules/system/console/main.odin` and `src/modules/system/console/completion.odin`.
 
 ## The language of the console
 
-A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No program receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between programs").
+A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No process receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between processes").
 
 The code is `src/modules/system/console/language.odin` (the parser and the values), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line) and `src/library/private/console/console_results` (the drawers).
 
@@ -106,7 +106,7 @@ error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)
 
 Here `columns` made a table of another record, with fewer fields, so the export of `sample`, which reads the whole record, refuses it.
 
-**How the call runs.** A built-in command runs in the console. An export of a module that `load` added is a direct call in the memory of the console. An export of a module that `isolate` added is an isolated call to a sandboxed program, and an export of a service is a call to that service; the arguments and the results go through the call region (`MODULE_CONTRACT.md`, section 4). A record argument is a copy: the export can write in it, and the variable that gave it does not change.
+**How the call runs.** A built-in command runs in the console. An export of a module that `load` added is a direct call in the memory of the console. An export of a module that `isolate` added is an isolated call to a sandboxed process, and an export of a service is a call to that service; the arguments and the results go through the call region (`MODULE_CONTRACT.md`, section 4). A record argument is a copy: the export can write in it, and the variable that gave it does not change.
 
 ### Variables
 
@@ -161,18 +161,18 @@ A line composes by calls in calls. The console evaluates each argument before it
 
 ```
 > connect("manual")
-> columns(where(manual.running(), "module", "calendar_fixed"), "program slot module replaces")
-> join(columns(manual.running(), "program hash"), columns(manual.modules(), "hash name code exports"), "hash")
+> columns(where(manual.running(), "module", "calendar_fixed"), "process slot module replaces")
+> join(columns(manual.running(), "process hash"), columns(manual.modules(), "hash name code exports"), "hash")
 > rows(manual.exports("")) - rows(manual.exporters("show"))
 ```
 
-The first line lists the programs that run a module, keeps the rows of one module, and shows four of their fields. The second joins two tables of the service `manual` on the hash of a module. The third subtracts two counts.
+The first line lists the processes that run a module, keeps the rows of one module, and shows four of their fields. The second joins two tables of the service `manual` on the hash of a module. The third subtracts two counts.
 
 **The built-in commands compose too.** A built-in command that lists things gives a table, so a line filters, sorts and counts it as it does the table of an export:
 
 ```
 > where(grants("notes"), "state", "held")
-> sort(where(programs(), "state", "waiting"), "name")
+> sort(where(processes(), "state", "waiting"), "name")
 > rows(where(help(), "name", "repeat"))
 > columns(where(loaded(), "call", "direct"), "module imported_by in_place_of")
 ```
@@ -197,8 +197,8 @@ A line that fails has one result: its error. The first error ends the line: the 
 | A field that the records do not have | `error: where: the records ... have no field x; their fields are ...` |
 | A value of the wrong kind for a field | `error: where: the field code is Integer, the value is Text` |
 | An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8), then the values of the record |
-| The root service refuses | `error: root.Stop: the argument name names a program of the system: ...`: the sentence of the error record of the root ring, then its values |
-| A call in an isolated program that faults | `error: the program agenda stopped: invalid instruction`, then the instruction and the frames of its stop report, each after `error: ` |
+| The root service refuses | `error: root.Stop: the argument name names a process of the system: ...`: the sentence of the error record of the root ring, then its values |
+| A call in an isolated process that faults | `error: the process agenda stopped: invalid instruction`, then the instruction and the frames of its stop report, each after `error: ` |
 
 An overflow has an error record of the kind `Over_Limit`: `value` is the left value, `found` the right value, and `limit` the largest integer.
 
@@ -224,7 +224,7 @@ One drawer exists for each kind of result. A drawer knows no command: it reads t
 
 ```
 > where(grants("notes"), "state", "held")
-program  grant  state  principal  principal_name
+process  grant  state  principal  principal_name
 notes    log    held           0  machine
 notes    store  held           0  machine
 2 rows of Grant
@@ -233,10 +233,10 @@ Memory
   memory                256 MiB
   free                  201 MiB
   ...
-> columns(where(programs(), "name", "console"), "name slot threads resident time started")
+> columns(where(processes(), "name", "console"), "name slot threads resident time started")
 name     slot  threads  resident (pages)  time (ms)  started (us)
 console     4        3               412         38       1830211
-1 row of Program
+1 row of Process
 ```
 
 ![A table of the console: each field in the color of its value kind](screenshots/console_value_kinds.png)
@@ -273,12 +273,12 @@ error: add: the argument note has 40 bytes; it can have at most 36 bytes (-1)
   values     value 40, limit 36, found 0, unit bytes
 ```
 
-- `kind`: the error kind, by its name in `src/library/contract/errors`. A kind that the contract does not have, from another program: "an unknown kind" and its number.
+- `kind`: the error kind, by its name in `src/library/contract/errors`. A kind that the contract does not have, from another process: "an unknown kind" and its number.
 - `operation`: the export, or `root.` and the command of the root ring.
 - `argument`: the number of the argument that is wrong, from 1, and its name. The line is absent when the record names no argument.
 - `values`: `value`, `limit` and `found` of the record, and its unit when it has one.
 
-When the export has a table of error details and wrote more than one detail, one line for each detail follows, each after `error: `, then the count of the details that the table of the console did not hold (16 places). An error of the console itself (a wrong kind of argument, an unknown name) has no record: its sentence is all of it. A load that fails, and a program that stops on a fault, add their lines after the sentence, each after `error: `.
+When the export has a table of error details and wrote more than one detail, one line for each detail follows, each after `error: `, then the count of the details that the table of the console did not hold (16 places). An error of the console itself (a wrong kind of argument, an unknown name) has no record: its sentence is all of it. A load that fails, and a process that stops on a fault, add their lines after the sentence, each after `error: `.
 
 ### The result of each built-in command
 
@@ -286,9 +286,9 @@ When the export has a table of error details and wrote more than one detail, one
 |---|---|---|
 | `help()` | Table of `Command` | One row for each command: `name`, `signature`, `about` |
 | `describe(name)` | Text | The signature and the whole help of one command |
-| `programs()` | Table of `Program` | The export `monitor.programs()` ("The built-in commands and the services"). A disk program has its nickname as its `name` and the hash of its file in `hash`: `columns(where(programs(), "name", "visitor"), "name hash")` |
-| `debug(program)`, `detach()` | Table | One row: the exports `debugger.attach()` and `debugger.detach()` ("The commands of the debugger") |
-| `threads()`, `hold(thread)`, `resume(thread)`, `continue_all()`, `step(thread)`, `step_line(thread)`, `step_over(thread)` | Table of `Thread_Row` | The threads of the debugged program: `thread`, `state`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
+| `processes()` | Table of `Process` | The export `monitor.processes()` ("The built-in commands and the services"). A disk process has its nickname as its `name` and the hash of its file in `hash`: `columns(where(processes(), "name", "visitor"), "name hash")` |
+| `debug(process)`, `detach()` | Table | One row: the exports `debugger.attach()` and `debugger.detach()` ("The commands of the debugger") |
+| `threads()`, `hold(thread)`, `resume(thread)`, `continue_all()`, `step(thread)`, `step_line(thread)`, `step_over(thread)` | Table of `Thread_Row` | The threads of the debugged process: `thread`, `state`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
 | `registers(thread)` | Table of `Register_Row` | `name`, `value`, `about` |
 | `stack(thread)` | Table of `Frame_Row` | `frame`, `module`, `procedure`, `offset`, `file`, `line`, `frame_pointer`, `return_address` |
 | `locals(thread, frame)` | Table of `Variable_Row` | `name`, `role`, `type`, `value`, `location` |
@@ -297,8 +297,8 @@ When the export has a table of error details and wrote more than one detail, one
 | `break_at(place)`, `watch(place, length)`, `breaks()`, `break_remove(number)` | Table of `Break_Row` | `number`, `kind`, `address`, `length`, `place` |
 | `debug_memory(place, count)` | Table of `Memory_Row` | `address`, `bytes`, `text` |
 | `events()`, `wait_stop(milliseconds)` | Table of `Event_Row` | `thread`, `kind`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
-| `stop_report(program)` | Table of `Stop_Frame_Row` | The frames of a disk program that stopped on a fault, with no attach: `frame`, `module`, `procedure`, `offset`, `file`, `line`, `stop` |
-| `program_modules()` | Table of `Program_Module` | One row for each module of each program: `slot`, `program`, `module`, `replaces`, `hash_head`, `writer` (`starter` or `program`: the module writer of the record) |
+| `stop_report(process)` | Table of `Stop_Frame_Row` | The frames of a disk process that stopped on a fault, with no attach: `frame`, `module`, `procedure`, `offset`, `file`, `line`, `stop` |
+| `process_modules()` | Table of `Process_Module` | One row for each module of each process: `slot`, `process`, `module`, `replaces`, `hash_head`, `writer` (`starter` or `process`: the module writer of the record) |
 | `memory()` | Record `Memory` | The memory of the machine and the counters of the kernel: `memory` and `free` in MiB, `used`, `reserved`, `budgets` and `free_no_budget_holds` in pages, then counts. `free_no_budget_holds` is 0 pages when each page is free or paid |
 | `locks()` | Table of `Lock` | One row for each kind of kernel lock: `lock`, `waits`, `takes` |
 | `modules()` | Table of `Module` | One row for each module of the boot image: `name`, `size` in bytes, `hash_head` |
@@ -306,21 +306,21 @@ When the export has a table of error details and wrote more than one detail, one
 | `unload(name)` | Record `Unloaded` | `module`, `commands`, `memory`: what became of the memory of the module |
 | `loaded()` | Table of `Loaded_Module` | The modules and the services whose exports are commands, and the imports of the modules: `module`, `call`, `imported_by`, `in_place_of`, `hash_head` |
 | `start(name)`, `stop(name)` | none | |
-| `start_from_disk(name, hash)` | none | A disk program: its module file is an object of the store `module_files`, and `hash` is 64 hexadecimal digits, or empty for the file of the row of the nickname (`MODULE_CONTRACT.md`, "A program from a disk") |
-| `allow(nickname, grant)`, `disallow(nickname, grant)` | none | A grant of the disk grant table to the file that a nickname names, from its next start: `store` only (`MODULE_CONTRACT.md`, "The grants of a disk program") |
+| `start_from_disk(name, hash)` | none | A disk process: its module file is an object of the store `module_files`, and `hash` is 64 hexadecimal digits, or empty for the file of the row of the nickname (`MODULE_CONTRACT.md`, "A process from a disk") |
+| `allow(nickname, grant)`, `disallow(nickname, grant)` | none | A grant of the disk grant table to the file that a nickname names, from its next start: `store` only (`MODULE_CONTRACT.md`, "The grants of a disk process") |
 | `nickname_move(nickname, hash)` | none | Points a nickname to another file; its grants and its store follow |
 | `disk_persistence(nickname, setting)` | none | How long a row lasts across a restart: `persist`, `forget`, or `global`; an empty nickname sets the global setting, `persist` or `forget` |
 | `remote_allow(key)` | none | Each call of the client of `remote` with this Ed25519 public key, 64 hexadecimal digits, acts for the principal of this console. The disk grant table of the principal keeps the key across a restart, as it keeps its other grants (`PRINCIPALS.md`, "The client keys of remote") |
 | `remote_disallow(key)` | Text | The grant of the key ends, and the key leaves the disk grant table: `remote` ends the open connection of the client and refuses the key in the next handshake. A sentence with the count of the connections to services that ended, which also says when the disk grant table did not take the revocation and the key can come back at the next start |
 | `remote_clients()` | Table of `Remote_Client` | The client keys that the principal of this console allowed: `key`, `principal`, `state` (`holds`, `locked`, or `contested` when another principal allowed the key too: it acts for neither until one of them revokes it) |
-| `grants(name)` | Table of `Grant` | One row for each grant that the program has or lost: `program`, `grant`, `state` (`held` or `lost`), `principal`, `principal_name` |
+| `grants(name)` | Table of `Grant` | One row for each grant that the process has or lost: `process`, `grant`, `state` (`held` or `lost`), `principal`, `principal_name` |
 | `revoke(name, grant)` | Integer | The holdings that ended |
 | `principal_create(name)` | none | The window of unlock opens; with a TPM and Secure Boot on, the TPM seals the keys with the passphrase, and the window shows the recovery key one time; the principal is created after Enter (`PRINCIPALS.md`, "The keys sealed by the TPM") |
 | `machine_passphrase()` | none | The window of unlock opens and asks for the machine passphrase two times (`PRINCIPALS.md`, "Principal 0 and its machine passphrase") |
 | `machine_seal()` | none | The TPM seals a new machine key to the measure of the system; the window of unlock shows its recovery key one time (`PRINCIPALS.md`, "The machine key sealed by the TPM") |
 | `passphrase_change()` | Text | In a console of the session of a named principal: the window of unlock asks for the current passphrase, then for a new one two times; the line gives the end of the change (`PRINCIPALS.md`, "A change of the passphrase") |
 | `recovery_key_change()` | Text | In a console of the session of a named principal: the window of unlock asks for the current passphrase, then shows a new recovery key one time; the line gives the end of the change (`PRINCIPALS.md`, "A change of the passphrase") |
-| `lock()` | Integer | The programs of the session that stopped |
+| `lock()` | Integer | The processes of the session that stopped |
 | `principals()` | Table of `Principal` | `number`, `name`, `state` (`machine`, `locked`, `unlocked`, `creating`), `public_key_head`, `measure_head` |
 | `replace(name, by)` | none | |
 | `replacements()` | Table of `Replacement` | `module`, `by`, `module_hash_head`, `by_hash_head` |
@@ -348,7 +348,7 @@ A `hash_head` is the head of a BLAKE3 hash: its first 8 bytes, as 16 hexadecimal
 
 ## The log records of a line
 
-While a line calls an export, the console shows under the line the log records that the called program writes, so the effect of a call is visible where the call was typed.
+While a line calls an export, the console shows under the line the log records that the called process writes, so the effect of a call is visible where the call was typed.
 
 ```
 > server.put("hello.txt", "kept in the store of server")
@@ -357,17 +357,17 @@ While a line calls an export, the console shows under the line the log records t
 27
 ```
 
-- **Which records.** The records that a program called by the line wrote, from the first call of the line on: a service, a sandboxed program of `isolate`, and the console itself for a module that `load` put in it. A line follows 4 programs at most. A program that `start` starts is not followed: the line ends before the program writes.
-- **By channel.** The records of one program and one channel follow one head line: the name of the program, in the color of a module, and the channel. A record of another channel starts a new group.
+- **Which records.** The records that a process called by the line wrote, from the first call of the line on: a service, a sandboxed process of `isolate`, and the console itself for a module that `load` put in it. A line follows 4 processes at most. A process that `start` starts is not followed: the line ends before the process writes.
+- **By channel.** The records of one process and one channel follow one head line: the name of the process, in the color of a module, and the channel. A record of another channel starts a new group.
 - **The value runs.** Each value run of a record is in the color of its value kind, as in the window of the log (`docs/TOOLS.md`, "The log"). A record of the level error is in the color of a failure.
 - **While the line runs.** During an isolated call or a call of a service, the console reads the new records each 100 ms (`STATUS_INTERVAL`), and once more when the line ends, before it draws the result. During a direct call the console waits in the module: the records show when the call returns.
 - **To the terminal only.** These lines do not go to the log: the records are in the log already.
 
-**How the console reads the records.** The console has no grant to read the memory of the log (the grant `log_records`), and gets none. It reads the records as any caller that acts for the principal: it calls the exports `records(after)` and `value_runs(after)` of the service `log`, through a connection that the root service gives. Its log scope is the whole log; after `revoke("console", "acts_for_principal")` it is the own records of the console, and a line shows no record of another program (`docs/TOOLS.md`, "Who reads which records"). The console asks for that connection itself, at the first line that calls a program; the connection adds no command, until `connect("log")` asks for the commands. The console reads the rows with the description of their record, by the names of the fields, and trusts no count of the service.
+**How the console reads the records.** The console has no grant to read the memory of the log (the grant `log_records`), and gets none. It reads the records as any caller that acts for the principal: it calls the exports `records(after)` and `value_runs(after)` of the service `log`, through a connection that the root service gives. Its log scope is the whole log; after `revoke("console", "acts_for_principal")` it is the own records of the console, and a line shows no record of another process (`docs/TOOLS.md`, "Who reads which records"). The console asks for that connection itself, at the first line that calls a process; the connection adds no command, until `connect("log")` asks for the commands. The console reads the rows with the description of their record, by the names of the fields, and trusts no count of the service.
 
 **When there is no record.** With no service `log`, or when the root service refuses the connection, a line shows no record; the console asks again after a line with `start` or `connect`. A service that does not answer in one second (`LINE_RECORD_ANSWER_LIMIT`) is not asked again in that line. A line that calls the service `log` itself shows no record: the console does not use a connection while a call runs on it.
 
-**The bounds.** One read draws at most 32 records, and reads at most 8 answers: a program that writes faster keeps its records in the log, where `log.records(after)` gives them.
+**The bounds.** One read draws at most 32 records, and reads at most 8 answers: a process that writes faster keeps its records in the log, where `log.records(after)` gives them.
 
 ## The built-in commands and the services
 
@@ -375,17 +375,17 @@ A fact that a service holds is an export of that service, and the console calls 
 
 | Built-in command | Where the fact comes from |
 |---|---|
-| `programs()` | The export `monitor.programs()`. With no service `monitor`, or when `monitor` lost its grant, the line fails with the error of the connection or of the export |
-| `setting(name, value)`, `manual_page(name)`, `strategy(name)` | The exports `settings.set`, `manual.show` and `scheduler.strategy_set`. The palette runs them ("8. The palette provider"). Each program must run: the command starts none. `strategy("eevdf")` sets the scheduling strategy of the machine, with `round_robin`, `fair` or `eevdf`: the console holds no right to change it, and the program `scheduler` holds it (`SCHEDULING.md`, "The change at run time") |
+| `processes()` | The export `monitor.processes()`. With no service `monitor`, or when `monitor` lost its grant, the line fails with the error of the connection or of the export |
+| `setting(name, value)`, `manual_page(name)`, `strategy(name)` | The exports `settings.set`, `manual.show` and `scheduler.strategy_set`. The palette runs them ("8. The palette provider"). Each process must run: the command starts none. `strategy("eevdf")` sets the scheduling strategy of the machine, with `round_robin`, `fair` or `eevdf`: the console holds no right to change it, and the process `scheduler` holds it (`SCHEDULING.md`, "The change at run time") |
 | `debug`, `detach`, `threads`, `hold`, `resume`, `continue_all`, `registers`, `stack`, `locals`, `value`, `source`, `break_at`, `watch`, `breaks`, `break_remove`, `step`, `step_line`, `step_over`, `debug_memory`, `events`, `wait_stop`, `stop_report` | The exports of the service `debugger`, which the root service starts when the console connects to it ("The commands of the debugger") |
 | `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `machine_passphrase`, `machine_seal`, `replace`, `connect`, `remote_allow`, `remote_disallow`, `remote_clients` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |
-| `modules()` | The boot image that the root service granted to the console. `manual.modules()` gives the same modules with more fields, when the program `manual` runs |
+| `modules()` | The boot image that the root service granted to the console. `manual.modules()` gives the same modules with more fields, when the process `manual` runs |
 | `replacements()` | The replacement table that the root service granted to the console, read-only. `manual.replacements()` gives it too, when `manual` runs |
-| `program_modules()`, `memory()`, `locks()` | The reports of the kernel, with the grant of the console to inspect the machine. `manual.running()` gives the modules of the programs, and `monitor.counts()` the counts, when those programs run |
+| `process_modules()`, `memory()`, `locks()` | The reports of the kernel, with the grant of the console to inspect the machine. `manual.running()` gives the modules of the processes, and `monitor.counts()` the counts, when those processes run |
 | `load`, `isolate`, `unload`, `loaded`, `buffer`, `byte`, `bytes`, `release` | The console itself: its command table, its modules, its handles |
 | `help`, `describe`, `variables`, `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`, `row`, `time`, `hash`, `length`, `text`, `repeat`, `clear`, `history_clear`, `measure_completion`, `shutdown` | The language and the console itself |
 
-`modules`, `replacements`, `program_modules`, `memory` and `locks` stay in the console because the programs that serve the same facts (`manual`, `monitor`) do not run at each boot, and these commands must work with no other program. The stores are a fact of the storage service: the console has no built-in command for them, and calls `storage.stores()` and `storage.usage()`.
+`modules`, `replacements`, `process_modules`, `memory` and `locks` stay in the console because the processes that serve the same facts (`manual`, `monitor`) do not run at each boot, and these commands must work with no other process. The stores are a fact of the storage service: the console has no built-in command for them, and calls `storage.stores()` and `storage.usage()`.
 
 ### The commands of the debugger
 
@@ -393,7 +393,7 @@ The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console
 
 | Command | Export of `debugger` |
 |---|---|
-| `debug(program)` | `attach` |
+| `debug(process)` | `attach` |
 | `detach()` | `detach` |
 | `threads()` | `threads` |
 | `hold(thread)` | `hold` |
@@ -414,13 +414,13 @@ The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console
 | `debug_memory(place, count)` | `memory` |
 | `events()` | `events` |
 | `wait_stop(milliseconds)` | `wait_stop` |
-| `stop_report(program)` | `stop_report` |
+| `stop_report(process)` | `stop_report` |
 
-`stop_report` needs no `debug`: it names the frames of a disk program that stopped on a fault, from the stop report that the root service kept (`MODULE_CONTRACT.md`, "The debug object of a disk program").
+`stop_report` needs no `debug`: it names the frames of a disk process that stopped on a fault, from the stop report that the root service kept (`MODULE_CONTRACT.md`, "The debug object of a disk process").
 
-Three short names are not the name of their export, because the console has a command with that name: `resume` (`release` closes a handle of the console), `debug_memory` (`memory` gives the memory of the machine), and `debug`, the word for the act. The command that holds one thread is `hold`: `stop` stops a whole program by its name. No command of the debugger takes the name of a command that the console had.
+Three short names are not the name of their export, because the console has a command with that name: `resume` (`release` closes a handle of the console), `debug_memory` (`memory` gives the memory of the machine), and `debug`, the word for the act. The command that holds one thread is `hold`: `stop` stops a whole process by its name. No command of the debugger takes the name of a command that the console had.
 
-**A loaded module can take a short name.** When two commands have one name, the command added last runs ("Calls"). `load` and `isolate` add each export of a module under its own name, with no prefix: a module with an export `debug`, `threads` or `stack` takes that name from the debugger, as it takes `programs` or `time`, until `unload`. `help()` then has two rows with the name, and `describe` gives the one that runs. The full name is never taken: `connect` adds the exports of a service as `service.export`, and a module cannot export a name with a period, so `debugger.attach(...)` always calls the service.
+**A loaded module can take a short name.** When two commands have one name, the command added last runs ("Calls"). `load` and `isolate` add each export of a module under its own name, with no prefix: a module with an export `debug`, `threads` or `stack` takes that name from the debugger, as it takes `processes` or `time`, until `unload`. `help()` then has two rows with the name, and `describe` gives the one that runs. The full name is never taken: `connect` adds the exports of a service as `service.export`, and a module cannot export a name with a period, so `debugger.attach(...)` always calls the service.
 
 After `connect("debugger")`, each export is also a command with its full name: `debugger.threads()`. Escape during `wait_stop` closes the connection to the service, which ends the debugging.
 
@@ -452,7 +452,7 @@ While a line runs, each key waits, in order, and the edit line shows them (`|` E
 
 One state loses a key. While Escape can stop a call of the line, the console must read each key to find that Escape. With 128 keys waiting, it then has no place for a key that is not Escape, and that key is lost. The console counts each such key. The log has `console: 128 keys wait for the end of the line, and the console reads on to find an Escape: a new key is lost` at the first one, and `console: the line ended: N keys were lost while it ran` when the line ends. After the Escape that stops the call, the console reads on only while a key has a place.
 
-Escape has one more meaning, and only in one state: while the line waits in a call of a sandboxed program or of a service, Escape stops that call at once, also when keys wait. While the line is in no such call (a built-in command, a direct call, the drawing of the result), Escape waits as each key, and then closes the list that the keys before it opened. So `clear()`, then `mcnt`, Escape and Tab typed before `clear()` ended, give what they give when typed slowly: the list opens at `m`, Escape closes it, Tab opens it again.
+Escape has one more meaning, and only in one state: while the line waits in a call of a sandboxed process or of a service, Escape stops that call at once, also when keys wait. While the line is in no such call (a built-in command, a direct call, the drawing of the result), Escape waits as each key, and then closes the list that the keys before it opened. So `clear()`, then `mcnt`, Escape and Tab typed before `clear()` ended, give what they give when typed slowly: the list opens at `m`, Escape closes it, Tab opens it again.
 
 The rules are `line_editor.running_key_action` and `line_editor.running_key_can_be_taken` (`src/library/support/line_editor/running_keys.odin`), with their host tests. A direct call that does not return cannot be stopped: the module runs in the thread of the lines; `isolate` such a module.
 
@@ -460,14 +460,14 @@ A chosen name replaces the whole name at the caret, also its part after the care
 
 ## 2. What the console completes
 
-The console completes the name at the caret from what it knows at that moment: its command table, its variables, the modules of the boot image, and the programs that run. Which of these it offers depends on where the caret is.
+The console completes the name at the caret from what it knows at that moment: its command table, its variables, the modules of the boot image, and the processes that run. Which of these it offers depends on where the caret is.
 
 | Where the caret is | The names | From |
 |---|---|---|
 | A name with no dot | Each command (with its full name: `monitor.count`), each connected service, each variable | The command table: the commands of the console, and the exports of the modules and services, from their descriptions |
 | After the name of a service and a dot (`storage.`) | The exports of that service | The commands whose name starts with that name and a dot. If none does, the whole name is matched against all the names |
 | Inside the quotes of the first argument of `load`, `isolate`, `start`, `replace` | The modules of the boot image | The image that the root service granted |
-| Inside the quotes of `connect`, `stop`, `grants`, `revoke` | The programs that run | `Inspect` on the machine, with the grant that the console holds. The root service has no command that lists its services: the console asks for none, and gets no new grant. With no grant to inspect, the list names the services whose exports are commands of the console |
+| Inside the quotes of `connect`, `stop`, `grants`, `revoke` | The processes that run | `Inspect` on the machine, with the grant that the console holds. The root service has no command that lists its services: the console asks for none, and gets no new grant. With no grant to inspect, the list names the services whose exports are commands of the console |
 | Inside the quotes of `unload` | The modules that `load` and `isolate` added | The table of the console |
 
 Not completed: the second argument of a call (the grant names of `revoke`), the fields of a record variable (`r.x`), the common start of several names (the list replaces it).
@@ -505,17 +505,17 @@ The palette of the desktop ranks its entries with the same match and the same or
 
 ## 4. The bounds, and the cost of one key
 
-The names in the list come from descriptions that other programs wrote, and a hostile description can hold very many or very long names. Each bound below keeps the work of one key below a fixed count of steps, whatever the names are.
+The names in the list come from descriptions that other processes wrote, and a hostile description can hold very many or very long names. Each bound below keeps the work of one key below a fixed count of steps, whatever the names are.
 
-Each bound holds against a description that another program wrote:
+Each bound holds against a description that another process wrote:
 
 - The match reads at most the first 128 bytes of a name (`NAME_SCAN_LIMIT`): one decode of the name and of the query (128 and 64 bytes), two passes of 128 characters and 64 places of score, at most 512 steps for a name. A longer name matches only in its start.
 - A query of more than 64 bytes matches nothing.
-- One ranking reads at most 4096 names (`CANDIDATE_SCAN_LIMIT`), and keeps the best 64 (`RANKED_CAPACITY`). The place of a name in the kept ones is a binary search: at most 7 orders of two names. An order reads at most 256 bytes of the names (`NAME_COMPARE_LIMIT`, a whole line of the history); after them the shorter name comes first, and two names of one length are equal. The search of the history skips a line equal to a kept one: at most 64 compares of 256 bytes for each line. So one key costs at most 4096 x (512 + 1792 + 64) steps, about 9.7 million, and one key of the search at most 256 x (512 + 1792 + 64 + 16 384), about 4.8 million. Before, an order read whole names: long names of one length with a long common start made a key cost names x 64 x their length. The console reads at most 512 names today (`CANDIDATE_CAPACITY`: 128 commands, 8 services, 16 variables, the modules of the boot image, 64 programs), so 10 000 exports of one service never reach the list: the console refuses a service whose commands do not fit in its table.
+- One ranking reads at most 4096 names (`CANDIDATE_SCAN_LIMIT`), and keeps the best 64 (`RANKED_CAPACITY`). The place of a name in the kept ones is a binary search: at most 7 orders of two names. An order reads at most 256 bytes of the names (`NAME_COMPARE_LIMIT`, a whole line of the history); after them the shorter name comes first, and two names of one length are equal. The search of the history skips a line equal to a kept one: at most 64 compares of 256 bytes for each line. So one key costs at most 4096 x (512 + 1792 + 64) steps, about 9.7 million, and one key of the search at most 256 x (512 + 1792 + 64 + 16 384), about 4.8 million. Before, an order read whole names: long names of one length with a long common start made a key cost names x 64 x their length. The console reads at most 512 names today (`CANDIDATE_CAPACITY`: 128 commands, 8 services, 16 variables, the modules of the boot image, 64 processes), so 10 000 exports of one service never reach the list: the console refuses a service whose commands do not fit in its table.
 - The console measures each ranking with the cycle counter, and writes the longest one on the log when Tab opens a list ("one ranking takes N us at most, over K keys").
 - When the names are more than the console reads (512), the line under the edit line says it: "N names match, and more names than the list reads: type more characters" (short form: "N names and more").
 - A name of 0 bytes is not a name. A name is UTF-8 (`docs/glossary/text.md`, "Text encoding"): the terminal draws an invalid sequence, and a character that its font lacks, as the replacement glyph. A line takes only characters with no control character, so a name with a control character cannot go in a line.
-- In the quotes of `connect`, `stop`, `grants` and `revoke`, the console reads the names of the programs that run once, when the quote opens (up to 64 `Inspect` calls), and keeps them while the caret stays in that quote and no line runs. A key in the quote makes no kernel call.
+- In the quotes of `connect`, `stop`, `grants` and `revoke`, the console reads the names of the processes that run once, when the quote opens (up to 64 `Inspect` calls), and keeps them while the caret stays in that quote and no line runs. A key in the quote makes no kernel call.
 
 The measure: the command `measure_completion()` times the four parts of one key with the list open, for the query `mcnt`: the collect (the table of names), the rank (the match of each name, and the best 64), the rows (the text of the 8 rows that the terminal receives), the colors (the runs of code of an edit line of 200 bytes with more parts than 64 runs hold, and of the 8 rows: section 7). Each number is the least of 20 batches of 10 keys, in microseconds. It writes two lines: one for the names of the console as they are, one for the worst case, 512 names of 128 bytes whose matched characters are far apart, so that the two passes read each whole name:
 
@@ -528,15 +528,15 @@ The main machine and `modustool measure` (the machine with only the desktop and 
 
 ## 5. Who draws the list, and the line under the edit line
 
-The console knows the names; the terminal owns the cells and the keys. The console sends the rows to show (`terminal.List_Row`: the name, what it is, the places that matched, and what kind of thing the name is, a `terminal.List_Icon`) and then the list (`terminal.List`: the count of rows, the chosen row, the place of the first row in all the names and their count, and the byte of the edit line where the name starts). The terminal lays it out: under the edit line and its hint line when the rows below hold it, above the edit line if not, at the column of the start of the name, as wide as the longest row and cut to the terminal. It has at most 8 rows, and a scroll bar at the right when there are more names (`DESIGN.md`, "The scroll bar"): it takes the last two cells of each row, shows the place of the rows in all the names, and takes the pointer. The console owns the list, so the terminal sends it the first row that the pointer asks for (`terminal.Input.List_First`); the console moves its view there, moves the chosen row to the nearest row of the new view, and sends the rows. The record means nothing while a line runs, when no list is open. Each row starts with the kind icon of its name (`glossary/desktop.md`, "Kind icon"), in three cells before the name: a command, an export, a command that makes a record, a module (a service and a program too), a variable, or a line of the history. The terminal chooses the form and the color, the same as a row of the palette has for the same kind; on the chosen row the icon is white, as the text. A list whose rows name no kind keeps no room for an icon.
+The console knows the names; the terminal owns the cells and the keys. The console sends the rows to show (`terminal.List_Row`: the name, what it is, the places that matched, and what kind of thing the name is, a `terminal.List_Icon`) and then the list (`terminal.List`: the count of rows, the chosen row, the place of the first row in all the names and their count, and the byte of the edit line where the name starts). The terminal lays it out: under the edit line and its hint line when the rows below hold it, above the edit line if not, at the column of the start of the name, as wide as the longest row and cut to the terminal. It has at most 8 rows, and a scroll bar at the right when there are more names (`DESIGN.md`, "The scroll bar"): it takes the last two cells of each row, shows the place of the rows in all the names, and takes the pointer. The console owns the list, so the terminal sends it the first row that the pointer asks for (`terminal.Input.List_First`); the console moves its view there, moves the chosen row to the nearest row of the new view, and sends the rows. The record means nothing while a line runs, when no list is open. Each row starts with the kind icon of its name (`glossary/desktop.md`, "Kind icon"), in three cells before the name: a command, an export, a command that makes a record, a module (a service and a process too), a variable, or a line of the history. The terminal chooses the form and the color, the same as a row of the palette has for the same kind; on the chosen row the icon is white, as the text. A list whose rows name no kind keeps no room for an icon.
 
-So no record has a place on the screen, and the terminal stays a program with no knowledge of the language of the console. The rows go through the text region of the console and its terminal: no third program reads it, and the terminal already shows each name that `help()` gives.
+So no record has a place on the screen, and the terminal stays a process with no knowledge of the language of the console. The rows go through the text region of the console and its terminal: no third process reads it, and the terminal already shows each name that `help()` gives.
 
 The look follows `docs/DESIGN.md`: the cells of the list have the card color, the chosen row the chosen blue `colors.chosen` with its text in white, the matched characters the accent (on the chosen row: the chosen blue on a white cell), what a name is at the right of its row, in the colors of its code (section 7); a border of one pixel in the color of the kernel, as the menus of the bar; no shadow, no round corner. A cell of the text grid has a fill color for this (`interface.Text_Grid_Cell.filled` and `background`, draw record version 5): a cell is 12 bytes in place of 8, and the damage by difference redraws only the rows of the list that change. The border is four records after all the others, so the records before keep their places when the list opens or closes.
 
 The line under the edit line (the hint line) and the list are drawn over the grid. The terminal keeps one free row under the edit line at all times, with or without a hint: the hint is drawn in that row. So the text never moves by one row when a hint comes or goes. When the view follows the text, the free row is the last row of the view, and the edit line the row above it. The list opens under the free row when the rows below hold it; when the edit line is near the bottom, it opens above the edit line, over the text.
 
-A hint line has two forms: a long one, and a short one for a terminal that is too narrow (`terminal.hint_form_choose`): the long form when it has no more bytes than the columns; if not, the short form when the program gave one; the form chosen is cut to the columns. The console gives a short form for the list ("12 names. Tab: take. Esc: close") and for the search ("search: leng  2 lines. ^R ^S Enter Esc"); a signature has one form, cut at the right.
+A hint line has two forms: a long one, and a short one for a terminal that is too narrow (`terminal.hint_form_choose`): the long form when it has no more bytes than the columns; if not, the short form when the process gave one; the form chosen is cut to the columns. The console gives a short form for the list ("12 names. Tab: take. Esc: close") and for the search ("search: leng  2 lines. ^R ^S Enter Esc"); a signature has one form, cut at the right.
 
 The status line of the terminal names the lines of the text that the view shows: "lines 709 to 736 of 737", or "lines none in view of 737" when the view shows no line of the text. The edit line and the free row are not lines of the text. After `clear()`, the terminal forgets its lines and the first row of the view is the edit line: a status that named the first row of the view would say "line 738 of 737".
 
@@ -554,7 +554,7 @@ The history lives in the memory of the console: 256 lines at most in a ring of 1
 - Its limit is 4 blocks. One object of one block takes 3 blocks of a store (its store block, the leaf of its tree, and its block of data, which the entry names with no object node), as the store of the principal shows ("3 of 4 blocks" for 20 bytes); a change needs one block more for its new data, in the commit that thins the version before. 2 blocks cannot hold the file. At its limit each commit thins the version before; the storage service says it once in a run.
 - The connection has no grant to act for the principal: the store of the history and no other one. A hostile console can fill 4 blocks, as its private store lets it fill 4.
 - The form: a connection that the console asks for through its root ring, at its start, as `connect("storage")` but with its own command. Not a boot pass: the console runs the whole time, it reads its history at its start. Not a connection in its context at the start: the places of the context of the store connection (7, 8, 9) are the places of the terminal of the console, and the storage service starts at boot after the console (the boot pass of `settings` starts it); a connection in the context needs the storage service before the console, which changes the order of the boot. The root service handles the root ring of the console only after the boot pass has started, so the storage service runs when the request comes: the order of the starts is the order of before.
-- The root service keeps the connection apart: `Disconnect` of the service `storage` does not end it, a revocation of the grant `store` does not change it, and a revocation of `acts_for_principal` gives it its limit only. `revoke("console", "history")` ends it: the console keeps its history in its memory. A second connection of one program to one service is refused as before, for each kind.
+- The root service keeps the connection apart: `Disconnect` of the service `storage` does not end it, a revocation of the grant `store` does not change it, and a revocation of `acts_for_principal` gives it its limit only. `revoke("console", "history")` ends it: the console keeps its history in its memory. A second connection of one process to one service is refused as before, for each kind.
 
 **The load.** At its start, before it reads a key, the console asks for the connection (it waits 30 s at most: the storage service mounts the disk at boot) and reads the object `line_history`. The second thread runs no line yet, so the history has one user. One log line says what came: "console: the line history: N lines kept from before the stop", or "no line history kept", or that the file is damaged, cannot be read, has more than 4096 bytes, or is refused by a check of `history_file_read` (with its name: "its hash is wrong", "a line is not a text of UTF-8", ...). Each of these gives an empty history. A line of the file goes through the bounds of a typed line (200 bytes of valid UTF-8 with no control character), and nothing of the file runs: a line runs only when the input takes it (Up, or Enter in the search) and presses Enter.
 
@@ -562,7 +562,7 @@ The history lives in the memory of the console: 256 lines at most in a ring of 1
 
 Why after each line and not at most one write in a second: a generation counts the commits of the whole disk, of each store, and the machine tests check generations. A rule of time makes the count of commits depend on the speed of the host; a rule of lines makes it a fact of the scenario. The steps of the tool now count the generations from a base near them (the step `Generation`, `{generation+N}`), so that a line of the console before them moves nothing.
 
-**What the history holds, and who reads it.** Each line that was entered, as typed: a line with a secret in it (a text that was given to a command) is in it, in the memory of the console and in its store, with the versions that the storage service keeps of the object until the next commits thin them. Who can read it: the console; and a program that acts for the principal, through the exports of the storage service that name another store (`storage.stores()` lists the store; `place = storage.open_store("console.history")` gives a place on it, then `storage.versions(place, "line_history")` and `storage.version(...)` give its states). Today those are the console itself and `remote` (the host, through the principal). No other program reaches it. `history_clear()` empties the history in the memory of the console and removes its object from the store, with each of its versions; the line `history_clear()` goes too.
+**What the history holds, and who reads it.** Each line that was entered, as typed: a line with a secret in it (a text that was given to a command) is in it, in the memory of the console and in its store, with the versions that the storage service keeps of the object until the next commits thin them. Who can read it: the console; and a process that acts for the principal, through the exports of the storage service that name another store (`storage.stores()` lists the store; `place = storage.open_store("console.history")` gives a place on it, then `storage.versions(place, "line_history")` and `storage.version(...)` give its states). Today those are the console itself and `remote` (the host, through the principal). No other process reaches it. `history_clear()` empties the history in the memory of the console and removes its object from the store, with each of its versions; the line `history_clear()` goes too.
 
 **The machine tests.** The main machine: the connection and "no line history kept" at its start; the steps of the storage service count from the generation of the first write of the principal. The persistence: the first machine types `length("kept across a stop")`, then `shutdown()`; the second one finds 4 lines ("storage: ok, generation 1027: 3 stores, 4 objects"), Up and Up give the line, Enter runs it (18), and Control-R `kept` finds it. A loss of power during the save: the settings case of `modustool test power` checks each object of each image after the loss, the line history with them, and gives the durable state or the state in flight, never a mix; the loss falls in the commits of `settings.repeat(1000)`, not in a commit of the history: a case that falls in a commit of the history is not built (one commit for each line makes such a case slow to reach).
 
@@ -596,7 +596,7 @@ A part with no class has the color of the text around it: the tone of the line, 
 - `name = ...` at the start of a line names a variable: the name is a Variable before it exists.
 - An Unknown part is quiet (the dim class), never red: the line is not run yet.
 
-**The rows of the list.** The name has the kind of what it is: a command or an export is a Function, with its module and its dot when its name has one (`monitor.count`); a record is a Type; a service is a Module; a module or a program in quotes is a Text; a line of the history is read as a line of code. What the name is, at the right, is read as a signature: the words before the parentheses are Words, the word after "of" is the Module; in the parentheses a name before `:` is a Parameter; after `:` or `->` each name is a Type, also in the parentheses of the type (`Table(Count_Name, Read)`). The alignment of the rows does not change: the runs give colors, never places.
+**The rows of the list.** The name has the kind of what it is: a command or an export is a Function, with its module and its dot when its name has one (`monitor.count`); a record is a Type; a service is a Module; a module or a process in quotes is a Text; a line of the history is read as a line of code. What the name is, at the right, is read as a signature: the words before the parentheses are Words, the word after "of" is the Module; in the parentheses a name before `:` is a Parameter; after `:` or `->` each name is a Type, also in the parentheses of the type (`Table(Count_Name, Read)`). The alignment of the rows does not change: the runs give colors, never places.
 
 **The marks over the colors.** The caret of the edit line is drawn over its byte, as before. A matched character of the list, and of the search of the history, has the accent over the color of its kind: the match is what was typed. The line editor has no selection of text. The hint line stays dim, with its mark on the parameter at the caret.
 
@@ -604,7 +604,7 @@ A part with no class has the color of the text around it: the tone of the line, 
 
 **The records** (`src/library/support/terminal`, record version 2):
 
-- `Code_Runs` (kind 8): the runs of the next Edit record, or of the next List_Row record of one row. Its bytes are in the text region: 4 bytes for each run (start, length, kind, a reserved byte), at most `CODE_RUN_LIMIT` (64) runs. The program sends it just before the record that it colors, so the terminal never shows a new text with the runs of the text before it. A record with no `Code_Runs` before it is plain.
+- `Code_Runs` (kind 8): the runs of the next Edit record, or of the next List_Row record of one row. Its bytes are in the text region: 4 bytes for each run (start, length, kind, a reserved byte), at most `CODE_RUN_LIMIT` (64) runs. The process sends it just before the record that it colors, so the terminal never shows a new text with the runs of the text before it. A record with no `Code_Runs` before it is plain.
 - `Style.code`: the kind of a Text record. The echoed line is runs of text with a kind each: the lines that the terminal keeps have a style for each run, and each cell of its grid has its own color, so the echo needs no new form of the grid.
 - `Style.value_kind`: the value kind of a run of a result or of a log record of a line (`modus:contract/value_kinds`), in the byte after `Style.code`. The terminal gives it the color of its kind in the appearance in force when it draws (`src/md/features/appearance.md`): a line written in the dark appearance takes the light colors after a change.
 - A row has at most 256 bytes, so a byte holds the start of a run. A part of one kind longer than 255 bytes is two runs.
@@ -617,7 +617,7 @@ A part with no class has the color of the text around it: the tone of the line, 
 
 The console is the palette provider of the desktop: each of its commands is an entry of the palette (`DESIGN.md`, "Palette"), and the console runs the entry that the input chose there. The panel is in the compositor and holds no right; a command runs in the console, with the grants of the console.
 
-**The grant.** The console has the grant `Palette`. At its start it sends `Palette_Provide` to the root service, which makes two memory objects and gives them to the console and to the compositor: the entry table, which the console writes and the compositor maps read-only, and one ring. `grants("console")` shows the grant as `palette`. `revoke("console", "palette")` ends the table and the ring in the console, and the compositor unmaps its side: the palette then lists the programs and the windows only, and its footer says "the console gives no commands". The console stops its use of the two objects before it asks for the revocation. No kernel operation is new.
+**The grant.** The console has the grant `Palette`. At its start it sends `Palette_Provide` to the root service, which makes two memory objects and gives them to the console and to the compositor: the entry table, which the console writes and the compositor maps read-only, and one ring. `grants("console")` shows the grant as `palette`. `revoke("console", "palette")` ends the table and the ring in the console, and the compositor unmaps its side: the palette then lists the processes and the windows only, and its footer says "the console gives no commands". The console stops its use of the two objects before it asks for the revocation. No kernel operation is new.
 
 **The entry table** (`src/library/contract/palette_table`). A header (a magic number, a version, the change count, the count of entries), a result area of 2048 bytes, a candidate area of 96 names, then at most 256 entries of 536 bytes. The version is 5. One entry is one command of the command table of now: a built-in command, a short name bound to an export, or an export of a module or of a service. A command that makes a record from its fields is not listed. A command with more parameters than an entry holds (6, `palette_table.PARAMETER_CAPACITY`: the fields of the form of the panel) is not listed: the console line calls it. Of two commands with one name the table has the one that a call runs.
 
@@ -655,22 +655,22 @@ The console writes the table again after each line, when the command table chang
 
 The result area holds what the drawer of the kind of the result wrote (`src/library/private/console/console_results`), as runs: a byte that says what the run is (a label, a number, the name of a record, a failure), a byte of length, then the bytes. The panel draws each run in the color of what it is, the colors of the same parts in the console. It parses no text.
 
-**What the compositor checks.** The console is another program for the compositor: its table and its answers are hostile input. The compositor copies the table, then checks the copy, and reads only the copy after that: the magic number and the version; a count of entries of at most 256; a change count that is even and the same before and after the copy, in at most 4 tries; for each entry, each kind and each flag in its range, each reserved byte 0, each length inside its field, a name of 1 byte at least, each text for a reader (the signature, the help sentence, the parameter names) valid UTF-8 with no control character (`src/library/contract/text_encoding`), the name, the act name, the name of a setting row and the name of a value in ASCII (they are identifiers), a signature that starts with the name, for a `Setting` entry a setting and a value that `src/library/contract/settings` has, and the name of a setting on a `Setting` or `Provider_Setting` entry only, always with the name of a value. A table that fails gives a palette with the programs and the windows only, one line of the log with the problem and its entry, and "the commands of the console were refused" in the footer. An answer is checked the same way: the count of bytes inside the result area, each run inside the count, each part in its range, each run valid UTF-8, at most 12 lines. A line of a result has at most 76 characters, and a character outside ASCII takes more than one byte of the area.
+**What the compositor checks.** The console is another process for the compositor: its table and its answers are hostile input. The compositor copies the table, then checks the copy, and reads only the copy after that: the magic number and the version; a count of entries of at most 256; a change count that is even and the same before and after the copy, in at most 4 tries; for each entry, each kind and each flag in its range, each reserved byte 0, each length inside its field, a name of 1 byte at least, each text for a reader (the signature, the help sentence, the parameter names) valid UTF-8 with no control character (`src/library/contract/text_encoding`), the name, the act name, the name of a setting row and the name of a value in ASCII (they are identifiers), a signature that starts with the name, for a `Setting` entry a setting and a value that `src/library/contract/settings` has, and the name of a setting on a `Setting` or `Provider_Setting` entry only, always with the name of a value. A table that fails gives a palette with the processes and the windows only, one line of the log with the problem and its entry, and "the commands of the console were refused" in the footer. An answer is checked the same way: the count of bytes inside the result area, each run inside the count, each part in its range, each run valid UTF-8, at most 12 lines. A line of a result has at most 76 characters, and a character outside ASCII takes more than one byte of the area.
 
 **The log.** The console writes "console: the palette table has N entries, generation G" at each change of the table, "console: the palette runs memory()" or "console: the palette opens stop() in the edit line" for a choice, then "console: the palette gets Record, N lines" or "console: the result of the palette choice is in the console: Table".
 
-**The form of a command with parameters.** An entry carries the name of each parameter (16 bytes at most; a longer name is absent) beside its kind. When each parameter is an Integer or a Text, the palette shows one field for each one. The built-in commands that take the name of a program, of a module or of a grant have names for their parameters (`revoke(name: Text, grant: Text)`); `help()` and `describe()` show them too.
+**The form of a command with parameters.** An entry carries the name of each parameter (16 bytes at most; a longer name is absent) beside its kind. When each parameter is an Integer or a Text, the palette shows one field for each one. The built-in commands that take the name of a process, of a module or of a grant have names for their parameters (`revoke(name: Text, grant: Text)`); `help()` and `describe()` show them too.
 
-- **Candidates.** The compositor sends `Candidates` with the entry (generation, index, hash) and the number of a parameter. The console writes at most 96 names of at most 31 bytes in the candidate area of the table, and answers `Candidates_Ready` with what they are and their count: the programs that run (`stop`, `grants`, `connect`, `debug`, the first parameter of `revoke`), the modules of the boot image (`start`, `load`, `isolate`, `replace`, `manual_page`), the grants (the second parameter of `revoke`), the strategies of the kernel (`strategy`), the names of the settings (the first parameter of `setting`). For each other parameter the count is 0. The answer also says whether the candidates are closed: the only values that the parameter takes. The strategies and the names of the settings are closed; the programs, the modules and the grants are suggestions, since a line can name another one. The palette shows a few closed values as a row of buttons. The compositor copies the area and checks the copy: the count, each length from 1 to 31, each name valid UTF-8, and a fact that the contract knows.
+- **Candidates.** The compositor sends `Candidates` with the entry (generation, index, hash) and the number of a parameter. The console writes at most 96 names of at most 31 bytes in the candidate area of the table, and answers `Candidates_Ready` with what they are and their count: the processes that run (`stop`, `grants`, `connect`, `debug`, the first parameter of `revoke`), the modules of the boot image (`start`, `load`, `isolate`, `replace`, `manual_page`), the grants (the second parameter of `revoke`), the strategies of the kernel (`strategy`), the names of the settings (the first parameter of `setting`). For each other parameter the count is 0. The answer also says whether the candidates are closed: the only values that the parameter takes. The strategies and the names of the settings are closed; the processes, the modules and the grants are suggestions, since a line can name another one. The palette shows a few closed values as a row of buttons. The compositor copies the area and checks the copy: the count, each length from 1 to 31, each name valid UTF-8, and a fact that the contract knows.
 - **Typed values.** The compositor sends one `Argument` record for each field, then `Choose` with the mode `Run_With_Arguments` and their count, all with one tag. An Integer is a number in one value of the record; a Text is its bytes, 48 at most, in six values. The console checks each one: the number of the parameter, the kind, the length, a text valid UTF-8, and no quote, which a line cannot hold in a text. A Text that a line cannot hold is refused with "a line of the console holds no quote and no invalid sequence of UTF-8 in a text", and never changed. A Text with é is a text of a line, as the keys type it. It then checks that the count is the count of the parameters of the command and that each value has the kind of its parameter, as it checks a typed line, and builds the line itself: `revoke("plasma", "log")`. A choice whose values do not fit is refused: "the arguments do not fit the command: type the line in the console".
 
-**The settings.** The table has one entry of the kind `Setting` for each value of each setting of `src/library/contract/settings`: "set font to spleen", with the number of the setting and of the value. The compositor checks both against the same contract. The entries of one setting follow each other, with one name of a setting (its title, `font`), the name of their value and the act name `settings.set:` with the name of the setting: the panel shows them as one setting row, and sends the entry of the value that the input chose. A choice runs the line `setting("font", "spleen")`: `setting(name, value)` is a built-in command, the export `settings.set` under a short name, so the console connects to `settings` at the first use. The program `settings` must run.
+**The settings.** The table has one entry of the kind `Setting` for each value of each setting of `src/library/contract/settings`: "set font to spleen", with the number of the setting and of the value. The compositor checks both against the same contract. The entries of one setting follow each other, with one name of a setting (its title, `font`), the name of their value and the act name `settings.set:` with the name of the setting: the panel shows them as one setting row, and sends the entry of the value that the input chose. A choice runs the line `setting("font", "spleen")`: `setting(name, value)` is a built-in command, the export `settings.set` under a short name, so the console connects to `settings` at the first use. The process `settings` must run.
 
-**The scheduling strategy.** The table has one entry of the kind `Provider_Setting` for each strategy of the kernel: "set strategy to round_robin", "set strategy to fair", "set strategy to eevdf". The three have the name of a setting `strategy` and the act name `strategy`: the panel shows them as one setting row, as it shows the values of a setting. A choice runs the line `strategy("eevdf")`: `strategy(name)` is a built-in command, the export `scheduler.strategy_set` under a short name, so the console connects to `scheduler` at the first use. The program `scheduler` must run, and it answers after its checks. The console gets no right over the machine for it: the program that holds the right Schedule changes the strategy (`SCHEDULING.md`, "The change at run time").
+**The scheduling strategy.** The table has one entry of the kind `Provider_Setting` for each strategy of the kernel: "set strategy to round_robin", "set strategy to fair", "set strategy to eevdf". The three have the name of a setting `strategy` and the act name `strategy`: the panel shows them as one setting row, as it shows the values of a setting. A choice runs the line `strategy("eevdf")`: `strategy(name)` is a built-in command, the export `scheduler.strategy_set` under a short name, so the console connects to `scheduler` at the first use. The process `scheduler` must run, and it answers after its checks. The console gets no right over the machine for it: the process that holds the right Schedule changes the strategy (`SCHEDULING.md`, "The change at run time").
 
 - **The value in use.** No page holds the strategy, and the compositor has no right to inspect the machine. The console reads the strategy in the system report, with its grant to inspect the machine, and sets the flag `In_Use` of the entry of that strategy. The compositor refuses a table with that flag on an entry of another kind.
 - **`Refresh`.** The strategy can change with no line of the console: a key in the window of `scheduler`. The compositor sends `Refresh` on the ring at each open of the panel. The console then writes its table again when the strategy in use is not the one that the table marks: the list of the panel follows, as after each new table. `Refresh` has no value and no answer, and the console takes it when no line runs.
 
-**The manual.** With the prefix `?` the compositor sends `Manual` with the name of a program, as a typed value. The console checks the name and runs `manual_page("plasma")`: the export `manual.show` under a short name, which makes the window of the manual show the page of that module. The answer is `Manual_Opened`, and the compositor brings the window of the manual to the front. The program `manual` must run: the command starts no program, and its error shows in the panel.
+**The manual.** With the prefix `?` the compositor sends `Manual` with the name of a process, as a typed value. The console checks the name and runs `manual_page("plasma")`: the export `manual.show` under a short name, which makes the window of the manual show the page of that module. The answer is `Manual_Opened`, and the compositor brings the window of the manual to the front. The process `manual` must run: the command starts no process, and its error shows in the panel.
 
 **Not done.** The entries do not carry the age of their last use in the line history: the recent choices are those of the panel only. An export of a service that the console is not connected to is not listed. The second parameter of `setting` has no candidates: its values depend on the first field, and a request for candidates carries no value of another field.

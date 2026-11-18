@@ -59,7 +59,7 @@ LINE_THICKNESS_LIMIT :: 32
 
 // The ends of a line stay inside this distance of the corner of the
 // surface, in pixels: the drawing walks each point of the path, so a line
-// of a billion points would stop the program.
+// of a billion points would stop the process.
 LINE_COORDINATE_LIMIT :: 1 << 15
 
 // The largest distance between the two points of a gradient on each axis,
@@ -356,7 +356,7 @@ RECORD_WORDS :: RECORD_SIZE / size_of(u64)
 #assert(RECORD_SIZE % size_of(u64) == 0)
 
 // copy_once takes the one copy of a record that a reader then checks: a
-// table can be in memory that another program writes during the read, so
+// table can be in memory that another process writes during the read, so
 // each byte is loaded once and never again. The copy is six loads of 64
 // bits: a volatile load of the whole struct is compiled field by field and
 // byte by byte for the arrays, which made the difference of two frames

@@ -1,13 +1,13 @@
-// The interface package (docs/INTERFACE.md): a program describes its window
+// The interface package (docs/INTERFACE.md): a process describes its window
 // again at each frame, and each call appends draw records to a draw table
-// in the memory of the program. The package finds the damage by a
+// in the memory of the process. The package finds the damage by a
 // comparison with the table of the frame before, and draws the records into
-// the surface of the program. It never allocates. The core files (the draw
+// the surface of the process. It never allocates. The core files (the draw
 // table, its execution, the difference, the layout, the text, the input,
 // the elements) make no kernel call; window_drawing.odin does: it reads the
 // events of a window and presents its surface.
 //
-// Who uses it: each program with a window (the console, the bar, the
+// Who uses it: each process with a window (the console, the bar, the
 // developer tools, the settings). The parts:
 //
 // - `Draw_Table`, `Draw_Record`, `Draw_Kind`: the frame as records
@@ -82,7 +82,7 @@ Text_Grid :: struct {
 }
 
 // The draw records of one frame and the bytes of their texts, in the memory
-// of the program. full: a record, a text or the cells of a grid did not
+// of the process. full: a record, a text or the cells of a grid did not
 // fit, and is not drawn: the table is not the frame, so the next frame is
 // drawn whole. refused: a record that the caller asked for could not be
 // made (a picture outside each picture memory of the table, a grid whose
@@ -104,8 +104,8 @@ Draw_Table :: struct {
 	// compositor gives each part of its screen its own list of one.
 	picture_memories: [][]graphics.Color,
 	// The interface font that measures and draws the Text records of the
-	// table in that font: the caches that the program validated (display). nil:
-	// the program has none, and a text in the interface font is a text in
+	// table in that font: the caches that the process validated (display). nil:
+	// the process has none, and a text in the interface font is a text in
 	// the font of the cells.
 	interface_font: ^display.Interface_Font,
 }
@@ -377,7 +377,7 @@ line_in_box :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_
 	record_append(table, placed_record(line, element, x, y, width, height))
 }
 
-// draw_picture appends the pixels of a picture of the program at (x, y).
+// draw_picture appends the pixels of a picture of the process at (x, y).
 // Each pixel of the picture must be inside one picture memory of the table:
 // the record names the first such memory, the index of the first pixel in
 // it, and the stride. generation is a new number each time its pixels

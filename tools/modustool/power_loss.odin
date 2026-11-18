@@ -495,7 +495,7 @@ crash_images_check :: proc(durable: []u8, pending: []Pending_Write, seed: u64) -
 			problem = fmt.tprintf("%d stores have a wrong count of blocks", contents.mount.stores_with_wrong_count)
 		case storage_mount.hash_index_check(state) != 0:
 			problem = fmt.tprintf("the hash index that the open made has %d faults", storage_mount.hash_index_check(state))
-		// The programs of these scenarios write from the root of their store,
+		// The processes of these scenarios write from the root of their store,
 		// with no writable share of a tree open: each commit looks up its hash,
 		// so a store never keeps one object two times. A scenario with such a
 		// share would make two roots of one hash on purpose.
@@ -600,7 +600,7 @@ POWER_LOSS_SEEDED_ROOTS :: 40
 
 // The first machine of each loss: a new disk, a note, then the count. The
 // disk loses its power in the middle of the count, at a commit that it
-// counts itself from before the key Tab: the program makes no other commit
+// counts itself from before the key Tab: the process makes no other commit
 // then, so the commit n after the arm is the count n. In the first loss the
 // cut comes after the count 300, and the store keeps each version (4500
 // blocks of limit); in the second, after the count 1200, when the store is
@@ -718,7 +718,7 @@ power_loss_sequence :: proc(part: ^Test_Part_Run, what: string, steps: []Step, o
 }
 
 // The settings through a loss of power (docs/FONTS.md, "The setting"): the
-// program settings keeps 1000 records, one commit each, and the disk loses
+// process settings keeps 1000 records, one commit each, and the disk loses
 // its power in the middle. Each image that a loss can leave gives the
 // record of the durable commit or the record in flight, never a mix (the
 // search above, on each object); the record of each image is a valid
@@ -826,7 +826,7 @@ power_loss_settings_run :: proc(part: ^Test_Part_Run) -> bool {
 }
 
 // The range writes through a loss of power (docs/STORAGE.md, "Ranges"):
-// the program ranges makes its cases, then a loop of commits of 4 range
+// the process ranges makes its cases, then a loop of commits of 4 range
 // writes each, and the disk loses its power in the loop. The loss comes at
 // the write of a root, so the commit in flight is a commit of range writes:
 // each image that a loss can leave gives the durable commit or that commit,
@@ -850,7 +850,7 @@ scenario_power_loss_ranges := [?]Step {
 	{kind = .Power_Loss},
 }
 
-// The bytes at the start of the object loop that the program ranges writes
+// The bytes at the start of the object loop that the process ranges writes
 // in the first commit of its loop (src/modules/tests/ranges/main.odin,
 // LOOP_MARKER): no other block of the disk starts with them.
 RANGES_LOOP_MARKER :: "ranges: the first commit of the loop of range commits"

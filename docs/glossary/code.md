@@ -4,7 +4,7 @@
 
 A module is the one format of compiled code in the system: a file of position-independent machine code that exports functions and is named by the hash of its bytes.
 
-A library, a program, a service, a command and the kernel are all modules of one format, where other systems have executables, shared objects and kernel modules. Its identity is the BLAKE3 hash of the whole file, and each import names a module by that hash. Example: `load("calendar")` in the console calls the exports of `calendar` directly; `isolate("calendar")` starts it in a call host. A module is not a package of a source language: the packages of `src/library` are compiled into modules and have no hash of their own.
+A library, a process, a service, a command and the kernel are all modules of one format, where other systems have executables, shared objects and kernel modules. Its identity is the BLAKE3 hash of the whole file, and each import names a module by that hash. Example: `load("calendar")` in the console calls the exports of `calendar` directly; `isolate("calendar")` starts it in a call host. A module is not a package of a source language: the packages of `src/library` are compiled into modules and have no hash of their own.
 
 The design: `docs/MODULE_CONTRACT.md`, "1. The module file".
 
@@ -34,7 +34,7 @@ Do not use: dependency, link.
 
 The module graph is the set of modules as nodes and their imports as edges: one edge goes from the module that imports to the module that it imports.
 
-The module graph answers two questions: which modules a program contains, and which programs a bad module reaches. Only an import by hash is an edge: a source library, a load by name, a connection to a service and a replacement are not edges. The site draws the graph of the build from the files. `manual.edges()` gives the graph of the programs that run, from the module records of the kernel, with the replacements that the loader applied.
+The module graph answers two questions: which modules a process contains, and which processes a bad module reaches. Only an import by hash is an edge: a source library, a load by name, a connection to a service and a replacement are not edges. The site draws the graph of the build from the files. `manual.edges()` gives the graph of the processes that run, from the module records of the kernel, with the replacements that the loader applied.
 
 The design: `docs/MODULE_CONTRACT.md`, "Replacement of an import".
 
@@ -44,9 +44,9 @@ Do not use: dependency graph, call graph, link map.
 
 A command is an export that the console can call: it is not a separate kind of thing.
 
-In other systems a command is a program that parses text arguments and writes text. Here the console reads the description of an export, completes its name and its arguments, checks their types, calls the export and shows its typed result. So help, completion and argument checks come from the module metadata, not from code in each program. An export is a command when the console can give each of its parameters. Example: `monitor.programs()` calls the export `programs` of the module `monitor`, and gives a table.
+In other systems a command is a process that parses text arguments and writes text. Here the console reads the description of an export, completes its name and its arguments, checks their types, calls the export and shows its typed result. So help, completion and argument checks come from the module metadata, not from code in each process. An export is a command when the console can give each of its parameters. Example: `monitor.processes()` calls the export `processes` of the module `monitor`, and gives a table.
 
-The rule: `docs/PROPERTIES.md`, "19. A command is a function: no text between programs".
+The rule: `docs/PROPERTIES.md`, "19. A command is a function: no text between processes".
 
 Do not use: CLI program, tool, script.
 
@@ -72,9 +72,9 @@ Do not use: section, blob.
 
 ### Replacement
 
-A replacement is a record `{hash, hash}` that the starter of a program gives to the loader: where a module imports the first module, the loader loads the second one.
+A replacement is a record `{hash, hash}` that the starter of a process gives to the loader: where a module imports the first module, the loader loads the second one.
 
-A replacement fixes a module in every program that imports it, with no new build of the programs. Example: module B has a security fault; a replacement `{B, B2}` makes each import of B load B2. The loader compares the description of each export that the importer uses, and one difference refuses the load. A replacement is visible in the module record of B2, and a program cannot ask for one or refuse one. The root service applies it only for a signed replacement row.
+A replacement fixes a module in every process that imports it, with no new build of the processes. Example: module B has a security fault; a replacement `{B, B2}` makes each import of B load B2. The loader compares the description of each export that the importer uses, and one difference refuses the load. A replacement is visible in the module record of B2, and a process cannot ask for one or refuse one. The root service applies it only for a signed replacement row.
 
 The design: `docs/MODULE_CONTRACT.md`, "Replacement of an import" and "Who may replace a module".
 
@@ -102,9 +102,9 @@ Do not use: allow list, whitelist, replacement manifest.
 
 ### Replacement table
 
-The replacement table is the list of the replacements of the machine, which the root service holds and gives to the loader of each program that it starts.
+The replacement table is the list of the replacements of the machine, which the root service holds and gives to the loader of each process that it starts.
 
-A program that loads modules, such as the console or the manual, receives the table with the right Read and reads it before each load. A program cannot change it. A program with the role Replace asks the root service: `replace("calendar", "calendar_fixed")` adds a record, `replace("calendar", "")` removes it, and `replacements()` lists the table. A change applies to the loads that follow; a program that runs keeps its modules. It is not the replacement list, which holds the signed pairs.
+A process that loads modules, such as the console or the manual, receives the table with the right Read and reads it before each load. A process cannot change it. A process with the role Replace asks the root service: `replace("calendar", "calendar_fixed")` adds a record, `replace("calendar", "")` removes it, and `replacements()` lists the table. A change applies to the loads that follow; a process that runs keeps its modules. It is not the replacement list, which holds the signed pairs.
 
 The design: `docs/MODULE_CONTRACT.md`, "Replacement of an import".
 
@@ -112,9 +112,9 @@ Do not use: override list, LD_PRELOAD, redirection table.
 
 ### Loader
 
-The loader is the code in user space that builds a program or a module space from a module and its imports (`src/library/support/system/load.odin`).
+The loader is the code in user space that builds a process or a module space from a module and its imports (`src/library/support/system/load.odin`).
 
-The kernel loads no module: it maps memory objects and records what the loader asserts. The loader finds each module by hash in its load source, maps its segments, rebases them, binds each slot, and writes a module record. On a failure the module space stays as it was, and the caller receives a load error. The loader runs in the program that starts another program, such as the root service, or in a program that loads a module for itself. It has no search path.
+The kernel loads no module: it maps memory objects and records what the loader asserts. The loader finds each module by hash in its load source, maps its segments, rebases them, binds each slot, and writes a module record. On a failure the module space stays as it was, and the caller receives a load error. The loader runs in the process that starts another process, such as the root service, or in a process that loads a module for itself. It has no search path.
 
 The design: `docs/MODULE_CONTRACT.md`, "2. Loading", and `docs/ARCHITECTURE.md`, "U3. Module store and loader".
 
@@ -122,9 +122,9 @@ Do not use: linker, dynamic linker.
 
 ### Prepared module
 
-A prepared module is the set of memory objects that hold the parts of a module that do not change after the load, kept by the program that starts programs, by the hash of the module.
+A prepared module is the set of memory objects that hold the parts of a module that do not change after the load, kept by the process that starts processes, by the hash of the module.
 
-A prepared module lets many programs share the pages of one module: its code, and the segments that are read-only after the load. The table `system.Prepared_Modules` keeps each handle without the right Write, so a write of a program to its code is a page fault. Each program still receives its own copy of each writable segment. The kernel learns nothing of the module format: it maps memory objects with the rights of their handles.
+A prepared module lets many processes share the pages of one module: its code, and the segments that are read-only after the load. The table `system.Prepared_Modules` keeps each handle without the right Write, so a write of a process to its code is a page fault. Each process still receives its own copy of each writable segment. The kernel learns nothing of the module format: it maps memory objects with the rights of their handles.
 
 The design: `docs/MODULE_CONTRACT.md`, "2. Loading".
 
@@ -132,11 +132,11 @@ Do not use: shared library, image cache, page cache.
 
 ### Shared code
 
-Shared code is the pages of a prepared module that each program of the module maps without Write: its code, its constants and its data that is read-only after the rebase.
+Shared code is the pages of a prepared module that each process of the module maps without Write: its code, its constants and its data that is read-only after the rebase.
 
-Shared code is why one module in many programs costs its pages once. Each program still has its own copy of each writable segment, made from the bytes of the file. Shared code needs code that the loader never writes: a call to another module goes through a slot in data, so the code pages stay identical to the file.
+Shared code is why one module in many processes costs its pages once. Each process still has its own copy of each writable segment, made from the bytes of the file. Shared code needs code that the loader never writes: a call to another module goes through a slot in data, so the code pages stay identical to the file.
 
-A merge of two modules into one makes a new hash, and two programs that merge the same module do not share its pages.
+A merge of two modules into one makes a new hash, and two processes that merge the same module do not share its pages.
 
 The design: `docs/MODULE_CONTRACT.md`, "2. Loading".
 
@@ -146,7 +146,7 @@ Do not use: text segment, shared object.
 
 A slot is 8 bytes of data of a module that the loader writes with the address of one export of an import.
 
-A call to another module is one indirect call through a slot: `call *slot(%rip)`. So the code never changes with the place of the other module, and code pages stay shared. After the bind the loader makes the slots read-only. A slot is bound once, at load, with no lazy binding: a missing export fails the load, never a later call. Measured: a call through a slot costs about 3.5 ns in the program `imports`.
+A call to another module is one indirect call through a slot: `call *slot(%rip)`. So the code never changes with the place of the other module, and code pages stay shared. After the bind the loader makes the slots read-only. A slot is bound once, at load, with no lazy binding: a missing export fails the load, never a later call. Measured: a call through a slot costs about 3.5 ns in the process `imports`.
 
 The design: `docs/MODULE_CONTRACT.md`, "3. Static is dynamic".
 
@@ -154,21 +154,21 @@ Do not use: GOT entry, import address, stub.
 
 ### Load source
 
-The load source is what a loader can read: the files that its program was granted, each named by its hash, and the replacements that the starter of the program gives.
+The load source is what a loader can read: the files that its process was granted, each named by its hash, and the replacements that the starter of the process gives.
 
-The load source closes the hole of a global library directory. A loader finds an import only there, and checks the hash and the tables of each file before it uses it. The root service and the console give the boot image; a call host receives a list of files from the console. For a disk program, the root service adds the files that an import scan found. A file that the load source does not hold gives the load error Find.
+The load source closes the hole of a global library directory. A loader finds an import only there, and checks the hash and the tables of each file before it uses it. The root service and the console give the boot image; a call host receives a list of files from the console. For a disk process, the root service adds the files that an import scan found. A file that the load source does not hold gives the load error Find.
 
 The rule: `docs/PROPERTIES.md`, "20. No ambient access: the other holes to close".
 
 Do not use: search path, library path, module store (for this).
 
-### Disk program
+### Disk process
 
-A disk program is a program whose module file is an object of the store `module_files` of the storage service, and not a file of the boot image.
+A disk process is a process whose module file is an object of the store `module_files` of the storage service, and not a file of the boot image.
 
-A disk program adds a program to a machine with no new boot image. The principal names its file by a nickname and by its hash: `start_from_disk("visitor", "5f0c…")`. The root service starts the bytes only when their BLAKE3 hash is that hash: the storage service carries the bytes and does not choose them. Its name gives it no grant: it receives the grants of its nickname in the disk grant table. A disk program is not a package: it has no signer and no version, and nothing is installed.
+A disk process adds a process to a machine with no new boot image. The principal names its file by a nickname and by its hash: `start_from_disk("visitor", "5f0c…")`. The root service starts the bytes only when their BLAKE3 hash is that hash: the storage service carries the bytes and does not choose them. Its name gives it no grant: it receives the grants of its nickname in the disk grant table. A disk process is not a package: it has no signer and no version, and nothing is installed.
 
-The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
+The design: `docs/MODULE_CONTRACT.md`, "A process from a disk".
 
 Do not use: installed program, side-loaded program.
 
@@ -176,25 +176,25 @@ Do not use: installed program, side-loaded program.
 
 The module file service is the module `module_files`: it stores a module file that a web server gives in the store `module_files` of its principal, and lists the files of that store with the hash of their bytes.
 
-A developer adds a program to a machine that runs, with no disk from the modus tool. In the console, `module_files.receive(nickname, path)` gives the hash of the bytes that came, then `start_from_disk(nickname, hash)` starts them. `module_files.list()` gives each file with the hash that the service computes again. The service starts no program and proves nothing: the root service checks the bytes against the hash. It is not a package manager: it reads no signature, version or dependency.
+A developer adds a process to a machine that runs, with no disk from the modus tool. In the console, `module_files.receive(nickname, path)` gives the hash of the bytes that came, then `start_from_disk(nickname, hash)` starts them. `module_files.list()` gives each file with the hash that the service computes again. The service starts no process and proves nothing: the root service checks the bytes against the hash. It is not a package manager: it reads no signature, version or dependency.
 
-The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
+The design: `docs/MODULE_CONTRACT.md`, "A process from a disk".
 
 Do not use: package manager, installer, downloader.
 
 ### Import scan
 
-An import scan is the read of the store `module_files` of a principal by the root service, to find each import of a disk program that the boot image does not hold by the BLAKE3 hash of the bytes of a file.
+An import scan is the read of the store `module_files` of a principal by the root service, to find each import of a disk process that the boot image does not hold by the BLAKE3 hash of the bytes of a file.
 
-A developer puts a program and its library modules in the store `module_files`, under any nicknames. At the start, the root service reads each entry, keeps the bytes whose hash an import names, and gives them to the loader beside the boot image. A hash that no file has refuses the start. The scan trusts no name and no hash that the storage service gives. It is not a search path: only bytes with the hash of the import are kept.
+A developer puts a process and its library modules in the store `module_files`, under any nicknames. At the start, the root service reads each entry, keeps the bytes whose hash an import names, and gives them to the loader beside the boot image. A hash that no file has refuses the start. The scan trusts no name and no hash that the storage service gives. It is not a search path: only bytes with the hash of the import are kept.
 
-The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
+The design: `docs/MODULE_CONTRACT.md`, "A process from a disk".
 
 Do not use: dependency resolution, library lookup, search of an import.
 
 ### Module space
 
-A module space is the set of modules that a loader put in one program, each module one time.
+A module space is the set of modules that a loader put in one process, each module one time.
 
 Two modules that import a third one call the same copy of it: the module space counts the uses of each module. A module that another module of the space uses stays when its caller unloads it; a module with no use leaves, and its imports lose one use. `system.module_space_release` removes a module; when the kernel refuses the removal, the load error has the stage Unmap.
 
@@ -214,9 +214,9 @@ Do not use: exception, errno, error message.
 
 ### Stop report
 
-A stop report is the record that the kernel keeps of a program that stopped on a fault (`op.Stop_Report`): the stop code, the instruction, the address, the module record of the module that ran, and the stack trace.
+A stop report is the record that the kernel keeps of a process that stopped on a fault (`op.Stop_Report`): the stop code, the instruction, the address, the module record of the module that ran, and the stack trace.
 
-A stop report replaces a core dump. It is small and typed, and the kernel writes it at the fault, from the frame of the thread, its frame pointers and the module records of the program. The holder of the program handle with the right Read reads it with `Program_State`. The stop code says why the program stopped: a fault and its vector, a refused return, or a fault ring that ended with a waiting thread. Example: the console prints "error: the instruction is at offset ... of calendar_fixed ...".
+A stop report replaces a core dump. It is small and typed, and the kernel writes it at the fault, from the frame of the thread, its frame pointers and the module records of the process. The holder of the process handle with the right Read reads it with `Process_State`. The stop code says why the process stopped: a fault and its vector, a refused return, or a fault ring that ended with a waiting thread. Example: the console prints "error: the instruction is at offset ... of calendar_fixed ...".
 
 The design: `docs/MODULE_CONTRACT.md`, "A fault: the stack trace".
 
@@ -224,21 +224,21 @@ Do not use: core dump, crash report, signal info.
 
 ### Kept stop report
 
-A kept stop report is the copy of the stop report of a disk program that the root service keeps after the program stopped on a fault (`disk_program.Kept_Stop_Report`), with the hash of its module file.
+A kept stop report is the copy of the stop report of a disk process that the root service keeps after the process stopped on a fault (`disk_process.Kept_Stop_Report`), with the hash of its module file.
 
-The root service holds the only handle of a disk program and closes it at the reap, so the kernel forgets the stop report. The copy keeps the frames that a module record holds, and no other word of the memory of the program. `stop_report("visitor")` in the console asks the debugger service for it, with no attach; the service names each frame by its procedure and its line. It is not a log: a new fault of the nickname replaces it, and a run with no fault removes it.
+The root service holds the only handle of a disk process and closes it at the reap, so the kernel forgets the stop report. The copy keeps the frames that a module record holds, and no other word of the memory of the process. `stop_report("visitor")` in the console asks the debugger service for it, with no attach; the service names each frame by its procedure and its line. It is not a log: a new fault of the nickname replaces it, and a run with no fault removes it.
 
-The design: `docs/MODULE_CONTRACT.md`, "The debug object of a disk program".
+The design: `docs/MODULE_CONTRACT.md`, "The debug object of a disk process".
 
 Do not use: crash log, saved stop report.
 
 ### Refused return
 
-A refused return is a return of the kernel to a thread that the processor refuses at `iretq`: the kernel stops the program of the thread, as its own fault, with the stop code `STOP_CODE_RETURN`.
+A refused return is a return of the kernel to a thread that the processor refuses at `iretq`: the kernel stops the process of the thread, as its own fault, with the stop code `STOP_CODE_RETURN`.
 
-The kernel returns to a program only with `iretq`, and checks the frame before each return: an instruction address at or above `USER_END`, or a stack address that is not canonical, cannot pass. A fault of the `iretq` itself is a fault of the thread, not of the kernel: the stop report has the refused address, and the machine goes on. A refused return can come from a frame that a program wrote with thread control, which checks the frame first.
+The kernel returns to a process only with `iretq`, and checks the frame before each return: an instruction address at or above `USER_END`, or a stack address that is not canonical, cannot pass. A fault of the `iretq` itself is a fault of the thread, not of the kernel: the stop report has the refused address, and the machine goes on. A refused return can come from a frame that a process wrote with thread control, which checks the frame first.
 
-The design: `docs/ARCHITECTURE.md`, "The return to a program".
+The design: `docs/ARCHITECTURE.md`, "The return to a process".
 
 Do not use: bad iret, iret fault.
 
@@ -290,7 +290,7 @@ Do not use: error code, errno value, exception type.
 
 A frame pointer is the register `rbp` of a function: the address of its frame on the stack, where the frame pointer and the return address of its caller are.
 
-Every module keeps frame pointers, so that the kernel, a debugger or a profiler walks the stack with no unwind tables and runs no code of the program. The modus tool compiles each module through LLVM with `--frame-pointer=all`. The cost, measured: the code of `console` is 0.45 % larger, and a call through a slot is about 0.4 ns slower.
+Every module keeps frame pointers, so that the kernel, a debugger or a profiler walks the stack with no unwind tables and runs no code of the process. The modus tool compiles each module through LLVM with `--frame-pointer=all`. The cost, measured: the code of `console` is 0.45 % larger, and a call through a slot is about 0.4 ns slower.
 
 The rule: `docs/MODULE_CONTRACT.md`, "Closed rules".
 
@@ -300,7 +300,7 @@ Do not use: base pointer, frame record.
 
 A stack trace is the list of the return addresses of the calls that led to a fault, from the frame pointers, each with the module record that holds it.
 
-The kernel writes the stack trace into the stop report: frame 0 is the instruction, and each next frame is a return address. The walk stops at 16 frames, or at a frame pointer that is 0, not aligned, not above the one before, or not memory of the program. A reader names each frame "module + offset"; the modus tool names the function from the linked file of the module.
+The kernel writes the stack trace into the stop report: frame 0 is the instruction, and each next frame is a return address. The walk stops at 16 frames, or at a frame pointer that is 0, not aligned, not above the one before, or not memory of the process. A reader names each frame "module + offset"; the modus tool names the function from the linked file of the module.
 
 The design: `docs/MODULE_CONTRACT.md`, "A fault: the stack trace".
 
@@ -308,11 +308,11 @@ Do not use: backtrace, call stack (for this), unwind.
 
 ### Module record
 
-A module record is what the kernel keeps of one module in a program (`op.Module_Record`, 88 bytes): its base address, its size, its hash, the hash that a replacement put it in place of, and its module writer.
+A module record is what the kernel keeps of one module in a process (`op.Module_Record`, 88 bytes): its base address, its size, its hash, the hash that a replacement put it in place of, and its module writer.
 
-The loader writes the record with `Program_Module` after it mapped the module. The kernel does not read the module: the record is what the loader asserts. The kernel uses it to name the module of a fault address and of each frame of a stack trace, and `Inspect` gives the records of a program. A program has at most 16 module records.
+The loader writes the record with `Process_Module` after it mapped the module. The kernel does not read the module: the record is what the loader asserts. The kernel uses it to name the module of a fault address and of each frame of a stack trace, and `Inspect` gives the records of a process. A process has at most 16 module records.
 
-The module records of a program that runs are its identity: `manual.running()` and `manual.edges()` read them.
+The module records of a process that runs are its identity: `manual.running()` and `manual.edges()` read them.
 
 The design: `docs/MODULE_CONTRACT.md`, "2. Loading".
 
@@ -320,9 +320,9 @@ Do not use: link map entry, loaded image list.
 
 ### Module writer
 
-The module writer of a module record is the party that wrote it: the program itself (`program`), or a holder of its program handle with Control, its starter (`starter`).
+The module writer of a module record is the party that wrote it: the process itself (`process`), or a holder of its process handle with Control, its starter (`starter`).
 
-The kernel sets it at each `Program_Module`, from the caller and the target. A program cannot replace or remove a record of the writer `starter`, or map memory at its addresses. So a record of the writer `starter` names the code that the starter put there, and a record of the writer `program` is what the program says of itself. Example: the root service starts `imports`, whose module has the writer `starter`; `imports` loads `calendar`, whose record has the writer `program`. It is not the `system.Writer` of a text.
+The kernel sets it at each `Process_Module`, from the caller and the target. A process cannot replace or remove a record of the writer `starter`, or map memory at its addresses. So a record of the writer `starter` names the code that the starter put there, and a record of the writer `process` is what the process says of itself. Example: the root service starts `imports`, whose module has the writer `starter`; `imports` loads `calendar`, whose record has the writer `process`. It is not the `system.Writer` of a text.
 
 The design: `docs/MODULE_CONTRACT.md`, "The writer of a module record".
 
@@ -332,9 +332,9 @@ Do not use: owner, author.
 
 A table is a set of records of one record description that follow each other in memory, with their count.
 
-The table is the unit of data of the system. The console holds a table as one value and passes it to the next function with no parsing. The callee writes a Table result in memory of the caller, with the count of the full table: a count above the capacity means that the table did not fit. A record of a table holds no Handle field. Example: `monitor.programs()` gives a table of `Program` records.
+The table is the unit of data of the system. The console holds a table as one value and passes it to the next function with no parsing. The callee writes a Table result in memory of the caller, with the count of the full table: a count above the capacity means that the table did not fit. A record of a table holds no Handle field. Example: `monitor.processes()` gives a table of `Process` records.
 
-The rules: `docs/PROPERTIES.md`, "12. Module metadata in flat tables, read through functions", and `docs/PROPERTIES.md`, "19. A command is a function: no text between programs".
+The rules: `docs/PROPERTIES.md`, "12. Module metadata in flat tables, read through functions", and `docs/PROPERTIES.md`, "19. A command is a function: no text between processes".
 
 Do not use: list, array (for this), result set, rowset, data frame.
 
@@ -396,9 +396,9 @@ Do not use: query, reflection API, introspection.
 
 ### Catalog
 
-A catalog is the input of an information function: the modules that a program can see, and the replacements of the machine.
+A catalog is the input of an information function: the modules that a process can see, and the replacements of the machine.
 
-A catalog is the boot image that the program was granted and the records of the replacement table. An information function sees nothing else: a program with no grant of the boot image has an empty catalog.
+A catalog is the boot image that the process was granted and the records of the replacement table. An information function sees nothing else: a process with no grant of the boot image has an empty catalog.
 
 Do not use: registry, repository, package database, index.
 
@@ -412,9 +412,9 @@ Do not use: exception, errno, error code.
 
 ### Boot image
 
-The boot image is the one block of data that the boot program loads with the kernel: the modules of the first programs and the resources, each with its name and its hash.
+The boot image is the one block of data that the boot program loads with the kernel: the modules of the first processes and the resources, each with its name and its hash.
 
-The boot image starts the system with no file system. Its header has a table of modules and a table of resources (`src/library/contract/boot_info`), each entry with a name, the BLAKE3 hash of the bytes, the offset and the size. The boot program checks each entry against the system description before the kernel starts, and the root service checks them again. The root service is the load source of the first programs; another program receives the boot image only by the grant `Image`.
+The boot image starts the system with no file system. Its header has a table of modules and a table of resources (`src/library/contract/boot_info`), each entry with a name, the BLAKE3 hash of the bytes, the offset and the size. The boot program checks each entry against the system description before the kernel starts, and the root service checks them again. The root service is the load source of the first processes; another process receives the boot image only by the grant `Image`.
 
 The design: `docs/ARCHITECTURE.md`, "U2b. Resources of the boot image".
 
@@ -464,7 +464,7 @@ Do not use: SIMD version, kernel (for this), fast path, intrinsics version.
 
 A debug object is the file that names the procedures, the source lines, the types and the variables of the code of one module, so that a reader can turn an address of the module into a name and a line, and a debugger can show a variable.
 
-A module names only its exports. With the debug object, the frame "fault + 0x1478" reads "fault::three + 0x8 in fault (src/modules/demonstrations/fault/main.odin:15)". The modus tool writes it at the build from the DWARF of the linked file, so the system reads no DWARF: a program reads only sorted tables of fixed records. The object names its module by the hash of the module file; the bytes of the module are the same without it. It is not the whole debug information of the compiler.
+A module names only its exports. With the debug object, the frame "fault + 0x1478" reads "fault::three + 0x8 in fault (src/modules/demonstrations/fault/main.odin:15)". The modus tool writes it at the build from the DWARF of the linked file, so the system reads no DWARF: a process reads only sorted tables of fixed records. The object names its module by the hash of the module file; the bytes of the module are the same without it. It is not the whole debug information of the compiler.
 
 The design: `docs/MODULE_CONTRACT.md`, "Debug information".
 
@@ -532,9 +532,9 @@ Do not use: place (for a variable), location expression (the form of DWARF that 
 
 ### Debug image
 
-The debug image is one file that holds the debug object of each module of a build, in the form of a boot image, so that the programs of a machine can name the procedures and lines of every module.
+The debug image is one file that holds the debug object of each module of a build, in the form of a boot image, so that the processes of a machine can name the procedures and lines of every module.
 
-The modus tool writes it as `build/debug.image` and copies it to the boot volume beside the boot program. The boot program reads it and does not verify it, because no code comes from it; a start with no debug image gives no names. The root service maps it read-only in each program with the grant `Debug_Image`, which finds an object with `system.debug_object_of`. It is not part of the boot image, so a change of a debug object changes no signature and no measure of the trusted boot.
+The modus tool writes it as `build/debug.image` and copies it to the boot volume beside the boot program. The boot program reads it and does not verify it, because no code comes from it; a start with no debug image gives no names. The root service maps it read-only in each process with the grant `Debug_Image`, which finds an object with `system.debug_object_of`. It is not part of the boot image, so a change of a debug object changes no signature and no measure of the trusted boot.
 
 The design: `docs/MODULE_CONTRACT.md`, "Where the debug objects are".
 

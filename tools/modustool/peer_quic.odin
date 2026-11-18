@@ -10,7 +10,7 @@ import "modus:support/quic"
 import "modus:support/random"
 import "modus:support/web"
 
-// The peer as QUIC clients of the program `quic_echo` (docs/QUIC.md,
+// The peer as QUIC clients of the process `quic_echo` (docs/QUIC.md,
 // section 6). The tool asks for one case at a time (step Peer_Quic); the
 // thread of the peer runs it with src/library/support/quic, the library of the system,
 // and the module cryptography compiled for the host. The client pins the
@@ -33,7 +33,7 @@ PEER_QUIC_FLOOD :: 1000 // The datagrams of the flood that no key opens.
 // The datagrams of the flood in one tick of the peer (1 ms or more): 1000 in
 // 200 ms. Faster, the 64 admitted remotes of the network service can be
 // full before quic_echo releases the remotes that it refused, and a forged
-// datagram is dropped before it reaches the program.
+// datagram is dropped before it reaches the process.
 PEER_QUIC_FLOOD_PER_TICK :: 5
 // The datagrams of the flood that may wait for their answer: the server
 // answers each Initial with a Retry, and the peer reads one frame of the
@@ -502,7 +502,7 @@ peer_quic_flood :: proc(peer: ^Peer, state: ^Peer_Quic) {
 
 // peer_quic_connect_again starts a new connection for each client of the
 // case whose handshake ended at its deadline, from a new port, as a client
-// program does. The server gives one address a budget of Initial checks (a
+// process does. The server gives one address a budget of Initial checks (a
 // few at once, then one in each second) and drops an Initial over it with
 // no answer, so a client among several of one address can send each try
 // of its Initial while the budget is empty. Without a new connection, the

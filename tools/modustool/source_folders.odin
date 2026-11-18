@@ -25,7 +25,7 @@ SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOL
 // The folders of the sources that a move removed. The check of the source
 // paths in the documents reads a code span that starts with one of them,
 // and refuses it: a document that still names the old place is stale.
-SOURCE_FOLDERS_GONE :: [?]string{"src/programs"}
+SOURCE_FOLDERS_GONE :: [?]string{"src/processes"}
 
 // The module groups (src/md/infrastructure/repository_layout.md, "The
 // module groups"): the folder of src/modules that holds a module says what
@@ -34,7 +34,7 @@ SOURCE_FOLDERS_GONE :: [?]string{"src/programs"}
 Module_Group :: enum {
 	System, // The root service, the services, the desktop, the tools of a principal.
 	Libraries, // The modules that export functions and have no entry, which other modules import.
-	Demonstrations, // The programs that each show a property to a principal.
+	Demonstrations, // The processes that each show a property to a principal.
 	Tests, // The test modules, which only a machine test starts or imports.
 }
 
@@ -86,7 +86,7 @@ PRIVATE_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_PRIVATE + "/"
 
 // The one flag of the compiler for the library. Each command of the tool
 // that runs the compiler gives it, the compile of the kernel too: flake.nix
-// gives the same flag when it builds this tool, and a program outside the
+// gives the same flag when it builds this tool, and a process outside the
 // repository gives it with the path of this folder. With one library the
 // compiler accepts an import of a support package in the kernel, so the
 // tool refuses it before the first compiler starts

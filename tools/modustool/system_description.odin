@@ -76,7 +76,7 @@ Image_Change :: struct {
 	description_left_out:              bool,
 	// The entry of this module in the boot image states another hash, while
 	// its bytes are right: the boot program must refuse the volume, because
-	// the loader gives the stated hash to the program as its identity.
+	// the loader gives the stated hash to the process as its identity.
 	stated_hash_changed_module:        string,
 }
 
@@ -629,7 +629,7 @@ run_key :: proc(args: []string) -> int {
 	}
 	// The seed of the key comes from the generator of the host. The
 	// cryptography of the system has no source of its own: in the system the
-	// root service seeds each program.
+	// root service seeds each process.
 	seed: [SIGNING_KEY_SIZE]u8
 	defer crypto.zero_explicit(&seed, size_of(seed))
 	random_file, open_error := os.open("/dev/urandom")

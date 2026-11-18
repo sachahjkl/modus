@@ -6,9 +6,9 @@
 //
 // The network service reads no byte of the data of a datagram or of a
 // segment here: `parse` checks the lengths and the header, not the
-// checksum of the transport. The program checks that checksum, after the
+// checksum of the transport. The process checks that checksum, after the
 // network service found its endpoint: TCP in src/library/support/tcp, UDP with
-// `udp_data_read` of this package. The program also writes the header and
+// `udp_data_read` of this package. The process also writes the header and
 // the checksum of what it sends: `udp_header_write` for a datagram
 // (docs/NETWORK.md, "The path of a datagram and of a segment").
 //
@@ -25,7 +25,7 @@
 // frame of the frame service with `parse` and writes the frames of its
 // endpoints with the `_frame` procedures, and keeps the tables of
 // `tables.odin` (the refused frames, the admitted remotes, the neighbors);
-// and each program with a datagram endpoint, which writes and reads its
+// and each process with a datagram endpoint, which writes and reads its
 // datagrams with `udp_header_write` and `udp_data_read`.
 //
 // See [network service](term:network-service) and (docs/NETWORK.md).
@@ -65,8 +65,8 @@ ARP_REPLY :: 2 // The operation of an ARP reply.
 TTL :: 64 // The time to live of each packet that this library writes.
 
 // The error of a frame is a record of the datagram contract, because the
-// network service gives it to programs, and an error must inform the
-// program that receives it. parse gives the kinds Too_Short to Unsupported.
+// network service gives it to processes, and an error must inform the
+// process that receives it. parse gives the kinds Too_Short to Unsupported.
 Layer :: datagram.Layer
 Problem_Kind :: datagram.Problem_Kind
 Problem :: datagram.Problem
@@ -239,7 +239,7 @@ icmp_parse :: proc "contextless" (message: []u8, offset: int, packet: Packet) ->
 }
 
 // udp_parse checks the header of a UDP datagram: its length. It reads no
-// byte of the data: the checksum is for the program (udp_data_read).
+// byte of the data: the checksum is for the process (udp_data_read).
 @(private)
 udp_parse :: proc "contextless" (datagram: []u8, offset: int, packet: Packet) -> (Packet, Problem) {
 	packet := packet
@@ -262,7 +262,7 @@ udp_parse :: proc "contextless" (datagram: []u8, offset: int, packet: Packet) ->
 
 // tcp_parse checks the header of a segment: its length and its data
 // offset. It reads no byte of the data: the checksum and the rest of the
-// segment are for TCP in the program (src/library/support/tcp).
+// segment are for TCP in the process (src/library/support/tcp).
 @(private)
 tcp_parse :: proc "contextless" (segment: []u8, offset: int, packet: Packet) -> (Packet, Problem) {
 	packet := packet
@@ -342,7 +342,7 @@ arp_frame :: proc "contextless" (frame: []u8, operation: u16, sender_hardware: H
 
 // ipv4_frame writes the headers of Ethernet and IPv4 of a frame whose
 // payload of payload bytes is already at frame[IPV4_DATA:]: a datagram or a
-// segment that the program wrote with its header and its checksum. It
+// segment that the process wrote with its header and its checksum. It
 // reads no byte of the payload. It gives the length of the frame, or 0 when
 // the payload is too large.
 ipv4_frame :: proc "contextless" (frame: []u8, destination, source: Hardware, source_address, destination_address: u32, protocol: u8, payload: int, identification: u16) -> int {
@@ -359,7 +359,7 @@ ipv4_frame :: proc "contextless" (frame: []u8, destination, source: Hardware, so
 // the pseudo-header, the header and the data. It gives the length of the
 // datagram, or 0 when the data is too large for one frame or for datagram.
 //
-// A program with a datagram endpoint calls it before each Send: the
+// A process with a datagram endpoint calls it before each Send: the
 // network service copies the datagram and computes no checksum. The source
 // address and the source port are the local address and the local port of
 // the endpoint (the command Info gives them); the network service refuses
@@ -399,7 +399,7 @@ Udp_Checksum_Rule :: enum u8 {
 // the checksum: with the rule Verify, this procedure checks it, over the
 // pseudo-header of the remote address and the local address. ok is false
 // for a datagram that is shorter than its header, whose length field is
-// not its length, or whose checksum is wrong: the program drops it and
+// not its length, or whose checksum is wrong: the process drops it and
 // counts it.
 udp_data_read :: proc "contextless" (datagram: []u8, remote_address, local_address: u32, rule: Udp_Checksum_Rule) -> (data: []u8, ok: bool) {
 	if len(datagram) < UDP_HEADER || int(byte_order.read_u16_big_endian(datagram, 4)) != len(datagram) {
@@ -484,13 +484,13 @@ problem_names := [Problem_Kind]string {
 }
 
 // problem_name gives the short name of a kind of problem, also for a value
-// that another program wrote.
+// that another process wrote.
 problem_name :: proc "contextless" (kind: Problem_Kind) -> string {
 	return problem_names[kind] if kind <= max(Problem_Kind) else "unknown"
 }
 
 // layer_name gives the name of a layer, also for a value that another
-// program wrote.
+// process wrote.
 layer_name :: proc "contextless" (layer: Layer) -> string {
 	return layer_names[layer] if layer <= max(Layer) else "frame"
 }

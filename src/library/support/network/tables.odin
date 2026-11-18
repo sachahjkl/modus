@@ -30,7 +30,7 @@ problem_count :: proc "contextless" (table: ^Problem_Table, found: datagram.Prob
 // problem_rows writes the rows that an endpoint can read: the rows of its
 // own table, then, with the right Inspect of its grant, the rows of the
 // machine. It never reads the table of another endpoint: the caller gives
-// only the table of the endpoint that asks, because a program learns
+// only the table of the endpoint that asks, because a process learns
 // nothing of the traffic of another. It gives the count
 // of the full answer; rows holds the part that fits.
 problem_rows :: proc "contextless" (own: ^Problem_Table, machine: ^Problem_Table, inspect: bool, rows: []datagram.Problem_Row) -> (count: int) {
@@ -89,7 +89,7 @@ listen_port_taken :: proc "contextless" (tcp: bool, port: u16, client_first: int
 // listen port. A segment to send goes out only to an admitted remote
 // (docs/NETWORK.md). Each place has the time of its last segment, in or
 // out: when the table is full, the oldest place with no segment for more
-// than ADMITTED_IDLE serves again, so that a program that forgets a Release
+// than ADMITTED_IDLE serves again, so that a process that forgets a Release
 // cannot close its own port.
 // Milliseconds: twice RTO_MOST of src/library/support/tcp (60 s, the longest gap
 // between two probes of a zero window), so that a live remote keeps its
@@ -103,7 +103,7 @@ Admitted_Remote :: struct {
 	used:      bool, // The place holds a remote.
 	time:      u64, // Milliseconds: the last segment of this remote, in or out (TCP), or the last datagram that came from it (UDP).
 	// UDP: the bytes of the datagrams that came from this remote and that
-	// went to it, and whether the program said that the remote proved its
+	// went to it, and whether the process said that the remote proved its
 	// address (the command Validate).
 	bytes_in:  u64,
 	bytes_out: u64, // See bytes_in.
@@ -171,7 +171,7 @@ admitted_received :: proc "contextless" (table: ^Admitted, address: u32, port: u
 // remote, and counts them: the remote is admitted, and it is validated, or
 // the bytes sent to it stay within AMPLIFICATION_FACTOR times the bytes
 // that came from it. A send does not change the time of the place: only a
-// datagram of the remote keeps it admitted, so a program cannot hold a
+// datagram of the remote keeps it admitted, so a process cannot hold a
 // place, and send, by sending. limit and would_send give the detail of a
 // refusal.
 admitted_send_allowed :: proc "contextless" (table: ^Admitted, address: u32, port: u16, bytes: u64) -> (allowed: bool, admitted: bool, limit: u64, would_send: u64) {

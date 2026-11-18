@@ -58,7 +58,7 @@ bar_with_value_stays_inside_its_area_at_each_edge :: proc(t: ^testing.T) {
 	for test_case in cases {
 		memory: Bar_Frame
 		frame := bar_frame_begin(&memory)
-		bar_with_value(&frame, test_case.area, test_case.bar_width, test_case.value, test_case.maximum, graphics.colors.program)
+		bar_with_value(&frame, test_case.area, test_case.bar_width, test_case.value, test_case.maximum, graphics.colors.process)
 		records_inside(t, &memory.table, test_case.area, test_case.name)
 		full := -1
 		texts := 0
@@ -82,7 +82,7 @@ bar_with_value_places_the_bar_and_the_value :: proc(t: ^testing.T) {
 	memory: Bar_Frame
 	frame := bar_frame_begin(&memory)
 	area := Area{284, 40, 300, TABLE_LINE}
-	bar_with_value(&frame, area, 200, 50, 100, graphics.colors.program)
+	bar_with_value(&frame, area, 200, 50, 100, graphics.colors.process)
 	testing.expect_value(t, memory.table.record_count, 3)
 	track := record_view(memory.table.records[0])
 	testing.expect(t, is_solid_rectangle(track), "the track is a solid rectangle")

@@ -8,7 +8,7 @@ The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The machine k
 
 ## Constraints
 
-- **The TPM is a device, and a device is a program** (property 17). After the start, a device service owns the TPM. The boot program talks to the TPM through the firmware only, and the firmware services end before the kernel starts.
+- **The TPM is a device, and a device is a process** (property 17). After the start, a device service owns the TPM. The boot program talks to the TPM through the firmware only, and the firmware services end before the kernel starts.
 - **No new kernel operation.** The TPM of the machine has the CRB interface at the fixed physical address `0xFED40000`. `Device_Create` of the kind `Memory` gives one page of its registers, mapped with no cache.
 - **The measure is PCR 11** ([`docs/TRUSTED_BOOT.md`](../../../docs/TRUSTED_BOOT.md), "6. The measure"). The firmware measures the state of Secure Boot into PCR 7.
 - **No update path exists in the system.** A new system is a new boot volume that the tool writes. So the old system cannot know the measure of the next one before the update.
@@ -19,7 +19,7 @@ The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The machine k
 
 ### The TPM service
 
-The program `tpm` is the device service of the TPM. The root service starts it at boot, before `unlock`, only when the trust record says `Measured`: the TPM is there and PCR 11 holds the measure. It gives the program the page of the registers, a ring and a region of one page. The program has no other grant.
+The process `tpm` is the device service of the TPM. The root service starts it at boot, before `unlock`, only when the trust record says `Measured`: the TPM is there and PCR 11 holds the measure. It gives the process the page of the registers, a ring and a region of one page. The process has no other grant.
 
 `unlock` is its one client. The root service gives the same ring and region to each run of `unlock` with the start grant `Tpm`. The ring has two commands:
 
@@ -101,7 +101,7 @@ The root service starts `unlock` only from its own procedure `unlock_start`, and
 
 **The new seal after a recovery.** When the TPM service runs, `unlock` asks it for a new seal of the same machine key, to the PCRs of the system that runs now. It writes the record with the new areas and the same recovery seal. The next start of this system then needs no recovery key. The disk grant table keeps its tag: the machine key did not change.
 
-**An update of the system.** The old system cannot seal the key to the next measure, because no program of the system knows the next description before the update. So the first start of a new system asks for the recovery key one time, and seals the key again.
+**An update of the system.** The old system cannot seal the key to the next measure, because no process of the system knows the next description before the update. So the first start of a new system asks for the recovery key one time, and seals the key again.
 
 ### A machine with no TPM
 
@@ -118,13 +118,13 @@ The test needs two systems with the same PCR 7 and two values of PCR 11, and one
 ## Refused forms
 
 - **A raw command from the client.** The client could extend PCR 11 or clear the TPM. The service builds each command, and a command has two forms only.
-- **The TPM driver in `unlock`.** A program with a window and the passphrase would also hold a device. Property 17 gives the TPM to a device service, and a later client (a counter of the disk grant table, an attestation) reaches the same service.
+- **The TPM driver in `unlock`.** A process with a window and the passphrase would also hold a device. Property 17 gives the TPM to a device service, and a later client (a counter of the disk grant table, an attestation) reaches the same service.
 - **The TPM service as a service with described exports.** A device service with a ring and a region is the form of the block service and of the frame service. The client needs no file of the service and no connection through the root service; the root service gives the ring at the start of `unlock`.
 - **A signed policy (`TPM2_PolicyAuthorize`)** in place of exact PCR values. Property 17 names it as the standard form against the cost of an update. It needs a key of the publisher of the system that the TPM verifies: the TPM verifies RSA and ECDSA, not Ed25519. It also lets each older system that the key signed unseal the key, unless the policy also checks the version floor of the TPM ([rollback_floors.md](rollback_floors.md)). Exact values keep "an older system opens nothing" now; a signed policy with the version floor is the later form.
 - **A seal at each start with no command.** The recovery key would show at a start that nobody watches, and a key with no recovery is lost at the first update.
 - **A seal by the TPM and a seal under the machine passphrase in one record, each enough alone.** An attacker with a copy of the disk tries passphrases against Argon2id, and the TPM adds nothing. The TPM and the passphrase together is the form of the keys of a named principal ([tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md)) and of the record `MACHINEP` ([tpm_sealed_machine_passphrase.md](tpm_sealed_machine_passphrase.md)): the passphrase gives the authorization value of the sealed object, and the TPM counts the wrong tries.
 - **The recovery key through Argon2id.** 160 random bits need no slow derivation. A recovery key that a principal chooses would need one, and it is weaker.
-- **The recovery key on the log, or kept in a store.** The log is read by programs and by the host. A key kept on the disk opens the copy for a reader of the disk.
+- **The recovery key on the log, or kept in a store.** The log is read by processes and by the host. A key kept on the disk opens the copy for a reader of the disk.
 - **The recovery key typed in the console.** The console keeps each line in its history and in its store.
 - **The two areas in the additional data of the recovery seal.** A new seal by the TPM would then need the recovery key again.
 - **A stop of the start when the TPM refuses.** The machine runs, and the disk grants of principal 0 stay absent until the recovery key is typed, as for a machine passphrase that is not typed.

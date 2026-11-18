@@ -195,7 +195,7 @@ site_value_kinds_of_the_context_roles :: proc(t: ^testing.T) {
 @(test)
 site_value_list_in_a_table :: proc(t: ^testing.T) {
 	b := strings.builder_make(context.temp_allocator)
-	table := site_table_start(&b, "Lists", {{"Program", .Name}, {"Grants", .List}, {"Why", .Prose}}, {.None, .Grant, .None})
+	table := site_table_start(&b, "Lists", {{"Process", .Name}, {"Grants", .List}, {"Why", .Prose}}, {.None, .Grant, .None})
 	strings.write_string(&b, "<tr><td>one</td><td>")
 	site_value_list(&b, {site_value_html(.Grant, "Inspect"), site_value_html(.Grant, "Debug_Image")})
 	strings.write_string(&b, "</td><td>a reason</td></tr>\n")

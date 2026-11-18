@@ -86,8 +86,8 @@ Kind_Time :: struct {
 	duration: time.Duration,
 }
 
-Program_Wait :: struct {
-	program: string,
+Process_Wait :: struct {
+	process: string,
 	count:   int,
 	waited:  time.Duration,
 }
@@ -101,7 +101,7 @@ Test_Times_Summary :: struct {
 	pictures:       int,
 	picture:        Picture_Time,
 	waited:         time.Duration,
-	programs:       []Program_Wait, // The most waited first.
+	processes:       []Process_Wait, // The most waited first.
 }
 
 // step_kind_waits_for_a_line says if the text of a step of this kind is a
@@ -114,11 +114,11 @@ step_kind_waits_for_a_line :: proc(kind: Step_Kind) -> bool {
 	return false
 }
 
-// program_of_a_log_text gives the name of the program that writes a line
+// process_of_a_log_text gives the name of the process that writes a line
 // of the log: the first word of the text before its first ":" ("clock" of
 // "clock: ok", "[console]" of "[console] settings: 3 commands"). A text
 // with no word gives "(no name)".
-program_of_a_log_text :: proc(text: string) -> string {
+process_of_a_log_text :: proc(text: string) -> string {
 	before := text
 	if colon := strings.index_byte(before, ':'); colon >= 0 {
 		before = before[:colon]
@@ -154,7 +154,7 @@ Record_Place :: struct {
 test_times_summary :: proc(records: []Step_Time, slowest_count := TEST_TIMES_SLOWEST_COUNT) -> Test_Times_Summary {
 	summary: Test_Times_Summary
 	places := make([]Record_Place, len(records), context.temp_allocator)
-	programs := make([dynamic]Program_Wait, context.temp_allocator)
+	processes := make([dynamic]Process_Wait, context.temp_allocator)
 	for record, place in records {
 		places[place] = {place, record.duration}
 		summary.kinds[record.kind].count += 1
@@ -172,18 +172,18 @@ test_times_summary :: proc(records: []Step_Time, slowest_count := TEST_TIMES_SLO
 		if !step_kind_waits_for_a_line(record.kind) {
 			continue
 		}
-		name := program_of_a_log_text(record.text)
+		name := process_of_a_log_text(record.text)
 		known := false
-		for &program in programs {
-			if program.program == name {
-				program.count += 1
-				program.waited += record.waited
+		for &process in processes {
+			if process.process == name {
+				process.count += 1
+				process.waited += record.waited
 				known = true
 				break
 			}
 		}
 		if !known {
-			append(&programs, Program_Wait{program = name, count = 1, waited = record.waited})
+			append(&processes, Process_Wait{process = name, count = 1, waited = record.waited})
 		}
 	}
 	// A stable sort: two equal durations keep the order of the run.
@@ -195,10 +195,10 @@ test_times_summary :: proc(records: []Step_Time, slowest_count := TEST_TIMES_SLO
 		place = places[index].place
 	}
 	summary.slowest = slowest
-	slice.stable_sort_by(programs[:], proc(first, second: Program_Wait) -> bool {
+	slice.stable_sort_by(processes[:], proc(first, second: Process_Wait) -> bool {
 		return first.waited > second.waited
 	})
-	summary.programs = programs[:]
+	summary.processes = processes[:]
 	return summary
 }
 
@@ -394,9 +394,9 @@ test_times_report :: proc(runs: []Test_Part_Run, build: time.Duration, started: 
 	}
 	fmt.printfln("modustool: measure: %d keys sent, %.1f s in the sends of keys, with the wait after each send", summary.keys, seconds_of(summary.key_time))
 	fmt.printfln("modustool: measure: %d pictures, %.1f s in their steps: the wait for a settled screen %.1f s, the screendumps of QEMU %.1f s, the read of the file %.1f s; on worker threads, while the scenario goes on: the conversion to PNG %.1f s, the write %.1f s", summary.pictures, seconds_of(summary.picture.settle + summary.picture.dump + summary.picture.read), seconds_of(summary.picture.settle), seconds_of(summary.picture.dump), seconds_of(summary.picture.read), seconds_of(summary.picture.conversion), seconds_of(summary.picture.write))
-	fmt.printfln("modustool: measure: %.1f s waited for lines of the log, by the program of the line:", seconds_of(summary.waited))
-	for program in summary.programs {
-		fmt.printfln("modustool: measure:     %8.1f s, %4d lines: %s", seconds_of(program.waited), program.count, program.program)
+	fmt.printfln("modustool: measure: %.1f s waited for lines of the log, by the process of the line:", seconds_of(summary.waited))
+	for process in summary.processes {
+		fmt.printfln("modustool: measure:     %8.1f s, %4d lines: %s", seconds_of(process.waited), process.count, process.process)
 	}
 	fmt.printfln("modustool: measure: the %d slowest steps:", len(summary.slowest))
 	for place in summary.slowest {

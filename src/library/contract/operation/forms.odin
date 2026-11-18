@@ -2,7 +2,7 @@ package operation
 
 // The form of each kernel operation: its name, and the name and the form of
 // each parameter. The kernel reads the forms to find the error record of an
-// operation that failed (src/kernel/diagnose.odin); a program reads the names to
+// operation that failed (src/kernel/diagnose.odin); a process reads the names to
 // write the sentence of an error record. One table for the two.
 
 // The form of one parameter of a kernel operation: what the kernel checks
@@ -16,7 +16,7 @@ Form :: enum u8 {
 	Value   = 1, // A number that the operation does not check.
 	Handle  = 2, // A handle of `kind` (None: any kind) with `rights`.
 	Handle_Or_Zero = 3, // The same, or 0: the caller itself, or no handle.
-	Address = 4, // An address in the program.
+	Address = 4, // An address in the process.
 	Count   = 5, // A count. `limit`: the largest, or 0.
 	Flags   = 6, // A set of flags. `limit`: the flags that the operation knows.
 	Choice  = 7, // A value of an enumeration. `limit`: the largest.
@@ -51,13 +51,13 @@ OPERATIONS := [Operation]Operation_Form {
 	.None = {name = "None"},
 	.Log = {"Log", {{"log", .Handle, .Log, {.Write}, 0}, {"address", .Address, .None, {}, 0}, {"length", .Count, .None, {}, LOG_TEXT_BYTES_MOST}, {"level", .Choice, .None, {}, u64(max(Log_Level))}, {"channel", .Value, .None, {}, 0}, {"channel", .Value, .None, {}, 0}, {"runs", .Count, .None, {}, LOG_CALL_RUN_LIMIT}}},
 	.Memory_Create = {"Memory_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"pages", .Count, .None, {}, MEMORY_PAGE_LIMIT}, {"flags", .Flags, .None, {}, MEMORY_FLAGS_KNOWN}, {}, {}, {}, {}}},
-	.Memory_Map = {"Memory_Map", {{"memory", .Handle, .Memory, {.Read}, 0}, {"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {"flags", .Flags, .None, {}, MAP_FLAGS_KNOWN}, {"first", .Count, .None, {}, 0}, {"pages", .Count, .None, {}, 0}, {}}},
-	.Memory_Unmap = {"Memory_Unmap", {{"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
+	.Memory_Map = {"Memory_Map", {{"memory", .Handle, .Memory, {.Read}, 0}, {"process", .Handle_Or_Zero, .Process, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {"flags", .Flags, .None, {}, MAP_FLAGS_KNOWN}, {"first", .Count, .None, {}, 0}, {"pages", .Count, .None, {}, 0}, {}}},
+	.Memory_Unmap = {"Memory_Unmap", {{"process", .Handle_Or_Zero, .Process, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Memory_Size = {"Memory_Size", {{"memory", .Handle, .Memory, {}, 0}, {}, {}, {}, {}, {}, {}}},
-	.Program_Create = {"Program_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"name", .Address, .None, {}, 0}, {"name_length", .Count, .None, {}, PROGRAM_NAME_BYTES_MOST}, {}, {}, {}, {}}},
-	.Program_Start = {"Program_Start", {{"program", .Handle, .Program, {.Control}, 0}, {"entry", .Address, .None, {}, 0}, {"stack", .Address, .None, {}, 0}, {"context", .Address, .None, {}, 0}, {}, {}, {}}},
-	.Program_Stop = {"Program_Stop", {{"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"code", .Value, .None, {}, 0}, {}, {}, {}, {}, {}}},
-	.Program_State = {"Program_State", {{"program", .Handle, .Program, {.Read}, 0}, {"report", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
+	.Process_Create = {"Process_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"name", .Address, .None, {}, 0}, {"name_length", .Count, .None, {}, PROCESS_NAME_BYTES_MOST}, {}, {}, {}, {}}},
+	.Process_Start = {"Process_Start", {{"process", .Handle, .Process, {.Control}, 0}, {"entry", .Address, .None, {}, 0}, {"stack", .Address, .None, {}, 0}, {"context", .Address, .None, {}, 0}, {}, {}, {}}},
+	.Process_Stop = {"Process_Stop", {{"process", .Handle_Or_Zero, .Process, {.Control}, 0}, {"code", .Value, .None, {}, 0}, {}, {}, {}, {}, {}}},
+	.Process_State = {"Process_State", {{"process", .Handle, .Process, {.Read}, 0}, {"report", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Handle_Give = {"Handle_Give", {{"target", .Handle_Or_Zero, .None, {}, 0}, {"handle", .Handle, .None, {.Give}, 0}, {"rights", .Flags, .None, {}, 0}, {}, {}, {}, {}}},
 	.Handle_Close = {"Handle_Close", {{"handle", .Handle, .None, {}, 0}, {}, {}, {}, {}, {}, {}}},
 	.Interrupt_Read = {"Interrupt_Read", {{"interrupt", .Handle, .Interrupt, {.Read}, 0}, {}, {}, {}, {}, {}, {}}},
@@ -69,25 +69,25 @@ OPERATIONS := [Operation]Operation_Form {
 	.Thread_State = {"Thread_State", {{"thread", .Handle, .Thread, {.Read}, 0}, {}, {}, {}, {}, {}, {}}},
 	.Word_Wait = {"Word_Wait", {{"words", .Address, .None, {}, 0}, {"count", .Count, .None, {}, WORD_WAIT_CAPACITY}, {}, {}, {}, {}, {}}},
 	.Word_Wake = {"Word_Wake", {{"word", .Address, .None, {}, 0}, {"count", .Value, .None, {}, 0}, {}, {}, {}, {}, {}}},
-	.Budget_Create = {"Budget_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"pages", .Count, .None, {}, 0}, {"programs", .Count, .None, {}, 0}, {"threads", .Count, .None, {}, 0}, {"processor", .Count, .None, {}, 0}, {"log_records", .Count, .None, {}, 0}, {}}},
+	.Budget_Create = {"Budget_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"pages", .Count, .None, {}, 0}, {"processes", .Count, .None, {}, 0}, {"threads", .Count, .None, {}, 0}, {"processor", .Count, .None, {}, 0}, {"log_records", .Count, .None, {}, 0}, {}}},
 	.Budget_Read = {"Budget_Read", {{"budget", .Handle, .Budget, {.Read}, 0}, {}, {}, {}, {}, {}, {}}},
 	.Handle_State = {"Handle_State", {{"handle", .Handle, .None, {}, 0}, {"memory", .Handle_Or_Zero, .Memory, {}, 0}, {}, {}, {}, {}, {}}},
-	.Handle_Revoke = {"Handle_Revoke", {{"handle", .Handle, .None, {}, 0}, {"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {}, {}, {}, {}, {}}},
+	.Handle_Revoke = {"Handle_Revoke", {{"handle", .Handle, .None, {}, 0}, {"process", .Handle_Or_Zero, .Process, {.Control}, 0}, {}, {}, {}, {}, {}}},
 	.Memory_Physical = {"Memory_Physical", {{"machine", .Handle, .Machine, {.Physical}, 0}, {"memory", .Handle, .Memory, {.Read}, 0}, {}, {}, {}, {}, {}}},
-	.Program_Module = {"Program_Module", {{"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"record", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
+	.Process_Module = {"Process_Module", {{"process", .Handle_Or_Zero, .Process, {.Control}, 0}, {"record", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Strategy_Set = {"Strategy_Set", {{"machine", .Handle, .Machine, {.Schedule}, 0}, {"strategy", .Choice, .None, {}, u64(max(Strategy))}, {}, {}, {}, {}, {}}},
 	.Memory_Commit = {"Memory_Commit", {{"memory", .Handle, .Memory, {.Write}, 0}, {"budget", .Handle, .Budget, {}, 0}, {"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, COMMIT_FLAGS_KNOWN}, {}, {}}},
 	.Memory_Protect = {"Memory_Protect", {{"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, MAP_FLAGS_KNOWN}, {}, {}, {}, {}}},
-	.Fault_Handler_Set = {"Fault_Handler_Set", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {"end", .Choice, .None, {}, u64(max(Fault_Handler_Action))}, {"kinds", .Flags, .None, {}, FAULT_KINDS_DELIVERED}, {"program", .Handle_Or_Zero, .Program, {.Debug}, 0}, {}, {}, {}}},
-	.Fault_Answer = {"Fault_Answer", {{"thread", .Value, .None, {}, 0}, {"serial", .Value, .None, {}, 0}, {"answer", .Choice, .None, {}, u64(max(Fault_Answer_Kind))}, {"program", .Handle_Or_Zero, .Program, {.Debug}, 0}, {}, {}, {}}},
+	.Fault_Handler_Set = {"Fault_Handler_Set", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {"end", .Choice, .None, {}, u64(max(Fault_Handler_Action))}, {"kinds", .Flags, .None, {}, FAULT_KINDS_DELIVERED}, {"process", .Handle_Or_Zero, .Process, {.Debug}, 0}, {}, {}, {}}},
+	.Fault_Answer = {"Fault_Answer", {{"thread", .Value, .None, {}, 0}, {"serial", .Value, .None, {}, 0}, {"answer", .Choice, .None, {}, u64(max(Fault_Answer_Kind))}, {"process", .Handle_Or_Zero, .Process, {.Debug}, 0}, {}, {}, {}}},
 	.Events_Set = {"Events_Set", {{"machine", .Handle, .Machine, {.Events}, 0}, {"memory", .Handle_Or_Zero, .Memory, {.Write}, 0}, {"rules", .Address, .None, {}, 0}, {"count", .Count, .None, {}, EVENT_RULE_CAPACITY}, {"records", .Count, .None, {}, EVENT_RING_RECORDS_MOST}, {}, {}}},
 	// The form names no right of the thread handle: each command has its
 	// own (thread_control_rights: Inspect, Inspect and Write, or Control),
 	// and a command of the schedule also takes the machine handle
 	// (thread_control_machine_rights).
 	.Thread_Control = {"Thread_Control", {{"thread", .Handle_Or_Zero, .Thread, {}, 0}, {"number", .Value, .None, {}, 0}, {"command", .Choice, .None, {}, u64(max(Thread_Control_Command))}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {"source", .Address, .None, {}, 0}, {}}},
-	.Guest_Run = {"Guest_Run", {{"program", .Handle, .Program, {.Control}, 0}, {"registers", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
-	.Log_Read = {"Log_Read", {{"memory", .Handle, .Memory, {.Read}, 0}, {"program", .Value, .None, {}, 0}, {"serial", .Value, .None, {}, 0}, {"after", .Value, .None, {}, 0}, {"records", .Address, .None, {}, 0}, {"count", .Count, .None, {}, OWN_LOG_RECORD_CAPACITY}, {}}},
+	.Guest_Run = {"Guest_Run", {{"process", .Handle, .Process, {.Control}, 0}, {"registers", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
+	.Log_Read = {"Log_Read", {{"memory", .Handle, .Memory, {.Read}, 0}, {"process", .Value, .None, {}, 0}, {"serial", .Value, .None, {}, 0}, {"after", .Value, .None, {}, 0}, {"records", .Address, .None, {}, 0}, {"count", .Count, .None, {}, OWN_LOG_RECORD_CAPACITY}, {}}},
 }
 
 // The name of each object kind, for the sentence of an error record
@@ -96,7 +96,7 @@ OPERATIONS := [Operation]Operation_Form {
 OBJECT_KIND_NAMES := [Object_Kind]string {
 	.None      = "no object",
 	.Memory    = "Memory",
-	.Program   = "Program",
+	.Process   = "Process",
 	.Interrupt = "Interrupt",
 	.Ports     = "Ports",
 	.Machine   = "Machine",
@@ -105,10 +105,10 @@ OBJECT_KIND_NAMES := [Object_Kind]string {
 	.Log       = "Log",
 }
 
-// The words of each program state, for the sentence of an error record
+// The words of each process state, for the sentence of an error record
 // (`errors.Kind.State`).
 @(rodata)
-STATE_NAMES := [Program_State]string {
+STATE_NAMES := [Process_State]string {
 	.None    = "no state that the handle shows",
 	.Created = "created, and not started",
 	.Ready   = "running",
@@ -116,7 +116,7 @@ STATE_NAMES := [Program_State]string {
 	.Stopped = "stopped",
 }
 
-// The name of each status, as `Status` names it: a program prints it with
+// The name of each status, as `Status` names it: a process prints it with
 // no copy of the enumeration names.
 @(rodata)
 STATUS_NAMES := [Status]string {

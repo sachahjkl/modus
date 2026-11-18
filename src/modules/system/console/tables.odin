@@ -164,7 +164,7 @@ tables_start :: proc "contextless" () {
 	// The result has the record of the table.
 	//
 	// ```
-	// > columns(where(manual.running(), "module", "calendar_fixed"), "program slot module replaces")
+	// > columns(where(manual.running(), "module", "calendar_fixed"), "process slot module replaces")
 	// ```
 	//
 	// Errors: the records have no such field (the error lists their
@@ -196,7 +196,7 @@ tables_start :: proc "contextless" () {
 	// description in the format of the module contract.
 	//
 	// ```
-	// > join(columns(manual.running(), "program hash"), columns(manual.modules(), "hash name code exports"), "hash")
+	// > join(columns(manual.running(), "process hash"), columns(manual.modules(), "hash name code exports"), "hash")
 	// ```
 	//
 	// Errors: the field is a text on one side and an integer on the other;

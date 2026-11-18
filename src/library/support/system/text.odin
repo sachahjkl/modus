@@ -7,7 +7,7 @@ import "modus:contract/value_kinds"
 import "modus:support/sentence"
 
 // Text without an allocator: src/library/support/sentence. These names stay in this
-// library, so a program writes system.Writer and system.format.
+// library, so a process writes system.Writer and system.format.
 Hex :: sentence.Hex
 Size :: sentence.Size
 Duration :: sentence.Duration
@@ -41,7 +41,7 @@ error_detail_number_text :: sentence.error_detail_number_text
 export_error_detail_text :: sentence.export_error_detail_text
 error_details_rest_text :: sentence.error_details_rest_text
 
-// log writes one line on the log of the kernel. A program with no handle to
+// log writes one line on the log of the kernel. A process with no handle to
 // the log writes nothing.
 //
 // The line has the level `Info` and no channel. Each part is a text or a
@@ -62,7 +62,7 @@ LOG_PART_SIZE :: 512
 
 // log_in writes one text on the log, in a channel and with a level. The
 // channel is a short name with no space: at most 16 characters. The kernel
-// sets the time, the program and the thread of the record. A text of any
+// sets the time, the process and the thread of the record. A text of any
 // length goes whole: the parts are written in a buffer of LOG_PART_SIZE
 // bytes, and each time the buffer is full it goes to the kernel as one line
 // of the log, ended after a whole character; the text continues on the next
@@ -74,7 +74,7 @@ LOG_PART_SIZE :: 512
 //
 // The text is UTF-8: the kernel writes "?" in place of each byte of an invalid sequence
 // of it, a control character included (src/library/contract/text_encoding). A
-// program with no log handle writes nothing. A line above the log records
+// process with no log handle writes nothing. A line above the log records
 // of each second of the budget is dropped and counted, and one record says
 // the count before the next line (log_call): it never waits.
 //
@@ -150,8 +150,8 @@ log_send :: proc "contextless" (handle: Handle, text: []u8, runs: []value_kinds.
 	log_call(handle, &area[0], count, level, packed, run_count)
 }
 
-// The lines of this program that the kernel refused for its log limit, and
-// that no note has said yet: one count for all the threads of the program.
+// The lines of this process that the kernel refused for its log limit, and
+// that no note has said yet: one count for all the threads of the process.
 log_lines_refused: u64
 
 // log_call gives one line to the kernel, and never waits: a thread with a
@@ -169,7 +169,7 @@ log_call :: proc "contextless" (handle: Handle, text: ^u8, count: int, level: op
 		note: [64]u8
 		digits: [20]u8
 		note_count := copy(note[:], format_decimal(digits[:], refused))
-		note_count += copy(note[note_count:], " lines of this program were refused by its log limit")
+		note_count += copy(note[note_count:], " lines of this process were refused by its log limit")
 		if _, status := call(.Log, u64(handle), u64(uintptr(&note[0])), u64(note_count), u64(op.Log_Level.Warning), 0, 0, 0); status == .Ok {
 			intrinsics.atomic_sub(&log_lines_refused, refused)
 		}

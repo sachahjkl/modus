@@ -21,7 +21,7 @@ scenario_tcp := [?]Step {
 	{kind = .Wait, text = "root: started network"},
 	{kind = .Wait, text = "network: an endpoint for server: TCP, the listen port 80, the remotes that send to it", any_order = true},
 	{kind = .Wait, text = "root: started server"},
-	{kind = .Wait, text = "server: listening on the TCP port 80, a table of 48 connections, the secret of the initial sequence numbers from the generator of the program"},
+	{kind = .Wait, text = "server: listening on the TCP port 80, a table of 48 connections, the secret of the initial sequence numbers from the generator of the process"},
 	// A page, and a close from the peer first.
 	{kind = .Peer, text = "page"},
 	{kind = .Wait, text = "server: 1 connections open at once"},
@@ -124,7 +124,7 @@ scenario_tcp := [?]Step {
 
 scenario_tcp_real := [?]Step {
 	// The server sends the field Date only when the date is known, and the
-	// program `date` knows it after it saw a second of the real-time clock
+	// process `date` knows it after it saw a second of the real-time clock
 	// begin: up to one second after its start. The fetch checks the field,
 	// so the date is known first.
 	// The date line and the line of the first window come in either order:

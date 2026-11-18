@@ -3,7 +3,7 @@
 // src/library/support/mark. A page that writes the name of the system as text in this
 // font shows the letters of the files of the mark, and the text stays text.
 //
-// The file is written here, table by table, with no other program: the
+// The file is written here, table by table, with no other process: the
 // letters are a few rectangles, so the font needs no curve and no
 // instruction. Each glyph is the union of its cells: the outline goes around
 // the whole letter, so that no line shows between two cells when a browser

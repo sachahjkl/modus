@@ -14,9 +14,9 @@
 // [link page](term:link-page) the boot image carries in the resource `manual_pages`. A declaration of the sources
 // that no module describes has its link page there too: [`system.word_wait`](system.word_wait) shows its line of
 // Odin and its comment. An address of another host is shown after its link, and does not open.
-// This program reads the file only: it **does not load the module**, and it does not start it.
+// This process reads the file only: it **does not load the module**, and it does not start it.
 //
-// The page of a module also says how the module can be used. The system has *one kind of file* for a program, a
+// The page of a module also says how the module can be used. The system has *one kind of file* for a process, a
 // library and a service, so the answer comes from two facts: the module has an entry or not, and it has exports
 // or not.
 //
@@ -35,7 +35,7 @@
 // A click on a name of the list shows that module. A click on a link with a line under it shows the page that it
 // names.
 //
-// The manual is a service: another program asks for a page with [show](manual.show), and reads a description as
+// The manual is a service: another process asks for a page with [show](manual.show), and reads a description as
 // a text with [about](manual.about) and [signature](manual.signature). The other exports give the facts of the
 // modules as tables, which the console combines with `where()`, `sort()`, `join()` and `columns()`.
 //
@@ -44,11 +44,11 @@
 //
 // **Grants**, as the root service gives them:
 //
-// - **Serve**: other programs call its exports through connections.
+// - **Serve**: other processes call its exports through connections.
 // - **Image**: it reads the file of each module of the boot image, read-only.
 // - **Replacements**: it reads the replacement table, so that a page names the module that a loader gives in
 //   place of an import.
-// - **Inspect**: it reads the module records of each program that runs. It gives these facts only to a caller
+// - **Inspect**: it reads the module records of each process that runs. It gives these facts only to a caller
 //   that acts for the principal (information.odin).
 //
 // **What it proves**: the documentation of a module is in its file, and a reader needs neither its source nor a
@@ -105,7 +105,7 @@ scroll_identity :: proc "contextless" () -> interface.Element_Identity {
 text_moved_by_scroll_bar: bool
 
 image: []u8
-// The lines that this program writes: the signatures and the facts. The
+// The lines that this process writes: the signatures and the facts. The
 // table of all the modules takes the most: each row is written twice, as
 // its columns and as its line, about 165 bytes for a module, so 32 KiB
 // holds the rows of about 190 modules. 16 KiB held 98, and the boot image
@@ -317,14 +317,14 @@ page_build :: proc "contextless" () {
 
 	put("HOW TO USE IT", 0, graphics.colors.dim)
 	if has_entry {
-		put_use("start", name, "a program: the module has an entry")
+		put_use("start", name, "a process: the module has an entry")
 	}
 	if exports > 0 && has_entry {
-		put_use("connect", name, "a service: calls to the program that runs, if it serves")
+		put_use("connect", name, "a service: calls to the process that runs, if it serves")
 	}
 	if exports > 0 {
 		put_use("load", name, "a library: direct calls, in the memory of the caller")
-		put_use("isolate", name, "a sandboxed program: calls through a ring, no handle")
+		put_use("isolate", name, "a sandboxed process: calls through a ring, no handle")
 	}
 	put("", 0, 0)
 
@@ -342,9 +342,9 @@ page_build :: proc "contextless" () {
 		for number in 1 ..= u32(imports) {
 			record, _ := module.record(file, .Imports, number, module.Import)
 			// A module, in the color of its value kind: the color of a
-			// program. A replacement is a fact of this machine: the color
+			// process. A replacement is a fact of this machine: the color
 			// of the machine.
-			put_built(2, graphics.colors.program, module_text(record.hash))
+			put_built(2, graphics.colors.process, module_text(record.hash))
 			for item in replaced {
 				if item.from == record.hash {
 					put_built(4, graphics.colors.machine, "on this machine a loader gives ", module_text(item.to), " in its place")
@@ -452,7 +452,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 // action bar"). The keys that move the text have the lowest priority: the
 // scroll bar moves it too.
 // A procedure, not a global array: an item is made by a call, and a
-// freestanding program runs no call before its entry.
+// freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [10]interface.Action_Bar_Item {
 	return {
 		interface.action_bar_item("module before", 6, "Up"),
@@ -613,13 +613,13 @@ list_has_entry: [LIST_ENTRY_CAPACITY]bool
 list_count: int
 
 // module_color gives the color of a module, in the list and in the title of
-// its page: a program that also serves calls, in the color of a program; a
-// library, the color of a module with no entry; a program with no exports,
+// its page: a process that also serves calls, in the color of a process; a
+// library, the color of a module with no entry; a process with no exports,
 // the text; anything else, the dim text.
 module_color :: proc "contextless" (exports: int, has_entry: bool) -> graphics.Color {
 	switch {
 	case exports > 0 && has_entry:
-		return graphics.colors.program
+		return graphics.colors.process
 	case exports > 0:
 		return graphics.colors.no_entry
 	case has_entry:
@@ -734,7 +734,7 @@ page_log :: proc "contextless" () -> int {
 	file := file_of(&entries[selected])
 	head, _ := module.header(file)
 	exports := described_exports(file)
-	system.log("manual: ", system.name_of(entries[selected].name[:]), head.entry_export != 0 ? ": a program, " : ": no entry, ", u64(exports), " exports, ", u64(rows()), " rows")
+	system.log("manual: ", system.name_of(entries[selected].name[:]), head.entry_export != 0 ? ": a process, " : ": no entry, ", u64(exports), " exports, ", u64(rows()), " rows")
 	return exports
 }
 
@@ -804,7 +804,7 @@ signature :: proc "c" (name: ^string, export: i64, result: ^[]u8, error: ^errors
 //
 // Then one loop waits on the events of the window and on the service ring. A call to an export runs in this
 // loop and can change the page; a key moves the page or the list. The window is drawn again only after a change.
-// The program never stops by itself: the compositor or the console stops it.
+// The process never stops by itself: the compositor or the console stops it.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)

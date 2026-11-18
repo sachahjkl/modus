@@ -2,9 +2,9 @@
 // lines of the system in each candidate font and in Spleen 8x16, one word of
 // each enlarged, and the measures of the text path.
 //
-// The program carries the six subsets of resources/fonts (ASCII only) and
+// The process carries the six subsets of resources/fonts (ASCII only) and
 // builds a glyph cache of each one in its own memory: the time of that
-// build is the measure of a cache made by each program at run time (the
+// build is the measure of a cache made by each process at run time (the
 // first of the three places of docs/FONTS.md, "Where it lives: three places
 // weighed").
 // The text of the window itself is the text of the system: the glyph
@@ -16,7 +16,7 @@
 // of the system.
 //
 // **Start**: `start("vector_glyphs")` in the console, or the bar of the
-// desktop. Its row of `program_roles` has no grant.
+// desktop. Its row of `process_roles` has no grant.
 //
 // **What a reader sees**: one block for each candidate and one for Spleen
 // 8x16. The log has:
@@ -41,7 +41,7 @@ import "modus:support/system"
 import "modus:support/vector_font"
 
 // The glyph caches that it builds.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1362, programs = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1362, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 1008
 HEIGHT :: 704
@@ -156,7 +156,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 			continue
 		}
 		graphics.text(canvas, x, y, SAMPLE, graphics.colors.text)
-		graphics.text_scaled(canvas, x + 560, y - 16, "12 345", graphics.colors.program, 2)
+		graphics.text_scaled(canvas, x + 560, y - 16, "12 345", graphics.colors.process, 2)
 		enlarged(canvas, content.x + (index % 4) * 240, content.y + ENLARGED_TOP + (index / 4) * (16 * ENLARGED + 16))
 		graphics.text_state = system_state
 	}

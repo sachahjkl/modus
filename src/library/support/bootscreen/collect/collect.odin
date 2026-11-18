@@ -1,5 +1,5 @@
 // The reader of the boot display: it fills a bootscreen.Data with the
-// records of the kernel. The program needs the machine with the right
+// records of the kernel. The process needs the machine with the right
 // Inspect.
 package collect
 
@@ -8,7 +8,7 @@ import op "modus:contract/operation"
 import "modus:support/system"
 
 // data fills a Data with the boot report, the system report, the report of
-// each processor, the report of each program, and the name of the
+// each processor, the report of each process, and the name of the
 // processor. A report that the kernel refuses stays zero: its card shows
 // that the fact is not known.
 data :: proc "contextless" (result: ^bootscreen.Data, machine: system.Handle) {
@@ -20,18 +20,18 @@ data :: proc "contextless" (result: ^bootscreen.Data, machine: system.Handle) {
 	for &processor, index in result.processors[:min(result.machine.processors, bootscreen.PROCESSOR_ROWS)] {
 		inspect(machine, .Processor, u64(index), &processor)
 	}
-	result.program_count = 0
-	result.program_total = 0
-	for slot in 1 ..< result.machine.program_slots {
-		report: op.Program_Report
-		inspect(machine, .Program, slot, &report)
+	result.process_count = 0
+	result.process_total = 0
+	for slot in 1 ..< result.machine.process_slots {
+		report: op.Process_Report
+		inspect(machine, .Process, slot, &report)
 		if report.state == .None {
 			continue
 		}
-		result.program_total += 1
-		if result.program_count < bootscreen.PROGRAM_ROWS {
-			result.programs[result.program_count] = {slot = slot, report = report}
-			result.program_count += 1
+		result.process_total += 1
+		if result.process_count < bootscreen.PROCESS_ROWS {
+			result.processes[result.process_count] = {slot = slot, report = report}
+			result.process_count += 1
 		}
 	}
 	if result.processor_name[0] == 0 {

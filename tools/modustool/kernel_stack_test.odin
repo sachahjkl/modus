@@ -139,7 +139,7 @@ kernel_stack_test_frames := [?]Kernel_Stack_Test_Frame {
 // stack of stack_bytes and a margin of least_free_bytes.
 kernel_stack_test_rules :: proc(stack_bytes, least_free_bytes: int) -> Kernel_Stack_Rules {
 	entries := make([]Kernel_Stack_Entry, 2, context.temp_allocator)
-	entries[0] = {"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a program"}
+	entries[0] = {"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a process"}
 	entries[1] = {"kernel::first_run", RETURN_ADDRESS_BYTES, "the first run"}
 	other_stack_entries := make([]string, 1, context.temp_allocator)
 	other_stack_entries[0] = "entry"
@@ -212,7 +212,7 @@ kernel_stack_measure_golden :: proc(t: ^testing.T) {
 		return
 	}
 	testing.expect_value(t, measure.lines[0], "the kernel stack of kernel: the deepest chain uses 992 of 4096 bytes, 3104 bytes free, and the build fails under 1024 bytes free: an interrupt at the idle wait over kernel_interrupt -> idle_wait (232 bytes), then kernel_interrupt -> kernel::command_run -> kernel::execute (2 levels) -> kernel::log -> memcpy")
-	testing.expect_value(t, measure.lines[1], "the kernel stack of kernel: each entry: an entry from a program 752 bytes, the first run 104 bytes; an interrupt at the idle wait 992 bytes; a fault of the kernel over the deepest chain 1752 bytes (not checked)")
+	testing.expect_value(t, measure.lines[1], "the kernel stack of kernel: each entry: an entry from a process 752 bytes, the first run 104 bytes; an interrupt at the idle wait 992 bytes; a fault of the kernel over the deepest chain 1752 bytes (not checked)")
 }
 
 // A listing with a register trial: another processor starts, calls the
@@ -265,7 +265,7 @@ kernel_stack_measure_of_a_register_trial :: proc(t: ^testing.T) {
 	frames, problem := kernel_stack_frames_read(kernel_stack_test_elf(frames_written[:]))
 	testing.expect_value(t, problem, "")
 	entries := make([]Kernel_Stack_Entry, 2, context.temp_allocator)
-	entries[0] = {"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a program"}
+	entries[0] = {"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a process"}
 	entries[1] = {"kernel::processor_entry", RETURN_ADDRESS_BYTES, "the start of another processor"}
 	assembly_frames := make([]Kernel_Stack_Assembly_Frame, 2, context.temp_allocator)
 	assembly_frames[0] = {"idle_wait", 0}
@@ -459,7 +459,7 @@ KERNEL_STACK_TEST_WALK_LEVELS :: 4
 // breaks, each stated rule given or left out.
 kernel_stack_test_break_rules :: proc(with_data_call, with_cycle_break: bool) -> Kernel_Stack_Rules {
 	entries := make([]Kernel_Stack_Entry, 2, context.temp_allocator)
-	entries[0] = {"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a program"}
+	entries[0] = {"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a process"}
 	entries[1] = {"kernel::lock_take", RETURN_ADDRESS_BYTES, "a lock"}
 	assembly_frames := make([]Kernel_Stack_Assembly_Frame, 1, context.temp_allocator)
 	assembly_frames[0] = {"idle_wait", 0}
@@ -505,7 +505,7 @@ kernel_stack_measure_takes_the_stated_breaks :: proc(t: ^testing.T) {
 		return
 	}
 	testing.expect(t, strings.has_suffix(measure.lines[0], "then kernel_interrupt -> kernel::self_test -> kernel::self_test.walk-12 (4 levels)"), measure.lines[0])
-	testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a program 424 bytes, a lock 168 bytes;"), measure.lines[1])
+	testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a process 424 bytes, a lock 168 bytes;"), measure.lines[1])
 
 	without_data_call := kernel_stack_measure("kernel", KERNEL_STACK_TEST_BREAK_LISTING, frames, kernel_stack_test_break_rules(false, true))
 	testing.expectf(t, len(without_data_call.problems) == 1 && without_data_call.problems[0] == "kernel::self_test calls an address where no procedure starts: callq\t0x900 <kernel::test_code>", "%v", without_data_call.problems[:])
@@ -520,13 +520,13 @@ kernel_stack_measure_takes_the_stated_breaks :: proc(t: ^testing.T) {
 @(test)
 kernel_stack_cycle_break_of_a_procedure_itself :: proc(t: ^testing.T) {
 	listing := "0000000000001000 <kernel_interrupt>:\n" +
-		"    1000:      \tcallq\t0x1100 <kernel::program_stop>\n" +
+		"    1000:      \tcallq\t0x1100 <kernel::process_stop>\n" +
 		"    1005:      \tcallq\t0x1400 <idle_wait>\n" +
-		"0000000000001100 <kernel::program_stop>:\n" +
+		"0000000000001100 <kernel::process_stop>:\n" +
 		"    1100:      \tcallq\t0x1200 <kernel::thread_finish>\n" +
 		"    1105:      \tretq\n" +
 		"0000000000001200 <kernel::thread_finish>:\n" +
-		"    1200:      \tcallq\t0x1100 <kernel::program_stop>\n" +
+		"    1200:      \tcallq\t0x1100 <kernel::process_stop>\n" +
 		"    1205:      \tretq\n" +
 		"0000000000001400 <idle_wait>:\n" +
 		"    1400:      \tretq\n"
@@ -536,12 +536,12 @@ kernel_stack_cycle_break_of_a_procedure_itself :: proc(t: ^testing.T) {
 	rules.entries = rules.entries[:1]
 	rules.recursions = nil
 	cycle_breaks := make([]Kernel_Stack_Cycle_Break, 1, context.temp_allocator)
-	cycle_breaks[0] = {"kernel::program_stop", "kernel::program_stop"}
+	cycle_breaks[0] = {"kernel::process_stop", "kernel::process_stop"}
 	rules.cycle_breaks = cycle_breaks
 	measure := kernel_stack_measure("kernel", listing, frames, rules)
 	testing.expectf(t, len(measure.problems) == 0, "%v", measure.problems[:])
 	if len(measure.lines) == 2 {
-		testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a program 296 bytes;"), measure.lines[1])
+		testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a process 296 bytes;"), measure.lines[1])
 	}
 }
 
@@ -598,7 +598,7 @@ kernel_stack_test_push_frames := [?]Kernel_Stack_Test_Frame {
 // pushes, with the row of the indirect tail call or without it.
 kernel_stack_test_push_rules :: proc(with_indirect_row: bool) -> Kernel_Stack_Rules {
 	entries := make([]Kernel_Stack_Entry, 1, context.temp_allocator)
-	entries[0] = {"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a program"}
+	entries[0] = {"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a process"}
 	assembly_frames := make([]Kernel_Stack_Assembly_Frame, 1, context.temp_allocator)
 	assembly_frames[0] = {"idle_wait", 0}
 	rules := Kernel_Stack_Rules {
@@ -636,7 +636,7 @@ kernel_stack_measure_counts_the_pushes_and_the_indirect_tail_calls :: proc(t: ^t
 	testing.expect_value(t, measure.deepest, 488)
 	if testing.expect_value(t, len(measure.lines), 2) {
 		testing.expect_value(t, measure.lines[0], "the kernel stack of kernel: the deepest chain uses 488 of 4096 bytes, 3608 bytes free, and the build fails under 1024 bytes free: an interrupt at the idle wait over kernel_interrupt -> idle_wait (208 bytes), then kernel_interrupt (16 bytes pushed for the call) -> kernel::thread_create")
-		testing.expect_value(t, measure.lines[1], "the kernel stack of kernel: each entry: an entry from a program 272 bytes; an interrupt at the idle wait 488 bytes; a fault of the kernel over the deepest chain 768 bytes (not checked)")
+		testing.expect_value(t, measure.lines[1], "the kernel stack of kernel: each entry: an entry from a process 272 bytes; an interrupt at the idle wait 488 bytes; a fault of the kernel over the deepest chain 768 bytes (not checked)")
 	}
 
 	deep_frames := kernel_stack_test_push_frames
@@ -724,8 +724,8 @@ kernel_stack_scan_follows_the_tables_and_the_calls_that_never_return :: proc(t: 
 	testing.expectf(t, len(measure.problems) == 0, "%v", measure.problems[:])
 	testing.expect_value(t, measure.deepest, 248)
 	if testing.expect_value(t, len(measure.lines), 2) {
-		testing.expect_value(t, measure.lines[0], "the kernel stack of kernel: the deepest chain uses 248 of 4096 bytes, 3848 bytes free, and the build fails under 1024 bytes free: an entry from a program, 184 bytes above it: kernel_interrupt -> kernel::dispatch (8 bytes pushed for the call) -> kernel::machine_stop")
-		testing.expect_value(t, measure.lines[1], "the kernel stack of kernel: each entry: an entry from a program 248 bytes; no chain reaches the idle wait; a fault of the kernel over the deepest chain 504 bytes (not checked)")
+		testing.expect_value(t, measure.lines[0], "the kernel stack of kernel: the deepest chain uses 248 of 4096 bytes, 3848 bytes free, and the build fails under 1024 bytes free: an entry from a process, 184 bytes above it: kernel_interrupt -> kernel::dispatch (8 bytes pushed for the call) -> kernel::machine_stop")
+		testing.expect_value(t, measure.lines[1], "the kernel stack of kernel: each entry: an entry from a process 248 bytes; no chain reaches the idle wait; a fault of the kernel over the deepest chain 504 bytes (not checked)")
 	}
 }
 
@@ -795,7 +795,7 @@ kernel_stack_scan_reads_a_prefix_line_and_a_far_return :: proc(t: ^testing.T) {
 	testing.expectf(t, len(measure.problems) == 0, "%v", measure.problems[:])
 	testing.expect_value(t, measure.deepest, 1392)
 	if testing.expect_value(t, len(measure.lines), 2) {
-		testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a program 1176 bytes;"), measure.lines[1])
+		testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a process 1176 bytes;"), measure.lines[1])
 	}
 }
 
@@ -868,6 +868,6 @@ kernel_stack_scan_takes_a_procedure_that_runs_on_into_a_label :: proc(t: ^testin
 	testing.expectf(t, len(measure.problems) == 0, "%v", measure.problems[:])
 	testing.expect_value(t, measure.deepest, 552)
 	if testing.expect_value(t, len(measure.lines), 2) {
-		testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a program 336 bytes;"), measure.lines[1])
+		testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a process 336 bytes;"), measure.lines[1])
 	}
 }

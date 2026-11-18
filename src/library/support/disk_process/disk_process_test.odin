@@ -1,9 +1,9 @@
 #+build !freestanding
-package disk_program
+package disk_process
 
 import "core:testing"
 
-// A name of a disk program is a name of an entry of a tree, of 23 bytes at
+// A name of a disk process is a name of an entry of a tree, of 23 bytes at
 // most, and never the name of the store of the module files.
 @(test)
 names_that_are_refused :: proc(t: ^testing.T) {
@@ -19,8 +19,8 @@ names_that_are_refused :: proc(t: ^testing.T) {
 		{"twenty_four_bytes_long__", .Too_Long, 0},
 		{"a/b", .Bad_Byte, 1},
 		{"a\x00b", .Bad_Byte, 1},
-		{"a b", .Bad_Byte, 1}, // A name of a program has no space.
-		{"café", .Bad_Byte, 3}, // A name of a program is ASCII.
+		{"a b", .Bad_Byte, 1}, // A name of a process has no space.
+		{"café", .Bad_Byte, 3}, // A name of a process is ASCII.
 		{".", .Bad_Byte, 0},
 		{"..", .Bad_Byte, 0},
 		{"module_files", .Store_Name, 0},

@@ -51,4 +51,4 @@ A Text field has no kind: the description has no place for the kind of a text, a
 
 ## State
 
-Built: the unit of an Integer field in the module contract, its checks, the describe tool, the drawers of a record and a table, the built-in tables `memory()`, `modules()`, `measure_completion()`, and the record `Program` of the monitor. Left: a kind for a Text field; the unit of a field in the palette and in the manual.
+Built: the unit of an Integer field in the module contract, its checks, the describe tool, the drawers of a record and a table, the built-in tables `memory()`, `modules()`, `measure_completion()`, and the record `Process` of the monitor. Left: a kind for a Text field; the unit of a field in the palette and in the manual.

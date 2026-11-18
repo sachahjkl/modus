@@ -12,7 +12,7 @@ import "modus:contract/value_kinds"
 //
 // The library has no cryptography of its own: each primitive is an export of the
 // [cryptography module](term:cryptography-module). This record is the one seam between the two. A
-// program fills it once from the import slots of the module, so each call is a direct call of an
+// process fills it once from the import slots of the module, so each call is a direct call of an
 // export. The host tests fill it with the same procedures of the module package. Each procedure of
 // this library that needs a primitive takes a pointer to the record as its first parameter.
 //
@@ -22,7 +22,7 @@ import "modus:contract/value_kinds"
 // compares that count with the size that it expects, so a short result is a failure.
 //
 // Each result must be **private memory of the caller**, and it is: the keys are in records of the
-// program, and a packet is opened in the private copy of its datagram (`datagram_take`).
+// process, and a packet is opened in the private copy of its datagram (`datagram_take`).
 //
 // It is the one place where a batch form of an export (a table of packets in one call) can take
 // the place of these procedures, when the module contract describes a table as a parameter
@@ -162,7 +162,7 @@ packet_key_sizes := [Cipher_Suite]int {
 // (`tls_packet_keys`).
 //
 // A zero record has no suite: each procedure refuses it (`Bad_Value`), so keys that are not ready
-// cannot protect or open a packet by mistake. The program keeps the record in its own memory and
+// cannot protect or open a packet by mistake. The process keeps the record in its own memory and
 // erases it when the level ends (RFC 9001, section 4.9; `secret_erase`).
 Packet_Keys :: struct {
 	suite:                 Cipher_Suite, // The AEAD and the header protection cipher of these keys. 0: the record holds no keys.
@@ -420,7 +420,7 @@ secret_erase :: proc "contextless" (data: rawptr, count: int) {
 
 when ODIN_OS == .Freestanding {
 	foreign _ {
-		// The procedure of the runtime of a program of the system that writes `count` zero bytes at
+		// The procedure of the runtime of a process of the system that writes `count` zero bytes at
 		// `destination`. `secret_erase` is its one caller.
 		erase_secret_bytes :: proc "c" (destination: rawptr, count: int) -> rawptr ---
 	}

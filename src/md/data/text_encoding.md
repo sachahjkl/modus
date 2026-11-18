@@ -4,14 +4,14 @@
 
 A principal writes the words of a language other than English: é, è, ç, à and ù on the layout of France. A text of the system must then hold these characters in each record that two parties share: an entry of the palette, a run of a result, a line of the terminal, a line of the log, the name of an object of a store.
 
-Several contracts froze their text to the bytes 32 to 126, each with its own check. Each of them is a format that two programs agree on. A change of each format, one at a time and later, is a migration of every contract. This design breaks those contracts once, before the keys give the characters, so that the keyboard work changes the keyboard path, the line editor and the fonts only.
+Several contracts froze their text to the bytes 32 to 126, each with its own check. Each of them is a format that two processes agree on. A change of each format, one at a time and later, is a migration of every contract. This design breaks those contracts once, before the keys give the characters, so that the keyboard work changes the keyboard path, the line editor and the fonts only.
 
 The `Text` of the module contract is UTF-8 already ([`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "The types that a description knows"). This design gives the same rule to each other contract.
 
 ## Constraints
 
 - **A text from another party is hostile input.** A broken sequence, an overlong form or a control character must not reach a terminal of the host, a log record, or the drawing as a byte.
-- **The kernel holds the border of the log.** A program calls the operation `Log` directly, so a check in the support library is no check.
+- **The kernel holds the border of the log.** A process calls the operation `Log` directly, so a check in the support library is no check.
 - **Each contract has a fixed size of field.** A length is a count of bytes, and a field holds fewer characters than bytes when a text has characters outside ASCII.
 - **The grid of cells shows one character in one cell.** A text that a byte count places is wrong for a character of two bytes.
 - **The fonts hold 32 to 126, the Latin-1 Supplement and the added characters only.** The glyph caches and Spleen have no other glyph.
@@ -19,7 +19,7 @@ The `Text` of the module contract is UTF-8 already ([`docs/MODULE_CONTRACT.md`](
 
 ## The chosen form
 
-**One rule, in one contract package.** `src/library/contract/text_encoding` holds the rule and the procedures. It is a contract package because the palette table, the store, the cut mark and the kernel check text with it, and none of them can import a support package. A support package or a program imports it as well.
+**One rule, in one contract package.** `src/library/contract/text_encoding` holds the rule and the procedures. It is a contract package because the palette table, the store, the cut mark and the kernel check text with it, and none of them can import a support package. A support package or a process imports it as well.
 
 **A text is UTF-8, as RFC 3629 defines it.** A character is one well-formed sequence:
 
@@ -52,10 +52,10 @@ Each other byte that starts a sequence is an invalid sequence: an overlong form 
 | --- | --- | --- |
 | The operation `Log` | The kernel | Replaces each byte of an invalid sequence with `?` in its copy, before the serial port and the record. Each record of a long text ends after a whole character. |
 | The palette table | The compositor | Refuses the table (`Bad_Byte`), the result area, the candidates, a `Text` argument; and a table whose names are not ASCII. The writer (`result_run`) replaces an invalid sequence, so its own table passes, and counts the columns of the run as written. |
-| `Program_Create` | The kernel | Refuses a name of a program with a byte outside 32 to 126 (`Bad_Operation`): a space is allowed, as in the names of the nodes of `rings`, and no byte acts on a terminal. |
+| `Process_Create` | The kernel | Refuses a name of a process with a byte outside 32 to 126 (`Bad_Operation`): a space is allowed, as in the names of the nodes of `rings`, and no byte acts on a terminal. |
 | The name of an entry of a store | The storage service | Refuses the name (`Bad_Byte` at the place of the invalid sequence). |
 | A record of the terminal ring | The terminal | Draws the replacement glyph for the invalid sequence. The library cuts each text after a whole character. |
-| A text drawn by a program | `graphics`, `text_shaping` | Draws the replacement glyph. |
+| A text drawn by a process | `graphics`, `text_shaping` | Draws the replacement glyph. |
 
 A border that refuses keeps the rule of its contract: a table that fails is no table. A border that must keep a text whole and its offsets (the log, with its value runs) replaces. A reader that draws shows the invalid sequence. The three are the same rule at three kinds of party.
 
@@ -83,12 +83,12 @@ A pair of the glyph cache names its two characters by their character index, in 
 - the name of a module, of an export, of a field and of a record of the module contract;
 - the names of a debug object: types, fields, procedures, variables and paths of sources ([`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "Debug information");
 - the channel of a line of the log (the kernel takes the bytes 33 to 126);
-- the name of a program: the kernel refuses a name with another byte at `Program_Create`, because the name starts each line of the program on the serial port; so the name of a disk program too;
+- the name of a process: the kernel refuses a name with another byte at `Process_Create`, because the name starts each line of the process on the serial port; so the name of a disk process too;
 - the name of a setting and of its values;
 - the name of a font and of a pointer theme in their files;
 - a command of the console, and in a palette entry its name, its act name, the name of its setting row and the name of its value.
 
-Each of them is matched byte for byte against what a principal or a program types, in each layout, and is written in a log line and a file name of the host. A second form of the same identifier (é as one code point, or as e and a combining accent) would name a second thing. ASCII gives one form only.
+Each of them is matched byte for byte against what a principal or a process types, in each layout, and is written in a log line and a file name of the host. A second form of the same identifier (é as one code point, or as e and a combining accent) would name a second thing. ASCII gives one form only.
 
 Two shared procedures of `text_encoding` hold the rule: `identifier_valid` (one or more bytes 33 to 126) for an identifier, and `identifier_words_valid` (bytes 32 to 126) for identifiers joined by spaces, as the title of a setting ("subpixel order") and the name of a setting entry of the palette ("set font to spleen"). In a palette entry, the signature, the help sentence, the parameter names, the candidates, a `Text` argument and the runs of a result are text for a reader: UTF-8.
 
@@ -119,9 +119,9 @@ The command `character` still writes a character from its code point: it writes 
 
 ## Subtle points
 
-- **A measure in bytes is wider than the drawing, never narrower.** A text of UTF-8 has at least as many bytes as characters. A program that still places a text by its count of bytes leaves a gap after a character outside ASCII; it never draws a text over another. `interface.text_width`, `graphics.text_width` and `text_fit` count characters.
-- **A writer cuts, a reader checks.** A record of the terminal of 256 bytes ends after a whole character, so a reader never sees half a character at the end of a run. A program that writes the ring by hand can still split one: the terminal draws two replacement glyphs, and nothing more happens.
-- **The check of the kernel is a filter of bytes, not a text parser.** It keeps no state between two calls and builds no structure, as the check of the channel does. It must be in the kernel: a program calls `Log` itself, so a check in the support library is no check.
+- **A measure in bytes is wider than the drawing, never narrower.** A text of UTF-8 has at least as many bytes as characters. A process that still places a text by its count of bytes leaves a gap after a character outside ASCII; it never draws a text over another. `interface.text_width`, `graphics.text_width` and `text_fit` count characters.
+- **A writer cuts, a reader checks.** A record of the terminal of 256 bytes ends after a whole character, so a reader never sees half a character at the end of a run. A process that writes the ring by hand can still split one: the terminal draws two replacement glyphs, and nothing more happens.
+- **The check of the kernel is a filter of bytes, not a text parser.** It keeps no state between two calls and builds no structure, as the check of the channel does. It must be in the kernel: a process calls `Log` itself, so a check in the support library is no check.
 - **The kernel replaces with `?`, not with U+FFFD.** U+FFFD is three bytes, and the value runs of a log line name offsets into the text.
 - **Bidirectional controls are characters of a text.** The drawing has no bidirectional algorithm: such a character the font lacks draws the replacement glyph and changes no order. A terminal of the host that reads the serial port can reorder a line with them; the log is for the developer, and the rule refuses the controls that act on a terminal.
 - **One code point, one cell.** A combining accent and a wide character take one cell each. No font of the system draws them, so each draws the replacement glyph in its own cell.

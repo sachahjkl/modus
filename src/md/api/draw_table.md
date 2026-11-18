@@ -1,6 +1,6 @@
 # The draw table: the 2D interface of the system
 
-The draw table is the one 2D interface of the system: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One 2D interface: the draw table". A program describes each frame of its window as a table of draw records in its own memory. The drawing module finds the damage by difference and draws the records into the surface. The compositor draws its screen with the same records. When a GPU exists, the GPU draws the same table through WebGPU.
+The draw table is the one 2D interface of the system: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One 2D interface: the draw table". A process describes each frame of its window as a table of draw records in its own memory. The drawing module finds the damage by difference and draws the records into the surface. The compositor draws its screen with the same records. When a GPU exists, the GPU draws the same table through WebGPU.
 
 This file records the rationalised form of the record: a closed set of primitives, each record with the fields of its kind only. The guide of today's form is [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "2.1 Draw record". The border of the drawing module is in [library_modules.md](library_modules.md). The picture memories are in [picture.md](picture.md), and the cells of a grid in [text_grid.md](text_grid.md).
 
@@ -18,7 +18,7 @@ Version 10 is a record of 40 bytes with one set of fields for all kinds. A revie
 
 These properties of version 10 work, and the new form keeps each one:
 
-- **Fixed-size records in the memory of the caller** (property 14). A table is an array. The difference compares two records at one index. The program allocates nothing.
+- **Fixed-size records in the memory of the caller** (property 14). A table is an array. The difference compares two records at one index. The process allocates nothing.
 - **Damage by difference.** Two equal records damage nothing. A record that changes damages its old and its new rectangle. A record must therefore give its rectangle with no other memory, and equal bytes must mean equal pixels.
 - **Values, not addresses.** A record names its text, its cells and its pixels by numbers in memory that the call passes. The record means the same in each address space, and a GPU can read it.
 - **Refusal of a hostile record with bounds.** A record of a caller can hold any bytes. The execution refuses a record that it cannot draw within a stated cost, and no record makes a fault or a write outside the pixels.
@@ -123,11 +123,11 @@ The field `text` of `Draw_Table` becomes `bytes`: the byte table. It holds the b
 
 ### The limits of the format: cost, never look
 
-The format puts no limit of look on what a program draws. Each bound of a kind (`PATH_POINT_LIMIT`, `STROKE_WIDTH_LIMIT`, `TEXT_BYTES_LIMIT`, `CLIP_DEPTH_LIMIT`, `COORDINATE_LIMIT`) is there to bound the cost of a hostile record, and for no other reason. The look of the desktop of the system is sober by choice: rectangles, sharp shadows, transparency only where it informs, short animations that inform ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "2. Forms"). That look is a rule of the elements of the interface package and of the compositor. It is never a reason to refuse a primitive.
+The format puts no limit of look on what a process draws. Each bound of a kind (`PATH_POINT_LIMIT`, `STROKE_WIDTH_LIMIT`, `TEXT_BYTES_LIMIT`, `CLIP_DEPTH_LIMIT`, `COORDINATE_LIMIT`) is there to bound the cost of a hostile record, and for no other reason. The look of the desktop of the system is sober by choice: rectangles, sharp shadows, transparency only where it informs, short animations that inform ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "2. Forms"). That look is a rule of the elements of the interface package and of the compositor. It is never a reason to refuse a primitive.
 
-- A program can draw any form: round, at an angle, curved. A round form is a path.
+- A process can draw any form: round, at an angle, curved. A round form is a path.
 - A shadow is a rectangle or a path with alpha. A sharp shadow needs no new kind.
-- An effect that the set lacks today (a blur, a blend mode, an even-odd fill, a cubic curve, a round join, a dash, a gradient of more than two colors) is added when a program needs it, as a kind or a field under the version rule. A blur waits for the GPU, where it costs little; on the processor it is the largest cost of a frame.
+- An effect that the set lacks today (a blur, a blend mode, an even-odd fill, a cubic curve, a round join, a dash, a gradient of more than two colors) is added when a process needs it, as a kind or a field under the version rule. A blur waits for the GPU, where it costs little; on the processor it is the largest cost of a frame.
 - The set stays closed: each kind that is added has its fields, its border and its bound of cost, as each kind of today.
 
 ### The text grid: the measure that decides
@@ -138,7 +138,7 @@ The measure: the terminal at 104 by 32 cells, in the frame of a plain text, of c
 
 ### The version rule
 
-`DRAW_RECORD_VERSION` is the version of the form of the record. Each change of a kind, of a field, of a bound that changes what a record draws, or of the blending rule is a new version. The format changes in place: the package, the drawing module and each writer move in the same step, and no reader reads two versions. The names of the exports carry the version (`damage_of_draw_table_<version>`, `execute_draw_table_in_rectangles_<version>`): a module of another version has no export with the name that an importer binds, so the load fails before the check of the descriptions ([`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "7. Where it lives: the elements in each program, the drawing in a module"). A constant check in the package and in the module stops a build whose names do not follow the version.
+`DRAW_RECORD_VERSION` is the version of the form of the record. Each change of a kind, of a field, of a bound that changes what a record draws, or of the blending rule is a new version. The format changes in place: the package, the drawing module and each writer move in the same step, and no reader reads two versions. The names of the exports carry the version (`damage_of_draw_table_<version>`, `execute_draw_table_in_rectangles_<version>`): a module of another version has no export with the name that an importer binds, so the load fails before the check of the descriptions ([`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "7. Where it lives: the elements in each process, the drawing in a module"). A constant check in the package and in the module stops a build whose names do not follow the version.
 
 ### The execution
 
@@ -169,7 +169,7 @@ Each line is an estimate to measure, not a claim:
 | A record of 48 bytes in place of 40: the difference and the copy of the frame before read 20 % more | The difference costs about 13 ns for each record today (`interface_elements`, 68 records); about 16 ns | The same window, the mean of 100 rounds |
 | The border reads and checks each record in each damage rectangle | 2 to 5 ns for each record and each rectangle | `clock`: the draw of 34 records in 1 rectangle, 16.3 µs today |
 | The memory of the tables | 8 bytes more for each record: 8 KiB more for a window of two tables of 512 records | The size of each window memory, from the build |
-| The work memory of the rasterizer | 64 KiB more in each program that draws a path | — |
+| The work memory of the rasterizer | 64 KiB more in each process that draws a path | — |
 | A translucent pixel or an antialiased edge: the blend in linear light in place of a write | The cost of a pixel of text today, for each such pixel | `blend_coverage_row` against `fill` over a row of 512 pixels |
 | A path, drawn again in each rectangle that it meets | 10 to 50 µs for a path of 100 points over 64 by 64 pixels, from the glyph with no cache (2.4 to 5.5 µs at 13 pixels) | A host test that draws a folded gap, a line and an icon of 64 by 64, and prints the times |
 | The line and the folded gap as antialiased strokes in place of the line of Bresenham | More for each pixel; the count of the pixels is about the same | `inspect`: the frame of its band of folded gaps |
@@ -191,18 +191,18 @@ The text, the pictures and the opaque rectangles on whole pixels cost what they 
 - **1/16 pixel.** It loses two bits of the measure of a text, which is in 1/64, so a right-aligned text could move by a third of a pixel. **1/256 pixel**, the unit of the rasterizer, gives no visible gain and a range four times smaller.
 - **Premultiplied alpha in a record.** A transparent color then has many forms, and a token of the appearance names a straight color. The execution multiplies.
 - **The blend in encoded values for the colors**, as the pointer pictures blend. It darkens the edges of a shape and of a text, which is why the text blends in linear light today. One rule serves every kind.
-- **Blend modes past source over, in this version.** No program needs one yet. One comes as a field under the version rule when a program needs it ("The limits of the format: cost, never look").
-- **The even-odd rule, cubic curves, round joins and ends, dashes, in this version.** The fonts and the pointer theme are quadratic outlines with the nonzero rule, and a writer cuts a cubic curve into quadratic curves within a tolerance. Each comes when a program needs it. The look of the desktop is never the reason: it binds the elements, not the format.
-- **A limit of the format that is a rule of the look.** It would make the one 2D interface of the system unfit for a program of a third party, whose look is its own.
+- **Blend modes past source over, in this version.** No process needs one yet. One comes as a field under the version rule when a process needs it ("The limits of the format: cost, never look").
+- **The even-odd rule, cubic curves, round joins and ends, dashes, in this version.** The fonts and the pointer theme are quadratic outlines with the nonzero rule, and a writer cuts a cubic curve into quadratic curves within a tolerance. Each comes when a process needs it. The look of the desktop is never the reason: it binds the elements, not the format.
+- **A limit of the format that is a rule of the look.** It would make the one 2D interface of the system unfit for a process of a third party, whose look is its own.
 - **A clip by a path, or a clip with edges inside a pixel.** It needs a mask for each pixel, and a GPU cuts by a scissor rectangle. A form with a curved edge is a path.
-- **A gradient with more than two colors, or a gradient that fills a path, in this version.** No program needs one yet. Each is a list of variable length or a second kind of paint for each shape; a need comes first.
-- **The point grid as a repeated picture.** The tile of pixels must be in the one picture memory of the call, which the program owns: the interface package has no place for it. A repeated rectangle needs no pixels.
+- **A gradient with more than two colors, or a gradient that fills a path, in this version.** No process needs one yet. Each is a list of variable length or a second kind of paint for each shape; a need comes first.
+- **The point grid as a repeated picture.** The tile of pixels must be in the one picture memory of the call, which the process owns: the interface package has no place for it. A repeated rectangle needs no pixels.
 - **`Point_Grid` and `Folded_Gap` kept as kinds.** The look of the system is in the elements of the package; the format holds primitives only.
 - **The old and the new form side by side in the drawing module.** The rule of the project is no backward compatibility: change a format in place and remove the old path. Each step below changes the format in place, with its version, and each writer moves in the same step.
 
 ## The subtle points
 
-- **A box that lies.** A box that is smaller than the drawing cuts the drawing; a box that is larger damages more. Neither harms another record or another program.
+- **A box that lies.** A box that is smaller than the drawing cuts the drawing; a box that is larger damages more. Neither harms another record or another process.
 - **A transparent record still damages its box.** A change of a color from opaque to transparent changes pixels.
 - **A record that the border refuses** draws nothing, and a refused `Clip` keeps the cut. It is equal to no record whose bytes differ, so a change to or from it damages both boxes; the same refused bytes in two frames draw nothing in both and damage nothing. Its fields are not trusted, so its box is the box of its bytes, cut to `COORDINATE_LIMIT`.
 - **The cost of a hostile record is bounded.** A rectangle reaches each pixel of its box at most once. A path has at most 1 024 points, so at most 16 384 segments, and its work is bounded by the rows of its box times its segments. A stroke is at most 64 pixels wide. A text is at most 256 bytes. The clip stack is at most 16 deep.
@@ -242,7 +242,7 @@ Before it, version 13 of the record. A text is one kind, `Text` (4), for both fo
 
 Before it, version 12 of the record. The look of the system left the format: the grid of points is one `Rectangle` with a pattern placed on the surface, and the folded gap is a `Rectangle` and two `Line` records with the box of the gap, both drawn by elements of the interface package with the pixels of the kinds that they replaced. The words 6 and 7 of those kinds name no kind, and the border refuses them as unknown. The pixels can differ in three cases:
 
-- a folded gap narrower than 6 pixels, whose line the execution draws from the other end (the program `inspect` draws gaps of 16 pixels);
+- a folded gap narrower than 6 pixels, whose line the execution draws from the other end (the process `inspect` draws gaps of 16 pixels);
 - a grid of points in an area left of or above the pixel -10 of a surface, where the pattern has cells that the kind did not draw;
 - a folded gap with an end of a line past `LINE_COORDINATE_LIMIT` (2^15 pixels): its track is drawn, and the line is left out, where the kind drew its lines up to `COORDINATE_LIMIT` (2^23 pixels). No surface of the system reaches 2^15 pixels.
 

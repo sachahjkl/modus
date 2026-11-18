@@ -1,11 +1,11 @@
-// The usable instruction sets of a program: those that the processor has
+// The usable instruction sets of a process: those that the processor has
 // and whose registers the kernel saves (docs/ARCHITECTURE.md, "The extended
 // state of the processor", section 6). No kernel operation: CPUID says what
 // the processor has and whether the kernel set CR4.OSXSAVE, and XCR0 says
 // which state components the kernel saves. An instruction of a set that is
-// not usable stops the program with an invalid opcode.
+// not usable stops the process with an invalid opcode.
 //
-// CPUID is slow in a virtual machine (an exit to the host): a program reads
+// CPUID is slow in a virtual machine (an exit to the host): a process reads
 // the facts once, at its start, and keeps the result.
 //
 // See [usable instruction set](term:usable-instruction-set) and
@@ -36,7 +36,7 @@ Instruction_Set :: enum u8 {
 	Bmi1, // Bit manipulation 1.
 	Bmi2, // Bit manipulation 2.
 }
-// A set of instruction sets: what a program can use.
+// A set of instruction sets: what a process can use.
 Instruction_Sets :: bit_set[Instruction_Set; u32]
 
 // The name of each set, as the manuals of the processor write it.

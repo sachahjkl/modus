@@ -1,4 +1,4 @@
-// A web client of this system: TCP in the program (src/library/support/tcp) over a
+// A web client of this system: TCP in the process (src/library/support/tcp) over a
 // segment endpoint with a client grant. The root service granted it
 // 10.0.2.100 port 80 and nothing else. In the test of TCP against a stack
 // that this project did not write, QEMU gives that address to a listener
@@ -10,7 +10,7 @@
 //
 // **What it is for.** It shows the shape of a network client in this
 // system: the network service moves segments, and TCP itself (the
-// handshake, the retransmissions, the window) is a library in the program.
+// handshake, the retransmissions, the window) is a library in the process.
 // It also shows that a [client grant](term:client-grant) is narrow: one
 // [remote](term:remote) address and one port. A segment to another address,
 // or from a port that the grant does not name, is refused with an
@@ -145,7 +145,7 @@ post :: proc "contextless" (place: u32) {
 // pump reads the completions, runs one step of the table and sends its
 // segments; it waits until something happens or until the next timer.
 // The times of one exchange, in nanoseconds: where the time of a request
-// goes (the program, the services and the device before the wire, or after).
+// goes (the process, the services and the device before the wire, or after).
 exchange_started_at, first_segment_sent_at, first_segment_received_at, first_data_received_at: u64
 
 pump :: proc "contextless" () {
@@ -423,13 +423,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_start(&window_memory, window)
 	draw_table := frame.table
 	interface.draw_text_wrapped(draw_table, LEFT, 16 + 4, WIDTH - 2 * LEFT, "a segment endpoint with a client grant: TCP to 10.0.2.100 port 80, and nothing else.", graphics.colors.dim)
-	interface.draw_text(draw_table, LEFT, 16 + LINE + 4, "the program asks", graphics.colors.dim)
+	interface.draw_text(draw_table, LEFT, 16 + LINE + 4, "the process asks", graphics.colors.dim)
 	interface.draw_text(draw_table, LEFT + ANSWER_X, 16 + LINE + 4, "the answer", graphics.colors.dim)
 	// The cases, then one line for the count of the cases with no room.
 	column := interface.column_of({LEFT, 16 + 2 * LINE, WIDTH - 2 * LEFT, HEIGHT - 16 - 2 * LINE - LINE - 16})
 	not_shown := 0
 	for &item, index in cases[:case_count] {
-		if _, drawn := interface.case_lines(&frame, &column, index, item.text, string(item.answer[:item.count]), ANSWER_X, graphics.colors.dim, item.right ? graphics.colors.program : graphics.colors.failed, LINE); !drawn {
+		if _, drawn := interface.case_lines(&frame, &column, index, item.text, string(item.answer[:item.count]), ANSWER_X, graphics.colors.dim, item.right ? graphics.colors.process : graphics.colors.failed, LINE); !drawn {
 			not_shown += 1
 		}
 	}
@@ -437,14 +437,14 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
-// The random generator of this program, from the seed of its starter.
-program_generator: random.Generator
+// The random generator of this process, from the seed of its starter.
+process_generator: random.Generator
 
 // entry opens its endpoint, runs every case once, closes the connection,
-// then shows the cases until the program is stopped.
+// then shows the cases until the process is stopped.
 //
 // It takes the secret of its initial sequence numbers from the random
-// generator of the program, opens the segment endpoint and the datagram
+// generator of the process, opens the segment endpoint and the datagram
 // region that the grant gives, and runs the cases (`cases_run`). After the
 // summary line it ends the connection and writes `fetch: the connection
 // ended, its record is free`. With no random seed, no endpoint, no
@@ -452,7 +452,7 @@ program_generator: random.Generator
 // on the log and stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if !random.generator_from_context(&program_generator, ctx) {
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("fetch: no random seed in the context")
 		system.stop(1)
 	}
@@ -462,7 +462,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
-		system.log("fetch: no endpoint: the program has no grant of the network")
+		system.log("fetch: no endpoint: the process has no grant of the network")
 		system.stop(1)
 	}
 	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
@@ -471,7 +471,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
-	// The buffers of the connections: memory of this program, which gives
+	// The buffers of the connections: memory of this process, which gives
 	// the library all the memory that it uses.
 	BUFFER_PAGES :: CAPACITY * (SEND_SIZE + RECEIVE_SIZE) / system.PAGE_SIZE
 	memory, memory_status := system.memory_create(BUFFER_PAGES)
@@ -481,12 +481,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	// The secret of the initial sequence numbers: 32 bytes of the generator
-	// of this program (docs/RANDOMNESS.md).
+	// of this process (docs/RANDOMNESS.md).
 	secret: [32]u8
-	random.fill(&program_generator, secret[:])
+	random.fill(&process_generator, secret[:])
 	tcp.table_init(&table, connections[:], ([^]u8)(buffers)[:BUFFER_PAGES * system.PAGE_SIZE], SEND_SIZE, RECEIVE_SIZE, 0, secret)
 	secret = {}
-	system.log("fetch: the secret of the initial sequence numbers from the generator of the program")
+	system.log("fetch: the secret of the initial sequence numbers from the generator of the process")
 	for place in 0 ..< RECEIVE_PLACES {
 		post(u32(place))
 	}

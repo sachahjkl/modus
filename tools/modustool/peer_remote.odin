@@ -246,7 +246,7 @@ peer_remote_client_key_set :: proc(state: ^Peer_Remote, private_key: [32]u8) {
 // a key that anyone who reads the source holds.
 peer_remote_client_key_draw :: proc(state: ^Peer_Remote) -> string {
 	// The tool holds the system's copy of core:crypto, whose rand_bytes stops
-	// the program: on the host the bytes come from getrandom.
+	// the process: on the host the bytes come from getrandom.
 	private_key: [32]u8
 	drawn := 0
 	for drawn < len(private_key) {
@@ -398,7 +398,7 @@ peer_remote_call_end :: proc(call: ^Remote_Call, outcome: Remote_Call_Outcome, c
 peer_remote_end_reason :: proc(client: ^quic.Connection) -> string {
 	switch {
 	case client.closed_by_handshake_timeout:
-		return "the handshake did not end in 10 s: does the machine run the program remote, with the key that the tool pinned?"
+		return "the handshake did not end in 10 s: does the machine run the process remote, with the key that the tool pinned?"
 	case client.closed_by_peer && !client.close_is_application && client.close_error_code == quic.CRYPTO_ERROR_BASE + u64(quic.Alert.Access_Denied):
 		return "remote refused the key of this client in the handshake (access_denied): no principal allowed it, or the session of its principal is locked; allow it with remote_allow in a console of the machine"
 	case client.closed_by_peer && client.close_is_application && client.close_error_code == u64(remote.Stream_Error.Revoked):
@@ -926,7 +926,7 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 		}
 		return true, fmt.tprintf("remote refused each of the %d malformed requests with the expected error record, each on its own stream", len(remote_malformed))
 	case "two at once":
-		first, first_problem := remote_case_request(machine, "monitor.programs()")
+		first, first_problem := remote_case_request(machine, "monitor.processes()")
 		second, second_problem := remote_case_request(machine, "monitor.count(\"processors\")")
 		if first_problem != "" || second_problem != "" {
 			return false, fmt.tprintf("the requests: %s%s", first_problem, second_problem)
@@ -943,14 +943,14 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 		first_result := peer_remote_wait(state, first_place)
 		first_header, problem := remote_case_answer(first_result, .Ok)
 		if problem != "" {
-			return false, fmt.tprintf("monitor.programs(): %s", problem)
+			return false, fmt.tprintf("monitor.processes(): %s", problem)
 		}
 		second_header, second_answer_problem := remote_case_answer(second_result, .Ok)
 		if second_answer_problem != "" {
 			return false, fmt.tprintf("monitor.count(\"processors\"): %s", second_answer_problem)
 		}
 		if first_header.value < 1 || second_header.value != 4 {
-			return false, fmt.tprintf("monitor.programs() gave %d rows, and monitor.count(\"processors\") gave %d, not 4", first_header.value, second_header.value)
+			return false, fmt.tprintf("monitor.processes() gave %d rows, and monitor.count(\"processors\") gave %d, not 4", first_header.value, second_header.value)
 		}
 		sync.mutex_lock(&state.lock)
 		most := state.most_open
@@ -958,7 +958,7 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 		if most < 2 {
 			return false, fmt.tprintf("the two calls were never on two streams at one time (the most at one time: %d)", most)
 		}
-		return true, fmt.tprintf("monitor.programs() (%d rows, %d bytes) and monitor.count(\"processors\") (4) on two streams at one time, each answer on its own stream", first_header.value, len(first_result.answer))
+		return true, fmt.tprintf("monitor.processes() (%d rows, %d bytes) and monitor.count(\"processors\") (4) on two streams at one time, each answer on its own stream", first_header.value, len(first_result.answer))
 	case "too large":
 		bytes := make([]u8, remote.REQUEST_LIMIT + 1, context.temp_allocator)
 		outcome := remote_case_call(state, bytes)

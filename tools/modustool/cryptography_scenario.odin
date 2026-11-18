@@ -1,6 +1,6 @@
 package modustool
 
-// The module `cryptography` as it ships: the program cryptography_vectors
+// The module `cryptography` as it ships: the process cryptography_vectors
 // imports it and runs the published vectors of each primitive through its
 // exports, on the machine (docs/CRYPTOGRAPHY.md).
 

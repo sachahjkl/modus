@@ -18,7 +18,7 @@ SOURCE_OF_CONSOLE :: "package console\n\nshared_name :: proc(x: int) {}\n\ncount
 @(private = "file")
 GRAPHICS_FILE :: "support/graphics/blend_test_source.odin"
 @(private = "file")
-CONSOLE_FILE :: "programs/console/count_test_source.odin"
+CONSOLE_FILE :: "processes/console/count_test_source.odin"
 
 // The index of the two files above, in a site of the tests.
 @(private = "file")
@@ -139,9 +139,9 @@ site_declaration_span_forms :: proc(t: ^testing.T) {
 	testing.expect(t, resolution == .Linked && place == graphics_shared)
 	place, resolution = resolve(index, "console.shared_name()", nil)
 	testing.expect(t, resolution == .Linked && place == console_shared)
-	place, resolution = resolve(index, "shared_name", []string{"programs/console"})
+	place, resolution = resolve(index, "shared_name", []string{"processes/console"})
 	testing.expect(t, resolution == .Linked && place == console_shared)
-	place, resolution = resolve(index, "shared_name", []string{"programs"})
+	place, resolution = resolve(index, "shared_name", []string{"processes"})
 	testing.expect_value(t, resolution, Site_Declaration_Resolution.Linked)
 	testing.expect_value(t, place, console_shared)
 	// A common word: linked when the span calls it or the text places it.
@@ -149,7 +149,7 @@ site_declaration_span_forms :: proc(t: ^testing.T) {
 	testing.expect_value(t, resolution, Site_Declaration_Resolution.Ambiguous)
 	_, resolution = resolve(index, "count()", nil)
 	testing.expect_value(t, resolution, Site_Declaration_Resolution.Linked)
-	_, resolution = resolve(index, "count", []string{"programs/console"})
+	_, resolution = resolve(index, "count", []string{"processes/console"})
 	testing.expect_value(t, resolution, Site_Declaration_Resolution.Linked)
 	// A constant is not called; a name that no file declares is not found.
 	_, resolution = resolve(index, "PAGE_SIZE()", nil)

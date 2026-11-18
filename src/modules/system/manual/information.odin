@@ -13,18 +13,18 @@ import "modus:support/system"
 // tables of the modules of the boot image (src/library/private/manual/information). The
 // console combines the tables with where, sort, join and columns.
 //
-// What runs comes from the kernel: the module records of each program,
+// What runs comes from the kernel: the module records of each process,
 // with the replacements that the loader applied. The manual reads them with
 // its grant, the machine with the right Inspect, and gives them only to a
-// caller that acts for the principal: a program sees no other program.
+// caller that acts for the principal: a process sees no other process.
 //
 // The window shows the same facts: the key o, or overview(), shows the
 // table of all the modules; the page of a module has its sizes, the modules
-// that import it, and the programs that run it.
+// that import it, and the processes that run it.
 
 machine: system.Handle
 
-// The rows of the window and of the measures: memory of this program.
+// The rows of the window and of the measures: memory of this process.
 module_rows: [128]information.Module
 export_rows: [512]information.Export
 import_rows: [128]information.Import
@@ -180,17 +180,17 @@ segments :: proc "c" (name: ^string, result: ^[]information.Segment, error: ^err
 	return table_count(count, problem, error)
 }
 
-// running gives one row for each module that runs in a program, from the module records of the kernel: the program, the module, its hash, the hash that a replacement changed, and the writer of the record.
+// running gives one row for each module that runs in a process, from the module records of the kernel: the process, the module, its hash, the hash that a replacement changed, and the writer of the record.
 //
-// The module records are what each loader asserted with the kernel operation `Program_Module`; the manual reads
+// The module records are what each loader asserted with the kernel operation `Process_Module`; the manual reads
 // them with `Inspect` and the right **Inspect** on the machine. The rows are records
 // [`Running`](information.Running). The field `writer` is `starter` for a record that the starter wrote, which
-// the program cannot change, and `program` for a record that the program wrote for itself.
+// the process cannot change, and `process` for a record that the process wrote for itself.
 //
 // **Result**: the count of rows, or a negative number with an error record:
 //
-// - `No_Grant` (-3): the caller does not act for the principal: a program sees no other program;
-// - `Refused` (-3): the kernel refused the report to this program, with its status.
+// - `No_Grant` (-3): the caller does not act for the principal: a process sees no other process;
+// - `Refused` (-3): the kernel refused the report to this process, with its status.
 @(export, link_name = "running")
 running :: proc "c" (result: ^[]information.Running, error: ^errors.Error_Record) -> i64 {
 	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
@@ -200,9 +200,9 @@ running :: proc "c" (result: ^[]information.Running, error: ^errors.Error_Record
 	return table_count(count, problem, error)
 }
 
-// edges gives one row for each import edge of each program that runs: the program, a module that runs in it with its hash, the module of the same program that imports it, and the module that a replacement put it in place of.
+// edges gives one row for each import edge of each process that runs: the process, a module that runs in it with its hash, the module of the same process that imports it, and the module that a replacement put it in place of.
 //
-// A module that no module of its program imports, as the module of the program, has one row with `imported_by`
+// A module that no module of its process imports, as the module of the process, has one row with `imported_by`
 // empty. The rows come from the module records of the kernel and the imports of the files of the boot image:
 // the module graph of the build, for what runs now. The rows are records
 // [`Edge`](information.Edge).
@@ -210,7 +210,7 @@ running :: proc "c" (result: ^[]information.Running, error: ^errors.Error_Record
 // **Result**: the count of rows, or a negative number with an error record:
 //
 // - `No_Grant` (-3): the caller does not act for the principal;
-// - `Refused` (-3): the kernel refused the report to this program, with its status.
+// - `Refused` (-3): the kernel refused the report to this process, with its status.
 @(export, link_name = "edges")
 edges :: proc "c" (result: ^[]information.Edge, error: ^errors.Error_Record) -> i64 {
 	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
@@ -253,7 +253,7 @@ problem :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) 
 	return text_result(system.written(&writer), result)
 }
 
-// overview shows in the window the table of all the modules of the boot image: their sizes, their counts of exports and imports, who imports each one, and the programs that run it. The result is the count of modules.
+// overview shows in the window the table of all the modules of the boot image: their sizes, their counts of exports and imports, who imports each one, and the processes that run it. The result is the count of modules.
 @(export, link_name = "overview")
 overview :: proc "c" () -> i64 {
 	navigation_leave()
@@ -267,14 +267,14 @@ importer_count :: proc "contextless" (hash: [32]u8) -> int {
 	return information.importers(catalog(), hash, nil)
 }
 
-// running_count gives the count of programs that run a module, from the
+// running_count gives the count of processes that run a module, from the
 // rows of running().
 @(private = "file")
-running_count :: proc "contextless" (hash: string, count: int) -> (programs: int) {
+running_count :: proc "contextless" (hash: string, count: int) -> (processes: int) {
 	for &row in running_rows[:min(count, len(running_rows))] {
-		programs += int(string(row.hash[:]) == hash)
+		processes += int(string(row.hash[:]) == hash)
 	}
-	return programs
+	return processes
 }
 
 // overview_build writes the page of the table of all the modules, and
@@ -307,7 +307,7 @@ overview_build :: proc "contextless" () -> int {
 		case row.problem[0] != 0:
 			color = graphics.colors.failed
 		case runs > 0:
-			color = graphics.colors.program
+			color = graphics.colors.process
 		case row.entry == 0:
 			color = graphics.colors.no_entry
 		}
@@ -320,8 +320,8 @@ overview_build :: proc "contextless" () -> int {
 	put("", 0, 0)
 	put_built(0, graphics.colors.dim, padded("all", name_width), right(totals[0], 6), right(totals[1], 8), right(totals[2], 8), right(totals[3], 8), right(i64(export_total), 9), right(i64(import_total), 8), "     ", right(i64(run_total), 6))
 	put("", 0, 0)
-	put("green: a program runs it. yellow: no entry, a library. red: it breaks a rule.", 0, graphics.colors.dim)
-	system.log("manual: overview: ", u64(count), " modules, ", u64(export_total), " exports, ", u64(import_total), " imports, ", u64(run_count), " modules that run in programs")
+	put("green: a process runs it. yellow: no entry, a library. red: it breaks a rule.", 0, graphics.colors.dim)
+	system.log("manual: overview: ", u64(count), " modules, ", u64(export_total), " exports, ", u64(import_total), " imports, ", u64(run_count), " modules that run in processes")
 	return count
 }
 
@@ -356,7 +356,7 @@ right :: proc "contextless" (value: i64, width: int) -> string {
 }
 
 // information_page writes the facts of one module that the information
-// functions give: its sizes, who imports it, and the programs that run it.
+// functions give: its sizes, who imports it, and the processes that run it.
 information_page :: proc "contextless" (hash: [32]u8) {
 	found, problem := information.find(catalog(), hex_of(hash))
 	if problem.kind != .None {
@@ -381,26 +381,26 @@ information_page :: proc "contextless" (hash: [32]u8) {
 		replacement := system.name_of(item.replacement[:])
 		module_name := system.name_of(item.module[:])
 		if replacement != "" {
-			put_built(2, graphics.colors.program, module_name, ", import ", u64(item.number), ", slots ", u64(item.slots), ", through the replacement of ", system.name_of(item.name[:]))
+			put_built(2, graphics.colors.process, module_name, ", import ", u64(item.number), ", slots ", u64(item.slots), ", through the replacement of ", system.name_of(item.name[:]))
 		} else {
-			put_built(2, graphics.colors.program, module_name, ", import ", u64(item.number), ", slots ", u64(item.slots))
+			put_built(2, graphics.colors.process, module_name, ", import ", u64(item.number), ", slots ", u64(item.slots))
 		}
 	}
 	put("", 0, 0)
 	run_count, _ := information.running(machine, catalog(), running_rows[:])
 	text := hex_of(hash)
-	programs := running_count(text, run_count)
-	put_built(0, graphics.colors.dim, "PROGRAMS THAT RUN IT (", u64(programs), ")")
+	processes := running_count(text, run_count)
+	put_built(0, graphics.colors.dim, "PROCESSES THAT RUN IT (", u64(processes), ")")
 	for &item in running_rows[:min(run_count, len(running_rows))] {
 		if string(item.hash[:]) != text {
 			continue
 		}
-		program := system.name_of(item.program[:])
+		process := system.name_of(item.process[:])
 		if item.replaces[0] != 0 {
 			replaced, _ := information.hash_parse(string(item.replaces[:]))
-			put_built(2, graphics.colors.program, program, " (slot ", u64(item.slot), ") at ", system.Hex(u64(item.base)), ", in place of ", module_text(replaced))
+			put_built(2, graphics.colors.process, process, " (slot ", u64(item.slot), ") at ", system.Hex(u64(item.base)), ", in place of ", module_text(replaced))
 		} else {
-			put_built(2, graphics.colors.program, program, " (slot ", u64(item.slot), ") at ", system.Hex(u64(item.base)))
+			put_built(2, graphics.colors.process, process, " (slot ", u64(item.slot), ") at ", system.Hex(u64(item.base)))
 		}
 	}
 	put("", 0, 0)

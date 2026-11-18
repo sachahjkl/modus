@@ -23,15 +23,15 @@ the_word_of_no_writer_is_refused :: proc(t: ^testing.T) {
 // Each writer has its word in a row, and each word fits the field of a row.
 @(test)
 each_module_writer_has_its_word :: proc(t: ^testing.T) {
-	testing.expect_value(t, module_writer_name(.Program), "program")
+	testing.expect_value(t, module_writer_name(.Process), "process")
 	testing.expect_value(t, module_writer_name(.Starter), "starter")
 	for member in Module_Writer {
 		testing.expect(t, len(module_writer_name(member)) <= MODULE_WRITER_NAME_CAPACITY, module_writer_name(member))
 	}
-	// A record that no kernel wrote is of the program: the starter must be
+	// A record that no kernel wrote is of the process: the starter must be
 	// a fact that the kernel adds, never the zero of a record.
 	record: Module_Record
 	writer, ok := module_writer_of_word(record.writer)
 	testing.expect(t, ok)
-	testing.expect_value(t, writer, Module_Writer.Program)
+	testing.expect_value(t, writer, Module_Writer.Process)
 }

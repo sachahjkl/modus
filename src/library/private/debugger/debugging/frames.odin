@@ -28,7 +28,7 @@ Entry_Place :: enum {
 // table.
 //
 // It ends at a frame pointer that is 0, that is not a multiple of 8, that
-// the program does not map, or that is not above the one before it; at a
+// the process does not map, or that is not above the one before it; at a
 // return address 0; and after len(frames) frames. It gives the count of
 // frames, 1 at least when `frames` has room.
 frames_walk :: proc "contextless" (reader: Memory_Reader, instruction, frame_pointer, stack_pointer: u64, entry: Entry_Place, frames: []Frame) -> (count: int) {

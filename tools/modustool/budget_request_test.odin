@@ -17,7 +17,7 @@ budget_request_read_takes_the_constant :: proc(t: ^testing.T) {
 	budget: Budget_Description
 	testing.expect(t, budget_request_read(file, &budget))
 	testing.expect(t, budget.stated)
-	testing.expect_value(t, budget.parts, Stated_Budget{working_memory_pages = 4096, programs = 0, threads = 2})
+	testing.expect_value(t, budget.parts, Stated_Budget{working_memory_pages = 4096, processes = 0, threads = 2})
 	testing.expect_value(t, budget.comment, "Its loop, and one more thread.")
 	testing.expect_value(t, budget.line, 6)
 
@@ -44,7 +44,7 @@ budget_request_read_takes_the_typed_form_and_prefixes :: proc(t: ^testing.T) {
 	} {
 		{"the type on the declaration", "package p\n// Why.\nMODULE_BUDGET : system.Stated_Budget : {working_memory_pages = 4096, threads = 2}\n", {working_memory_pages = 4096, threads = 2}},
 		{"the type on both", "package p\n// Why.\nMODULE_BUDGET : system.Stated_Budget : system.Stated_Budget{working_memory_pages = 4096}\n", {working_memory_pages = 4096}},
-		{"a hexadecimal part", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 0x1000, programs = 0b11, threads = 0o10}\n", {working_memory_pages = 4096, programs = 3, threads = 8}},
+		{"a hexadecimal part", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 0x1000, processes = 0b11, threads = 0o10}\n", {working_memory_pages = 4096, processes = 3, threads = 8}},
 		{"a hexadecimal part with separators", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 0xA4_00}\n", {working_memory_pages = 41984}},
 		{"a window of literals", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{window_width = 640, window_height = 480}\n", {window_width = 640, window_height = 480}},
 	}
@@ -61,7 +61,7 @@ budget_request_read_takes_the_typed_form_and_prefixes :: proc(t: ^testing.T) {
 }
 
 // A window part that names a constant takes the value of the constant,
-// from any file of the package: the program passes the same constant to
+// from any file of the package: the process passes the same constant to
 // display.open, so the counted pictures are the pictures that it opens.
 @(test)
 budget_window_resolve_takes_the_constants_of_the_package :: proc(t: ^testing.T) {
@@ -110,7 +110,7 @@ budget_window_resolve_takes_the_constants_of_the_package :: proc(t: ^testing.T) 
 // two pictures of a window of 1000 x 704.
 @(test)
 budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
-	stated := Stated_Budget{working_memory_pages = 2536, programs = 2, threads = 3, window_width = 1000, window_height = 704}
+	stated := Stated_Budget{working_memory_pages = 2536, processes = 2, threads = 3, window_width = 1000, window_height = 704}
 	// 98 pages and a part of one more; two imports of 19 and of 72 pages.
 	module_size := u64(98 * 4096 + 1)
 	imports := []u64{19 * 4096, 72 * 4096}
@@ -124,7 +124,7 @@ budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 	testing.expect_value(t, counted.thread_pages, 72 + 2 * 19)
 	// 1000 x 704 pixels of 4 bytes, two pictures: 5632000 bytes, 1375 pages.
 	testing.expect_value(t, counted.window_pages, 1375)
-	testing.expect_value(t, counted.request, module.Budget_Request{pages = 2536 + 190 + 110 + 1375, programs = 2, threads = 3})
+	testing.expect_value(t, counted.request, module.Budget_Request{pages = 2536 + 190 + 110 + 1375, processes = 2, threads = 3})
 
 	// No part of threads: the tool counts the first thread, and the table
 	// leaves the part to the starter. No window: no pictures.
@@ -142,10 +142,10 @@ budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 @(test)
 build_measure_lines_name_each_budget_request_once :: proc(t: ^testing.T) {
 	requests := make([dynamic]Build_Budget_Request, context.temp_allocator)
-	append(&requests, Build_Budget_Request{name = "block", request = {pages = 256, programs = 1, threads = 1}}, Build_Budget_Request{name = "console", request = {pages = 8192, programs = 5, threads = 6}})
+	append(&requests, Build_Budget_Request{name = "block", request = {pages = 256, processes = 1, threads = 1}}, Build_Budget_Request{name = "console", request = {pages = 8192, processes = 5, threads = 6}})
 	lines := build_measure_lines(Build_Measure{budget_requests = requests}, 0)
 	last := lines[len(lines) - 1]
-	testing.expect(t, strings.contains(last, "block 256 pages, 1 programs, 1 threads; console 8192 pages, 5 programs, 6 threads"), last)
+	testing.expect(t, strings.contains(last, "block 256 pages, 1 processes, 1 threads; console 8192 pages, 5 processes, 6 threads"), last)
 	testing.expect_value(t, strings.count(last, "console"), 1)
 }
 
@@ -226,7 +226,7 @@ file_with_budget :: proc(storage: ^[512]u8, count: u32, record_size: u32, reques
 // with no table, and the rule of the growth of a record.
 @(test)
 budget_request_reads_the_table :: proc(t: ^testing.T) {
-	asked := module.Budget_Request{pages = 4096, programs = 3, threads = 7}
+	asked := module.Budget_Request{pages = 4096, processes = 3, threads = 7}
 
 	storage: [512]u8
 	file := file_with_budget(&storage, 2, size_of(module.Budget_Request), asked)

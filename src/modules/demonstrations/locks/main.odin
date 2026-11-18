@@ -1,25 +1,25 @@
 // The checks and the measures of the locks of the kernel.
 //
-// The program starts four programs `locker`. Each one works on its own
+// The process starts four processes `locker`. Each one works on its own
 // objects only: a kernel entry of one locker touches no object of another
 // locker. So a locker waits for another one only when the kernel makes it
 // wait. With 1, 2 and 4 lockers at one time, each locker enters the kernel
 // a fixed count of times, then writes a fixed count of pages for the first
-// time. Then two threads of this program wake each other with the word
+// time. Then two threads of this process wake each other with the word
 // wait a fixed count of times, alone, then while two lockers enter the
 // kernel. The window shows the counts, and the waits of each lock of the
 // kernel in each run. In a [measure run](term:measure-run) each run has a
 // fixed time and no count, and the numbers are the kernel entries, the
 // page faults on first use and the wakes in one second.
 //
-// The program checks the counts: the kernel counted each entry of a
+// The process checks the counts: the kernel counted each entry of a
 // locker, each page returned to its budget, each free page is in a budget
 // or reserved, and no wake was lost. It does not check a speed.
 //
-// The program needs the grant to inspect the machine, and the boot image
+// The process needs the grant to inspect the machine, and the boot image
 // (it starts the lockers).
 //
-// **What it is for.** It shows how the kernel behaves when many programs
+// **What it is for.** It shows how the kernel behaves when many processes
 // enter it at one time: the count of the waits of each
 // [lock of the kernel](term:lock-of-the-kernel), one
 // [run queue](term:run-queue) for each processor, and the
@@ -36,8 +36,8 @@
 // stress case and of the case of the frames, then the summary.
 //
 // **Its grants**: **Inspect**, to read the counts of the locks and of the
-// kernel entries, and **Image**, to start the program `locker`. Its budget
-// holds 9216 pages and 8 programs: 4 lockers of 1024 pages, then 3 at a
+// kernel entries, and **Image**, to start the process `locker`. Its budget
+// holds 9216 pages and 8 processes: 4 lockers of 1024 pages, then 3 at a
 // time in the stress case.
 //
 // **What it does not prove.** A count of waits says how often a lock was
@@ -56,7 +56,7 @@ import "modus:support/random"
 import "modus:support/system"
 
 // Four lockers of 1024 pages, then three at a time of the stress case.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7745, programs = 8, threads = 20, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7745, processes = 8, threads = 20, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(1024, 16384)
@@ -73,10 +73,10 @@ LOAD_ENTRIES_CHECKED :: 65_536 // Kernel entries of each locker that loads the k
 // wake that is only late on a loaded host comes long before it: the bound of
 // a hang.
 LOST_WAIT :: system.TEST_HANG_BOUND_MILLISECONDS
-LOCKER_AMOUNTS :: system.Budget_Amounts{pages = 1024, programs = 1, threads = 1, processor = 1_000_000, log_records = 10}
-CHURN_AMOUNTS :: system.Budget_Amounts{pages = 512, programs = 1, threads = lockers.CHURN_THREADS, processor = 1_000_000, log_records = 10}
+LOCKER_AMOUNTS :: system.Budget_Amounts{pages = 1024, processes = 1, threads = 1, processor = 1_000_000, log_records = 10}
+CHURN_AMOUNTS :: system.Budget_Amounts{pages = 512, processes = 1, threads = lockers.CHURN_THREADS, processor = 1_000_000, log_records = 10}
 CHURN_ROUNDS :: 40
-CHURN_COUNT :: 3 // The programs of one round.
+CHURN_COUNT :: 3 // The processes of one round.
 
 // The window follows docs/DESIGN.md where it is cheap: rectangles only,
 // the grid of 8 pixels, the colors of the rules, a name in the dim color
@@ -101,7 +101,7 @@ counts := [3]int{1, 2, 4}
 
 machine: system.Handle
 board: ^lockers.Board
-programs: [lockers.LOCKER_CAPACITY]system.Handle
+processes: [lockers.LOCKER_CAPACITY]system.Handle
 
 // All the lockers together: the kernel entries and the pages on first use
 // of the check; in a measure run, in one second.
@@ -178,7 +178,7 @@ measure :: proc "contextless" (mode: lockers.Mode, rates: ^[len(counts)]u64, loc
 	for active, row in counts {
 		entries_before: [lockers.LOCKER_CAPACITY]u64
 		for index in 0 ..< active {
-			entries_before[index] = system.program_entries(programs[index])
+			entries_before[index] = system.process_entries(processes[index])
 		}
 		before := report()
 		// A measure starts a little later: each locker is at its start
@@ -192,10 +192,10 @@ measure :: proc "contextless" (mode: lockers.Mode, rates: ^[len(counts)]u64, loc
 		for index in 0 ..< active {
 			slot := &board.slots[index]
 			total += slot.count
-			kernel := system.program_entries(programs[index]) - entries_before[index]
+			kernel := system.process_entries(processes[index]) - entries_before[index]
 			kernel_total += kernel
 			// The kernel counted each entry that the library of the locker
-			// counted: the loop, two budget reads, the wake of this program,
+			// counted: the loop, two budget reads, the wake of this process,
 			// and the wait that follows (it can be in the count or not yet).
 			if mode == .Entries && (slot.entries != slot.count + 1 || kernel < slot.count + 3 || kernel > slot.count + 8) {
 				if entries_right {
@@ -236,7 +236,7 @@ Pair :: struct {
 	stop:   u32,
 	rounds: [2]u64,
 	lost:   [2]u64,
-	refused: [2]u64, // The batches of a wake and a wait that the library refused: a fault of this program.
+	refused: [2]u64, // The batches of a wake and a wait that the library refused: a fault of this process.
 }
 
 pair: Pair
@@ -437,29 +437,29 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	}
 	y += GAP
 	line: [64]u8
-	interface.draw_text(table, LEFT, y, "programs stopped while they ran", graphics.colors.dim)
+	interface.draw_text(table, LEFT, y, "processes stopped while they ran", graphics.colors.dim)
 	interface.draw_text(table, COLUMN_X, y, system.format(line[:], stress_started), graphics.colors.text)
 	y += LINE
 	if done {
 		right := entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right
-		interface.draw_text(table, LEFT, y, right ? "the counts add up, no wake was lost, stopped programs returned all" : "a count is wrong", right ? graphics.colors.program : graphics.colors.failed)
+		interface.draw_text(table, LEFT, y, right ? "the counts add up, no wake was lost, stopped processes returned all" : "a count is wrong", right ? graphics.colors.process : graphics.colors.failed)
 	} else {
 		interface.draw_text(table, LEFT, y, measured ? "measures in progress" : "checks in progress", graphics.colors.dim)
 	}
 }
 
-// stress stops programs while their threads run, many times: each round
+// stress stops processes while their threads run, many times: each round
 // starts three churn lockers; the second and the third stop the one before
-// them after a few milliseconds, while this program stops each one, or
-// closes its last handle at once. At the end, each page, program and thread
-// is back in the budget of this program, and the free pages are the pages
+// them after a few milliseconds, while this process stops each one, or
+// closes its last handle at once. At the end, each page, process and thread
+// is back in the budget of this process, and the free pages are the pages
 // of the budgets and the reserved pages.
-stress :: proc "contextless" (image: []u8, programs_free: u64) {
+stress :: proc "contextless" (image: []u8, processes_free: u64) {
 	// The lockers of the measures have ended: their slots are back.
 	initial: system.Budget_Amounts
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
 		initial, _ = system.budget_read()
-		if initial.programs == programs_free {
+		if initial.processes == processes_free {
 			break
 		}
 		system.sleep(system.time() + 10)
@@ -478,7 +478,7 @@ stress :: proc "contextless" (image: []u8, programs_free: u64) {
 				grants[lockers.GRANT_PEER] = {churners[index - 1], {.Control}}
 			}
 			status: system.Status
-			churner, status = system.program_start(file, "churn", grants, random.values_with_seed(&program_generator, values), CHURN_AMOUNTS)
+			churner, status = system.process_start(file, "churn", grants, random.values_with_seed(&process_generator, values), CHURN_AMOUNTS)
 			if status == .Ok {
 				started += 1
 			}
@@ -493,7 +493,7 @@ stress :: proc "contextless" (image: []u8, programs_free: u64) {
 			}
 			switch (round + u64(index)) % 3 {
 			case 0:
-				system.call(.Program_Stop, u64(churner), 7)
+				system.call(.Process_Stop, u64(churner), 7)
 				stopped += 1
 			case 1:
 				// The other thread stops it while this one closes the handle.
@@ -511,28 +511,28 @@ stress :: proc "contextless" (image: []u8, programs_free: u64) {
 				closed += 1
 				continue
 			}
-			system.close(churner) // The last handle of this program to it, at once.
+			system.close(churner) // The last handle of this process to it, at once.
 			closed += 1
 		}
 	}
 	intrinsics.atomic_store(&stopper.quit, 1)
 	system.word_wake(&stopper.target)
 	system.thread_wait(helper)
-	// The cleanup of a program runs when its last thread leaves its
+	// The cleanup of a process runs when its last thread leaves its
 	// processor: wait for the budget. The bound only ends a hang.
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	after: system.Budget_Amounts
 	for system.time() < deadline {
 		after, _ = system.budget_read()
-		if after.pages == initial.pages && after.programs == initial.programs && after.threads == initial.threads {
+		if after.pages == initial.pages && after.processes == initial.processes && after.threads == initial.threads {
 			break
 		}
 		system.sleep(system.time() + 10)
 	}
 	stress_started = started
 	final := report()
-	stress_right = started == CHURN_ROUNDS * CHURN_COUNT && after.pages == initial.pages && after.programs == initial.programs && after.threads == initial.threads && final.budget_pages + final.reserved_pages == final.free_pages
-	system.log("locks: stress: ", started, " programs started, ", stopped, " stopped by this program (some by a thread while another thread closed the last handle), ", closed - stopped, " only by the close of their last handle, while their threads ran and they stopped each other; budget: pages ", after.pages, " of ", initial.pages, ", programs ", after.programs, " of ", initial.programs, ", threads ", after.threads, " of ", initial.threads, "; free pages ", final.free_pages, ", in budgets ", final.budget_pages, ", reserved ", final.reserved_pages)
+	stress_right = started == CHURN_ROUNDS * CHURN_COUNT && after.pages == initial.pages && after.processes == initial.processes && after.threads == initial.threads && final.budget_pages + final.reserved_pages == final.free_pages
+	system.log("locks: stress: ", started, " processes started, ", stopped, " stopped by this process (some by a thread while another thread closed the last handle), ", closed - stopped, " only by the close of their last handle, while their threads ran and they stopped each other; budget: pages ", after.pages, " of ", initial.pages, ", processes ", after.processes, " of ", initial.processes, ", threads ", after.threads, " of ", initial.threads, "; free pages ", final.free_pages, ", in budgets ", final.budget_pages, ", reserved ", final.reserved_pages)
 }
 
 stress_right: bool
@@ -540,11 +540,11 @@ stress_started: u64
 
 // The stress case of the frames: two lockers make and close memory objects
 // of 600 pages (three list pages each), two lockers fault pages on first
-// use, and this program reads System_Report with no pause. The kernel checks
+// use, and this process reads System_Report with no pause. The kernel checks
 // its sums of the frames at each report and at each drain (in the test
-// build); this program checks that the free pages less the reserved pages
-// are the pages of the budgets in each report. The lockers and this program
-// are different programs: no program lock orders their kernel entries.
+// build); this process checks that the free pages less the reserved pages
+// are the pages of the budgets in each report. The lockers and this process
+// are different processes: no process lock orders their kernel entries.
 FRAMES_STRESS_TIME :: 500 // Milliseconds of one round, in a measure run.
 
 frames_stress_right: bool
@@ -555,7 +555,7 @@ frames_stress :: proc "contextless" () {
 	answered := true
 	measured := system.measure_run()
 	// In the check, each locker ends after its count of work, and this
-	// program reads reports until each one ended. A measure run has rounds
+	// process reads reports until each one ended. A measure run has rounds
 	// of a fixed time: a loaded host can give the lockers no time in one
 	// round, so the rounds go on until each kind of work ran at least once.
 	// The bound only ends a hang.
@@ -597,14 +597,14 @@ frames_stress :: proc "contextless" () {
 		faulted += board.slots[2].count + board.slots[3].count
 	}
 	frames_stress_right = answered && made != 0 && faulted != 0 && wrong == 0
-	system.log("locks: frames: ", made, " objects of 600 pages made and closed by two lockers while two lockers faulted ", faulted, " pages and this program read ", reports, " reports; reports where the free pages less the reserved pages were not the pages of the budgets: ", wrong)
+	system.log("locks: frames: ", made, " objects of 600 pages made and closed by two lockers while two lockers faulted ", faulted, " pages and this process read ", reports, " reports; reports where the free pages less the reserved pages were not the pages of the budgets: ", wrong)
 }
 
-// The second thread of the stress case: it stops the program that the
+// The second thread of the stress case: it stops the process that the
 // first thread names in `stop_target`, while the first thread closes its
 // last handle to it.
 Stopper :: struct {
-	target: u32, // A program handle. 0: none.
+	target: u32, // A process handle. 0: none.
 	done:   u32, // Adds 1 after each stop.
 	quit:   u32,
 }
@@ -618,26 +618,26 @@ stopper_run :: proc "c" (parameter: rawptr) -> ! {
 			system.word_wait(&stopper.target, 0, system.time() + 100)
 			continue
 		}
-		system.call(.Program_Stop, u64(target), 7)
+		system.call(.Process_Stop, u64(target), 7)
 		intrinsics.atomic_add(&stopper.done, 1)
 	}
 	system.thread_stop()
 }
 
-// The random generator of this program (src/library/support/random).
-program_generator: random.Generator
+// The random generator of this process (src/library/support/random).
+process_generator: random.Generator
 
 // entry starts the four lockers, runs the measures with 1, 2 and 4 of
 // them, the word wait alone and under load, the stress case and the case
 // of the frames, checks the counts, and writes the summary. It then keeps
-// the window open until the program is stopped. With no random seed, no
+// the window open until the process is stopped. With no random seed, no
 // boot image, no memory for the board, or a locker that does not start, it
 // writes the reason on the log and stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	// The random generator of this program, from the seed that its starter
-	// gave: it gives the seed of each program that this one starts.
-	if !random.generator_from_context(&program_generator, ctx) {
+	// The random generator of this process, from the seed that its starter
+	// gave: it gives the seed of each process that this one starts.
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("locks: no random seed in the context")
 		system.stop(1)
 	}
@@ -661,13 +661,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	board = (^lockers.Board)(address)
 	names := [lockers.LOCKER_CAPACITY]string{"locker 1", "locker 2", "locker 3", "locker 4"}
-	for &program, index in programs {
+	for &process, index in processes {
 		grants: [op.CONTEXT_HANDLES]system.Grant
 		values: [op.CONTEXT_VALUES]u64
 		grants[lockers.GRANT_BOARD] = {memory, {.Read, .Write}}
 		values[lockers.VALUE_INDEX] = u64(index)
 		status: system.Status
-		if program, status = system.program_start(system.image_find(image, "locker"), names[index], grants, random.values_with_seed(&program_generator, values), LOCKER_AMOUNTS); status != .Ok {
+		if process, status = system.process_start(system.image_find(image, "locker"), names[index], grants, random.values_with_seed(&process_generator, values), LOCKER_AMOUNTS); status != .Ok {
 			system.log("locks: cannot start a locker: status ", u64(status))
 			system.stop(1)
 		}
@@ -695,10 +695,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("locks: lock waits of takes, 4 lockers, pages on first use: ", locks_text(text[:], fault_locks))
 	system.log("locks: lock waits of takes, word wait with 2 lockers: ", locks_text(text[:], pair_locks))
 	frames_stress()
-	for program in programs {
-		system.close(program)
+	for process in processes {
+		system.close(process)
 	}
-	stress(image, at_start.programs)
+	stress(image, at_start.processes)
 	// The frame caches of the processors, after the measures and the stress.
 	processor_count := report().processors
 	for &cache, index in caches {
@@ -730,7 +730,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	done = true
 	if entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right && frames_stress_right {
-		system.log("locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped program returned its pages, its slot and its threads")
+		system.log("locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped process returned its pages, its slot and its threads")
 	} else {
 		system.log("locks: wrong: entries ", u64(entries_right), " faults ", u64(faults_right), " pages ", u64(pages_right), " wakes ", u64(pairs_right), " lost ", lost_wakes, " stress ", u64(stress_right), " frames ", u64(frames_stress_right))
 	}

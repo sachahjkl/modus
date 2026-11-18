@@ -1,16 +1,16 @@
 // The drawing module: the damage of a frame and the draw of its records,
-// for each program that imports it (docs/INTERFACE.md, section 7). It holds
+// for each process that imports it (docs/INTERFACE.md, section 7). It holds
 // the code that finds what changed between two draw tables and the code
 // that draws the records of a draw table into pixels: the fills, the
 // gradients, the lines, the text of the cells and the text of the
-// interface font, with their blends. A program that imports it holds none
+// interface font, with their blends. A process that imports it holds none
 // of that code: the system has one copy.
 //
 // **What it is for.** It is the first [library module](term:library-module):
-// code that each program with a window compiled into its own file. The
-// [interface package](term:interface-package) keeps, in the program, what a
-// program calls many times for each frame: the elements, the layout, the
-// input. The [drawing module](term:drawing-module) takes what a program
+// code that each process with a window compiled into its own file. The
+// [interface package](term:interface-package) keeps, in the process, what a
+// process calls many times for each frame: the elements, the layout, the
+// input. The [drawing module](term:drawing-module) takes what a process
 // calls a few times for each frame: `damage_of_draw_table_15` one time, then
 // `execute_draw_table_in_rectangles_15` one time for all the damage
 // rectangles of the frame.
@@ -22,15 +22,15 @@
 // in place.
 //
 // **What it keeps.** It allocates nothing, and it keeps no address of the
-// caller after a call. Its own data is a cache, one copy for each program
-// that imports it: the text settings of the program (the choice of the
+// caller after a call. Its own data is a cache, one copy for each process
+// that imports it: the text settings of the process (the choice of the
 // font, the glyph caches, the font outlines and the demand cache that the
-// starter of the program mapped, validated at the first draw), its private
+// starter of the process mapped, validated at the first draw), its private
 // glyph cache, and the tables of the blend of a text. It reads the choice
-// of the settings again at each draw, so a program sends it nothing when a
+// of the settings again at each draw, so a process sends it nothing when a
 // setting changes. A character past the glyph caches is drawn from the
 // demand cache or into the private glyph cache of this copy, which the
-// budget of the program pays (src/md/features/glyphs_on_demand.md).
+// budget of the process pays (src/md/features/glyphs_on_demand.md).
 //
 // **Pictures.** A [picture record](term:picture-record) names its pixels by
 // values: the place of its first pixel in a picture memory, and its
@@ -113,11 +113,11 @@ ARGUMENT_CANVAS :: 5
 @(private)
 ARGUMENT_RECTANGLES :: 6
 
-// The text of the program that runs this copy of the module: what the
+// The text of the process that runs this copy of the module: what the
 // module loads one time, at the first draw. It is data of the module, and
-// the loader gives each program its own copy.
+// the loader gives each process its own copy.
 //
-// The rule of the callers: one thread of a program at a time calls
+// The rule of the callers: one thread of a process at a time calls
 // execute_draw_table_in_rectangles_15. It is the rule of the text state of
 // the graphics package, which changes "between two frames" (src/library/support/graphics,
 // text.odin), and each window of the system has one loop that draws. The
@@ -125,39 +125,39 @@ ARGUMENT_RECTANGLES :: 6
 // below, the choice of the settings that each draw applies, the square
 // root table and the blend tables are all written with no guard.
 //
-// What a second thread gets when a program breaks the rule: the two
+// What a second thread gets when a process breaks the rule: the two
 // threads can both load (they write the same values), and one can draw
 // while the other writes the choice of the font or a blend table. That
 // draw can show a text in the wrong font or with wrong colors, and when
 // the choice of the settings changes at that moment it can read a glyph
 // cache record that is half of one cache and half of the other, and
-// fault. All of it is inside the program that broke the rule: the module
+// fault. All of it is inside the process that broke the rule: the module
 // runs in its address space, with its own copy of this data.
 // damage_of_draw_table_15 reads no text state: any thread can call it.
 @(private)
-Program_Text :: struct {
+Process_Text :: struct {
 	loaded:               bool, // The text settings and the interface font were looked for.
 	interface_font:       display.Interface_Font, // The two glyph caches of the interface font, validated.
 	interface_font_given: bool, // The starter mapped both, and both are of a proportional font.
 }
 
 @(private)
-program_text: Program_Text
+process_text: Process_Text
 
 // A context with no bit set: what a host test reads, as it has no context
-// of a program. No fixed range is mapped in it, so nothing is loaded.
+// of a process. No fixed range is mapped in it, so nothing is loaded.
 @(private)
 no_context: system.Context
 
-// program_text_load loads the text settings and the interface font of the
-// program, one time, then gives the choice of the settings page to the
+// process_text_load loads the text settings and the interface font of the
+// process, one time, then gives the choice of the settings page to the
 // text code of this module: a change of a setting reaches the next draw
-// with no message from the program. It writes no line on the log: the
-// program validated the same caches when it opened its window, and wrote
-// the lines. One thread of a program at a time runs it (Program_Text).
+// with no message from the process. It writes no line on the log: the
+// process validated the same caches when it opened its window, and wrote
+// the lines. One thread of a process at a time runs it (Process_Text).
 @(private)
-program_text_load :: proc "contextless" () {
-	if !program_text.loaded {
+process_text_load :: proc "contextless" () {
+	if !process_text.loaded {
 		context_record := &no_context
 		when ODIN_OS == .Freestanding {
 			context_record = system.context_record()
@@ -174,10 +174,10 @@ program_text_load :: proc "contextless" () {
 			}
 		}
 		if given {
-			program_text.interface_font = {regular = caches[0], bold = caches[1]}
-			program_text.interface_font_given = true
+			process_text.interface_font = {regular = caches[0], bold = caches[1]}
+			process_text.interface_font_given = true
 		}
-		program_text.loaded = true
+		process_text.loaded = true
 	}
 	display.text_settings_apply()
 }
@@ -196,7 +196,7 @@ program_text_load :: proc "contextless" () {
 // (volatile_load); a draw record is a plain read, which the compiler can
 // make again after a check. A direct call is not a border of trust: the
 // module runs in the address space of its caller, with the rights of that
-// program and its own copy of the data of the module, so a caller that
+// process and its own copy of the data of the module, so a caller that
 // cheats reaches only its own memory. In an isolated call the receiver
 // gives the export its own copy of the arguments.
 @(private)
@@ -236,7 +236,7 @@ damage_of_draw_table_15 :: proc "c" (before: ^system.Table_To_Read(draw_record.D
 	return i64(damage.count)
 }
 
-// execute_draw_table_in_rectangles_15 draws the records of a draw table into the pixels of a canvas, in each rectangle of `rectangles`, in their order, each cut to its rectangle: the pixels are those of one draw for each rectangle, also where two rectangles overlap. With `fill_background` of the canvas not 0, each rectangle is painted with the color `background` before its records. A table of no rectangle draws nothing. The pixels are memory of the caller, written in place: no copy in a direct call. The text is drawn in the font that the settings of the program choose, from the glyph caches of the program; a character past them is drawn from the fallback chain of its font, from the demand cache or into the private glyph cache of the program, when the starter of the program mapped the font outlines, or as the replacement glyph. Each color of a record is 0xAARRGGBB with straight alpha, and blends over the pixels by one rule in linear light; an opaque color writes its pixels. The alpha of a text scales the cover of each pixel of its ink. A Rectangle with no pattern and a Gradient can have a box inside the pixels: the part of an edge pixel inside the box scales its alpha. A Gradient mixes its two colors at the level of the center of each pixel on the line of its two points, in steps of 1/255. A Picture record of picture memory 0 takes its pixels from `picture_memory`, from its first pixel, a line each stride pixels: the format Opaque copies each pixel, and the format Straight_Alpha blends each pixel, 0xAARRGGBB, by the rule of the colors. A Text_Grid record draws its cells from `now_text`, from its first byte, a row each `columns` cells. A record that the border of the draw record refuses (a word that names no kind, a reserved byte that is not 0, a box that is inverted, past the coordinate limit or not on whole pixels in a kind that draws on whole pixels, a color of alpha 0 that is not 0, two ends of a gradient of alpha 0 that are not both 0, two points of a gradient that are equal or too far apart, a line whose color is not opaque, a format of a picture that names no member, a field past its bound) draws nothing, and a refused Clip keeps the cut. A text record that names bytes past its text table, a Picture record of another picture memory or with a pixel past `picture_memory`, and a Text_Grid record with no column, with bytes that are not a whole count of rows, past its text table or at an address that is not a multiple of 4, draw nothing. The result is 0. It fails with -1 and an error record, and draws nothing: Bad_Value of `canvas` for a width or a height below 1 or a stride below the width, Too_Small of `pixels` for bytes that do not hold `stride` times `height` pixels, Bad_Address of `pixels` or of `picture_memory` for an address that is not a multiple of 4, Too_Long of `rectangles` for more than 8 rectangles, Too_Long for a table over 2^40 records or bytes.
+// execute_draw_table_in_rectangles_15 draws the records of a draw table into the pixels of a canvas, in each rectangle of `rectangles`, in their order, each cut to its rectangle: the pixels are those of one draw for each rectangle, also where two rectangles overlap. With `fill_background` of the canvas not 0, each rectangle is painted with the color `background` before its records. A table of no rectangle draws nothing. The pixels are memory of the caller, written in place: no copy in a direct call. The text is drawn in the font that the settings of the process choose, from the glyph caches of the process; a character past them is drawn from the fallback chain of its font, from the demand cache or into the private glyph cache of the process, when the starter of the process mapped the font outlines, or as the replacement glyph. Each color of a record is 0xAARRGGBB with straight alpha, and blends over the pixels by one rule in linear light; an opaque color writes its pixels. The alpha of a text scales the cover of each pixel of its ink. A Rectangle with no pattern and a Gradient can have a box inside the pixels: the part of an edge pixel inside the box scales its alpha. A Gradient mixes its two colors at the level of the center of each pixel on the line of its two points, in steps of 1/255. A Picture record of picture memory 0 takes its pixels from `picture_memory`, from its first pixel, a line each stride pixels: the format Opaque copies each pixel, and the format Straight_Alpha blends each pixel, 0xAARRGGBB, by the rule of the colors. A Text_Grid record draws its cells from `now_text`, from its first byte, a row each `columns` cells. A record that the border of the draw record refuses (a word that names no kind, a reserved byte that is not 0, a box that is inverted, past the coordinate limit or not on whole pixels in a kind that draws on whole pixels, a color of alpha 0 that is not 0, two ends of a gradient of alpha 0 that are not both 0, two points of a gradient that are equal or too far apart, a line whose color is not opaque, a format of a picture that names no member, a field past its bound) draws nothing, and a refused Clip keeps the cut. A text record that names bytes past its text table, a Picture record of another picture memory or with a pixel past `picture_memory`, and a Text_Grid record with no column, with bytes that are not a whole count of rows, past its text table or at an address that is not a multiple of 4, draw nothing. The result is 0. It fails with -1 and an error record, and draws nothing: Bad_Value of `canvas` for a width or a height below 1 or a stride below the width, Too_Small of `pixels` for bytes that do not hold `stride` times `height` pixels, Bad_Address of `pixels` or of `picture_memory` for an address that is not a multiple of 4, Too_Long of `rectangles` for more than 8 rectangles, Too_Long for a table over 2^40 records or bytes.
 @(export, link_name = "execute_draw_table_in_rectangles_15")
 execute_draw_table_in_rectangles_15 :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Canvas_Shape, rectangles: ^system.Table_To_Read(Damage_Rectangle), error: ^errors.Error_Record) -> i64 {
 	// One copy of the shape, of each count and of the rectangles: the
@@ -285,12 +285,12 @@ execute_draw_table_in_rectangles_15 :: proc "c" (now: ^system.Table_To_Read(draw
 	// record, so one place holds the rule.
 	picture_memories := [1][]graphics.Color{([^]graphics.Color)(picture_address)[:picture_bytes / size_of(graphics.Color)]}
 	table.picture_memories = picture_memories[:]
-	program_text_load()
+	process_text_load()
 	// One frame of the order of use of the private glyph cache, and one
 	// generation of the demand cache, for each glyph of this draw.
 	display.text_frame_begin()
-	if program_text.interface_font_given {
-		table.interface_font = &program_text.interface_font
+	if process_text.interface_font_given {
+		table.interface_font = &process_text.interface_font
 	}
 	target := graphics.Canvas{pixels = ([^]graphics.Color)(pixel_address), width = int(canvas_shape.width), height = int(canvas_shape.height), stride = int(canvas_shape.stride)}
 	surface := interface.Rectangle{0, 0, target.width, target.height}

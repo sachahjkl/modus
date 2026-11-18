@@ -2,7 +2,7 @@
 // the pages of the terms of the glossary, of the headings of the guides and
 // of the declarations of the sources that no module describes, which the
 // documentation of the modules of the boot image links, in one resource
-// that the modus tool writes and the program `manual` reads in place. All
+// that the modus tool writes and the process `manual` reads in place. All
 // numbers are little-endian.
 //
 //   Header      32 bytes, at 0

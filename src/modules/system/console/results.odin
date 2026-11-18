@@ -36,7 +36,7 @@ FAILURE_OPERATION_SIZE :: 96
 // The failure of the line that runs: its sentence, the error record when a
 // call gave one, with the names that the record refers to by number, the
 // error details of the call, and the lines that say more (the stop report
-// of a program, the errors of a load).
+// of a process, the errors of a load).
 Line_Failure :: struct {
 	sentence:        [FAILURE_SENTENCE_SIZE]u8,
 	sentence_count:  int,

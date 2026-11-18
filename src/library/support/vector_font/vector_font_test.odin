@@ -317,7 +317,7 @@ segments_at_the_edges_stay_in_their_rows :: proc(t: ^testing.T) {
 // reads the whole. A size over the span, or under the header, is refused
 // after a read of the header only. A size larger than the mapping under a
 // span that holds it cannot be tested on the host: the read faults, as it
-// does in a program whose starter states a range that it did not map.
+// does in a process whose starter states a range that it did not map.
 @(test)
 a_cache_at_an_address_states_its_size :: proc(t: ^testing.T) {
 	bytes := #load("../../../../resources/fonts/jetbrains_mono.ttf")

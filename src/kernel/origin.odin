@@ -8,22 +8,22 @@ import op "modus:contract/operation"
 // with no pointer tree, so the tree is one table of links below
 // (docs/PROPERTIES.md, "Data-oriented kernel internals").
 //
-// A holding is a handle or a mapping of a program. The origin of a holding
+// A holding is a handle or a mapping of a process. The origin of a holding
 // is the handle that it came from:
 //   a handle that Handle_Give made: the handle that was given;
 //   a mapping that Memory_Map made: the memory handle that was mapped.
 // A holding that the kernel made, or the handle of a new object, has no
 // origin. When a handle closes, what came from it now comes from its own
-// origin: a program that closes a handle does not hide what it passed on.
+// origin: a process that closes a handle does not hide what it passed on.
 // Handle_Revoke ends each holding that came from a handle.
 //
-// The tree is one flat table of links. Holding number = program slot * 256
+// The tree is one flat table of links. Holding number = process slot * 256
 // + n. n < 128: handle slot n. n >= 128: mapping slot n - 128. 0: none.
 // Each change is a constant number of writes: a holding is in the list of
 // the holdings of its origin, with a link in each direction.
-HOLDINGS_PER_PROGRAM :: 256
+HOLDINGS_PER_PROCESS :: 256
 #assert(HANDLE_CAPACITY == 128 && MAPPING_CAPACITY == 128)
-#assert(PROGRAM_CAPACITY * HOLDINGS_PER_PROGRAM <= 65536)
+#assert(PROCESS_CAPACITY * HOLDINGS_PER_PROCESS <= 65536)
 
 Holding :: u16
 
@@ -36,20 +36,20 @@ Origin_Link :: struct {
 
 // The origin lock protects `origins`, `origin_changes` and `revoking`. The
 // link of a holding changes under the origin lock; a path that ends a
-// holding also holds the program lock of the holder.
+// holding also holds the process lock of the holder.
 origin_lock: Lock
-origins: [PROGRAM_CAPACITY * HOLDINGS_PER_PROGRAM]Origin_Link
+origins: [PROCESS_CAPACITY * HOLDINGS_PER_PROCESS]Origin_Link
 origin_changes: u64 // Detaches since boot: a revocation sees that another processor changed the tree.
 revoking: bool // A revocation lists and ends holdings: a path with no control lock adds none.
-revoke_lost: u64 // Bit n: Handle_Revoke ended a holding of program n. Control lock.
-#assert(PROGRAM_CAPACITY <= 64)
+revoke_lost: u64 // Bit n: Handle_Revoke ended a holding of process n. Control lock.
+#assert(PROCESS_CAPACITY <= 64)
 
-holding_of_handle :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) -> Holding {
-	return Holding(intrinsics.ptr_sub(program, &programs[0])) << 8 | Holding(intrinsics.ptr_sub(slot, &program.handles[0]))
+holding_of_handle :: proc "contextless" (process: ^Process, slot: ^Handle_Slot) -> Holding {
+	return Holding(intrinsics.ptr_sub(process, &processes[0])) << 8 | Holding(intrinsics.ptr_sub(slot, &process.handles[0]))
 }
 
-holding_of_mapping :: proc "contextless" (program: ^Program, mapping: ^Mapping) -> Holding {
-	return Holding(intrinsics.ptr_sub(program, &programs[0])) << 8 | Holding(HANDLE_CAPACITY + intrinsics.ptr_sub(mapping, &program.mappings[0]))
+holding_of_mapping :: proc "contextless" (process: ^Process, mapping: ^Mapping) -> Holding {
+	return Holding(intrinsics.ptr_sub(process, &processes[0])) << 8 | Holding(HANDLE_CAPACITY + intrinsics.ptr_sub(mapping, &process.mappings[0]))
 }
 
 // origin_attach says that a holding came from a handle. The holding is in
@@ -75,8 +75,8 @@ origin_attach :: proc "contextless" (holding: Holding, origin: Holding) -> bool 
 }
 
 // origin_detach takes a holding that ends out of the tree. What came from
-// it now comes from its origin. The caller holds the program lock of the
-// holder: then a link that is zero stays zero (only that program adds a
+// it now comes from its origin. The caller holds the process lock of the
+// holder: then a link that is zero stays zero (only that process adds a
 // holding below this one, and a holding with no origin gets none), and the
 // origin lock is not needed.
 origin_detach :: proc "contextless" (holding: Holding) {
@@ -143,7 +143,7 @@ origin_count :: proc "contextless" (top: Holding) -> (count: u64) {
 	return count
 }
 
-// A mapping in the program that revokes stays: a program does not remove
+// A mapping in the process that revokes stays: a process does not remove
 // its own memory when it takes back what it gave.
 @(private = "file")
 stays :: proc "contextless" (holding: Holding, caller: u32) -> bool {
@@ -163,9 +163,9 @@ End :: enum {
 @(private = "file")
 holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
 	index := u32(holding >> 8)
-	program := &programs[index]
-	taken := program_lock(index)
-	defer program_unlock(index, taken)
+	process := &processes[index]
+	taken := process_lock(index)
+	defer process_unlock(index, taken)
 	lock_take(&origin_lock, .Origin)
 	same := origin_changes == changes
 	lock_free(&origin_lock, .Origin)
@@ -174,20 +174,20 @@ holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
 	}
 	n := holding & 0xFF
 	if n < HANDLE_CAPACITY {
-		slot := &program.handles[n]
+		slot := &process.handles[n]
 		if slot.kind == .None {
 			return .Gone
 		}
-		handle_close(program, slot)
+		handle_close(process, slot)
 		slot.ended = u8(errors.End.Revoked)
 	} else {
-		mapping := &program.mappings[n - HANDLE_CAPACITY]
+		mapping := &process.mappings[n - HANDLE_CAPACITY]
 		if mapping.page_count == 0 {
 			return .Gone
 		}
 		// Before the unmap: the unmap can end the memory object and free its
 		// frames. A thread that waits on a word of it wakes; it runs again
-		// after the unmap, under this program lock.
+		// after the unmap, under this process lock.
 		// A thread that registered its words and does not wait yet counts
 		// too: its wait_end must not wait on a frame that leaves. One sorted
 		// search over the frames of the object, not one walk of the object
@@ -195,8 +195,8 @@ holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
 		// the object, and then each of its frames leaves.
 		region := &regions[mapping.region]
 		whole := [1]op.Page_Range{{first = 0, page_count = region.page_count}}
-		waiters_on_frames_wake(program, region, whole[:])
-		unmap(program, mapping)
+		waiters_on_frames_wake(process, region, whole[:])
+		unmap(process, mapping)
 	}
 	revoke_lost |= 1 << index
 	return .Ended
@@ -204,7 +204,7 @@ holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
 
 // revoke_under ends a holding and each holding that came from it, the last
 // ones first. `changes` is origin_changes when the caller chose `top`: if
-// another processor changed the tree since (a program closed a holding, and
+// another processor changed the tree since (a process closed a holding, and
 // its slot can hold a new handle now), nothing more ends here, and the
 // caller looks again from its own handle (restart). It does not loop for
 // ever: during the revocation no holding is added to the tree, so each
@@ -244,9 +244,9 @@ revoke_under :: proc "contextless" (top: Holding, caller: u32, changes: u64) -> 
 	}
 }
 
-// revoke ends each holding that came from a handle: in one program
-// (only != 0), or in each program. A holding that ends takes with it what
-// came from it, in any program. The handle stays. The caller holds the
+// revoke ends each holding that came from a handle: in one process
+// (only != 0), or in each process. A holding that ends takes with it what
+// came from it, in any process. The handle stays. The caller holds the
 // control lock.
 revoke :: proc "contextless" (top: Holding, caller: u32, only: u32) -> (count: u64) {
 	revoke_lost = 0
@@ -272,10 +272,10 @@ revoke :: proc "contextless" (top: Holding, caller: u32, only: u32) -> (count: u
 	lock_take(&origin_lock, .Origin)
 	revoking = false
 	lock_free(&origin_lock, .Origin)
-	// Each program that lost a holding gets an event.
-	for index in 1 ..< u32(PROGRAM_CAPACITY) {
+	// Each process that lost a holding gets an event.
+	for index in 1 ..< u32(PROCESS_CAPACITY) {
 		if revoke_lost & (1 << index) != 0 && index != caller {
-			program_event(index)
+			process_event(index)
 		}
 	}
 	return count

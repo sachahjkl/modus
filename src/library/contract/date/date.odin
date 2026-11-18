@@ -1,19 +1,19 @@
 // The date (docs/ARCHITECTURE.md, "The date"): one page that the root
-// service creates. The program `date` is its one writer: it reads the
-// real-time clock of the machine through two ports (a driver is a program,
+// service creates. The process `date` is its one writer: it reads the
+// real-time clock of the machine through two ports (a driver is a process,
 // not a part of the kernel) and writes the date of the time 0 of the
-// system. Each program that the root service starts by its name, and the
+// system. Each process that the root service starts by its name, and the
 // compositor, map the page with the right Read only, at PAGE_ADDRESS; the
 // bit of the range Date_Page in the context value
 // op.CONTEXT_VALUE_FIXED_RANGES_MAPPED says that it is mapped (clear: the
-// program has no page). A
-// terminal has no page: it shows the text of another program, and needs no
-// date. A program that another program starts has none either.
+// process has no page). A
+// terminal has no page: it shows the text of another process, and needs no
+// date. A process that another process starts has none either.
 //
 // The date of now is milliseconds_at_time_zero + the milliseconds of the
 // time page (system.time()): no kernel entry. The date is in UTC. The page
 // also holds the time zone of the principal, a fixed offset from UTC: the
-// program `date` copies it from the setting `time_zone` of the settings
+// process `date` copies it from the setting `time_zone` of the settings
 // page (src/md/features/time_zone.md), and the local time is the date and
 // that offset. Leap seconds are not counted: a day has 86400 seconds, as in
 // the time of POSIX.
@@ -36,9 +36,9 @@ import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 
-PAGE_ADDRESS :: fixed_addresses.DATE_PAGE_ADDRESS // Where a program maps the date page.
-GRANT_PAGE :: 6 // The handle of the context of the program `date`: the page, with Read and Write.
-GRANT_PORTS :: 7 // The handle of the context of the program `date`: the ports 0x70 and 0x71 of the real-time clock.
+PAGE_ADDRESS :: fixed_addresses.DATE_PAGE_ADDRESS // Where a process maps the date page.
+GRANT_PAGE :: 6 // The handle of the context of the process `date`: the page, with Read and Write.
+GRANT_PORTS :: 7 // The handle of the context of the process `date`: the ports 0x70 and 0x71 of the real-time clock.
 
 // Where the date of the page comes from.
 Source :: enum u32 {
@@ -46,7 +46,7 @@ Source :: enum u32 {
 	Real_Time_Clock = 1, // The real-time clock of the machine (CMOS), read at the start.
 }
 
-// The date page: what the program `date` writes and each program reads.
+// The date page: what the process `date` writes and each process reads.
 Page :: struct {
 	change_count:              u32, // Even when the page is stable. Each change adds 2.
 	source:                    Source, // Where the date comes from. None: no date is known.
@@ -70,7 +70,7 @@ zone_offset_seconds_read :: proc "contextless" (page: ^Page) -> i64 {
 	return clamp(zone, -ZONE_OFFSET_SECONDS_LIMIT, ZONE_OFFSET_SECONDS_LIMIT)
 }
 
-// page_of gives the date page of a program, or nil.
+// page_of gives the date page of a process, or nil.
 page_of :: proc "contextless" (ctx: ^op.Context) -> ^Page {
 	return .Date_Page in fixed_addresses.ranges_mapped(&ctx.values) ? (^Page)(uintptr(PAGE_ADDRESS)) : nil
 }
@@ -81,12 +81,12 @@ DATE_MILLISECONDS_LIMIT :: i64(253402300800) * 1000
 
 // READ_TRIES is the most reads of a page that changes, or that a writer left
 // in the middle of a change (a writer stopped between its two stores): the
-// reader then gives no date, and never waits on another program.
+// reader then gives no date, and never waits on another process.
 READ_TRIES :: 64
 
 // milliseconds_now gives the milliseconds since 1970 (UTC) at the time
 // `system_milliseconds` of the system (system.time()). known is false when
-// the program has no page, when the page has no date, when the date is not
+// the process has no page, when the page has no date, when the date is not
 // from 1970 to 9999, and when the page changed at each of READ_TRIES reads.
 milliseconds_now :: proc "contextless" (page: ^Page, system_milliseconds: u64) -> (milliseconds: i64, known: bool) {
 	if page == nil {
@@ -119,7 +119,7 @@ milliseconds_now :: proc "contextless" (page: ^Page, system_milliseconds: u64) -
 }
 
 // zone_write sets the time zone, in one change of the page. The one writer
-// is the program `date`; it wakes the waiters of change_count after (this
+// is the process `date`; it wakes the waiters of change_count after (this
 // package has no kernel call).
 zone_write :: proc "contextless" (page: ^Page, zone_offset_seconds: i64) {
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
@@ -127,7 +127,7 @@ zone_write :: proc "contextless" (page: ^Page, zone_offset_seconds: i64) {
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
 }
 
-// write sets the date of the time 0. The one writer is the program `date`.
+// write sets the date of the time 0. The one writer is the process `date`.
 write :: proc "contextless" (page: ^Page, source: Source, milliseconds_at_time_zero: i64) {
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
 	intrinsics.atomic_store_explicit((^u32)(&page.source), u32(source), .Release)

@@ -2,11 +2,11 @@
 // (docs/ARCHITECTURE.md, U4). It has the ports of the controller and its two
 // interrupts, and nothing else. It sends input records to the compositor.
 //
-// **What it is for.** It shows that a driver is a program, not a part of
-// the kernel. This program is a [device service](term:device-service): the
+// **What it is for.** It shows that a driver is a process, not a part of
+// the kernel. This process is a [device service](term:device-service): the
 // root service gives it the five I/O ports of the PS/2 controller (0x60 to 0x64) and its two interrupts (1, the keyboard; 12,
 // the mouse). The kernel turns each interrupt into an event of the
-// program; it never reads a key itself.
+// process; it never reads a key itself.
 //
 // **What a reader sees.** No window: the line `input: ok, the mouse has a
 // wheel` (or `no wheel`, for a mouse with no wheel) on the log, once the
@@ -42,8 +42,8 @@
 // **How it starts.** The root service starts it at each boot, before the
 // compositor, with a context of its own: handle 0 is the input ring, which
 // it shares with the compositor; handles 1 to 3 are the ports and the two
-// interrupts. Its row of `program_roles` has the grant System_Part only:
-// no connection, and no service, so it cannot reach another program. The
+// interrupts. Its row of `process_roles` has the grant System_Part only:
+// no connection, and no service, so it cannot reach another process. The
 // root service names these slots INPUT_GRANT_ too.
 //
 // **What it does not prove.** It works with the PS/2 controller that QEMU
@@ -62,7 +62,7 @@ import "modus:support/system"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module and its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 181, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 181, processes = 1, threads = 1}
 
 // The context of this service.
 GRANT_RING :: 0
@@ -131,7 +131,7 @@ keyboard_bytes_dropped_at_start: u64
 // ring, in order, before any newer record.
 pointer_backlog: key_path.Pointer_Backlog
 // The records that this service lost. The back pressure of entry keeps
-// both at 0: a number above 0 is a fault of this program.
+// both at 0: a number above 0 is a fault of this process.
 key_records_refused: u64
 pointer_records_refused: u64
 
@@ -255,7 +255,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	held_before := false // The turn before left a byte in the controller.
 	for {
-		// An interrupt of this program is an event.
+		// An interrupt of this process is an event.
 		wait := system.wait_begin()
 		held := false
 		for {
@@ -403,7 +403,7 @@ mouse_byte :: proc "contextless" (value: u8) {
 	}
 	if !key_path.pointer_backlog_add(&pointer_backlog, moved) {
 		// The loop of entry reads a byte of the mouse only while an entry
-		// is free: this is a fault of this program, and it is in the log.
+		// is free: this is a fault of this process, and it is in the log.
 		pointer_records_refused += 1
 		system.log("input: no entry for a change of a button of the pointer: ", pointer_records_refused, " pointer records are lost")
 	}

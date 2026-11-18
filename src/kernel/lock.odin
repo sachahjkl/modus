@@ -50,7 +50,7 @@ lock_take :: proc "contextless" (lock: ^Lock, kind: op.Lock_Kind) {
 		// take: event_record takes no lock, so it can run with this one held.
 		started: u64
 		if event_observed(cpu, OBSERVED_LOCK_WAIT) {
-			if program, _ := event_current(cpu); event_wanted(cpu, OBSERVED_LOCK_WAIT, .Lock_Wait, program) {
+			if process, _ := event_current(cpu); event_wanted(cpu, OBSERVED_LOCK_WAIT, .Lock_Wait, process) {
 				started = cycles_now()
 			}
 		}
@@ -67,8 +67,8 @@ lock_take :: proc "contextless" (lock: ^Lock, kind: op.Lock_Kind) {
 			intrinsics.cpu_relax()
 		}
 		if started != 0 {
-			program, thread_number := event_current(cpu)
-			event_record(cpu, .Lock_Wait, program, thread_number, u64(kind), cycles_now() - started, 0)
+			process, thread_number := event_current(cpu)
+			event_record(cpu, .Lock_Wait, process, thread_number, u64(kind), cycles_now() - started, 0)
 		}
 	}
 	cpu.held[kind] += 1
@@ -90,7 +90,7 @@ lock_held :: proc "contextless" (kind: op.Lock_Kind) -> bool {
 }
 
 // Two locks of one kind at one time: the order of ARCHITECTURE.md permits it
-// for program locks under the control lock, and for run locks in the order
+// for process locks under the control lock, and for run locks in the order
 // of the processors (see queue_move).
 @(private = "file")
 lock_order_check :: proc "contextless" (cpu: ^Processor, kind: op.Lock_Kind) {
@@ -99,7 +99,7 @@ lock_order_check :: proc "contextless" (cpu: ^Processor, kind: op.Lock_Kind) {
 			lock_order_broken(kind, other)
 		}
 	}
-	if cpu.held[kind] != 0 && kind != .Run && !(kind == .Program && cpu.held[.Control] != 0) {
+	if cpu.held[kind] != 0 && kind != .Run && !(kind == .Process && cpu.held[.Control] != 0) {
 		lock_order_broken(kind, kind)
 	}
 }
@@ -123,11 +123,11 @@ lock_counts_sum :: proc "contextless" () -> (sum: [op.LOCK_KIND_CAPACITY]op.Lock
 }
 
 // The control lock (docs/ARCHITECTURE.md, "Locks of the kernel"). A close
-// under it can end the last handle to a program: the stop of that program
+// under it can end the last handle to a process: the stop of that process
 // waits in `stops_pending` until control_free, so that a stop never runs
-// inside the program locks of the path that closed the handle.
+// inside the process locks of the path that closed the handle.
 control_lock: Lock
-stops_pending: u64 // Bit n: program n has no handle. Control lock.
+stops_pending: u64 // Bit n: process n has no handle. Control lock.
 
 control_take :: proc "contextless" () {
 	lock_take(&control_lock, .Control)
@@ -137,38 +137,38 @@ control_free :: proc "contextless" () {
 	for stops_pending != 0 {
 		index := u32(intrinsics.count_trailing_zeros(stops_pending))
 		stops_pending &~= 1 << index
-		program := &programs[index]
-		if intrinsics.atomic_load(&program.references) != 0 {
+		process := &processes[index]
+		if intrinsics.atomic_load(&process.references) != 0 {
 			continue
 		}
-		if program.state == .Stopped {
-			program_free(program) // Only after the cleanup; else the cleanup frees it.
-		} else if program.state != .None {
-			program_stop(index, op.STOP_CODE_NO_HANDLE)
+		if process.state == .Stopped {
+			process_free(process) // Only after the cleanup; else the cleanup frees it.
+		} else if process.state != .None {
+			process_stop(index, op.STOP_CODE_NO_HANDLE)
 		}
 	}
 	lock_free(&control_lock, .Control)
 }
 
-// The lock of each program. It is out of the program record: a new program
+// The lock of each process. It is out of the process record: a new process
 // in a slot does not reset it.
-program_locks: [PROGRAM_CAPACITY]Lock
+process_locks: [PROCESS_CAPACITY]Lock
 
-// program_lock takes the lock of a program, unless this processor holds it
-// already. true: this call took it; give it to program_unlock.
-program_lock :: proc "contextless" (index: u32) -> bool {
+// process_lock takes the lock of a process, unless this processor holds it
+// already. true: this call took it; give it to process_unlock.
+process_lock :: proc "contextless" (index: u32) -> bool {
 	cpu := processor_self()
-	if cpu.programs_held & (1 << index) != 0 {
+	if cpu.processes_held & (1 << index) != 0 {
 		return false
 	}
-	lock_take(&program_locks[index], .Program)
-	cpu.programs_held |= 1 << index
+	lock_take(&process_locks[index], .Process)
+	cpu.processes_held |= 1 << index
 	return true
 }
 
-program_unlock :: proc "contextless" (index: u32, taken: bool) {
+process_unlock :: proc "contextless" (index: u32, taken: bool) {
 	if taken {
-		processor_self().programs_held &~= 1 << index
-		lock_free(&program_locks[index], .Program)
+		processor_self().processes_held &~= 1 << index
+		lock_free(&process_locks[index], .Process)
 	}
 }

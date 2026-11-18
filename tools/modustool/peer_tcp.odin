@@ -10,7 +10,7 @@ import "modus:contract/datagram"
 import "modus:support/tcp"
 import "modus:support/web"
 
-// The peer as a TCP client of the program `server` (docs/NETWORK.md, "With
+// The peer as a TCP client of the process `server` (docs/NETWORK.md, "With
 // the controlled peer"). The tool asks for one case at a time (step Peer);
 // the thread of the peer runs it with src/library/support/tcp, the library of the
 // system, so the cases test the library against itself; the machine with

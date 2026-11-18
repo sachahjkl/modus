@@ -7,7 +7,7 @@ import "modus:contract/frame"
 import "modus:contract/remote"
 import "modus:contract/settings"
 import "modus:contract/tpm_service"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import "modus:support/principals"
 import "modus:support/system"
 
@@ -28,22 +28,22 @@ import "modus:support/system"
 #assert(tpm_service.GRANT_SERVICE == system.GRANT_TPM_SERVICE)
 #assert(tpm_service.GRANT_REGION == system.GRANT_TPM_REGION)
 #assert(remote.GRANT_CLIENT_TABLE == system.GRANT_CLIENT_TABLE)
-#assert(disk_program.SERVICE_VALUE_PRINCIPAL == system.GRANT_VALUE_SERVICE_PRINCIPAL)
+#assert(disk_process.SERVICE_VALUE_PRINCIPAL == system.GRANT_VALUE_SERVICE_PRINCIPAL)
 #assert(principals.VALUE_MODE == system.GRANT_VALUE_UNLOCK_MODE)
 #assert(principals.VALUE_NAME == system.GRANT_VALUE_UNLOCK_NAME)
 #assert(principals.VALUE_SEAL_ALLOWED == system.GRANT_VALUE_SEAL_ALLOWED)
 
 // grant_slot_refused writes the line of a start that a taken slot stopped:
-// two roles of the program have one slot, and the program does not start
+// two roles of the process have one slot, and the process does not start
 // with one of the two handles lost. A slot is an int that the starter
 // named, which can be negative: the line writes its word.
 grant_slot_refused :: proc "contextless" (name: string, slot: int) {
-	system.log_in("programs", .Error, "root: cannot start ", system.Module_Name{name}, ": two grants of its role take the handle ", u64(slot), " of its context, and a handle would be lost")
+	system.log_in("processes", .Error, "root: cannot start ", system.Module_Name{name}, ": two grants of its role take the handle ", u64(slot), " of its context, and a handle would be lost")
 }
 
-// context_refused says if a write into the context of a program was
+// context_refused says if a write into the context of a process was
 // refused, and writes its line: each starter of this service reads it once,
-// before the start, so no program starts with a handle or a value lost.
+// before the start, so no process starts with a handle or a value lost.
 context_refused :: proc "contextless" (name: string, grants: ^system.Context_Grants, values: ^system.Context_Values) -> bool {
 	part, place, refused := system.context_refusal_of(grants, values)
 	if !refused {
@@ -53,7 +53,7 @@ context_refused :: proc "contextless" (name: string, grants: ^system.Context_Gra
 	case .Handle:
 		grant_slot_refused(name, place)
 	case .Value:
-		system.log_in("programs", .Error, "root: cannot start ", system.Module_Name{name}, ": two parts of its start write the value ", u64(place), " of its context, and a value would be lost")
+		system.log_in("processes", .Error, "root: cannot start ", system.Module_Name{name}, ": two parts of its start write the value ", u64(place), " of its context, and a value would be lost")
 	}
 	return true
 }

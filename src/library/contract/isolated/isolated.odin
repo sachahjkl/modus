@@ -1,12 +1,12 @@
-// The isolated call: a program calls an export of a module that runs in
-// another program. A command is a function, and its arguments are typed
+// The isolated call: a process calls an export of a module that runs in
+// another process. A command is a function, and its arguments are typed
 // records, never text (docs/MODULE_CONTRACT.md, sections 4 and 5).
 //
-// The caller starts a call host: a program that loads one module and serves
+// The caller starts a call host: a process that loads one module and serves
 // its exports. The call host receives two memory objects:
 //
 //   the call ring     a ring (package ring). One command record is one call.
-//   the call region   memory that the two programs share. The caller writes
+//   the call region   memory that the two processes share. The caller writes
 //                     the argument record and the bytes of its slices in it.
 //
 // The command record:
@@ -25,7 +25,7 @@
 //   Integer   8 bytes: the value.
 //   Text      16 bytes: a Slice. In a direct call the argument holds the
 //             address of a slice record. An address has no meaning in another
-//             program, so the field holds the slice record itself, and the
+//             process, so the field holds the slice record itself, and the
 //             slice holds an offset in the call region.
 //   Record    8 bytes: the offset of the bytes of the record in the call
 //             region. The description gives the size. The receiver copies
@@ -124,12 +124,12 @@ REGION_PAGES :: 16
 // A service that serves its own exports receives calls in the same form. It
 // has one connection for each caller: one call ring and one call region.
 // The root service names each connection on the service ring of the
-// program, as a command record:
+// process, as a command record:
 //   kind        a Service_Command
 //   values[0]   the handle of the call ring, in the service
 //   values[1]   the handle of the call region, in the service
 //   values[2..5] Connect: the name of the caller, as the root service names
-//               it: 32 bytes, zero bytes after the name. A program that the
+//               it: 32 bytes, zero bytes after the name. A process that the
 //               root service starts again has the same name.
 //   values[6]   Connect and Grant: what the root service grants to the
 //               caller in this service. The caller cannot change it.
@@ -143,7 +143,7 @@ REGION_PAGES :: 16
 //               Bit 47 (CALLER_READS_ONLY): the connection reads only; the
 //               service refuses each call that changes what it keeps. The
 //               root service sets it on the connection through which the
-//               debugger service reads the debug object of a disk program.
+//               debugger service reads the debug object of a disk process.
 //               Bits 48 to 62 (CALLER_PRINCIPAL_MASK): the number of the
 //               principal whose session the caller belongs to
 //               (docs/PRINCIPALS.md): 0 is the machine, 1 and more a named
@@ -208,13 +208,13 @@ Status :: enum u32 {
 	Load_Failed   = 4,
 }
 
-// In the call region, `start` is an offset. In a program, it is an address.
+// In the call region, `start` is an offset. In a process, it is an address.
 //
 // It is the form of a Text argument in the argument record, and of the
 // buffer of a Text or Table result. A receiver checks that `start + count`
 // is inside the call region before it reads a byte (`decode`). 16 bytes.
 Slice :: struct {
-	start: u64, // An offset in the call region, or an address in a program.
+	start: u64, // An offset in the call region, or an address in a process.
 	count: u64, // Bytes; for the buffer of a Table result, records.
 }
 #assert(size_of(Slice) == 16)
@@ -528,7 +528,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	// The receiver writes the counts of Append places back into the
 	// argument record: no table of the call region overlaps it.
 	region_range_add(&ranges, {offset, offset + size, true, 0}, refusal) or_return
-	// One copy: the other program can change the call region at any time.
+	// One copy: the other process can change the call region at any time.
 	record: [ARGUMENT_RECORD_LIMIT]u8
 	intrinsics.mem_copy_non_overlapping(&record, raw_data(region[offset:]), int(size))
 	field := u64(0)

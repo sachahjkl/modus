@@ -18,7 +18,7 @@
 //
 // **Who uses it.** The root service starts it at boot when the machine has
 // an entropy device at the place `pci.ENTROPY_DEVICE`, and is its one
-// client. No other program can name the device or the ring.
+// client. No other process can name the device or the ring.
 //
 // **The commands of the entropy ring** (`src/library/contract/entropy_service`):
 // `Read`, with a count of 1 to 48 bytes. Its completion carries the bytes
@@ -48,11 +48,11 @@ import "modus:support/virtio"
 // first Memory_Physical (src/md/infrastructure/iommu.md, "Device
 // addresses"), as for the block service: the same amount as the block
 // service.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 179, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 179, processes = 1, threads = 1}
 
 // The memory of the queue (pci.QUEUE_PAGES): pages 0 to 2 the virtqueue,
 // page 3 the buffer that the device writes. The device reaches no other
-// memory of this program.
+// memory of this process.
 PAGE_BUFFER :: virtio.QUEUE_PAGES
 
 device: virtio.Device

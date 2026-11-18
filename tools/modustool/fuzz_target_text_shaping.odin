@@ -14,7 +14,7 @@ import "modus:support/text_shaping"
 // read, and each place stays in the text.
 //
 // The fallback face is None: a fallback face reads the font files that a
-// program opened, a state outside the input, and the module has none.
+// process opened, a state outside the input, and the module has none.
 
 // The head of an input: the counts of the parts that follow it, in this
 // order: the advances (CHARACTER_COUNT of them), the pairs, the text, the

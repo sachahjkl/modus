@@ -30,7 +30,7 @@ the_rules_keep_their_contrast_in_each_appearance :: proc(t: ^testing.T) {
 			{"the firmware", tokens.firmware},
 			{"the boot program", tokens.boot_program},
 			{"the kernel", tokens.kernel},
-			{"a program", tokens.program},
+			{"a process", tokens.process},
 			{"memory", tokens.memory},
 			{"the machine", tokens.machine},
 			{"a module with no entry", tokens.no_entry},
@@ -57,10 +57,10 @@ the_rules_keep_their_contrast_in_each_appearance :: proc(t: ^testing.T) {
 		}
 		// White on the fills of the blue and of the red.
 		expect_contrast(t, of, "white on the chosen row", COLOR_WHITE, tokens.chosen, TEXT_CONTRAST_LEAST)
-		expect_contrast(t, of, "white on the close button", COLOR_WHITE, tokens.stop_program, TEXT_CONTRAST_LEAST)
+		expect_contrast(t, of, "white on the close button", COLOR_WHITE, tokens.stop_process, TEXT_CONTRAST_LEAST)
 		// The x of the close button of a window that is not in front is a
 		// graphic on its quiet red.
-		expect_contrast(t, of, "the x of a quiet close button", tokens.stop_program_quiet_mark, tokens.stop_program_quiet, GRAPHIC_CONTRAST_LEAST)
+		expect_contrast(t, of, "the x of a quiet close button", tokens.stop_process_quiet_mark, tokens.stop_process_quiet, GRAPHIC_CONTRAST_LEAST)
 		// A chosen character of a grid is the chosen blue on white.
 		expect_contrast(t, of, "the chosen blue on white", tokens.chosen, COLOR_WHITE, TEXT_CONTRAST_LEAST)
 		// Each class of code on a card: the console and the terminal.
@@ -85,7 +85,7 @@ the_ink_is_the_dark_background_and_the_light_text :: proc(t: ^testing.T) {
 }
 
 // appearance_use changes the tokens that each draw reads, and the dark
-// appearance is the one of a program that has no settings page.
+// appearance is the one of a process that has no settings page.
 @(test)
 appearance_use_changes_the_tokens :: proc(t: ^testing.T) {
 	testing.expect_value(t, appearance, Appearance.Dark)
@@ -109,19 +109,19 @@ the_two_appearances_differ_where_they_must :: proc(t: ^testing.T) {
 	testing.expect(t, dark.dim != light.dim)
 	testing.expect_value(t, light.title, dark.title)
 	testing.expect_value(t, light.chosen, dark.chosen)
-	testing.expect_value(t, light.stop_program, dark.stop_program)
+	testing.expect_value(t, light.stop_process, dark.stop_process)
 	// The light value of a concept is its accent at the shade of its value
 	// kind on the light page of the site.
 	testing.expect_value(t, light.firmware, shade(DARK_FIRMWARE, 83))
 	testing.expect_value(t, light.boot_program, shade(DARK_BOOT_PROGRAM, 65))
 	testing.expect_value(t, light.kernel, shade(DARK_KERNEL, 73))
-	testing.expect_value(t, light.program, shade(DARK_PROGRAM, 58))
+	testing.expect_value(t, light.process, shade(DARK_PROCESS, 58))
 	testing.expect_value(t, light.memory, shade(DARK_MEMORY, 65))
 	testing.expect_value(t, light.machine, shade(DARK_MACHINE, 78))
 	testing.expect_value(t, light.no_entry, shade(DARK_NO_ENTRY, 55))
 	testing.expect_value(t, light.resource, shade(DARK_RESOURCE, 60))
 	testing.expect_value(t, light.failed, shade(DARK_FAILED, 78))
-	// The tokens that the programs share: the same rule, the shade that
+	// The tokens that the processes share: the same rule, the shade that
 	// keeps 4.5 to 1 on the light surfaces.
 	testing.expect_value(t, light.warning, shade(DARK_WARNING, 57))
 	testing.expect_value(t, light.link, shade(DARK_LINK, 55))

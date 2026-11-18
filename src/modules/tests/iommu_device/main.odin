@@ -2,7 +2,7 @@
 // block device of the disk of the measures that gives its device an
 // address that it did not declare. The root service starts it in place of
 // the block service for the one client `iommu` (src/modules/tests/iommu); no
-// other program can start it. The design is
+// other process can start it. The design is
 // src/md/infrastructure/iommu.md, "The proof".
 //
 // **What it shows.** On a machine with the IOMMU, a device reaches only the
@@ -44,7 +44,7 @@
 // **What a reader sees.** No window: the lines `iommu_device: ...` on the
 // log, each one with "as it must" when the rule held. On a machine with no
 // IOMMU the device writes the page, and the line says so. The writes go to
-// the disk of the measures, which holds no data of a program.
+// the disk of the measures, which holds no data of a process.
 package iommu_device_service
 
 import "modus:contract/block"
@@ -54,7 +54,7 @@ import "modus:support/system"
 import "modus:support/virtio"
 
 // The budget of a block service: it drives one disk through one ring.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, processes = 1, threads = 1}
 
 // The kind of a request of this test to its disk: the request types of a
 // virtio block device (virtio 1.2, section 5.2.6), written in the header

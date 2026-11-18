@@ -1,10 +1,10 @@
 // The module file service: it stores a module file that a web server
 // gives in the store `module_files` of its principal, and lists the files of
-// that store with the hash of their bytes. A developer then adds a program
+// that store with the hash of their bytes. A developer then adds a process
 // to a machine that runs, with no disk from the tool
-// (docs/MODULE_CONTRACT.md, "A program from a disk").
+// (docs/MODULE_CONTRACT.md, "A process from a disk").
 //
-// **What it is for.** The root service starts a disk program from the
+// **What it is for.** The root service starts a disk process from the
 // store `module_files` when the hash of its bytes is the hash that the
 // principal names. This service puts a file in that store from the
 // network, and gives the hash to type. It starts nothing: the root service
@@ -30,14 +30,14 @@
 // - **Serve**: the two exports for the console.
 //
 // The root service also gives the number of its principal in its context
-// (disk_program.SERVICE_VALUE_PRINCIPAL): a caller of another principal
+// (disk_process.SERVICE_VALUE_PRINCIPAL): a caller of another principal
 // is refused.
 //
 // **What a reader sees.** No window. The log has "module_files: serves the
 // store module_files of principal 0, ...", one line for each file that it
 // stores, and one line for each row of a list.
 //
-// The design: (src/md/features/programs_from_a_disk.md, "How the file
+// The design: (src/md/features/processes_from_a_disk.md, "How the file
 // reaches the disk").
 package module_files
 
@@ -46,7 +46,7 @@ import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import "modus:support/network"
 import "modus:support/random"
 import "modus:support/storage"
@@ -56,7 +56,7 @@ import "modus:support/web"
 
 // The memory of one file of 4 MiB (1024 pages), the buffers of the 4
 // connections (96 pages), and its tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1184, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1184, processes = 1, threads = 1}
 
 // The connections at one time: one for the call that runs, and the ones
 // that wait in TIME-WAIT after earlier calls.
@@ -73,9 +73,9 @@ RECEIVE_PLACES :: 96
 SEND_TAG :: 1000 // Tags from 1000: a Send of place tag - 1000.
 CALL_TAG :: 100_000 // Info.
 
-// The file of one call: the limit of a module file of a disk program, so
+// The file of one call: the limit of a module file of a disk process, so
 // that the root service can load each file that this service stores.
-FILE_PAGES :: disk_program.FILE_BYTES_LIMIT / system.PAGE_SIZE
+FILE_PAGES :: disk_process.FILE_BYTES_LIMIT / system.PAGE_SIZE
 
 // The bytes of the path of a request.
 PATH_LIMIT :: 200
@@ -124,7 +124,7 @@ store_client: storage.Client
 store_principal: u64 // The principal of the store: the only principal whose callers this service serves.
 file: []u8 // FILE_PAGES pages of its own memory: the bytes of the call that runs.
 service: system.Service
-program_generator: random.Generator // The random generator of this program, from the seed of its starter.
+process_generator: random.Generator // The random generator of this process, from the seed of its starter.
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log("module_files: ", text)
@@ -231,7 +231,7 @@ caller_allowed :: proc "contextless" () -> bool {
 }
 
 // connection_end ends the connection of a call: a close when the data
-// went both ways, else a reset. The loop of the program runs its timers
+// went both ways, else a reset. The loop of the process runs its timers
 // after the call.
 connection_end :: proc "contextless" (index: int) {
 	switch connections[index].state {
@@ -244,7 +244,7 @@ connection_end :: proc "contextless" (index: int) {
 }
 
 // remote_ended says if no more byte can come on a connection: the remote
-// closed or reset it, and the program read each byte that came.
+// closed or reset it, and the process read each byte that came.
 remote_ended :: proc "contextless" (index: int) -> bool {
 	connection := &connections[index]
 	return (connection.state == .Closed || connection.closed_by_remote) && connection.receive_ready == 0
@@ -318,7 +318,7 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 	if head.status != 200 {
 		return 0, network_failure(error, ERROR_ANSWER, .Refused, .None, path, "the status of the answer is not 200", i64(head.status))
 	}
-	if head.content_length < 1 || head.content_length > disk_program.FILE_BYTES_LIMIT {
+	if head.content_length < 1 || head.content_length > disk_process.FILE_BYTES_LIMIT {
 		return 0, network_failure(error, ERROR_ANSWER, .Too_Long, .Bytes, path, "the answer has no Content-Length of 1 to 4194304 bytes", i64(head.content_length))
 	}
 	// The length is read one time, here: no later byte changes it.
@@ -395,19 +395,19 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	// The call region stays writable by the caller during the call: copy
 	// each text one time, then check and use the copy only.
 	nickname_text := nickname^
-	name_copy: [disk_program.NAME_LIMIT]u8
+	name_copy: [disk_process.NAME_LIMIT]u8
 	name_length := copy(name_copy[:], nickname_text)
-	if len(nickname_text) > disk_program.NAME_LIMIT {
-		return errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(len(nickname_text)), disk_program.NAME_LIMIT)
+	if len(nickname_text) > disk_process.NAME_LIMIT {
+		return errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(len(nickname_text)), disk_process.NAME_LIMIT)
 	}
 	name := string(name_copy[:name_length])
-	problem, offset := disk_program.name_problem(name)
+	problem, offset := disk_process.name_problem(name)
 	switch problem {
 	case .None:
 	case .Empty:
-		return errors.fail(error, ERROR_NAME, .Empty, .Bytes, 1, 0, disk_program.NAME_LIMIT)
+		return errors.fail(error, ERROR_NAME, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT)
 	case .Too_Long:
-		return errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(name_length), disk_program.NAME_LIMIT)
+		return errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(name_length), disk_process.NAME_LIMIT)
 	case .Bad_Byte:
 		return errors.fail(error, ERROR_NAME, .Bad_Byte, .Bytes, 1, i64(offset), 0, i64(name_copy[offset]))
 	case .Store_Name, .Table_Name:
@@ -435,7 +435,7 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	if store_client.ring_memory == 0 || !storage.connected(&store_client) {
 		return errors.fail(error, ERROR_STORE, .Refused, .Store)
 	}
-	deadline := system.time() + disk_program.LOAD_DEADLINE_MILLISECONDS
+	deadline := system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS
 	size, failed := fetch(request_path, deadline, error)
 	if failed != 0 {
 		return failed
@@ -457,18 +457,18 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	if _, status := storage.commit(&store_client, storage.ROOT, name, &store_error); status != .Ok {
 		return store_failure(error, &store_error, status, "the file ", system.Module_Name{name})
 	}
-	digits: [disk_program.HASH_DIGITS]u8
-	disk_program.hash_write(&digits, hash)
+	digits: [disk_process.HASH_DIGITS]u8
+	disk_process.hash_write(&digits, hash)
 	system.log("module_files: stored ", system.Module_Name{name}, " from ", request_path, ": ", u64(size), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
 	copy(result^, digits[:])
-	return disk_program.HASH_DIGITS
+	return disk_process.HASH_DIGITS
 }
 
 // bytes_hash reads the bytes of an object of the store into `file`, and
 // gives the BLAKE3 hash of those bytes. The hash of the entry is not read:
 // it differs from the hash of the bytes when the object has a hole.
-bytes_hash :: proc "contextless" (name: string, size: int) -> (hash: [disk_program.HASH_SIZE]u8, ok: bool) {
-	if size <= 0 || size > disk_program.FILE_BYTES_LIMIT {
+bytes_hash :: proc "contextless" (name: string, size: int) -> (hash: [disk_process.HASH_SIZE]u8, ok: bool) {
+	if size <= 0 || size > disk_process.FILE_BYTES_LIMIT {
 		return {}, false
 	}
 	received := 0
@@ -537,13 +537,13 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 			after_length = copy(after[:], entry_name)
 			// The disk grant table and the debug object of a module file
 			// are objects of the store, and no module file.
-			if entry_kind != .Object || entry_name == disk_program.TABLE_OBJECT_NAME || disk_program.debug_object_name_is(entry_name) {
+			if entry_kind != .Object || entry_name == disk_process.TABLE_OBJECT_NAME || disk_process.debug_object_name_is(entry_name) {
 				continue
 			}
-			digits: [disk_program.HASH_DIGITS]u8
-			hash, hashed := bytes_hash(entry_name, int(min(item.size, i64(disk_program.FILE_BYTES_LIMIT) + 1)))
+			digits: [disk_process.HASH_DIGITS]u8
+			hash, hashed := bytes_hash(entry_name, int(min(item.size, i64(disk_process.FILE_BYTES_LIMIT) + 1)))
 			if hashed {
-				disk_program.hash_write(&digits, hash)
+				disk_process.hash_write(&digits, hash)
 				system.log("module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
 			} else {
 				system.log("module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, has no hash: its bytes did not come, or pass the 4194304 bytes of a module file")
@@ -575,10 +575,10 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 // 4. writes "module_files: serves the store module_files of principal N: ...".
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if !random.generator_from_context(&program_generator, ctx) {
+	if !random.generator_from_context(&process_generator, ctx) {
 		fail("no random seed in the context")
 	}
-	store_principal = ctx.values[disk_program.SERVICE_VALUE_PRINCIPAL]
+	store_principal = ctx.values[disk_process.SERVICE_VALUE_PRINCIPAL]
 	opened: bool
 	if service, opened = system.service_open(ctx); !opened {
 		fail("no service ring")
@@ -594,10 +594,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if file_map_status != .Ok {
 		fail("no memory for the bytes of a file")
 	}
-	file = ([^]u8)(file_address)[:disk_program.FILE_BYTES_LIMIT]
+	file = ([^]u8)(file_address)[:disk_process.FILE_BYTES_LIMIT]
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
-		fail("no endpoint: the program has no grant of the network")
+		fail("no endpoint: the process has no grant of the network")
 	}
 	region_address, region_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
 	if region_status != .Ok {
@@ -622,7 +622,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the grant is not a client grant of TCP")
 	}
 	remote_address, remote_port = grant.address, grant.port
-	// The buffers of the connections: memory of this program, which gives
+	// The buffers of the connections: memory of this process, which gives
 	// the library all the memory that it uses.
 	buffer_memory, buffer_status := system.memory_create(BUFFER_PAGES)
 	if buffer_status != .Ok {
@@ -633,9 +633,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no memory for the buffers of the connections")
 	}
 	// The secret of the initial sequence numbers (RFC 6528): 32 bytes of
-	// the generator of this program (docs/RANDOMNESS.md).
+	// the generator of this process (docs/RANDOMNESS.md).
 	secret: [32]u8
-	random.fill(&program_generator, secret[:])
+	random.fill(&process_generator, secret[:])
 	if table_error := tcp.table_init(&table, connections[:], ([^]u8)(buffers)[:BUFFER_PAGES * system.PAGE_SIZE], SEND_SIZE, RECEIVE_SIZE, u32(info.values[0]), secret); table_error.kind != 0 {
 		fail("the connection table refused its memory")
 	}

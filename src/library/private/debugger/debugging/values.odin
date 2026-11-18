@@ -10,7 +10,7 @@ RECORD_FIELDS_SHOWN :: 8 // The fields of a record in the text of one value.
 STRING_BYTES_SHOWN :: 64 // The bytes of a string that a second read of memory takes.
 ENUMERATION_VALUES_SEARCHED :: 4096 // The named values of one enumeration that a search reads.
 
-// Names an address of the debugged program: the procedure or the global
+// Names an address of the debugged process: the procedure or the global
 // that holds it. `write` adds nothing when it knows no name.
 Address_Namer :: struct {
 	write: proc "contextless" (state: rawptr, writer: ^sentence.Writer, address: u64),
@@ -18,7 +18,7 @@ Address_Namer :: struct {
 }
 
 // What the text of a value needs: the debug object of the types, the
-// memory of the program, and the names of its addresses.
+// memory of the process, and the names of its addresses.
 Value_Context :: struct {
 	object: []u8, // The debug object of the module of the type, after its check.
 	reader: Memory_Reader,
@@ -175,7 +175,7 @@ slice_words :: proc "contextless" (ctx: ^Value_Context, located: Located) -> (ad
 // - a slice as its count and its address;
 // - each other type as its size.
 //
-// A value whose bytes the program does not map is "not readable".
+// A value whose bytes the process does not map is "not readable".
 value_write :: proc "contextless" (writer: ^sentence.Writer, ctx: ^Value_Context, located: Located, depth := 0) {
 	type, found := debug_object.type_by_index(ctx.object, located.type)
 	if !found {
@@ -391,7 +391,7 @@ Resolve_Problem :: enum {
 	Index_Past_End = 4, // An index that is not below the count of the elements.
 	Not_A_Pointer  = 5, // A `^` after a value that is not a pointer, or after a pointer with no type.
 	Nil_Pointer    = 6, // A step through a pointer of 0.
-	Not_Readable   = 7, // The program does not map the bytes that a step reads.
+	Not_Readable   = 7, // The process does not map the bytes that a step reads.
 }
 
 // pointer_target gives the value that a pointer value points to.

@@ -67,7 +67,7 @@ Cryptography_Adjustment :: struct {
 // the correction, these lines go.
 //
 // The adjustments of argon2id/argon2id.odin take its allocator away: the
-// caller supplies the blocks, because the code of a program or of a module
+// caller supplies the blocks, because the code of a process or of a module
 // has no allocator. A supply that is smaller than the parameters ask, or
 // not aligned on 8 bytes, is the result Out_Of_Memory before any work. The
 // helpers of core:mem come from the compatibility layer.

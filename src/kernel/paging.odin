@@ -6,7 +6,7 @@ import "base:intrinsics"
 import op "modus:contract/operation"
 
 // Paging as a tool of the kernel on itself: the kernel protects its own
-// pages as it protects the pages of a program, so that a fault of the
+// pages as it protects the pages of a process, so that a fault of the
 // kernel cannot write its code or execute its data.
 //
 // The kernel half of the addresses has three parts:
@@ -15,7 +15,7 @@ import op "modus:contract/operation"
 //   the kernel module: each segment with its own protection;
 //   the kernel stacks: each one between two guard pages with no memory.
 // No page is both writable and executable. The kernel reads its own tables
-// to prove it (mappings_report), at boot and for a program that asks.
+// to prove it (mappings_report), at boot and for a process that asks.
 
 PAGE_LARGE :: u64(1) << 7
 // The bits of the error code of a page fault.
@@ -27,13 +27,13 @@ LARGE_PAGE_SIZE :: 2 << 20
 DIRECT_MAP_INDEX :: (u64(info.DIRECT_MAP_BASE) >> 39) & 511
 
 foreign _ {
-	// 1: the processors refuse the memory of programs to the kernel (SMAP).
+	// 1: the processors refuse the memory of processes to the kernel (SMAP).
 	// interrupt_common reads it too. user_copy is in instructions.odin.
 	user_access_guard: u8
 	stack_switch :: proc "c" (top: u64, entry: rawptr) -> ! ---
 }
 
-kernel_no_execute: bool // The processors refuse to execute the memory of programs in the kernel.
+kernel_no_execute: bool // The processors refuse to execute the memory of processes in the kernel.
 
 // kernel_entry gives the entry of the last level table for an address of
 // the kernel half. With create, it makes the tables that are missing: only
@@ -94,7 +94,7 @@ paging_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		}
 	}
 
-	// The table of the stacks exists before the first program: each
+	// The table of the stacks exists before the first process: each
 	// address space copies the top entries of the kernel half.
 	if kernel_entry(op.KERNEL_STACK_BASE) == nil {
 		log("kernel: no memory for the page tables of the kernel")
@@ -189,9 +189,9 @@ fault_reason :: proc "contextless" (frame: ^Frame, address: u64) -> string {
 	case frame.error & FAULT_PRESENT == 0:
 		return "the address has no page"
 	case address < USER_END && frame.error & FAULT_EXECUTE != 0:
-		return "the kernel executed memory of a program"
+		return "the kernel executed memory of a process"
 	case address < USER_END:
-		return "the kernel used memory of a program outside a copy"
+		return "the kernel used memory of a process outside a copy"
 	case frame.error & FAULT_EXECUTE != 0:
 		return "execute of a page that is not code"
 	case frame.error & FAULT_WRITE != 0:
@@ -246,7 +246,7 @@ mappings_report :: proc "contextless" (report: ^op.Mapping_Report, table: u64, f
 				flags -= {.Execute}
 			}
 			if entry & PAGE_USER == 0 {
-				flags -= {.Program}
+				flags -= {.Process}
 			}
 			switch {
 			case level == 0:
@@ -261,7 +261,7 @@ mappings_report :: proc "contextless" (report: ^op.Mapping_Report, table: u64, f
 	report^ = {}
 	// One call of walk for each level: the measure of the kernel stack
 	// counts that many frames of it.
-	walk(report, table, info.PAGE_TABLE_LEVELS - 1, 0, first, last, {.Write, .Execute, .Program})
+	walk(report, table, info.PAGE_TABLE_LEVELS - 1, 0, first, last, {.Write, .Execute, .Process})
 	report.kernel_guard = u64(user_access_guard)
 	report.kernel_no_execute = u64(kernel_no_execute)
 	if first < 256 {
@@ -287,7 +287,7 @@ audit: op.Mapping_Report
 paging_audit :: proc "contextless" () {
 	mappings_report(&audit, kernel_table, 256, 512)
 	log_in("paging", .Info, "kernel: paging: ", Size{audit.pages, .Pages}, " in ", audit.run_count, " runs, ", Size{audit.execute_pages, .Pages}, " of code, ", Size{audit.write_execute_pages, .Pages}, " write and execute, ", audit.guard_pages, " guard pages of ", audit.guards_expected)
-	log_in("paging", .Info, "kernel: paging: the kernel ", kernel_no_execute ? "cannot" : "can", " execute memory of programs, and ", user_access_guard != 0 ? "cannot" : "can", " use it outside a copy")
+	log_in("paging", .Info, "kernel: paging: the kernel ", kernel_no_execute ? "cannot" : "can", " execute memory of processes, and ", user_access_guard != 0 ? "cannot" : "can", " use it outside a copy")
 	if audit.write_execute_pages != 0 || audit.guard_pages != audit.guards_expected {
 		log("kernel: the page tables of the kernel do not keep their rules")
 		machine_stop(.Start_Failed)
@@ -320,13 +320,13 @@ self_test :: proc "contextless" (test: info.Self_Test, boot: ^info.Boot_Info) {
 	case .Execute_Data:
 		log("kernel: self test: execute the data of the kernel")
 		(cast(proc "c" ())rawptr(&test_code))()
-	case .Read_Program:
-		log("kernel: self test: read the memory of a program outside a copy")
-		control_register_3_write(programs[1].table)
-		_ = intrinsics.volatile_load((^u8)(uintptr(op.PROGRAM_BASE)))
-	case .Execute_Program:
-		log("kernel: self test: execute the code of a program")
-		control_register_3_write(programs[1].table)
+	case .Read_Process:
+		log("kernel: self test: read the memory of a process outside a copy")
+		control_register_3_write(processes[1].table)
+		_ = intrinsics.volatile_load((^u8)(uintptr(op.PROCESS_BASE)))
+	case .Execute_Process:
+		log("kernel: self test: execute the code of a process")
+		control_register_3_write(processes[1].table)
 		(cast(proc "c" ())rawptr(uintptr(threads[1].frame.rip)))()
 	case .Register_Refused:
 		// On a refusal it stops the machine with the code 0.

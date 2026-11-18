@@ -11,9 +11,9 @@ package modustool
 // runs in the session: its store is another store, new, and its note stays
 // there. The console connects to the storage service acting for principal
 // 0, not for principal 1: it was started outside the session. The lock
-// stops the programs of the session; a wrong passphrase opens nothing; the
+// stops the processes of the session; a wrong passphrase opens nothing; the
 // right one starts the session again, and `notes` finds the note of alice.
-// A revocation still ends a grant of a program of the session.
+// A revocation still ends a grant of a process of the session.
 //
 // The second one starts on the same disk: `unlock` finds the file, the
 // passphrase starts the session, and the note of alice is there again.
@@ -54,7 +54,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = "root: principal 1 \"alice\" is recorded, its public key ", any_order = true},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is created: its keys are sealed in the store of unlock under a key of Argon2id, 19456 KiB and 2 passes, derived in ", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it"},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it"},
 	{kind = .Wait, text = "root: unlock stopped with code 0"},
 	// notes from the menu: in the session, with a store of its own.
 	{kind = .Launch, text = "notes"},
@@ -92,9 +92,9 @@ scenario_principals_first := [?]Step {
 	// line of the store of alice there would end the wait as a failure.
 	{kind = .Type, text = "principals()"},
 	{kind = .Wait, text = "[console]      1  alice    unlocked  ", fails_on = "[console] notes.principal.1: "},
-	// The lock: the programs of the session stop, and unlock asks again.
+	// The lock: the processes of the session stop, and unlock asks again.
 	{kind = .Type, text = "lock()"},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: 1 programs stopped"},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: 1 processes stopped"},
 	{kind = .Wait, text = "root: notes stopped with code ", any_order = true},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is locked: its passphrase opens its session", any_order = true},
 	{kind = .Wait, text = "[console] 1", any_order = true},
@@ -112,11 +112,11 @@ scenario_principals_first := [?]Step {
 	{kind = .Shot, text = "principals_unlock"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" opens its seal; the root service receives the key of its disk grant table only, and the secret keys are erased"},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it"},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it"},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: restored the note \"of alice\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
-	// A revocation ends a grant of a program of the session.
+	// A revocation ends a grant of a process of the session.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "revoke(\"notes\", \"store\")"},
 	{kind = .Wait, text = "root: revoked the grant store of notes, connections changed: 1"},
@@ -135,14 +135,14 @@ scenario_principals_second := [?]Step {
 	{kind = .Wait, text = "compositor: surface unlock"},
 	{kind = .Front, text = "unlock"},
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it"},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it"},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "root: started notes, in the session of principal 1 \"alice\""},
 	{kind = .Wait, text = "notes: restored the note \"of alice\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "lock()"},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: 1 programs stopped"},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: 1 processes stopped"},
 	// The lock starts unlock again, and its window takes the front: the
 	// console comes back to the front after that window, so the last line
 	// goes to the console and not to unlock as a passphrase.

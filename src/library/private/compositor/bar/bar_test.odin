@@ -43,11 +43,11 @@ entries_round_trip :: proc(t: ^testing.T, layout: Layout, name: string) {
 	windows_left, windows_top, windows_width, windows_height := windows_button(layout)
 	testing.expectf(t, windows_left == x + width + WINDOWS_GAP, "%s: the button windows follows the button start", name)
 	testing.expectf(t, button_at(layout, windows_left + windows_width, windows_top) == .None && button_at(layout, windows_left, windows_top + windows_height) == .None, "%s: past the button windows", name)
-	for program, index in names {
-		center_x, center_y, found := center(layout, program)
-		testing.expectf(t, found && line_at(layout, center_x, center_y) == index, "%s: the middle of the line of %s", name, program)
+	for process, index in names {
+		center_x, center_y, found := center(layout, process)
+		testing.expectf(t, found && line_at(layout, center_x, center_y) == index, "%s: the middle of the line of %s", name, process)
 		line_x, line_y, line_width, line_height := line(layout, index)
-		testing.expectf(t, line_at(layout, line_x, line_y) == index && line_at(layout, line_x + line_width - 1, line_y + line_height - 1) == index, "%s: the corners of the line of %s", name, program)
+		testing.expectf(t, line_at(layout, line_x, line_y) == index && line_at(layout, line_x + line_width - 1, line_y + line_height - 1) == index, "%s: the corners of the line of %s", name, process)
 	}
 	menu_x, menu_y, menu_width, menu_height := menu(layout)
 	testing.expectf(t, line_at(layout, menu_x + menu_width + 1, menu_y + TITLE + 4) == -1 && line_at(layout, menu_x + 4, menu_y + 4) == -1, "%s: past the menu and in its title", name)
@@ -88,9 +88,9 @@ places_follow_the_measured_widths :: proc(t: ^testing.T) {
 	cells := layout_of(nil)
 	testing.expect(t, layout.label_width > 0 && layout.windows_label_width > 0)
 	testing.expect(t, layout != cells, "B612 measures the names of the bar in its own widths")
-	for program, index in names {
+	for process, index in names {
 		_, _, line_width, _ := line(layout, index)
-		testing.expectf(t, text_width_in(&cache, program) + 2 * PADDING <= line_width, "%s fits its line", program)
+		testing.expectf(t, text_width_in(&cache, process) + 2 * PADDING <= line_width, "%s fits its line", process)
 	}
 	_, _, button_width, _ := button(layout)
 	testing.expect_value(t, button_width, text_width_in(&cache, LABEL) + 2 * PADDING)

@@ -1,6 +1,6 @@
 // The formats of the principals (docs/PRINCIPALS.md): the name of a store
 // of a principal, the name of a principal, the passphrase, and the file in
-// which the program `unlock` keeps the record of a named principal, with its
+// which the process `unlock` keeps the record of a named principal, with its
 // secret keys sealed under a key that Argon2id derives from the passphrase.
 //
 // No allocator and no kernel operation: the host tests run each procedure
@@ -13,7 +13,7 @@
 //   passphrase, with a sentence for each refusal.
 // - `name_pack`, `name_unpack`: a name in three values of a ring record.
 // - `store_name_write`, `store_name_principal`: the name of the store of a
-//   program in the session of a principal.
+//   process in the session of a principal.
 // - `Principal_File`, `file_encode`, `file_decode`,
 //   `file_additional_data`: the file of `unlock`.
 // - `Machine_File`, `machine_file_encode`, `machine_file_decode`,
@@ -58,7 +58,7 @@ NAME_LIMIT :: 23
 PASSPHRASE_LEAST :: 8 // The fewest bytes of a passphrase.
 PASSPHRASE_LIMIT :: 128 // The most bytes of a passphrase.
 
-// The context values of the program `unlock`. 0 to 4 are the roles that the
+// The context values of the process `unlock`. 0 to 4 are the roles that the
 // root service gives (the store: 3).
 VALUE_MODE :: 5 // What this start of `unlock` does: the word of an Unlock_Mode.
 VALUE_NAME :: 6 // 6, 7 and 8: the name, 24 bytes with zero bytes after it.
@@ -385,18 +385,18 @@ name_unpack :: proc "contextless" (values: [3]u64) -> (name: [NAME_LIMIT]u8, len
 }
 
 // store_name_write writes the name of the store that the root service gives
-// to the connection of a program to the storage service: the name of the
-// program for principal 0, so the stores of the system keep their names;
-// "<program>.principal.<number>" for a named principal, so two principals
-// that run one program have two stores. history adds ".history" after the
-// name of the program (the store of the line history of the console). It
+// to the connection of a process to the storage service: the name of the
+// process for principal 0, so the stores of the system keep their names;
+// "<process>.principal.<number>" for a named principal, so two principals
+// that run one process have two stores. history adds ".history" after the
+// name of the process (the store of the line history of the console). It
 // gives false when the name and its zero byte do not fit in 32 bytes: the
 // root service then refuses the connection, as a cut name could be the
 // name of another store. This is the one place that builds the name: the
-// identity of the package of the program (the key of the principal that
+// identity of the package of the process (the key of the principal that
 // signs it, and its name) enters here when storage attaches data to it
 // (docs/PRINCIPALS.md, section 6).
-store_name_write :: proc "contextless" (out: ^[32]u8, program: string, principal: u64, history: bool) -> bool {
+store_name_write :: proc "contextless" (out: ^[32]u8, process: string, principal: u64, history: bool) -> bool {
 	out^ = {}
 	count := 0
 	put :: proc "contextless" (into: ^[32]u8, written: ^int, text: string) -> bool {
@@ -407,7 +407,7 @@ store_name_write :: proc "contextless" (out: ^[32]u8, program: string, principal
 		written^ += len(text)
 		return true
 	}
-	ok := put(out, &count, program)
+	ok := put(out, &count, process)
 	if ok && history {
 		ok = put(out, &count, ".history")
 	}
@@ -518,7 +518,7 @@ file_additional_data :: proc "contextless" (bytes: ^[FILE_SIZE]u8) -> []u8 {
 // passphrase"). It holds the machine key, 32 random bytes, sealed under
 // the key that Argon2id derives from the machine passphrase. The machine key
 // gives the key of the tag of the disk grant table of principal 0
-// (modus:support/disk_program, table_key_of_machine_key). With no record,
+// (modus:support/disk_process, table_key_of_machine_key). With no record,
 // the machine has no passphrase.
 MACHINE_OBJECT :: "machine"
 MACHINE_MAGIC :: "MACHINEK" // The first 8 bytes of the record.

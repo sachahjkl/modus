@@ -5,7 +5,7 @@ import "base:intrinsics"
 // A lock: one thread holds it at a time. The zero value is a free lock.
 // It is one word of memory. A thread enters the kernel only to wait for a
 // lock that another thread holds, and to wake a thread that waits.
-// A lock in shared memory works between two programs.
+// A lock in shared memory works between two processes.
 Lock :: struct {
 	state: u32, // 0: free. 1: held. 2: held, and a thread can wait.
 	waits: u32, // The times that a thread waited. For measures only.

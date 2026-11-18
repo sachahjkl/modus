@@ -1,8 +1,8 @@
 // A module of commands that imports the module calendar.
 //
-// Each export calls days_in_month of calendar through an import slot: one indirect call. The loader puts calendar in the same program, or the module that a replacement gives in its place: the file of this module does not change, so its hash does not change. The module is also a program that waits: two programs that import calendar at two places share one copy of its code.
+// Each export calls days_in_month of calendar through an import slot: one indirect call. The loader puts calendar in the same process, or the module that a replacement gives in its place: the file of this module does not change, so its hash does not change. The module is also a process that waits: two processes that import calendar at two places share one copy of its code.
 //
-// **What it is for.** It is the importer of the test of the replacement of an import. The program `imports` loads it with calendar, then with calendar_fixed in place of calendar, and compares: year_days(2000) is 365 with the fault and 366 with the correction, from the same file of agenda.
+// **What it is for.** It is the importer of the test of the replacement of an import. The process `imports` loads it with calendar, then with calendar_fixed in place of calendar, and compares: year_days(2000) is 365 with the fault and 366 with the correction, from the same file of agenda.
 //
 // **Example**, in the console:
 //
@@ -38,7 +38,7 @@ year_days :: proc "c" (year: i64) -> i64 {
 
 // month_days gives the count of days of one month of a year, from the module calendar.
 //
-// - **month**: 1 to 12. Another month makes calendar stop the program on a bounds check: after `load` that program is the caller itself.
+// - **month**: 1 to 12. Another month makes calendar stop the process on a bounds check: after `load` that process is the caller itself.
 // - **year**: any year.
 @(export, link_name = "month_days")
 month_days :: proc "c" (month, year: i64) -> i64 {
@@ -47,7 +47,7 @@ month_days :: proc "c" (month, year: i64) -> i64 {
 
 // calls calls days_in_month a count of times and gives the sum of the results: a measure of a call through an import slot.
 //
-// The months and the years change with each call (the years 2000 to 2006), so the compiler cannot keep one answer. The program `imports` times it to compare a slot that holds calendar with a slot that holds its replacement. A count of 0 or less gives 0.
+// The months and the years change with each call (the years 2000 to 2006), so the compiler cannot keep one answer. The process `imports` times it to compare a slot that holds calendar with a slot that holds its replacement. A count of 0 or less gives 0.
 @(export, link_name = "calls")
 calls :: proc "c" (count: i64) -> i64 {
 	total: i64
@@ -57,9 +57,9 @@ calls :: proc "c" (count: i64) -> i64 {
 	return total
 }
 
-// entry runs agenda as a program: it waits with no end. A program that runs agenda maps the code of calendar that another program of the same starter maps.
+// entry runs agenda as a process: it waits with no end. A process that runs agenda maps the code of calendar that another process of the same starter maps.
 //
-// The program `imports` starts two such programs from the boot image and reads their page tables: the code pages of calendar are one copy in the two. The program does nothing else and never stops by itself.
+// The process `imports` starts two such processes from the boot image and reads their page tables: the code pages of calendar are one copy in the two. The process does nothing else and never stops by itself.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {

@@ -1,12 +1,12 @@
-// The TCP library: the connections of one program, as a table of records of
+// The TCP library: the connections of one process, as a table of records of
 // fixed size, with the buffers in one block of memory that the caller gives:
 // the caller supplies all the memory.
 // The library allocates nothing and calls no kernel operation; one call,
 // step, reads a batch of segments, runs the timers and writes the segments
 // to send. docs/NETWORK.md has the rules and their sources.
 //
-// Who uses it: the HTTP server (`src/modules/demonstrations/server`), the program `fetch`
-// and the tests of TCP. The program gets its segments from a segment
+// Who uses it: the HTTP server (`src/modules/demonstrations/server`), the process `fetch`
+// and the tests of TCP. The process gets its segments from a segment
 // endpoint of the network service and gives `step` the time of its clock;
 // the library holds no time and no thread of its own. The network service
 // computes no checksum of a segment: this library writes the checksum of
@@ -15,9 +15,9 @@
 // the table counts the segments that it dropped). The parts:
 //
 // - `Table`, `table_init`: the connections and their buffers.
-// - `connect`, `write`, `read`, `close`, `abort`: what the program asks.
+// - `connect`, `write`, `read`, `close`, `abort`: what the process asks.
 // - `step`, `Incoming`, `Output`, `Event`: one turn of the library.
-// - `Connection`, `State`: one connection, which the program can read.
+// - `Connection`, `State`: one connection, which the process can read.
 // - `Header`, `header_read`, `header_write` (`segment.odin`): the segment.
 //
 // ```odin
@@ -60,11 +60,11 @@ State :: enum u8 {
 	Fin_Wait_2   = 5, // The remote acknowledged the FIN of this side; this side waits for the FIN of the remote, at most FIN_WAIT_2.
 	Closing      = 6, // Both sides sent a FIN at the same time; this side waits for the ACK of its own.
 	Time_Wait    = 7, // Both FINs are acknowledged; the record waits TIME_WAIT, so that an old segment does not reach a new connection.
-	Close_Wait   = 8, // The remote sent its FIN; the program can still write, then close.
-	Last_Ack     = 9, // The program closed after the FIN of the remote; this side waits for the ACK of its FIN.
+	Close_Wait   = 8, // The remote sent its FIN; the process can still write, then close.
+	Last_Ack     = 9, // The process closed after the FIN of the remote; this side waits for the ACK of its FIN.
 }
 
-// What a step tells the program about a connection.
+// What a step tells the process about a connection.
 Event_Kind :: enum u8 {
 	Opened      = 0, // An active open reached Established.
 	Accepted    = 1, // A passive open reached Established: a new connection of the listen port.
@@ -93,7 +93,7 @@ Range :: struct {
 	end:   u32, // The sequence number after its last byte.
 }
 
-// Connection is the record of one connection. The program reads and can
+// Connection is the record of one connection. The process reads and can
 // change each field. Times are microseconds of the clock of the caller.
 //
 // A record is free when its state is Closed and it has no event and no RST
@@ -102,7 +102,7 @@ Connection :: struct {
 	state:                 State, // Where the connection is in RFC 9293.
 	passive:               bool, // A SYN from the remote opened it.
 	closed_by_remote:      bool, // The FIN of the remote came before this side closed.
-	fin_queued:            bool, // The program closed: a FIN follows the data.
+	fin_queued:            bool, // The process closed: a FIN follows the data.
 	fin_sent:              bool, // The FIN at fin_sequence was sent at least one time.
 	fin_acknowledged:      bool, // The remote acknowledged the FIN of this side.
 	fin_waiting:           bool, // A FIN arrived after a hole, at receive_fin.
@@ -136,8 +136,8 @@ Connection :: struct {
 	initial_receive:       u32, // IRS: the sequence number of the SYN of the remote.
 	receive_next:          u32, // RCV.NXT: the next byte expected from the remote.
 	receive_edge:          u32, // receive_next + the window that the last segment gave. It never moves back.
-	receive_start:         u32, // The place of the first byte that the program did not read.
-	receive_ready:         u32, // The bytes in order that the program did not read.
+	receive_start:         u32, // The place of the first byte that the process did not read.
+	receive_ready:         u32, // The bytes in order that the process did not read.
 	receive_fin:           u32, // The sequence number of a FIN that arrived after a hole (fin_waiting).
 	unacknowledged_bytes:  u32, // The bytes in order since the last ACK.
 	acks_owed:             u32, // One ACK for each segment after a hole, also in one batch (RFC 5681 4.2).
@@ -170,7 +170,7 @@ Connection :: struct {
 	out_of_window_answers_period_start: u64, // The start of the period of ANSWER_LIMIT.
 	rtt_samples:           u32, // The round trips measured.
 
-	// What happened, for the program and for a reader of its log.
+	// What happened, for the process and for a reader of its log.
 	opened_at:             u64, // When the open started.
 	established_at:        u64, // When it reached Established. 0: never.
 	closed_at:             u64, // When it ended. 0: it runs.
@@ -189,10 +189,10 @@ Connection :: struct {
 }
 #assert(size_of(Connection) == 424)
 
-// Table is the connection table of one program.
+// Table is the connection table of one process.
 //
 // The caller gives the memory: the records and the buffers. `table_init`
-// fills it; the program then sets `listen_port` for a server, or
+// fills it; the process then sets `listen_port` for a server, or
 // `port_first` and `port_count` for a client, from its grant.
 Table :: struct {
 	connections:      []Connection, // The records.
@@ -216,7 +216,7 @@ Table :: struct {
 	refused_syns:     u64, // A SYN to the listen port when no record is free, or over remote_limit.
 	reclaimed:        u64, // Records in TIME-WAIT that a SYN took, when no record was free.
 	// The remotes of the records in TIME-WAIT that a SYN took: their record
-	// gives no Closed event, so the program reads them here after each step
+	// gives no Closed event, so the process reads them here after each step
 	// (to release them) and sets the count to 0.
 	reclaimed_remotes:      [RECLAIMED_CAPACITY]Remote,
 	reclaimed_remote_count: int,
@@ -689,7 +689,7 @@ timers :: proc "contextless" (connection: ^Connection, now: u64) {
 }
 
 // find gives the record of a connection: its remote and its two ports.
-// -1: no record. A program uses it to know if a segment had a connection.
+// -1: no record. A process uses it to know if a segment had a connection.
 find :: proc "contextless" (table: ^Table, remote_address: u32, local_port, remote_port: u16) -> int {
 	for &item, index in table.connections {
 		if item.state != .Closed && item.remote_address == remote_address && item.local_port == local_port && item.remote_port == remote_port {
@@ -705,7 +705,7 @@ find :: proc "contextless" (table: ^Table, remote_address: u32, local_port, remo
 //
 // It reads the ports at their fixed place, bytes 0 to 3, and nothing else:
 // not the checksum, not the data offset, not an option. So it also answers
-// for a segment that `step` dropped, damaged or malformed. A program that
+// for a segment that `step` dropped, damaged or malformed. A process that
 // must decide something for a segment after the step (the release of a
 // remote that no connection has) asks this, and decides only when the
 // answer is -1: a damaged segment whose ports name a live connection then
@@ -1039,7 +1039,7 @@ listen :: proc "contextless" (table: ^Table, remote_address: u32, header: Header
 	if index < 0 {
 		// No SYN cookies. A record in TIME-WAIT only waits for old segments:
 		// the SYN takes the oldest one (RFC 6191 takes a SYN in TIME-WAIT too),
-		// and its remote goes to reclaimed_remotes for the program. With
+		// and its remote goes to reclaimed_remotes for the process. With
 		// none, a RST tells the remote at once.
 		oldest := -1
 		for &item, place in table.connections {
@@ -1212,7 +1212,7 @@ synchronized :: proc "contextless" (table: ^Table, index: int, header: Header, n
 			}
 			return
 		}
-		// Also a passive open that the program never saw Accepted: the event
+		// Also a passive open that the process never saw Accepted: the event
 		// tells it to release the remote.
 		connection_end(connection, now, {.Reset})
 		return

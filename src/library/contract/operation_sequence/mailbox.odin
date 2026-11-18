@@ -1,9 +1,9 @@
 package operation_sequence
 
 // The mailbox of the machine and the results of the runner
-// (src/md/infrastructure/kernel_fuzzing.md, "The programs in the machine").
+// (src/md/infrastructure/kernel_fuzzing.md, "The processes in the machine").
 //
-// The program `operation_fuzzing` makes the mailbox: one contiguous memory
+// The process `operation_fuzzing` makes the mailbox: one contiguous memory
 // object, whose physical address it writes on the log. The tool reads and
 // writes it through the memory file of the machine. The tool writes a
 // sequence, then adds one to `sequences_written`; the service runs it, writes
@@ -21,7 +21,7 @@ import "modus:contract/operation"
 MAILBOX_MAGIC :: u64(0x4C49_414D_5245_504F) // The bytes "OPERMAIL".
 MAILBOX_FORMAT :: 1
 
-// The program that runs each sequence, and the module of the boot image
+// The process that runs each sequence, and the module of the boot image
 // that holds it.
 RUNNER_NAME :: "operation_sequence_runner"
 // The stop code of a runner that ran each step of its sequence. Any other
@@ -56,7 +56,7 @@ Execution_Outcome :: enum u64 {
 // The log records are not compared: their amount returns each second.
 Mailbox_Amounts :: struct {
 	pages:    u64,
-	programs: u64,
+	processes: u64,
 	threads:  u64,
 }
 
@@ -127,7 +127,7 @@ area_address :: proc "contextless" (area: int) -> u64 {
 }
 
 // The handles of the context of the runner. The budget and the log are at
-// their usual slots; the machine at the slot of the machine of a program.
+// their usual slots; the machine at the slot of the machine of a process.
 RUNNER_CONTEXT_MACHINE :: 2
 RUNNER_CONTEXT_AREA_FIRST :: 3
 #assert(RUNNER_CONTEXT_AREA_FIRST + AREAS_MOST <= operation.CONTEXT_LOG)

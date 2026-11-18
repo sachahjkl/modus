@@ -1,6 +1,6 @@
 // PCI: the bus of the devices of the first machine. The root service reads
 // and writes the configuration of each device through two ports; it holds
-// them, and no other program does. It gives a device service exactly one
+// them, and no other process does. It gives a device service exactly one
 // device (GRANT_ roles below): the memory of its registers, one message
 // interrupt, memory for its queues, and a copy of its configuration. A
 // device behind a conventional bridge comes with the registers of each
@@ -201,7 +201,7 @@ NETWORK_DEVICE :: 0x12 // The network device of the frame service.
 // machine with no such device still starts (src/md/features/entropy_device.md).
 ENTROPY_DEVICE :: 0x13
 // The sound device of the sound service, when the machine has one: its
-// service starts for the program with the grant Sound_Device
+// service starts for the process with the grant Sound_Device
 // (src/md/features/timed_stream.md).
 SOUND_DEVICE :: 0x14
 VENDOR_VIRTIO :: 0x1AF4 // The vendor identifier of the virtio devices.

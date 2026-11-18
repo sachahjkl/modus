@@ -1,15 +1,15 @@
-// The terminal: it shows the text that a program gives as records, and it
-// gives the keys that the input types to that program (src/library/support/terminal).
+// The terminal: it shows the text that a process gives as records, and it
+// gives the keys that the input types to that process (src/library/support/terminal).
 //
-// The terminal starts no program. The root service starts a program and its
+// The terminal starts no process. The root service starts a process and its
 // terminal, and gives the same terminal ring and text region to the two.
 // The terminal holds a surface, these two memory objects, and a handle that
-// reads the state of the program: it has nothing of the role of the program.
-// The name of the program, the size of the text and what the window shows
+// reads the state of the process: it has nothing of the role of the process.
+// The name of the process, the size of the text and what the window shows
 // are values of its context.
 //
 // Keys: Page Up and Page Down move the view. Each other key goes to the
-// program, and the view returns to the last lines.
+// process, and the view returns to the last lines.
 //
 // The pointer: the scroll bar at the right of the lines moves the view. A
 // press on an arrow button moves it by one line, and again while the
@@ -28,7 +28,7 @@
 //                tells the compositor whether a change waits for its
 //                next picture (src/md/features/terminal_due_picture.md).
 //
-// The reader does not wait for a picture, so the program that writes does
+// The reader does not wait for a picture, so the process that writes does
 // not wait for a picture. A line that the window does not show costs one
 // copy of its bytes, and no pixel.
 //
@@ -36,19 +36,19 @@
 // lines, the runs, the bytes. Each area starts again at its first place
 // when it is full: the oldest lines go.
 //
-// **What it is for.** A program with the grant **Terminal** (the console,
+// **What it is for.** A process with the grant **Terminal** (the console,
 // flood) writes typed records, not pixels and not escape sequences: a run
-// of text has its style as a field. The program never draws, never waits
+// of text has its style as a field. The process never draws, never waits
 // for a picture, and never parses a key sequence. See the terms
 // [terminal](term:terminal) and [terminal ring](term:terminal-ring).
 //
 // **Start**: nothing starts it by name. The root service starts one
-// terminal with each program that has the grant **Terminal**, and refuses
-// `start("terminal")`. Its row of `program_roles` has the grant
+// terminal with each process that has the grant **Terminal**, and refuses
+// `start("terminal")`. Its row of `process_roles` has the grant
 // System_Part only: it receives only the handles above.
 //
-// **What a reader sees**: a window with the name of the program, its
-// lines, a status bar that the program fills, the
+// **What a reader sees**: a window with the name of the process, its
+// lines, a status bar that the process fills, the
 // [action bar](term:action-bar) of Page Up and Page Down at the right of
 // its last line, and on the log:
 //
@@ -63,21 +63,21 @@
 //   character, a block element or a Greek letter of Paper Mono, which the
 //   font service drew (src/md/features/glyphs_on_demand.md);
 // - "terminal: console shows the character N in its cells, drawn by this
-//   program from the font F of its fallback chain", once, for the first or
+//   process from the font F of its fallback chain", once, for the first or
 //   the last character of the view past the glyph cache and the cell
 //   subset that a font of the chain of the cells has; and "terminal:
 //   console shows the character N in its cells as the replacement glyph:
 //   no font of its fallback chain has it", once, for the first or the
 //   last such character that no font has.
 //
-// The terminal of flood measures: it shows the rates of the program, and
+// The terminal of flood measures: it shows the rates of the process, and
 // writes one line with the lines, the records and the kernel entries of one
 // second.
 //
 // **What it proves**: a text output with no kernel entry for each line, and
 // a writer that never waits for the screen. It does not prove fairness
-// between two writers: one terminal serves one program.
-package terminal_program
+// between two writers: one terminal serves one process.
+package terminal_process
 
 import "modus:contract/demand_cache"
 import "modus:contract/enum_word"
@@ -97,7 +97,7 @@ import "base:intrinsics"
 // The lines that it keeps, and the two pictures of its window: their size
 // follows the columns and the rows that its starter gives, so the tool
 // cannot count them, and the working memory holds them at their largest.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8035, programs = 1, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8035, processes = 1, threads = 2}
 
 COLUMNS_LIMIT :: terminal.COLUMNS_LIMIT
 ROWS_LIMIT :: terminal.ROWS_LIMIT
@@ -120,10 +120,10 @@ LIST_ICON_CELLS :: 3
 
 // What the root service chose for this terminal, and the places that
 // follow from it.
-program_name: string
+process_name: string
 name_bytes: system.Name
 columns, rows: int
-measure: bool // The window shows the rates of the program, and the status on its own line.
+measure: bool // The window shows the rates of the process, and the status on its own line.
 text_y, text_width, text_height, status_y, hint_y, width, height, graph_x: int
 scroll_area: interface.Area // The scroll bar of the lines: at the right edge of the window, from the head to the line over the status.
 text_view_area: interface.Area // The rows of the lines: the wheel over them moves the view.
@@ -158,14 +158,14 @@ GRAPH_HEIGHT :: 48
 LIST_WIDTH_LEAST :: 16 // Cells: a list of short names stays wide enough to read.
 
 // The colors that are the terminal's own: the tone of each run of text, the
-// graph of the head, the states of the program and the cursor. Each has a
+// graph of the head, the states of the process and the cursor. Each has a
 // value in each appearance (src/md/features/appearance.md): a light value
 // is the dark one at the shade that keeps 4.5 to 1 on the light surfaces.
 Terminal_Colors :: struct {
 	tones:     [terminal.Tone]graphics.Color, // The color of each tone.
 	graph:     graphics.Color, // A bar of the graph of the head.
 	graph_dim: graphics.Color, // The empty part of a bar of the graph.
-	stopped:   graphics.Color, // "the program does not run".
+	stopped:   graphics.Color, // "the process does not run".
 	held:      graphics.Color, // The view is held, and the rate of kernel entries.
 	cursor:    graphics.Color, // The cell of the cursor, in reverse.
 }
@@ -220,7 +220,7 @@ Line :: struct {
 lines: [^]Line
 runs: [^]Run
 bytes: []u8
-lines_written: u64 // The lines that ended. lines[lines_written] is the line that the program writes now.
+lines_written: u64 // The lines that ended. lines[lines_written] is the line that the process writes now.
 runs_written: u64
 bytes_written: u64
 oldest: u64 // The oldest line that the terminal still has.
@@ -238,7 +238,7 @@ Status_Line :: struct {
 }
 status_line: Status_Line
 
-// The line that the program changes (terminal.Kind.Edit).
+// The line that the process changes (terminal.Kind.Edit).
 Edit_Line :: struct {
 	text:       [terminal.RUN_LIMIT]u8,
 	length:     int,
@@ -251,7 +251,7 @@ edit_line: Edit_Line
 // The serial of the newest key that an Edit record named (terminal.edit):
 // the reader keeps it, the view gives it to the drawer.
 edit_key_serial: u64
-// The newest key serial that the drawer forwarded to the program: the
+// The newest key serial that the drawer forwarded to the process: the
 // reader refuses an Edit serial past it. The drawer stores it before the
 // send, so the reader sees it before any Edit that answers the key.
 key_serial_forwarded: u64
@@ -263,7 +263,7 @@ edit_runs_pending: terminal.Code_Runs
 // left its line plain. The list counts its own.
 edit_runs_refused: u64
 runs_refusal_logged: bool
-// The log says one time that the program sent a list row that names no icon.
+// The log says one time that the process sent a list row that names no icon.
 rows_refusal_logged: bool
 // The records whose kind names no record, or None: the log says it one time.
 records_refused: u64
@@ -289,7 +289,7 @@ list_keeping: terminal.List_Keeping
 Request :: struct {
 	follow: bool, // The view shows the last lines.
 	top:    u64, // If not follow: the line of the first row.
-	stopped: bool, // The program stopped: the reader writes a line that says it.
+	stopped: bool, // The process stopped: the reader writes a line that says it.
 	code:    u32,
 }
 
@@ -367,13 +367,13 @@ lost_wake_check :: proc "contextless" (ended_by_time: bool, wakes_before: u32) {
 	}
 	if intrinsics.atomic_load(&drawer_wakes) == wakes_before && intrinsics.atomic_load(&activity) != activity_at_wait && !lost_wake_logged[0] {
 		lost_wake_logged[0] = true
-		system.log("terminal: ", program_name, ": the drawer slept to its deadline after a change of the view, and no wake came")
+		system.log("terminal: ", process_name, ": the drawer slept to its deadline after a change of the view, and no wake came")
 	}
 	read := intrinsics.atomic_load(&source.commands.counters.read)
 	stuck := intrinsics.atomic_load(&reader_idle) != 0 && ring.count(&source.commands) != 0
 	if stuck && reader_stuck_seen && read == reader_read_seen && !lost_wake_logged[1] {
 		lost_wake_logged[1] = true
-		system.log("terminal: ", program_name, ": the reader waits with ", u64(ring.count(&source.commands)), " records in its ring, and read none since the last look")
+		system.log("terminal: ", process_name, ": the reader waits with ", u64(ring.count(&source.commands)), " records in its ring, and read none since the last look")
 	}
 	reader_read_seen, reader_stuck_seen = read, stuck
 }
@@ -403,7 +403,7 @@ take :: proc "contextless" (count: u32) -> (first, second: []u8) {
 	return source_text[place:][:size], source_text[:count - size]
 }
 
-// put copies bytes to the bytes that the terminal keeps. The program can
+// put copies bytes to the bytes that the terminal keeps. The process can
 // change the text region at any time: the terminal uses only this copy.
 put :: proc "contextless" (text: []u8) {
 	place := int(bytes_written & (BYTE_CAPACITY - 1))
@@ -413,7 +413,7 @@ put :: proc "contextless" (text: []u8) {
 	bytes_written += u64(len(text))
 }
 
-// keep adds a run to the line that the program writes now. The text of the
+// keep adds a run to the line that the process writes now. The text of the
 // run is two parts.
 keep :: proc "contextless" (first, second: []u8, style: terminal.Style) {
 	line := &lines[lines_written & (LINE_CAPACITY - 1)]
@@ -437,15 +437,15 @@ keep :: proc "contextless" (first, second: []u8, style: terminal.Style) {
 
 apply :: proc "contextless" (record: ring.Record) {
 	records_read += 1
-	// The program writes the word: a word that names no record, and None,
+	// The process writes the word: a word that names no record, and None,
 	// are refused and counted, and the log says it once.
 	kind, kind_ok := terminal.kind_of_ring_word(record.kind)
 	if !kind_ok {
-		// The drawer reads the count when the program stops.
+		// The drawer reads the count when the process stops.
 		intrinsics.atomic_add(&records_refused, 1)
 		if !records_refusal_logged {
 			records_refusal_logged = true
-			system.log("terminal: ", program_name, " sent a record of the kind ", u64(record.kind), ", which names no record: it is refused")
+			system.log("terminal: ", process_name, " sent a record of the kind ", u64(record.kind), ", which names no record: it is refused")
 		}
 		return
 	}
@@ -468,13 +468,13 @@ apply :: proc "contextless" (record: ring.Record) {
 		forget()
 	case .Edit:
 		first, second := take(record.tag)
-		// The newest key whose character the program put in its line: the
+		// The newest key whose character the process put in its line: the
 		// next picture shows it. A serial past the keys that the terminal
 		// forwarded is refused, counted, and the log says it once.
 		if terminal.edit_key_serial_take(&edit_key_serial, record.values[2], intrinsics.atomic_load(&key_serial_forwarded)) {
 			edit_serials_refused += 1
 			if edit_serials_refused == 1 {
-				system.log("terminal: ", program_name, " named a key serial past the keys that it got: it is refused, and the next ones are counted")
+				system.log("terminal: ", process_name, " named a key serial past the keys that it got: it is refused, and the next ones are counted")
 			}
 		}
 		edit_line = {style = transmute(terminal.Style)record.values[0]}
@@ -525,15 +525,15 @@ apply :: proc "contextless" (record: ring.Record) {
 			edit_runs_refused += 1 // No other record takes runs.
 		}
 	}
-	// A program that sends runs that do not fit its rows: its rows stay
+	// A process that sends runs that do not fit its rows: its rows stay
 	// plain, and the log says it once.
 	if !runs_refusal_logged && edit_runs_refused + list_keeping.runs_refused != 0 {
 		runs_refusal_logged = true
-		system.log("terminal: ", program_name, " sent runs of code that do not fit their row: the row is drawn plain, its text whole")
+		system.log("terminal: ", process_name, " sent runs of code that do not fit their row: the row is drawn plain, its text whole")
 	}
 	if !rows_refusal_logged && list_keeping.rows_refused != 0 {
 		rows_refusal_logged = true
-		system.log("terminal: ", program_name, " sent a row of a completion list whose icon names no icon: the row is refused")
+		system.log("terminal: ", process_name, " sent a row of a completion list whose icon names no icon: the row is refused")
 	}
 }
 
@@ -541,7 +541,7 @@ apply :: proc "contextless" (record: ring.Record) {
 // flag Color; if not, the color of its value kind when it has one; if not,
 // the color of its code kind when the kind has one; if not, the color of
 // its tone. Each color but its own is the one of the appearance in force,
-// read at each draw. The bytes of the style come from another program: a
+// read at each draw. The bytes of the style come from another process: a
 // tone that names no tone draws in the color of plain text, and a value
 // kind or a code kind that names no kind gives no color of its own.
 style_color :: proc "contextless" (style: terminal.Style) -> graphics.Color {
@@ -563,7 +563,7 @@ style_color :: proc "contextless" (style: terminal.Style) -> graphics.Color {
 	return terminal.code_kind_color(code_kind, plain)
 }
 
-// The text of each record is UTF-8 from another program: a cell holds one
+// The text of each record is UTF-8 from another process: a cell holds one
 // character, decoded once here, and an invalid sequence is one cell of the replacement
 // character (src/library/contract/text_encoding). A count of bytes of a
 // record (a cursor, a mark, a match, a run of code) names the character
@@ -639,7 +639,7 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 	view.list_icons = {}
 	// The scroll bar: the drawer draws it over the last cells of the rows,
 	// at the place of the rows shown in all the names. The count of the
-	// names comes from the program: it is at least the rows shown.
+	// names comes from the process: it is at least the rows shown.
 	shown_first := max(list_keeping.shown.first, 0) + offset
 	view.list_scroll = scroll != 0
 	view.list_first = shown_first
@@ -711,7 +711,7 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 // the completion list, the same as a row of the palette has for the same
 // kind (src/library/private/compositor/palette, entry_icon). nil: no icon.
 //
-// - A service, a module and a program are modules: the form of a module.
+// - A service, a module and a process are modules: the form of a module.
 // - An export is a part of a module: its own form, in the color of a module.
 // - A command that makes a record gives a type; a variable holds a value;
 //   a line of the history has the form of a time.
@@ -725,7 +725,7 @@ list_icon_form :: proc "contextless" (icon: terminal.List_Icon) -> (form: ^kind_
 		return kind_icons.cells_of_desktop_kind(.Export), module_color
 	case .Record:
 		return kind_icons.cells_of_value_kind(.Type), graphics.value_kind_color(value_kinds.Value_Kind.Type, graphics.appearance)
-	case .Service, .Module, .Program:
+	case .Service, .Module, .Process:
 		return kind_icons.cells_of_value_kind(.Module), module_color
 	case .Variable:
 		return kind_icons.cells_of_value_kind(.Value), graphics.value_kind_color(value_kinds.Value_Kind.Value, graphics.appearance)
@@ -754,7 +754,7 @@ note :: proc "contextless" (parts: ..system.Part) {
 // view_make fills the view for the request.
 view_make :: proc "contextless" () {
 	if request.stopped {
-		note("-- ", program_name, " stopped with code ", u64(request.code), " after ", lines_written, " lines --")
+		note("-- ", process_name, " stopped with code ", u64(request.code), " after ", lines_written, " lines --")
 		status_line.total = 0
 		edit_line = {}
 		edit_runs_pending = {}
@@ -766,7 +766,7 @@ view_make :: proc "contextless" () {
 	if lines[lines_written & (LINE_CAPACITY - 1)].run_count != 0 {
 		count += 1
 	}
-	// The line that the program changes takes rows after the last line: one
+	// The line that the process changes takes rows after the last line: one
 	// cell for each of its characters, decoded once here, and one for the
 	// cursor.
 	edit_characters: [terminal.RUN_LIMIT]rune
@@ -970,13 +970,13 @@ view_take :: proc "contextless" () {
 
 // ---- The drawer.
 
-program: system.Handle // The program that writes, with the right Read. 0 after it stopped.
+process: system.Handle // The process that writes, with the right Read. 0 after it stopped.
 
 Rates :: struct {
 	lines:   u64, // In one second.
 	records: u64,
 	bytes:   u64,
-	entries: u64, // Kernel entries of the program that writes, for one million records.
+	entries: u64, // Kernel entries of the process that writes, for one million records.
 	frames:  u64,
 }
 
@@ -1020,9 +1020,9 @@ list_scroll_area: interface.Area
 list_view_area: interface.Area // The cells of the rows of the completion list in the last frame, or no width: the wheel over them belongs to the list.
 list_scroll_result: interface.Scroll_Bar_Result
 list_scroll_identity: interface.Element_Identity
-// The first row that the terminal asked the program for, and the first row
+// The first row that the terminal asked the process for, and the first row
 // that the list had then: the scroll bar gives the same row at each frame
-// until the program answers, and the terminal asks one time. -1: no
+// until the process answers, and the terminal asks one time. -1: no
 // request waits for an answer.
 list_first_asked := -1
 list_first_when_asked: int
@@ -1078,7 +1078,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	// The text: only the rows of the window, as one text grid.
 	interface.draw_text_grid(table, TEXT_X, text_y, view_grid())
 
-	// The status of the program: a text, and a value of a total. With the
+	// The status of the process: a text, and a value of a total. With the
 	// rates it has its own line. If not, it takes the place of the line count.
 	// The line of the keys is the band of the action bar, from edge to
 	// edge, under each text of the line: with no rates the status shares
@@ -1101,8 +1101,8 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		x = interface.draw_text(table, x + STATUS_BAR_WIDTH + 12, status_y, number(&buffer, status.value), graphics.colors.text)
 		x = interface.draw_text(table, x, status_y, " of ", graphics.colors.dim)
 		status_end = interface.draw_text(table, x, status_y, number(&buffer, status.total), graphics.colors.dim)
-	} else if program == 0 && measure {
-		interface.draw_text(table, TEXT_X, status_y, "the program does not run", own_colors().stopped)
+	} else if process == 0 && measure {
+		interface.draw_text(table, TEXT_X, status_y, "the process does not run", own_colors().stopped)
 	}
 	if measure {
 		// At the right: the frames of the terminal.
@@ -1132,8 +1132,8 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		if view.gone {
 			x = interface.draw_text(table, x, hint_y, "  older than the lines kept", graphics.colors.dim)
 		}
-		if program == 0 && !measure {
-			x = interface.draw_text(table, x, hint_y, "  the program does not run", own_colors().stopped)
+		if process == 0 && !measure {
+			x = interface.draw_text(table, x, hint_y, "  the process does not run", own_colors().stopped)
 		}
 		hint_left = x
 	}
@@ -1175,16 +1175,16 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 			frame.input.wheel = 0
 		}
 		// The scroll bar of the list, over its last cells and the right
-		// column of its border. The program that writes owns the list and
+		// column of its border. The process that writes owns the list and
 		// its choice: the bar takes the pointer, and the first row that
-		// the pointer asks for goes to the program (list_scroll_send).
+		// the pointer asks for goes to the process (list_scroll_send).
 		if view.list_scroll {
 			bar_length := view.list_rows * CELL_HEIGHT
 			bar_x := TEXT_X + (view.list_left + view.list_columns - LIST_SCROLL_CELLS) * CELL_WIDTH
 			list_scroll_area = {bar_x, text_y + view.list_top * CELL_HEIGHT, SCROLL_WIDTH, bar_length}
 			// The list lies over the lines: its bar comes before the bar of
 			// the lines, and takes the wheel over the list first.
-			// While the program has not answered a request, the bar starts
+			// While the process has not answered a request, the bar starts
 			// from the row that the terminal asked for: else a second
 			// notch, or a second press, gives the same row again and is
 			// lost.
@@ -1216,10 +1216,10 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 }
 
 // The keys of the terminal, in its action bar (docs/INTERFACE.md, "4.4
-// The action bar"). Each other key goes to the program, which names its
+// The action bar"). Each other key goes to the process, which names its
 // own keys.
 // A procedure, not a global array: an item is made by a call, and a
-// freestanding program runs no call before its entry.
+// freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
 	return {interface.action_bar_item("lines before", 1, "Page Up"), interface.action_bar_item("lines after", 1, "Page Down")}
 }
@@ -1239,7 +1239,7 @@ page_move :: proc "contextless" (code: u32) -> i64 {
 }
 
 // view_move asks for the view moved by some lines: the view holds there
-// while the program writes, and follows the last lines again when it
+// while the process writes, and follows the last lines again when it
 // reaches them.
 view_move :: proc "contextless" (move: i64) {
 	if move == 0 {
@@ -1252,12 +1252,12 @@ view_move :: proc "contextless" (move: i64) {
 		request.follow = true
 	}
 	if was_following && !request.follow {
-		system.log("terminal: the view stays at line ", request.top + 1, ", ", program_name, " continues")
+		system.log("terminal: the view stays at line ", request.top + 1, ", ", process_name, " continues")
 	}
 }
 
 // status_bar_length gives the pixels of the bar of a status: value of total
-// on length pixels. The program that writes chooses both numbers: a
+// on length pixels. The process that writes chooses both numbers: a
 // product value x length can pass the largest u64, so a large total is
 // divided first. The bar is never longer than length.
 status_bar_length :: proc "contextless" (value, total: u64, length: int) -> int {
@@ -1276,15 +1276,15 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(1)
 }
 
-// The entry of the terminal: it opens the window of one program, starts the
+// The entry of the terminal: it opens the window of one process, starts the
 // reader thread, then draws the lines and sends the keys until the machine
 // stops.
 //
 // When the root service starts it, the entry:
 //
-// 1. reads its values: the name of the program, the columns (40 at least),
+// 1. reads its values: the name of the process, the columns (40 at least),
 //    the rows (4 at least), and the flag that it measures;
-// 2. opens a window of two pictures with the name of the program; with no
+// 2. opens a window of two pictures with the name of the process; with no
 //    window, it writes "terminal: no surface" and stops with the code 1;
 // 3. creates the three areas of the lines;
 // 4. opens the terminal ring and maps the text region, read-only; a wrong
@@ -1292,22 +1292,22 @@ fail :: proc "contextless" (text: string) -> ! {
 // 5. starts the reader thread, and writes "terminal: ok, ...".
 //
 // The first thread is then the drawer. It sleeps while nothing changes,
-// and wakes for a record, a key, the stop of the program, or every 250 ms
-// to look at the state of the program. Page Up and Page Down move the
-// view; each other key goes to the program, and a key is lost when the
-// queue is full. When the program
+// and wakes for a record, a key, the stop of the process, or every 250 ms
+// to look at the state of the process. Page Up and Page Down move the
+// view; each other key goes to the process, and a key is lost when the
+// queue is full. When the process
 // stops, the terminal shows its code and keeps its lines: it does not stop
 // with it.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	name_bytes = system.name_unpack({ctx.values[terminal.VALUE_NAME], ctx.values[terminal.VALUE_NAME + 1], ctx.values[terminal.VALUE_NAME + 2], ctx.values[terminal.VALUE_NAME + 3]})
-	program_name = system.name_of(name_bytes[:])
+	process_name = system.name_of(name_bytes[:])
 	columns = int(clamp(ctx.values[terminal.VALUE_COLUMNS], 40, COLUMNS_LIMIT))
 	rows = int(clamp(ctx.values[terminal.VALUE_ROWS], 4, ROWS_LIMIT))
 	measure = ctx.values[terminal.VALUE_MEASURE] != 0
 	layout()
-	program = ctx.handles[terminal.GRANT_PROGRAM]
-	window, ok := display.open(ctx, width, height, program_name)
+	process = ctx.handles[terminal.GRANT_PROCESS]
+	window, ok := display.open(ctx, width, height, process_name)
 	if !ok {
 		fail("no surface")
 	}
@@ -1332,7 +1332,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	bytes = ([^]u8)(area(BYTE_CAPACITY))[:BYTE_CAPACITY]
 
 	// The terminal ring and the text region, from the root service. This
-	// program has the right Read only on the text region.
+	// process has the right Read only on the text region.
 	status: system.Status
 	if source, status = system.ring_open(ctx.handles[terminal.GRANT_RING]); status != .Ok {
 		fail("no terminal ring")
@@ -1348,7 +1348,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if _, status = system.thread_start(read, nil); status != .Ok {
 		fail("no thread")
 	}
-	system.log("terminal: ok, ", program_name, " writes in a ring of ", u64(ring.capacity(&source.commands)), " records")
+	system.log("terminal: ok, ", process_name, " writes in a ring of ", u64(ring.capacity(&source.commands)), " records")
 
 	request.follow = true
 	now := system.time()
@@ -1356,19 +1356,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	sample_time := now
 	sample_lines, sample_records, sample_bytes, sample_entries: u64
 	frames, sample_frames: u64
-	sample_entries = system.program_entries(program)
+	sample_entries = system.process_entries(process)
 	keys_sent: u64
-	keys_loss: key_path.Loss_Period // The keys that the full queue of the program refused.
+	keys_loss: key_path.Loss_Period // The keys that the full queue of the process refused.
 	// One line of the log, for the second that follows the first second.
 	second_start: u64
 	second_lines, second_records, second_entries, second_frames: u64
 	second_logged := false
 	drawn: u32 // The value of activity at the last picture.
 	dirty := true // The view changed with no record: a key, the first picture.
-	STATE_TIME :: 250 // Milliseconds between two looks at the state of the program.
+	STATE_TIME :: 250 // Milliseconds between two looks at the state of the process.
 	picture_waits := false // A picture waits until the compositor took the picture before it.
 	// The event word of this thread at the last look at the state of the
-	// program: the kernel adds 1 to it when the program stops.
+	// process: the kernel adds 1 to it when the process stops.
 	events_seen := intrinsics.volatile_load(system.events())
 	for {
 		// One read of the count of the groups of records decides the wait,
@@ -1382,8 +1382,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		display.picture_due_set(&window, due)
 		switch turn_wait {
 		case .Nothing_To_Draw:
-			// Wait for a record, a key, the stop of the program, or the next
-			// look at the program. A record after the read of seen, or a stop
+			// Wait for a record, a key, the stop of the process, or the next
+			// look at the process. A record after the read of seen, or a stop
 			// after the last look at the state, ends the wait at once.
 			wait: system.Wait
 			display.wait_events(&wait, &window)
@@ -1391,7 +1391,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.wait_word(&wait, system.events(), events_seen)
 			// A held arrow button of the scroll bar takes its next step at
 			// a time of the clock: the wait ends there at the latest.
-			deadline := program != 0 ? system.time() + STATE_TIME : system.WAIT_FOREVER
+			deadline := process != 0 ? system.time() + STATE_TIME : system.WAIT_FOREVER
 			step_time, step_due := interface.window_scroll_bar_wake(&drawing)
 			if step_due {
 				deadline = min(deadline, step_time)
@@ -1407,7 +1407,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			lost_wake_check(now >= deadline, wakes_before)
 		case .Compositor:
 			// The wait ends when the compositor has read the ring of the
-			// window, or at the next look at the program.
+			// window, or at the next look at the process.
 			now = display.wait(&window, system.time() + STATE_TIME)
 		case .Next_Frame:
 			// A record during this wait needs no wake: the picture is due
@@ -1441,7 +1441,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			// The clipboard (src/md/features/clipboard.md): the terminal has
 			// no selection, so it declines a copy; a paste goes to the
-			// program as typed characters.
+			// process as typed characters.
 			if event.kind == .Copy_Asked {
 				display.copy_decline(&window)
 				continue
@@ -1467,26 +1467,26 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			switch event.code {
 			case display.KEY_PAGE_UP, display.KEY_PAGE_DOWN:
 			case:
-				// The key goes to the program. The terminal never waits for
-				// the program: this thread also draws the window and moves
-				// the view, and a program that reads no key must not stop
+				// The key goes to the process. The terminal never waits for
+				// the process: this thread also draws the window and moves
+				// the view, and a process that reads no key must not stop
 				// them. The queue holds the keys typed ahead; when it is
 				// full, the key is lost, and the log has one line when the
 				// loss begins and one line with the count when it ends.
-				if program != 0 {
+				if process != 0 {
 					if event.key_serial > intrinsics.atomic_load(&key_serial_forwarded) {
 						intrinsics.atomic_store(&key_serial_forwarded, event.key_serial)
 					}
 					if system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Key), tag = event.code, values = {0 = u64(event.character), 1 = u64(event.modifiers), 2 = event.key_serial}}) {
 						keys_sent += 1
 						if keys_sent == 1 {
-							system.log("terminal: the first key goes to ", program_name)
+							system.log("terminal: the first key goes to ", process_name)
 						}
 						if lost, ended := key_path.loss_end(&keys_loss); ended {
-							system.log("terminal: ", program_name, " reads its keys again: ", lost, " keys were lost")
+							system.log("terminal: ", process_name, " reads its keys again: ", lost, " keys were lost")
 						}
 					} else if key_path.loss_count(&keys_loss) {
-						system.log("terminal: ", program_name, " does not read its keys: its queue of ", u64(ring.capacity(&source.completions)), " keys is full, and a new key is lost")
+						system.log("terminal: ", process_name, " does not read its keys: its queue of ", u64(ring.capacity(&source.completions)), " keys is full, and a new key is lost")
 					}
 				}
 				request.follow = true
@@ -1498,24 +1498,24 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if now < next_frame {
 			continue
 		}
-		// The stop of the program is a change too: it is known before the
+		// The stop of the process is a change too: it is known before the
 		// look at the canvas, so a stop that waits for the compositor is a
 		// due picture. The event word is read before the state: a stop
 		// after this read ends the next wait with nothing to draw at once.
 		events_seen = intrinsics.volatile_load(system.events())
-		if program != 0 {
-			if state, code := system.program_state(program); state == .Stopped {
+		if process != 0 {
+			if state, code := system.process_state(process); state == .Stopped {
 				request.stopped, request.code = true, code
 				view_take()
-				system.log("terminal: ", program_name, " stopped with code ", u64(code), " after ", view.count - 1, " lines and ", view.records, " records")
+				system.log("terminal: ", process_name, " stopped with code ", u64(code), " after ", view.count - 1, " lines and ", view.records, " records")
 				if lost, ended := key_path.loss_end(&keys_loss); ended {
-					system.log("terminal: ", program_name, " stopped and did not read its keys: ", lost, " keys were lost")
+					system.log("terminal: ", process_name, " stopped and did not read its keys: ", lost, " keys were lost")
 				}
 				if refused := intrinsics.atomic_load(&records_refused); refused != 0 {
-					system.log("terminal: ", program_name, " stopped after ", refused, " records whose kind names no record")
+					system.log("terminal: ", process_name, " stopped after ", refused, " records whose kind names no record")
 				}
-				system.close(program)
-				program = 0
+				system.close(process)
+				process = 0
 				dirty = true
 			}
 		}
@@ -1534,13 +1534,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		drawn, dirty = current, false
 		view_take()
 		// The picture shows the edit line of the view: its Present names the
-		// newest key that the program put in it, for the measure of a key
+		// newest key that the process put in it, for the measure of a key
 		// to the screen.
 		display.key_shown(&window, view.key_serial)
 		frames += 1
 		if now - sample_time >= SAMPLE_TIME {
 			elapsed := now - sample_time
-			entries := program != 0 ? system.program_entries(program) : sample_entries
+			entries := process != 0 ? system.process_entries(process) : sample_entries
 			records := view.records - sample_records
 			rates = {
 				lines   = (view.count - sample_lines) * 1000 / elapsed,
@@ -1552,7 +1552,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			copy(history[:], history[1:])
 			history[HISTORY - 1] = rates.lines
 			sample_time, sample_lines, sample_records, sample_bytes, sample_entries, sample_frames = now, view.count, view.records, view.bytes, entries, frames
-			if measure && !second_logged && program != 0 {
+			if measure && !second_logged && process != 0 {
 				if second_start == 0 {
 					if view.records != 0 {
 						second_start, second_lines, second_records, second_entries, second_frames = now, view.count, view.records, entries, frames
@@ -1562,7 +1562,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					time := now - second_start
 					system.log(
 						"terminal: ",
-						program_name,
+						process_name,
 						" wrote ",
 						(view.count - second_lines) * 1000 / time,
 						" lines in one second, ",
@@ -1576,7 +1576,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			}
 		}
-		// The frame of the text of this program: the glyphs past the glyph
+		// The frame of the text of this process: the glyphs past the glyph
 		// cache that it draws below, as the drawing module draws them in
 		// its own copy, from the same outlines and the same demand cache.
 		display.text_frame_begin()
@@ -1625,34 +1625,34 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 }
 
-// list_scroll_send gives the program the first row that the pointer asked
+// list_scroll_send gives the process the first row that the pointer asked
 // for on the scroll bar of the completion list, as one input record. The
-// program owns the list: it answers with the rows of its new view. The
+// process owns the list: it answers with the rows of its new view. The
 // scroll bar gives the same row at each frame until that answer, so a row
 // is asked one time, and again only after the list moved. It gives true
 // when it sent a record. The log has one line for a press that moved the
 // view and one for a drag, not one for each step.
 list_scroll_send :: proc "contextless" () -> (sent: bool) {
 	if list_scroll_area.width == 0 || list_first_asked >= 0 && view.list_first != list_first_when_asked {
-		list_first_asked = -1 // No list, or the program answered.
+		list_first_asked = -1 // No list, or the process answered.
 	}
 	moved := list_scroll_result
-	if moved.changed && program != 0 && moved.first != list_first_asked {
+	if moved.changed && process != 0 && moved.first != list_first_asked {
 		sent = system.send(&source.completions, ring.Record{kind = u32(terminal.Input.List_First), values = {0 = u64(moved.first)}})
 		if sent {
 			list_first_asked, list_first_when_asked = moved.first, view.list_first
 			list_drag_moved ||= moved.held == .Thumb
 			if moved.pressed_now != .None && moved.pressed_now != .Thumb {
-				system.log("terminal: a press on ", scroll_part_words(moved.pressed_now), " of the scroll bar of the completion list of ", program_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
+				system.log("terminal: a press on ", scroll_part_words(moved.pressed_now), " of the scroll bar of the completion list of ", process_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
 			}
 			if moved.wheel_taken {
-				system.log("terminal: the wheel moves the completion list of ", program_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
+				system.log("terminal: the wheel moves the completion list of ", process_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
 			}
 		}
 	}
 	if moved.drag_ended {
 		if list_drag_moved {
-			system.log("terminal: a drag of the thumb of the scroll bar of the completion list of ", program_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
+			system.log("terminal: a drag of the thumb of the scroll bar of the completion list of ", process_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
 		}
 		list_drag_moved = false
 	}
@@ -1661,19 +1661,19 @@ list_scroll_send :: proc "contextless" () -> (sent: bool) {
 
 list_drag_moved: bool // The drag of the thumb of the completion list that is held now moved its view.
 demand_cell_told: bool // The line of the first cell drawn from the demand cache is on the log.
-fallback_cell_told: bool // The line of the first cell that this program drew from a font of its fallback chain is on the log.
+fallback_cell_told: bool // The line of the first cell that this process drew from a font of its fallback chain is on the log.
 missing_cell_told: bool // The line of the first cell that no font of the chain has is on the log.
 
 // fallback_cells_tell says once, after a frame, where the first cells past
 // the glyph cache of the view come from: the demand cache, a font of the
-// fallback chain, or no font. The program draws the glyph of the cell as
+// fallback chain, or no font. The process draws the glyph of the cell as
 // the drawing module drew it, from the same outlines, and checks that it
 // has ink and stays in its cell.
 fallback_cells_tell :: proc "contextless" () {
 	if !demand_cell_told && view.demand_character != 0 {
 		if found := display.cell_fallback_of(view.demand_character); found.source == .Demand_Cache && found.rows > 0 && found.inside {
 			demand_cell_told = true
-			system.log("terminal: ", program_name, " shows the character ", u64(view.demand_character), " in its cells from the demand cache")
+			system.log("terminal: ", process_name, " shows the character ", u64(view.demand_character), " in its cells from the demand cache")
 		}
 	}
 	for character in ([2]rune{view.fallback_first, view.fallback_last}) {
@@ -1685,12 +1685,12 @@ fallback_cells_tell :: proc "contextless" () {
 		case .Private_Cache, .Demand_Cache:
 			if !fallback_cell_told && found.rows > 0 && found.inside {
 				fallback_cell_told = true
-				system.log("terminal: ", program_name, " shows the character ", u64(character), " in its cells, drawn by this program from the font ", fallback_glyphs.outline_font_name(found.font), " of its fallback chain")
+				system.log("terminal: ", process_name, " shows the character ", u64(character), " in its cells, drawn by this process from the font ", fallback_glyphs.outline_font_name(found.font), " of its fallback chain")
 			}
 		case .Missing:
 			if !missing_cell_told && found.font == .None {
 				missing_cell_told = true
-				system.log("terminal: ", program_name, " shows the character ", u64(character), " in its cells as the replacement glyph: no font of its fallback chain has it")
+				system.log("terminal: ", process_name, " shows the character ", u64(character), " in its cells as the replacement glyph: no font of its fallback chain has it")
 			}
 		}
 	}
@@ -1699,7 +1699,7 @@ fallback_cells_tell :: proc "contextless" () {
 // pointer_shape_follow asks the compositor for the arrow while the pointer
 // is over a scroll bar of the window or holds one, and for the text shape
 // over the rest of the surface: a scroll bar is a control, not text
-// (docs/POINTERS.md, "The request of a program"). It asks only at a change:
+// (docs/POINTERS.md, "The request of a process"). It asks only at a change:
 // the compositor writes one line of the log for each request.
 pointer_shape_follow :: proc "contextless" (window: ^display.Window) {
 	input := &drawing.input
@@ -1744,9 +1744,9 @@ scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part) -> str
 // the view is after it: one line for each frame that the wheel moved.
 wheel_log :: proc "contextless" () {
 	if request.follow {
-		system.log("terminal: the wheel moves the view of ", program_name, ": the view follows the last lines")
+		system.log("terminal: the wheel moves the view of ", process_name, ": the view follows the last lines")
 	} else {
-		system.log("terminal: the wheel moves the view of ", program_name, ": the view starts at line ", request.top + 1, " of ", view.count)
+		system.log("terminal: the wheel moves the view of ", process_name, ": the view starts at line ", request.top + 1, " of ", view.count)
 	}
 }
 
@@ -1754,21 +1754,21 @@ wheel_log :: proc "contextless" () {
 // and where the view is after it.
 scroll_log :: proc "contextless" (act, part: string) {
 	if request.follow {
-		system.log("terminal: ", act, part, " of the scroll bar of ", program_name, ": the view follows the last lines")
+		system.log("terminal: ", act, part, " of the scroll bar of ", process_name, ": the view follows the last lines")
 	} else {
-		system.log("terminal: ", act, part, " of the scroll bar of ", program_name, ": the view starts at line ", request.top + 1, " of ", view.count)
+		system.log("terminal: ", act, part, " of the scroll bar of ", process_name, ": the view starts at line ", request.top + 1, " of ", view.count)
 	}
 }
 
 // The memory of a paste: the copy that display.paste_read checks.
 paste_bytes: [display.CLIPBOARD_TEXT_LIMIT]u8
 
-// paste_type gives the text of a paste to the program as typed characters:
+// paste_type gives the text of a paste to the process as typed characters:
 // one key record with no key code for each character, in the order of the
 // text, as the principal could type them (src/md/features/clipboard.md).
 // The text holds no control character, so a paste never presses Enter.
-// The terminal never waits for the program: the paste goes whole when the
-// queue of the program has room for each of its characters, else nothing
+// The terminal never waits for the process: the paste goes whole when the
+// queue of the process has room for each of its characters, else nothing
 // is typed, and the log says it.
 paste_type :: proc "contextless" (window: ^display.Window, event: display.Event) {
 	count, problem := display.paste_read(window, event, paste_bytes[:])
@@ -1777,13 +1777,13 @@ paste_type :: proc "contextless" (window: ^display.Window, event: display.Event)
 	}
 	text := paste_bytes[:count]
 	characters := text_encoding.character_count(text)
-	if program == 0 {
-		system.log("terminal: a paste of ", u64(characters), " characters, and no program to type them")
+	if process == 0 {
+		system.log("terminal: a paste of ", u64(characters), " characters, and no process to type them")
 		return
 	}
 	room := int(ring.capacity(&source.completions) - ring.count(&source.completions))
 	if characters > room {
-		system.log("terminal: the paste of ", u64(characters), " characters is larger than the room of ", u64(room), " keys of ", program_name, ": nothing is typed")
+		system.log("terminal: the paste of ", u64(characters), " characters is larger than the room of ", u64(room), " keys of ", process_name, ": nothing is typed")
 		return
 	}
 	for place := 0; place < count; {
@@ -1794,5 +1794,5 @@ paste_type :: proc "contextless" (window: ^display.Window, event: display.Event)
 		place += length
 		system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Key), tag = 0, values = {0 = u64(character), 1 = 0}})
 	}
-	system.log("terminal: a paste of ", u64(characters), " characters goes to ", program_name)
+	system.log("terminal: a paste of ", u64(characters), " characters goes to ", process_name)
 }

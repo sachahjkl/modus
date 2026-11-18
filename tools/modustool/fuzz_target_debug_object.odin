@@ -5,7 +5,7 @@ import "core:slice"
 import debug_object "modus:contract/debug_object"
 
 // The fuzz targets of the debug object (src/md/infrastructure/fuzzing.md,
-// "The targets, in order of value"): it comes beside a disk program, from
+// "The targets, in order of value"): it comes beside a disk process, from
 // the network, and the debugger service reads it. An object that `check`
 // accepts gives each reader with no fault, and `encode` of its tables
 // gives its bytes back.

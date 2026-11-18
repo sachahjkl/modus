@@ -6,12 +6,12 @@ import "modus:support/system"
 
 // The resources of the boot image (docs/ARCHITECTURE.md, U2b): files that
 // are not modules, each with its name and the hash of its bytes. This
-// service gives one to a program as a read-only mapping, after it checked
+// service gives one to a process as a read-only mapping, after it checked
 // the hash.
 
 // resource_mapping finds the resource with this name, checks the hash of
 // its bytes against its entry, and gives the read-only mapping of its pages
-// at an address of the program that receives it, with its size. It gives
+// at an address of the process that receives it, with its size. It gives
 // false for a resource that the image does not have, and false with a line
 // on the log for a resource whose hash is wrong.
 resource_mapping :: proc "contextless" (name: string, address: u64, receiver: string) -> (mapping: system.Mapping, size: u64, ok: bool) {
@@ -21,7 +21,7 @@ resource_mapping :: proc "contextless" (name: string, address: u64, receiver: st
 	}
 	start := system.nanoseconds()
 	if blake3.hash(image[entry.offset:][:entry.size]) != entry.hash {
-		system.log_in("programs", .Warning, "root: the resource ", name, " does not have the hash of its entry: not given")
+		system.log_in("processes", .Warning, "root: the resource ", name, " does not have the hash of its entry: not given")
 		return {}, 0, false
 	}
 	spent := system.nanoseconds() - start

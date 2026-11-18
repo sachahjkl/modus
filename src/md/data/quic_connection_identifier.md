@@ -18,7 +18,7 @@ A connection identifier is 0 to 20 bytes (RFC 9000, section 17.2). The QUIC libr
 
 - **An array and a separate length, with a `has_` field for an optional one.** It held a negative length, a length over 20, a byte after the length, and a length with its `has_` field false. Each writer refused them each time it ran.
 - **A slice.** It names memory of another record, which a later packet can change.
-- **Private fields.** The language has none. A record made by hand can still hold a count over 20; `connection_identifier_bytes` then stops the program on the check of the bounds of the slice, so such a record never reaches the network.
+- **Private fields.** The language has none. A record made by hand can still hold a count over 20; `connection_identifier_bytes` then stops the process on the check of the bounds of the slice, so such a record never reaches the network.
 
 ## State
 

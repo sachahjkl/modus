@@ -8,7 +8,7 @@ The guide is [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "4. 
 
 - The description of a module describes each export completely: the name, the type, the detail and the direction of each parameter. This holds at each count of parameters.
 - The call form is the convention of the machine (System V AMD64 on x86-64), in a subset that every compiler gives: `proc "c"` in Odin, `extern "C"` in C, Rust and Zig. No contract depends on one language.
-- A caller in another program sends the same values as an argument record. The record is derived from the description, so no second encoding exists.
+- A caller in another process sends the same values as an argument record. The record is derived from the description, so no second encoding exists.
 - One routine, `export_call`, calls each export from an array of values. No code is made for each description.
 - A description is a flat record of a fixed size, and a receiver copies an argument record with no allocation. So each count has a bound.
 

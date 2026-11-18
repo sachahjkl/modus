@@ -1,5 +1,5 @@
 #+build !freestanding
-package disk_program
+package disk_process
 
 import "core:testing"
 
@@ -65,7 +65,7 @@ bytes_with_another_hash_are_not_kept :: proc(t: ^testing.T) {
 	testing.expect(t, !scan.entries[0].kept)
 }
 
-// The entries that the scan does not note: a name that no disk program
+// The entries that the scan does not note: a name that no disk process
 // has, the disk grant table, an object with no byte or over the limit; and
 // past the capacity, with the mark that says so.
 @(test)

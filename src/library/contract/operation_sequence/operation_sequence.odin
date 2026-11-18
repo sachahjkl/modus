@@ -1,6 +1,6 @@
 // The operation sequence (src/md/infrastructure/kernel_fuzzing.md, "The
 // sequence format and the grammar"): the fuzz input of the kernel
-// operations. The tool writes it; a program of a test machine reads it,
+// operations. The tool writes it; a process of a test machine reads it,
 // then runs each sequence step as one command record of its kernel ring.
 //
 // A sequence names no handle number and no address of one run. A handle
@@ -42,7 +42,7 @@ MAGIC :: u64(0x5351_4553_5245_504F) // The bytes "OPERSEQS".
 FORMAT :: 1 // The format of the bytes. The reader refuses another.
 
 // The most sequence steps of one sequence. Each one is a kernel entry or a
-// part of one, and one sequence runs in one new program, so a short
+// part of one, and one sequence runs in one new process, so a short
 // sequence keeps the steps that a finding needs easy to read.
 STEPS_MOST :: 64
 // The values of one command record (`ring.Record`): the arguments of a

@@ -1,11 +1,11 @@
 // Tables and bytes as parameters (docs/MODULE_CONTRACT.md, "Tables and
 // bytes as parameters"): one description, three ways to call.
 //
-// This program calls the exports of the module sample with tables in its
+// This process calls the exports of the module sample with tables in its
 // own memory, in three ways, with the same arguments: a direct call of the
 // module that it loaded in its own address space, an isolated call of a
 // call host that it starts, and an isolated call of the service "sample"
-// (the same module, started by the root service as a program). It shows
+// (the same module, started by the root service as a process). It shows
 // each answer, the hostile cases, and the cost of each way for tables of
 // 64, 1024 and 65536 records of 40 bytes.
 //
@@ -34,7 +34,7 @@
 // cases", or "tables: wrong answer: ..." for each wrong answer.
 //
 // **What it does not prove**: a way that does not start is shown as
-// "refused" and its cases fail; the program does not retry it.
+// "refused" and its cases fail; the process does not retry it.
 package tables
 
 import "base:intrinsics"
@@ -51,10 +51,10 @@ import "modus:support/system"
 
 // A table of 65536 readings in a memory object (640 pages), and two call
 // hosts (sample, hostile_exports) with their threads.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2561, programs = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2561, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
-// The records of sample, as this program declares them: the layout is the
-// description (a program in C declares the same struct).
+// The records of sample, as this process declares them: the layout is the
+// description (a process in C declares the same struct).
 Reading :: struct {
 	sensor:  i64,
 	time:    i64,
@@ -115,7 +115,7 @@ sample_file: []u8
 sample_base: u64
 host: system.Call_Connection
 service: system.Call_Connection
-// The module of the exports that are wrong on purpose: in this program and
+// The module of the exports that are wrong on purpose: in this process and
 // in a call host of its own; no service holds it.
 hostile_file: []u8
 hostile_base: u64
@@ -309,7 +309,7 @@ hostile_add :: proc "contextless" (name: string, right: bool, parts: ..system.Pa
 	hostile_count += 1
 }
 
-// raw_call sends an argument record that this program wrote itself, as a
+// raw_call sends an argument record that this process wrote itself, as a
 // hostile caller does, and gives the status of the completion.
 raw_call :: proc "contextless" (connection: ^system.Call_Connection, export: u32, size: u64) -> (status_word: u32, refusal: errors.Error_Record) {
 	connection.tag += 1
@@ -322,8 +322,8 @@ raw_call :: proc "contextless" (connection: ^system.Call_Connection, export: u32
 				return record.kind, transmute(errors.Error_Record)record.values
 			}
 		}
-		if state, _ := system.program_state(connection.program); state == .Stopped {
-			return max(u32), {} // A word that names no status: the program stopped.
+		if state, _ := system.process_state(connection.process); state == .Stopped {
+			return max(u32), {} // A word that names no status: the process stopped.
 		}
 		system.wait_records(&wait, &connection.calls.completions)
 		system.wait_end(&wait)
@@ -364,7 +364,7 @@ run_hostile :: proc "contextless" () {
 		refusal_add("a memory object to the service", service_status == .Refused && refusal.argument == 1, &refusal, "sum_values", "readings")
 	}
 
-	// A Change table in a memory object that this program lends with Read
+	// A Change table in a memory object that this process lends with Read
 	// only: the receiver proves the rights of the direction.
 	scale_index, scale_function, _ := export_of("scale_values")
 	copy_handle, give_status := system.give(0, large_memory, {.Read, .Give})
@@ -563,10 +563,10 @@ card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, t
 	graphics.text(canvas, x + width - 16 - graphics.text_width(caption), y + 12, caption, graphics.colors.dim)
 }
 
-// mark draws the square of an answer: the color of a program when it is
+// mark draws the square of an answer: the color of a process when it is
 // the expected answer, the color "failed" when it is not.
 mark :: proc "contextless" (canvas: graphics.Canvas, x, y: int, right: bool) {
-	graphics.fill(canvas, x, y + 4, 8, 8, right ? graphics.colors.program : graphics.colors.failed)
+	graphics.fill(canvas, x, y + 4, 8, 8, right ? graphics.colors.process : graphics.colors.failed)
 }
 
 draw :: proc "contextless" (canvas: graphics.Canvas) {
@@ -651,9 +651,9 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	}
 }
 
-// The random generator of this program: it gives the seed of each call
-// host that this program starts.
-program_generator: random.Generator
+// The random generator of this process: it gives the seed of each call
+// host that this process starts.
+process_generator: random.Generator
 
 // The entry of tables: it prepares the three ways, runs the cases, the
 // hostile cases and the measures once, then shows the result for ever.
@@ -661,12 +661,12 @@ program_generator: random.Generator
 // With no seed or no window it stops with the code 1. It loads `sample`
 // here (the direct way), starts a call host of it (the second way), and
 // connects to the service `sample` (the third way); a way that fails is
-// marked refused and the program goes on. It does the same for
+// marked refused and the process goes on. It does the same for
 // `hostile_exports`, with no service. Then it fills a table of 65536
 // readings for the measures, runs everything, and writes the result.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if !random.generator_from_context(&program_generator, ctx) {
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("tables: no random seed in the context")
 		system.stop(1)
 	}
@@ -680,16 +680,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	sample_file = system.image_find(image, "sample")
 
-	// The direct way: the module in this program.
+	// The direct way: the module in this process.
 	space = {source = {image = image}, next = op.MODULE_BASE}
 	load_error: module.Load_Error
 	if place, loaded := system.module_space_load(&space, sample_file, &load_error); loaded {
 		sample_base = space.modules[place].base
 		ways_ready[.Direct] = true
 	}
-	// The call host: the module in a program of its own.
+	// The call host: the module in a process of its own.
 	status: system.Status
-	if host, status = system.call_host_start(image, image_memory, sample_file, "sample host", random.values_with_seed(&program_generator, {}), &load_error); status == .Ok {
+	if host, status = system.call_host_start(image, image_memory, sample_file, "sample host", random.values_with_seed(&process_generator, {}), &load_error); status == .Ok {
 		ways_ready[.Call_Host] = true
 	} else {
 		buffer: [256]u8
@@ -697,7 +697,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.load_error_text(&writer, &load_error)
 		system.log("tables: the call host did not start: status ", u64(status), "; ", system.written(&writer))
 	}
-	// The service: the root service starts sample as a program.
+	// The service: the root service starts sample as a process.
 	if ring_handle := ctx.handles[system.GRANT_ROOT]; ring_handle != 0 {
 		if requests, status = system.ring_open(ring_handle); status == .Ok {
 			if service, status = system.service_connection(&requests, 1, "sample"); status == .Ok {
@@ -705,13 +705,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 	}
-	// The exports that are wrong on purpose: in this program, and in a call host.
+	// The exports that are wrong on purpose: in this process, and in a call host.
 	hostile_file = system.image_find(image, "hostile_exports")
 	if place, loaded := system.module_space_load(&space, hostile_file, &load_error); loaded {
 		hostile_base = space.modules[place].base
 		hostile_ready[.Direct] = true
 	}
-	if hostile_host, status = system.call_host_start(image, image_memory, hostile_file, "hostile host", random.values_with_seed(&program_generator, {}), &load_error); status == .Ok {
+	if hostile_host, status = system.call_host_start(image, image_memory, hostile_file, "hostile host", random.values_with_seed(&process_generator, {}), &load_error); status == .Ok {
 		hostile_ready[.Call_Host] = true
 	}
 	system.log("tables: the ways: direct ", ways_ready[.Direct] ? "ready" : "refused", ", call host ", ways_ready[.Call_Host] ? "ready" : "refused", ", service ", ways_ready[.Service] ? "ready" : "refused")

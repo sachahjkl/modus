@@ -1,7 +1,7 @@
 package server
 
 // The pages that the server serves by name: objects of its private store in
-// the storage service, as each program has one. The server reads them into
+// the storage service, as each process has one. The server reads them into
 // its memory when it starts, and serves them from there: a request never
 // waits for the storage service. The principal changes them from the console
 // through the exports of the server, functions with typed parameters,
@@ -362,7 +362,7 @@ counts_html :: proc "contextless" (buffer: []u8) -> string {
 	row :: proc "contextless" (writer: ^system.Writer, name: string, value: u64) {
 		text(writer, "<tr><td>", name, "</td><td>", value, "</td></tr>\n")
 	}
-	text(&writer, "<!doctype html>\n<html><head><title>server</title></head><body>\n<h1>server</h1>\n<p>An HTTP/1.1 server of this system: TCP in the program, one thread, one table of ", u64(CAPACITY), " connections.</p>\n<table>\n")
+	text(&writer, "<!doctype html>\n<html><head><title>server</title></head><body>\n<h1>server</h1>\n<p>An HTTP/1.1 server of this system: TCP in the process, one thread, one table of ", u64(CAPACITY), " connections.</p>\n<table>\n")
 	row(&writer, "connections open", u64(tcp_open_count()))
 	row(&writer, "connections accepted", accepted)
 	row(&writer, "requests answered", requests_answered)
@@ -373,7 +373,7 @@ counts_html :: proc "contextless" (buffer: []u8) -> string {
 	row(&writer, "bytes out", bytes_out)
 	row(&writer, "retransmitted segments", retransmissions)
 	row(&writer, "milliseconds since the start", system.time() - start_time)
-	row(&writer, "kernel entries of this program", system.kernel_entries())
+	row(&writer, "kernel entries of this process", system.kernel_entries())
 	text(&writer, "</table>\n<p>pages:")
 	for &item, index in pages {
 		if item.used {

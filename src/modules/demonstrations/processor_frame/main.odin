@@ -4,7 +4,7 @@
 //
 // **What it is for.** It gives the numbers from which the thresholds of
 // the processor profile of the [quality profile](term:quality-profile)
-// come. The test machine shows 1024 x 768, so the program draws into
+// come. The test machine shows 1024 x 768, so the process draws into
 // canvases of 1920 x 1080 in memory of its own budget, with the code that
 // the compositor calls: `graphics.clear`, `graphics.copy` and the
 // [drawing module](term:drawing-module). It measures three parts, each 21
@@ -42,9 +42,9 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
 
-// The program draws through the drawing module only: the interface
+// The process draws through the drawing module only: the interface
 // package declares its exports with this setting, which the row of the
-// program in the module table gives (tools/modustool/modules.odin).
+// process in the module table gives (tools/modustool/modules.odin).
 #assert(interface.DRAWING_THROUGH_MODULE, "processor_frame is built with -define:DRAWING_THROUGH_MODULE=true")
 
 // The reference screen:
@@ -90,18 +90,18 @@ PICTURE_PIXELS :: PICTURE_SIDE * PICTURE_SIDE
 PICTURE_PAGES :: 2 * PICTURE_PIXELS / PIXELS_IN_A_PAGE
 #assert(2 * PICTURE_PIXELS % PIXELS_IN_A_PAGE == 0)
 
-// The program itself, as the other small programs with no window.
-PROGRAM_PAGES :: 180
+// The process itself, as the other small processes with no window.
+PROCESS_PAGES :: 180
 // The page tables of the mappings: about 33 MiB in 8 mappings, one table
 // for each 2 MiB, one more for each mapping that does not start on a
 // 2 MiB edge, and the page directories above them.
 PAGE_TABLE_PAGES :: 32
 
 // The three canvases of the screen, the four surfaces, the pictures, the
-// program and its page tables. The tool reads a literal only, so the
+// process and its page tables. The tool reads a literal only, so the
 // assert ties it to the parts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8815, programs = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == 3 * SCREEN_PAGES + WINDOW_PAGES + PICTURE_PAGES + PROGRAM_PAGES + PAGE_TABLE_PAGES)
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8815, processes = 1, threads = 1}
+#assert(MODULE_BUDGET.working_memory_pages == 3 * SCREEN_PAGES + WINDOW_PAGES + PICTURE_PAGES + PROCESS_PAGES + PAGE_TABLE_PAGES)
 
 // The frame of a window and the bar, in the form of the compositor
 // (src/modules/system/compositor/main.odin, frame_records).
@@ -191,12 +191,12 @@ desktop_counts: Desktop_Counts
 full_screen_areas := [1]interface.Rectangle{{0, 0, SCREEN_WIDTH, SCREEN_HEIGHT}}
 damage_areas: [2]interface.Rectangle
 // The calls of the drawing module that it refused: each is a fault of this
-// program, which the last line names.
+// process, which the last line names.
 refusals: u64
 
 Frame_Times :: [ROUNDS]u64
 
-// canvas_make makes a canvas of memory of the budget of this program.
+// canvas_make makes a canvas of memory of the budget of this process.
 canvas_make :: proc "contextless" (width, height: int) -> (canvas: graphics.Canvas, ok: bool) {
 	pages := (u64(width * height) + PIXELS_IN_A_PAGE - 1) / PIXELS_IN_A_PAGE
 	memory, status := system.memory_create(pages)
@@ -267,11 +267,11 @@ window_frame_records :: proc "contextless" (table: ^interface.Draw_Table, window
 	interface.draw_rectangle(table, x, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, start)
 	interface.draw_rectangle(table, x + outer_width - BORDER, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, end)
 	interface.draw_text(table, x + 8, y + 4, WINDOW_TITLE, focus ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_INTERFACE)
-	base := graphics.Color(focus ? graphics.colors.stop_program : graphics.colors.stop_program_quiet)
+	base := graphics.Color(focus ? graphics.colors.stop_process : graphics.colors.stop_process_quiet)
 	close_x := x + outer_width - BORDER - CLOSE_SIZE
 	interface.draw_vertical_gradient(table, close_x, y, CLOSE_SIZE, TITLE_HEIGHT, graphics.shade(base, 118), graphics.shade(base, 82))
 	interface.draw_rectangle(table, close_x, y, CLOSE_SIZE, 1, graphics.shade(base, 150))
-	interface.draw_character(table, close_x + (CLOSE_SIZE - graphics.CELL_WIDTH) / 2, y + (TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, 'x', focus ? graphics.COLOR_WHITE : graphics.colors.stop_program_quiet_mark)
+	interface.draw_character(table, close_x + (CLOSE_SIZE - graphics.CELL_WIDTH) / 2, y + (TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, 'x', focus ? graphics.COLOR_WHITE : graphics.colors.stop_process_quiet_mark)
 }
 
 // bar_button_records appends a button of the bar with its label in the
@@ -357,7 +357,7 @@ compositor_frame_in_its_damage :: proc "contextless" () {
 
 // desktop_text_append appends a text and counts it in the font that draws
 // it: a text in the interface font is in the font of the cells when the
-// program has no interface font.
+// process has no interface font.
 desktop_text_append :: proc "contextless" (x, y: int, text: string, color: graphics.Color, font: interface.Font, right_aligned := false) {
 	if interface.font_in_use(&desktop_table, font, len(text)).kind == .Interface {
 		desktop_counts.interface_texts += 1
@@ -407,7 +407,7 @@ desktop_build :: proc "contextless" () {
 			}
 			// A bar: its track, then its value.
 			interface.draw_rectangle(table, x + 16, y + CARD_HEIGHT - 24, CARD_WIDTH - 32, 8, graphics.colors.track)
-			interface.draw_rectangle(table, x + 16, y + CARD_HEIGHT - 24, (index + 1) * 32, 8, graphics.colors.program)
+			interface.draw_rectangle(table, x + 16, y + CARD_HEIGHT - 24, (index + 1) * 32, 8, graphics.colors.process)
 			desktop_counts.opaque_rectangles += 2
 		}
 	}
@@ -452,7 +452,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The places of the windows, from the back to the front: each one lower
 	// and to the right, inside the screen with its frame.
 	places := [WINDOW_COUNT][2]int{{96, 72}, {480, 200}, {880, 320}, {1160, 480}}
-	surface_colors := [WINDOW_COUNT]graphics.Color{graphics.colors.kernel, graphics.colors.memory, graphics.colors.machine, graphics.colors.program}
+	surface_colors := [WINDOW_COUNT]graphics.Color{graphics.colors.kernel, graphics.colors.memory, graphics.colors.machine, graphics.colors.process}
 	made := true
 	ok: bool
 	frame, ok = canvas_make(SCREEN_WIDTH, SCREEN_HEIGHT)
@@ -470,7 +470,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	picture_canvas, ok = canvas_make(PICTURE_SIDE, 2 * PICTURE_SIDE)
 	made &&= ok
 	if !made {
-		system.log("processor_frame: wrong: the budget of this program gave no memory for its canvases")
+		system.log("processor_frame: wrong: the budget of this process gave no memory for its canvases")
 		system.stop(1)
 	}
 	pictures = picture_canvas.pixels[:2 * PICTURE_PIXELS]

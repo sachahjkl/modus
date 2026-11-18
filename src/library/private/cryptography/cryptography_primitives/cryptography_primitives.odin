@@ -3,7 +3,7 @@
 // the system. The module cryptography exports each procedure of this
 // package under the same name and with the same signature; the QUIC peer of
 // the tool and the host tests of QUIC call them here, because a host
-// program cannot load a module.
+// process cannot load a module.
 //
 // - **The caller supplies the memory**: each Text is bytes of the caller,
 //   each result is a buffer of the caller, so the package allocates nothing.
@@ -11,7 +11,7 @@
 //   result are read once at the entry. Each input that the code of the origin
 //   reads more than once (a nonce, the additional data, a message to sign,
 //   the info of HKDF, a tag) is first copied into the frame of the call, with
-//   a limit. So another thread or another program that writes the memory of
+//   a limit. So another thread or another process that writes the memory of
 //   the caller during the call cannot make the call check some bytes and
 //   use others.
 // - **The result buffer must be private memory of the caller**: an open and
@@ -68,7 +68,7 @@ ERROR :: -1
 
 // zero_context gives the context of the code of the origin: all zero. The
 // origin uses no allocator here, and an assertion with no procedure goes to
-// the default one of the runtime (it stops the program). Not
+// the default one of the runtime (it stops the process). Not
 // runtime.default_context(): it stores the default random generator, whose
 // thread-local state a module does not have (the convert step of the tool
 // refuses thread-local data).
@@ -142,7 +142,7 @@ aead_run :: #force_no_inline proc "contextless" (aead: Aead, sealing: bool, key_
 		return errors.fail(error, ERROR, .Too_Small, .Bytes, 5, i64(len(output_buffer)), i64(count))
 	}
 	output := output_buffer[:count]
-	// A result that overlaps the text with an offset would stop the program
+	// A result that overlaps the text with an offset would stop the process
 	// in the origin; here it is an error record. An exact overlap (in place)
 	// is right.
 	if bytes.alias_inexactly(output, input) || bytes.alias(output, key) || bytes.alias(output, nonce) || bytes.alias(output, additional) {

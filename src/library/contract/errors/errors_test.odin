@@ -3,7 +3,7 @@ package errors
 
 import "core:testing"
 
-// An error record comes from another program. Each word of its kind, its
+// An error record comes from another process. Each word of its kind, its
 // unit and its end that names no member is refused first: -1, one past the
 // last member, the largest and the smallest word. Then each member comes
 // back from its own word.

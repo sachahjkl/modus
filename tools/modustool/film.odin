@@ -419,7 +419,7 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 
 // run_film makes one film: `film` and `film terminal` the film of the
 // terminal, `film palette` the film of the palette, `film heron` the film
-// of the program heron, `film boot` the film of the boot of the machine.
+// of the process heron, `film boot` the film of the boot of the machine.
 // The films differ by their scenario only: the worker, the list of the
 // encoder and the encoder are the same. A film is for the development log, and for the
 // news entry that names it: it is not a test, and no check runs it.

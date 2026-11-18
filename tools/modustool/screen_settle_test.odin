@@ -3,22 +3,22 @@ package modustool
 import "core:strings"
 import "core:testing"
 
-// A screen is settled when the program of each window is in a wait in the
+// A screen is settled when the process of each window is in a wait in the
 // two reads, with the same count of kernel entries, and no change waits for
 // a frame.
 @(test)
 screen_settle_problem_accepts_a_settled_screen :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
-	programs := []Settle_Program{{slot = 3, name = "console", state = "waiting", entries = 900}, {slot = 7, name = "notes", state = "waiting", entries = 120}}
+	processes := []Settle_Process{{slot = 3, name = "console", state = "waiting", entries = 900}, {slot = 7, name = "notes", state = "waiting", entries = 120}}
 	windows := []Settle_Window{{title = "console", presents = 14}, {title = "notes", presents = 2}}
-	testing.expect_value(t, screen_settle_problem(programs, windows, false, programs), "")
+	testing.expect_value(t, screen_settle_problem(processes, windows, false, processes), "")
 }
 
 // Each fact that is missing is a reason, and the reason names the window.
 @(test)
 screen_settle_problem_names_what_is_not_settled :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
-	before := []Settle_Program{{slot = 7, name = "notes", state = "waiting", entries = 120}}
+	before := []Settle_Process{{slot = 7, name = "notes", state = "waiting", entries = 120}}
 	windows := []Settle_Window{{title = "notes", presents = 2}}
 	testing.expect(t, strings.contains(screen_settle_problem(before, windows, true, before), "the desktop"), "a change of the desktop that waits")
 	waiting := []Settle_Window{{title = "notes", presents = 2, waits = true}}
@@ -26,24 +26,24 @@ screen_settle_problem_names_what_is_not_settled :: proc(t: ^testing.T) {
 	// A terminal that waits on its clock with a line that it did not draw
 	// is in a wait with the same kernel entries: only its word says it.
 	due := []Settle_Window{{title = "notes", presents = 2, due = true}}
-	testing.expect(t, strings.contains(screen_settle_problem(before, due, false, before), "the program of the window notes has a change that waits for its next picture"), "a picture that is due")
-	ready := []Settle_Program{{slot = 7, name = "notes", state = "ready", entries = 120}}
-	testing.expect(t, strings.contains(screen_settle_problem(before, windows, false, ready), "the program of the window notes is ready"), "the program runs at the second read")
-	testing.expect(t, strings.contains(screen_settle_problem(ready, windows, false, before), "the program of the window notes was ready"), "the program ran at the first read")
-	entered := []Settle_Program{{slot = 7, name = "notes", state = "waiting", entries = 123}}
-	testing.expect(t, strings.contains(screen_settle_problem(before, windows, false, entered), "entered the kernel 3 times"), "the program ran between the reads")
-	testing.expect(t, strings.contains(screen_settle_problem(nil, windows, false, before), "started between two reads"), "the program is new")
+	testing.expect(t, strings.contains(screen_settle_problem(before, due, false, before), "the process of the window notes has a change that waits for its next picture"), "a picture that is due")
+	ready := []Settle_Process{{slot = 7, name = "notes", state = "ready", entries = 120}}
+	testing.expect(t, strings.contains(screen_settle_problem(before, windows, false, ready), "the process of the window notes is ready"), "the process runs at the second read")
+	testing.expect(t, strings.contains(screen_settle_problem(ready, windows, false, before), "the process of the window notes was ready"), "the process ran at the first read")
+	entered := []Settle_Process{{slot = 7, name = "notes", state = "waiting", entries = 123}}
+	testing.expect(t, strings.contains(screen_settle_problem(before, windows, false, entered), "entered the kernel 3 times"), "the process ran between the reads")
+	testing.expect(t, strings.contains(screen_settle_problem(nil, windows, false, before), "started between two reads"), "the process is new")
 	empty := []Settle_Window{{title = "notes"}}
-	testing.expect(t, strings.contains(screen_settle_problem(before, empty, false, before), "the window notes has no picture of its program yet"), "a surface with no Present")
+	testing.expect(t, strings.contains(screen_settle_problem(before, empty, false, before), "the window notes has no picture of its process yet"), "a surface with no Present")
 }
 
-// A window that draws with no end, the windows of the programs that carry
-// the reads, and a window whose program stopped do not hold a picture back.
+// A window that draws with no end, the windows of the processes that carry
+// the reads, and a window whose process stopped do not hold a picture back.
 @(test)
 screen_settle_problem_leaves_windows_out :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
-	before := []Settle_Program{{slot = 4, name = "plasma", state = "ready", entries = 10}, {slot = 5, name = "remote", state = "ready", entries = 50}, {slot = 6, name = "monitor", state = "ready", entries = 70}, {slot = 8, name = "rights", state = "stopped", entries = 30}}
-	after := []Settle_Program{{slot = 4, name = "plasma", state = "ready", entries = 400}, {slot = 5, name = "remote", state = "ready", entries = 90}, {slot = 6, name = "monitor", state = "ready", entries = 99}, {slot = 8, name = "rights", state = "stopped", entries = 30}}
+	before := []Settle_Process{{slot = 4, name = "plasma", state = "ready", entries = 10}, {slot = 5, name = "remote", state = "ready", entries = 50}, {slot = 6, name = "monitor", state = "ready", entries = 70}, {slot = 8, name = "rights", state = "stopped", entries = 30}}
+	after := []Settle_Process{{slot = 4, name = "plasma", state = "ready", entries = 400}, {slot = 5, name = "remote", state = "ready", entries = 90}, {slot = 6, name = "monitor", state = "ready", entries = 99}, {slot = 8, name = "rights", state = "stopped", entries = 30}}
 	windows := []Settle_Window{{title = "plasma", presents = 800, waits = true}, {title = "remote", presents = 9, waits = true}, {title = "monitor", presents = 5}, {title = "rights", presents = 0}}
 	testing.expect_value(t, screen_settle_problem(before, windows, false, after), "")
 	testing.expect(t, draws_without_end("life") && !draws_without_end("notes") && left_out_of_calls("remote") && !draws_without_end("remote"))

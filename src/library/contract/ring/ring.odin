@@ -1,12 +1,12 @@
 // The ring: two queues of fixed records in shared memory. It is the base
 // interface of the kernel, with no blocking operation, and the one way that
-// two programs communicate.
+// two processes communicate.
 //
 // One side writes the queue of command records and reads the queue of
 // completion records. The other side does the opposite. A queue has one
 // writer and one reader: no queue operation needs a lock, and none enters
-// the kernel. The same format is used between two programs and between a
-// program and the kernel.
+// the kernel. The same format is used between two processes and between a
+// process and the kernel.
 //
 // The memory of a ring:
 //   page 0        the head: the counters of the two queues (Head)
@@ -28,7 +28,7 @@
 // src/md/api/kernel_ring_completion_room.md).
 //
 // Who uses it: the kernel (the kernel ring of each thread), every service
-// (its rings to its callers) and every program. The parts:
+// (its rings to its callers) and every process. The parts:
 //
 // - `Record`: one command or one completion, 64 bytes.
 // - `Head`, `Counters`: the shared head of a ring.
@@ -54,7 +54,7 @@ PAGE_SIZE :: 4096 // The page of the processor: the head is one page.
 //
 // The writer fills it; the reader copies it out of the shared memory before
 // it reads a field (`pop` gives a copy), because the writer of another
-// program can change the shared bytes at any time. Each ring contract says
+// process can change the shared bytes at any time. Each ring contract says
 // what `kind` and `values` mean. 64 bytes: one line of the cache.
 //
 // Example: the kernel operation `Memory_Size` of the memory handle 5 is the

@@ -4,12 +4,12 @@
 // It draws one record, Data. Each part of Data is a record of the kernel:
 // the boot record (the stages and their times, the memory that the firmware
 // gave, the firmware, the framebuffer), the state of the memory, the
-// processors, the programs, and the modules of the boot image.
+// processors, the processes, and the modules of the boot image.
 //
-// Three programs draw it. The boot program draws what it knows before the
+// Three processes draw it. The boot program draws what it knows before the
 // kernel exists. The root service draws it while it starts the first
-// programs: if the start fails, the display stays, with the failure. The
-// program `boot` draws it in a window at any time.
+// processes: if the start fails, the display stays, with the failure. The
+// process `boot` draws it in a window at any time.
 //
 // A record that is all zero is valid: its card shows that the fact is
 // not known yet. This package uses no kernel operation: package collect
@@ -36,7 +36,7 @@ import "base:intrinsics"
 WIDTH :: 976 // The size that the display needs.
 HEIGHT :: 708 // Pixels: a window of this height fits the screen of 768 lines under the bar and its title.
 PROCESSOR_ROWS :: 16 // The processors that the card of the processors shows.
-PROGRAM_ROWS :: 12 // The programs that the card of the programs shows.
+PROCESS_ROWS :: 12 // The processes that the card of the processes shows.
 
 // The state of the start, which the title of the display says.
 State :: enum {
@@ -45,7 +45,7 @@ State :: enum {
 	Failed, // The start stopped: `Data.message` says why.
 }
 
-// The steps of the start, in their order. The program that draws says
+// The steps of the start, in their order. The process that draws says
 // which step the machine does now: the steps before it are done.
 Step :: enum {
 	Firmware, // The firmware runs the boot program.
@@ -60,10 +60,10 @@ Step :: enum {
 	Desktop, // The root service starts the desktop.
 }
 
-// One row of the card of the programs.
-Program :: struct {
-	slot:   u64, // The program slot.
-	report: op.Program_Report, // Its report.
+// One row of the card of the processes.
+Process :: struct {
+	slot:   u64, // The process slot.
+	report: op.Process_Report, // Its report.
 }
 
 // What the display shows: the reports of the kernel, the boot image and the
@@ -72,9 +72,9 @@ Data :: struct {
 	boot:            op.Boot_Report, // The boot record.
 	machine:         op.System_Report, // The memory and the counts.
 	processors:      [PROCESSOR_ROWS]op.Processor_Report, // The first processors.
-	programs:        [PROGRAM_ROWS]Program, // By slot.
-	program_count:   int, // The entries of `programs` in use.
-	program_total:   int, // All the programs: programs has the first ones.
+	processes:        [PROCESS_ROWS]Process, // By slot.
+	process_count:   int, // The entries of `processes` in use.
+	process_total:   int, // All the processes: processes has the first ones.
 	image:           []u8, // The boot image.
 	processor_name:  [48]u8, // The name that the processor gives of itself.
 	message:         string, // What the machine does now.
@@ -392,7 +392,7 @@ IMAGE_NAMES_X :: 216 // The tiles of the names start here.
 IMAGE_CHECK_Y :: 96 // The y of the line of the check.
 IMAGE_TRUST_Y :: 114 // The y of the line of the trust.
 
-// The layout is large for a stack: one copy serves each draw of the program.
+// The layout is large for a stack: one copy serves each draw of the process.
 @(private)
 image_layout: image_card.Layout
 
@@ -407,7 +407,7 @@ image_kind_names := [image_card.File_Kind]string {
 // The color of each kind of file of the boot image.
 @(private, rodata)
 image_kind_colors := [image_card.File_Kind]graphics.Color {
-	.Entry    = graphics.DARK_PROGRAM,
+	.Entry    = graphics.DARK_PROCESS,
 	.No_Entry = graphics.DARK_NO_ENTRY,
 	.Resource = graphics.DARK_RESOURCE,
 }
@@ -457,7 +457,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	switch data.state {
 	case .Running:
 	case .Ready:
-		state_color = graphics.DARK_PROGRAM
+		state_color = graphics.DARK_PROCESS
 	case .Failed:
 		state_color = graphics.DARK_FAILED
 	}
@@ -471,11 +471,11 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 		for step in 0 ..< len(Step) {
 			x := PATH_X + step * PATH_STEP
 			if step != 0 {
-				fill(canvas, x - PATH_STEP + 8, PATH_Y - 1, PATH_STEP - 16, 2, step <= now ? graphics.shade(graphics.DARK_PROGRAM, 80) : 0x33507C)
+				fill(canvas, x - PATH_STEP + 8, PATH_Y - 1, PATH_STEP - 16, 2, step <= now ? graphics.shade(graphics.DARK_PROCESS, 80) : 0x33507C)
 			}
 			switch {
 			case step < now:
-				block(canvas, x - 5, PATH_Y - 5, 10, 10, graphics.shade(graphics.DARK_PROGRAM, 130), graphics.DARK_PROGRAM)
+				block(canvas, x - 5, PATH_Y - 5, 10, 10, graphics.shade(graphics.DARK_PROCESS, 130), graphics.DARK_PROCESS)
 			case step == now:
 				block(canvas, x - 8, PATH_Y - 8, 16, 16, graphics.shade(state_color, 140), state_color)
 				block(canvas, x - 5, PATH_Y - 5, 10, 10, 0x10203C, 0x10203C)
@@ -508,25 +508,25 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	{
 		// 236: the six rows of names end at the bottom of its content; the
 		// card of the boot image takes the rest for the line of the trust.
-		area := card(canvas, MARGIN, 84, WIDTH - 2 * MARGIN, 236, "THE LINE OF TIME", "Boot_Report.stages, Program_Report.start_time: the cycle counter", graphics.DARK_KERNEL)
+		area := card(canvas, MARGIN, 84, WIDTH - 2 * MARGIN, 236, "THE LINE OF TIME", "Boot_Report.stages, Process_Report.start_time: the cycle counter", graphics.DARK_KERNEL)
 		origin := boot.stage_count > 1 ? boot.stages[1].start : 0
 		last := origin
 		for stage in boot.stages[:boot.stage_count] {
 			last = max(last, stage.start + stage.duration)
 		}
-		// The programs of the start: the ones that started in the second
+		// The processes of the start: the ones that started in the second
 		// after the kernel.
 		kernel_end := last
-		for program in data.programs[:data.program_count] {
-			if program.report.start_time <= kernel_end + 1_000_000 {
-				last = max(last, program.report.start_time)
+		for process in data.processes[:data.process_count] {
+			if process.report.start_time <= kernel_end + 1_000_000 {
+				last = max(last, process.report.start_time)
 			}
 		}
 		span := max(last - origin, 1)
 		place :: proc "contextless" (time, origin, span: u64, width: int) -> int {
 			return time <= origin ? 0 : int(min(time - origin, span) * u64(width) / span)
 		}
-		// The time from the boot program to the last program, in large digits.
+		// The time from the boot program to the last process, in large digits.
 		if boot.stage_count != 0 {
 			put_duration(&text, span)
 			write_large(canvas, WIDTH - MARGIN - CARD_MARGIN - text.count * 16, 84 + 6, string(text.bytes[:text.count]), 2, graphics.DARK_TEXT)
@@ -555,9 +555,9 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 				y := 92 + int(step) % 5 * LINE
 				switch {
 				case step < data.step:
-					block(area, x, y + 3, 10, 10, graphics.shade(graphics.DARK_PROGRAM, 130), graphics.DARK_PROGRAM)
+					block(area, x, y + 3, 10, 10, graphics.shade(graphics.DARK_PROCESS, 130), graphics.DARK_PROCESS)
 					write(area, x + 18, y, name, graphics.DARK_TEXT)
-					write(area, x + 200, y, "done", graphics.DARK_PROGRAM)
+					write(area, x + 200, y, "done", graphics.DARK_PROCESS)
 				case step == data.step:
 					block(area, x, y + 3, 10, 10, graphics.shade(state_color, 140), state_color)
 					block(area, x + 3, y + 6, 4, 4, graphics.DARK_CARD_BOTTOM, graphics.DARK_CARD_BOTTOM)
@@ -584,14 +584,14 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			}
 			text.count = 0
 		}
-		// Each program of the start: a mark on the line of time, at its creation.
+		// Each process of the start: a mark on the line of time, at its creation.
 		marks := 0
-		for &program in data.programs[:data.program_count] {
-			if program.report.start_time > kernel_end + 1_000_000 {
+		for &process in data.processes[:data.process_count] {
+			if process.report.start_time > kernel_end + 1_000_000 {
 				continue
 			}
-			x := track_x + 4 + min(place(program.report.start_time, origin, span, inner), inner - 2)
-			color := graphics.shade(graphics.DARK_PROGRAM, u32(130 - 14 * (marks & 3)))
+			x := track_x + 4 + min(place(process.report.start_time, origin, span, inner), inner - 2)
+			color := graphics.shade(graphics.DARK_PROCESS, u32(130 - 14 * (marks & 3)))
 			fill(area, x, TUBE_Y - 4, 2, TUBE_HEIGHT + 8, color)
 			block(area, x - 3, TUBE_Y - 12, 8, 8, color, color)
 			marks += 1
@@ -622,7 +622,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			write(area, 0, TUBE_Y + TUBE_HEIGHT + 10, "firmware", graphics.DARK_DIM)
 		}
 
-		// The names: each stage and each program of the start, with its
+		// The names: each stage and each process of the start, with its
 		// color and its time, in two columns.
 		NAMES_Y :: 92
 		NAME_ROWS :: 6
@@ -643,11 +643,11 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			entry += 1
 		}
 		marks = 0
-		for &program in data.programs[:data.program_count] {
-			if program.report.start_time > kernel_end + 1_000_000 {
+		for &process in data.processes[:data.process_count] {
+			if process.report.start_time > kernel_end + 1_000_000 {
 				continue
 			}
-			color := graphics.shade(graphics.DARK_PROGRAM, u32(130 - 14 * (marks & 3)))
+			color := graphics.shade(graphics.DARK_PROCESS, u32(130 - 14 * (marks & 3)))
 			marks += 1
 			if entry >= 2 * NAME_ROWS {
 				continue
@@ -655,12 +655,12 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			x := entry / NAME_ROWS * column_width
 			y := NAMES_Y + entry % NAME_ROWS * LINE
 			block(area, x + 1, y + 4, 8, 8, color, color)
-			put(&text, "program ")
-			put_name(&text, program.report.name[:])
+			put(&text, "process ")
+			put_name(&text, process.report.name[:])
 			put(&text, ": created")
 			show(area, x + 18, y, &text, graphics.DARK_TEXT)
 			put(&text, "at ")
-			put_duration(&text, program.report.start_time - min(origin, program.report.start_time))
+			put_duration(&text, process.report.start_time - min(origin, process.report.start_time))
 			show_right(area, x + column_width - 24, y, &text, color)
 			entry += 1
 		}
@@ -827,38 +827,38 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 		trust_line(area, IMAGE_TRUST_Y, data)
 	}
 
-	// The programs.
+	// The processes.
 	{
-		area := card(canvas, RIGHT_X, BOTTOM_Y, WIDTH - RIGHT_X - MARGIN, BOTTOM_HEIGHT, "PROGRAMS", "threads, pages, created", graphics.DARK_PROGRAM)
-		if data.program_count == 0 {
-			write(area, 0, 0, "No program runs yet.", graphics.DARK_DIM)
+		area := card(canvas, RIGHT_X, BOTTOM_Y, WIDTH - RIGHT_X - MARGIN, BOTTOM_HEIGHT, "PROCESSES", "threads, pages, created", graphics.DARK_PROCESS)
+		if data.process_count == 0 {
+			write(area, 0, 0, "No process runs yet.", graphics.DARK_DIM)
 		} else {
-			put_number(&text, u64(data.program_total))
+			put_number(&text, u64(data.process_total))
 			show_right(canvas, WIDTH - MARGIN - CARD_MARGIN, BOTTOM_Y + 13, &text, graphics.DARK_TEXT)
 		}
 		most: u64 = 1
-		for &program in data.programs[:data.program_count] {
-			most = max(most, program.report.mapped_pages)
+		for &process in data.processes[:data.process_count] {
+			most = max(most, process.report.mapped_pages)
 		}
-		for &program, index in data.programs[:data.program_count] {
+		for &process, index in data.processes[:data.process_count] {
 			if (index + 1) * LINE > area.height {
 				break
 			}
 			y := index * LINE
-			put_number(&text, program.slot)
+			put_number(&text, process.slot)
 			show_right(area, 16, y, &text, graphics.DARK_DIM)
-			put_name(&text, program.report.name[:])
+			put_name(&text, process.report.name[:])
 			text.count = min(text.count, 12)
-			show(area, 28, y, &text, program.report.state == .Stopped ? graphics.DARK_FAILED : graphics.DARK_TEXT)
-			put_number(&text, program.report.thread_count)
+			show(area, 28, y, &text, process.report.state == .Stopped ? graphics.DARK_FAILED : graphics.DARK_TEXT)
+			put_number(&text, process.report.thread_count)
 			show_right(area, 150, y, &text, graphics.DARK_TEXT)
-			// The pages of the program, as a bar against the largest program.
+			// The pages of the process, as a bar against the largest process.
 			block(area, 162, y + 5, 56, 6, graphics.DARK_TRACK, graphics.DARK_TRACK)
-			block(area, 162, y + 5, max(int(program.report.mapped_pages * 56 / most), 4), 6, graphics.shade(graphics.DARK_PROGRAM, 120), graphics.shade(graphics.DARK_PROGRAM, 80))
-			put_number(&text, program.report.mapped_pages)
+			block(area, 162, y + 5, max(int(process.report.mapped_pages * 56 / most), 4), 6, graphics.shade(graphics.DARK_PROCESS, 120), graphics.shade(graphics.DARK_PROCESS, 80))
+			put_number(&text, process.report.mapped_pages)
 			show_right(area, 264, y, &text, graphics.DARK_TEXT)
-			put_duration(&text, program.report.start_time)
-			show_right(area, area.width, y, &text, graphics.DARK_PROGRAM)
+			put_duration(&text, process.report.start_time)
+			show_right(area, area.width, y, &text, graphics.DARK_PROCESS)
 		}
 	}
 }
@@ -937,7 +937,7 @@ check_line :: proc "contextless" (area: graphics.Canvas, y: int, data: ^Data) {
 	case trust.verifier != .None:
 		put_number(&text, trust.entry_count)
 		put(&text, " verified, the kernel included")
-		show(area, x, y, &text, graphics.DARK_PROGRAM)
+		show(area, x, y, &text, graphics.DARK_PROCESS)
 	case data.state == .Failed && trust.key_kind != .None:
 		write(area, x, y, "no file verified", graphics.DARK_FAILED)
 	case:
@@ -994,7 +994,7 @@ trust_line :: proc "contextless" (area: graphics.Canvas, y: int, data: ^Data) {
 		color = graphics.DARK_BOOT_PROGRAM
 	case .Firmware_And_Boot_Program:
 		put(&text, "Secure Boot")
-		color = graphics.DARK_PROGRAM
+		color = graphics.DARK_PROCESS
 	}
 	x = trust_part(area, x, y, &text, color, false)
 	color = graphics.DARK_DIM
@@ -1006,7 +1006,7 @@ trust_line :: proc "contextless" (area: graphics.Canvas, y: int, data: ^Data) {
 		put_number(&text, trust.measure_register)
 		put(&text, " ")
 		put_hex_bytes(&text, trust.measure_value[:4])
-		color = graphics.DARK_PROGRAM
+		color = graphics.DARK_PROCESS
 	case .No_Tpm:
 		put(&text, "no TPM")
 		color = graphics.DARK_BOOT_PROGRAM

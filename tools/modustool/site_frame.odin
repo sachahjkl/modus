@@ -472,7 +472,7 @@ site_description_cut :: proc(text: string) -> string {
 }
 
 // site_git_commit reads the commit of the work tree from the files of git,
-// with no program: .git is a folder, or a file "gitdir: <folder>" in a
+// with no process: .git is a folder, or a file "gitdir: <folder>" in a
 // work tree; HEAD names a reference, which is a file or a line of
 // packed-refs in the common folder.
 site_git_commit :: proc() -> string {
@@ -789,7 +789,7 @@ site_build :: proc(address: string) -> bool {
 		// The feed is written before the checks: each page links to it.
 		site_write_file(&site, SITE_NEWS_FEED, transmute([]u8)site_news_feed(&site)) or_return
 	}
-	// The files that each page names in its head, or that other programs
+	// The files that each page names in its head, or that other processes
 	// read with no address: written before the checks of the links.
 	site_write_file(&site, SITE_RELEASES_FEED, transmute([]u8)site_releases_feed(&site)) or_return
 	manifest := site_manifest(&site)
@@ -882,7 +882,7 @@ site_build :: proc(address: string) -> bool {
 		fmt.eprintfln("modustool: site: %d problems; no page is written", len(problems))
 		return false
 	}
-	// What other programs read: with an address, the canonical addresses,
+	// What other processes read: with an address, the canonical addresses,
 	// Open Graph, the JSON-LD graphs and the sitemap; with none, their
 	// absence.
 	sitemap := site.address != "" ? site_sitemap(&site) : ""

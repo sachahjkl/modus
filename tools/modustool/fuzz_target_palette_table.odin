@@ -9,7 +9,7 @@ import "modus:contract/text_encoding"
 
 // The fuzz target of the palette table (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): the compositor maps the table of the
-// console, another program, and copies its entries, its result area and
+// console, another process, and copies its entries, its result area and
 // its candidates; the console reads the arguments that the panel sends on
 // a ring. Each reader checks its copy and trusts nothing of the memory.
 

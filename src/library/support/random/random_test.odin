@@ -220,7 +220,7 @@ a_draw_leaves_the_generator_free :: proc(t: ^testing.T) {
 }
 
 // A key is drawn only when the seed has the strength that the caller asks:
-// a weaker seed gives Seed_Too_Weak and no byte (the program chooses what
+// a weaker seed gives Seed_Too_Weak and no byte (the process chooses what
 // it accepts, and an unmet requirement is an error).
 @(test)
 a_key_asks_for_a_least_seed_strength :: proc(t: ^testing.T) {
@@ -257,7 +257,7 @@ a_key_asks_for_a_least_seed_strength :: proc(t: ^testing.T) {
 			testing.expect_value(t, generator.served, 0)
 		}
 	}
-	// A generator with no seed gives the error, not a stop of the program.
+	// A generator with no seed gives the error, not a stop of the process.
 	empty: Generator
 	key: [32]u8
 	error: errors.Error_Record
@@ -337,7 +337,7 @@ the_stream_depends_on_the_device_bytes :: proc(t: ^testing.T) {
 	testing.expect(t, first != second)
 }
 
-// The report goes to the program `randomness` through the values 0 to 7
+// The report goes to the process `randomness` through the values 0 to 7
 // of its context, the facts of the entropy device with it.
 @(test)
 the_report_goes_through_the_context_values :: proc(t: ^testing.T) {

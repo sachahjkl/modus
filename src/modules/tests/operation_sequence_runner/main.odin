@@ -1,5 +1,5 @@
 // The runner of one operation sequence (src/md/infrastructure/kernel_fuzzing.md,
-// "The programs in the machine"). The program `operation_fuzzing` starts
+// "The processes in the machine"). The process `operation_fuzzing` starts
 // one new runner for each sequence, with the budget of that sequence.
 //
 // **What it is for.** It runs each sequence step as one command record of
@@ -7,7 +7,7 @@
 // checks the answers against the forms of the kernel operations.
 //
 // **Start**: only `operation_fuzzing` starts it, from the boot image of the
-// operation sequences. Its row of `program_roles` has no grant. It writes
+// operation sequences. Its row of `process_roles` has no grant. It writes
 // nothing on the log, unless a step writes there.
 package operation_sequence_runner
 
@@ -20,7 +20,7 @@ import "modus:contract/ring"
 import "modus:support/system"
 
 // The sequence, read again from the copy that the service mapped: the
-// copy is read-only here, and this program checks what it runs.
+// copy is read-only here, and this process checks what it runs.
 sequence: operation_sequence.Sequence
 
 // The table of error details of each step: a step of a batch keeps its own

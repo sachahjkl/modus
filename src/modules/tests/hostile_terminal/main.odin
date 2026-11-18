@@ -1,18 +1,18 @@
-// A test program that writes to its terminal three records whose kind
+// A test process that writes to its terminal three records whose kind
 // names no record, then one line, and stops.
 //
 // The three words are None, the word one past the last kind, and the
 // largest word of the field. The terminal decides each one at its border,
 // which a host test gives the same words (terminal.kind_of_ring_word). This
-// program shows that the terminal answers what its border decided: it
+// process shows that the terminal answers what its border decided: it
 // counts each refused record, writes one line at the first one, and the
-// count when the program stops. It sends no answer on the ring, so this
-// program checks what it can see: the terminal read the three records and
+// count when the process stops. It sends no answer on the ring, so this
+// process checks what it can see: the terminal read the three records and
 // the line after them.
 //
 // **What it is for.** A record of the terminal ring comes from another
-// program. A word that names no record must not stop the terminal, nor
-// become a record that the program did not write.
+// process. A word that names no record must not stop the terminal, nor
+// become a record that the process did not write.
 //
 // **Start**: `start("hostile_terminal")` in the console. The machine test
 // starts it after `flood`.

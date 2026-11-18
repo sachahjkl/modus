@@ -3,7 +3,7 @@ package modustool
 // The randomness of the system: three machines (docs/RANDOMNESS.md).
 //
 // Two machines with each feature of the processor: the root service makes
-// the seed of the system from rdseed; two programs `randomness` show two
+// the seed of the system from rdseed; two processes `randomness` show two
 // streams. The first of them has the entropy device of virtio: the root
 // service starts the entropy service, mixes its two reads of 32 bytes into
 // its generator, and the window shows the bytes; the second has none, and
@@ -11,11 +11,11 @@ package modustool
 // (src/md/features/entropy_device.md). The third machine has no rdrand and
 // no rdseed (`-cpu max,-rdrand,-rdseed`): the seed comes from the cycle
 // counter only, the root service and the window say "weak", and each
-// program still starts. The first bytes of the stream of each program, in
-// the three machines, all differ: two programs, and a restart, give
+// process still starts. The first bytes of the stream of each process, in
+// the three machines, all differ: two processes, and a restart, give
 // different streams. On the first machine the root service reads the
 // device again 30 seconds after the start, writes 32 bytes of its stream in
-// the fresh bytes page of each program, and each program `randomness`
+// the fresh bytes page of each process, and each process `randomness`
 // mixes them into its generator (src/md/features/fresh_bytes.md).
 
 TEST_OUTPUT_RANDOM :: BUILD_FOLDER + "/test_output_random.txt"
@@ -34,24 +34,24 @@ scenario_random_with_the_processor := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"randomness\")"},
-	{kind = .Remember, text = "randomness: the seed of the system: strength entropy (rdseed); the first bytes of the stream of this program: "},
+	{kind = .Remember, text = "randomness: the seed of the system: strength entropy (rdseed); the first bytes of the stream of this process: "},
 	{kind = .Wait, text = "randomness: the entropy device: 64 bytes mixed after the gathering; refused reads: 0"},
 	{kind = .Wait, text = "randomness: 1 MiB by the high 4 bits of each byte: from "},
 	{kind = .Wait, text = "randomness: the generator: 4 MiB in "},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"randomness\")"},
-	{kind = .Remember, text = "randomness: the seed of the system: strength entropy (rdseed); the first bytes of the stream of this program: "},
-	// The first program can mix its page before the second one ends its
+	{kind = .Remember, text = "randomness: the seed of the system: strength entropy (rdseed); the first bytes of the stream of this process: "},
+	// The first process can mix its page before the second one ends its
 	// measure: the next two lines search from the measure of the first.
 	{kind = .Wait, text = "randomness: the generator: 4 MiB in ", any_order = true},
-	// Each of the two programs mixes the next change of its page at a refill
+	// Each of the two processes mixes the next change of its page at a refill
 	// of its live draw, then writes the line once. After both lines, the
 	// window in front shows a mix.
-	{kind = .Wait, text = "randomness: the fresh bytes of the root service are mixed into the generator of this program, at the change "},
-	{kind = .Wait, text = "randomness: the fresh bytes of the root service are mixed into the generator of this program, at the change "},
+	{kind = .Wait, text = "randomness: the fresh bytes of the root service are mixed into the generator of this process, at the change "},
+	{kind = .Wait, text = "randomness: the fresh bytes of the root service are mixed into the generator of this process, at the change "},
 	{kind = .Front, text = "randomness"},
 	{kind = .Shot, text = "randomness"},
-	{kind = .Distinct, text = "two programs of one machine"},
+	{kind = .Distinct, text = "two processes of one machine"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
@@ -64,9 +64,9 @@ scenario_random_restart := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"randomness\")"},
-	{kind = .Remember, text = "randomness: the seed of the system: strength entropy (rdseed); the first bytes of the stream of this program: "},
+	{kind = .Remember, text = "randomness: the seed of the system: strength entropy (rdseed); the first bytes of the stream of this process: "},
 	{kind = .Wait, text = "randomness: the entropy device: absent"},
-	{kind = .Distinct, text = "two programs, then a restart of the machine"},
+	{kind = .Distinct, text = "two processes, then a restart of the machine"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
@@ -77,7 +77,7 @@ scenario_random_without_the_processor := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"randomness\")"},
-	{kind = .Remember, text = "randomness: the seed of the system: strength weak (the cycle counter only); the first bytes of the stream of this program: "},
+	{kind = .Remember, text = "randomness: the seed of the system: strength weak (the cycle counter only); the first bytes of the stream of this process: "},
 	{kind = .Wait, text = "randomness: the generator: 4 MiB in "},
 	{kind = .Front, text = "randomness"},
 	{kind = .Shot, text = "randomness_weak"},
@@ -87,7 +87,7 @@ scenario_random_without_the_processor := [?]Step {
 	// listens on nothing (docs/QUIC.md, section 6).
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"quic_echo\")"},
-	{kind = .Wait, text = "quic_echo: the random seed of this program is weak: it makes no key of a server, and listens on nothing"},
+	{kind = .Wait, text = "quic_echo: the random seed of this process is weak: it makes no key of a server, and listens on nothing"},
 	{kind = .Front, text = "quic_echo"},
 	{kind = .Shot, text = "quic_echo_weak"},
 	{kind = .Front, text = "console"},

@@ -1,13 +1,13 @@
 package root
 
-// A disk program: a program whose module file is an object of the store
+// A disk process: a process whose module file is an object of the store
 // `module_files` of the storage service, and not a file of the boot image
-// (docs/MODULE_CONTRACT.md, "A program from a disk").
+// (docs/MODULE_CONTRACT.md, "A process from a disk").
 //
-// The command Start_From_Disk names the program and the hash of its file.
+// The command Start_From_Disk names the process and the hash of its file.
 // This service reads the object through a connection of its own to the
 // storage service, checks the hash of the bytes, and starts them with no
-// grant. The storage service is a program that this service started: it is
+// grant. The storage service is a process that this service started: it is
 // not trusted to choose what runs, and it is not waited for. The load is a
 // state of the loop of this service (disk_load_step), so each other ring is
 // served while the bytes come. An import that the boot image does not hold
@@ -16,22 +16,22 @@ package root
 //
 // The disk grant table of each principal binds a nickname, the name of the
 // entry, to the hash of one file, with the grants of that file
-// (docs/MODULE_CONTRACT.md, "The grants of a disk program"). Its rules are
-// in modus:support/disk_program; this file applies them at each start and
+// (docs/MODULE_CONTRACT.md, "The grants of a disk process"). Its rules are
+// in modus:support/disk_process; this file applies them at each start and
 // serves the commands Disk_Grant and Nickname_Move. The store is the one
 // grant that a command gives: the store of the nickname, so it follows the
 // nickname to its next file.
 
 import "modus:contract/blake3"
 import "modus:contract/enum_word"
-import program_page "modus:contract/disk_program_page"
+import process_page "modus:contract/disk_process_page"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/start_grant"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import "modus:support/display"
 import "modus:support/principals"
 import "modus:support/random"
@@ -54,18 +54,18 @@ Disk_Load_Stage :: enum u8 {
 // service.
 Disk_Load :: struct {
 	stage:          Disk_Load_Stage,
-	asker:          ^Started, // The program that sent the command: it receives the completion. nil: it stopped.
+	asker:          ^Started, // The process that sent the command: it receives the completion. nil: it stopped.
 	tag:            u32, // The tag of the command.
-	name:           [disk_program.NAME_LIMIT]u8, // The name of the program, and of its entry in the store.
+	name:           [disk_process.NAME_LIMIT]u8, // The name of the process, and of its entry in the store.
 	name_length:    int,
-	hash:           [disk_program.HASH_SIZE]u8, // The hash that the command names.
-	principal:      u64, // The principal of the session of the asker: the store is its store, and the program joins its session.
+	hash:           [disk_process.HASH_SIZE]u8, // The hash that the command names.
+	principal:      u64, // The principal of the session of the asker: the store is its store, and the process joins its session.
 	connection:     ^Connection, // The connection of this service to the storage service. nil: it ended.
 	client:         storage.Client, // The call ring and the call region of that connection, mapped here.
 	sent:           storage.Sent_Call, // The call whose answer this service waits for.
 	arguments:      [4]isolated.Argument, // The arguments of that call.
 	argument_count: int,
-	read:           disk_program.Read, // The size of the file, and the bytes that came.
+	read:           disk_process.Read, // The size of the file, and the bytes that came.
 	memory:         system.Handle, // The memory of the file, from the budget of this service. 0: none yet.
 	bytes:          []u8, // That memory, mapped.
 	deadline:       u64, // The time at which the load ends with no answer.
@@ -74,7 +74,7 @@ Disk_Load :: struct {
 disk_load: Disk_Load
 
 // The caller record of the connection of this service to the storage
-// service. This service is no row of its own table of started programs, so
+// service. This service is no row of its own table of started processes, so
 // the connection has this record as its caller: its name is the name of the
 // store, and grant_for gives it the limit of that store and no grant to act
 // for a principal.
@@ -86,13 +86,13 @@ disk_reader: Started
 // table of a named principal is read after its first unlock, under the key
 // that `unlock` gives with it, and written after each change
 // (persisted_grant_table.odin). A caller that acts for a named principal
-// is a program of its session, such as a console that the desktop starts
+// is a process of its session, such as a console that the desktop starts
 // while the session runs.
-disk_grant_tables: [principals.PRINCIPAL_CAPACITY]disk_program.Grant_Table
+disk_grant_tables: [principals.PRINCIPAL_CAPACITY]disk_process.Grant_Table
 
 // disk_grant_table_of gives the table of a principal, or nil for a number
 // with no record.
-disk_grant_table_of :: proc "contextless" (principal: u64) -> ^disk_program.Grant_Table {
+disk_grant_table_of :: proc "contextless" (principal: u64) -> ^disk_process.Grant_Table {
 	if principal >= principals.PRINCIPAL_CAPACITY {
 		return nil
 	}
@@ -113,7 +113,7 @@ disk_grant_table_lasts :: proc "contextless" (principal: u64) -> string {
 	return "; the passphrase of the principal keeps its disk grant table on the disk"
 }
 
-// disk_store_limit gives the blocks of the store of a disk program in a
+// disk_store_limit gives the blocks of the store of a disk process in a
 // service: the store of its nickname when its start gave it the grant
 // store, and the grant was not revoked; else none.
 disk_store_limit :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
@@ -122,15 +122,15 @@ disk_store_limit :: proc "contextless" (caller: ^Started, service: ^Started) -> 
 	}
 	// The budget that a module asks for has no part for a store yet: the
 	// store of a nickname has the default limit of a store, which no name
-	// of the tables of this service changes for a disk program.
+	// of the tables of this service changes for a disk process.
 	return STORE_BLOCKS_DEFAULT
 }
 
-// disk_program_running gives the disk program of a nickname that runs in
+// disk_process_running gives the disk process of a nickname that runs in
 // the session of a principal, or nil.
-disk_program_running :: proc "contextless" (nickname: string, principal: u64) -> ^Started {
+disk_process_running :: proc "contextless" (nickname: string, principal: u64) -> ^Started {
 	for &item in started {
-		if item.program != 0 && item.from_disk && item.principal == principal && system.name_of(item.name[:]) == nickname {
+		if item.process != 0 && item.from_disk && item.principal == principal && system.name_of(item.name[:]) == nickname {
 			return &item
 		}
 	}
@@ -141,29 +141,29 @@ disk_program_running :: proc "contextless" (nickname: string, principal: u64) ->
 // values of the completion.
 disk_refused :: proc "contextless" (name: string, values: [7]u64, parts: ..system.Part) -> [7]u64 {
 	text: [384]u8
-	system.log_in("programs", .Warning, "root: refused ", system.Module_Name{name}, " from the disk: ", system.format(text[:], ..parts))
+	system.log_in("processes", .Warning, "root: refused ", system.Module_Name{name}, " from the disk: ", system.format(text[:], ..parts))
 	return values
 }
 
-// disk_name_refusal says if a name cannot be the name of a disk program,
-// with the values of the completion. A program of the boot image has its
+// disk_name_refusal says if a name cannot be the name of a disk process,
+// with the values of the completion. A process of the boot image has its
 // grants, its budget and the name of its store by its name, in the tables
 // of this service: a file of a disk with such a name would take them. So
-// the name of a disk program is the name of no module of the boot image, of
-// no row of those tables and of no program of the system.
+// the name of a disk process is the name of no module of the boot image, of
+// no row of those tables and of no process of the system.
 disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refused: bool) {
 	kind := u32(root_ring.Root_Command.Start_From_Disk)
-	problem, offset := disk_program.name_problem(name)
+	problem, offset := disk_process.name_problem(name)
 	switch problem {
 	case .None:
 	case .Empty:
-		values^ = disk_refused(name, errors.ring_fail(kind, .Empty, .Bytes, 1, 0, disk_program.NAME_LIMIT), "the name has no byte")
+		values^ = disk_refused(name, errors.ring_fail(kind, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT), "the name has no byte")
 		return true
 	case .Too_Long:
-		values^ = disk_refused(name, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(len(name)), disk_program.NAME_LIMIT), "the name has more than ", u64(disk_program.NAME_LIMIT), " bytes")
+		values^ = disk_refused(name, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(len(name)), disk_process.NAME_LIMIT), "the name has more than ", u64(disk_process.NAME_LIMIT), " bytes")
 		return true
 	case .Bad_Byte:
-		values^ = disk_refused(name, errors.ring_fail(kind, .Bad_Byte, .None, 1, i64(offset), 0, i64(name[offset])), "the name is no name of a program: visible characters of ASCII, no \"/\", not \".\" or \"..\"")
+		values^ = disk_refused(name, errors.ring_fail(kind, .Bad_Byte, .None, 1, i64(offset), 0, i64(name[offset])), "the name is no name of a process: visible characters of ASCII, no \"/\", not \".\" or \"..\"")
 		return true
 	case .Store_Name:
 		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the name is the name of the store of the module files")
@@ -172,8 +172,8 @@ disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refu
 		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the name is the name of the object of the disk grant table")
 		return true
 	}
-	if name_is_a_system_part(name) || role_names_the_program(name) {
-		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the grant table of the root service names it, and a disk program takes no grant by its name")
+	if name_is_a_system_part(name) || role_names_the_process(name) {
+		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the grant table of the root service names it, and a disk process takes no grant by its name")
 		return true
 	}
 	if len(system.image_find(image, name)) != 0 {
@@ -183,15 +183,15 @@ disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refu
 	return false
 }
 
-// disk_start_begin runs the command Start_From_Disk of a program with the
+// disk_start_begin runs the command Start_From_Disk of a process with the
 // grant Root_Ring. It refuses at once what needs no read, with the values
 // of the completion; else it opens the connection to the storage service,
 // asks for the size of the object, and holds the completion until the load
 // ends (held): the loop of this service goes on.
 disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, values: ^[7]u64) -> (status: system.Status, held: bool) {
 	kind := u32(root_ring.Root_Command.Start_From_Disk)
-	hash := transmute([disk_program.HASH_SIZE]u8)[4]u64{record.values[0], record.values[1], record.values[2], record.values[3]}
-	name_bytes, name_length := disk_program.name_unpack({record.values[4], record.values[5], record.values[6]})
+	hash := transmute([disk_process.HASH_SIZE]u8)[4]u64{record.values[0], record.values[1], record.values[2], record.values[3]}
+	name_bytes, name_length := disk_process.name_unpack({record.values[4], record.values[5], record.values[6]})
 	name := string(name_bytes[:name_length])
 	if disk_name_refusal(name, values) {
 		return .Bad_Operation, false
@@ -203,7 +203,7 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 		values^ = disk_refused(name, errors.ring_fail(kind, .Absent, .Principals, 0), "the asker has no principal with a record")
 		return .Bad_State, false
 	}
-	file, _, problem_of_the_nickname := disk_program.start_file(table, name, hash)
+	file, _, problem_of_the_nickname := disk_process.start_file(table, name, hash)
 	switch problem_of_the_nickname {
 	case .None, .Absent, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key:
 		// start_file gives only None, No_File and Other_File: the start goes on.
@@ -222,14 +222,14 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 	}
 	// The connection: the store `module_files` of the principal of the asker.
 	disk_reader = {}
-	copy(disk_reader.name[:len(disk_reader.name) - 1], disk_program.STORE_NAME)
+	copy(disk_reader.name[:len(disk_reader.name) - 1], disk_process.STORE_NAME)
 	disk_reader.principal = asker.principal
 	connection, service, ring_memory, region_memory, open_status := connection_open(&disk_reader, "storage")
 	if open_status != .Ok {
 		values^ = disk_refused(name, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(open_status)), "no connection to the storage service: status ", open_status)
 		return open_status, false
 	}
-	client, opened := storage.open_handles(ring_memory, region_memory, service.program, system.image_find(image, "storage"))
+	client, opened := storage.open_handles(ring_memory, region_memory, service.process, system.image_find(image, "storage"))
 	if !opened {
 		system.close(ring_memory)
 		system.close(region_memory)
@@ -247,9 +247,9 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 		principal   = asker.principal,
 		connection  = connection,
 		client      = client,
-		deadline    = system.time() + disk_program.LOAD_DEADLINE_MILLISECONDS,
+		deadline    = system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS,
 	}
-	system.log_in("programs", .Info, "root: reads ", system.Module_Name{name}, " from the store ", disk_program.STORE_NAME, " of the storage service, for principal ", asker.principal)
+	system.log_in("processes", .Info, "root: reads ", system.Module_Name{name}, " from the store ", disk_process.STORE_NAME, " of the storage service, for principal ", asker.principal)
 	if !disk_load_ask("size", 0, false) {
 		// The asker receives the completion from the caller of this
 		// procedure, not from the end of the load.
@@ -292,7 +292,7 @@ disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [
 		system.memory_unmap(raw_data(load.client.region))
 	}
 	// The handle of the storage service is the handle of its row in the
-	// table of the started programs: it stays.
+	// table of the started processes: it stays.
 	for handle in ([2]system.Handle{load.client.ring_memory, load.client.region_memory}) {
 		if handle != 0 {
 			system.close(handle)
@@ -308,14 +308,14 @@ disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [
 		system.close(load.memory)
 	}
 	disk_imports_end()
-	if load.asker != nil && load.asker.program != 0 && load.asker.requests.head != nil {
+	if load.asker != nil && load.asker.process != 0 && load.asker.requests.head != nil {
 		system.send(&load.asker.requests.completions, ring.Record{kind = u32(status), tag = load.tag, values = values})
 	}
 	load^ = {}
 	return values
 }
 
-// disk_load_forget takes a program that stops out of the load: the asker
+// disk_load_forget takes a process that stops out of the load: the asker
 // receives no completion, and a connection that ended is not ended again.
 disk_load_forget :: proc "contextless" (item: ^Started) {
 	if disk_load.asker == item {
@@ -338,7 +338,7 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 	name := string(load.name[:load.name_length])
 	refused_status := errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 	if load.asker == nil {
-		disk_load_end(.Bad_State, disk_refused(name, refused_status, "the program that asked for it stopped"))
+		disk_load_end(.Bad_State, disk_refused(name, refused_status, "the process that asked for it stopped"))
 		return
 	}
 	if load.connection == nil {
@@ -353,7 +353,7 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 			return
 		}
 		if system.time() >= load.deadline {
-			disk_load_end(.Bad_State, disk_refused(name, errors.ring_fail(kind, .No_Answer, .Milliseconds, 0, 0, disk_program.LOAD_DEADLINE_MILLISECONDS), "the storage service gave no answer in ", u64(disk_program.LOAD_DEADLINE_MILLISECONDS), " ms"))
+			disk_load_end(.Bad_State, disk_refused(name, errors.ring_fail(kind, .No_Answer, .Milliseconds, 0, 0, disk_process.LOAD_DEADLINE_MILLISECONDS), "the storage service gave no answer in ", u64(disk_process.LOAD_DEADLINE_MILLISECONDS), " ms"))
 			return
 		}
 		system.wait_records(wait, &load.client.calls.completions)
@@ -366,7 +366,7 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		return
 	}
 	if storage.export_failed_with(status, value, .Absent) {
-		disk_load_end(.Bad_Handle, disk_refused(name, errors.ring_fail(kind, .Absent, .Objects, 1), "the store ", disk_program.STORE_NAME, " has no object with this name"))
+		disk_load_end(.Bad_Handle, disk_refused(name, errors.ring_fail(kind, .Absent, .Objects, 1), "the store ", disk_process.STORE_NAME, " has no object with this name"))
 		return
 	}
 	if status == .Failed {
@@ -386,15 +386,15 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		// The size is copied here and checked one time: no later answer
 		// changes it.
 		size := u64(value)
-		answer: disk_program.Size_Answer
-		load.read, answer = disk_program.read_begin(size)
+		answer: disk_process.Size_Answer
+		load.read, answer = disk_process.read_begin(size)
 		switch answer {
 		case .Good:
 		case .Empty:
 			disk_load_end(.Bad_Operation, disk_refused(name, errors.ring_fail(kind, .Malformed, .None, 1), "the object has no byte"))
 			return
 		case .Too_Large:
-			disk_load_end(.Bad_Operation, disk_refused(name, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(min(size, 1 << 62)), disk_program.FILE_BYTES_LIMIT), "the object has ", size, " bytes, and the module file of a disk program has at most ", u64(disk_program.FILE_BYTES_LIMIT)))
+			disk_load_end(.Bad_Operation, disk_refused(name, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(min(size, 1 << 62)), disk_process.FILE_BYTES_LIMIT), "the object has ", size, " bytes, and the module file of a disk process has at most ", u64(disk_process.FILE_BYTES_LIMIT)))
 			return
 		}
 		pages := (size + system.PAGE_SIZE - 1) / system.PAGE_SIZE
@@ -420,7 +420,7 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		// as this service bounded it (isolated.result_text): it is compared
 		// with what the file has left before the copy.
 		count := u64(len(text))
-		step := disk_program.read_step(&load.read, count)
+		step := disk_process.read_step(&load.read, count)
 		switch step {
 		case .More, .Complete:
 			copy(load.bytes[load.read.received - count:][:count], text)
@@ -489,13 +489,13 @@ disk_load_start :: proc "contextless" () {
 		disk_load_end(.Bad_State, disk_refused(name, errors.ring_fail(kind, .Absent, .Principals, 0), "its principal has no record"))
 		return
 	}
-	file, granted, problem_of_the_nickname := disk_program.start_file(table, name, found)
+	file, granted, problem_of_the_nickname := disk_process.start_file(table, name, found)
 	if problem_of_the_nickname != .None {
 		disk_load_end(.Bad_Operation, disk_refused(name, errors.ring_fail(kind, .Exists, .Grants, 2), "the nickname names the file ", system.Hash{file[:]}, " since the command, and the bytes have the hash ", system.Hash{found[:]}))
 		return
 	}
 	load_error: module.Load_Error
-	status := disk_program_run(name, load.bytes, found, principal, granted, disk_imports_files(), &load_error)
+	status := disk_process_run(name, load.bytes, found, principal, granted, disk_imports_files(), &load_error)
 	if status != .Ok {
 		if load_error.stage != .None {
 			buffer: [512]u8
@@ -509,38 +509,38 @@ disk_load_start :: proc "contextless" () {
 	}
 	grants_text := ", with no grant"
 	store_text := ""
-	program_buffer, store_buffer: [32]u8
-	if .Store in granted && principals.store_name_write(&store_buffer, disk_program.store_program_name(&program_buffer, name), principal, false) {
+	process_buffer, store_buffer: [32]u8
+	if .Store in granted && principals.store_name_write(&store_buffer, disk_process.store_process_name(&process_buffer, name), principal, false) {
 		grants_text = ", with the grant store: the store "
 		store_text = system.name_of(store_buffer[:])
 	}
 	if principal == principals.MACHINE {
-		system.log_in("programs", .Info, "root: started ", system.Module_Name{name}, " from the disk, hash ", system.Hash{found[:]}, grants_text, store_text)
+		system.log_in("processes", .Info, "root: started ", system.Module_Name{name}, " from the disk, hash ", system.Hash{found[:]}, grants_text, store_text)
 	} else {
-		system.log_in("programs", .Info, "root: started ", system.Module_Name{name}, " from the disk, hash ", system.Hash{found[:]}, grants_text, store_text, ", in the session of principal ", principal, " \"", principal_name(principal), "\"")
+		system.log_in("processes", .Info, "root: started ", system.Module_Name{name}, " from the disk, hash ", system.Hash{found[:]}, grants_text, store_text, ", in the session of principal ", principal, " \"", principal_name(principal), "\"")
 	}
 	disk_load_end(.Ok, {})
 }
 
-// disk_program_run starts a disk program from the bytes of its file, which
-// this service checked. The program receives what each program receives
+// disk_process_run starts a disk process from the bytes of its file, which
+// this service checked. The process receives what each process receives
 // and nothing of a role: the log with the right Write, a window, the date
 // page, the settings page and the glyph caches, read-only. It has no row
-// in the tables by name of this service, and the budget of a program that
+// in the tables by name of this service, and the budget of a process that
 // no table names. Its grants are the grants of its nickname in the disk
 // grant table of its principal: with the grant store, a connection to the
-// store of its nickname, in its context as a program of the boot image
+// store of its nickname, in its context as a process of the boot image
 // receives its private store. Its modules are copies that its own budget
 // pays: it maps no prepared module of this service. store_files are the
 // files of the store that the import scan kept: its load source holds them
 // beside the boot image.
-disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_program.HASH_SIZE]u8, principal: u64, disk_grants: disk_program.Disk_Grants, store_files: []system.Source_File, load_error: ^module.Load_Error) -> system.Status {
+disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_process.HASH_SIZE]u8, principal: u64, disk_grants: disk_process.Disk_Grants, store_files: []system.Source_File, load_error: ^module.Load_Error) -> system.Status {
 	// The storage service runs before a slot is chosen: a start of it
 	// takes the first free slot.
 	storage_service: ^Started
 	if .Store in disk_grants {
 		for &item in started {
-			if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == "storage" {
+			if item.process != 0 && item.service.head != nil && system.name_of(item.name[:]) == "storage" {
 				storage_service = &item
 			}
 		}
@@ -585,10 +585,10 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	}
 	slot.client = client
 	// The compositor names the window by the nickname, beside the hash
-	// prefix of the file that this service checked: the program does not
+	// prefix of the file that this service checked: the process does not
 	// choose the name that the menu of the windows shows.
-	nickname := disk_program.name_pack(name)
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client), 1 = nickname[0], 2 = nickname[1], 3 = nickname[2], 4 = program_page.hash_head(hash)}})
+	nickname := disk_process.name_pack(name)
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client), 1 = nickname[0], 2 = nickname[1], 3 = nickname[2], 4 = process_page.hash_head(hash)}})
 	system.grant_put(&context_grants, system.GRANT_DISPLAY, {display_memory, {.Read, .Write}})
 	// The date page, the fresh bytes page, the settings page, five glyph
 	// caches, the font outlines, the demand cache, the file of the storage
@@ -619,7 +619,7 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		}
 		system.grant_put(&context_grants, system.GRANT_STORAGE_RING, {store_ring, {.Read, .Write}})
 		system.grant_put(&context_grants, system.GRANT_STORAGE_REGION, {store_region, {.Read, .Write}})
-		system.grant_put(&context_grants, system.GRANT_STORAGE_SERVICE, {storage_service.program, {.Read}})
+		system.grant_put(&context_grants, system.GRANT_STORAGE_SERVICE, {storage_service.process, {.Read}})
 		for &item in system.image_entries(image) {
 			if system.name_of(item.name[:]) == "storage" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 				system.value_put(&values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
@@ -628,32 +628,32 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 			}
 		}
 	}
-	program: system.Handle
-	// Its request, up to the largest budget of a disk program, paid by the
-	// one budget of the disk programs: a file of a disk cannot take what
-	// the programs of the boot image need. Its name selects no exception.
-	disk_programs: system.Handle
-	disk_programs, status = disk_programs_budget_get()
+	process: system.Handle
+	// Its request, up to the largest budget of a disk process, paid by the
+	// one budget of the disk processes: a file of a disk cannot take what
+	// the processes of the boot image need. Its name selects no exception.
+	disk_processes: system.Handle
+	disk_processes, status = disk_processes_budget_get()
 	if status == .Ok && context_refused(name, &context_grants, &values) {
 		status = .Bad_State
 	}
 	if status == .Ok {
-		program_budget := disk_budget_of(file, name, disk_programs)
+		process_budget := disk_budget_of(file, name, disk_processes)
 		source := load_source()
 		source.files = store_files
-		program, status = system.program_start(file, name, context_grants.grants, random.values_with_seed(&program_generator, values.values), program_budget, mappings[:mapping_count], nil, source, load_error, disk_programs)
+		process, status = system.process_start(file, name, context_grants.grants, random.values_with_seed(&process_generator, values.values), process_budget, mappings[:mapping_count], nil, source, load_error, disk_processes)
 		if status == .No_Budget {
-			budget_refusal_log(name, program_budget, disk_programs, "the disk programs")
+			budget_refusal_log(name, process_budget, disk_processes, "the disk processes")
 		}
 	}
 	if status != .Ok {
 		release(slot) // The compositor forgets the ring, and the connection ends.
 		return status
 	}
-	slot.program = program
+	slot.process = process
 	slot.hash = hash
 	slot.granted += {.Log}
-	disk_program_page_add(slot)
+	disk_process_page_add(slot)
 	return .Ok
 }
 
@@ -663,7 +663,7 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 // only. values is the completion: an error record for a refusal.
 disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
 	kind := u32(root_ring.Root_Command.Disk_Grant)
-	nickname_bytes, nickname_length := disk_program.name_unpack({record.values[0], record.values[1], record.values[2]})
+	nickname_bytes, nickname_length := disk_process.name_unpack({record.values[0], record.values[1], record.values[2]})
 	nickname := string(nickname_bytes[:nickname_length])
 	if .Acts_For_Principal not_in grants_held(caller) {
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
@@ -681,34 +681,34 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		return .Bad_Operation
 	}
 	asked_name := start_grant.GRANT_NAMES[asked]
-	grant, answer := disk_program.grant_by_command(asked)
+	grant, answer := disk_process.grant_by_command(asked)
 	switch answer {
 	case .Given:
 	case .Never:
 		values^ = errors.ring_fail(kind, .Reserved, .Grants, 2, i64(number))
-		system.log_in("programs", .Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": no command gives it to a disk program, as it reaches the whole machine or the principal")
+		system.log_in("processes", .Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": no command gives it to a disk process, as it reaches the whole machine or the principal")
 		return .Bad_Operation
 	case .Not_Built:
 		values^ = errors.ring_fail(kind, .Unsupported, .Grants, 2, i64(number))
-		system.log_in("programs", .Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": a command gives a disk program the grant Store only")
+		system.log_in("processes", .Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": a command gives a disk process the grant Store only")
 		return .Bad_Operation
 	}
-	problem_of_the_name, offset := disk_program.nickname_grant_problem(nickname)
+	problem_of_the_name, offset := disk_process.nickname_grant_problem(nickname)
 	switch problem_of_the_name {
 	case .None:
 	case .Empty:
-		values^ = errors.ring_fail(kind, .Empty, .Bytes, 1, 0, disk_program.NAME_LIMIT)
+		values^ = errors.ring_fail(kind, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT)
 		return .Bad_Operation
 	case .Too_Long:
-		values^ = errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(nickname_length), disk_program.NAME_LIMIT)
+		values^ = errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(nickname_length), disk_process.NAME_LIMIT)
 		return .Bad_Operation
 	case .Bad_Byte:
 		values^ = errors.ring_fail(kind, .Bad_Byte, .None, 1, i64(offset), 0, i64(offset < len(nickname) ? nickname[offset] : 0))
-		system.log_in("programs", .Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": a nickname with a grant has letters, digits, '-' and '_' only")
+		system.log_in("processes", .Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": a nickname with a grant has letters, digits, '-' and '_' only")
 		return .Bad_Operation
 	case .Store_Name, .Table_Name:
 		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
-		system.log_in("programs", .Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": the store of the module files keeps this name for itself")
+		system.log_in("processes", .Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": the store of the module files keeps this name for itself")
 		return .Bad_Operation
 	}
 	table := disk_grant_table_of(caller.principal)
@@ -720,60 +720,60 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	grant_name := disk_program.disk_grant_names[grant]
+	grant_name := disk_process.disk_grant_names[grant]
 	if action == .Disallow {
-		row := disk_program.table_find(table, nickname)
-		problem := disk_program.table_disallow(table, nickname, grant)
+		row := disk_process.table_find(table, nickname)
+		problem := disk_process.table_disallow(table, nickname, grant)
 		if problem != .None {
 			values^ = errors.ring_fail(kind, .Absent, .Grants, problem == .Absent ? 1 : 2)
 			return .Bad_Handle
 		}
-		system.log_in("programs", .Info, "root: the nickname ", system.Module_Name{nickname}, ", the file ", system.Hash{row.hash[:]}, ", lost the grant ", grant_name, " for principal ", caller.principal, ", from its next start; its store stays on the disk", disk_grant_table_lasts(caller.principal))
+		system.log_in("processes", .Info, "root: the nickname ", system.Module_Name{nickname}, ", the file ", system.Hash{row.hash[:]}, ", lost the grant ", grant_name, " for principal ", caller.principal, ", from its next start; its store stays on the disk", disk_grant_table_lasts(caller.principal))
 		persisted_table_changed(caller.principal)
 		return .Ok
 	}
-	// The hash that the nickname names now: its row, else the disk program
+	// The hash that the nickname names now: its row, else the disk process
 	// of the nickname that runs, whose bytes this service checked.
-	hash: [disk_program.HASH_SIZE]u8
-	if row := disk_program.table_find(table, nickname); row != nil {
+	hash: [disk_process.HASH_SIZE]u8
+	if row := disk_process.table_find(table, nickname); row != nil {
 		hash = row.hash
-	} else if running := disk_program_running(nickname, caller.principal); running != nil {
+	} else if running := disk_process_running(nickname, caller.principal); running != nil {
 		hash = running.hash
 	} else {
-		values^ = errors.ring_fail(kind, .Absent, .Programs, 1)
-		system.log_in("programs", .Warning, "root: refused the grant ", grant_name, " to the nickname ", system.Module_Name{nickname}, ": it has no row in the disk grant table of principal ", caller.principal, ", and no disk program of that nickname runs; start it by its hash first")
+		values^ = errors.ring_fail(kind, .Absent, .Processes, 1)
+		system.log_in("processes", .Warning, "root: refused the grant ", grant_name, " to the nickname ", system.Module_Name{nickname}, ": it has no row in the disk grant table of principal ", caller.principal, ", and no disk process of that nickname runs; start it by its hash first")
 		return .Bad_Handle
 	}
 	// The name of the store must fit: a cut name can be the name of
 	// another store.
-	program_buffer, store_buffer: [32]u8
-	if grant == .Store && !principals.store_name_write(&store_buffer, disk_program.store_program_name(&program_buffer, nickname), caller.principal, false) {
+	process_buffer, store_buffer: [32]u8
+	if grant == .Store && !principals.store_name_write(&store_buffer, disk_process.store_process_name(&process_buffer, nickname), caller.principal, false) {
 		values^ = errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(nickname_length), i64(len(store_buffer) - 1))
-		system.log_in("programs", .Warning, "root: refused the grant store to the nickname ", system.Module_Name{nickname}, ": the name of its store for principal ", caller.principal, " has more than 31 bytes")
+		system.log_in("processes", .Warning, "root: refused the grant store to the nickname ", system.Module_Name{nickname}, ": the name of its store for principal ", caller.principal, " has more than 31 bytes")
 		return .Bad_Operation
 	}
-	switch disk_program.table_allow(table, nickname, hash, grant) {
+	switch disk_process.table_allow(table, nickname, hash, grant) {
 	case .None:
 	case .Full:
-		values^ = errors.ring_fail(kind, .Full, .Grants, 0, 0, disk_program.ROW_CAPACITY)
+		values^ = errors.ring_fail(kind, .Full, .Grants, 0, 0, disk_process.ROW_CAPACITY)
 		return .No_Slot
 	case .No_File, .Other_File, .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key:
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	system.log_in("programs", .Info, "root: the nickname ", system.Module_Name{nickname}, ", the file ", system.Hash{hash[:]}, ", has the grant ", grant_name, " for principal ", caller.principal, ", from its next start", disk_grant_table_lasts(caller.principal))
+	system.log_in("processes", .Info, "root: the nickname ", system.Module_Name{nickname}, ", the file ", system.Hash{hash[:]}, ", has the grant ", grant_name, " for principal ", caller.principal, ", from its next start", disk_grant_table_lasts(caller.principal))
 	persisted_table_changed(caller.principal)
 	return .Ok
 }
 
 // nickname_move runs the command Nickname_Move: a nickname of the table of
 // the principal of the caller points to another file, and its grants and
-// its store follow. The log says it before the change. A program of the
+// its store follow. The log says it before the change. A process of the
 // nickname that runs keeps the grants of its start.
 nickname_move :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
 	kind := u32(root_ring.Root_Command.Nickname_Move)
-	hash := transmute([disk_program.HASH_SIZE]u8)[4]u64{record.values[0], record.values[1], record.values[2], record.values[3]}
-	nickname_bytes, nickname_length := disk_program.name_unpack({record.values[4], record.values[5], record.values[6]})
+	hash := transmute([disk_process.HASH_SIZE]u8)[4]u64{record.values[0], record.values[1], record.values[2], record.values[3]}
+	nickname_bytes, nickname_length := disk_process.name_unpack({record.values[4], record.values[5], record.values[6]})
 	nickname := string(nickname_bytes[:nickname_length])
 	if .Acts_For_Principal not_in grants_held(caller) {
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
@@ -788,29 +788,29 @@ nickname_move :: proc "contextless" (caller: ^Started, record: ring.Record, valu
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	row := disk_program.table_find(table, nickname)
+	row := disk_process.table_find(table, nickname)
 	if row == nil {
 		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
-		system.log_in("programs", .Warning, "root: refused the move of the nickname ", system.Module_Name{nickname}, ": it has no row in the disk grant table of principal ", caller.principal)
+		system.log_in("processes", .Warning, "root: refused the move of the nickname ", system.Module_Name{nickname}, ": it has no row in the disk grant table of principal ", caller.principal)
 		return .Bad_Handle
 	}
 	if hash == {} || hash == row.hash {
 		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2)
 		return .Bad_Operation
 	}
-	system.log_in("programs", .Info, "root: the file ", system.Hash{hash[:]}, " will get the data of ", system.Module_Name{nickname})
-	if disk_program.table_move(table, nickname, hash) != .None {
+	system.log_in("processes", .Info, "root: the file ", system.Hash{hash[:]}, " will get the data of ", system.Module_Name{nickname})
+	if disk_process.table_move(table, nickname, hash) != .None {
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	system.log_in("programs", .Info, "root: the nickname ", system.Module_Name{nickname}, " names the file ", system.Hash{hash[:]}, ", with its grants and its store", disk_grant_table_lasts(caller.principal))
+	system.log_in("processes", .Info, "root: the nickname ", system.Module_Name{nickname}, " names the file ", system.Hash{hash[:]}, ", with its grants and its store", disk_grant_table_lasts(caller.principal))
 	persisted_table_changed(caller.principal)
 	return .Ok
 }
 
 // The words of a setting of persistence, as the log writes them.
 @(rodata)
-persistence_words := [disk_program.Persistence]string {
+persistence_words := [disk_process.Persistence]string {
 	.Global  = "the global setting",
 	.Persist = "persist across a restart",
 	.Forget  = "last until the machine stops",
@@ -823,16 +823,16 @@ persistence_words := [disk_program.Persistence]string {
 // disk: a row that now lasts until the machine stops leaves the disk.
 disk_grant_persistence :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
 	kind := u32(root_ring.Root_Command.Disk_Grant_Persistence)
-	nickname_bytes, nickname_length := disk_program.name_unpack({record.values[0], record.values[1], record.values[2]})
+	nickname_bytes, nickname_length := disk_process.name_unpack({record.values[0], record.values[1], record.values[2]})
 	nickname := string(nickname_bytes[:nickname_length])
 	if .Acts_For_Principal not_in grants_held(caller) {
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		return .No_Right
 	}
 	setting := record.values[4]
-	persistence, persistence_ok := enum_word.member_of_word(disk_program.Persistence, setting)
+	persistence, persistence_ok := enum_word.member_of_word(disk_process.Persistence, setting)
 	if !persistence_ok || nickname == "" && persistence == .Global {
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(setting, 1 << 62)), i64(max(disk_program.Persistence)))
+		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(setting, 1 << 62)), i64(max(disk_process.Persistence)))
 		return .Bad_Operation
 	}
 	table := disk_grant_table_of(caller.principal)
@@ -844,15 +844,15 @@ disk_grant_persistence :: proc "contextless" (caller: ^Started, record: ring.Rec
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	if disk_program.table_persistence_set(table, nickname, persistence) != .None {
+	if disk_process.table_persistence_set(table, nickname, persistence) != .None {
 		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
-		system.log_in("programs", .Warning, "root: refused the setting of persistence of the nickname ", system.Module_Name{nickname}, ": it has no row in the disk grant table of principal ", caller.principal)
+		system.log_in("processes", .Warning, "root: refused the setting of persistence of the nickname ", system.Module_Name{nickname}, ": it has no row in the disk grant table of principal ", caller.principal)
 		return .Bad_Handle
 	}
 	if nickname == "" {
-		system.log_in("programs", .Info, "root: each row of the disk grant table of principal ", caller.principal, " with no exception will ", persistence_words[persistence], disk_grant_table_lasts(caller.principal))
+		system.log_in("processes", .Info, "root: each row of the disk grant table of principal ", caller.principal, " with no exception will ", persistence_words[persistence], disk_grant_table_lasts(caller.principal))
 	} else {
-		system.log_in("programs", .Info, "root: the row of the nickname ", system.Module_Name{nickname}, " in the disk grant table of principal ", caller.principal, " has the setting: ", persistence_words[persistence], disk_grant_table_lasts(caller.principal))
+		system.log_in("processes", .Info, "root: the row of the nickname ", system.Module_Name{nickname}, " in the disk grant table of principal ", caller.principal, " has the setting: ", persistence_words[persistence], disk_grant_table_lasts(caller.principal))
 	}
 	persisted_table_changed(caller.principal)
 	return .Ok

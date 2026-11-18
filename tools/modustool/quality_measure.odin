@@ -18,7 +18,7 @@ QUALITY_PROFILE_LINE :: "compositor: the quality profile is the processor profil
 QUALITY_FRAME :: "compositor: measure: the time of a frame, from the first record that the compositor reads to the flip"
 QUALITY_KEY :: "compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it"
 QUALITY_WINDOW_START :: "compositor: measure: the start of the window "
-QUALITY_WINDOW_START_TAIL :: ", from Program_Start to its first frame: "
+QUALITY_WINDOW_START_TAIL :: ", from Process_Start to its first frame: "
 // The window whose start the measure record keeps: locks draws its first
 // frame before its measures, in the measure run.
 QUALITY_WINDOW_START_LOCKS :: QUALITY_WINDOW_START + "locks" + QUALITY_WINDOW_START_TAIL

@@ -404,13 +404,13 @@ FLOOR_RESPONSE_LIMIT :: 512
 // numbers (src/md/features/rollback_floors.md). It fills the trust record.
 //
 // The check is the work of this boot program, the code of the volume that
-// starts: a refused system runs no kernel and no program. A floor that
+// starts: a refused system runs no kernel and no process. A floor that
 // cannot be read is 0, and the start goes on: a TPM that the firmware
 // stopped using would else stop each start, and such a machine opens no key
 // sealed by the TPM either.
 //
 // The raise is here, before the measure, because the policy of a floor
-// names PCR 11 before the measure: after it, no kernel and no program, not
+// names PCR 11 before the measure: after it, no kernel and no process, not
 // even one of a system that a stolen key signed, can raise a floor.
 floors_check :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 	trust := &boot.trust

@@ -137,7 +137,7 @@ Kernel_Stack_Rules :: struct {
 
 kernel_stack_rules := Kernel_Stack_Rules {
 	entries = {
-		{"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a program"},
+		{"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a process"},
 		{"kernel_interrupt", REFUSED_RETURN_BYTES_ABOVE + KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "a return that the processor refused"},
 		// stack_switch and the start code push a null return address.
 		{"kernel::first_run", RETURN_ADDRESS_BYTES, "the first run after the boot"},
@@ -154,7 +154,7 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		// the return address: 8 bytes under its entry.
 		{"gdt_load", 8},
 		// Both move the stack pointer and never return: what runs after them
-		// is an entry of this table or the program.
+		// is an entry of this table or the process.
 		{"resume", 0},
 		{"stack_switch", 0},
 		{"extended_state_save", 0},
@@ -190,7 +190,7 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		{"kernel::mappings_report.walk", info.PAGE_TABLE_LEVELS},
 	},
 	indirect_calls = {
-		// The self test calls the code of a program, to prove that the
+		// The self test calls the code of a process, to prove that the
 		// processor refuses it: it faults at the first instruction, and the
 		// fault stops the machine.
 		{"kernel::self_test", {}},
@@ -212,12 +212,12 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		// of the readers of the log, and the machine stops. That log is the
 		// one way from queue_ready to word_wake.
 		{"kernel::queue_ready", "kernel::word_wake"},
-		// program_stop marks its program Stopped before it finishes its
-		// threads and cleans it up. thread_finish stops the program of its
-		// thread only while that program is not Stopped, and each thread
-		// that program_stop and program_cleanup finish is of that program.
-		// So below program_stop, no chain runs program_stop again.
-		{"kernel::program_stop", "kernel::program_stop"},
+		// process_stop marks its process Stopped before it finishes its
+		// threads and cleans it up. thread_finish stops the process of its
+		// thread only while that process is not Stopped, and each thread
+		// that process_stop and process_cleanup finish is of that process.
+		// So below process_stop, no chain runs process_stop again.
+		{"kernel::process_stop", "kernel::process_stop"},
 	},
 	// The conversions of 16-bit floating point numbers that Odin defines in
 	// each module: the kernel has no floating point number.
@@ -233,12 +233,12 @@ kernel_stack_rules := Kernel_Stack_Rules {
 	// vector, the timer and the devices too, runs on the kernel stack.
 	interrupt_stacks = {
 		// A double fault, a non-maskable interrupt and a machine check stop
-		// the machine, from a program or from the kernel.
+		// the machine, from a process or from the kernel.
 		{"the double fault", op.KERNEL_FAULT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_FAULT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, true},
 		{"the non-maskable interrupt", op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, true},
 		{"the machine check", op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, true},
 		// The stub returns from a debug trap of the kernel with no compiled
-		// code, and moves the frame of a trap of a program to the kernel
+		// code, and moves the frame of a trap of a process to the kernel
 		// stack before kernel_interrupt (src/kernel/processor.asm).
 		{"the debug exception", op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, false},
 	},
@@ -664,7 +664,7 @@ stack_is_jump :: proc(mnemonic: string) -> bool {
 }
 
 // stack_leaves says if an instruction leaves its procedure for its caller,
-// or for a program. A far return ("lretq") is a return too: gdt_load
+// or for a process. A far return ("lretq") is a return too: gdt_load
 // returns with it to load the code selector.
 @(private = "file")
 stack_leaves :: proc(mnemonic: string) -> bool {

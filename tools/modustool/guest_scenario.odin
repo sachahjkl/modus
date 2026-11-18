@@ -5,7 +5,7 @@ import "core:os"
 import "core:strings"
 
 // A guest (src/md/features/guest.md; docs/ARCHITECTURE.md, "A guest"): one
-// machine. The program guest_demo makes a guest program, maps one page of
+// machine. The process guest_demo makes a guest process, maps one page of
 // 16-bit code in it, and runs its guest processor: the `out` of the guest
 // arrives as an exit record with the port 0x80 and the value 42, and its
 // `hlt` ends it. An `int1` of the guest arrives as an exit Other with the
@@ -32,7 +32,7 @@ scenario_guest := [?]Step {
 	{kind = .Type, text = "start(\"guest_demo\")"},
 	{kind = .Wait, text = "guest_demo: the guest wrote 42 to the port 0x80, then halted after it: as it must", fails_on = "guest_demo: failed: "},
 	{kind = .Wait, text = "guest_demo: the int1 of the guest arrived as an exit Other with the exit code 0x88: as it must", fails_on = "guest_demo: failed: "},
-	{kind = .Wait, text = "guest_demo: Program_Start of the guest gave Bad_State: as it must", fails_on = "guest_demo: failed: "},
+	{kind = .Wait, text = "guest_demo: Process_Start of the guest gave Bad_State: as it must", fails_on = "guest_demo: failed: "},
 	{kind = .Wait, text = "guest_demo: ok"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},

@@ -1,40 +1,40 @@
 package root
 
 // The connection through which the debugger service reads the debug object
-// of a disk program
-// (docs/MODULE_CONTRACT.md, "The debug object of a disk program").
+// of a disk process
+// (docs/MODULE_CONTRACT.md, "The debug object of a disk process").
 // The debug object is an object of the store `module_files`, beside
 // the module file, named by the hash of the module. The debugger service
 // holds no store: this service gives it a connection that reads only, to
-// the store `module_files` of the principal of the program, as a part of the
-// debug access to that program for one caller. The connection ends with
+// the store `module_files` of the principal of the process, as a part of the
+// debug access to that process for one caller. The connection ends with
 // the debug access (debug_end).
 //
-// The same connection serves the stop report of a disk program that
-// stopped on a fault. This service holds the only handle of a disk program
+// The same connection serves the stop report of a disk process that
+// stopped on a fault. This service holds the only handle of a disk process
 // and closes it at the reap, so the kernel forgets the report then: this
 // service keeps a copy (stop_report_keep), and gives it with the
-// connection to a caller that acts for the principal of the program, with
-// no debug access (src/md/features/debug_object_of_a_disk_program.md).
+// connection to a caller that acts for the principal of the process, with
+// no debug access (src/md/features/debug_object_of_a_disk_process.md).
 
 import "modus:contract/errors"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import "modus:contract/root_ring"
 import "modus:support/system"
 
 // The caller record of that connection. This service is no row of its own
-// table of started programs, so the connection has this record as its
+// table of started processes, so the connection has this record as its
 // caller, as the read of a module file has disk_reader: its name is the
 // name of the store, and grant_for gives it the limit of that store, the
 // flag that it reads only, and no grant to act for a principal.
 debug_store_reader: Started
 
 // The one connection of the debugger service to the store. The service
-// debugs one program at a time, and reads one object at a time, so one
+// debugs one process at a time, and reads one object at a time, so one
 // connection is enough: a new one ends the one before.
 Debug_Store :: struct {
 	connection: ^Connection, // nil: none.
-	target:     ^Started, // The disk program whose debug access the connection is a part of. nil for a kept stop report.
+	target:     ^Started, // The disk process whose debug access the connection is a part of. nil for a kept stop report.
 	// A connection for a kept stop report: the caller of the debugger
 	// service that asked for it, and that service. nil for a debug access.
 	report_for: ^Started,
@@ -44,37 +44,37 @@ Debug_Store :: struct {
 
 debug_store: Debug_Store
 
-// The stop reports of the disk programs that stopped on a fault.
-kept_stop_reports: disk_program.Kept_Stop_Reports
+// The stop reports of the disk processes that stopped on a fault.
+kept_stop_reports: disk_process.Kept_Stop_Reports
 
 // The page that carries a kept stop report to the debugger service.
-#assert(size_of(disk_program.Kept_Stop_Report) <= system.PAGE_SIZE)
+#assert(size_of(disk_process.Kept_Stop_Report) <= system.PAGE_SIZE)
 
-// stop_report_keep keeps the stop report of a disk program that stopped,
+// stop_report_keep keeps the stop report of a disk process that stopped,
 // before the reap closes its handle. A stop with no fault has no report:
 // it removes the report of an older fault of that nickname, so that a
 // kept report always tells how the last run of the nickname ended. The
-// values that can be words of the memory of the program are taken out
+// values that can be words of the memory of the process are taken out
 // first: a reader of the kept report holds no debug access.
 stop_report_keep :: proc "contextless" (item: ^Started) {
-	if !item.from_disk || item.program == 0 {
+	if !item.from_disk || item.process == 0 {
 		return
 	}
-	report := system.program_stop_report(item.program)
+	report := system.process_stop_report(item.process)
 	name := system.name_of(item.name[:])
 	if report.code == 0 {
-		disk_program.kept_stop_report_forget(&kept_stop_reports, item.principal, name)
+		disk_process.kept_stop_report_forget(&kept_stop_reports, item.principal, name)
 		return
 	}
-	disk_program.stop_report_hide(&report)
-	if disk_program.kept_stop_report_keep(&kept_stop_reports, item.principal, name, item.hash, &report) {
-		system.log_in("programs", .Info, "root: kept the stop report of ", system.Module_Name{name}, ", a disk program of principal ", item.principal, ": stop_report(\"", system.Module_Name{name}, "\") names its frames")
+	disk_process.stop_report_hide(&report)
+	if disk_process.kept_stop_report_keep(&kept_stop_reports, item.principal, name, item.hash, &report) {
+		system.log_in("processes", .Info, "root: kept the stop report of ", system.Module_Name{name}, ", a disk process of principal ", item.principal, ": stop_report(\"", system.Module_Name{name}, "\") names its frames")
 	}
 }
 
 // debug_store_open runs the command Debug_Store of the debugger service
 // `holder`: a connection that reads only to the store `module_files` of the
-// principal of the disk program with a name, for the caller of the
+// principal of the disk process with a name, for the caller of the
 // connection with the call ring `connection_ring`. values is the
 // completion: the storage service, the call ring and the call region, each
 // a handle of the debugger service; a refusal writes its error record
@@ -82,14 +82,14 @@ stop_report_keep :: proc "contextless" (item: ^Started) {
 // so it holds no connection place of the storage service for the rest of
 // the debugging.
 //
-// Without `kept`, the connection is for the debugging of that program for
+// Without `kept`, the connection is for the debugging of that process for
 // that caller. With `kept`, it is for the stop report that this service
-// kept of the disk program of the principal of the caller with that
+// kept of the disk process of the principal of the caller with that
 // nickname: the completion adds the page of the report and the principal.
 //
 // Bad_Handle: the ring names no connection of the service. Bad_State: this
-// service did not give the service the debug access to a program with
-// that name for that caller, or the program is not a disk program: the
+// service did not give the service the debug access to a process with
+// that name for that caller, or the process is not a disk process: the
 // debug image holds the debug object of a module of the boot image.
 debug_store_open :: proc "contextless" (holder: ^Started, name: string, connection_ring: u64, end: bool, kept: bool, values: ^[7]u64) -> system.Status {
 	kind := u32(root_ring.Root_Command.Debug_Store)
@@ -112,16 +112,16 @@ debug_store_open :: proc "contextless" (holder: ^Started, name: string, connecti
 	}
 	// The connection is a part of a debug access that this service gave:
 	// the rule of that access was applied to this caller (debug). The
-	// program is found by that access and by its name, never by its name
-	// alone: two principals can run disk programs of one nickname.
+	// process is found by that access and by its name, never by its name
+	// alone: two principals can run disk processes of one nickname.
 	target: ^Started
 	for &item in started {
-		if item.program != 0 && item.debugger == holder && item.debug_for == caller && item.debug_for_row == row && system.name_of(item.name[:]) == name {
+		if item.process != 0 && item.debugger == holder && item.debug_for == caller && item.debug_for_row == row && system.name_of(item.name[:]) == name {
 			target = &item
 		}
 	}
 	if target == nil {
-		values^ = errors.ring_fail(kind, .Absent, .Debugged_Programs, 1)
+		values^ = errors.ring_fail(kind, .Absent, .Debugged_Processes, 1)
 		return .Bad_State
 	}
 	if end {
@@ -140,15 +140,15 @@ debug_store_open :: proc "contextless" (holder: ^Started, name: string, connecti
 	}
 	debug_store.target = target
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), 0, 0, 0, 0}
-	system.log_in("programs", .Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " a connection that reads only to the store ", disk_program.STORE_NAME, " of principal ", target.principal, ", for the debug object of ", system.Module_Name{name})
+	system.log_in("processes", .Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " a connection that reads only to the store ", disk_process.STORE_NAME, " of principal ", target.principal, ", for the debug object of ", system.Module_Name{name})
 	return .Ok
 }
 
 // debug_store_open_for_report gives the debugger service the kept stop
-// report of the disk program of `principal`, the principal of the
+// report of the disk process of `principal`, the principal of the
 // connection of `caller`, with a nickname, and the connection to read the
 // debug object of its module. The rule is the rule of the report, not of
-// the debug access: the report holds no byte of the memory of the program,
+// the debug access: the report holds no byte of the memory of the process,
 // and the caller, which acts for that principal, can read the store
 // `module_files` anyway.
 //
@@ -172,7 +172,7 @@ debug_store_open_for_report :: proc "contextless" (holder: ^Started, caller: ^St
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		return .Bad_Operation
 	}
-	report := disk_program.kept_stop_report_find(&kept_stop_reports, principal, name)
+	report := disk_process.kept_stop_report_find(&kept_stop_reports, principal, name)
 	if report == nil {
 		values^ = errors.ring_fail(kind, .Absent, .Stop_Reports, 1)
 		return .Bad_State
@@ -190,7 +190,7 @@ debug_store_open_for_report :: proc "contextless" (holder: ^Started, caller: ^St
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(mapped))
 		return mapped
 	}
-	(^disk_program.Kept_Stop_Report)(address)^ = report^
+	(^disk_process.Kept_Stop_Report)(address)^ = report^
 	system.memory_unmap(address)
 	given_page, page_status := system.give(holder.requests_memory, page, {.Read})
 	if page_status != .Ok {
@@ -202,7 +202,7 @@ debug_store_open_for_report :: proc "contextless" (holder: ^Started, caller: ^St
 	if status != .Ok {
 		// The page is in the ring memory of the service already: the
 		// service closes a handle that a refusal names in no value.
-		system.handle_revoke(page, holder.program)
+		system.handle_revoke(page, holder.process)
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
 		return status
 	}
@@ -210,7 +210,7 @@ debug_store_open_for_report :: proc "contextless" (holder: ^Started, caller: ^St
 	debug_store.report_for_row = row
 	debug_store.holder = holder
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), u64(given_page), principal, 0, 0}
-	system.log_in("programs", .Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " the kept stop report of ", system.Module_Name{name}, " and a connection that reads only to the store ", disk_program.STORE_NAME, " of principal ", principal, ", for ", system.Module_Name{system.name_of(caller.name[:])})
+	system.log_in("processes", .Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " the kept stop report of ", system.Module_Name{name}, " and a connection that reads only to the store ", disk_process.STORE_NAME, " of principal ", principal, ", for ", system.Module_Name{system.name_of(caller.name[:])})
 	return .Ok
 }
 
@@ -225,7 +225,7 @@ debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: 
 	}
 	debug_store = {}
 	debug_store_reader = {}
-	copy(debug_store_reader.name[:len(debug_store_reader.name) - 1], disk_program.STORE_NAME)
+	copy(debug_store_reader.name[:len(debug_store_reader.name) - 1], disk_process.STORE_NAME)
 	debug_store_reader.principal = principal
 	connection, service, ring_memory, region_memory, status := connection_open(&debug_store_reader, "storage")
 	if status != .Ok {
@@ -235,7 +235,7 @@ debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: 
 	// service; this service keeps none of the memory.
 	defer system.close(ring_memory)
 	defer system.close(region_memory)
-	sources := [3]system.Handle{service.program, ring_memory, region_memory}
+	sources := [3]system.Handle{service.process, ring_memory, region_memory}
 	given_rights := [3]system.Rights{{.Read}, {.Read, .Write}, {.Read, .Write}}
 	given_count := 0
 	for source, index in sources {
@@ -250,7 +250,7 @@ debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: 
 		// handles given before the failure are revoked here, as the page
 		// of a report is.
 		for source in sources[:given_count] {
-			system.handle_revoke(source, holder.program)
+			system.handle_revoke(source, holder.process)
 		}
 		disconnect(connection)
 		return status
@@ -259,9 +259,9 @@ debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: 
 	return .Ok
 }
 
-// debug_store_end ends the connection of the debug object of a program:
+// debug_store_end ends the connection of the debug object of a process:
 // when the debugger service read the object, and in any case when the
-// debug access to that program ends. The storage service then answers no
+// debug access to that process ends. The storage service then answers no
 // call of it.
 debug_store_end :: proc "contextless" (target: ^Started) {
 	if debug_store.connection == nil || target == nil || debug_store.target != target {

@@ -1,31 +1,31 @@
 // The real shortage of page frames: the frame caches of the processors
 // drained so that a take that cannot fail succeeds (docs/ARCHITECTURE.md,
 // "The frame caches"). This
-// program runs alone, on a machine of the test whose boot image has no
+// process runs alone, on a machine of the test whose boot image has no
 // desktop: the root service gives it nearly all of its pages.
 //
 // The frame table becomes empty only when the unspent pages of all the
 // budgets and the reserved pages are fewer than the frames in the stacks of
-// the processors. Here the budget of this program holds nearly all of them.
+// the processors. Here the budget of this process holds nearly all of them.
 // Four threads make memory objects until the budget pays no more, and write
 // one byte in each page: each first use is a take that cannot fail. Near the
 // end the frame table is empty while the stacks of the other processors
-// hold frames: the take drains the stacks and succeeds. Then the program
+// hold frames: the take drains the stacks and succeeds. Then the process
 // checks, with the exact difference of System_Report, that no frame is free
 // anywhere that a budget can pay, that a Memory_Create fails with its error
 // record, frees everything, and checks that the sums are those of the start.
 // It stops the machine with the code 0.
 //
 // **What it is for.** It proves a rule of the kernel that no other test can
-// reach: a page that a budget paid for is always there when the program
+// reach: a page that a budget paid for is always there when the process
 // uses it, even when every free frame sits in the cache of another
-// processor. On a machine with a desktop the other programs hold the pages,
+// processor. On a machine with a desktop the other processes hold the pages,
 // so the frame table never becomes empty.
 //
 // **Start**: no reader starts it. The root service starts it in place of
-// the desktop when the boot image has the program `shortage` and no
-// program `input`: the tool builds that image for the test of the shortage.
-// Its row of `program_roles` has no grant: `shortage_start` in the root service
+// the desktop when the boot image has the process `shortage` and no
+// process `input`: the tool builds that image for the test of the shortage.
+// Its row of `process_roles` has no grant: `shortage_start` in the root service
 // gives it the machine and nearly all the pages of the root service.
 //
 // **What a reader sees**: no window. The log has three lines of counts,
@@ -42,7 +42,7 @@ import "modus:support/system"
 
 THREAD_COUNT :: 4
 OBJECT_PAGES :: 4096 // The first size of the objects; it halves when the budget cannot pay it.
-OBJECT_CAPACITY :: 24 // The objects of one thread: the mappings of the program are 128.
+OBJECT_CAPACITY :: 24 // The objects of one thread: the mappings of the process are 128.
 
 Filler :: struct #align (64) {
 	objects:  [OBJECT_CAPACITY]system.Handle,
@@ -124,7 +124,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	own, _ := system.budget_read()
 	processors := start.processors
 	drains_before := drains(processors)
-	system.log("shortage: start: ", start.free_pages - start.reserved_pages, " free pages that budgets can pay, ", own.pages, " of them in the budget of this program, ", processors, " processors")
+	system.log("shortage: start: ", start.free_pages - start.reserved_pages, " free pages that budgets can pay, ", own.pages, " of them in the budget of this process, ", processors, " processors")
 
 	began := system.nanoseconds()
 	threads: [THREAD_COUNT]system.Thread
@@ -166,7 +166,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// A take that can fail fails now, with its error record.
 	refusal: errors.Error_Record
 	_, refused := system.memory_create(1, error = &refusal)
-	system.log("shortage: full: ", pages, " pages written in ", objects, " objects by ", u64(THREAD_COUNT), " threads in ", filled / 1_000_000, " ms; the budget of this program holds ", empty.pages, " pages; the free pages that budgets can pay: ", payable, " (the pages that the root service kept), and the reserved pages: ", full.reserved_pages, "; drains of the stacks: ", drains_full - drains_before, "; a new memory object of 1 page: status ", u64(refused), ", error kind ", u64(refusal.kind), refusal.kind == i64(errors.Kind.Budget) ? " (Budget: the budget cannot pay)" : " (another kind)")
+	system.log("shortage: full: ", pages, " pages written in ", objects, " objects by ", u64(THREAD_COUNT), " threads in ", filled / 1_000_000, " ms; the budget of this process holds ", empty.pages, " pages; the free pages that budgets can pay: ", payable, " (the pages that the root service kept), and the reserved pages: ", full.reserved_pages, "; drains of the stacks: ", drains_full - drains_before, "; a new memory object of 1 page: status ", u64(refused), ", error kind ", u64(refusal.kind), refusal.kind == i64(errors.Kind.Budget) ? " (Budget: the budget cannot pay)" : " (another kind)")
 
 	began = system.nanoseconds()
 	for &filler in fillers {

@@ -402,7 +402,7 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 		place         = SITE_SPLEEN_LICENSE_FILE,
 		license       = site_line_after(spleen_text, SPDX_IDENTIFIER_LINE_START),
 		author        = site_line_after(spleen_text, "Copyright "),
-		in_boot_image = "yes, in each program that draws text",
+		in_boot_image = "yes, in each process that draws text",
 	}
 	SPLEEN_ORIGIN :: "comes from Spleen 8x16 "
 	if start := strings.index(spleen_lines[0], SPLEEN_ORIGIN); start >= 0 {
@@ -498,8 +498,8 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	}
 	append(&system_rows, fiat)
 
-	// The portraits of the program hall_of_fame: one row for each picture
-	// of its credits file. The place is the file of pixels that the program
+	// The portraits of the process hall_of_fame: one row for each picture
+	// of its credits file. The place is the file of pixels that the process
 	// holds, so the card of the module links each row.
 	credits, credits_problem := hall_of_fame_credits_read()
 	if credits_problem != "" {
@@ -507,7 +507,7 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	}
 	for credit in credits {
 		append(&system_rows, Site_License_Row {
-			what           = strings.concatenate({"Portrait of ", credit.person, " in the program hall_of_fame"}, context.temp_allocator),
+			what           = strings.concatenate({"Portrait of ", credit.person, " in the process hall_of_fame"}, context.temp_allocator),
 			place          = hall_of_fame_pixels_path(credit.file),
 			license        = site_spdx(credit.license),
 			author         = credit.author,

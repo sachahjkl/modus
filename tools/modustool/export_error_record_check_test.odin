@@ -178,7 +178,7 @@ exports_with_a_helper_in_another_file :: proc(t: ^testing.T) {
 	}
 }
 
-// The rule holds in the programs and the modules of the repository.
+// The rule holds in the processes and the modules of the repository.
 //
 // The count of the packages proves that the tree was read. The count of the
 // exports only has to be positive: it falls each time an export gets an

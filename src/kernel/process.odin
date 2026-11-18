@@ -6,7 +6,7 @@ import "base:intrinsics"
 import op "modus:contract/operation"
 import "kernel:processor_counters"
 
-// The objects, the handle tables, the programs and their threads
+// The objects, the handle tables, the processes and their threads
 // (docs/ARCHITECTURE.md, "Handle table"). The scheduler is in schedule.odin
 // and strategy.odin.
 // All tables are flat arrays with a fixed capacity. Index 0 of each table is
@@ -14,16 +14,16 @@ import "kernel:processor_counters"
 
 USER_END :: u64(op.USER_END)
 REGION_CAPACITY :: 2048
-// The root budget holds the log records of a program of normal use for
-// each program slot: the contract counts the slots of the kernel.
-PROGRAM_CAPACITY :: op.PROGRAM_SLOTS_OF_THE_MACHINE
+// The root budget holds the log records of a process of normal use for
+// each process slot: the contract counts the slots of the kernel.
+PROCESS_CAPACITY :: op.PROCESS_SLOTS_OF_THE_MACHINE
 HANDLE_CAPACITY :: 128
 MAPPING_CAPACITY :: 128
 
 // A memory object: pages, each with a page frame or with none yet.
 //
 // A page on first use gets its page frame at the first read or write, by a
-// program (a page fault) or by the kernel (user_range). The budget paid for
+// process (a page fault) or by the kernel (user_range). The budget paid for
 // each page when the object was created: the page is reserved, so a free
 // page frame exists for it at any time, and an access never fails for lack
 // of memory. A page that nobody touched costs no page frame and no zeroing.
@@ -35,7 +35,7 @@ MAPPING_CAPACITY :: 128
 //
 // A contiguous object has its frames in one block from `physical`, all
 // given at creation: device memory, and the memory that the kernel itself
-// reads through the direct map (a thread area, the first program).
+// reads through the direct map (a thread area, the first process).
 REGION_INLINE_PAGES :: op.MEMORY_INLINE_PAGES
 LIST_ENTRIES :: op.MEMORY_LIST_ENTRIES
 
@@ -61,7 +61,7 @@ Region :: struct {
 }
 
 // The state of a page in its slot of the frame list (docs/ARCHITECTURE.md,
-// "The virtual memory of a program", "The state of a page"): a frame is
+// "The virtual memory of a process", "The state of a page"): a frame is
 // aligned on 4096 bytes, so the low 12 bits of a slot hold the state.
 SLOT_COMMITTED :: u64(1) // Uncommitted objects only: the budget paid for the page.
 SLOT_DENY_WRITE :: u64(1) << 1
@@ -91,7 +91,7 @@ region_serial: u64 // The serial of the last memory object.
 reserved_pages: u64
 
 // The `object` of a handle slot, by kind:
-//   Memory: index in regions       Program: index in programs
+//   Memory: index in regions       Process: index in processes
 //   Interrupt: index in the interrupt tables (INTERRUPT_CAPACITY)
 //   Ports: first port; count: number of ports
 //   Thread: index in threads       Budget: index in budgets
@@ -99,11 +99,11 @@ Object_Kind :: op.Object_Kind
 
 // The rights of the handle of a new object, by kind.
 RIGHTS_MEMORY :: op.Rights{.Give, .Read, .Write, .Execute}
-// A program: Debug makes its holder the debugger of the program
-// (fault_ring.odin). The program that creates a program has it, as it has
-// the memory that it maps in that program; a copy that it gives has it only
+// A process: Debug makes its holder the debugger of the process
+// (fault_ring.odin). The process that creates a process has it, as it has
+// the memory that it maps in that process; a copy that it gives has it only
 // when the giver names it.
-RIGHTS_PROGRAM :: op.Rights{.Give, .Read, .Control, .Debug}
+RIGHTS_PROCESS :: op.Rights{.Give, .Read, .Control, .Debug}
 // A thread: Control ends it; Inspect holds it and reads its registers;
 // Write writes them (op.thread_control_rights).
 RIGHTS_THREAD :: op.Rights{.Give, .Read, .Write, .Control, .Inspect}
@@ -131,11 +131,11 @@ Mapping :: struct {
 	region:     u32,
 	// The pages of the mapping whose entry is present. Written only where an
 	// entry of the mapping becomes present or the mapping ends, each time
-	// under the program lock: map_region, page_give, unmap. A report reads it
+	// under the process lock: map_region, page_give, unmap. A report reads it
 	// in place of a walk of the page table (its cost is one read for each
 	// mapping, not one for each page).
 	present_page_count: u64,
-	// The protection that the handle permitted when the program mapped the
+	// The protection that the handle permitted when the process mapped the
 	// object: Memory_Protect can give back what `bits` lost, never more.
 	limit_bits: u64,
 	large:      bool, // Each 2 MiB of the mapping is one large page (an object made Large_Pages).
@@ -159,8 +159,8 @@ page_bits :: proc "contextless" (mapping: ^Mapping, state: u64) -> u64 {
 }
 
 
-// A thread: one flow of execution in a program. It is a register state and
-// a kernel ring. Its stack is memory of the program: the kernel does not
+// A thread: one flow of execution in a process. It is a register state and
+// a kernel ring. Its stack is memory of the process: the kernel does not
 // know it.
 //
 // The first 64 bytes are the hot line of the scheduler: what a pick, a wake
@@ -168,7 +168,7 @@ page_bits :: proc "contextless" (mapping: ^Mapping, state: u64) -> u64 {
 // aligned on 64 bytes, so the line is one cache line.
 Thread :: struct #align (64) {
 	// Scheduling (schedule.odin, strategy.odin), under the run lock of home.
-	state:          op.Program_State, // None, Ready, Waiting or Stopped.
+	state:          op.Process_State, // None, Ready, Waiting or Stopped.
 	home:           u32, // The processor whose run queue the thread is in, or was in last.
 	queue_next:     u32,
 	queue_previous: u32,
@@ -186,7 +186,7 @@ Thread :: struct #align (64) {
 	// The thread has breakpoints (breakpoints.odin): the processor that
 	// takes it loads its debug registers. It is in this line so that a
 	// switch to a thread with no breakpoint reads no other line for it.
-	// Written under the program lock, while the thread is held or to clear
+	// Written under the process lock, while the thread is held or to clear
 	// it (atomic: a switch and a debug exception read it).
 	has_breakpoints:  bool,
 	// The set `processors` below does not hold every processor of the
@@ -206,10 +206,10 @@ Thread :: struct #align (64) {
 	counting: bool,
 	frame:        Frame,
 	extended_state: Extended_State_Area, // Complete while the thread is on no processor: schedule saves it when a processor leaves the thread, and restores it when a processor takes it (docs/ARCHITECTURE.md, "The extended state of the processor").
-	program:      u32,
-	number:       u32, // The index of the thread area in the program.
+	process:      u32,
+	number:       u32, // The index of the thread area in the process.
 	ring:         ring.Ring,
-	record:       u64, // The address of the thread record in the program.
+	record:       u64, // The address of the thread record in the process.
 	events:       ^u32, // The `events` word of the thread record, for the kernel.
 	deadline:     u64,
 	references:   u32, // Handles to this thread.
@@ -227,18 +227,18 @@ Thread :: struct #align (64) {
 	serial:       u32, // Changes for each new thread in the slot (the record of the gs register).
 	// The thread record of the thread through the direct map: the kernel
 	// writes the fault ring there when this thread is the fault handler of
-	// its program. nil after thread_finish. Program lock.
+	// its process. nil after thread_finish. Process lock.
 	record_in_kernel: ^op.Thread_Record,
 	// The thread waits in the fault ring for an answer (fault_ring.odin).
-	// Written under the program lock; the thread is Waiting with no deadline
+	// Written under the process lock; the thread is Waiting with no deadline
 	// while it is true.
 	fault_waits:   bool,
-	fault_serial:  u64, // The serial of that fault: Program.fault_serial when it came. Program lock.
-	fault_address: u64, // The address of the access of that fault. Program lock.
+	fault_serial:  u64, // The serial of that fault: Process.fault_serial when it came. Process lock.
+	fault_address: u64, // The address of the access of that fault. Process lock.
 	// The instruction address and the frame pointer of that fault: a
 	// write of Thread_Control changes the frame while the thread waits,
 	// and the stop report of the answer Stop names the fault, not the
-	// write. Program lock.
+	// write. Process lock.
 	fault_instruction:   u64,
 	fault_frame_pointer: u64,
 	// The control of a thread (thread_control.odin). The stop count: the
@@ -247,34 +247,34 @@ Thread :: struct #align (64) {
 	control_stops: u32,
 	// Thread_Control wrote the registers or the extended state since the
 	// last fault of the thread: Fault_Answer then accepts Resume for any
-	// kind. Program lock.
+	// kind. Process lock.
 	registers_written: bool,
 	// The breakpoints of the thread, and the value of the debug control
 	// register for them (breakpoints.odin). They mean something only while
-	// has_breakpoints is true. Written under the program lock while the
+	// has_breakpoints is true. Written under the process lock while the
 	// thread is held; the processor that takes the thread reads them.
 	breakpoints:        op.Thread_Breakpoints,
 	breakpoint_control: u64,
 	// The record of the fault that the thread waits for is in the ring of
-	// the debugger of its program, not in the ring of its program: only
-	// the debugger answers it. Program lock.
+	// the debugger of its process, not in the ring of its process: only
+	// the debugger answers it. Process lock.
 	fault_to_debugger: bool,
-	// The stops of control_stops that the debugger of the program made:
+	// The stops of control_stops that the debugger of the process made:
 	// the end of the debugging takes them back, and no others. Never
 	// above control_stops: a Resume that is not of the debugger takes
-	// only a stop that is not of the debugger. Program lock.
+	// only a stop that is not of the debugger. Process lock.
 	debug_stops: u32,
-	// The debugger of the program wrote the trap flag that is in the
+	// The debugger of the process wrote the trap flag that is in the
 	// frame of the thread: the end of the debugging clears that flag, and
 	// a single step that comes after that end is dropped and stops no
-	// program. It stays true through the record of a step, until the next
-	// write of the registers. A trap flag that the program set itself
-	// never has this mark. Program lock.
+	// process. It stays true through the record of a step, until the next
+	// write of the registers. A trap flag that the process set itself
+	// never has this mark. Process lock.
 	debugger_step: bool,
-	// The program whose debug handler this thread is (fault_ring.odin). 0:
+	// The process whose debug handler this thread is (fault_ring.odin). 0:
 	// none. Written under the control lock (atomic: Fault_Handler_Set reads
-	// it under the program lock of the thread only).
-	debugs_program: u32,
+	// it under the process lock of the thread only).
+	debugs_process: u32,
 	// The most that the weight can be: 1 to op.WEIGHT_FULL. Only a write
 	// of the schedule through the machine handle changes it; a new thread
 	// gets the limit of a new thread of its creator
@@ -284,13 +284,13 @@ Thread :: struct #align (64) {
 	// with no lock).
 	weight_limit: u32,
 	// The weight limit of a thread that this thread creates, and of the
-	// first thread of a program that it starts, with the value of its
-	// program as a second bound (creation_weight_limit): 1 to
+	// first thread of a process that it starts, with the value of its
+	// process as a second bound (creation_weight_limit): 1 to
 	// weight_limit. Only a write of the schedule through the machine
 	// handle changes it; a new thread gets the limit of its creation as
 	// its weight limit and as its own value. It bounds the weight of a
 	// thread that the share policy never saw (docs/SCHEDULING.md, "A share
-	// for each program"). Read at a write of the schedule and at a
+	// for each process"). Read at a write of the schedule and at a
 	// creation only. Written under the run lock of home (atomic: a
 	// creation and a diagnosis read it with no lock).
 	new_thread_weight_limit: u32,
@@ -321,13 +321,13 @@ Thread :: struct #align (64) {
 #assert(PROCESSOR_CAPACITY <= op.PLACEMENT_PROCESSOR_CAPACITY)
 #assert(offset_of(Thread, frame) == 64)
 
-// word_address gives the physical address of a 32-bit word of a program,
-// or 0 if the program cannot read it.
-word_address :: proc "contextless" (program: ^Program, address: u64) -> u64 {
-	if address & 3 != 0 || !user_range(program, address, 4, false) {
+// word_address gives the physical address of a 32-bit word of a process,
+// or 0 if the process cannot read it.
+word_address :: proc "contextless" (process: ^Process, address: u64) -> u64 {
+	if address & 3 != 0 || !user_range(process, address, 4, false) {
 		return 0
 	}
-	entry := page_entry(program.table, address)^
+	entry := page_entry(process.table, address)^
 	// A large page: its frame is 2 MiB, and the bits 12 to 20 of the
 	// address are in the page.
 	if entry & PAGE_LARGE != 0 {
@@ -338,21 +338,21 @@ word_address :: proc "contextless" (program: ^Program, address: u64) -> u64 {
 
 THREAD_TABLE_CAPACITY :: 256
 
-Program :: struct {
-	state:        op.Program_State, // None, Created, Ready or Stopped.
+Process :: struct {
+	state:        op.Process_State, // None, Created, Ready or Stopped.
 	code:         u32,
-	name:         [op.PROGRAM_NAME_BYTES_MOST + 1]u8, // Zero bytes after the name.
+	name:         [op.PROCESS_NAME_BYTES_MOST + 1]u8, // Zero bytes after the name.
 	table:        u64,
-	references:   u32, // Handles to this program.
+	references:   u32, // Handles to this process.
 	budget:       u32, // The budget that paid for the slot. It pays for the page tables.
 	thread_areas: u32, // Bit n: thread area n is in use.
 	thread_count: u32,
 	has_ports:    bool,
-	// The new-thread weight limit of the program (op.Program_Schedule): no
-	// thread of the program creates a thread with a higher weight limit.
-	// 0 is op.WEIGHT_FULL, so a new program, whose record is zero, has the
-	// full value (program_new_thread_weight_limit). Only a write through the
-	// machine handle changes it, under the program lock (atomic: a creation
+	// The new-thread weight limit of the process (op.Process_Schedule): no
+	// thread of the process creates a thread with a higher weight limit.
+	// 0 is op.WEIGHT_FULL, so a new process, whose record is zero, has the
+	// full value (process_new_thread_weight_limit). Only a write through the
+	// machine handle changes it, under the process lock (atomic: a creation
 	// reads it with no lock).
 	new_thread_weight_limit: u32,
 	run_time:     u64,
@@ -361,52 +361,52 @@ Program :: struct {
 	mapped_pages: u64,
 	handles:      [HANDLE_CAPACITY]Handle_Slot,
 	mappings:     [MAPPING_CAPACITY]Mapping,
-	modules:      [op.PROGRAM_MODULE_CAPACITY]op.Module_Record, // What the loaders asserted (Program_Module).
-	stop:         op.Stop_Report, // A program that stopped on a fault: where.
-	// The processors that run a thread of the program, plus 1 while a stop
+	modules:      [op.PROCESS_MODULE_CAPACITY]op.Module_Record, // What the loaders asserted (Process_Module).
+	stop:         op.Stop_Report, // A process that stopped on a fault: where.
+	// The processors that run a thread of the process, plus 1 while a stop
 	// marks the threads; HOLDS_STOPPED when the marks are done (atomic).
 	holds:        u64,
-	ports_serial: u64, // Changes with each Ports handle of the program. It stays when the slot serves a new program.
-	cleaned:      bool, // program_cleanup ran: the slot can be free when no handle names it. Control lock.
-	serial:       u32, // Changes for each new program in the slot. It stays when the slot serves a new program.
-	// The log records of this program: the count of its next record, whose
+	ports_serial: u64, // Changes with each Ports handle of the process. It stays when the slot serves a new process.
+	cleaned:      bool, // process_cleanup ran: the slot can be free when no handle names it. Control lock.
+	serial:       u32, // Changes for each new process in the slot. It stays when the slot serves a new process.
+	// The log records of this process: the count of its next record, whose
 	// low 32 bits are its own number (op.Log_Record.own_number). Log lock;
-	// program_create sets it to 0, when no thread of the slot runs. A new
-	// program starts at 0, so its own numbers say nothing of the programs
+	// process_create sets it to 0, when no thread of the slot runs. A new
+	// process starts at 0, so its own numbers say nothing of the processes
 	// before it in the slot. 64 bits: the window of the own log ring
 	// (op.own_log_window) needs the count, not its low bits.
 	log_records_written:  u64,
-	// The Log operations of this program that its log limit refused since
-	// its last accepted one. Program lock (Log runs under it); the cleanup
+	// The Log operations of this process that its log limit refused since
+	// its last accepted one. Process lock (Log runs under it); the cleanup
 	// reads it after the threads ended, and writes it on the log when it is
 	// not 0, so a refusal that no later line said is not silent.
 	log_lines_refused: u64,
-	// The frames of the own log ring of this program (op.OWN_LOG_PAGES),
-	// which its budget paid: a copy of each record of the program, which
+	// The frames of the own log ring of this process (op.OWN_LOG_PAGES),
+	// which its budget paid: a copy of each record of the process, which
 	// only its own records push out (src/md/features/own_log_ring.md).
 	// Set and cleared under the log lock; all 0: no ring.
 	log_ring_frames:      [op.OWN_LOG_PAGES]u64,
-	// The fault ring (fault_ring.odin), under the program lock. 0: no fault
-	// handler, and every fault stops the program.
+	// The fault ring (fault_ring.odin), under the process lock. 0: no fault
+	// handler, and every fault stops the process.
 	fault_handler:        u32, // The thread whose thread record holds the fault ring.
 	// The fault kinds of the handler: bit n is the vector n. 0 with no
-	// handler. Written under the program lock with an atomic store, and read
+	// handler. Written under the process lock with an atomic store, and read
 	// with no lock by a fault first, so that a fault that is not delivered
 	// takes no lock.
 	fault_kinds:          u64,
 	fault_handler_serial: u32,
-	fault_written:        u32, // The records that the kernel wrote in that ring: the kernel's own count, not the one in memory of the program.
+	fault_written:        u32, // The records that the kernel wrote in that ring: the kernel's own count, not the one in memory of the process.
 	fault_full:           u32, // The faults that found the ring full.
-	fault_serial:         u64, // The faults given to a ring: the serial of the next record is one more. A count of this program only.
-	// The debugger of the program (fault_ring.odin), under the program
+	fault_serial:         u64, // The faults given to a ring: the serial of the next record is one more. A count of this process only.
+	// The debugger of the process (fault_ring.odin), under the process
 	// lock. debug_handler is a thread of
-	// another program, the debugger: its debug handler. 0: no debugger.
+	// another process, the debugger: its debug handler. 0: no debugger.
 	// It changes only with the control lock held too.
 	debug_handler: u32,
 	// The thread record of the debug handler through the direct map: the
 	// ring that takes the records. The end of the debug handler clears it
-	// under the program lock before the record is unmapped, so a fault of
-	// this program never writes a record that is gone.
+	// under the process lock before the record is unmapped, so a fault of
+	// this process never writes a record that is gone.
 	debug_record:  ^op.Thread_Record,
 	// The fault kinds of the debugger: bit n is the vector n. 0 with no
 	// debugger. Written and read as fault_kinds.
@@ -418,24 +418,24 @@ Program :: struct {
 
 HOLDS_STOPPED :: u64(1) << 32
 
-// program_leave says that a processor left a thread of a program. true:
-// it was the last one after a stop, and the caller cleans the program up.
-program_leave :: proc "contextless" (index: u32) -> bool {
-	return intrinsics.atomic_sub(&programs[index].holds, 1) - 1 == HOLDS_STOPPED
+// process_leave says that a processor left a thread of a process. true:
+// it was the last one after a stop, and the caller cleans the process up.
+process_leave :: proc "contextless" (index: u32) -> bool {
+	return intrinsics.atomic_sub(&processes[index].holds, 1) - 1 == HOLDS_STOPPED
 }
 
-// program_module records a module that a loader put in a program, replaces
+// process_module records a module that a loader put in a process, replaces
 // the record with the same base, or removes it (size 0). Two records do not
-// share an address. by_the_program: the program writes in itself. The kernel
-// writes the writer of the record, and the program cannot change a record of
-// its starter: else a program could name its code by the module of another
+// share an address. by_the_process: the process writes in itself. The kernel
+// writes the writer of the record, and the process cannot change a record of
+// its starter: else a process could name its code by the module of another
 // (src/md/features/module_record_writer.md).
-program_module :: proc "contextless" (program: ^Program, record: op.Module_Record, by_the_program: bool) -> Operation_Outcome {
+process_module :: proc "contextless" (process: ^Process, record: op.Module_Record, by_the_process: bool) -> Operation_Outcome {
 	if record.size != 0 && (record.base >= op.USER_END || record.size > op.USER_END - record.base) {
 		return .Bad_Address
 	}
 	place: ^op.Module_Record
-	for &item in program.modules {
+	for &item in process.modules {
 		if item.size != 0 && item.base == record.base {
 			place = &item
 		} else if item.size != 0 && record.size != 0 && record.base < item.base + item.size && item.base < record.base + record.size {
@@ -450,24 +450,24 @@ program_module :: proc "contextless" (program: ^Program, record: op.Module_Recor
 	if record.size == 0 && (place.size == 0 || place.base != record.base) {
 		return .Bad_Address
 	}
-	if by_the_program && place.size != 0 && place.writer == u64(op.Module_Writer.Starter) {
+	if by_the_process && place.size != 0 && place.writer == u64(op.Module_Writer.Starter) {
 		return .No_Right
 	}
 	written := record
-	written.writer = by_the_program ? u64(op.Module_Writer.Program) : u64(op.Module_Writer.Starter)
+	written.writer = by_the_process ? u64(op.Module_Writer.Process) : u64(op.Module_Writer.Starter)
 	place^ = record.size == 0 ? {} : written
 	return .Ok
 }
 
 // starter_module_meeting gives the module record of the writer Starter that
-// meets a range of addresses of a program, or nil. The caller holds the
-// program lock. The test compares offsets from the lower start, so no sum
-// of an address and a size from the program wraps.
-starter_module_meeting :: proc "contextless" (program: ^Program, address: u64, size: u64) -> ^op.Module_Record {
+// meets a range of addresses of a process, or nil. The caller holds the
+// process lock. The test compares offsets from the lower start, so no sum
+// of an address and a size from the process wraps.
+starter_module_meeting :: proc "contextless" (process: ^Process, address: u64, size: u64) -> ^op.Module_Record {
 	if size == 0 {
 		return nil
 	}
-	for &item in program.modules {
+	for &item in process.modules {
 		if item.size == 0 || item.writer != u64(op.Module_Writer.Starter) {
 			continue
 		}
@@ -479,9 +479,9 @@ starter_module_meeting :: proc "contextless" (program: ^Program, address: u64, s
 	return nil
 }
 
-// module_of gives the module record of a program that holds an address, or nil.
-module_of :: proc "contextless" (program: ^Program, address: u64) -> ^op.Module_Record {
-	for &item in program.modules {
+// module_of gives the module record of a process that holds an address, or nil.
+module_of :: proc "contextless" (process: ^Process, address: u64) -> ^op.Module_Record {
+	for &item in process.modules {
 		if item.size != 0 && address >= item.base && address - item.base < item.size {
 			return &item
 		}
@@ -508,9 +508,9 @@ Budget :: struct {
 
 budgets: [BUDGET_CAPACITY]Budget
 regions: [REGION_CAPACITY]Region
-programs: [PROGRAM_CAPACITY]Program
+processes: [PROCESS_CAPACITY]Process
 threads: [THREAD_TABLE_CAPACITY]Thread
-interrupt_owner: [INTERRUPT_CAPACITY]u32 // A program.
+interrupt_owner: [INTERRUPT_CAPACITY]u32 // A process.
 interrupt_pending: [INTERRUPT_CAPACITY]u32
 interrupt_references: [INTERRUPT_CAPACITY]u32 // Handles. A message interrupt with none is free.
 // The milliseconds since the kernel made the time page. The tick of the
@@ -518,7 +518,7 @@ interrupt_references: [INTERRUPT_CAPACITY]u32 // Handles. A message interrupt wi
 // loses no time. It never goes back.
 time_milliseconds: u64
 cycle_start: u64 // The cycle counter at the time 0.
-time_region: u32 // The memory object of the time page. It is in each program.
+time_region: u32 // The memory object of the time page. It is in each process.
 time_record: ^op.Time_Record
 
 // budget_create moves amounts from a budget to a new budget.
@@ -526,7 +526,7 @@ budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) ->
 	from := &budgets[parent]
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
-	if !from.live || amounts.pages > from.amounts.pages || amounts.programs > from.amounts.programs || amounts.threads > from.amounts.threads || amounts.processor > from.amounts.processor || amounts.log_records > from.amounts.log_records {
+	if !from.live || amounts.pages > from.amounts.pages || amounts.processes > from.amounts.processes || amounts.threads > from.amounts.threads || amounts.processor > from.amounts.processor || amounts.log_records > from.amounts.log_records {
 		return 0, .No_Budget
 	}
 	for &budget, slot in budgets[1:] {
@@ -537,7 +537,7 @@ budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) ->
 				processor_sync(all_other_processors())
 			}
 			from.amounts.pages -= amounts.pages
-			from.amounts.programs -= amounts.programs
+			from.amounts.processes -= amounts.processes
 			from.amounts.threads -= amounts.threads
 			// Log reads it with no lock (budget_log).
 			intrinsics.atomic_sub(&from.amounts.log_records, amounts.log_records)
@@ -555,7 +555,7 @@ budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) ->
 // objects that it paid for.
 budget_release :: proc "contextless" (index: u32) {
 	budget := &budgets[index]
-	// A copy of a Budget handle in its own program adds 1 with no control
+	// A copy of a Budget handle in its own process adds 1 with no control
 	// lock: the count is atomic.
 	if intrinsics.atomic_sub(&budget.references, 1) != 1 {
 		return
@@ -564,16 +564,16 @@ budget_release :: proc "contextless" (index: u32) {
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
 	budgets[parent].amounts.pages += budget.amounts.pages
-	budgets[parent].amounts.programs += budget.amounts.programs
+	budgets[parent].amounts.processes += budget.amounts.processes
 	budgets[parent].amounts.threads += budget.amounts.threads
 	for &region in regions {
 		if region.page_count != 0 && region.budget == index {
 			region.budget = parent
 		}
 	}
-	for &program in programs {
-		if program.state != .None && program.budget == index {
-			intrinsics.atomic_store(&program.budget, parent) // read_log_count reads it with an atomic load.
+	for &process in processes {
+		if process.state != .None && process.budget == index {
+			intrinsics.atomic_store(&process.budget, parent) // read_log_count reads it with an atomic load.
 		}
 	}
 	for &thread in threads {
@@ -586,7 +586,7 @@ budget_release :: proc "contextless" (index: u32) {
 			intrinsics.atomic_store(&other.parent, parent)
 		}
 	}
-	// After its programs and threads moved: the records that it wrote in
+	// After its processes and threads moved: the records that it wrote in
 	// this second stay spent in its parent. Its amount returns after its
 	// count, so a Log of the parent meanwhile is checked against the
 	// smaller amount and never passes it.
@@ -856,12 +856,12 @@ region_release :: proc "contextless" (index: u32) {
 	lock_free(&frame_lock, .Frame)
 }
 
-// handle_insert puts a handle in a free slot of a program. The caller holds
-// the program lock; for a Ports or an Interrupt handle, also the control
+// handle_insert puts a handle in a free slot of a process. The caller holds
+// the process lock; for a Ports or an Interrupt handle, also the control
 // lock. A reference count is atomic: the caller holds a handle or a mapping
 // of the object, so the count is not 0. 0: no free slot.
-handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op.Handle {
-	for &entry, index in program.handles[1:] {
+handle_insert :: proc "contextless" (process: ^Process, slot: Handle_Slot) -> op.Handle {
+	for &entry, index in process.handles[1:] {
 		if entry.kind != .None {
 			continue
 		}
@@ -871,20 +871,20 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 		switch slot.kind {
 		case .Memory:
 			intrinsics.atomic_add(&regions[slot.object].references, 1)
-		case .Program:
-			intrinsics.atomic_add(&programs[slot.object].references, 1)
+		case .Process:
+			intrinsics.atomic_add(&processes[slot.object].references, 1)
 		case .Thread:
 			intrinsics.atomic_add(&threads[slot.object].references, 1)
 		case .Budget:
 			intrinsics.atomic_add(&budgets[slot.object].references, 1)
 		case .Ports:
-			intrinsics.atomic_store(&program.has_ports, true)
-			ports_changed(program)
+			intrinsics.atomic_store(&process.has_ports, true)
+			ports_changed(process)
 		case .Interrupt:
-			intrinsics.atomic_store(&interrupt_owner[slot.object], index_of_program(program))
+			intrinsics.atomic_store(&interrupt_owner[slot.object], index_of_process(process))
 			interrupt_references[slot.object] += 1
 			// The entry of a message interrupt behind a conventional bridge
-			// follows the program that holds it.
+			// follows the process that holds it.
 			iommu_interrupt_owner_changed(slot.object)
 		case .Machine, .Log:
 			// One object of the machine, which never ends: no count.
@@ -897,16 +897,16 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 }
 
 // handle_insert_undo takes back a handle that handle_insert just made and
-// that no program saw: the origin tree refused it during a revocation. The
+// that no process saw: the origin tree refused it during a revocation. The
 // tree refuses only a path with no control lock, so the handle is never of
 // a kind that handle_needs_control names.
-handle_insert_undo :: proc "contextless" (program: ^Program, handle: op.Handle) {
-	slot := &program.handles[u32(handle) & 0xFFFF]
+handle_insert_undo :: proc "contextless" (process: ^Process, handle: op.Handle) {
+	slot := &process.handles[u32(handle) & 0xFFFF]
 	switch slot.kind {
 	case .Memory:
 		intrinsics.atomic_sub(&regions[slot.object].references, 1)
-	case .Program:
-		intrinsics.atomic_sub(&programs[slot.object].references, 1)
+	case .Process:
+		intrinsics.atomic_sub(&processes[slot.object].references, 1)
 	case .Thread:
 		intrinsics.atomic_sub(&threads[slot.object].references, 1)
 	case .Budget:
@@ -931,7 +931,7 @@ handle_needs_control :: proc "contextless" (kind: Object_Kind) -> bool {
 	switch kind {
 	case .Memory, .Log, .Machine:
 		return false
-	case .Program, .Thread, .Budget, .Interrupt, .Ports:
+	case .Process, .Thread, .Budget, .Interrupt, .Ports:
 		return true
 	case .None:
 		// No handle: nothing is made or closed. A caller has found the
@@ -942,15 +942,15 @@ handle_needs_control :: proc "contextless" (kind: Object_Kind) -> bool {
 }
 
 // interrupt_handle_released ends what a handle of an interrupt held: its
-// count, and the owner of the line when the program was the owner. The
+// count, and the owner of the line when the process was the owner. The
 // device of a message interrupt that no handle names sends it no more,
 // before the index can be given to another device; the entry of a message
-// interrupt behind a conventional bridge follows the program that holds it.
+// interrupt behind a conventional bridge follows the process that holds it.
 // The caller holds the control lock.
 @(private = "file")
-interrupt_handle_released :: proc "contextless" (program: ^Program, object: u32) {
+interrupt_handle_released :: proc "contextless" (process: ^Process, object: u32) {
 	interrupt_references[object] -= 1
-	if interrupt_owner[object] == index_of_program(program) {
+	if interrupt_owner[object] == index_of_process(process) {
 		intrinsics.atomic_store(&interrupt_owner[object], 0)
 	}
 	if interrupt_references[object] == 0 && object >= INTERRUPT_LINES {
@@ -959,26 +959,26 @@ interrupt_handle_released :: proc "contextless" (program: ^Program, object: u32)
 	iommu_interrupt_owner_changed(object)
 }
 
-index_of_program :: #force_inline proc "contextless" (program: ^Program) -> u32 {
-	return u32(intrinsics.ptr_sub(program, &programs[0]))
+index_of_process :: #force_inline proc "contextless" (process: ^Process) -> u32 {
+	return u32(intrinsics.ptr_sub(process, &processes[0]))
 }
 
-// ports_changed makes each processor open the ports of the program again
-// before it returns to a program: run checks ports_serial. The caller holds
+// ports_changed makes each processor open the ports of the process again
+// before it returns to a process: run checks ports_serial. The caller holds
 // the control lock.
-ports_changed :: proc "contextless" (program: ^Program) {
-	intrinsics.atomic_add(&program.ports_serial, 1)
+ports_changed :: proc "contextless" (process: ^Process) {
+	intrinsics.atomic_add(&process.ports_serial, 1)
 	processor_sync(all_other_processors())
 }
 
-// handle_find gives the slot of a handle of a program. The handle must name
+// handle_find gives the slot of a handle of a process. The handle must name
 // an object of this kind (.None: any kind) and have each of these rights.
-handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_Kind, rights: op.Rights = {}) -> (slot: ^Handle_Slot, status: Operation_Outcome) {
+handle_find :: proc "contextless" (process: ^Process, handle: u64, kind: Object_Kind, rights: op.Rights = {}) -> (slot: ^Handle_Slot, status: Operation_Outcome) {
 	index := handle & 0xFFFF
 	if index == 0 || index >= HANDLE_CAPACITY || handle >> 32 != 0 {
 		return nil, .Bad_Handle
 	}
-	slot = &program.handles[index]
+	slot = &process.handles[index]
 	if slot.kind == .None || u64(slot.generation) != handle >> 16 || (kind != .None && slot.kind != kind) {
 		return nil, .Bad_Handle
 	}
@@ -988,27 +988,27 @@ handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_
 	return slot, .Ok
 }
 
-// handle_close closes a handle of a program. The caller holds the program
+// handle_close closes a handle of a process. The caller holds the process
 // lock; for a kind of handle_needs_control, and for a machine handle with
 // the right Events, also the control lock.
-handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
-	origin_detach(holding_of_handle(program, slot))
+handle_close :: proc "contextless" (process: ^Process, slot: ^Handle_Slot) {
+	origin_detach(holding_of_handle(process, slot))
 	switch slot.kind {
 	case .Memory:
 		// A device of this service reaches the object no more once the
 		// service holds no handle to it, before the object can end.
-		iommu_handle_closed(program, slot)
+		iommu_handle_closed(process, slot)
 		region_release(slot.object)
-	case .Program:
-		// A program runs only while a handle names it: nobody can stop a
-		// program that no handle names. The stop waits for control_free.
-		// The debugging of a program lives while its debugger holds the
+	case .Process:
+		// A process runs only while a handle names it: nobody can stop a
+		// process that no handle names. The stop waits for control_free.
+		// The debugging of a process lives while its debugger holds the
 		// right Debug on it (fault_ring.odin): a close and a revocation
 		// both come here.
 		if .Debug in slot.rights {
-			debug_right_closed(program, slot)
+			debug_right_closed(process, slot)
 		}
-		if intrinsics.atomic_sub(&programs[slot.object].references, 1) == 1 {
+		if intrinsics.atomic_sub(&processes[slot.object].references, 1) == 1 {
 			stops_pending |= 1 << slot.object
 		}
 	case .Thread:
@@ -1019,15 +1019,15 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 	case .Budget:
 		budget_release(slot.object)
 	case .Interrupt:
-		interrupt_handle_released(program, slot.object)
+		interrupt_handle_released(process, slot.object)
 	case .Ports:
 		slot.kind = .None
-		ports_changed(program)
+		ports_changed(process)
 	case .Machine:
-		// The event table of the program lives while it has the right
+		// The event table of the process lives while it has the right
 		// Events (events.odin): a close and a revocation both come here.
 		if .Events in slot.rights {
-			event_right_closed(program, slot)
+			event_right_closed(process, slot)
 		}
 	case .Log:
 		// The log never ends: the handle holds nothing to release.
@@ -1037,11 +1037,11 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 	slot^ = {generation = slot.generation + 1, ended = u8(errors.End.Closed)}
 }
 
-// map_region puts pages of a region in the address space of a program. origin is
-// the memory handle that a program mapped (origin.odin), or 0.
-// by_the_program: the program maps in itself, and not over a module of its
+// map_region puts pages of a region in the address space of a process. origin is
+// the memory handle that a process mapped (origin.odin), or 0.
+// by_the_process: the process maps in itself, and not over a module of its
 // starter.
-map_region :: proc "contextless" (program: ^Program, region_index: u32, address: u64, flags: op.Map_Flags, first: u64, count: u64, origin: Holding = 0, by_the_program := false) -> (result: u64, status: Operation_Outcome) {
+map_region :: proc "contextless" (process: ^Process, region_index: u32, address: u64, flags: op.Map_Flags, first: u64, count: u64, origin: Holding = 0, by_the_process := false) -> (result: u64, status: Operation_Outcome) {
 	region := &regions[region_index]
 	// An object with marks of protection is mapped once: the marks are of
 	// the object, and would reach a second mapping.
@@ -1064,7 +1064,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		if region.large_pages && first % op.LARGE_PAGE_PAGES == 0 && count % op.LARGE_PAGE_PAGES == 0 {
 			alignment = LARGE_PAGE_SIZE
 		}
-		address = chosen_address(program, count, alignment)
+		address = chosen_address(process, count, alignment)
 		if address == 0 {
 			return 0, .No_Slot // No gap below MODULE_BASE.
 		}
@@ -1073,16 +1073,16 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	if address % PAGE_SIZE != 0 || address < PAGE_SIZE || address >= USER_END || size > USER_END - address {
 		return 0, .Bad_Address
 	}
-	// Memory of the program where its starter recorded a module would run
+	// Memory of the process where its starter recorded a module would run
 	// under the name of that module. Before the check of the mappings, so
 	// that a map over that module always gives the same status.
-	if by_the_program && starter_module_meeting(program, address, size) != nil {
+	if by_the_process && starter_module_meeting(process, address, size) != nil {
 		return 0, .No_Right
 	}
 	// A page on first use has no page table entry yet: the mappings say
 	// which addresses are taken.
 	mapping: ^Mapping
-	for &candidate in program.mappings {
+	for &candidate in process.mappings {
 		if candidate.page_count == 0 {
 			if mapping == nil {
 				mapping = &candidate
@@ -1116,7 +1116,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	large := region.large_pages && address % LARGE_PAGE_SIZE == 0 && first % op.LARGE_PAGE_PAGES == 0 && count % op.LARGE_PAGE_PAGES == 0
 	// The origin first: during a revocation, a path with no control lock
 	// adds no holding, and runs again under the control lock.
-	holding := holding_of_mapping(program, mapping)
+	holding := holding_of_mapping(process, mapping)
 	if !origin_attach(holding, origin) {
 		return 0, .Needs_Control
 	}
@@ -1125,27 +1125,27 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	freed: Freed_Tables
 	if large {
 		for part in 0 ..< count / op.LARGE_PAGE_PAGES {
-			entry := page_directory_entry_hold(program.table, address + part * LARGE_PAGE_SIZE, &program.budget, &freed)
+			entry := page_directory_entry_hold(process.table, address + part * LARGE_PAGE_SIZE, &process.budget, &freed)
 			if entry == nil {
 				// The status before the free: the freed tables return pages
 				// to the budget.
-				refusal: Operation_Outcome = budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
+				refusal: Operation_Outcome = budgets[process.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
 				self := processor_self()
 				for undo in 0 ..< part {
 					undo_address := address + undo * LARGE_PAGE_SIZE
-					undo_entry := page_directory_entry(program.table, undo_address)
+					undo_entry := page_directory_entry(process.table, undo_address)
 					if undo_entry == nil {
 						page_table_count_broken("a held entry has no table")
 					}
 					undo_entry^ = 0
-					if intrinsics.atomic_load(&self.table) == program.table {
+					if intrinsics.atomic_load(&self.table) == process.table {
 						page_flush(undo_address)
 					}
-					page_entries_release(program.table, undo_address, 2, 1, &freed)
+					page_entries_release(process.table, undo_address, 2, 1, &freed)
 				}
 				intrinsics.atomic_thread_fence(.Seq_Cst)
-				processor_sync(processors_with_table(program.table))
-				page_tables_free(program.table, &program.budget, &freed)
+				processor_sync(processors_with_table(process.table))
+				page_tables_free(process.table, &process.budget, &freed)
 				origin_detach(holding)
 				return 0, refusal
 			}
@@ -1159,17 +1159,17 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	for page := u64(0); page < (large ? 0 : count); {
 		run_address := address + page * PAGE_SIZE
 		run := min(512 - (run_address >> 12 & 511), count - page)
-		run_first_entry := page_entry_hold(program.table, run_address, run, &program.budget, &freed)
+		run_first_entry := page_entry_hold(process.table, run_address, run, &process.budget, &freed)
 		if run_first_entry == nil {
-			refusal: Operation_Outcome = budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
-			// Another thread of the program can have used a page that was
+			refusal: Operation_Outcome = budgets[process.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
+			// Another thread of the process can have used a page that was
 			// present: as in unmap, each processor forgets the entries. The
 			// runs of the undo are the runs of the map: the same start.
 			self := processor_self()
 			for undo := u64(0); undo < page; {
 				undo_address := address + undo * PAGE_SIZE
 				undo_run := min(512 - (undo_address >> 12 & 511), page - undo)
-				undo_first_entry := page_entry(program.table, undo_address)
+				undo_first_entry := page_entry(process.table, undo_address)
 				if undo_first_entry == nil {
 					page_table_count_broken("a held entry has no table")
 				}
@@ -1177,17 +1177,17 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 				for at in 0 ..< undo_run {
 					if undo_entries[at] & PAGE_PRESENT != 0 {
 						undo_entries[at] = 0
-						if intrinsics.atomic_load(&self.table) == program.table {
+						if intrinsics.atomic_load(&self.table) == process.table {
 							page_flush(undo_address + at * PAGE_SIZE)
 						}
 					}
 				}
-				page_entries_release(program.table, undo_address, 1, undo_run, &freed)
+				page_entries_release(process.table, undo_address, 1, undo_run, &freed)
 				undo += undo_run
 			}
 			intrinsics.atomic_thread_fence(.Seq_Cst)
-			processor_sync(processors_with_table(program.table))
-			page_tables_free(program.table, &program.budget, &freed)
+			processor_sync(processors_with_table(process.table))
+			page_tables_free(process.table, &process.budget, &freed)
 			origin_detach(holding)
 			return 0, refusal
 		}
@@ -1203,35 +1203,35 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		}
 		page += run
 	}
-	// Under the program lock of the program: each caller of map_region holds
-	// it (Memory_Map through target_lock in enter.odin, program_create and
+	// Under the process lock of the process: each caller of map_region holds
+	// it (Memory_Map through target_lock in enter.odin, process_create and
 	// thread_create in this file, the start of the root service in main.odin).
 	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, present_page_count = present_page_count, limit_bits = limit_bits, large = large}
 	intrinsics.atomic_add(&region.references, 1)
-	program.mapped_pages += count
+	process.mapped_pages += count
 	return address, .Ok
 }
 
 // chosen_address gives the lowest address from op.CHOSEN_BASE where count
 // pages fit with one page with no mapping before and after them: the first
-// gap between the mappings of the program. The range of a mapping that
-// ended serves again: a program that maps and unmaps at each call uses the
+// gap between the mappings of the process. The range of a mapping that
+// ended serves again: a process that maps and unmaps at each call uses the
 // same few addresses, and its tables are those of one mapping at a time.
 // A module record of the writer Starter is a range that the gap avoids too:
-// the program cannot map there, and an address that the kernel chooses must
-// not give a refusal that the program cannot avoid. Each pass moves the
+// the process cannot map there, and an address that the kernel chooses must
+// not give a refusal that the process cannot avoid. Each pass moves the
 // candidate past at least one mapping or record, which it never meets
-// again: at most MAPPING_CAPACITY + PROGRAM_MODULE_CAPACITY passes. The
-// caller holds the program lock.
-chosen_address :: proc "contextless" (program: ^Program, count: u64, alignment: u64 = PAGE_SIZE) -> u64 {
+// again: at most MAPPING_CAPACITY + PROCESS_MODULE_CAPACITY passes. The
+// caller holds the process lock.
+chosen_address :: proc "contextless" (process: ^Process, count: u64, alignment: u64 = PAGE_SIZE) -> u64 {
 	align_up :: #force_inline proc "contextless" (value, alignment: u64) -> u64 {
 		return (value + alignment - 1) / alignment * alignment
 	}
 	candidate := align_up(u64(op.CHOSEN_BASE), alignment)
 	size := count * PAGE_SIZE
-	for _ in 0 ..= MAPPING_CAPACITY + op.PROGRAM_MODULE_CAPACITY {
+	for _ in 0 ..= MAPPING_CAPACITY + op.PROCESS_MODULE_CAPACITY {
 		moved := false
-		for mapping in program.mappings {
+		for mapping in process.mappings {
 			if mapping.page_count == 0 {
 				continue
 			}
@@ -1241,7 +1241,7 @@ chosen_address :: proc "contextless" (program: ^Program, count: u64, alignment: 
 				moved = true
 			}
 		}
-		for item in program.modules {
+		for item in process.modules {
 			if item.size == 0 || item.writer != u64(op.Module_Writer.Starter) {
 				continue
 			}
@@ -1263,29 +1263,29 @@ chosen_address :: proc "contextless" (program: ^Program, count: u64, alignment: 
 }
 
 // unmap removes a mapping. Before the memory object can end, each
-// processor that uses the page table of the program forgets the mapping.
+// processor that uses the page table of the process forgets the mapping.
 // The entries of the mapping stop being held, and each table that holds no
-// entry then is freed after that shoot-down. The caller holds the program
+// entry then is freed after that shoot-down. The caller holds the process
 // lock.
-unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
-	origin_detach(holding_of_mapping(program, mapping))
+unmap :: proc "contextless" (process: ^Process, mapping: ^Mapping) {
+	origin_detach(holding_of_mapping(process, mapping))
 	self := processor_self()
 	walked_present_pages: u64
 	freed: Freed_Tables
 	// A large page is one entry of the second level for 512 pages.
 	for part in 0 ..< (mapping.large ? mapping.page_count / op.LARGE_PAGE_PAGES : 0) {
 		address := mapping.address + part * LARGE_PAGE_SIZE
-		entry := page_directory_entry(program.table, address)
+		entry := page_directory_entry(process.table, address)
 		if entry == nil {
 			// The mapping holds its tables: a missing one is a wrong count.
 			page_table_count_broken("a held entry has no table")
 		}
 		walked_present_pages += (entry^ & PAGE_PRESENT) * op.LARGE_PAGE_PAGES
 		entry^ = 0
-		if self.table == program.table {
+		if self.table == process.table {
 			page_flush(address)
 		}
-		page_entries_release(program.table, address, 2, 1, &freed)
+		page_entries_release(process.table, address, 2, 1, &freed)
 	}
 	// One table of the last level at a time (one walk of the upper levels
 	// for 512 pages). Each page of the mapping is a held entry, present or
@@ -1298,7 +1298,7 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 	for page := u64(0); page < (mapping.large ? 0 : mapping.page_count); {
 		address := mapping.address + page * PAGE_SIZE
 		run := min(512 - (address >> 12 & 511), mapping.page_count - page)
-		entry := page_entry(program.table, address)
+		entry := page_entry(process.table, address)
 		if entry == nil {
 			// The mapping holds its tables: a missing one is a wrong count.
 			page_table_count_broken("a held entry has no table")
@@ -1312,20 +1312,20 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 			if entries[at] & PAGE_PRESENT != 0 {
 				walked_present_pages += 1
 				entries[at] = 0
-				if self.table == program.table {
+				if self.table == process.table {
 					page_flush(address + at * PAGE_SIZE)
 				}
 			}
 		}
-		page_entries_release(program.table, address, 1, run, &freed)
+		page_entries_release(process.table, address, 1, run, &freed)
 		page += run
 	}
 	// The entries are 0 before the read of the tables of the processors: a
 	// processor that loads the table after the read sees the 0 entries.
 	intrinsics.atomic_thread_fence(.Seq_Cst)
-	processor_sync(processors_with_table(program.table))
+	processor_sync(processors_with_table(process.table))
 	// No processor walks into a freed table now: the frames can serve again.
-	page_tables_free(program.table, &program.budget, &freed)
+	page_tables_free(process.table, &process.budget, &freed)
 	// The test build checks the count of the present pages against the
 	// walk that this loop made anyway: one comparison, no other walk.
 	when TEST_BUILD_CHECKS_LOCK_ORDER {
@@ -1346,12 +1346,12 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 		intrinsics.atomic_store(&region.marked_pages, 0)
 		lock_free(lock, .Region)
 	}
-	program.mapped_pages -= mapping.page_count
+	process.mapped_pages -= mapping.page_count
 	// A mapping of the registers of a device keeps the domain of that device
 	// as a handle does: the last one of the two ends it.
-	iommu_mapping_ended(program, mapping)
+	iommu_mapping_ended(process, mapping)
 	region_release(mapping.region)
-	mapping^ = {} // The count of the present pages ends with the mapping (under the program lock: the caller holds it).
+	mapping^ = {} // The count of the present pages ends with the mapping (under the process lock: the caller holds it).
 }
 
 // all_other_processors gives the set of the processors but this one.
@@ -1378,9 +1378,9 @@ processors_with_table :: proc "contextless" (table: u64) -> (set: u64) {
 	return set
 }
 
-// mapping_at gives the mapping of a program that holds an address, or nil.
-mapping_at :: proc "contextless" (program: ^Program, address: u64) -> ^Mapping {
-	for &mapping in program.mappings {
+// mapping_at gives the mapping of a process that holds an address, or nil.
+mapping_at :: proc "contextless" (process: ^Process, address: u64) -> ^Mapping {
+	for &mapping in process.mappings {
 		if mapping.page_count != 0 && address >= mapping.address && address - mapping.address < mapping.page_count * PAGE_SIZE {
 			return &mapping
 		}
@@ -1388,26 +1388,26 @@ mapping_at :: proc "contextless" (program: ^Program, address: u64) -> ^Mapping {
 	return nil
 }
 
-// page_give makes the page of an address present in a program, for an
-// access of the program (a page fault) or of the kernel (user_range). The
+// page_give makes the page of an address present in a process, for an
+// access of the process (a page fault) or of the kernel (user_range). The
 // page gets the frame of its memory object; a page on first use gets its
-// zero frame now. The caller holds the program lock, so no other processor
-// changes the tables or the mappings of the program meanwhile. A processor
+// zero frame now. The caller holds the process lock, so no other processor
+// changes the tables or the mappings of the process meanwhile. A processor
 // keeps no translation of an entry that was not present, so no other
 // processor must forget anything: a thread there that faults on the same
 // page waits for the lock, then finds the entry present and continues.
-// false: the program has no mapping there, or it does not permit the access.
-page_give :: proc "contextless" (program: ^Program, address: u64, write: bool, execute: bool) -> bool {
-	mapping := mapping_at(program, address)
+// false: the process has no mapping there, or it does not permit the access.
+page_give :: proc "contextless" (process: ^Process, address: u64, write: bool, execute: bool) -> bool {
+	mapping := mapping_at(process, address)
 	if mapping == nil {
 		return false
 	}
 	// Each page of a large mapping with access is present. A fault there
 	// that the entry permits now came through an old translation, before the
 	// shoot-down of a protection change: the instruction runs again
-	// with no stop of the program.
+	// with no stop of the process.
 	if mapping.large {
-		entry := page_directory_entry(program.table, address &~ u64(LARGE_PAGE_SIZE - 1))
+		entry := page_directory_entry(process.table, address &~ u64(LARGE_PAGE_SIZE - 1))
 		return entry != nil && entry^ & PAGE_PRESENT != 0 && (!write || entry^ & PAGE_WRITE != 0) && (!execute || entry^ & PAGE_NO_EXECUTE == 0)
 	}
 	page := (address - mapping.address) / PAGE_SIZE
@@ -1415,11 +1415,11 @@ page_give :: proc "contextless" (program: ^Program, address: u64, write: bool, e
 	state := region_page_state(region, mapping.first + page)
 	bits := page_bits(mapping, state)
 	// No access, a page that is not committed, or an access that the
-	// protection of the page refuses: a fault of the program.
+	// protection of the page refuses: a fault of the process.
 	if bits == 0 || !page_committed(region, state) || write && bits & PAGE_WRITE == 0 || execute && bits & PAGE_NO_EXECUTE != 0 {
 		return false
 	}
-	entry := page_entry(program.table, mapping.address + page * PAGE_SIZE)
+	entry := page_entry(process.table, mapping.address + page * PAGE_SIZE)
 	if entry == nil {
 		return false // map_region made the tables and the mapping holds them: this does not happen.
 	}
@@ -1429,7 +1429,7 @@ page_give :: proc "contextless" (program: ^Program, address: u64, write: bool, e
 			return false
 		}
 		entry^ = frame | bits
-		mapping.present_page_count += 1 // Under the program lock: the caller holds it (see above).
+		mapping.present_page_count += 1 // Under the process lock: the caller holds it (see above).
 	}
 	return true
 }
@@ -1442,18 +1442,18 @@ present_count_broken :: proc "contextless" (mapping: ^Mapping, walked: u64) -> !
 	machine_stop(.Invariant_Broken)
 }
 
-// present_pages gives the pages of the mappings of a program that have a
+// present_pages gives the pages of the mappings of a process that have a
 // page frame.
-present_pages :: proc "contextless" (program: ^Program) -> (count: u64) {
-	for mapping in program.mappings {
+present_pages :: proc "contextless" (process: ^Process) -> (count: u64) {
+	for mapping in process.mappings {
 		count += mapping.present_page_count
 	}
 	return count
 }
 
-// holds_region says if a program has a handle to a memory object.
-holds_region :: proc "contextless" (program: ^Program, region: u32) -> bool {
-	for &slot in program.handles {
+// holds_region says if a process has a handle to a memory object.
+holds_region :: proc "contextless" (process: ^Process, region: u32) -> bool {
+	for &slot in process.handles {
 		if slot.kind == .Memory && slot.object == region {
 			return true
 		}
@@ -1461,9 +1461,9 @@ holds_region :: proc "contextless" (program: ^Program, region: u32) -> bool {
 	return false
 }
 
-// maps_region says if a program has a mapping of a memory object.
-maps_region :: proc "contextless" (program: ^Program, region: u32) -> bool {
-	for mapping in program.mappings {
+// maps_region says if a process has a mapping of a memory object.
+maps_region :: proc "contextless" (process: ^Process, region: u32) -> bool {
+	for mapping in process.mappings {
 		if mapping.page_count != 0 && mapping.region == region {
 			return true
 		}
@@ -1472,13 +1472,13 @@ maps_region :: proc "contextless" (program: ^Program, region: u32) -> bool {
 }
 
 // time_page_create makes the time page. The kernel keeps one reference:
-// the page stays when no program has it.
+// the page stays when no process has it.
 time_page_create :: proc "contextless" () -> bool {
 	physical := frames_allocate(1)
 	if physical == 0 {
 		return false
 	}
-	time_region = region_device(physical, 1) // No budget pays for it, and no program frees it.
+	time_region = region_device(physical, 1) // No budget pays for it, and no process frees it.
 	if time_region == 0 {
 		return false
 	}
@@ -1491,74 +1491,74 @@ time_page_create :: proc "contextless" () -> bool {
 	return true
 }
 
-// program_create makes a program with no memory. The budget pays for the
+// process_create makes a process with no memory. The budget pays for the
 // slot and for the page tables. The caller holds the control lock.
-program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, status: Operation_Outcome) {
-	if !budgets[budget].live || budgets[budget].amounts.programs == 0 || budgets[budget].amounts.pages == 0 {
+process_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, status: Operation_Outcome) {
+	if !budgets[budget].live || budgets[budget].amounts.processes == 0 || budgets[budget].amounts.pages == 0 {
 		return 0, .No_Budget
 	}
-	for &program, slot in programs[1:] {
-		if program.state != .None {
+	for &process, slot in processes[1:] {
+		if process.state != .None {
 			continue
 		}
 		index = u32(slot + 1)
-		taken := program_lock(index)
-		defer program_unlock(index, taken)
-		ports_serial := program.ports_serial
-		serial := program.serial + 1
-		program = {ports_serial = ports_serial, serial = serial, budget = budget}
-		program.table = address_space_create(&program.budget)
-		if program.table == 0 {
-			program = {ports_serial = ports_serial, serial = serial}
+		taken := process_lock(index)
+		defer process_unlock(index, taken)
+		ports_serial := process.ports_serial
+		serial := process.serial + 1
+		process = {ports_serial = ports_serial, serial = serial, budget = budget}
+		process.table = address_space_create(&process.budget)
+		if process.table == 0 {
+			process = {ports_serial = ports_serial, serial = serial}
 			return 0, .No_Budget
 		}
-		// The own log ring: the budget of the program pays it, as it pays
-		// the top table, so a program with many records fills memory that
+		// The own log ring: the budget of the process pays it, as it pays
+		// the top table, so a process with many records fills memory that
 		// it paid for.
-		ring_frames, ring_taken := own_log_ring_take(&program.budget)
+		ring_frames, ring_taken := own_log_ring_take(&process.budget)
 		if !ring_taken {
-			address_space_free(program.table, &program.budget)
-			program = {ports_serial = ports_serial, serial = serial}
+			address_space_free(process.table, &process.budget)
+			process = {ports_serial = ports_serial, serial = serial}
 			return 0, .No_Budget
 		}
-		budgets[budget].amounts.programs -= 1
-		copy(program.name[:len(program.name) - 1], name)
-		// The time page: read only. A program cannot remove it (Memory_Unmap).
-		if _, map_status := map_region(&program, time_region, op.TIME_ADDRESS, {}, 0, 1); map_status != .Ok {
-			own_log_ring_give_back(ring_frames, &program.budget)
-			address_space_free(program.table, &program.budget)
-			budgets[budget].amounts.programs += 1
-			program = {ports_serial = ports_serial, serial = serial}
+		budgets[budget].amounts.processes -= 1
+		copy(process.name[:len(process.name) - 1], name)
+		// The time page: read only. A process cannot remove it (Memory_Unmap).
+		if _, map_status := map_region(&process, time_region, op.TIME_ADDRESS, {}, 0, 1); map_status != .Ok {
+			own_log_ring_give_back(ring_frames, &process.budget)
+			address_space_free(process.table, &process.budget)
+			budgets[budget].amounts.processes += 1
+			process = {ports_serial = ports_serial, serial = serial}
 			return 0, map_status
 		}
 		// Under the log lock: Log_Read finds the frames of the ring only
-		// with the serial of this program, which the reset above wrote.
+		// with the serial of this process, which the reset above wrote.
 		log_taken := log_take()
-		program.log_ring_frames = ring_frames
+		process.log_ring_frames = ring_frames
 		log_free(log_taken)
-		program.state = .Created
-		program.start_time = microseconds(cycles_now())
+		process.state = .Created
+		process.start_time = microseconds(cycles_now())
 		return index, .Ok
 	}
 	return 0, .No_Slot
 }
 
-// program_free frees the slot of a stopped program that no handle names,
+// process_free frees the slot of a stopped process that no handle names,
 // after its cleanup. Stopped alone does not say that the cleanup ran: a
 // thread of it can still run on a processor. The caller holds the control
-// lock, and no lock after the program lock.
+// lock, and no lock after the process lock.
 //
 // The own log ring ends here, not at the cleanup: while a handle names the
-// program, its holder can read its last records (Log_Read with the slot
+// process, its holder can read its last records (Log_Read with the slot
 // and the serial). Its pages return to the budget with the slot, before
-// the slot can serve a new program.
-program_free :: proc "contextless" (program: ^Program) {
-	if program.state != .Stopped || !program.cleaned {
+// the slot can serve a new process.
+process_free :: proc "contextless" (process: ^Process) {
+	if process.state != .Stopped || !process.cleaned {
 		return
 	}
-	own_log_ring_end(program)
-	program.state = .None
-	budgets[program.budget].amounts.programs += 1
+	own_log_ring_end(process)
+	process.state = .None
+	budgets[process.budget].amounts.processes += 1
 }
 
 // thread_free frees the slot of a finished thread that no handle names.
@@ -1568,28 +1568,28 @@ thread_free :: proc "contextless" (thread: ^Thread) {
 	budgets[thread.budget].amounts.threads += 1
 }
 
-// program_new_thread_weight_limit gives the new-thread weight limit of a
-// program: the stored value, where 0 is the full weight.
-program_new_thread_weight_limit :: proc "contextless" (program: ^Program) -> u32 {
-	value := intrinsics.atomic_load(&program.new_thread_weight_limit)
+// process_new_thread_weight_limit gives the new-thread weight limit of a
+// process: the stored value, where 0 is the full weight.
+process_new_thread_weight_limit :: proc "contextless" (process: ^Process) -> u32 {
+	value := intrinsics.atomic_load(&process.new_thread_weight_limit)
 	return value == 0 ? u32(op.WEIGHT_FULL) : value
 }
 
 // creation_weight_limit gives the weight limit of a thread that the thread
-// `creator` creates, or of the first thread of a program that it starts:
+// `creator` creates, or of the first thread of a process that it starts:
 // the smaller of its own new-thread weight limit and the one of its
-// program (op.new_thread_weight_limit_of_creation). The creation and a
-// write of the value of the program both hold the control lock, so each
+// process (op.new_thread_weight_limit_of_creation). The creation and a
+// write of the value of the process both hold the control lock, so each
 // creation comes wholly before the write or wholly after it: a thread
 // created before it is in each thread report read after it, and a thread
 // created after it has the new value (docs/SCHEDULING.md, "A share for
-// each program").
+// each process").
 creation_weight_limit :: proc "contextless" (creator: u32) -> u32 {
 	thread := &threads[creator]
-	return op.new_thread_weight_limit_of_creation(intrinsics.atomic_load(&thread.new_thread_weight_limit), program_new_thread_weight_limit(&programs[thread.program]))
+	return op.new_thread_weight_limit_of_creation(intrinsics.atomic_load(&thread.new_thread_weight_limit), process_new_thread_weight_limit(&processes[thread.process]))
 }
 
-// thread_create adds a thread to a program. The kernel makes the thread
+// thread_create adds a thread to a process. The kernel makes the thread
 // area: the thread record and the kernel ring of the thread.
 // The budget pays for the slot and for the thread area. The weight and the
 // request are checked by the caller, the weight against weight_limit too;
@@ -1597,32 +1597,32 @@ creation_weight_limit :: proc "contextless" (creator: u32) -> u32 {
 // weight_limit is the limit of a new thread of the thread that creates
 // this one (creation_weight_limit), which the new thread gets as its
 // weight limit and as its own new-thread weight limit
-// (op.thread_schedule_of_new_thread): a program
+// (op.thread_schedule_of_new_thread): a process
 // does not leave a limit by a new thread, or by the first thread of a
-// program that it starts. processors_limit is the limit of the
+// process that it starts. processors_limit is the limit of the
 // placement of that thread, for the same reason: the new thread gets it
 // as its set of processors and as its limit; 0 is every processor. The
 // caller holds the control lock.
-thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64, weight: u64 = 0, request: u64 = 0, weight_limit: u32 = op.WEIGHT_FULL, processors_limit: u64 = 0) -> (index: u32, status: Operation_Outcome) {
+thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, stack, parameter: u64, weight: u64 = 0, request: u64 = 0, weight_limit: u32 = op.WEIGHT_FULL, processors_limit: u64 = 0) -> (index: u32, status: Operation_Outcome) {
 	// The first instruction and the stack are in the half of the addresses
-	// of a program. The processor refuses to return to an address that is
+	// of a process. The processor refuses to return to an address that is
 	// not canonical, and it refuses in the kernel, after the kernel loaded
-	// the state of the program: the fault would be a fault of the kernel,
-	// and one program would stop the machine.
+	// the state of the process: the fault would be a fault of the kernel,
+	// and one process would stop the machine.
 	if entry >= USER_END || stack > USER_END || stack < 8 {
 		return 0, .Bad_Address
 	}
-	program := &programs[program_index]
-	taken := program_lock(program_index)
-	defer program_unlock(program_index, taken)
-	// A stop marks each thread of the program once: a thread made after it
-	// would run in a program that ends.
-	if program.state != .Created && program.state != .Ready {
+	process := &processes[process_index]
+	taken := process_lock(process_index)
+	defer process_unlock(process_index, taken)
+	// A stop marks each thread of the process once: a thread made after it
+	// would run in a process that ends.
+	if process.state != .Created && process.state != .Ready {
 		return 0, .Bad_State
 	}
 	number := u32(op.THREAD_CAPACITY)
 	for candidate in 0 ..< u32(op.THREAD_CAPACITY) {
-		if program.thread_areas & (1 << candidate) == 0 {
+		if process.thread_areas & (1 << candidate) == 0 {
 			number = candidate
 			break
 		}
@@ -1643,7 +1643,7 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	// block: it is contiguous.
 	region := region_create(budget, 1 + ring.PAGE_COUNT, contiguous = true) or_return
 	record := op.THREAD_AREA_BASE + u64(number) * op.THREAD_AREA_PAGES * PAGE_SIZE
-	if _, map_status := map_region(program, region, record, {.Write}, 0, 0); map_status != .Ok {
+	if _, map_status := map_region(process, region, record, {.Write}, 0, 0); map_status != .Ok {
 		regions[region].references = 1
 		region_release(region)
 		return 0, map_status
@@ -1664,7 +1664,7 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	// of 2688 bytes.
 	intrinsics.mem_zero(thread, size_of(Thread))
 	thread.state = .Ready
-	thread.program = program_index
+	thread.process = process_index
 	thread.budget = budget
 	thread.number = number
 	thread.ring = thread_ring
@@ -1701,8 +1701,8 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	}
 	extended_state_start(&thread.extended_state)
 	budgets[budget].amounts.threads -= 1
-	program.thread_areas |= 1 << number
-	program.thread_count += 1
+	process.thread_areas |= 1 << number
+	process.thread_count += 1
 	thread_queue(thread)
 	return index, .Ok
 }
@@ -1739,8 +1739,8 @@ thread_stop :: proc "contextless" (index: u32) {
 
 // thread_finish frees what an ended thread has: its entries in the wait
 // table, its thread area. No processor runs the thread. The other threads
-// of the program get an event: one of them can wait for this end. A
-// program with no thread stops. The caller holds the control lock.
+// of the process get an event: one of them can wait for this end. A
+// process with no thread stops. The caller holds the control lock.
 // `serial` names the thread: if the slot serves another thread now, this
 // thread was finished already.
 thread_finish :: proc "contextless" (index: u32, serial: u32) {
@@ -1750,67 +1750,67 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 	}
 	thread.finished = true
 	wait_unregister(thread)
-	program_index := thread.program
-	program := &programs[program_index]
-	// The debug handler of another program ends with its thread: that
-	// program gets its threads back before the thread record, which holds
+	process_index := thread.process
+	process := &processes[process_index]
+	// The debug handler of another process ends with its thread: that
+	// process gets its threads back before the thread record, which holds
 	// the ring, is unmapped below.
-	if debugged := intrinsics.atomic_load(&thread.debugs_program); debugged != 0 {
+	if debugged := intrinsics.atomic_load(&thread.debugs_process); debugged != 0 {
 		debug_handler_end(debugged)
 	}
-	taken := program_lock(program_index)
+	taken := process_lock(process_index)
 	thread.events = nil
 	thread.record_in_kernel = nil
 	thread.ring = {}
 	// The thread record is unmapped below: a fault handler that ends ends
 	// the fault ring. A thread that waits for an answer then has no thread
-	// that can read its record: the program stops (after the lock).
-	handler_ended := program.fault_handler == index
+	// that can read its record: the process stops (after the lock).
+	handler_ended := process.fault_handler == index
 	if handler_ended {
-		program.fault_handler = 0
-		intrinsics.atomic_store(&program.fault_kinds, 0)
+		process.fault_handler = 0
+		intrinsics.atomic_store(&process.fault_kinds, 0)
 	}
-	// Under the program lock: program_event, which holds only this lock,
-	// never reads this slot as a thread of the program again, also when a
-	// new thread of another program takes the slot.
-	thread.program = 0
-	running := program.state != .Stopped
+	// Under the process lock: process_event, which holds only this lock,
+	// never reads this slot as a thread of the process again, also when a
+	// new thread of another process takes the slot.
+	thread.process = 0
+	running := process.state != .Stopped
 	last := false
 	if running {
-		for &mapping in program.mappings {
+		for &mapping in process.mappings {
 			if mapping.page_count != 0 && mapping.address == thread.record {
-				unmap(program, &mapping)
+				unmap(process, &mapping)
 				break
 			}
 		}
-		program.thread_areas &~= 1 << thread.number
-		program.thread_count -= 1
-		last = program.thread_count == 0
+		process.thread_areas &~= 1 << thread.number
+		process.thread_count -= 1
+		last = process.thread_count == 0
 	}
-	// A thread that waits for the debugger of the program has its record
+	// A thread that waits for the debugger of the process has its record
 	// in another ring: the end of this handler does not lose it.
-	unanswered := handler_ended && running && fault_waiter_exists(program_index)
-	program_unlock(program_index, taken)
+	unanswered := handler_ended && running && fault_waiter_exists(process_index)
+	process_unlock(process_index, taken)
 	if intrinsics.atomic_load(&thread.references) == 0 {
 		thread_free(thread)
 	}
 	if last {
-		program_stop(program_index, 0)
+		process_stop(process_index, 0)
 	} else if unanswered {
-		program_stop(program_index, op.STOP_CODE_FAULT_UNANSWERED)
+		process_stop(process_index, op.STOP_CODE_FAULT_UNANSWERED)
 	} else if running {
-		program_event(program_index)
+		process_event(process_index)
 	}
 }
 
-// program_event tells each thread of a program that an event arrived: see
+// process_event tells each thread of a process that an event arrived: see
 // operation.Word. A thread that waits on its event word wakes. It takes the
-// program lock: the thread area of a thread that ends is free only after.
-program_event :: proc "contextless" (index: u32) {
-	taken := program_lock(index)
-	defer program_unlock(index, taken)
+// process lock: the thread area of a thread that ends is free only after.
+process_event :: proc "contextless" (index: u32) {
+	taken := process_lock(index)
+	defer process_unlock(index, taken)
 	for &thread in threads[1:] {
-		if thread.program != index || thread.events == nil {
+		if thread.process != index || thread.events == nil {
 			continue
 		}
 		intrinsics.atomic_add(thread.events, 1)
@@ -1818,54 +1818,54 @@ program_event :: proc "contextless" (index: u32) {
 	}
 }
 
-// program_state gives the state of a program for a report: a running
-// program is Ready when one of its threads is Ready.
-program_state :: proc "contextless" (index: u32) -> op.Program_State {
-	program := &programs[index]
-	if program.state != .Ready {
-		return program.state
+// process_state gives the state of a process for a report: a running
+// process is Ready when one of its threads is Ready.
+process_state :: proc "contextless" (index: u32) -> op.Process_State {
+	process := &processes[index]
+	if process.state != .Ready {
+		return process.state
 	}
 	for &thread in threads[1:] {
-		if thread.program == index && intrinsics.atomic_load(&thread.state) == .Ready {
+		if thread.process == index && intrinsics.atomic_load(&thread.state) == .Ready {
 			return .Ready
 		}
 	}
 	return .Waiting
 }
 
-// program_stop ends a program (docs/ARCHITECTURE.md, "A program ends after
+// process_stop ends a process (docs/ARCHITECTURE.md, "A process ends after
 // its last thread leaves its processor"). Each thread that waits or is in a
 // queue ends now; each thread on a processor gets stop_requested. The last
 // of these processors to leave its thread, or this call if none runs one,
-// cleans the program up. The caller holds the control lock.
-program_stop :: proc "contextless" (index: u32, code: u32) {
-	program := &programs[index]
-	taken := program_lock(index)
-	if program.state == .None || program.state == .Stopped {
+// cleans the process up. The caller holds the control lock.
+process_stop :: proc "contextless" (index: u32, code: u32) {
+	process := &processes[index]
+	taken := process_lock(index)
+	if process.state == .None || process.state == .Stopped {
 		// Another stop marked the threads, and some can still be on their
 		// processors: this operation also returns only after they left.
-		if self := processor_self(); program.state == .Stopped && self.operation.running {
-			self.operation.stopped_programs |= 1 << index
-			self.stopped_serials[index] = program.serial
+		if self := processor_self(); process.state == .Stopped && self.operation.running {
+			self.operation.stopped_processes |= 1 << index
+			self.stopped_serials[index] = process.serial
 		}
-		program_unlock(index, taken)
+		process_unlock(index, taken)
 		return
 	}
-	intrinsics.atomic_add(&program.holds, 1)
-	// The state changes first: a handle that this program closes later can
-	// name this program, and an operation of the program sees it.
-	program.state = .Stopped
-	program.code = code
-	// The debugging of a program ends with the program: its debug handler
-	// is free for another program, and no ring takes a record of a program
+	intrinsics.atomic_add(&process.holds, 1)
+	// The state changes first: a handle that this process closes later can
+	// name this process, and an operation of the process sees it.
+	process.state = .Stopped
+	process.code = code
+	// The debugging of a process ends with the process: its debug handler
+	// is free for another process, and no ring takes a record of a process
 	// that stops.
 	debug_handler_end(index)
-	program_unlock(index, taken)
+	process_unlock(index, taken)
 	self := processor_self()
 	running: u64
 	ended: [THREAD_TABLE_CAPACITY]bool
 	for &thread, slot in threads[1:] {
-		if thread.program != index {
+		if thread.process != index {
 			continue
 		}
 		home := run_lock(&thread)
@@ -1882,12 +1882,12 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 		}
 		run_unlock(home)
 	}
-	// A guest of this program runs on a processor with no thread of the
-	// program: that processor gets the interrupt too, which ends the run at
+	// A guest of this process runs on a processor with no thread of the
+	// process: that processor gets the interrupt too, which ends the run at
 	// once, and the stop waits for the hold of the run (guest.odin).
-	if program.table != 0 {
+	if process.table != 0 {
 		for cpu in processors[:processor_count] {
-			if intrinsics.atomic_load(&guest_tables_running[cpu.index]) == program.table {
+			if intrinsics.atomic_load(&guest_tables_running[cpu.index]) == process.table {
 				running |= 1 << cpu.index
 			}
 		}
@@ -1904,93 +1904,93 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	}
 	// The operation returns after the threads left their processors.
 	if running &~ (1 << self.index) != 0 && self.operation.running {
-		self.operation.stopped_programs |= 1 << index
-		self.stopped_serials[index] = program.serial
+		self.operation.stopped_processes |= 1 << index
+		self.stopped_serials[index] = process.serial
 	}
-	if intrinsics.atomic_add(&program.holds, HOLDS_STOPPED - 1) + HOLDS_STOPPED - 1 == HOLDS_STOPPED {
-		program_cleanup(index)
+	if intrinsics.atomic_add(&process.holds, HOLDS_STOPPED - 1) + HOLDS_STOPPED - 1 == HOLDS_STOPPED {
+		process_cleanup(index)
 	}
 }
 
-// program_cleanup frees all that a stopped program has. No processor runs
+// process_cleanup frees all that a stopped process has. No processor runs
 // a thread of it. The caller holds the control lock.
-program_cleanup :: proc "contextless" (index: u32) {
-	program := &programs[index]
-	// The event table belongs to the program that gave it: it ends with it,
-	// before its handles close (events.odin). No program lock is held here.
+process_cleanup :: proc "contextless" (index: u32) {
+	process := &processes[index]
+	// The event table belongs to the process that gave it: it ends with it,
+	// before its handles close (events.odin). No process lock is held here.
 	event_table_end_for(index)
 	for &thread, slot in threads[1:] {
-		if thread.program == index && thread.state == .Stopped && !thread.finished {
+		if thread.process == index && thread.state == .Stopped && !thread.finished {
 			thread_finish(u32(slot + 1), thread.serial)
 		}
 	}
 	// The lines that its log limit refused and that no later line of the
-	// program said: no thread of it runs a Log now. The control lock comes
+	// process said: no thread of it runs a Log now. The control lock comes
 	// before the log lock.
-	if refused := program.log_lines_refused; refused != 0 {
-		program.log_lines_refused = 0
-		log("kernel: ", Module_Name{program_name(program)}, ": ", refused, " lines were refused by its log limit, the last ones before its stop")
+	if refused := process.log_lines_refused; refused != 0 {
+		process.log_lines_refused = 0
+		log("kernel: ", Module_Name{process_name(process)}, ": ", refused, " lines were refused by its log limit, the last ones before its stop")
 	}
-	taken := program_lock(index)
-	program.thread_count = 0
-	program.thread_areas = 0
-	// No processor keeps the page table of the program.
+	taken := process_lock(index)
+	process.thread_count = 0
+	process.thread_areas = 0
+	// No processor keeps the page table of the process.
 	self := processor_self()
-	if intrinsics.atomic_load(&self.table) == program.table {
+	if intrinsics.atomic_load(&self.table) == process.table {
 		intrinsics.atomic_store(&self.table, kernel_table)
 		control_register_3_write(kernel_table)
 	}
-	processor_sync(processors_with_table(program.table))
+	processor_sync(processors_with_table(process.table))
 	// The devices of a device service reach no page from now: before its
 	// handles close, which can free the pages.
-	iommu_program_end(index)
-	for &mapping in program.mappings {
+	iommu_process_end(index)
+	for &mapping in process.mappings {
 		if mapping.page_count != 0 {
-			unmap(program, &mapping)
+			unmap(process, &mapping)
 		}
 	}
-	for &slot in program.handles {
+	for &slot in process.handles {
 		if slot.kind != .None {
-			handle_close(program, &slot)
+			handle_close(process, &slot)
 		}
 	}
 	// The control block and the extended state of a guest: no run holds
-	// the program now.
+	// the process now.
 	guest_end(index)
-	address_space_free(program.table, &program.budget)
-	program.table = 0
-	// The own log ring stays until the slot is free (program_free): a
-	// holder of the program handle, such as the starter, still reads the
-	// last records of a program that stopped.
-	program.cleaned = true
-	program_unlock(index, taken)
-	for &other, other_index in programs[1:] {
+	address_space_free(process.table, &process.budget)
+	process.table = 0
+	// The own log ring stays until the slot is free (process_free): a
+	// holder of the process handle, such as the starter, still reads the
+	// last records of a process that stopped.
+	process.cleaned = true
+	process_unlock(index, taken)
+	for &other, other_index in processes[1:] {
 		other_slot := u32(other_index + 1)
-		other_taken := program_lock(other_slot)
+		other_taken := process_lock(other_slot)
 		holds := false
 		if other.state != .None && other.state != .Stopped {
 			for slot in other.handles {
-				if slot.kind == .Program && slot.object == index {
+				if slot.kind == .Process && slot.object == index {
 					holds = true
 					break
 				}
 			}
 		}
-		program_unlock(other_slot, other_taken)
+		process_unlock(other_slot, other_taken)
 		if holds {
-			program_event(other_slot)
+			process_event(other_slot)
 		}
 	}
-	if intrinsics.atomic_load(&program.references) == 0 {
-		program_free(program)
+	if intrinsics.atomic_load(&process.references) == 0 {
+		process_free(process)
 	}
 }
 
-// ports_switch opens on a processor the ports of program index (0: none),
-// when the program or its ports changed (ports_serial). A processor writes
+// ports_switch opens on a processor the ports of process index (0: none),
+// when the process or its ports changed (ports_serial). A processor writes
 // only its own port bitmap.
 ports_switch :: proc "contextless" (cpu: ^Processor, index: u32) {
-	serial := intrinsics.atomic_load(&programs[index].ports_serial)
+	serial := intrinsics.atomic_load(&processes[index].ports_serial)
 	if cpu.ports_loaded == index && (index == 0 || cpu.ports_serial == serial) {
 		return
 	}
@@ -2000,7 +2000,7 @@ ports_switch :: proc "contextless" (cpu: ^Processor, index: u32) {
 		}
 	}
 	if index != 0 {
-		for &slot in programs[index].handles {
+		for &slot in processes[index].handles {
 			if intrinsics.atomic_load(&slot.kind) == .Ports {
 				ports_allow(cpu, u64(slot.object), u64(slot.count), true)
 			}
@@ -2037,7 +2037,7 @@ EXCEPTION_NAMES := [32]string {
 // data that it touches (docs/ARCHITECTURE.md, "Locks of the kernel").
 @(require, linkage = "strong", link_name = "kernel_interrupt")
 kernel_interrupt :: proc "c" (frame: ^Frame) {
-	from_program := frame.cs & 3 != 0
+	from_process := frame.cs & 3 != 0
 	// The address of a page fault, read once and first: every later use
 	// takes this value, also if a later path can take another page fault.
 	fault_address: u64
@@ -2047,32 +2047,32 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	// A fault of the iretq of resume: the processor refused the return to
 	// the current thread. interrupt_common gave the kernel its gs back for
 	// each interrupt between the swapgs of resume and its iretq.
-	if !from_program && frame.rip == u64(uintptr(&resume_return)) && frame.vector >= 11 && frame.vector <= 13 {
+	if !from_process && frame.rip == u64(uintptr(&resume_return)) && frame.vector >= 11 && frame.vector <= 13 {
 		return_refused_by_the_processor(frame)
 	}
 	// A protection fault of the one instruction of a register trial: the
 	// processor refused the register, and the trial goes on at its refusal
 	// label, which gives false (register_trial.odin). It returns through the
 	// iretq of interrupt_common, on the stack of the trial.
-	if !from_program && frame.vector == VECTOR_PROTECTION_FAULT {
+	if !from_process && frame.vector == VECTOR_PROTECTION_FAULT {
 		if refusal := register_trial_refusal_address(frame.rip); refusal != 0 {
 			frame.rip = refusal
 			return
 		}
 	}
 	// A non-maskable interrupt, a double fault and a machine check are not
-	// faults of an instruction of the program that ran: a double fault is a
+	// faults of an instruction of the process that ran: a double fault is a
 	// mistake of the kernel, a machine check an error of the machine, and
 	// the kernel sends no non-maskable interrupt, so one reports the machine
 	// (a hardware error, or a request through the hypervisor). To stop only
-	// that program would hide the fault and go on with a machine that is
+	// that process would hide the fault and go on with a machine that is
 	// not sound: the machine stops with a line, as in the kernel below.
-	if from_program && (frame.vector == VECTOR_NON_MASKABLE_INTERRUPT || frame.vector == VECTOR_DOUBLE_FAULT || frame.vector == VECTOR_MACHINE_CHECK) {
+	if from_process && (frame.vector == VECTOR_NON_MASKABLE_INTERRUPT || frame.vector == VECTOR_DOUBLE_FAULT || frame.vector == VECTOR_MACHINE_CHECK) {
 		fault_report_begin()
-		log("kernel: ", EXCEPTION_NAMES[frame.vector], " vector ", frame.vector, " while a program ran, at ", Hex(frame.rip), ": a fault of the machine, not of the program: the machine stops")
+		log("kernel: ", EXCEPTION_NAMES[frame.vector], " vector ", frame.vector, " while a process ran, at ", Hex(frame.rip), ": a fault of the machine, not of the process: the machine stops")
 		machine_stop(.Fault)
 	}
-	if !from_program && frame.vector < VECTOR_INTERRUPT_BASE {
+	if !from_process && frame.vector < VECTOR_INTERRUPT_BASE {
 		// The processor can hold any lock: it takes none.
 		name := EXCEPTION_NAMES[frame.vector]
 		address := fault_address
@@ -2085,16 +2085,16 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	}
 	cpu := processor_self()
 	sync_acknowledge(cpu)
-	if !from_program {
+	if !from_process {
 		// An interrupt in the idle loop: the drain of the serial port there
 		// leaves after it, as idle_wait returns after one interrupt, so the
 		// processor looks at the queues again (serial_drain_while_idle).
 		intrinsics.atomic_add(&cpu.idle_interrupts, 1)
 	}
-	// The thread of a program entry is the current thread of this
+	// The thread of a process entry is the current thread of this
 	// processor: no other processor takes it away.
 	thread: ^Thread
-	if from_program {
+	if from_process {
 		thread = &threads[cpu.current]
 		thread.frame = frame^
 		// The status of a debug exception is in a register of the
@@ -2107,26 +2107,26 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	}
 	switch {
 	case frame.vector == VECTOR_DEBUG_FRAME_LOST:
-		// The program ran int1 with a held debug trap, and the second trap
+		// The process ran int1 with a held debug trap, and the second trap
 		// took the place of the frame of the first on their one stack: the
 		// kernel does not know where the thread was, so it cannot return to
-		// it, and no fault handler could resume it. The program stops with
+		// it, and no fault handler could resume it. The process stops with
 		// the stop code of a debug exception and the instruction address 0;
 		// its general registers are its own, so the stack trace starts from
 		// its frame pointer.
 		frame.vector = VECTOR_DEBUG
-		program_fault(thread.program, frame, 0)
-		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
-			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, 0, u64(op.Event_Fault_Outcome.Stopped))
+		process_fault(thread.process, frame, 0)
+		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.process) {
+			event_record(cpu, .Fault, thread.process, thread.number, frame.vector, 0, u64(op.Event_Fault_Outcome.Stopped))
 		}
 	case frame.vector == VECTOR_KERNEL_ENTER:
 		cpu.entries += 1
 		enter(cpu, cpu.current)
 	case frame.vector == VECTOR_TIMER:
-		if from_program {
+		if from_process {
 			cpu.busy_time += 1
 			thread.run_time += 1
-			intrinsics.atomic_add(&programs[thread.program].run_time, 1)
+			intrinsics.atomic_add(&processes[thread.process].run_time, 1)
 			if strategy_tick(cpu, thread, budget_charge(cpu)) {
 				cpu.slice_left = 0 // The strategy ends the turn.
 			}
@@ -2162,12 +2162,12 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	case frame.vector == VECTOR_WAKE || frame.vector == VECTOR_SYNC:
 		// A thread that woke on another processor preempts the thread
 		// that runs here (kick). Interrupts are off in the kernel, so this
-		// interrupt arrives either when the processor returns to a program
-		// (from_program) or while it waits idle with no thread: then no
+		// interrupt arrives either when the processor returns to a process
+		// (from_process) or while it waits idle with no thread: then no
 		// turn is to end, and the processor picks a thread anyway. A flag
 		// for a thread that left its processor before the interrupt ends
 		// the turn of the next thread (one more pass through schedule).
-		if intrinsics.atomic_exchange(&cpu.preempt, false) && from_program {
+		if intrinsics.atomic_exchange(&cpu.preempt, false) && from_process {
 			cpu.slice_left = 0
 			cpu.preemptions += 1
 			cpu.preempt_from = cycles_now()
@@ -2176,7 +2176,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	case frame.vector == VECTOR_SPURIOUS:
 	case frame.vector == VECTOR_IOMMU_FAULT:
 		// A device reached memory that its service did not declare: a line
-		// of the log, and the program that runs goes on.
+		// of the log, and the process that runs goes on.
 		cpu.interrupts += 1
 		iommu_faults_take()
 		apic_write(APIC_END, 0)
@@ -2192,48 +2192,48 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_RESERVED_BIT != 0:
 		// The processor found a reserved bit in an entry of a page table.
 		// Only the kernel writes those entries: it is a mistake of the
-		// kernel, not of the program. The machine stops, as at an exception
+		// kernel, not of the process. The machine stops, as at an exception
 		// in the kernel; a fault handler never sees it, so a repair cannot
 		// hide it in a loop of faults.
 		fault_report_begin()
-		log("kernel: a page table entry of program ", Module_Name{program_name(&programs[thread.program])}, " has a reserved bit: page fault error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(fault_address))
+		log("kernel: a page table entry of process ", Module_Name{process_name(&processes[thread.process])}, " has a reserved bit: page fault error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(fault_address))
 		machine_stop(.Fault)
-	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_fault(thread.program, fault_address, frame.error):
+	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_fault(thread.process, fault_address, frame.error):
 		// A page on first use, or a page that another thread made present
 		// while this one waited for the lock: the instruction runs again.
 		cpu.first_use_faults += 1
 		// The event points of a fault (events.odin) come after the work, so
 		// that the record says what the kernel did. The thread keeps its
-		// program and its number until its processor leaves it.
-		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
-			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.First_Use))
+		// process and its number until its processor leaves it.
+		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.process) {
+			event_record(cpu, .Fault, thread.process, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.First_Use))
 		}
 	case:
-		delivery := Fault_Delivery.Stops_The_Program
-		if from_program && frame.vector < VECTOR_INTERRUPT_BASE {
+		delivery := Fault_Delivery.Stops_The_Process
+		if from_process && frame.vector < VECTOR_INTERRUPT_BASE {
 			delivery = fault_deliver(cpu.current, fault_address)
 		}
 		switch delivery {
 		case .Waits_For_An_Answer:
 			// A record of a fault ring: the thread is Waiting until a
-			// thread of its program, or its debugger, answers, so the end
+			// thread of its process, or its debugger, answers, so the end
 			// below goes to schedule. The address is 0 for a fault that is
 			// not a page fault.
-			if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
-				event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Fault_Ring))
+			if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.process) {
+				event_record(cpu, .Fault, thread.process, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Fault_Ring))
 			}
 		case .Continues:
 			// A debug exception of a breakpoint or of a single step that
 			// its debugger no longer waits for: the thread goes on below,
-			// and it is no fault of the program.
-		case .Stops_The_Program:
-			program_fault(thread.program, frame, fault_address)
-			if from_program && frame.vector < VECTOR_INTERRUPT_BASE && event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
-				event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Stopped))
+			// and it is no fault of the process.
+		case .Stops_The_Process:
+			process_fault(thread.process, frame, fault_address)
+			if from_process && frame.vector < VECTOR_INTERRUPT_BASE && event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.process) {
+				event_record(cpu, .Fault, thread.process, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Stopped))
 			}
 		}
 	}
-	if !from_program {
+	if !from_process {
 		return // The processor was idle: it looks for a thread itself.
 	}
 	// The thread that entered continues, unless it waits, it ends, a stop
@@ -2246,51 +2246,51 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 
 // interrupt_signal counts an interrupt and tells its owner. The owner is
 // read with no lock: when the handle closes at the same time, the event
-// can go to the program that held it.
+// can go to the process that held it.
 interrupt_signal :: proc "contextless" (index: u64) {
 	intrinsics.atomic_add(&interrupt_pending[index], 1)
 	if owner := intrinsics.atomic_load(&interrupt_owner[index]); owner != 0 {
-		program_event(owner)
+		process_event(owner)
 	}
 }
 
-// page_fault gives a page on first use to a program, under its program
-// lock. false: the program has no mapping there, or no right for the access.
+// page_fault gives a page on first use to a process, under its process
+// lock. false: the process has no mapping there, or no right for the access.
 page_fault :: proc "contextless" (index: u32, address: u64, error: u64) -> bool {
-	taken := program_lock(index)
-	defer program_unlock(index, taken)
-	return page_give(&programs[index], address, error & FAULT_WRITE != 0, error & FAULT_EXECUTE != 0)
+	taken := process_lock(index)
+	defer process_unlock(index, taken)
+	return page_give(&processes[index], address, error & FAULT_WRITE != 0, error & FAULT_EXECUTE != 0)
 }
 
-// program_fault stops the program of a thread that faulted. A fault in one
-// thread stops the program: the threads share all their memory.
-program_fault :: proc "contextless" (index: u32, frame: ^Frame, address: u64) {
+// process_fault stops the process of a thread that faulted. A fault in one
+// thread stops the process: the threads share all their memory.
+process_fault :: proc "contextless" (index: u32, frame: ^Frame, address: u64) {
 	control_take()
 	defer control_free()
-	program_stop(index, program_fault_report(index, frame, address))
+	process_stop(index, process_fault_report(index, frame, address))
 }
 
-// program_fault_report writes the stop report and the line of the log of a
-// fault of a thread of a program, and gives the stop code. address is the
+// process_fault_report writes the stop report and the line of the log of a
+// fault of a thread of a process, and gives the stop code. address is the
 // address of a page fault (the processor gives it in cr2). The caller holds
 // the control lock, and the page table of this processor is the one of the
-// program: the stack trace reads its memory. Then the caller stops the
-// program with the code.
-program_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: u64) -> (code: u32) {
-	program := &programs[index]
-	taken := program_lock(index)
+// process: the stack trace reads its memory. Then the caller stops the
+// process with the code.
+process_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: u64) -> (code: u32) {
+	process := &processes[index]
+	taken := process_lock(index)
 	name := frame.vector < 32 ? EXCEPTION_NAMES[frame.vector] : ""
 	// The module of the instruction, as the loader recorded it: a
 	// replacement names the module that runs, not the one of the import.
-	found := module_of(program, frame.rip)
-	// The first stop is the one that the report keeps: a program that a stop
+	found := module_of(process, frame.rip)
+	// The first stop is the one that the report keeps: a process that a stop
 	// or another fault already stopped keeps its code and its report.
-	first := program.state != .Stopped && program.state != .None
+	first := process.state != .Stopped && process.state != .None
 	// A page of an Uncommitted object that is not committed has its own
 	// code: the access went to addresses with no memory paid behind them.
 	code = op.STOP_CODE_FAULT + u32(frame.vector)
-	if frame.vector == VECTOR_PAGE_FAULT && program.table != 0 {
-		if mapping := mapping_at(program, address); mapping != nil && mapping.region < REGION_CAPACITY {
+	if frame.vector == VECTOR_PAGE_FAULT && process.table != 0 {
+		if mapping := mapping_at(process, address); mapping != nil && mapping.region < REGION_CAPACITY {
 			region := &regions[mapping.region]
 			page := mapping.first + (address - mapping.address) / PAGE_SIZE
 			if region.uncommitted && !page_committed(region, region_page_state(region, page)) {
@@ -2300,34 +2300,34 @@ program_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: 
 		}
 	}
 	if first {
-		program.stop = {code = code, vector = u32(frame.vector), instruction = frame.rip}
+		process.stop = {code = code, vector = u32(frame.vector), instruction = frame.rip}
 		if frame.vector == 14 {
-			program.stop.address = address
+			process.stop.address = address
 		}
 		if found != nil {
-			program.stop.module = found^
+			process.stop.module = found^
 		}
 	}
 	if found == nil {
-		log_in("fault", .Warning, "kernel: program ", Module_Name{program_name(program)}, " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address))
+		log_in("fault", .Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address))
 	} else if found.replaces == {} {
-		log_in("fault", .Warning, "kernel: program ", Module_Name{program_name(program)}, " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", Hash{found.hash[:8]}, " at offset ", Hex(frame.rip - found.base))
+		log_in("fault", .Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", Hash{found.hash[:8]}, " at offset ", Hex(frame.rip - found.base))
 	} else {
-		log_in("fault", .Warning, "kernel: program ", Module_Name{program_name(program)}, " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", Hash{found.hash[:8]}, " at offset ", Hex(frame.rip - found.base), ", which replaces ", Hash{found.replaces[:8]})
+		log_in("fault", .Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", Hash{found.hash[:8]}, " at offset ", Hex(frame.rip - found.base), ", which replaces ", Hash{found.replaces[:8]})
 	}
-	// The stack trace: the page table of the program is the one of this
-	// processor, and the program lock is held (user_range, user_copy).
+	// The stack trace: the page table of the process is the one of this
+	// processor, and the process lock is held (user_range, user_copy).
 	if first {
-		stack_trace(program, frame, &program.stop)
+		stack_trace(process, frame, &process.stop)
 	}
-	program_unlock(index, taken)
+	process_unlock(index, taken)
 	return code
 }
 
-program_name :: proc "contextless" (program: ^Program) -> string {
+process_name :: proc "contextless" (process: ^Process) -> string {
 	count := 0
-	for count < len(program.name) && program.name[count] != 0 {
+	for count < len(process.name) && process.name[count] != 0 {
 		count += 1
 	}
-	return string(program.name[:count])
+	return string(process.name[:count])
 }

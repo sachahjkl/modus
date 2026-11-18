@@ -85,7 +85,7 @@ comment_markdown_renders_each_construct :: proc(t: ^testing.T) {
 	testing.expect(t, !strings.contains(render_comment(&site, "A Module here."), "class=\"term\""), "a term links in a comment")
 	// A comment with no mark renders as before: a line in a cell, paragraphs
 	// on a page.
-	testing.expect_value(t, render_comment(&site, "Maps <memory>\nof a program.", .Line), "Maps &lt;memory&gt; of a program.")
+	testing.expect_value(t, render_comment(&site, "Maps <memory>\nof a process.", .Line), "Maps &lt;memory&gt; of a process.")
 	testing.expect_value(t, render_comment(&site, "One.\n\nTwo.", .Paragraphs), "<p>One.</p>\n<p>Two.</p>\n")
 	// A cell with a list holds blocks.
 	testing.expect(t, strings.has_prefix(render_comment(&site, "Kinds:\n\n- a\n- b", .Line), "<p>Kinds:</p>\n<ul>"), "a list in a cell is not a list")
@@ -102,7 +102,7 @@ link_test_site :: proc() -> Site {
 	exports := make([]Export_Description, 1, context.temp_allocator)
 	exports[0] = {name = "edges"}
 	modules := make([]Site_Module, 1, context.temp_allocator)
-	modules[0] = {build = {name = "manual", source = "programs/manual"}, kind = "entry", page = site_module_page("manual"), description = {exports = exports}}
+	modules[0] = {build = {name = "manual", source = "processes/manual"}, kind = "entry", page = site_module_page("manual"), description = {exports = exports}}
 	site.reference.modules = modules
 	site.declarations = site_declaration_index_make()
 	sources := [2][2]string {

@@ -7,7 +7,7 @@
 // of each part. A button shows the damage rectangles of each frame over the
 // window, as records of the next frame.
 //
-// At its start the program measures the damage by difference on its own
+// At its start the process measures the damage by difference on its own
 // window: a frame where nothing changed, a frame where one number changed,
 // a frame where everything moved, and the whole frame drawn with no
 // comparison. The log has the numbers.
@@ -47,7 +47,7 @@ TICK :: 100 // Milliseconds between two frames.
 // action bar"). Each one is a key of the interface package: the focus,
 // the press of a button, the choice of the list.
 // A procedure, not a global array: an item is made by a call, and a
-// freestanding program runs no call before its entry.
+// freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [5]interface.Action_Bar_Item {
 	return {
 		interface.action_bar_item("next element", 6, "Tab"),
@@ -61,7 +61,7 @@ bar: interface.Action_Bar_State
 
 window_memory: interface.Window_Memory(512, 8192)
 
-// What the window shows: the state of the program.
+// What the window shows: the state of the process.
 presses: u64
 names := [?]string{"boot", "clock", "remote", "scheduler", "palette", "compositor"}
 choice: int
@@ -112,7 +112,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 		system.log("interface_elements: the text is \"", string(typed[:typed_count]), "\"")
 	}
 	interface.cell_text(frame, interface.column_take(&column, 16), "bars: a value against a maximum, parts of one total", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
-	interface.bar(frame, interface.column_take(&column, 8), number % 100, 100, graphics.colors.program)
+	interface.bar(frame, interface.column_take(&column, 8), number % 100, 100, graphics.colors.process)
 	parts := [3]u64{number % 50 + 10, 20, 15}
 	colors := [3]graphics.Color{graphics.colors.kernel, graphics.colors.memory, graphics.colors.failed}
 	interface.bar_parts(frame, interface.column_take(&column, 8), parts[:], colors[:], 100)
@@ -261,7 +261,7 @@ measure_fonts :: proc "contextless" (window: ^display.Window) {
 
 // entry opens the window, runs the four measures of the damage by
 // difference and the measure of one whole frame, writes them on the log,
-// then draws a frame at each event of the window until the program is
+// then draws a frame at each event of the window until the process is
 // stopped. With no window, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {

@@ -25,7 +25,7 @@ Cells :: [ICON_SIZE]string
 // A kind of thing of the desktop that is not a value kind: a display lists
 // it beside the values, and it has an icon as they have.
 Desktop_Kind :: enum u8 {
-	Window  = 0, // A window of a program.
+	Window  = 0, // A window of a process.
 	Setting = 1, // One value of one setting of the machine.
 	Export  = 2, // An export of a module or of a service.
 	Stop    = 3, // An act that destroys: the close of a window, a command that stops the machine.

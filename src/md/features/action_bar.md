@@ -15,22 +15,22 @@ The action bar is one element of the interface package for that line. Each item 
 - **One fact once on a screen.** The bar does not say "keys", and an item does not repeat a button or a title of the window.
 - **The keys stay the first path.** A window that the bar hides must still take each key. The bar is a reminder and a second path, never the only one.
 - **A machine test presses an item by its name** ([test_pointer.md](../infrastructure/test_pointer.md)).
-- **Two kinds of window.** Some programs give every event to the interface package (`window_events`). Others read the keys from the events themselves and give the package only the pointer (`manual`, the terminal). The bar must serve both.
+- **Two kinds of window.** Some processes give every event to the interface package (`window_events`). Others read the keys from the events themselves and give the package only the pointer (`manual`, the terminal). The bar must serve both.
 
 ## The chosen form
 
-**An item** (`Action_Bar_Item`) is the faces of its keycaps, the name of its action, and a priority that the program gives. The faces are the only statement of the key: the bar derives the key that a press runs from them (`action_bar_key_of`). `{"Shift", "Tab"}` is Shift with Tab; `{"h"}` is the character `h`; `{"Page Up"}` is the key Page Up. A face that names no key gives an item that takes no press.
+**An item** (`Action_Bar_Item`) is the faces of its keycaps, the name of its action, and a priority that the process gives. The faces are the only statement of the key: the bar derives the key that a press runs from them (`action_bar_key_of`). `{"Shift", "Tab"}` is Shift with Tab; `{"h"}` is the character `h`; `{"Page Up"}` is the key Page Up. A face that names no key gives an item that takes no press.
 
-**A press gives the key back.** A press on an item gives the program the key of the item (`Action_Bar_Result.run`). A program with `window_events` puts it in the input of its next frame (`input_key_add`): the key then goes the way that a typed key goes, through the focus and the elements. A program that reads its keys runs it through its own procedure for a key. In both, the press and the key run one piece of code.
+**A press gives the key back.** A press on an item gives the process the key of the item (`Action_Bar_Result.run`). A process with `window_events` puts it in the input of its next frame (`input_key_add`): the key then goes the way that a typed key goes, through the focus and the elements. A process that reads its keys runs it through its own procedure for a key. In both, the press and the key run one piece of code.
 
-**One row, and a list for the rest.** The bar measures each item. When the items do not fit in one row, it keeps a button `more` at the right end of the row and takes items out of the row, the lowest priority first, until the rest fit beside it. Two items of one priority: the later one goes first. The items in the row keep the order that the program gave; the list keeps that order too. The button says how many items it holds: `3 more`.
+**One row, and a list for the rest.** The bar measures each item. When the items do not fit in one row, it keeps a button `more` at the right end of the row and takes items out of the row, the lowest priority first, until the rest fit beside it. Two items of one priority: the later one goes first. The items in the row keep the order that the process gave; the list keeps that order too. The button says how many items it holds: `3 more`.
 
 **The list opens upward**, aligned to the right edge of the bar, inside the window. Its rows have the same form as the items: keycaps, then the name, with a line between two rows. While it is open:
 
 - Up and Down choose a row. Up from no row chooses the row next to the bar, the last; Down chooses the first. A move stops at an end.
 - Enter runs the chosen row and closes the list. Enter with no row closes it.
 - Escape closes it.
-- Another key closes it and goes to the program, as it would with the list closed.
+- Another key closes it and goes to the process, as it would with the list closed.
 - A press on a row runs it. A press outside the list closes it and does nothing else.
 
 **Wrap, the other overflow** (`Action_Bar_Overflow.Wrap`). The items flow over two rows, in their order. The items that two rows still do not hold go into the list, by the same rule of priority. The bar of a wrap window is always two rows high, so the content above it does not move when the items change. The default is the list: one row takes less of the window. A window chooses wrap when it has the room for two rows and its keys must all show at once, because its reader learns them there.
@@ -47,20 +47,20 @@ The action bar is one element of the interface package for that line. Each item 
 - The button `more` is a keycap with three points of 2 by 2 pixels, then the count and the word.
 - The list has a border of 1 pixel in `colors.not_usable` and the surface `colors.card_top`. The row under the pointer is on `colors.track`; the row that the keys chose is on `colors.chosen` with its name in white.
 
-**The state of a bar** (`Action_Bar_State`) is memory of the program: the list is open or not, its chosen row, the keys of the items in the list, the places of the last frame, the part that holds a press, and the pointer of the frame. The bar keeps it because the keys reach the list before the bar draws: the keys of the list need the items of the last frame.
+**The state of a bar** (`Action_Bar_State`) is memory of the process: the list is open or not, its chosen row, the keys of the items in the list, the places of the last frame, the part that holds a press, and the pointer of the frame. The bar keeps it because the keys reach the list before the bar draws: the keys of the list need the items of the last frame.
 
-**The order in a frame.** `action_bar_input_take` comes first, after `window_frame_begin`. It takes the keys of an open list, and it takes the press and the pointer when the list is open or the pointer is over the bar: no element under the list sees them. `action_bar` comes last, so the list is drawn over the content. A program that reads its keys calls `action_bar_key` for each key first, and does not act on a press for which `action_bar_takes_pointer` says yes.
+**The order in a frame.** `action_bar_input_take` comes first, after `window_frame_begin`. It takes the keys of an open list, and it takes the press and the pointer when the list is open or the pointer is over the bar: no element under the list sees them. `action_bar` comes last, so the list is drawn over the content. A process that reads its keys calls `action_bar_key` for each key first, and does not act on a press for which `action_bar_takes_pointer` says yes.
 
 **The names.** The name of the action of an item is its element name; a row of the list too, while the list is open; the button has the name `more`. An item is in the row or in the list, never both, so one name has one rectangle.
 
 ## Refused forms
 
-- **A table of actions with an index for each.** A press would give an index, and the program would map it to a procedure beside its map of keys. That is two paths, and the faces would be a third statement of the key.
+- **A table of actions with an index for each.** A press would give an index, and the process would map it to a procedure beside its map of keys. That is two paths, and the faces would be a third statement of the key.
 - **An item with alternative keys.** `up, down: module` is two actions. A press on it could run neither. Each item is one action: `Up` module before, `Down` module after.
 - **The items in the order of Tab.** Tab belongs to the window: `manual` moves its links with it, `settings` its buttons. The keys of each item are the keyboard path of the item.
 - **A press that clears the focus.** `settings` has the item `Tab` next button: a press must move the focus from where it is. A window that needs it clears the focus itself (the debugger window, where the letters must act and not type in the field).
 - **A press outside the open list that also acts.** The reader aims at the list; a press that misses it must not change the content under it.
-- **The state in the interface state.** One window can have no bar, and the interface state is one record for each window that the package fixes. The bar is the one element that needs it, and its program owns it.
+- **The state in the interface state.** One window can have no bar, and the interface state is one record for each window that the package fixes. The bar is the one element that needs it, and its process owns it.
 - **Glyphs for the keys.** `⌫`, `↑` and `⋯` are not in the fonts. A triangle and three points are rectangles, which the draw table has.
 - **A bar that shrinks its items.** A cut name or a narrow keycap says nothing. An item is whole, or it is in the list.
 - **Round keycaps.** A keycap of the design is a rectangle.
@@ -70,16 +70,16 @@ The action bar is one element of the interface package for that line. Each item 
 
 ## Subtle points
 
-- **An item is made by a call.** Odin takes no literal of a fixed array with fewer values than the array, so `action_bar_item(name, priority, faces..)` copies the faces into the fixed array of the item, and drops a face past the capacity. A slice of faces was refused: it pointed into the stack of a procedure that had returned. A freestanding program runs no call before its entry, so a program writes its items in a procedure that returns the array, and calls it where it draws the bar.
+- **An item is made by a call.** Odin takes no literal of a fixed array with fewer values than the array, so `action_bar_item(name, priority, faces..)` copies the faces into the fixed array of the item, and drops a face past the capacity. A slice of faces was refused: it pointed into the stack of a procedure that had returned. A freestanding process runs no call before its entry, so a process writes its items in a procedure that returns the array, and calls it where it draws the bar.
 
-- **The key of a press is synthetic.** A face of one character gives the character with the code 0. A program that compares a key code with a letter does not see it: compare the character.
+- **The key of a press is synthetic.** A face of one character gives the character with the code 0. A process that compares a key code with a letter does not see it: compare the character.
 - **The list must fit above the bar.** The bar gives the list the room from its top to the top of the window (`Action_Bar_Options.top`). Rows that do not fit are not shown, and `Action_Bar_Result.list_rows_not_shown` counts them; a host test checks the count.
 - **An element line for each change of a rectangle.** An item whose place changes at each frame writes a line at each frame. A bar has a fixed area. The terminal puts its bar at the right of a line whose text changes: its items stand from the right edge (`Action_Bar_Options.alignment = .Right`), so they do not move while the text at the left changes.
 - **A press on an item of a window that types.** In the debugger window the letters type in the debug place field while it has the focus. A press on an item takes the focus from the field first, so `h` holds the thread.
-- **The frame after a press.** A program that draws only after a change builds the frame that runs the key. `action_bar_wants_frame` says when a pointer event needs a frame: over the bar, the list open, a held press, or a bar lit in the last frame.
+- **The frame after a press.** A process that draws only after a change builds the frame that runs the key. `action_bar_wants_frame` says when a pointer event needs a frame: over the bar, the list open, a held press, or a bar lit in the last frame.
 
 ## State
 
 Built: the element, its layout as a pure procedure, the list with its keys and its pointer, wrap, the host tests (the fit, the overflow at several widths, the order of priority, the place of the list, the keys of the list), and the bar of each window that listed its keys: `manual`, the terminal, `settings`, `notes`, the debugger window, `unlock`, `interface_elements`, `tally`, `rings`, `paint`. The machine scenario takes a picture of `interface_elements` with all its items, opens the list of the debugger window, and runs `detach` from the list.
 
-Left: the band of keys of the palette, which the compositor draws with its own panel; a window whose surface can change its width, which no program of the system has.
+Left: the band of keys of the palette, which the compositor draws with its own panel; a window whose surface can change its width, which no process of the system has.

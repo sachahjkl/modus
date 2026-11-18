@@ -85,7 +85,7 @@ test_table_make :: proc(t: ^testing.T, table: ^Test_Table) {
 	table.columns = {integer_column("slot"), text_column("name", 12), integer_column("pages")}
 	size: u32
 	ok: bool
-	table.file, size, ok = description_write(table.description[:], "Program", table.columns[:])
+	table.file, size, ok = description_write(table.description[:], "Process", table.columns[:])
 	testing.expect(t, ok, "the description is written")
 	testing.expect_value(t, size, 32)
 	table.size = int(size)
@@ -112,7 +112,7 @@ description_is_read_by_the_contract :: proc(t: ^testing.T) {
 	described, ok := module.record_type(table.file, 1)
 	testing.expect(t, ok, "the record is found")
 	testing.expect_value(t, described.field_count, 3)
-	testing.expect_value(t, module.string_at(table.file, described.name_offset, described.name_count), "Program")
+	testing.expect_value(t, module.string_at(table.file, described.name_offset, described.name_count), "Process")
 	item, found := module.field(table.file, described, 1)
 	testing.expect(t, found && item.type == u8(module.Type.Text) && item.detail == 12 && item.offset == 8)
 	testing.expect_value(t, module.string_at(table.file, item.name_offset, item.name_count), "name")
@@ -135,7 +135,7 @@ long_text_has_the_cut_mark :: proc(t: ^testing.T) {
 	table := new(Test_Table, context.temp_allocator)
 	test_table_make(t, table)
 	table.columns[1] = text_column("name", 24)
-	table.file, _, _ = description_write(table.description[:], "Program", table.columns[:])
+	table.file, _, _ = description_write(table.description[:], "Process", table.columns[:])
 	row: [64]u8
 	row_text_set(row[:], table.columns[1], "a name that is longer than twenty-four bytes")
 	text := module.field_text(row[:], column_field(table.columns[1]))
@@ -172,7 +172,7 @@ table_columns :: proc(t: ^testing.T) {
 	drawn := new(Drawn, context.temp_allocator)
 	sink := drawn_sink(drawn)
 	draw_table(&sink, table.file, 1, test_table_bytes(table), 20)
-	expected := "slot  name     pages\n" + "   3  console    120\n" + "  12  log          7\n" + "2 rows of Program\n"
+	expected := "slot  name     pages\n" + "   3  console    120\n" + "  12  log          7\n" + "2 rows of Process\n"
 	testing.expect_value(t, drawn_text(drawn), expected)
 	// A row that is too long goes on under the last column.
 	testing.expect_value(t, drawn.continuation[1], 15)
@@ -191,15 +191,15 @@ table_cut_at_the_row_limit :: proc(t: ^testing.T) {
 	drawn := new(Drawn, context.temp_allocator)
 	sink := drawn_sink(drawn)
 	draw_table(&sink, table.file, 1, test_table_bytes(table), 2, ": skip(table, 2) gives them")
-	expected := "slot  name  pages\n" + "   1  x         1\n" + "   2  x         1\n" + "3 rows more are not shown: skip(table, 2) gives them\n" + "5 rows of Program\n"
+	expected := "slot  name  pages\n" + "   1  x         1\n" + "   2  x         1\n" + "3 rows more are not shown: skip(table, 2) gives them\n" + "5 rows of Process\n"
 	testing.expect_value(t, drawn_text(drawn), expected)
 	// One row, and no row.
 	drawn^ = {}
 	draw_table(&sink, table.file, 1, test_table_bytes(table)[:table.size], 20)
-	testing.expect(t, strings.has_suffix(drawn_text(drawn), "1 row of Program\n"))
+	testing.expect(t, strings.has_suffix(drawn_text(drawn), "1 row of Process\n"))
 	drawn^ = {}
 	draw_table(&sink, table.file, 1, nil, 20)
-	testing.expect_value(t, drawn_text(drawn), "slot  name  pages\n0 rows of Program\n")
+	testing.expect_value(t, drawn_text(drawn), "slot  name  pages\n0 rows of Process\n")
 	// A description that is not one.
 	drawn^ = {}
 	draw_table(&sink, table.file, 9, test_table_bytes(table), 20)
@@ -214,9 +214,9 @@ record_fields :: proc(t: ^testing.T) {
 	drawn := new(Drawn, context.temp_allocator)
 	sink := drawn_sink(drawn)
 	draw_record(&sink, table.file, 1, test_table_bytes(table))
-	expected := "Program\n" + "  slot   3\n" + "  name   console\n" + "  pages  120\n"
+	expected := "Process\n" + "  slot   3\n" + "  name   console\n" + "  pages  120\n"
 	testing.expect_value(t, drawn_text(drawn), expected)
-	testing.expect_value(t, drawn.parts[Part.Type], len("Program"))
+	testing.expect_value(t, drawn.parts[Part.Type], len("Process"))
 	testing.expect_value(t, drawn.continuation[1], 9)
 	// Bytes that are fewer than the record.
 	drawn^ = {}
@@ -411,7 +411,7 @@ failure_lines :: proc(t: ^testing.T) {
 	testing.expect_value(t, drawn_text(drawn), expected)
 	testing.expect_value(t, drawn.parts[Part.Status], len("Too_Long"))
 
-	// A kind that the contract does not have, from another program.
+	// A kind that the contract does not have, from another process.
 	drawn^ = {}
 	record = {kind = 9999}
 	draw_failure(&sink, {sentence = "x", record = &record})

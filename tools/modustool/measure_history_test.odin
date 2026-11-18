@@ -40,9 +40,9 @@ measure_history_series_read_the_lines_of_the_record :: proc(t: ^testing.T) {
 		"[scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 200581 wakes in one second (80106 turns ended on the processor of the waker, 85 by an interrupt, 430 moves)",
 		"[vector_glyphs] vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 3887 ns, scale 2 8568 ns, scale 3 16922 ns; from the glyph cache: 201 ns; Spleen 8x16: 22 ns",
 		"[compositor:surfaces] compositor: a full frame of 1024x768 with 17 windows in 2272 us",
-		"[disk] disk: read, 1 block in each request, 32 in flight: 429355 blocks in one second, kernel entries for 100 requests: 10 of this program, 18 of the block service, 0 errors",
+		"[disk] disk: read, 1 block in each request, 32 in flight: 429355 blocks in one second, kernel entries for 100 requests: 10 of this process, 18 of the block service, 0 errors",
 		"[notes] notes: count 1000, stopped: 1000 commits in 8215 ms",
-		"[net] net: the header and the checksum of a datagram of 1472 bytes: 331 ns, in this program (no offload)",
+		"[net] net: the header and the checksum of a datagram of 1472 bytes: 331 ns, in this process (no offload)",
 		"[net] net: the round trip of one datagram of 64 bytes: 48 us at least, 66 us in the middle, over 1000",
 		"[net] net: a burst with 64 datagrams in flight: 89509 datagrams in one second, sent and answered, 0 lost",
 		"[fetch] fetch: GET /large: 1048576 bytes, fnv1a64 e7867887f2822325 as expected, 112.4 MB/s",
@@ -78,7 +78,7 @@ measure_history_series_read_the_lines_of_the_record :: proc(t: ^testing.T) {
 	other_unit, _ := strings.replace_all(lines[3], "3887 ns", "3887 us", context.temp_allocator)
 	_, _, other_unit_ok := measure_history_value(measure_history_series[3], other_unit)
 	testing.expect(t, !other_unit_ok, "a series took a number of another unit")
-	_, _, other_words_ok := measure_history_value(measure_history_series[0], "[locks] locks: 4 programs 25399040")
+	_, _, other_words_ok := measure_history_value(measure_history_series[0], "[locks] locks: 4 processes 25399040")
 	testing.expect(t, !other_words_ok, "a series took a line with other words")
 	// A point after the number ends a sentence: it is not a decimal point.
 	sentence_end := Measure_History_Series{before = "count ", after = "."}
@@ -161,7 +161,7 @@ measure_history_chart_golden :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(points), 4)
 	testing.expect(t, !points[2].present)
 	testing.expect_value(t, points[2].missing, "the record has no line of this measure")
-	golden := `<svg class="measure-history-chart" viewBox="0 0 600 120" role="img" aria-label="Kernel entries in one second, 4 programs">
+	golden := `<svg class="measure-history-chart" viewBox="0 0 600 120" role="img" aria-label="Kernel entries in one second, 4 processes">
 <line class="measure-history-scale" x1="0" y1="6" x2="600" y2="6"/>
 <line class="measure-history-scale" x1="0" y1="114" x2="600" y2="114"/>
 <polyline class="measure-history-line" points="6,60 202,6"/>

@@ -7,10 +7,10 @@ import "core:strings"
 // The proof that the kernel has no x87, MMX, SSE, AVX or opmask instruction
 // outside the save and the restore of the extended state
 // (docs/ARCHITECTURE.md, "The extended state of the processor"). The kernel
-// saves the registers of a program only when a processor leaves a thread for
+// saves the registers of a process only when a processor leaves a thread for
 // another one: during each kernel entry and each interrupt, the registers of
-// the program stay live, so one instruction of the kernel that changes one
-// of them gives a program a wrong value, with no error. The build
+// the process stay live, so one instruction of the kernel that changes one
+// of them gives a process a wrong value, with no error. The build
 // disassembles the linked kernel and refuses it when such an instruction is
 // found.
 //
@@ -80,7 +80,7 @@ vector_mnemonic_starts := [?]string{
 }
 
 // Whole mnemonics that use the extended state. "wait" is how llvm-objdump
-// prints fwait (0x9B): it raises a pending x87 exception of the program in
+// prints fwait (0x9B): it raises a pending x87 exception of the process in
 // the kernel. No other mnemonic of x86 is "wait" or starts with it (the
 // waits of WAITPKG are umwait and tpause).
 @(rodata)
@@ -296,7 +296,7 @@ kernel_has_no_vector_instruction :: proc(listing: string) -> bool {
 		fmt.eprintfln("modustool: the check of the vector instructions of the kernel fails: %s", problem)
 	}
 	if len(check.refused) > 0 {
-		fmt.eprintfln("modustool: the kernel has %d instructions that use an x87, MMX, SSE or AVX register outside the save and the restore of the extended state; the registers of a program would change during a kernel entry:", len(check.refused))
+		fmt.eprintfln("modustool: the kernel has %d instructions that use an x87, MMX, SSE or AVX register outside the save and the restore of the extended state; the registers of a process would change during a kernel entry:", len(check.refused))
 		for finding in check.refused[:min(len(check.refused), 40)] {
 			fmt.eprintfln("modustool:   %s: %s", finding.procedure, finding.instruction)
 		}

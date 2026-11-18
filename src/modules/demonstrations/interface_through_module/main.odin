@@ -1,7 +1,7 @@
-// The interface package as a module, for one program (docs/INTERFACE.md,
-// section 7). This program builds the same frame in two ways: through the
+// The interface package as a module, for one process (docs/INTERFACE.md,
+// section 7). This process builds the same frame in two ways: through the
 // exports of the module interface_module, which it imports (each call
-// passes the draw table and the text table of this program as table
+// passes the draw table and the text table of this process as table
 // parameters, with no copy), and with the package src/library/support/interface
 // compiled in. It compares the two draw tables and measures the two builds.
 // It draws its window through the drawing module, which it imports too:
@@ -9,11 +9,11 @@
 // the two exports of that module. Then it draws one frame two times, with
 // the package compiled in and through the drawing module, into two
 // canvases of its own, and compares their bytes: the package draws with
-// the text settings that this program loaded, the module with those that
+// the text settings that this process loaded, the module with those that
 // the module loaded.
 //
 // **What it is for.** It shows that one code module can be a library in
-// another program with no loss: the [interface package](term:interface-package)
+// another process with no loss: the [interface package](term:interface-package)
 // as the module `interface_module` gives the same
 // [draw table](term:draw-table) as the package compiled in, and a
 // [table parameter](term:table-parameter) passes the tables of the caller
@@ -40,7 +40,7 @@ import "modus:support/interface"
 import module "modus:contract/module"
 import "modus:support/system"
 
-// The records of the module, as this program declares them: the layout is
+// The records of the module, as this process declares them: the layout is
 // the description.
 Area :: struct {
 	x, y, width, height: i64,
@@ -161,7 +161,7 @@ build_through_module :: proc "contextless" (texts: ^Texts) {
 	title, caption := TITLE, CAPTION
 	draw_card(&drawn, &text, &place, &title, &caption, i64(graphics.colors.kernel), nil)
 	calls += 2
-	sentence := "each element is one call through an import slot; the module keeps no state of this program."
+	sentence := "each element is one call through an import slot; the module keeps no state of this process."
 	first := to_area(line_area(0))
 	draw_cell_text(&drawn, &text, &first, &sentence, i64(graphics.colors.dim), 0, nil)
 	headers := [4]string{"way", "one frame, ns", "", "ns per call"}
@@ -211,7 +211,7 @@ build_compiled_in :: proc "contextless" (texts: ^Texts, table: ^interface.Draw_T
 	frame := interface.frame_begin(table, &state, &input)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, TITLE, CAPTION, graphics.colors.kernel)
-	interface.cell_text(&frame, line_area(0), "each element is one call through an import slot; the module keeps no state of this program.", graphics.colors.dim)
+	interface.cell_text(&frame, line_area(0), "each element is one call through an import slot; the module keeps no state of this process.", graphics.colors.dim)
 	headers := [4]string{"way", "one frame, ns", "", "ns per call"}
 	for column in 0 ..< 4 {
 		interface.cell_text(&frame, cell_area(line_area(2), column), headers[column], graphics.colors.dim, column >= 2 ? .Right : .Left)
@@ -280,8 +280,8 @@ kept_counts :: proc "contextless" () -> (records, bytes: u64) {
 before_count, before_text_count: u64
 
 // What each of the two pictures of the surface owes against the frame
-// before (interface.Picture_Debts): this program draws through the module
-// by hand, so it keeps the debts that the window layer keeps for a program.
+// before (interface.Picture_Debts): this process draws through the module
+// by hand, so it keeps the debts that the window layer keeps for a process.
 picture_debts: interface.Picture_Debts
 
 // present draws the frame through the module: the damage by difference
@@ -362,7 +362,7 @@ package_pixels, module_pixels: [PROOF_WIDTH * PROOF_HEIGHT]graphics.Color
 // compiled in, as a window drew a whole frame before the drawing module
 // (the clear, then the execution), and through the export of the drawing
 // module. It gives the count of the pixels that differ. The package draws
-// with the text state of this program, the module with its own: the two
+// with the text state of this process, the module with its own: the two
 // are loaded from the same context by two copies of the code, and equal
 // bytes say that they chose the same fonts. compared is false when the
 // module refused the call: refused has its record.
@@ -393,7 +393,7 @@ BUILDS :: 200
 // entry builds the frame through the module and with the package, compares
 // the two draw tables, measures both builds and the case of a table that is
 // too small, writes the lines on the log, then draws its window through the
-// module at each event until the program is stopped. With no window, it
+// module at each event until the process is stopped. With no window, it
 // stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -406,7 +406,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		shown.module_code = code_bytes(system.image_find(image, "interface_module"))
 	}
 	// The module, in a direct call, finds the interface font of this
-	// program at its fixed ranges: the package compiled in takes the same
+	// process at its fixed ranges: the package compiled in takes the same
 	// font, so the two tables can be equal.
 	package_table := interface.Draw_Table{records = package_records[:], text = package_text[:], interface_font = display.interface_font_of()}
 	texts: Texts
@@ -431,7 +431,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("interface_through_module: one frame of ", shown.records, " draw records and ", shown.text_bytes, " text bytes in ", shown.calls, " element calls: ", shown.module_time, " ns through the module, ", shown.package_time, " ns with the package compiled in, the least of ", u64(BUILDS))
 	system.log("interface_through_module: the damage and the drawing through the module: ", shown.draw_time, " ns; interface_module has ", shown.module_code, " bytes of code")
 	// A frame that does not fit: a draw table of 16 places. The module gives
-	// the count of the full frame; the program draws the 16 records that it
+	// the count of the full frame; the process draws the 16 records that it
 	// holds, and says it.
 	record_capacity_of_build = 16
 	build_through_module(&texts)

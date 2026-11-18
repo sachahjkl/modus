@@ -1,15 +1,15 @@
 // The kernel: the handle table, memory, the scheduler, the rings and the waits, the device grants and the interrupts (docs/ARCHITECTURE.md, "Kernel systems").
 //
 // The kernel is the one module that runs in kernel mode. It keeps the
-// tables that no program can be trusted to keep: which program holds which
+// tables that no process can be trusted to keep: which process holds which
 // [handle](term:handle) with which rights, which page frame belongs to which
 // [memory object](term:memory-object), which thread runs on which processor.
-// Every other part of the system is a program: the device services, the
+// Every other part of the system is a process: the device services, the
 // storage, the network, the compositor, the console. The kernel has no
 // driver, no file system, no network protocol, no loader of modules and no
 // name of a user (docs/ARCHITECTURE.md, "What the kernel does not contain").
 //
-// **What it is for.** A program asks the kernel for a thing with a
+// **What it is for.** A process asks the kernel for a thing with a
 // [kernel operation](term:kernel-operation): a record in its kernel ring,
 // or a direct entry. The kernel checks the kind and the rights of each
 // handle in the record, does the operation, and writes a status. The
@@ -19,15 +19,15 @@
 //
 // **The five systems.**
 //
-// - The handle table: one table of handles for each program; the check of
-//   the kind and the rights of a handle (`src/kernel/program.odin`).
+// - The handle table: one table of handles for each process; the check of
+//   the kind and the rights of a handle (`src/kernel/process.odin`).
 // - Memory: the page frames, the page tables, the memory objects, the
 //   [budgets](term:budget) that pay for each page (`src/kernel/memory.odin`,
 //   `src/kernel/virtual_memory.odin`, `src/kernel/paging.odin`).
 // - The scheduler: one [run queue](term:run-queue) for each processor, and
 //   the [strategy](term:strategy) of the machine (`src/kernel/schedule.odin`,
 //   `src/kernel/strategy.odin`; docs/SCHEDULING.md).
-// - The rings and the waits: the kernel ring of each program, the
+// - The rings and the waits: the kernel ring of each process, the
 //   [word wait](term:word-wait), the wait on rings (`src/kernel/wait.odin`).
 // - The device grants and the interrupts: device memory and message
 //   interrupts for a device service (`src/kernel/apic.odin`).
@@ -39,12 +39,12 @@
 // processor (`src/kernel/extended_state.odin`) and the
 // [stop report](term:stop-report) (`src/kernel/diagnose.odin`).
 //
-// **How it starts.** The [boot program](term:boot-program) loads the kernel
+// **How it starts.** The [boot program](term:boot-process) loads the kernel
 // and the [boot image](term:boot-image), builds the first page tables and
 // jumps to the export `entry` with the [boot record](term:boot-record). The
 // kernel then builds the [root service](term:root-service), the first
-// program, and gives it every handle that exists at boot. From that point
-// the kernel only answers: every other program is built by a program, with
+// process, and gives it every handle that exists at boot. From that point
+// the kernel only answers: every other process is built by a process, with
 // kernel operations (docs/ARCHITECTURE.md, "Boot").
 //
 // **What a reader sees.** The kernel writes its lines to the serial port and
@@ -52,7 +52,7 @@
 // `kernel: free memory <size>`, the size and the address of the
 // framebuffer, `kernel: ok`, then one line for each [stage](term:stage) of
 // the start with its time, on the channel `boot`. The console line
-// `programs()` lists the programs that the kernel runs.
+// `processes()` lists the processes that the kernel runs.
 //
 // The locks of the kernel and their order are in docs/ARCHITECTURE.md,
 // "Locks of the kernel".
@@ -185,8 +185,8 @@ debug_image_pages :: proc "contextless" (boot: ^info.Boot_Info) -> (pages: u64, 
 	return 0, false
 }
 
-// root_start builds the first program from the module "root" of the boot
-// image. Every other program is built by a program, with kernel operations.
+// root_start builds the first process from the module "root" of the boot
+// image. Every other process is built by a process, with kernel operations.
 root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	fail :: proc "contextless" (text: string) -> ! {
 		log("kernel: cannot start the root service: ", text)
@@ -220,9 +220,9 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	ROOT_BUDGET :: 1
 	budgets[ROOT_BUDGET] = {
 		live = true,
-		amounts = {pages = free_frames, programs = PROGRAM_CAPACITY - 1, threads = THREAD_TABLE_CAPACITY - 1, processor = u64(processor_count) * 1_000_000, log_records = op.LOG_RECORDS_OF_THE_MACHINE},
+		amounts = {pages = free_frames, processes = PROCESS_CAPACITY - 1, threads = THREAD_TABLE_CAPACITY - 1, processor = u64(processor_count) * 1_000_000, log_records = op.LOG_RECORDS_OF_THE_MACHINE},
 	}
-	index, _ := program_create(ROOT_BUDGET, transmute([]u8)name)
+	index, _ := process_create(ROOT_BUDGET, transmute([]u8)name)
 	// The kernel writes the module and the context through the direct map:
 	// these two are contiguous. The stack has its pages on first use.
 	code, _ := region_create(ROOT_BUDGET, head.memory_size / PAGE_SIZE, contiguous = true)
@@ -231,15 +231,15 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	if index == 0 || code == 0 || stack == 0 || ctx == 0 {
 		fail("no memory")
 	}
-	program := &programs[index]
-	taken := program_lock(index)
-	defer program_unlock(index, taken)
+	process := &processes[index]
+	taken := process_lock(index)
+	defer process_unlock(index, taken)
 	// The kernel is the starter of the root service: the record is of the
 	// writer Starter, which the root service cannot change.
-	program_module(program, {base = op.PROGRAM_BASE, size = head.memory_size, hash = hash}, by_the_program = false)
+	process_module(process, {base = op.PROCESS_BASE, size = head.memory_size, hash = hash}, by_the_process = false)
 	memory := info.physical_slice(regions[code].physical, head.memory_size, u8)
 	module.copy_segments(file, memory)
-	if module.rebase(file, memory, op.PROGRAM_BASE) != .None || module.count(file, .Imports) > 1 {
+	if module.rebase(file, memory, op.PROCESS_BASE) != .None || module.count(file, .Imports) > 1 {
 		fail("the module cannot be loaded")
 	}
 	for segment_index in 1 ..< module.count(file, .Segments) {
@@ -251,42 +251,42 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		if .Execute in segment.flags {
 			flags += {.Execute}
 		}
-		if _, status := map_region(program, code, op.PROGRAM_BASE + segment.memory_offset, flags, segment.memory_offset / PAGE_SIZE, segment.memory_size / PAGE_SIZE); status != .Ok {
+		if _, status := map_region(process, code, op.PROCESS_BASE + segment.memory_offset, flags, segment.memory_offset / PAGE_SIZE, segment.memory_size / PAGE_SIZE); status != .Ok {
 			fail("a segment cannot be mapped")
 		}
 	}
-	_, stack_status := map_region(program, stack, op.STACK_TOP - op.STACK_PAGES * PAGE_SIZE, {.Write}, 0, 0)
-	_, context_status := map_region(program, ctx, op.CONTEXT_ADDRESS, {.Write}, 0, 0)
-	start, has_entry := module.export_address(file, op.PROGRAM_BASE, head.entry_export)
+	_, stack_status := map_region(process, stack, op.STACK_TOP - op.STACK_PAGES * PAGE_SIZE, {.Write}, 0, 0)
+	_, context_status := map_region(process, ctx, op.CONTEXT_ADDRESS, {.Write}, 0, 0)
+	start, has_entry := module.export_address(file, op.PROCESS_BASE, head.entry_export)
 	if stack_status != .Ok || context_status != .Ok || !has_entry {
 		fail("the module has no entry")
 	}
 
 	// The root service receives every handle that exists at boot.
 	record := direct(regions[ctx].physical, op.Context)
-	record.handles[op.CONTEXT_BUDGET] = handle_insert(program, {kind = .Budget, rights = RIGHTS_BUDGET, object = ROOT_BUDGET})
-	record.handles[op.CONTEXT_LOG] = handle_insert(program, {kind = .Log, rights = RIGHTS_LOG})
+	record.handles[op.CONTEXT_BUDGET] = handle_insert(process, {kind = .Budget, rights = RIGHTS_BUDGET, object = ROOT_BUDGET})
+	record.handles[op.CONTEXT_LOG] = handle_insert(process, {kind = .Log, rights = RIGHTS_LOG})
 	if log_head != nil {
 		log_region = region_device(physical_of(log_head), op.LOG_PAGES)
-		record.handles[op.ROOT_LOG_RECORDS] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read}, object = log_region})
+		record.handles[op.ROOT_LOG_RECORDS] = handle_insert(process, {kind = .Memory, rights = {.Give, .Read}, object = log_region})
 	}
-	record.handles[op.ROOT_MACHINE] = handle_insert(program, {kind = .Machine, rights = RIGHTS_MACHINE})
+	record.handles[op.ROOT_MACHINE] = handle_insert(process, {kind = .Machine, rights = RIGHTS_MACHINE})
 	framebuffer := boot.framebuffer
 	if framebuffer.format != .None {
 		pages := (u64(framebuffer.pixels_per_line) * u64(framebuffer.height) * 4 + PAGE_SIZE - 1) / PAGE_SIZE
-		record.handles[op.ROOT_FRAMEBUFFER] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read, .Write}, object = region_device(framebuffer.address, pages)})
+		record.handles[op.ROOT_FRAMEBUFFER] = handle_insert(process, {kind = .Memory, rights = {.Give, .Read, .Write}, object = region_device(framebuffer.address, pages)})
 		record.values[op.ROOT_VALUE_WIDTH] = u64(framebuffer.width)
 		record.values[op.ROOT_VALUE_HEIGHT] = u64(framebuffer.height)
 		record.values[op.ROOT_VALUE_PIXELS_PER_LINE] = u64(framebuffer.pixels_per_line)
 		record.values[op.ROOT_VALUE_FORMAT] = u64(framebuffer.format)
 	}
-	record.handles[op.ROOT_BOOT_IMAGE] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.boot_image, (boot.boot_image_size + PAGE_SIZE - 1) / PAGE_SIZE)})
+	record.handles[op.ROOT_BOOT_IMAGE] = handle_insert(process, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.boot_image, (boot.boot_image_size + PAGE_SIZE - 1) / PAGE_SIZE)})
 	record.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE] = boot.boot_image_size
 	// The debug image: the kernel gives its pages and reads none of them
 	// (docs/MODULE_CONTRACT.md, "Debug information").
 	if boot.debug_image_size != 0 {
 		if pages, accepted := debug_image_pages(boot); accepted {
-			record.handles[op.ROOT_DEBUG_IMAGE] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.debug_image, pages)})
+			record.handles[op.ROOT_DEBUG_IMAGE] = handle_insert(process, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.debug_image, pages)})
 			record.values[op.ROOT_VALUE_DEBUG_IMAGE_SIZE] = boot.debug_image_size
 		} else {
 			log("kernel: the debug image of the boot program is refused: its range is not on a page, is over its bound, or is not memory of the boot; a stop report names no procedure")
@@ -296,5 +296,5 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	if _, status := thread_create(index, ROOT_BUDGET, u64(start), op.STACK_TOP, op.CONTEXT_ADDRESS); status != .Ok {
 		fail("no memory for the first thread")
 	}
-	program.state = .Ready
+	process.state = .Ready
 }

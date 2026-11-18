@@ -140,7 +140,7 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	testing.expect(t, built_pixels == fallback_pixels)
 
 	// The private glyph cache: ═ drawn by the font service and by this
-	// program give the same pixels; and α of B612 stays in its cell.
+	// process give the same pixels; and α of B612 stays in its cell.
 	DOUBLE :: rune(0x2550)
 	double_entry: demand_cache.Entry
 	double_entry, result = vector_font.demand_glyph_draw(&demand_font, &writer, DOUBLE, render)

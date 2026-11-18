@@ -89,7 +89,7 @@ Stream_State :: struct {
 // two buffers of 64 KiB, about 129 KiB in all.
 //
 // The caller owns the table and gives it at the start of the connection: it
-// goes in the global memory of the program or in a mapping, never on a stack.
+// goes in the global memory of the process or in a mapping, never on a stack.
 // An application does not write the fields: it uses the calls of this file. It
 // can read them, for example `in_use` and `identifier` to find the streams
 // that the peer opened.
@@ -526,12 +526,12 @@ stream_write :: proc "contextless" (connection: ^Connection, identifier: u64, by
 // read, the stream queues MAX_STREAM_DATA and the connection MAX_DATA. The
 // caller therefore calls `connection_datagram_send` after its reads.
 //
-// **A program reads each stream to its end.** A record is freed only when the
+// **A process reads each stream to its end.** A record is freed only when the
 // application read the end of the peer here (`finished` or `reset` true), and
-// the last byte of this side or its reset was acknowledged. A program that
+// the last byte of this side or its reset was acknowledged. A process that
 // never reads a stream to its end keeps the record for the life of the
 // connection, and a server then gives the client no stream in its place: a
-// program reads each stream to its end, or resets it and reads the reset of
+// process reads each stream to its end, or resets it and reads the reset of
 // the peer. Once the stream ended, a read of it gives nothing.
 //
 // ```odin

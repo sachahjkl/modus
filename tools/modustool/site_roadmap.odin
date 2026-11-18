@@ -10,12 +10,12 @@ import "core:strings"
 SITE_ROADMAP_FOLDER :: "roadmap"
 
 // The class of the accent of a section: the mark of each of its cards.
-// What is in work has the color of a program, the color of what runs;
+// What is in work has the color of a process, the color of what runs;
 // what comes next has the color of the kernel, the color of a decision;
 // what comes later has no accent: the dim color (SITE_ROADMAP_RULES); what
 // may be done one day is not decided either, and has the same dim color.
 site_roadmap_section_classes := [Roadmap_Section]string {
-	.Now   = "accent-program",
+	.Now   = "accent-process",
 	.Next  = "accent-kernel",
 	.Later = "roadmap-later",
 	.Maybe = "roadmap-later",

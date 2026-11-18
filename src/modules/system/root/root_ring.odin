@@ -1,7 +1,7 @@
 package root
 
 // The root ring in this service: the dispatch of each command that a
-// program writes on its root ring (modus:contract/root_ring;
+// process writes on its root ring (modus:contract/root_ring;
 // src/md/api/root_ring.md).
 //
 // Each record goes through three steps, in this order, and a step that
@@ -12,9 +12,9 @@ package root
 // 1. The border: command_of_word reads the kind. A word that names no
 //    command, and None, get `Unsupported`, and nothing runs.
 // 2. The sender: the table root_ring.ROOT_COMMAND_SENDERS, with the start
-//    grants that the program received at its start (Started.role), and for
+//    grants that the process received at its start (Started.role), and for
 //    a Connect the services of its role. A refusal gets `No_Grant`, before
-//    any other check, so a program learns nothing of a command that it
+//    any other check, so a process learns nothing of a command that it
 //    cannot send.
 // 3. The command: one case of a whole switch. The table
 //    root_ring.ROOT_COMMAND_REFUSAL_WRITERS says who writes the error
@@ -39,7 +39,7 @@ Command_Answer :: struct {
 	held:   bool,
 }
 
-// root_ring_serve answers each command that a program wrote on its root
+// root_ring_serve answers each command that a process wrote on its root
 // ring since the last pass.
 root_ring_serve :: proc "contextless" (item: ^Started) {
 	for record in system.receive(&item.requests.commands) {
@@ -53,8 +53,8 @@ root_ring_serve :: proc "contextless" (item: ^Started) {
 
 // root_command_answer runs the three steps of one record: the border and
 // the sender, which root_ring.dispatch_decide decides from the role that
-// the program received at its start and never from its name (a disk
-// program has the nickname that it chose), then the command.
+// the process received at its start and never from its name (a disk
+// process has the nickname that it chose), then the command.
 root_command_answer :: proc "contextless" (item: ^Started, record: ring.Record) -> (answer: Command_Answer) {
 	name_bytes := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
 	name := system.name_of(name_bytes[:])
@@ -80,15 +80,15 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 	case .None:
 		// The border refuses it; the case keeps the switch whole.
 	case .Start:
-		// A program that a program starts belongs to the session of the
-		// program that asks.
+		// A process that a process starts belongs to the session of the
+		// process that asks.
 		answer.status = start(name, item.principal)
 	case .Stop:
 		answer.status = .Bad_Handle
 		for &other in started {
-			// The compositor is not a program that the console stops.
-			if other.program != 0 && other.program != compositor && !other.is_terminal && system.name_of(other.name[:]) == name {
-				system.call(.Program_Stop, u64(other.program), 0)
+			// The compositor is not a process that the console stops.
+			if other.process != 0 && other.process != compositor && !other.is_terminal && system.name_of(other.name[:]) == name {
+				system.call(.Process_Stop, u64(other.process), 0)
 				answer.status = .Ok
 				break
 			}
@@ -97,7 +97,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.status = root_connect(item, record, name, &answer.values)
 	case .Disconnect:
 		// The connection of the history is not ended by the name of its
-		// service: the program keeps its history when it ends its calls to
+		// service: the process keeps its history when it ends its calls to
 		// the storage service.
 		answer.status = .Bad_Handle
 		for &connection in connections {
@@ -173,7 +173,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 	return answer
 }
 
-// root_connect runs Connect. The program of the client table connects for
+// root_connect runs Connect. The process of the client table connects for
 // one of its rows, and for no other principal; its check writes the record
 // of its refusal, and a connection that fails after it gets the record of
 // root_command_refusal.
@@ -199,7 +199,7 @@ root_connect :: proc "contextless" (item: ^Started, record: ring.Record, name: s
 // kernel does (src/kernel/diagnose.odin), it reads the state again after
 // the refusal, and names a cause only when the state shows it now: else the
 // record is Refused, with the status. The record names the argument of the
-// caller, and no fact of another program that the status does not give.
+// caller, and no fact of another process that the status does not give.
 root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, name: string, value: u64, status: system.Status) -> [7]u64 {
 	kind := u32(command)
 	of_the_system := name_is_a_system_part(name)
@@ -207,7 +207,7 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client:
 		// No cause that the state shows: the record Refused, with the status.
 	case .Connect_History, .Palette_Provide:
-		// A grant of the role that the command needs, and that the program
+		// A grant of the role that the command needs, and that the process
 		// lacks or lost by a revocation.
 		if status == .No_Right {
 			return root_ring.sender_refusal(command)
@@ -230,7 +230,7 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 			return errors.ring_fail(kind, .Reserved, .None, 1)
 		}
 		if status == .Bad_Handle && find(name) == nil {
-			return errors.ring_fail(kind, .Absent, .Programs, 1)
+			return errors.ring_fail(kind, .Absent, .Processes, 1)
 		}
 	case .Connect:
 		if status == .Bad_Handle {
@@ -245,12 +245,12 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 		}
 	case .Grants:
 		if status == .Bad_Handle && find(name) == nil {
-			return errors.ring_fail(kind, .Absent, .Programs, 1)
+			return errors.ring_fail(kind, .Absent, .Processes, 1)
 		}
 	case .Revoke:
 		switch {
 		case status == .Bad_Handle && find(name) == nil:
-			return errors.ring_fail(kind, .Absent, .Programs, 1)
+			return errors.ring_fail(kind, .Absent, .Processes, 1)
 		case status == .Bad_Operation:
 			return errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(value, 1 << 62)), i64(max(system.Root_Grant)))
 		case status == .Bad_State:

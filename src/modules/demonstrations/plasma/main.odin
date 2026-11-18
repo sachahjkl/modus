@@ -3,12 +3,12 @@
 // **What it is for.** It is a load that never ends and never waits for an
 // input: one thread computes each pixel of a picture of 320 by 200, about
 // 30 times in one second, with integers only. It shows the share of the
-// processor of a busy program in `monitor`, and the cost of a full picture
+// processor of a busy process in `monitor`, and the cost of a full picture
 // for the compositor.
 //
 // **Start**: `start("plasma")` in the console, or the bar of the desktop.
 // The log has "plasma: ok" after the first picture. Its row of
-// `program_roles` has no grant: a window is all that it needs.
+// `process_roles` has no grant: a window is all that it needs.
 //
 // **How it computes**: a table of the sine in 256 steps, from the
 // approximation of Bhaskara in integers, and a palette of 256 colors from
@@ -27,7 +27,7 @@ FRAME_INTERVAL :: 33
 
 sine: [256]i32 // One period, from -127 to 127.
 palette: [256]graphics.Color
-// The window is one picture of this program, shown with the interface
+// The window is one picture of this process, shown with the interface
 // package (a Picture record): the animation draws into it.
 picture_pixels: [WIDTH * HEIGHT]graphics.Color
 picture: graphics.Canvas
@@ -42,7 +42,7 @@ drawing: interface.Window_Drawing
 //
 // With no window it stops with the code 1. The time of each picture is
 // fixed from the first one: after a slow picture, the next pictures follow
-// with no sleep until the program is on time again.
+// with no sleep until the process is on time again.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "plasma")

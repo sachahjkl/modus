@@ -18,7 +18,7 @@ import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import debug_object "modus:contract/debug_object"
 import module "modus:contract/module"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 
 // The name of the module build file, in the folder of the module.
 MODULE_BUILD_FILE_NAME :: "module.txt"
@@ -380,7 +380,7 @@ Outside_Module_Example :: struct {
 
 THIRD_PARTY_EXAMPLE_FOLDER :: BUILD_FOLDER + "/third_party_example"
 
-// A program with no import, and a module with an import: the second
+// A process with no import, and a module with an import: the second
 // needs the file of its import from the folder of the system while its
 // own file goes to the folder of the copy.
 OUTSIDE_MODULE_EXAMPLES :: [?]Outside_Module_Example {
@@ -545,8 +545,8 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 	return true
 }
 
-// The name of the outside module that the test of the disk programs starts
-// in a machine: the sources of the program visitor, copied outside the
+// The name of the outside module that the test of the disk processes starts
+// in a machine: the sources of the process visitor, copied outside the
 // sources and built by `module-build` under this name, which is no module
 // of the boot image.
 OUTSIDE_DISK_MODULE :: "outsider"
@@ -636,11 +636,11 @@ run_module_disk :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	for file in files {
-		if disk_program.debug_object_name_is(file.name) {
+		if disk_process.debug_object_name_is(file.name) {
 			continue
 		}
-		digits: [disk_program.HASH_DIGITS]u8
-		disk_program.hash_write(&digits, blake3.hash(file.bytes))
+		digits: [disk_process.HASH_DIGITS]u8
+		disk_process.hash_write(&digits, blake3.hash(file.bytes))
 		fmt.printfln("modustool: in the console of a machine with this disk: start_from_disk(\"%s\", \"%s\")", file.name, string(digits[:]))
 	}
 	return 0

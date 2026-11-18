@@ -1,4 +1,4 @@
-// The lines of the program processor_frame, which measures a frame at
+// The lines of the process processor_frame, which measures a frame at
 // 1920 x 1080 on the processor in three parts
 // (src/md/features/desktop_to_browser.md, "The first measure: a frame at 1920 × 1080 on the processor").
 // The scenario of the measure run waits for each line; after the machine,
@@ -11,7 +11,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 
-// The start of each line, in the order of the log. The program writes them
+// The start of each line, in the order of the log. The process writes them
 // (src/modules/demonstrations/processor_frame/main.odin, measure_log).
 PROCESSOR_FRAME_CLEAR_AND_PRESENT :: "processor_frame: measure: a clear and a present of 1920x1080"
 PROCESSOR_FRAME_FULL_FRAME :: "processor_frame: measure: a full frame of the compositor at 1920x1080 with 4 windows"
@@ -47,7 +47,7 @@ processor_frame_text_before :: proc(text, separator: string) -> (before, after: 
 	return text[:at], text[at + len(separator):], true
 }
 
-// processor_frame_decimal reads a time as the program writes it: digits, a
+// processor_frame_decimal reads a time as the process writes it: digits, a
 // point and one digit. It gives tenths of a microsecond.
 @(private = "file")
 processor_frame_decimal :: proc(text: string) -> (tenths: u64, ok: bool) {
@@ -79,7 +79,7 @@ processor_frame_count :: proc(text: string) -> (count: u64, ok: bool) {
 }
 
 // processor_frame_line_problem gives why the times of one line are not in
-// the form of the program, or "": the least and the median in tenths of a
+// the form of the process, or "": the least and the median in tenths of a
 // microsecond, the least not above the median, a median that is not 0, the
 // frames in one second that the median gives, and a count of frames that
 // is not 0.
@@ -115,7 +115,7 @@ processor_frame_line_problem :: proc(line: string) -> string {
 	case least > median:
 		return fmt.tprintf("the least %d.%d us is above the median %d.%d us", least / 10, least % 10, median / 10, median % 10)
 	}
-	// The program computes the frames from the median in nanoseconds, and
+	// The process computes the frames from the median in nanoseconds, and
 	// writes the median cut to a tenth of a microsecond: the frames lie
 	// between the counts of the median written and of one tenth more.
 	most := 10_000_000 / median
@@ -128,7 +128,7 @@ processor_frame_line_problem :: proc(line: string) -> string {
 
 // processor_frame_lines_problems gives the problems of the lines of
 // processor_frame in a log: each part has exactly one line, in the form of
-// the program, and the last line of the program is there.
+// the process, and the last line of the process is there.
 processor_frame_lines_problems :: proc(log: string) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	lines := strings.split_lines(log, context.temp_allocator)
@@ -174,7 +174,7 @@ processor_frame_lines_check :: proc(path: string) -> bool {
 		return false
 	}
 	test_passed_print("the %d measure lines of processor_frame in %s are in their form, and each part drew its pixels", len(processor_frame_parts), path)
-	for line in measure_program_lines(log, "processor_frame") {
+	for line in measure_process_lines(log, "processor_frame") {
 		if strings.contains(line, "processor_frame: measure: ") {
 			fmt.println(line)
 		}

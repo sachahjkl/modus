@@ -55,7 +55,7 @@ Measure_Record_Number :: struct {
 	line_number:    int,
 	matching_lines: int,
 	machine:        string, // The machine that wrote the log.
-	line:           string, // The whole line, with its label "[program] ".
+	line:           string, // The whole line, with its label "[process] ".
 	absent:         string, // Why the run did not give the number.
 }
 

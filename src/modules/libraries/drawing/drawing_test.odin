@@ -14,7 +14,7 @@ import "modus:support/system"
 import "modus:support/vector_font"
 
 // The text state of the graphics package and the text of the module are
-// one for the test program, and the tests run on several threads: each
+// one for the test process, and the tests run on several threads: each
 // test that draws holds this lock, so the proof of the same pixels changes
 // the fonts with no other draw at that time.
 @(private = "file")
@@ -399,7 +399,7 @@ color :: proc(list: []graphics.Color, generator: ^u32, place: ^int, part_changed
 @(private = "file")
 build_proof_frame :: proc(table: ^interface.Draw_Table, seed: u32, changed: int) {
 	words := [?]string{"To", "LT", "Ty", "settings", "AVATAR", "Wave", "palette", "jj", "fill", "rings", "0O 1lI", "Monitor", "the clock", "W", "i", "{0}%e", "12:34:56"}
-	colors := [?]graphics.Color{graphics.colors.text, graphics.colors.dim, graphics.colors.kernel, graphics.colors.program, graphics.colors.memory, graphics.colors.failed, graphics.COLOR_WHITE}
+	colors := [?]graphics.Color{graphics.colors.text, graphics.colors.dim, graphics.colors.kernel, graphics.colors.process, graphics.colors.memory, graphics.colors.failed, graphics.COLOR_WHITE}
 	state := seed
 	part := 0
 	interface.draw_table_clear(table)
@@ -497,8 +497,8 @@ proof_fonts_build :: proc(t: ^testing.T) -> (fonts: Proof_Fonts) {
 	return fonts
 }
 
-// One font state of a program: the setting of the font of the cells, the
-// order of the stripes, and whether the program has the interface font.
+// One font state of a process: the setting of the font of the cells, the
+// order of the stripes, and whether the process has the interface font.
 @(private = "file")
 Proof_Configuration :: struct {
 	name:           string,
@@ -556,7 +556,7 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 	fonts := proof_fonts_build(t)
 	// The fonts end before their memory: no later draw reads a freed cache.
 	defer {
-		program_text = {}
+		process_text = {}
 		graphics.text_state.has_cache = false
 		graphics.text_state.has_bold_cache = false
 		graphics.text_choice_set(.Vector, .Red_Green_Blue)
@@ -593,9 +593,9 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 	frames, damage_rectangles, text_records, picture_records := 0, 0, 0, 0
 	for configuration in configurations {
 		graphics.text_choice_set(configuration.font, configuration.order)
-		// The module reads the interface font of the program in its own
+		// The module reads the interface font of the process in its own
 		// data; the package reads it in the draw table.
-		program_text = {loaded = true, interface_font = fonts.interface_font, interface_font_given = configuration.interface_font}
+		process_text = {loaded = true, interface_font = fonts.interface_font, interface_font_given = configuration.interface_font}
 		font_of_tables: ^display.Interface_Font
 		if configuration.interface_font {
 			font_of_tables = &fonts.interface_font
@@ -699,7 +699,7 @@ one_call_with_the_rectangles_draws_as_one_call_for_each :: proc(t: ^testing.T) {
 	defer sync.mutex_unlock(&draw_lock)
 	fonts := proof_fonts_build(t)
 	defer {
-		program_text = {}
+		process_text = {}
 		graphics.text_state.has_cache = false
 		graphics.text_state.has_bold_cache = false
 		graphics.text_choice_set(.Vector, .Red_Green_Blue)
@@ -729,7 +729,7 @@ one_call_with_the_rectangles_draws_as_one_call_for_each :: proc(t: ^testing.T) {
 	frames, rectangles_drawn, overlaps, one_calls, calls_for_each := 0, 0, 0, 0, 0
 	for configuration in configurations {
 		graphics.text_choice_set(configuration.font, configuration.order)
-		program_text = {loaded = true, interface_font = fonts.interface_font, interface_font_given = configuration.interface_font}
+		process_text = {loaded = true, interface_font = fonts.interface_font, interface_font_given = configuration.interface_font}
 		font_of_table: ^display.Interface_Font
 		if configuration.interface_font {
 			font_of_table = &fonts.interface_font
@@ -828,7 +828,7 @@ grid_proof_table :: proc(memory: ^Grid_Proof_Tables) -> interface.Draw_Table {
 @(private = "file")
 grid_proof_cells :: proc(cells: []interface.Text_Grid_Cell, seed: u32) {
 	state := seed
-	colors := [?]graphics.Color{graphics.colors.text, graphics.colors.dim, graphics.colors.kernel, graphics.colors.program, graphics.COLOR_WHITE}
+	colors := [?]graphics.Color{graphics.colors.text, graphics.colors.dim, graphics.colors.kernel, graphics.colors.process, graphics.COLOR_WHITE}
 	characters := "let x = 12; -- the line {0}%e Wave jj"
 	for &cell, index in cells {
 		row, column := index / GRID_COLUMNS, index % GRID_COLUMNS
@@ -864,7 +864,7 @@ the_exports_draw_a_text_grid_as_the_package :: proc(t: ^testing.T) {
 	defer sync.mutex_unlock(&draw_lock)
 	fonts := proof_fonts_build(t)
 	defer {
-		program_text = {}
+		process_text = {}
 		graphics.text_state.has_cache = false
 		graphics.text_state.has_bold_cache = false
 		graphics.text_choice_set(.Vector, .Red_Green_Blue)
@@ -891,7 +891,7 @@ the_exports_draw_a_text_grid_as_the_package :: proc(t: ^testing.T) {
 	frames, damage_rectangles, grid_records := 0, 0, 0
 	for font in fonts_of_the_cells {
 		graphics.text_choice_set(font, .Red_Green_Blue)
-		program_text = {loaded = true}
+		process_text = {loaded = true}
 		for seed in 0 ..< u32(PROOF_SEEDS) {
 			grid_proof_cells(cells_before, seed * 7919 + 1)
 			copy(cells_now, cells_before)
@@ -1034,11 +1034,11 @@ the_parts_of_a_screen_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) 
 	sync.mutex_lock(&draw_lock)
 	defer sync.mutex_unlock(&draw_lock)
 	defer {
-		program_text = {}
+		process_text = {}
 		graphics.text_choice_set(.Vector, .Red_Green_Blue)
 	}
 	graphics.text_choice_set(.Spleen, .Red_Green_Blue)
-	program_text = {loaded = true}
+	process_text = {loaded = true}
 	// Each surface in an allocation of its own, with a stride larger than
 	// its width; the heron is the last memory.
 	sizes := [SURFACE_COUNT][2]int{{64, 40}, {96, 56}, {48, 48}, {120, 32}}
@@ -1208,10 +1208,10 @@ scroll_line_cells :: proc(row: []interface.Text_Grid_Cell, number: u64) {
 		rest /= 10
 	}
 	levels := [4]string{"info", "debug", "warning", "error"}
-	messages := [5]string{"the queue was full: the writer waited", "the block 81 244 has the hash", "the line left the view", "a program gave a handle", "one wake for 2048 records"}
+	messages := [5]string{"the queue was full: the writer waited", "the block 81 244 has the hash", "the line left the view", "a process gave a handle", "one wake for 2048 records"}
 	column := scroll_put(row, 0, string(digits[:]), graphics.colors.dim)
 	level := levels[number % 4]
-	column = scroll_put(row, column + 1, level, level == "error" ? graphics.COLOR_WHITE : graphics.colors.program, level == "error" ? graphics.colors.failed : 0)
+	column = scroll_put(row, column + 1, level, level == "error" ? graphics.COLOR_WHITE : graphics.colors.process, level == "error" ? graphics.colors.failed : 0)
 	scroll_put(row, column + 1, messages[number % 5], graphics.colors.text)
 }
 
@@ -1226,7 +1226,7 @@ build_scrolling_frame :: proc(table: ^interface.Draw_Table, cells: []interface.T
 	for bar in 0 ..< 12 {
 		height := next_number(&state) % 4 * 4
 		interface.draw_rectangle(table, 200 + bar * 6, 4, 5, 12 - height, graphics.colors.track)
-		interface.draw_rectangle(table, 200 + bar * 6, 16 - height, 5, height, graphics.colors.program)
+		interface.draw_rectangle(table, 200 + bar * 6, 16 - height, 5, height, graphics.colors.process)
 	}
 	x := interface.draw_text(table, 8, 4, "lines ", graphics.colors.dim)
 	x = interface.draw_unsigned(table, x, 4, top + 1, graphics.colors.text)
@@ -1245,11 +1245,11 @@ a_scrolling_grid_in_two_pictures_is_each_frame :: proc(t: ^testing.T) {
 	sync.mutex_lock(&draw_lock)
 	defer sync.mutex_unlock(&draw_lock)
 	defer {
-		program_text = {}
+		process_text = {}
 		graphics.text_choice_set(.Vector, .Red_Green_Blue)
 	}
 	graphics.text_choice_set(.Spleen, .Red_Green_Blue)
-	program_text = {loaded = true}
+	process_text = {loaded = true}
 	before_memory := new(Grid_Proof_Tables)
 	now_memory := new(Grid_Proof_Tables)
 	defer free(before_memory)

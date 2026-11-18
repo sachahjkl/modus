@@ -1,8 +1,8 @@
-// The client of the storage service: what a program compiles in to keep its
+// The client of the storage service: what a process compiles in to keep its
 // data in its private store: a tree of entries, each an object or a tree
 // (docs/STORAGE.md).
 //
-// The root service makes the connection when it starts the program, and
+// The root service makes the connection when it starts the process, and
 // gives it in the context (GRANT_ roles below): a call ring, a call region,
 // a handle that reads the state of the storage service, and the file of the
 // storage service, mapped read-only at FILE_ADDRESS. The calls are isolated
@@ -20,13 +20,13 @@
 // under a place. A name is one step under a place.
 //
 // When the root service revokes the grant, the handles of the connection
-// end: a call gives Gone, and the program continues.
+// end: a call gives Gone, and the process continues.
 //
-// Who uses it: each program with the grant `Store` (the console, the notes,
+// Who uses it: each process with the grant `Store` (the console, the notes,
 // the settings, the tests of the storage service). The parts:
 //
 // - `Client`, `open`, `connected`, `call`: the connection.
-// - `call_send`, `call_answer`: one call in two parts, for a program that
+// - `call_send`, `call_answer`: one call in two parts, for a process that
 //   does not wait for the storage service.
 // - `read`, `write`, `remove` and the pending changes (`write_range`,
 //   `set_size`, `commit`): the objects.
@@ -51,7 +51,7 @@ import "modus:contract/ring"
 import store_contract "modus:contract/store"
 import "modus:support/system"
 
-// The slots of the context of a program with a private store, in the one
+// The slots of the context of a process with a private store, in the one
 // table of the context slots (src/library/support/system/grants.odin).
 GRANT_RING :: system.GRANT_STORAGE_RING // Memory: the call ring.
 GRANT_REGION :: system.GRANT_STORAGE_REGION // Memory: the call region.
@@ -67,7 +67,7 @@ FILE_ADDRESS :: fixed_addresses.STORAGE_FILE_ADDRESS // Where the root service m
 // The answer of an export of the storage service that is not a generation
 // or a size: one of these negative results. The error record of the call
 // says more (src/library/contract/errors): the client gives it to its
-// program. The values are the words of the result of the export: the
+// process. The values are the words of the result of the export: the
 // service writes i64(member), and a reader takes the word with
 // export_error_of_result.
 Export_Error :: enum i64 {
@@ -105,12 +105,12 @@ export_failed_with :: proc "contextless" (status: Status, result: i64, answer: E
 	return status == .Failed && ok && read == answer
 }
 
-// One connection to the storage service, in the memory of the program. One
+// One connection to the storage service, in the memory of the process. One
 // thread uses it at a time: a call uses the call region whole.
 Client :: struct {
 	ring_memory:   system.Handle, // The memory of the call ring.
 	region_memory: system.Handle, // The memory of the call region.
-	service:       system.Handle, // The program of the storage service, with Read: its state.
+	service:       system.Handle, // The process of the storage service, with Read: its state.
 	calls:         ring.Ring, // The call ring, mapped.
 	region:        []u8, // The call region, mapped.
 	file:          []u8, // The file of the storage service: the descriptions of its exports.
@@ -129,7 +129,7 @@ Status :: enum {
 }
 
 // open opens the connection that the root service gave in the context of
-// this program. ok is false for a program with no grant of a store, or a
+// this process. ok is false for a process with no grant of a store, or a
 // file of the service that is not a valid module.
 open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) {
 	client.ring_memory = ctx.handles[GRANT_RING]
@@ -160,7 +160,7 @@ open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) 
 }
 
 // connected says if the connection is still there. The kernel ends the
-// handles of the connection at a revocation: the program learns it here,
+// handles of the connection at a revocation: the process learns it here,
 // before it uses the memory.
 connected :: proc "contextless" (client: ^Client) -> bool {
 	if client.gone {
@@ -168,7 +168,7 @@ connected :: proc "contextless" (client: ^Client) -> bool {
 	}
 	kind, _, _ := system.handle_state(client.ring_memory)
 	region_kind, _, _ := system.handle_state(client.region_memory)
-	state, _ := system.program_state(client.service)
+	state, _ := system.process_state(client.service)
 	if kind != .Memory || region_kind != .Memory || state == .Stopped || state == .None {
 		client.gone = true
 	}
@@ -202,7 +202,7 @@ call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated
 // A call that was sent and whose answer did not come yet: what call_answer
 // needs to read the answer. The root service keeps one while it reads a
 // file, because it never waits for the storage service
-// (docs/MODULE_CONTRACT.md, "A program from a disk").
+// (docs/MODULE_CONTRACT.md, "A process from a disk").
 Sent_Call :: struct {
 	function:    module.Function, // The description of the export.
 	offset:      u64, // The argument record in the call region.
@@ -518,7 +518,7 @@ rename :: proc "contextless" (client: ^Client, place: Place, name: string, to_pl
 }
 
 // The answer of the export share: the number of the share and its two
-// handles, as this program names them.
+// handles, as this process names them.
 Shared :: struct {
 	share:  i64, // The number of the share, for `unshare`.
 	ring:   i64, // The handle of the call ring of the new connection.
@@ -526,7 +526,7 @@ Shared :: struct {
 }
 
 // share makes a new connection whose root is the tree of a place, and
-// gives a Client of it: its two handles can go to another program, which
+// gives a Client of it: its two handles can go to another process, which
 // opens it with open_handles. number is for unshare.
 share :: proc "contextless" (client: ^Client, place: Place, read_only: bool, error: ^errors.Error_Record = nil) -> (shared: Client, number: i64, status: Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {integer = read_only ? 1 : 0}}
@@ -621,7 +621,7 @@ Version :: struct {
 	current:    i64, // 1: the current version.
 }
 
-// versions copies the states of an object of the store of the program into
+// versions copies the states of an object of the store of the process into
 // `into`, the oldest first, the current version last. total is the count of
 // all the states: more than len(rows) when they did not fit.
 versions :: proc "contextless" (client: ^Client, place: Place, name: string, into: []Version, error: ^errors.Error_Record = nil) -> (rows: []Version, total: i64, status: Status) {
@@ -695,10 +695,10 @@ Erase_Measure :: struct {
 }
 
 // erase_versions ends each version of an object of the store of this
-// program, and writes zero bytes over each block that no other state names
+// process, and writes zero bytes over each block that no other state names
 // after that (src/md/features/version_erase.md). The current version stays.
-// Only a program with the grant Versions_Erase may call it, on its own
-// store: another program, and a share, get Failed with No_Grant. An object
+// Only a process with the grant Versions_Erase may call it, on its own
+// store: another process, and a share, get Failed with No_Grant. An object
 // with no version gives a row of zeros, and the disk does not change.
 erase_versions :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (measure: Erase_Measure, status: Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}

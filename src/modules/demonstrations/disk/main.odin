@@ -1,19 +1,19 @@
 // A check and a measure of the block service (src/library/contract/block), on a disk
-// of its own: the disk of the measures, that holds no data of a program.
+// of its own: the disk of the measures, that holds no data of a process.
 //
-// The program reads and writes blocks in five runs: one block in each
+// The process reads and writes blocks in five runs: one block in each
 // request, with one request in flight and then with 32. The check sends a
 // fixed count of requests in each run, and no request must fail. In a
 // [measure run](term:measure-run) each run goes on for one second, and
-// the program writes the blocks in one second. In the two it
-// counts the kernel entries of the two programs for each
+// the process writes the blocks in one second. In the two it
+// counts the kernel entries of the two processes for each
 // request: its own entries (the system library counts them) and those of
 // the block service (the command Statistics). Then it writes a pattern,
 // flushes, reads it back and compares.
 //
 // **What it is for.** It measures the cost of a disk under this design: a
-// [block service](term:block-service) that is a program, a
-// [block ring](term:block-ring) between two programs, and a
+// [block service](term:block-service) that is a process, a
+// [block ring](term:block-ring) between two processes, and a
 // [data region](term:data-region) that the device reads and writes
 // directly. The kernel entries for each request show that the kernel is
 // not on the path of the data: an entry is a wait or a wake, and one entry
@@ -23,7 +23,7 @@
 // `start("disk")` in the console. The window has one row for each of the
 // five runs: a read or a write, the blocks in each request, the
 // requests in flight, a bar of the requests that the check sent, and a bar
-// of the kernel entries of this program and of the block service for 100
+// of the kernel entries of this process and of the block service for 100
 // requests. In a measure run (`modustool measure disk`) the first bar is
 // the blocks in one second. Its lines in the log:
 //
@@ -33,7 +33,7 @@
 //   flight: 256 requests, ...`; in a measure run: `... 32 in flight: <rate>
 //   blocks in one second, ...`;
 // - `disk: a read of 2 blocks from the last block: ...`, the error record of
-//   a read past the end of the disk, which the program checks field by
+//   a read past the end of the disk, which the process checks field by
 //   field;
 // - one line for each word of a command record that names no command
 //   (None, one past the last command, the largest word): `disk: the
@@ -49,8 +49,8 @@
 //
 // **Its grant**: **Scratch_Disk**: a block service of the
 // [disk of the measures](term:disk-of-the-measures), and its block ring.
-// The disk holds no data of a program, so the measure writes over it. The
-// program has no store and no other disk.
+// The disk holds no data of a process, so the measure writes over it. The
+// process has no store and no other disk.
 //
 // **What it does not prove.** The numbers are those of virtio under QEMU on
 // the host of the run, not of a real disk: they are printed as measures,
@@ -89,7 +89,7 @@ Measure :: struct {
 	done:    bool,
 	requests: u64, // The requests that the run sent and that were answered.
 	rate:    u64, // Blocks in one second: a measure run only.
-	client:  u64, // Kernel entries of this program for 100 requests.
+	client:  u64, // Kernel entries of this process for 100 requests.
 	service: u64, // Kernel entries of the block service for 100 requests.
 	errors:  u64,
 }
@@ -166,7 +166,7 @@ service_entries :: proc "contextless" () -> u64 {
 // blocks, at places that walk the first 4096 blocks of the disk. The check
 // ends after REQUESTS_CHECKED answers; a measure run goes on for one
 // second, and has the rate. It writes the kernel entries of the two
-// programs for 100 requests and the failed requests into the record, and
+// processes for 100 requests and the failed requests into the record, and
 // one line on the log.
 run :: proc "contextless" (measure: ^Measure) {
 	measured := system.measure_run()
@@ -210,11 +210,11 @@ run :: proc "contextless" (measure: ^Measure) {
 	measure.service = service * 100 / max(done, 1)
 	measure.done = true
 	if !measured {
-		system.log("disk: ", measure.write ? "write" : "read", ", ", measure.blocks, measure.blocks == 1 ? " block" : " blocks", " in each request, ", u64(measure.depth), " in flight: ", done, " requests, kernel entries for 100 requests: ", measure.client, " of this program, ", measure.service, " of the block service, ", measure.errors, " errors")
+		system.log("disk: ", measure.write ? "write" : "read", ", ", measure.blocks, measure.blocks == 1 ? " block" : " blocks", " in each request, ", u64(measure.depth), " in flight: ", done, " requests, kernel entries for 100 requests: ", measure.client, " of this process, ", measure.service, " of the block service, ", measure.errors, " errors")
 		return
 	}
 	measure.rate = done * measure.blocks * 1000 / elapsed
-	system.log("disk: ", measure.write ? "write" : "read", ", ", measure.blocks, measure.blocks == 1 ? " block" : " blocks", " in each request, ", u64(measure.depth), " in flight: ", measure.rate, " blocks in one second, kernel entries for 100 requests: ", measure.client, " of this program, ", measure.service, " of the block service, ", measure.errors, " errors")
+	system.log("disk: ", measure.write ? "write" : "read", ", ", measure.blocks, measure.blocks == 1 ? " block" : " blocks", " in each request, ", u64(measure.depth), " in flight: ", measure.rate, " blocks in one second, kernel entries for 100 requests: ", measure.client, " of this process, ", measure.service, " of the block service, ", measure.errors, " errors")
 }
 
 // check writes a pattern in 128 blocks after the blocks of the measures,
@@ -346,7 +346,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// Each line is a line of a table: its text 4 pixels under its top.
 	column := interface.column_of({12, 8, WIDTH - 24, HEIGHT - 8})
 	interface.cell_text(&frame, interface.column_take(&column, LINE), "the block service: a virtio disk, a ring, the data in shared memory.", graphics.colors.dim)
-	interface.cell_text(&frame, interface.column_take(&column, LINE), "the device reads and writes the memory of this program: no copy.", graphics.colors.dim)
+	interface.cell_text(&frame, interface.column_take(&column, LINE), "the device reads and writes the memory of this process: no copy.", graphics.colors.dim)
 	// The size of the disk: a label, its number, and the unit after it.
 	number: interface.Text_Builder
 	disk_line := interface.column_take(&column, LINE)
@@ -373,7 +373,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.cell_text(&frame, cells[2], measure.blocks == 1 ? "block" : "blocks", graphics.colors.dim)
 		interface.cell_text(&frame, cells[3], interface.number_text(&number, u64(measure.depth)), graphics.colors.text)
 		if measure.done {
-			interface.bar_with_value(&frame, cells[4], BAR_WIDTH, measured ? measure.rate : measure.requests - measure.errors, most_rate, measure.errors == 0 ? graphics.colors.program : graphics.colors.failed)
+			interface.bar_with_value(&frame, cells[4], BAR_WIDTH, measured ? measure.rate : measure.requests - measure.errors, most_rate, measure.errors == 0 ? graphics.colors.process : graphics.colors.failed)
 			interface.bar_with_value(&frame, cells[5], BAR_WIDTH, measure.client + measure.service, most_entries, graphics.colors.kernel)
 		} else {
 			interface.cell_text(&frame, cells[4], "...", graphics.colors.dim)
@@ -382,7 +382,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.column_take(&column, LINE / 2)
 	checked_line := interface.column_take(&column, LINE)
 	if checked {
-		interface.cell_text(&frame, checked_line, wrong == 0 ? "write, flush, read back: 128 blocks, 0 wrong" : "write, flush, read back: WRONG", wrong == 0 ? graphics.colors.program : graphics.colors.failed)
+		interface.cell_text(&frame, checked_line, wrong == 0 ? "write, flush, read back: 128 blocks, 0 wrong" : "write, flush, read back: WRONG", wrong == 0 ? graphics.colors.process : graphics.colors.failed)
 	}
 	measure_line := interface.column_take(&column, LINE)
 	if !measured {
@@ -392,7 +392,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 }
 
 // entry runs the five runs once, shows them, then keeps the window open
-// until the program is stopped.
+// until the process is stopped.
 //
 // **What it does**, in order:
 //
@@ -400,7 +400,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 //    (1 MiB, contiguous: the device reads and writes it).
 // 2. It gives the data region to the block service through the block ring,
 //    and sends `Attach`. The block service maps the ring when it starts; the
-//    program tries again each millisecond, until the hang bound.
+//    process tries again each millisecond, until the hang bound.
 // 3. It asks `Info` for the size of the disk.
 // 4. It runs each of the five runs (`run`): a count of requests, or one
 //    second in a measure run.

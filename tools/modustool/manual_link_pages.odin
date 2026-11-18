@@ -1,7 +1,7 @@
 // The link pages of the manual (src/md/features/manual_links.md): the
 // resource `manual_pages` of the boot image. The documentation of a module
 // links terms of the glossary, headings of the guides and declarations of
-// the sources that no module describes; the program `manual` reads only the
+// the sources that no module describes; the process `manual` reads only the
 // boot image, so the build writes the page of each such target in one
 // resource, in the format of src/library/contract/manual_pages.
 package modustool

@@ -1,9 +1,9 @@
-// A program that writes to an address that it does not have. It shows that
-// the kernel stops this program only: the rest of the system continues.
+// A process that writes to an address that it does not have. It shows that
+// the kernel stops this process only: the rest of the system continues.
 //
 // The write is three calls deep: the stop report has a stack trace from the
 // frame pointers, with the instruction in three and the return addresses in
-// two, one and entry (program `errors`).
+// two, one and entry (process `errors`).
 package fault
 
 import "modus:support/system"
@@ -29,19 +29,19 @@ one :: #force_no_inline proc "contextless" (address: uintptr) {
 
 // entry writes a log line, then writes to address 0 three calls deep.
 //
-// **What it is for.** It shows the sandbox of a program: a fault ends the
-// program that made it, never the machine or another program. The kernel
-// writes the [stop report](term:stop-report) of the program (the vector,
+// **What it is for.** It shows the sandbox of a process: a fault ends the
+// process that made it, never the machine or another process. The kernel
+// writes the [stop report](term:stop-report) of the process (the vector,
 // the address, and the frames of its stack), and keeps it while a handle
-// names the program, so that a developer tool reads it later.
+// names the process, so that a developer tool reads it later.
 //
 // **What a reader sees.** Start it from the start menu, or with
 // `start("fault")` in the console. It has no window and no grant. The log
-// gets `fault: this program writes to address 0`, then the line of the
-// kernel that reports the page fault (vector 14) and stops the program.
-// The desktop goes on. In `inspect`, the stopped program shows its stop
+// gets `fault: this process writes to address 0`, then the line of the
+// kernel that reports the page fault (vector 14) and stops the process.
+// The desktop goes on. In `inspect`, the stopped process shows its stop
 // report, each frame named by its procedure and its source line from the
-// debug image. The program `errors` starts it in its fault case, and checks
+// debug image. The process `errors` starts it in its fault case, and checks
 // that the four frames are all in this module.
 //
 // **Why the code looks odd.** The address comes from a value of the context
@@ -50,17 +50,17 @@ one :: #force_no_inline proc "contextless" (address: uintptr) {
 // is the last instruction of a function: each call keeps its frame and its
 // return address, and the stack trace has every level.
 //
-// If the write ever succeeds, the program writes `fault: the write did not
-// stop the program` and stops with the code 1: that line is a fault of the
+// If the write ever succeeds, the process writes `fault: the write did not
+// stop the process` and stops with the code 1: that line is a fault of the
 // kernel.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	system.log("fault: this program writes to address 0")
+	system.log("fault: this process writes to address 0")
 	// The value 14: 0, as no starter writes it; the compiler cannot know it.
-	// (The values 9 to 12 are the random seed of the program, 16 the
+	// (The values 9 to 12 are the random seed of the process, 16 the
 	// strength of the seed; 13 and 15 have no role.)
 	address := uintptr(ctx.values[14])
 	one(address)
-	system.log("fault: the write did not stop the program")
+	system.log("fault: the write did not stop the process")
 	system.stop(1)
 }

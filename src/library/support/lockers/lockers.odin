@@ -1,4 +1,4 @@
-// What the program `locks` and its program `locker` agree on (the lock
+// What the process `locks` and its process `locker` agree on (the lock
 // split of the kernel). `locks` starts LOCKER_CAPACITY lockers. Each one
 // waits for a command on the board, works on its own objects from the time
 // `start` to the time `end` or until it did `limit` operations, writes what
@@ -9,18 +9,18 @@ import "modus:contract/fixed_addresses"
 
 // The roles of the context of a locker.
 GRANT_BOARD :: 0 // Memory, with Read and Write: the board, one page that `locks` also maps.
-GRANT_PEER :: 1 // ROLE_CHURN: a program, with the right Control, that this one stops. 0: none.
+GRANT_PEER :: 1 // ROLE_CHURN: a process, with the right Control, that this one stops. 0: none.
 VALUE_INDEX :: 0 // The place of the locker on the board.
 VALUE_ROLE :: 1 // ROLE_MEASURE or ROLE_CHURN.
-VALUE_STOP_AFTER :: 2 // ROLE_CHURN: the milliseconds after which the program stops its peer, or itself with no peer. 0: never.
+VALUE_STOP_AFTER :: 2 // ROLE_CHURN: the milliseconds after which the process stops its peer, or itself with no peer. 0: never.
 
 // A locker of the measures: it works on the board.
 ROLE_MEASURE :: 0
 // A locker of the stress case: it has no board. Two threads compute with no
 // end, and the first thread makes threads that end at once, and stops one
 // of the two and makes it again, with no end, until a stop: `locks` stops
-// the program while its threads run, closes its last handle at once, and
-// the program can stop itself or its peer at the same time.
+// the process while its threads run, closes its last handle at once, and
+// the process can stop itself or its peer at the same time.
 ROLE_CHURN :: 1
 CHURN_THREADS :: 4 // The threads that a churn locker can have at one time.
 

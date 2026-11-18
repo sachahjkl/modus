@@ -58,32 +58,32 @@ times_summary_orders_the_slowest_steps :: proc(t: ^testing.T) {
 	testing.expect_value(t, all.slowest[1], 1)
 	none := test_times_summary(nil)
 	testing.expect_value(t, len(none.slowest), 0)
-	testing.expect_value(t, len(none.programs), 0)
+	testing.expect_value(t, len(none.processes), 0)
 }
 
-// The waits are added by the program of the line, the most waited first;
-// a step that waits for no line of the log is not a wait of a program.
+// The waits are added by the process of the line, the most waited first;
+// a step that waits for no line of the log is not a wait of a process.
 @(test)
-times_summary_adds_the_waits_by_program :: proc(t: ^testing.T) {
+times_summary_adds_the_waits_by_process :: proc(t: ^testing.T) {
 	records := hand_made_records()
 	summary := test_times_summary(records[:])
-	testing.expect_value(t, len(summary.programs), 3)
-	testing.expect_value(t, summary.programs[0], Program_Wait{program = "clock", count = 2, waited = 9 * time.Second})
-	testing.expect_value(t, summary.programs[1], Program_Wait{program = "compositor", count = 1, waited = 3 * time.Second})
-	testing.expect_value(t, summary.programs[2], Program_Wait{program = "[console]", count = 1, waited = 2 * time.Second})
+	testing.expect_value(t, len(summary.processes), 3)
+	testing.expect_value(t, summary.processes[0], Process_Wait{process = "clock", count = 2, waited = 9 * time.Second})
+	testing.expect_value(t, summary.processes[1], Process_Wait{process = "compositor", count = 1, waited = 3 * time.Second})
+	testing.expect_value(t, summary.processes[2], Process_Wait{process = "[console]", count = 1, waited = 2 * time.Second})
 }
 
-// The program of a line is the first word of its text before the first ":".
+// The process of a line is the first word of its text before the first ":".
 @(test)
-program_name_is_the_first_word_before_the_colon :: proc(t: ^testing.T) {
-	testing.expect_value(t, program_of_a_log_text("clock: ok, 4 cases"), "clock")
-	testing.expect_value(t, program_of_a_log_text("scheduler: strategy fair: 3 threads"), "scheduler")
-	testing.expect_value(t, program_of_a_log_text("[console] settings: 3 commands"), "[console]")
-	testing.expect_value(t, program_of_a_log_text("[console] 18"), "[console]")
-	testing.expect_value(t, program_of_a_log_text("boot program: the firmware has no TPM protocol"), "boot")
-	testing.expect_value(t, program_of_a_log_text("   threads     "), "threads")
-	testing.expect_value(t, program_of_a_log_text(""), "(no name)")
-	testing.expect_value(t, program_of_a_log_text(": no name"), "(no name)")
+process_name_is_the_first_word_before_the_colon :: proc(t: ^testing.T) {
+	testing.expect_value(t, process_of_a_log_text("clock: ok, 4 cases"), "clock")
+	testing.expect_value(t, process_of_a_log_text("scheduler: strategy fair: 3 threads"), "scheduler")
+	testing.expect_value(t, process_of_a_log_text("[console] settings: 3 commands"), "[console]")
+	testing.expect_value(t, process_of_a_log_text("[console] 18"), "[console]")
+	testing.expect_value(t, process_of_a_log_text("boot program: the firmware has no TPM protocol"), "boot")
+	testing.expect_value(t, process_of_a_log_text("   threads     "), "threads")
+	testing.expect_value(t, process_of_a_log_text(""), "(no name)")
+	testing.expect_value(t, process_of_a_log_text(": no name"), "(no name)")
 }
 
 // The start of a text never ends inside a character of several bytes.

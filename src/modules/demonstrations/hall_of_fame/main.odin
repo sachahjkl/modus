@@ -362,7 +362,7 @@ build :: proc "contextless" (frame: ^interface.Frame) -> (drawn: int) {
 }
 
 // entry opens the window, prepares the portraits, then draws a frame at
-// each event of the window until the program is stopped. With no window,
+// each event of the window until the process is stopped. With no window,
 // it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {

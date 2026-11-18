@@ -1,7 +1,7 @@
 package modustool
 
 // The large objects of a store (docs/STORAGE.md, "Large objects"): the
-// program `ranges` makes an object of 8 GiB from three range writes, makes
+// process `ranges` makes an object of 8 GiB from three range writes, makes
 // 1000 small writes at scrambled offsets and one commit, and checks that the
 // commit hashed and wrote what the writes touched, not the object; then a
 // version, a cut, an extension, the refusals, and a loop of range commits.

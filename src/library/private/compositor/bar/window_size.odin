@@ -67,7 +67,7 @@ resize_edges_at :: proc "contextless" (outer: Outer_Rectangle, border, pointer_x
 // One window for the hit test of the edges, as the compositor sees it.
 Window_Hit :: struct {
 	outer:     Outer_Rectangle, // Its frame on the screen.
-	resizable: bool, // The program declared it resizable, and no resize of it waits for its program.
+	resizable: bool, // The process declared it resizable, and no resize of it waits for its process.
 }
 
 // resize_target gives the window whose edges a press at a place takes,

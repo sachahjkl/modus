@@ -8,15 +8,15 @@ The guide is [`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md), "3. The seed o
 
 ## Constraints
 
-- **The code of a device is a program** (property 7). The root service holds the ports of the configuration of the bus; it does not drive a queue.
-- **No seed waits for a device.** No program runs before the root service, so its first seed comes from the processor. A device that does not answer must not stop the start.
+- **The code of a device is a process** (property 7). The root service holds the ports of the configuration of the bus; it does not drive a queue.
+- **No seed waits for a device.** No process runs before the root service, so its first seed comes from the processor. A device that does not answer must not stop the start.
 - **The device is one more source, never the only one.** The bytes of a device can only add to the seed. A device that gives zeros, the same bytes twice, or nothing, leaves the generator as it was.
 - **The claim stays the claim of the processor.** The seed strength says what the system can claim. The system cannot check the bytes of a device, as it cannot check `rdseed`.
 - **A value from another party is copied, then checked**: the count of bytes in a completion, and the length that the device writes in its ring of used chains.
 
 ## The chosen form
 
-**The entropy service** is the program `entropy`: the device service of the entropy device. It has what each virtio device service has (the registers, one message interrupt, the memory of the queues, the machine with the right Physical, a copy of the configuration) and the entropy ring, and nothing else. It drives one queue of the device, with one request in flight. The buffer of a request is in the memory of the queues: the device reaches no other memory, and with the IOMMU only that memory.
+**The entropy service** is the process `entropy`: the device service of the entropy device. It has what each virtio device service has (the registers, one message interrupt, the memory of the queues, the machine with the right Physical, a copy of the configuration) and the entropy ring, and nothing else. It drives one queue of the device, with one request in flight. The buffer of a request is in the memory of the queues: the device reaches no other memory, and with the IOMMU only that memory.
 
 **The place.** The device is at the place `pci.ENTROPY_DEVICE` of bus 0, as each device of the fixed machine is at a fixed place. The root service reads the identity there after the compositor starts. With no virtio entropy device at that place, it writes one line at the level information and starts no service:
 
@@ -28,7 +28,7 @@ The guide is [`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md), "3. The seed o
 
 `root: the entropy device gave 64 bytes in 2 reads: 64 bytes mixed into the random generator of the system; refused reads: 0`
 
-Each program that the root service starts after that line has a seed from the stream of the new key. The programs before it (input, the compositor, and the programs that start while the device answers) have a seed from the processor only. The service stays and waits for the next command: after the reads of the start, the root service asks for one read every 30 seconds, and gives each running program 32 bytes of its stream after each one ([fresh_bytes.md](fresh_bytes.md)).
+Each process that the root service starts after that line has a seed from the stream of the new key. The processes before it (input, the compositor, and the processes that start while the device answers) have a seed from the processor only. The service stays and waits for the next command: after the reads of the start, the root service asks for one read every 30 seconds, and gives each running process 32 bytes of its stream after each one ([fresh_bytes.md](fresh_bytes.md)).
 
 **A read that adds nothing.** `random.device_bytes_mix` refuses a read and leaves the key as it was when:
 
@@ -40,17 +40,17 @@ A refused read counts in the entropy report (`device_reads_refused`) and in the 
 
 These checks find a broken device: a model that gives zeros, or a buffer that it never wrote. They are not a protection. A hostile device passes them with ease (two values, or a read that comes back after another one). The protection is the mix: the old key is always an input of the new one.
 
-**The entropy report** says whether the device is there, the bytes mixed and the reads refused. The program `randomness` shows them, from the context values 0 and 7.
+**The entropy report** says whether the device is there, the bytes mixed and the reads refused. The process `randomness` shows them, from the context values 0 and 7.
 
 ## Refused forms
 
 - **The device as the seed, or as the only source.** A device model that the host fakes, or a broken one, would then fix each seed. Mixed into the key, its bytes cannot remove what the processor gave.
-- **A higher seed strength from the device.** The strength must hold for each seed of one boot; the programs that start before the answer have no device bytes. The bytes also come from the host, which the system cannot check. A strength for the device needs its own design.
-- **A wait for the device before the first program.** A device that does not answer would stop the start, and the seed of the processor already holds the claimed strength.
+- **A higher seed strength from the device.** The strength must hold for each seed of one boot; the processes that start before the answer have no device bytes. The bytes also come from the host, which the system cannot check. A strength for the device needs its own design.
+- **A wait for the device before the first process.** A device that does not answer would stop the start, and the seed of the processor already holds the claimed strength.
 - **The queue code in the root service.** A fault in it would stop the root service, which holds every grant. A device service stops alone.
-- **The device in the program `randomness`.** That program is a window that any principal starts; a device grant there would give a viewer a device.
+- **The device in the process `randomness`.** That process is a window that any principal starts; a device grant there would give a viewer a device.
 - **A region for the bytes.** One completion holds 48 bytes; a read of 32 bytes needs no second memory object.
-- **A service that gives each program its bytes at each draw.** It is refused for each source ([`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md), "1. Where a program gets random bytes"): a call for each draw, and one shared state for all programs.
+- **A service that gives each process its bytes at each draw.** It is refused for each source ([`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md), "1. Where a process gets random bytes"): a call for each draw, and one shared state for all processes.
 
 ## Subtle points
 

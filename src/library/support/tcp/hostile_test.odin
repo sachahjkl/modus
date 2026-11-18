@@ -44,7 +44,7 @@ probes_give_up :: proc(t: ^testing.T) {
 }
 
 // A SYN, then nothing: the passive record ends after fewer retries than
-// an established connection, and the program gets an event for it.
+// an established connection, and the process gets an event for it.
 @(test)
 syn_received_ends_soon :: proc(t: ^testing.T) {
 	link := link_make(22)
@@ -63,7 +63,7 @@ syn_received_ends_soon :: proc(t: ^testing.T) {
 }
 
 // A SYN, then a RST at the exact sequence: the passive record ends with
-// an event, so that the program releases the remote.
+// an event, so that the process releases the remote.
 @(test)
 passive_reset_has_an_event :: proc(t: ^testing.T) {
 	link := link_make(23)
@@ -453,7 +453,7 @@ short_segment_is_dropped :: proc(t: ^testing.T) {
 	testing.expect_value(t, link.sides[1].sent_out, 0)
 }
 
-// A program releases the remote of a segment that no connection has. It
+// A process releases the remote of a segment that no connection has. It
 // asks with the two ports at their fixed place, so a segment that the
 // library dropped still names its connection: a segment from the remote of
 // a live connection, with a malformed option and a wrong checksum, changes
@@ -493,7 +493,7 @@ dropped_segment_of_a_live_connection_names_its_connection :: proc(t: ^testing.T)
 	testing.expect_value(t, table.malformed, 1)
 	testing.expect(t, b^ == untouched, "a dropped segment changed the connection")
 	testing.expect_value(t, link.sides[1].sent_out, sent_before)
-	// Both name the connection: the program releases nothing for them.
+	// Both name the connection: the process releases nothing for them.
 	testing.expect_value(t, connection_of_segment(table, {remote_address = ADDRESS_A, segment = damaged.bytes[:HEADER_MSS]}), 0)
 	testing.expect_value(t, connection_of_segment(table, {remote_address = ADDRESS_A, segment = malformed.bytes[:HEADER_MSS]}), 0)
 	// The same ports from another address, another remote port, and a

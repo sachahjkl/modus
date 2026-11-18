@@ -405,7 +405,7 @@ the_table_of_the_address_parameters_refuses_a_record_in_the_wrong_place :: proc(
 	no_count := fuzz_address_parameters
 	moved := fuzz_address_parameters
 	for &row in no_count {
-		if row.operation == .Program_State {
+		if row.operation == .Process_State {
 			row.record = .Page_Range_Table
 		}
 	}

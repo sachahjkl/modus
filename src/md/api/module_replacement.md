@@ -1,6 +1,6 @@
 # Who may replace a module
 
-A replacement of an import puts the code of another module into each program that imports the first one, with all the memory and all the handles of each. The drawing module is imported by the compositor, which holds every surface and every key, by the terminal, and by almost every program with a window. So the question "who may replace a module" is the question "who may run code in all of those programs". This file records the answer.
+A replacement of an import puts the code of another module into each process that imports the first one, with all the memory and all the handles of each. The drawing module is imported by the compositor, which holds every surface and every key, by the terminal, and by almost every process with a window. So the question "who may replace a module" is the question "who may run code in all of those processes". This file records the answer.
 
 The mechanism of a replacement (the table of the machine, the check of the loader, the module record) is in [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "Replacement of an import". The rule of this file is in the same guide, "Who may replace a module".
 
@@ -18,12 +18,12 @@ A replacement row (`docs/glossary/code.md`, "Replacement row") is a record of th
 - **The signed message** is a label (`module replacement signature 1`, on 32 bytes), the old hash, the new hash, and the scope with its principal: 104 bytes. A signature of one row never verifies for another pair, another direction or another scope.
 - **The root service accepts a replacement only for a row whose signature verifies under a key that it trusts for the scope of the row.** The console still names the two modules (`replace("calendar", "calendar_fixed")`); the root service then looks for the row of that pair in the replacement list and verifies its signature, before it writes the table of the machine. The console gives no row and no signature: it chooses among the rows that a principal signed.
 - **The scope System** is each importer of the machine. Its key is the signing key of the system (`docs/glossary/trusted_boot.md`, "Signing key"): the public key that verified the system description, from the trust record that the boot program wrote.
-- **The scope Principal** is the programs of the session of one principal, for a module that only those programs import. Its key is the public signing key of that principal, from the record that the root service holds.
-- **A replacement of a module that a service of the system imports needs the signing key of the system**, whatever the scope of its row: the compositor, the terminal (the terminal of a program runs in the session of that program), and every program of principal 0. A key of a principal reaches the code of that principal; it must never reach the code that holds the screen and the keys of every principal.
+- **The scope Principal** is the processes of the session of one principal, for a module that only those processes import. Its key is the public signing key of that principal, from the record that the root service holds.
+- **A replacement of a module that a service of the system imports needs the signing key of the system**, whatever the scope of its row: the compositor, the terminal (the terminal of a process runs in the session of that process), and every process of principal 0. A key of a principal reaches the code of that principal; it must never reach the code that holds the screen and the keys of every principal.
 - **A refusal is one line of the log**, which names the two modules and the reason, and an error record for the asker. The table does not change, so each importer loads the module that its import names.
 - **The removal of a replacement needs no row.** It gives back the module that the importer names, which the system description lists.
 - **The tool signs the rows when it writes the boot image of a volume**, with the key that signs its system description: the key of `SYSTEM_SIGNING_KEY`, else the test signing key. The test machine signs with the test key, as its boot image is signed. The rows of the build are a table of the tool, by the names of the modules.
-- **The format** is the contract package `src/library/contract/replacement_list` (its reader copies nothing: the list is in the pages of the boot image, which no program writes, and the root service checked its hash against the system description). The signature and its check are the private part `src/library/private/root/replacement_signature` of the root service, which the tool and the root service compile in.
+- **The format** is the contract package `src/library/contract/replacement_list` (its reader copies nothing: the list is in the pages of the boot image, which no process writes, and the root service checked its hash against the system description). The signature and its check are the private part `src/library/private/root/replacement_signature` of the root service, which the tool and the root service compile in.
 
 ## The refused forms
 
@@ -40,7 +40,7 @@ A replacement row (`docs/glossary/code.md`, "Replacement row") is a record of th
 - **The check runs at each `replace`, not at the start.** A row that does not verify costs nothing until a principal asks for it, and the refusal then names it. The start of the machine verifies no row.
 - **The order of the checks**: the names, a module that replaces itself, a chain of replacements, then the row and its signature. A chain is refused for each pair, so its sentence comes first.
 - **One row for one pair and one scope.** The reader refuses a list with two rows of the same pair and scope, so the row that the root service verifies is the only candidate.
-- **A program that loads modules with its own loader** (the program `imports`, the program `errors`) chooses its own replacements for its own address space. It reaches only its own memory and handles, so it needs no row. The rule is for the table of the machine, which reaches other programs.
+- **A process that loads modules with its own loader** (the process `imports`, the process `errors`) chooses its own replacements for its own address space. It reaches only its own memory and handles, so it needs no row. The rule is for the table of the machine, which reaches other processes.
 - **The private key of the test system is published.** A test machine says so at its start; a row that the test key signed proves nothing on such a machine, as its system description proves nothing.
 
 ## What is built and what is left

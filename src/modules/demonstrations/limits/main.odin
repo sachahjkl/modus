@@ -1,20 +1,20 @@
 // A demonstration of the limits of a budget: processor time and log
-// records. A program cannot take all the processor time or fill the log:
+// records. A process cannot take all the processor time or fill the log:
 // each resource has a limit.
 //
-// The program makes three budgets with a limit of processor time, and one
+// The process makes three budgets with a limit of processor time, and one
 // thread on each budget. Each thread computes with no end. A fourth thread
-// is on the budget of the program. The window shows the processor time
+// is on the budget of the process. The window shows the processor time
 // that each budget used in the last second, against its limit. The budget
-// of the program has a limit too, and what the three budgets use counts in
-// it. Then the program writes 100 records on the log at once: its budget
+// of the process has a limit too, and what the three budgets use counts in
+// it. Then the process writes 100 records on the log at once: its budget
 // has 40 records for each second.
 //
 // **What it is for.** It shows that a [limit](term:limit) of a budget holds
-// against a program that tries to take more: a thread that never waits
+// against a process that tries to take more: a thread that never waits
 // gets no more than the processor time of its budget in each
 // [period](term:period), and a burst of log records past the limit is
-// refused with `No_Budget`, so no program fills the log of the others.
+// refused with `No_Budget`, so no process fills the log of the others.
 //
 // **What a reader sees.** Start it from the start menu, or with
 // `start("limits")` in the console. The window has one bar for each of the
@@ -26,7 +26,7 @@
 // `burst`, at the level debug.
 //
 // **Its grants**: none. Its budget from the root service holds 2048 pages,
-// 1 program and 5 threads, with a limit of processor time and of log
+// 1 process and 5 threads, with a limit of processor time and of log
 // records.
 //
 // **What it does not prove.** The bars are measures: a loaded host gives a
@@ -47,7 +47,7 @@ import "modus:support/system"
 // by its name, once the tool counts its module, its threads and its window.
 // Its small limits of processor time and of log records are an exception
 // of the root service: a request holds no limit in time.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1406, programs = 1, threads = 5, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1406, processes = 1, threads = 5, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -71,7 +71,7 @@ BURST :: 100
 // One budget: its limit, and what it used in the last interval, for one second.
 Row :: struct {
 	name:   string,
-	budget: system.Handle, // 0: the budget of the program.
+	budget: system.Handle, // 0: the budget of the process.
 	limit:  u64, // Microseconds of processor time in each second.
 	before: u64,
 	used:   u64,
@@ -81,7 +81,7 @@ rows := [ROW_COUNT]Row {
 	{name = "a thread, 5 %", limit = 50_000},
 	{name = "a thread, 20 %", limit = 200_000},
 	{name = "a thread, 60 %", limit = 600_000},
-	{name = "the program: all"},
+	{name = "the process: all"},
 }
 
 sink: [ROW_COUNT]u64
@@ -183,7 +183,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			for row in rows {
 				right &&= within(row)
 			}
-			system.log("limits: processor time of one second, used of limit: ", rows[0].used, " of ", rows[0].limit, ", ", rows[1].used, " of ", rows[1].limit, ", ", rows[2].used, " of ", rows[2].limit, ", the program ", rows[3].used, " of ", rows[3].limit)
+			system.log("limits: processor time of one second, used of limit: ", rows[0].used, " of ", rows[0].limit, ", ", rows[1].used, " of ", rows[1].limit, ", ", rows[2].used, " of ", rows[2].limit, ", the process ", rows[3].used, " of ", rows[3].limit)
 			if right {
 				system.log("limits: ok, 4 budgets within their processor time, ", accepted, " log records written and ", refused, " refused with ", log_limit, " for each second")
 			} else {
@@ -214,14 +214,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			y += LINE
 		}
 		y += LINE / 2
-		interface.draw_text(table, 12, y, "what the three budgets use counts in the budget of the program.", graphics.colors.dim)
+		interface.draw_text(table, 12, y, "what the three budgets use counts in the budget of the process.", graphics.colors.dim)
 		y += LINE
-		interface.draw_text(table, 12, y, "a new budget with a higher limit than the program:", graphics.colors.dim)
-		interface.draw_text(table, 424, y, rule_right ? "refused: no budget" : "another answer", rule_right ? graphics.colors.program : graphics.colors.failed)
+		interface.draw_text(table, 12, y, "a new budget with a higher limit than the process:", graphics.colors.dim)
+		interface.draw_text(table, 424, y, rule_right ? "refused: no budget" : "another answer", rule_right ? graphics.colors.process : graphics.colors.failed)
 		y += LINE
 		line: [96]u8
 		interface.draw_text(table, 12, y, system.format(line[:], "100 log records at once, ", log_limit, " for each second:"), graphics.colors.dim)
-		interface.draw_text(table, 424, y, system.format(line[:], accepted, " written, ", refused, " refused"), log_right ? graphics.colors.program : graphics.colors.failed)
+		interface.draw_text(table, 424, y, system.format(line[:], accepted, " written, ", refused, " refused"), log_right ? graphics.colors.process : graphics.colors.failed)
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		for _ in display.next_event(&window) {}
 		system.sleep(system.time() + INTERVAL)

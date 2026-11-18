@@ -1,19 +1,19 @@
 # The timed stream, and sound through virtio-snd
 
-A timed stream is a class protocol whose records say when their content must reach the device, not only what to do with it. Sound is its first user: a program plays samples through the sound device of the test machine, each record at the time that it names. Video, and the frames of a display at a rate, are the same class later. The order of this work and its reason are in [desktop_to_browser.md](desktop_to_browser.md), phase A. The device service follows [device_services.md](device_services.md).
+A timed stream is a class protocol whose records say when their content must reach the device, not only what to do with it. Sound is its first user: a process plays samples through the sound device of the test machine, each record at the time that it names. Video, and the frames of a display at a rate, are the same class later. The order of this work and its reason are in [desktop_to_browser.md](desktop_to_browser.md), phase A. The device service follows [device_services.md](device_services.md).
 
-The guide is [`docs/SOUND.md`](../../../docs/SOUND.md), "1. What a program does". The terms are in [`docs/glossary/devices.md`](../../../docs/glossary/devices.md), "Timed stream", and in [`docs/glossary/sound.md`](../../../docs/glossary/sound.md): "Sound service", "Stream ring", "Sample region", "Frame", "Sample", "Period", "Stream clock" and "Underrun".
+The guide is [`docs/SOUND.md`](../../../docs/SOUND.md), "1. What a process does". The terms are in [`docs/glossary/devices.md`](../../../docs/glossary/devices.md), "Timed stream", and in [`docs/glossary/sound.md`](../../../docs/glossary/sound.md): "Sound service", "Stream ring", "Sample region", "Frame", "Sample", "Period", "Stream clock" and "Underrun".
 
 ## The constraints
 
 - A device service holds the handles of its device and nothing else (property 7). The kernel carries no sample (property 5).
-- The program that asks for the work pays for the memory of its samples (property 14).
+- The process that asks for the work pays for the memory of its samples (property 14).
 - No queue drops a record in silence: a record that cannot play is refused, with a status and an error record.
 - The test checks a condition, never a speed of the host.
 
 ## The stream clock
 
-The time of a record is the system clock: the nanoseconds since boot that `system.nanoseconds()` gives, the same clock in every program. A program never sees the clock of the device.
+The time of a record is the system clock: the nanoseconds since boot that `system.nanoseconds()` gives, the same clock in every process. A process never sees the clock of the device.
 
 The device has its own clock: the count of frames that it played. A frame is one sample of each channel, 4 bytes in the one format. The sound service keeps the map between the two clocks, the anchor: the frame `anchor_frame` plays at the time `anchor_time`. A time `t` at or after the anchor maps to the frame `anchor_frame + round((t - anchor_time) × 48000 / 10⁹)`, and a frame maps back the same way, rounded down. The contract package `timed_stream` computes both with no product that passes 64 bits: 48000 / 10⁹ is 6 / 125000, so the procedures divide by 125000 first and multiply the rest. A host test checks them against a reference at the edges.
 
@@ -21,7 +21,7 @@ The service sets the anchor at `Start`: frame 0 plays at the time of the answer 
 
 The service sees the first sign of a drift today, in one direction. A device whose clock runs fast takes the periods faster than their time, so the frames given end further and further after now. When they end more than `AHEAD_OF_THE_DEVICE_LIMIT_NANOSECONDS` (120 ms, three times the periods given) after now, the service holds the next period until the time comes, counts the hold, and writes one line at the first one. At its start QEMU takes some periods at once into its mixer, fewer than the periods given, so the bound is past what a device does at its start. A device whose clock runs slow is the other direction: it takes the periods late, and the latency grows with no sign that the service reads; the correction above covers it.
 
-The stream adds no clock finer than the one that each program has: the completions name times of `system.nanoseconds()`, which reads the cycle counter. Row 17 of property 20 ("a precise clock is a grant") is not met today ([log_side_channels.md](log_side_channels.md) holds the side channels that are closed); the stream neither opens nor closes it.
+The stream adds no clock finer than the one that each process has: the completions name times of `system.nanoseconds()`, which reads the cycle counter. Row 17 of property 20 ("a precise clock is a grant") is not met today ([log_side_channels.md](log_side_channels.md) holds the side channels that are closed); the stream neither opens nor closes it.
 
 ## The record
 
@@ -40,7 +40,7 @@ The service then checks the place and the count against the size of the region, 
 
 A record is late when its first frame maps before the first frame that the service has not yet given to the device: the service cannot change a period that the device holds. It is refused whole, with the status `Late` and the earliest time that it could take (`limit`), and no frame of it plays.
 
-Refused forms: play the part of the record that is still ahead, which cuts the start of a sound and moves what the program meant; play it at the earliest time, which shifts every later record of the program. A late frame of a video is dropped the same way.
+Refused forms: play the part of the record that is still ahead, which cuts the start of a sound and moves what the process meant; play it at the earliest time, which shifts every later record of the process. A late frame of a video is dropped the same way.
 
 ### A record too far ahead
 
@@ -48,7 +48,7 @@ A record whose time is more than `AHEAD_LIMIT_NANOSECONDS` (10 s) after the earl
 
 ### The order of the records
 
-The records of a stream are in the order of their time and do not overlap: a record whose first frame is before the end of the record accepted before it is refused with `Overlap`. Each frame then has one source, and the pending records are a queue. Mixing two records is mixing two programs, below.
+The records of a stream are in the order of their time and do not overlap: a record whose first frame is before the end of the record accepted before it is refused with `Overlap`. Each frame then has one source, and the pending records are a queue. Mixing two records is mixing two processes, below.
 
 ## An underrun
 
@@ -60,7 +60,7 @@ The test of an underrun is by time and not by count: the device can take several
 
 ## The latency
 
-The latency that the service holds is the frames that it gave to the device and that the device did not take: from 30 ms to 40 ms. The earliest time that a record can take is the time of the first frame not given, so a program that wants a sound now asks for that time. The answer of `Start` gives the latency in nanoseconds; each completion of `Play` gives the time of its first frame by the stream clock.
+The latency that the service holds is the frames that it gave to the device and that the device did not take: from 30 ms to 40 ms. The earliest time that a record can take is the time of the first frame not given, so a process that wants a sound now asks for that time. The answer of `Start` gives the latency in nanoseconds; each completion of `Play` gives the time of its first frame by the stream clock.
 
 A completion says that the device took the period that holds the last frame of the record, not that the frame played. The device adds its own delay after the take, which the service does not know: virtio-snd reports a `latency_bytes` in each status, and QEMU writes there the size of the period, not a delay. QEMU takes a period into its mixer, then into its output, so its latency is higher than the latency that the service holds, by the buffers of its mixer and of its output.
 
@@ -68,7 +68,7 @@ A shorter period gives a lower latency and more wakes of the service: 10 ms is 1
 
 ## The format
 
-One format: 48000 frames in one second, two channels, signed 16-bit samples in little endian, the left one first (`Format.Signed_16_Stereo_48000`). The device service sets the device to it at its start. A record names its format so that a second format is one more member and one more conversion, and a record of the old programs never plays in the wrong format: the border refuses a word that names no member.
+One format: 48000 frames in one second, two channels, signed 16-bit samples in little endian, the left one first (`Format.Signed_16_Stereo_48000`). The device service sets the device to it at its start. A record names its format so that a second format is one more member and one more conversion, and a record of the old processes never plays in the wrong format: the border refuses a word that names no member.
 
 ## The budget and who pays
 
@@ -78,19 +78,19 @@ One format: 48000 frames in one second, two channels, signed 16-bit samples in l
 
 A copy in the service costs one pass over each sample. It is there because the service places the samples of a record at the frame of its time inside a period, with silence around them; the device reads whole periods.
 
-## One program at a time
+## One process at a time
 
-One program holds the stream: the program with the start grant `Sound_Device`. The root service starts the sound service for it, and stops it when that program stops, as for a block service. A second program with the grant does not start while the first runs: the root service refuses it with the status `Bad_State` and one line. Nothing is mixed.
+One process holds the stream: the process with the start grant `Sound_Device`. The root service starts the sound service for it, and stops it when that process stops, as for a block service. A second process with the grant does not start while the first runs: the root service refuses it with the status `Bad_State` and one line. Nothing is mixed.
 
-The refusal lasts a little past the end of the first program. When it stops, the root service stops the sound service, and the place of the sound service stays in its table until the stop of that program is read; a start in that time gets the same `Bad_State` and line. A second try after the reap starts.
+The refusal lasts a little past the end of the first process. When it stops, the root service stops the sound service, and the place of the sound service stays in its table until the stop of that process is read; a start in that time gets the same `Bad_State` and line. A second try after the reap starts.
 
 The stream ring has the capacity of the contract, `RING_CAPACITY`, and the table of the pending records one place for each place: the service stops at its start when its ring is larger.
 
-Mixing is a sound service of the class, between the programs and the device service, as the storage service is between the programs and the block service: each program gets a stream of its own, and the class service sums the frames of each period. It waits for a second program that plays sound.
+Mixing is a sound service of the class, between the processes and the device service, as the storage service is between the processes and the block service: each process gets a stream of its own, and the class service sums the frames of each period. It waits for a second process that plays sound.
 
 ## Capture
 
-Capture is later. A program that reads the microphone holds a device queue behind a grant, with a visible indicator while it is in use ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "20. No ambient access: the other holes to close", row 9). A captured record is the same record: the time of its first frame, its format, its count and its place.
+Capture is later. A process that reads the microphone holds a device queue behind a grant, with a visible indicator while it is in use ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "20. No ambient access: the other holes to close", row 9). A captured record is the same record: the time of its first frame, its format, its count and its place.
 
 ## The device: virtio-snd
 
@@ -105,13 +105,13 @@ The device writes its answers and the statuses. The readers of them are pure pro
 
 **The order of the periods.** The service requires that the device ends the periods in the order in which it gave them, and stops on a device that breaks it. A period completes the records up to its end, so a period ended out of order would complete a record whose earlier frames the device still holds. The service could instead complete only up to the oldest period in flight, but a device that reorders the periods of one stream plays them out of order too, and no record can be right on it. QEMU 10.2 ends them in order: its stream is one queue.
 
-**A device that does not answer.** A control request waits for its answer until the one hang bound of a program, `system.TEST_HANG_BOUND_MILLISECONDS`: a device answers in microseconds, and the bound only ends a hang. At the start of the service, the service then writes a line that names the request and stops. At `Start`, it first answers the client with `Device_Error` and the record `No_Answer`, then stops, so the client is not left waiting.
+**A device that does not answer.** A control request waits for its answer until the one hang bound of a process, `system.TEST_HANG_BOUND_MILLISECONDS`: a device answers in microseconds, and the bound only ends a hang. At the start of the service, the service then writes a line that names the request and stops. At `Start`, it first answers the client with `Device_Error` and the record `No_Answer`, then stops, so the client is not left waiting.
 
 QEMU 10.2 consumes a request of the transmit queue when its frames reach its mixer, and its wave output writes the frames that the stream gave: with no request, the output gets no frame. The proof below does not depend on that.
 
 ## The proof
 
-The machine test `sound` starts a machine with `virtio-sound-pci` and an output to a file (`-audiodev wav`), at 48000 frames in one second and two channels, so QEMU converts no rate. The program `tone` starts the stream, asks for a tone of 440 Hz of 500 ms at 500 ms after the frame 0, and writes the frame where it played. It checks that the frame is the frame of its time, and, with no underrun, that it played at the time of that frame. It also sends eight commands that the service must refuse (a second region, a damaged `Start`, and six records), and checks each status and error record.
+The machine test `sound` starts a machine with `virtio-sound-pci` and an output to a file (`-audiodev wav`), at 48000 frames in one second and two channels, so QEMU converts no rate. The process `tone` starts the stream, asks for a tone of 440 Hz of 500 ms at 500 ms after the frame 0, and writes the frame where it played. It checks that the frame is the frame of its time, and, with no underrun, that it played at the time of that frame. It also sends eight commands that the service must refuse (a second region, a damaged `Start`, and six records), and checks each status and error record.
 
 The tool then reads the file. It finds the tone by its own start, the first frame that is not silence, and measures it as a span to its last frame that is not silence. A frame of 0 is a frame of the tone: a cosine has samples of exactly 0 at some crossings (here every eleventh one), so a count of the frames that are not silence would miss them. A run of silent frames inside the span longer than one period of the tone (109 frames) is silence that the device wrote, and counts in neither the length nor the window; a crossing is a run of one frame or two. The checks come in the order of their faults:
 
@@ -130,13 +130,13 @@ Refused forms of the proof: a recording of the sound card of the host, which a t
 
 | Form | Why refused |
 |---|---|
-| The time of a record in frames of the device | A program would need the clock of the device, and two devices would have two clocks. The system clock is one for every program |
+| The time of a record in frames of the device | A process would need the clock of the device, and two devices would have two clocks. The system clock is one for every process |
 | The device reads the samples in the sample region | The device would reach memory of the client, and the frames of a record rarely fall on a period |
-| A late record played in part, or at the earliest time | It changes what the program meant, in silence |
+| A late record played in part, or at the earliest time | It changes what the process meant, in silence |
 | Records that overlap, summed | That is mixing; it waits for a class service |
-| A second program that waits for the first | A wait in the root service that no principal sees; the refusal with its line says what holds the device |
+| A second process that waits for the first | A wait in the root service that no principal sees; the refusal with its line says what holds the device |
 | A drift correction now | QEMU has no drift to measure; a correction that no test checks is a guess |
 
 ## State
 
-Built: the class protocol in `src/library/contract/timed_stream` with its host tests, the sound service `sound` for virtio-snd with the readers of the device answers in its private part and their host tests, the hold of a device that takes the periods too fast, the start grant `Sound_Device`, the program `tone`, and the machine test `sound` with the check of the file. Left: the correction of the drift, capture, mixing in a class service, a second format, and a measure of the underruns on a loaded machine.
+Built: the class protocol in `src/library/contract/timed_stream` with its host tests, the sound service `sound` for virtio-snd with the readers of the device answers in its private part and their host tests, the hold of a device that takes the periods too fast, the start grant `Sound_Device`, the process `tone`, and the machine test `sound` with the check of the file. Left: the correction of the drift, capture, mixing in a class service, a second format, and a measure of the underruns on a loaded machine.

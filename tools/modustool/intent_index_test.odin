@@ -199,7 +199,7 @@ intent_pointers_to_a_guide :: proc(t: ^testing.T) {
 intent_files_are_working_records :: proc(t: ^testing.T) {
 	testing.expect(t, site_is_working_record("src/md/README.md"))
 	testing.expect(t, site_is_working_record("src/md/features/palette.md"))
-	testing.expect(t, !site_is_working_record("src/programs/console/README.md"))
+	testing.expect(t, !site_is_working_record("src/processes/console/README.md"))
 	end, found := site_document_path_end("see src/md/features/palette.md, \"The form\"", 4)
 	testing.expect(t, found)
 	testing.expect_value(t, end, len("see src/md/features/palette.md"))

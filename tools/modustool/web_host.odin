@@ -22,7 +22,7 @@ import "modus:support/web"
 //             and fetches the pages of `server` (forward_fetch).
 //   guestfwd  the address 10.0.2.100 port 80 of the network of the machine
 //             goes to a port where the tool listens with core:net: the
-//             program `fetch` connects to it (Listener).
+//             process `fetch` connects to it (Listener).
 //
 // The listener answers as `server` does: GET /hello, GET /large, and POST
 // /sink, which gives the length and the hash of the body. A scenario can

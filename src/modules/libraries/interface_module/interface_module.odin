@@ -3,12 +3,12 @@
 // module later with the same calls"). Each export calls one function of
 // src/library/support/interface over two tables in memory of the caller: the draw
 // table (Table of Draw_Record, Append) and the text table (Bytes, Append).
-// The module holds no state of the program: a frame of the package is made
+// The module holds no state of the process: a frame of the package is made
 // over the two tables for the time of one call.
 //
 // **What it is for.** It checks a claim of the interface package by doing
 // it: the same functions, called through the call form, give the same draw
-// records as a call of the package in the program. The program
+// records as a call of the package in the process. The process
 // `interface_through_module` loads it, draws its window through it, and
 // compares the records and the time of each way.
 //
@@ -21,9 +21,9 @@
 //
 // **What it does not hold**: the damage of a frame and the draw of its
 // records into pixels. They are the two exports of the drawing module
-// (`src/modules/libraries/drawing`), which each program with a window imports. This
+// (`src/modules/libraries/drawing`), which each process with a window imports. This
 // module keeps the elements only: it shows what one element call through a
-// border costs, and why the elements stay compiled into each program.
+// border costs, and why the elements stay compiled into each process.
 package interface_module
 
 import "base:intrinsics"
@@ -92,14 +92,14 @@ Element_Frame :: struct {
 
 // The interface state and the input of each frame: empty. The elements of
 // this module take no input and never write them, so the module keeps no
-// state of a program in them; one empty record serves each call, with no
+// state of a process in them; one empty record serves each call, with no
 // zero bytes to write at each call.
 @(private)
 no_state: interface.Interface_State
 @(private)
 no_input: interface.Input
 
-// The interface font of the program that runs the module, validated once:
+// The interface font of the process that runs the module, validated once:
 // in a direct call the caller, whose starter maps the caches at their
 // fixed ranges; in an isolated call the call host, which has none, so its
 // elements draw in the font of the cells. The state: 0 not looked at yet,
@@ -111,12 +111,12 @@ module_interface_font: display.Interface_Font
 module_interface_font_state: u32
 
 // A context with no bit set: what a host test reads, as it has no
-// context of a program.
+// context of a process.
 @(private)
 no_context: system.Context
 
 @(private)
-interface_font_of_program :: proc "contextless" () -> ^display.Interface_Font {
+interface_font_of_process :: proc "contextless" () -> ^display.Interface_Font {
 	state := intrinsics.atomic_load_explicit(&module_interface_font_state, .Acquire)
 	if state == 0 {
 		context_record := &no_context
@@ -172,7 +172,7 @@ element_frame_begin :: proc "contextless" (element: ^Element_Frame, drawn: ^Draw
 		errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_TEXT, value_of_size(max(text.capacity, text.count)), i64(TABLE_LIMIT))
 		return false
 	}
-	element.table = {records = element.records[:], text = element.text[:], interface_font = interface_font_of_program()}
+	element.table = {records = element.records[:], text = element.text[:], interface_font = interface_font_of_process()}
 	element.frame = {table = &element.table, state = &no_state, input = &no_input}
 	return true
 }

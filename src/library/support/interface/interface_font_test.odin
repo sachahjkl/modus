@@ -59,8 +59,8 @@ test_interface_font_free :: proc(font: ^Test_Interface_Font) {
 }
 
 // A draw of a text in the interface font changes the blend tables of the
-// text state of the program, and its private glyph cache, so one thread of
-// a program draws at a time (src/md/features/glyphs_on_demand.md, "Subtle
+// text state of the process, and its private glyph cache, so one thread of
+// a process draws at a time (src/md/features/glyphs_on_demand.md, "Subtle
 // points"). The test runner runs the tests on several threads: each test
 // of this file that draws holds this lock from its first draw to its last
 // check, and fills the table of the blend before, through blend_table.
@@ -151,7 +151,7 @@ build_labels :: proc(table: ^Draw_Table, seed: u32, changed: int) {
 		right := 200 + chosen % 7
 		draw_text_right(table, right, 80 + row * 18, words[(chosen / 8) % len(words)], graphics.colors.text, FONT_INTERFACE)
 		next := pick(&state, &part, changed)
-		draw_text(table, right + 4 - next % 3, 80 + row * 18, words[(next / 4) % len(words)], graphics.colors.program, FONT_INTERFACE)
+		draw_text(table, right + 4 - next % 3, 80 + row * 18, words[(next / 4) % len(words)], graphics.colors.process, FONT_INTERFACE)
 	}
 	label := words[pick(&state, &part, changed) % len(words)]
 	value := words[pick(&state, &part, changed) % len(words)]

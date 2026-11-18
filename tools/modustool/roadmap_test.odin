@@ -17,7 +17,7 @@ A preamble of one line, with **bold** and ` + "`code`" + `.
 
 ## Next
 
-- **A guest.** A program runs another system in a guest.
+- **A guest.** A process runs another system in a guest.
 
 ## Later
 `
@@ -77,7 +77,7 @@ roadmap_of_a_damaged_file :: proc(t: ^testing.T) {
 		// The sections: their names, their order, their count, no other heading.
 		{"## Now", "## Today", "is not expected here"},
 		{"## Next", "## Later", "is not expected here"},
-		{"## Next\n\n- **A guest.** A program runs another system in a guest.\n\n", "", "is not expected here"},
+		{"## Next\n\n- **A guest.** A process runs another system in a guest.\n\n", "", "is not expected here"},
 		{"\n## Later\n", "", "the section \"## Later\" is not in the file"},
 		{"## Later\n", "## Later\n\n## Done\n", "is not expected here"},
 		{"## Next", "### Soon\n\n## Next", "is not expected here"},
@@ -191,7 +191,7 @@ roadmap_of_the_section_maybe :: proc(t: ^testing.T) {
 // Each problem names the file and the line of its fault.
 @(test)
 roadmap_problem_names_its_line :: proc(t: ^testing.T) {
-	damaged, _ := strings.replace(GOOD_ROADMAP, "- **A guest.** A program runs another system in a guest.", "- **A guest.** One. Two. Three.", 1, context.temp_allocator)
+	damaged, _ := strings.replace(GOOD_ROADMAP, "- **A guest.** A process runs another system in a guest.", "- **A guest.** One. Two. Three.", 1, context.temp_allocator)
 	_, problems := roadmap_parse(damaged)
 	testing.expect_value(t, len(problems), 1)
 	if len(problems) == 1 {
@@ -265,7 +265,7 @@ roadmap_other_refused_texts_are_found :: proc(t: ^testing.T) {
 roadmap_entry_with_a_changelog_entry_is_refused :: proc(t: ^testing.T) {
 	roadmap, problems := roadmap_parse(GOOD_ROADMAP)
 	testing.expectf(t, len(problems) == 0, "problems: %v", problems)
-	released_lines := []string{"**A guest**: a program runs another system."}
+	released_lines := []string{"**A guest**: a process runs another system."}
 	other_lines := []string{"**The console**: it draws results."}
 	changelog := Changelog {
 		releases = []Changelog_Release{{number = {0, 9, 0}, date = "2026-11-10", line = 5, entries = []Changelog_Entry{{type_index = 0, lines = released_lines, line = 9}, {type_index = 0, lines = other_lines, line = 10}}}},

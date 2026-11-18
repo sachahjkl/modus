@@ -4,26 +4,26 @@ import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/value_kinds"
-import program_page "modus:contract/disk_program_page"
+import process_page "modus:contract/disk_process_page"
 import op "modus:contract/operation"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import "modus:support/system"
 
 // The monitor is also a service: its exports give what its window shows, as
 // tables of records, not text. The console calls them through a
 // connection, and the host through the remote service.
 //
-// The facts are the facts of the machine: each program and the counts of
+// The facts are the facts of the machine: each process and the counts of
 // the kernel. The monitor reads them with its grant, the machine with the
 // right Inspect, and gives them only to a caller that acts for the principal
-// (a program sees no other program).
+// (a process sees no other process).
 
-// One row for each program that runs: programs().
+// One row for each process that runs: processes().
 //
 // A field that counts a size or a time has a type of the contract: the
 // console shows it in the color of its kind, with its unit.
-Program :: struct {
-	slot:     i64, // The place of the program in the kernel.
+Process :: struct {
+	slot:     i64, // The place of the process in the kernel.
 	name:     [32]u8,
 	state:    [8]u8, // created, ready, waiting or stopped.
 	resident: value_kinds.Size_In_Pages, // The mapped pages that have a page frame.
@@ -33,14 +33,14 @@ Program :: struct {
 	time:     value_kinds.Time_In_Milliseconds, // Processor time.
 	entries:  i64, // Kernel entries.
 	started:  value_kinds.Time_In_Microseconds, // The time of the start, after the start of the machine.
-	// A disk program: the BLAKE3 hash of its module file, in hexadecimal,
+	// A disk process: the BLAKE3 hash of its module file, in hexadecimal,
 	// as the root service checked it. Empty: the root service did not start
-	// this program from a disk.
+	// this process from a disk.
 	hash:    [64]u8,
 }
 // The field holds the 64 digits that hash_write gives, with no zero byte
 // after them: a Text field ends at its end too.
-#assert(size_of(Program) - offset_of(Program, hash) == disk_program.HASH_DIGITS)
+#assert(size_of(Process) - offset_of(Process, hash) == disk_process.HASH_DIGITS)
 
 // The name of one count: a row of the table of counts_named().
 Count_Name :: struct {
@@ -66,7 +66,7 @@ ERROR_REFUSED :: -2
 ERROR_ABSENT :: -3
 
 @(rodata)
-state_names := [op.Program_State]string {
+state_names := [op.Process_State]string {
 	.None    = "",
 	.Created = "created",
 	.Ready   = "ready",
@@ -86,31 +86,31 @@ acts_for_principal :: proc "contextless" () -> bool {
 	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
-// programs gives one row for each program that runs, from the reports of the kernel: its slot, its name, its state, its resident pages (the mapped pages with a page frame) and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, the time of its start in microseconds, and the hash of the file of a disk program.
+// processes gives one row for each process that runs, from the reports of the kernel: its slot, its name, its state, its resident pages (the mapped pages with a page frame) and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, the time of its start in microseconds, and the hash of the file of a disk process.
 //
-// The monitor asks the kernel for the report of each program slot, and skips a slot with no program. A stopped
-// program that its parent has not closed yet has a row, with the state `stopped`.
+// The monitor asks the kernel for the report of each process slot, and skips a slot with no process. A stopped
+// process that its parent has not closed yet has a row, with the state `stopped`.
 //
-// A program that the root service started from a disk has its nickname as its name, and the whole hash of its
-// module file in `hash`: 64 hexadecimal digits, from the [disk program page](term:disk-program-page) that the root
-// service writes, as the window of the monitor shows them. Each other program has an empty `hash`, also a program
-// with the name of a disk program.
+// A process that the root service started from a disk has its nickname as its name, and the whole hash of its
+// module file in `hash`: 64 hexadecimal digits, from the [disk process page](term:disk-process-page) that the root
+// service writes, as the window of the monitor shows them. Each other process has an empty `hash`, also a process
+// with the name of a disk process.
 //
-// - **result**: a table of `Program` rows that the call fills. A table shorter than the count gets the first rows
-//   only; the result still counts every program.
+// - **result**: a table of `Process` rows that the call fills. A table shorter than the count gets the first rows
+//   only; the result still counts every process.
 //
-// The result is the count of programs, or a negative number with an error record:
+// The result is the count of processes, or a negative number with an error record:
 //
-// - `No_Grant` (-1): the caller does not act for the principal. A program sees no other program, so only the
+// - `No_Grant` (-1): the caller does not act for the principal. A process sees no other process, so only the
 //   console and the host through the remote service get rows.
 // - `Refused` (-2): the kernel refused the system report to the monitor; the record holds its status. This comes
 //   when the grant **Inspect** of the monitor was revoked.
 //
-// Example, in the console after `connect("monitor")`: `monitor.programs()`, or
-// `where(monitor.programs(), "threads", 2)` to keep the rows of a column value, or
-// `columns(where(monitor.programs(), "name", "visitor"), "name hash")` for the file of a disk program.
-@(export, link_name = "programs")
-programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
+// Example, in the console after `connect("monitor")`: `monitor.processes()`, or
+// `where(monitor.processes(), "threads", 2)` to keep the rows of a column value, or
+// `columns(where(monitor.processes(), "name", "visitor"), "name hash")` for the file of a disk process.
+@(export, link_name = "processes")
+processes :: proc "c" (result: ^[]Process, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
@@ -119,35 +119,35 @@ programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
 		return errors.fail(error, ERROR_REFUSED, .Refused, .None, 0, 0, 0, i64(status))
 	}
 	total := 0
-	for slot in 1 ..< report.program_slots {
-		program: op.Program_Report
-		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&program)), size_of(program)); status != .Ok || program.state == .None {
+	for slot in 1 ..< report.process_slots {
+		process: op.Process_Report
+		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); status != .Ok || process.state == .None {
 			continue
 		}
 		if total < len(result^) {
 			row := &result[total]
 			row^ = {
 				slot     = i64(slot),
-				resident = value_kinds.Size_In_Pages(program.present_pages),
-				mapped   = value_kinds.Size_In_Pages(program.mapped_pages),
-				handles  = i64(program.handle_count),
-				threads  = i64(program.thread_count),
-				time     = value_kinds.Time_In_Milliseconds(program.run_time),
-				entries  = i64(program.entries),
-				started  = value_kinds.Time_In_Microseconds(program.start_time),
+				resident = value_kinds.Size_In_Pages(process.present_pages),
+				mapped   = value_kinds.Size_In_Pages(process.mapped_pages),
+				handles  = i64(process.handle_count),
+				threads  = i64(process.thread_count),
+				time     = value_kinds.Time_In_Milliseconds(process.run_time),
+				entries  = i64(process.entries),
+				started  = value_kinds.Time_In_Microseconds(process.start_time),
 			}
-			// A disk program: the nickname and the hash that the root
+			// A disk process: the nickname and the hash that the root
 			// service checked, matched as the window matches them, by the
 			// slot and the serial that the kernel reports.
-			if page_row, from_disk := program_page.row_find(disk_programs, slot, program.program_serial); from_disk {
-				nickname := program_page.nickname_of(page_row.nickname)
-				copy(row.name[:len(row.name) - 1], program_page.nickname_text(&nickname))
-				disk_program.hash_write(&row.hash, transmute([disk_program.HASH_SIZE]u8)page_row.hash)
+			if page_row, from_disk := process_page.row_find(disk_processes, slot, process.process_serial); from_disk {
+				nickname := process_page.nickname_of(page_row.nickname)
+				copy(row.name[:len(row.name) - 1], process_page.nickname_text(&nickname))
+				disk_process.hash_write(&row.hash, transmute([disk_process.HASH_SIZE]u8)page_row.hash)
 			} else {
-				copy(row.name[:len(row.name) - 1], system.name_of(program.name[:]))
+				copy(row.name[:len(row.name) - 1], system.name_of(process.name[:]))
 			}
-			if program.state <= max(op.Program_State) {
-				copy(row.state[:], state_names[program.state])
+			if process.state <= max(op.Process_State) {
+				copy(row.state[:], state_names[process.state])
 			}
 		}
 		total += 1
@@ -155,11 +155,11 @@ programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
 	return i64(total)
 }
 
-// counts gives one row for each count of the machine that the kernel reports: the time, the pages, the free pages, the reserved pages, the memory objects, the programs, the processors, the kernel entries, the interrupts, the page faults of a first use, and the takes and the waits of the locks of the kernel, the scheduling strategy (its number, and its name as the unit) and its changes.
+// counts gives one row for each count of the machine that the kernel reports: the time, the pages, the free pages, the reserved pages, the memory objects, the processes, the processors, the kernel entries, the interrupts, the page faults of a first use, and the takes and the waits of the locks of the kernel, the scheduling strategy (its number, and its name as the unit) and its changes.
 //
 // Each row is a `Count`: a name, a value and a unit ("free pages", 12345, "pages"). The names are the names that
 // [count](monitor.count) and [counts_named](monitor.counts_named) take. The counts of the locks add the takes and
-// the waits of every kind of lock. The count "programs" counts the slots in use, stopped programs included.
+// the waits of every kind of lock. The count "processes" counts the slots in use, stopped processes included.
 //
 // - **result**: a table of `Count` rows; the call fills at most its length.
 //
@@ -295,9 +295,9 @@ counts_read :: proc "contextless" (rows: ^[COUNT_CAPACITY]Count) -> (total: int,
 		return 0, status
 	}
 	running: u64
-	for slot in 1 ..< report.program_slots {
-		program: op.Program_Report
-		if _, program_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&program)), size_of(program)); program_status == .Ok && program.state != .None {
+	for slot in 1 ..< report.process_slots {
+		process: op.Process_Report
+		if _, process_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); process_status == .Ok && process.state != .None {
 			running += 1
 		}
 	}
@@ -318,7 +318,7 @@ counts_read :: proc "contextless" (rows: ^[COUNT_CAPACITY]Count) -> (total: int,
 		{"reserved pages", report.reserved_pages, "pages"},
 		{"budget pages", report.budget_pages, "pages"},
 		{"memory objects", report.region_count, "objects"},
-		{"programs", running, "programs"},
+		{"processes", running, "processes"},
 		{"processors", report.processors, "processors"},
 		{"kernel entries", report.entries, "entries"},
 		{"interrupts", report.interrupts, "interrupts"},
@@ -340,7 +340,7 @@ counts_read :: proc "contextless" (rows: ^[COUNT_CAPACITY]Count) -> (total: int,
 
 // served gives what the monitor did as a service: the calls that it executed, the connections that it has now, and the pictures of its window.
 //
-// These are facts of the monitor itself, not of other programs: each caller sees them, with no grant to act for
+// These are facts of the monitor itself, not of other processes: each caller sees them, with no grant to act for
 // the principal. The test of the calls from the host reads `calls` before and after a call over a link that loses
 // datagrams: the count grows by one, so the call ran one time.
 //

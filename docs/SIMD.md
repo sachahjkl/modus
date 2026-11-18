@@ -56,17 +56,17 @@ The vector forms use the 128-bit registers of SSE2. Two facts make this form fre
 - **Every x86-64 processor has SSE2.** It is a part of the architecture, not an extension that one processor has and another lacks.
 - **The kernel saves these registers for every thread**, at each switch of threads, on every processor (`docs/ARCHITECTURE.md`, "The extended state of the processor").
 
-So a vector form needs no test of the processor and no choice at the start of a program: on amd64 the public procedure runs the SSE2 form, and on another target the scalar form.
+So a vector form needs no test of the processor and no choice at the start of a process: on amd64 the public procedure runs the SSE2 form, and on another target the scalar form.
 
 **How a module is compiled.** A module is compiled for the plain x86-64 processor, with SSE2: for a module, `llc` gets no `-mattr` and no `-mcpu` (`build_module` in `tools/modustool/modules.odin`). The kernel is the one exception, in the other direction: it is compiled with every vector feature off (`KERNEL_TARGET_FEATURES`), and the build refuses a kernel that has a vector instruction outside the save and the restore of the extended state (`tools/modustool/vector_check.odin`). No vector form runs in the kernel.
 
 **How a vector form is written.** The arithmetic is written with `base:intrinsics` on `#simd[N]T` types: `simd_shuffle`, `simd_select`, `simd_lanes_eq`, `simd_shr`, `simd_shl`, `simd_bit_and`, `simd_bit_or`, `simd_bit_xor`, `simd_reduce_or`, `simd_reduce_and`, `simd_extract`, `unaligned_load`, `unaligned_store`, the operators `+ - *`, and `cast` between element widths. The compiler lowers them to SSE2 instructions. No form names an instruction of the processor, and no form is written in assembler.
 
-**What SSE2 is not here.** It is not the only instruction set that a program can use. A program can read its usable instruction sets with `src/library/support/instruction_sets` (`usable_instruction_sets`) and run AVX2 code where the processor has it and the kernel saves its registers. No vector form of the system does that today: the measures below say why.
+**What SSE2 is not here.** It is not the only instruction set that a process can use. A process can read its usable instruction sets with `src/library/support/instruction_sets` (`usable_instruction_sets`) and run AVX2 code where the processor has it and the kernel saves its registers. No vector form of the system does that today: the measures below say why.
 
 ### What was measured about AVX2
 
-An AVX2 form of each procedure, behind one choice at the start of a program (CPUID and XGETBV as instruction templates), was measured by the host tests on a host with AVX2. The host load was 10, above the limit of 8, so these times rank the forms and are not valid measures of speed:
+An AVX2 form of each procedure, behind one choice at the start of a process (CPUID and XGETBV as instruction templates), was measured by the host tests on a host with AVX2. The host load was 10, above the limit of 8, so these times rank the forms and are not valid measures of speed:
 
 | Measure (host, `-o:speed`) | Scalar | SSE2 | AVX2 |
 |---|---|---|---|
@@ -75,11 +75,11 @@ An AVX2 form of each procedure, behind one choice at the start of a program (CPU
 
 The build with no optimisation (the build of the host tests of `modustool check`) gave the same order: one glyph 1382 / 813 / 4716 ns in a first run, BLAKE3 5920 / 1904 / 2002 us.
 
-AVX2 lost to SSE2 in both places, and its form of the blend of a glyph gave wrong bytes in the build with no optimisation. So the system has the scalar form and the SSE2 form only: no AVX2 form, and no vector form that chooses at the start of a program.
+AVX2 lost to SSE2 in both places, and its form of the blend of a glyph gave wrong bytes in the build with no optimisation. So the system has the scalar form and the SSE2 form only: no AVX2 form, and no vector form that chooses at the start of a process.
 
 ### What an AVX2 form needs
 
-1. **The registers saved, and a way to know it.** This part exists. The kernel saves the extended state of a thread at each switch of threads: with `xsaveopt` when the processor has it, with the `ymm` registers of AVX and the registers of AVX-512 when the processor has them; with `fxsave` else (`src/kernel/extended_state.odin`; `docs/ARCHITECTURE.md`, "The extended state of the processor"). A program reads whether AVX2 is usable with `src/library/support/instruction_sets`, once at its start: CPUID is slow in a virtual machine.
+1. **The registers saved, and a way to know it.** This part exists. The kernel saves the extended state of a thread at each switch of threads: with `xsaveopt` when the processor has it, with the `ymm` registers of AVX and the registers of AVX-512 when the processor has them; with `fxsave` else (`src/kernel/extended_state.odin`; `docs/ARCHITECTURE.md`, "The extended state of the processor"). A process reads whether AVX2 is usable with `src/library/support/instruction_sets`, once at its start: CPUID is slow in a virtual machine.
 2. **A form that wins by measure** on the machine, with optimisation, on a host with a load under 8. The blend of a glyph reads a table at an index for each channel. The AVX2 gather (`vpgatherdd`) is not faster than single loads on every processor, and on processors from Skylake to Ice Lake and Tiger Lake the correction against Gather Data Sampling (2023) makes it several times slower. A form to measure first: the arithmetic in `ymm` registers with the reads of one byte of the SSE2 form, and no gather.
 3. **The cause of the wrong bytes understood.** The facts:
    - In the build with no optimisation, the AVX2 form gave the byte 03 in some channels. 03 is entry 0 of the table of square roots, so the gather read index 0 in those lanes: the vector of indices that the gather received had zeros where the indices were not 0. The build with optimisation gave the right bytes.
@@ -100,7 +100,7 @@ A vector of 128 bits or less is passed in one `xmm` register by both kinds. That
 
 ### SSSE3, SSE4.1 and AVX-512
 
-No form uses SSSE3 or SSE4.1. `pshufb` (SSSE3) does a rotation of 8 bits in one instruction in place of three in BLAKE3; `pmulld` and `pblendvb` (SSE4.1) have SSE2 forms of one to three instructions that the compiler writes. The gain is a few instructions in loops whose cost is elsewhere (the reads of the table, the 7 rounds). Such a form needs a test of the processor at the start of a program (`src/library/support/instruction_sets`).
+No form uses SSSE3 or SSE4.1. `pshufb` (SSSE3) does a rotation of 8 bits in one instruction in place of three in BLAKE3; `pmulld` and `pblendvb` (SSE4.1) have SSE2 forms of one to three instructions that the compiler writes. The gain is a few instructions in loops whose cost is elsewhere (the reads of the table, the 7 rounds). Such a form needs a test of the processor at the start of a process (`src/library/support/instruction_sets`).
 
 AVX-512 gives 512-bit registers (16 pixels, 16 chunks of BLAKE3 side by side), mask registers (the last pixels of a row with no scalar tail), and a gather of 16 lanes. The kernel already saves its three state components on a processor that has them: the extended state area of each thread has 2688 bytes for that (`EXTENDED_STATE_CAPACITY`). A form still needs the same test of the processor as AVX2, and a measure first: on some processors a 512-bit instruction lowers the clock of the core for a while.
 
@@ -171,7 +171,7 @@ The compositor draws each frame of the screen. This table says, for each kind of
 
 ## 5. BLAKE3 (`src/library/contract/blake3`)
 
-**Where the hash runs.** The root service checks the hash of each resource before it gives it to a program, and the loader checks the hash of each module that it loads. The hash of a module is its identity, so every start of a program pays this cost.
+**Where the hash runs.** The root service checks the hash of each resource before it gives it to a process, and the loader checks the hash of each module that it loads. The hash of a module is its identity, so every start of a process pays this cost.
 
 **How BLAKE3 cuts its input.** The input is cut in chunks of 1024 bytes. Each chunk gives a chaining value of 8 words, and the chaining values are joined two by two in a tree, up to the root. The chunks do not depend on each other: several can be compressed at the same time.
 
@@ -187,7 +187,7 @@ The rotations by 16, 12, 8 and 7 bits are written as two shifts and an or (`rota
 
 ## 6. How to measure on the machine
 
-A measure is a line that a program of the system writes on the log. Each command runs the main machine test; each line is in `build/test_output.txt`. A measure is valid when `uptime` shows a load under 8. No test fails on a time: a measure is printed, never asserted (`docs/TOOLS.md`, "The bounds of the tests").
+A measure is a line that a process of the system writes on the log. Each command runs the main machine test; each line is in `build/test_output.txt`. A measure is valid when `uptime` shows a load under 8. No test fails on a time: a measure is printed, never asserted (`docs/TOOLS.md`, "The bounds of the tests").
 
 ```
 flock -o <the lock of the worktree> nix develop -c modustool test main
@@ -216,4 +216,4 @@ nix develop -c odin test src/library/contract/blake3 -o:speed -vet -collection:m
 - The row of colors of a gradient across or at an angle (a division and a mix for each pixel) and the outline renderer (`src/library/support/vector_font`, at build time) stay scalar.
 - The object code of the SSE2 forms is not read yet: the measures say if the compiler lowered the 16-bit products to `pmullw` and `pmulhuw`.
 - The cryptography of the system has no vector form: it keeps the portable implementations of its origin (`docs/CRYPTOGRAPHY.md`).
-- No vector form uses a usable instruction set above SSE2. The package `src/library/support/instruction_sets` has two users, the test programs `extended_state` and `return_fault`.
+- No vector form uses a usable instruction set above SSE2. The package `src/library/support/instruction_sets` has two users, the test processes `extended_state` and `return_fault`.

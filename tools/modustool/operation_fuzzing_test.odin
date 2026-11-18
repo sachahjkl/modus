@@ -78,7 +78,7 @@ each_word_with_a_digit_is_removed_from_a_report :: proc(t: ^testing.T) {
 	testing.expect_value(t, operation_numbers_removed("kernel: exception in the kernel: page fault vector 14 error 0000000000000002 at ffffffff8001a2b0 address 0000000000000010: write"), "kernel: exception in the kernel: page fault vector # error # at # address #: write")
 	testing.expect_value(t, operation_numbers_removed("free bits 12, marked 1"), "free bits #, marked #")
 	testing.expect_value(t, operation_numbers_removed(""), "")
-	testing.expect_value(t, operation_numbers_removed("the lock order is broken: a lock Program_Table"), "the lock order is broken: a lock Program_Table")
+	testing.expect_value(t, operation_numbers_removed("the lock order is broken: a lock Process_Table"), "the lock order is broken: a lock Process_Table")
 }
 
 // A value of the kernel in hexadecimal can hold letters only: each word of
@@ -101,7 +101,7 @@ each_hexadecimal_value_of_the_kernel_is_removed_from_a_report :: proc(t: ^testin
 // one run.
 @(private = "file")
 stop_log :: proc(address: string, error: string) -> string {
-	return fmt.tprintf("kernel: ok\r\n[operation_fuzzing] operation_fuzzing: mailbox at 1234\r\nkernel: program operation_sequence_runner stopped: page fault vector 14 at 0000000000401000\r\nkernel: the line above is cut: the report of a fault of the kernel starts here\r\nkernel: exception in the kernel: page fault vector 14 error %s at %s address 0000000000000010: a read of a page that is not present\r\n", error, address)
+	return fmt.tprintf("kernel: ok\r\n[operation_fuzzing] operation_fuzzing: mailbox at 1234\r\nkernel: process operation_sequence_runner stopped: page fault vector 14 at 0000000000401000\r\nkernel: the line above is cut: the report of a fault of the kernel starts here\r\nkernel: exception in the kernel: page fault vector 14 error %s at %s address 0000000000000010: a read of a page that is not present\r\n", error, address)
 }
 
 // Two runs of one stop give one signature, whatever the addresses and the
@@ -141,7 +141,7 @@ the_procedure_of_a_report_names_no_number :: proc(t: ^testing.T) {
 // The names of a small debug object of a kernel: one procedure and its
 // file.
 @(private = "file")
-KERNEL_OBJECT_STRINGS :: "kernel::page_fault_handlesrc/kernel/program.odin"
+KERNEL_OBJECT_STRINGS :: "kernel::page_fault_handlesrc/kernel/process.odin"
 @(private = "file")
 KERNEL_OBJECT_PROCEDURE :: "kernel::page_fault_handle"
 @(private = "file")
@@ -217,14 +217,14 @@ the_end_line_of_a_sequence_is_found_by_its_number :: proc(t: ^testing.T) {
 // the lines up to the end line of a sequence name only its own faults.
 @(test)
 a_late_line_of_isolation_belongs_to_the_sequence_that_caused_it :: proc(t: ^testing.T) {
-	log := "[operation_fuzzing] operation_fuzzing: sequence 1 ended\r\nkernel: program root stopped: page fault vector 14 at 0000000000401000\r\n[operation_fuzzing] operation_fuzzing: sequence 2 ended\r\n[operation_fuzzing] operation_fuzzing: sequence 3 ended\r\n"
+	log := "[operation_fuzzing] operation_fuzzing: sequence 1 ended\r\nkernel: process root stopped: page fault vector 14 at 0000000000401000\r\n[operation_fuzzing] operation_fuzzing: sequence 2 ended\r\n[operation_fuzzing] operation_fuzzing: sequence 3 ended\r\n"
 	first, first_found := operation_end_line_through(log, 1)
 	testing.expect(t, first_found)
 	testing.expect_value(t, operation_isolation_line(log[:first]), "")
 	rest := log[first:]
 	second, second_found := operation_end_line_through(rest, 2)
 	testing.expect(t, second_found)
-	testing.expect_value(t, operation_isolation_line(rest[:second]), "kernel: program root stopped: page fault vector 14 at 0000000000401000")
+	testing.expect_value(t, operation_isolation_line(rest[:second]), "kernel: process root stopped: page fault vector 14 at 0000000000401000")
 	third, third_found := operation_end_line_through(rest[second:], 3)
 	testing.expect(t, third_found)
 	testing.expect_value(t, operation_isolation_line(rest[second:][:third]), "")
@@ -256,17 +256,17 @@ the_lines_of_a_log_are_read_whole :: proc(t: ^testing.T) {
 	testing.expect_value(t, operation_log_new_lines(path, &scanned), "")
 }
 
-// A Program_Create whose name in its area is a protected name gets another
+// A Process_Create whose name in its area is a protected name gets another
 // first byte; a longer name, a shorter one, a name past the content of its
 // area and a name of another source stay. The change is the same at each
 // run, and the sequence still passes check.
 @(test)
-a_generated_sequence_never_names_a_protected_program :: proc(t: ^testing.T) {
+a_generated_sequence_never_names_a_protected_process :: proc(t: ^testing.T) {
 	BEFORE_SERVICE :: "rootrootx"
 	CONTENT :: BEFORE_SERVICE + OPERATION_FUZZING_MODULE
-	name_place := operation_parameter_place(.Program_Create, "name")
-	length_place := operation_parameter_place(.Program_Create, "name_length")
-	testing.expect(t, name_place >= 0 && length_place >= 0, "Program_Create has no name or no name_length")
+	name_place := operation_parameter_place(.Process_Create, "name")
+	length_place := operation_parameter_place(.Process_Create, "name_length")
+	testing.expect(t, name_place >= 0 && length_place >= 0, "Process_Create has no name or no name_length")
 	if name_place < 0 || length_place < 0 {
 		return
 	}
@@ -277,7 +277,7 @@ a_generated_sequence_never_names_a_protected_program :: proc(t: ^testing.T) {
 	copy(sequence.content[:], CONTENT)
 	create :: proc(sequence: ^operation_sequence.Sequence, name_place, length_place: int, offset, length: u64) {
 		item := &sequence.steps[sequence.step_count]
-		item.operation = u32(operation.Operation.Program_Create)
+		item.operation = u32(operation.Operation.Process_Create)
 		item.arguments[0] = {source = .Budget}
 		item.arguments[name_place] = {source = .Area_Address, area = 0, offset = offset}
 		item.arguments[length_place] = {source = .Value, value = length}
@@ -358,15 +358,15 @@ two_runs_of_one_broken_oracle_give_one_signature :: proc(t: ^testing.T) {
 }
 
 // The stop of operation_fuzzing or of the root service is found at the
-// start of a line only: a program that quotes the line is no fault.
+// start of a line only: a process that quotes the line is no fault.
 @(test)
 a_line_of_isolation_is_found_at_the_start_of_a_line :: proc(t: ^testing.T) {
 	testing.expect_value(t, operation_isolation_line(""), "")
-	testing.expect_value(t, operation_isolation_line("[log] said kernel: program root stopped: x\n"), "")
-	testing.expect_value(t, operation_isolation_line("kernel: program operation_sequence_runner stopped: page fault\n"), "")
-	testing.expect_value(t, operation_isolation_line("[log] kernel: program root stopped\nkernel: program root stopped: page fault vector 14 at 00000000004010a0\r\n"), "kernel: program root stopped: page fault vector 14 at 00000000004010a0")
-	first := operation_isolation_fault("kernel: program operation_fuzzing stopped: page fault vector 14 at 0000000000401000", "")
-	second := operation_isolation_fault("kernel: program operation_fuzzing stopped: page fault vector 14 at 0000000000402000", "")
+	testing.expect_value(t, operation_isolation_line("[log] said kernel: process root stopped: x\n"), "")
+	testing.expect_value(t, operation_isolation_line("kernel: process operation_sequence_runner stopped: page fault\n"), "")
+	testing.expect_value(t, operation_isolation_line("[log] kernel: process root stopped\nkernel: process root stopped: page fault vector 14 at 00000000004010a0\r\n"), "kernel: process root stopped: page fault vector 14 at 00000000004010a0")
+	first := operation_isolation_fault("kernel: process operation_fuzzing stopped: page fault vector 14 at 0000000000401000", "")
+	second := operation_isolation_fault("kernel: process operation_fuzzing stopped: page fault vector 14 at 0000000000402000", "")
 	testing.expect_value(t, first.signature, second.signature)
 	testing.expect_value(t, first.kind, Operation_Fault_Kind.Isolation)
 }

@@ -201,8 +201,8 @@ fuzz_target_table := [?]Fuzz_Target {
 	{
 		name = "disk_grant_table",
 		kind = .Raw,
-		about = "support/disk_program: a table behind its tag holds rows by its rules, and encodes and decodes to its part that persists",
-		packages = {SOURCE_FOLDER_SUPPORT + "/disk_program"},
+		about = "support/disk_process: a table behind its tag holds rows by its rules, and encodes and decodes to its part that persists",
+		packages = {SOURCE_FOLDER_SUPPORT + "/disk_process"},
 		input_limit = 2 << 10,
 		execute = fuzz_disk_grant_table_execute,
 		seeds = fuzz_disk_grant_table_seeds,
@@ -352,8 +352,8 @@ fuzz_target_table := [?]Fuzz_Target {
 	{
 		name = "kept_stop_reports",
 		kind = .Generated,
-		about = "support/disk_program: a hidden stop report names no hidden value, and the kept reports follow their model",
-		packages = {SOURCE_FOLDER_SUPPORT + "/disk_program"},
+		about = "support/disk_process: a hidden stop report names no hidden value, and the kept reports follow their model",
+		packages = {SOURCE_FOLDER_SUPPORT + "/disk_process"},
 		input_limit = 4 << 10,
 		execute = fuzz_kept_stop_reports_execute,
 	},

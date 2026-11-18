@@ -5,7 +5,7 @@
 // U+00A0 to U+00FF, then the euro sign, by their character index) and the
 // pairs, of one scale of a glyph cache (text_shaping.spacing_of gives them
 // from a cache). The
-// module holds no state of a program.
+// module holds no state of a process.
 //
 // The tables are hostile input: the counts are checked here; each advance,
 // each pair, each byte and each range is read once by the package, and kept
@@ -16,7 +16,7 @@
 // gives that work through the call form, in batches, so one call places a
 // whole text or measures all the labels of a window. Because the spacing
 // comes from the caller, the module holds no font and no state, and an
-// isolated call gives the same answer as a direct call. A program in the
+// isolated call gives the same answer as a direct call. A process in the
 // system calls the package `src/library/support/text_shaping` directly; this module is
 // the same code for a caller that loads it or isolates it.
 //

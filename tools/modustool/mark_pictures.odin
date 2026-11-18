@@ -267,7 +267,7 @@ SITE_ICON_MASKABLE :: "icon_512_maskable.png"
 // writes the rows of the repository and `modustool site` the rows of the
 // site; neither holds a number of a picture of its own. What the system
 // draws is not a file and has no row; it follows the same rule: the window
-// of the program `heron` and the boot display are smooth, the bar of the
+// of the process `heron` and the boot display are smooth, the bar of the
 // desktop is cells.
 //
 // The repository: the mark with the name at cells of 24 and 20 pixels with

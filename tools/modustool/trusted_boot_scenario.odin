@@ -63,7 +63,7 @@ import "modus:support/tpm2"
 // The module that the volumes of machines 1 and 5 change: the root service
 // starts it at each boot: with no check, the machine runs it.
 CHANGED_MODULE :: "console"
-// The module that the volume of machine 7 changes: no program of that
+// The module that the volume of machine 7 changes: no process of that
 // machine loads it.
 OTHER_SYSTEM_MODULE :: "lonely"
 
@@ -431,7 +431,7 @@ floor_start_steps :: proc(machine: ^Floor_Machine, firmware: Machine_Firmware, f
 }
 
 // floor_started_steps adds the steps after the raises of a machine that
-// starts: the measure, after which no program raises a floor, the root
+// starts: the measure, after which no process raises a floor, the root
 // service, and the desktop; then the end.
 floor_started_steps :: proc(machine: ^Floor_Machine) {
 	append(&machine.steps, Step{kind = .Wait, text = MEASURE_LINE, fails_on = MEASURE_REFUSED_LINE, seconds = TPM_MACHINE_STEP_SECONDS})

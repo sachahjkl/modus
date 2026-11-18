@@ -38,7 +38,7 @@ sample_parts :: proc() -> Encode_Parts {
 	procedures[0] = {start = 0x1000, size = 0x40, name_offset = name_offset_of(names, "fault::three"), name_count = 12, package_count = 5}
 	procedures[1] = {start = 0x1100, size = 0x20, name_offset = name_offset_of(names, "entry"), name_count = 5}
 	files := make([]File, 2, context.temp_allocator)
-	files[1] = {path_offset = name_offset_of(names, "programs/fault/main.odin"), path_count = 24, content_hash = {0 = 0x11, 31 = 0x22}}
+	files[1] = {path_offset = name_offset_of(names, "processes/fault/main.odin"), path_count = 24, content_hash = {0 = 0x11, 31 = 0x22}}
 	lines := make([]Line, 2, context.temp_allocator)
 	lines[0] = {offset = 0x1000, place = row_place(1, 14)}
 	lines[1] = {offset = 0x1120}
@@ -190,7 +190,7 @@ a_debug_object_is_of_one_module_and_names_the_hash_of_each_source_file :: proc(t
 	testing.expect(t, !describes_module(object, [32]u8{0 = 0xAB, 31 = 0xCE}), "another module is not described")
 	testing.expect(t, !describes_module(object[:len(object) - 1], [32]u8{0 = 0xAB, 31 = 0xCD}), "a cut object describes no module")
 	source, found := source_line_of(object, 0x1008)
-	testing.expect(t, found && source.path == "programs/fault/main.odin" && source.line == 14 && source.content_hash_known)
+	testing.expect(t, found && source.path == "processes/fault/main.odin" && source.line == 14 && source.content_hash_known)
 	testing.expect(t, source.content_hash == [32]u8{0 = 0x11, 31 = 0x22}, "the hash of the content of the file")
 	_, found = source_line_of(object, 0x1120)
 	testing.expect(t, !found, "no line after the code")

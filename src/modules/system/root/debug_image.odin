@@ -7,7 +7,7 @@ import "modus:support/system"
 // The debug image (docs/MODULE_CONTRACT.md, "Debug information"): the
 // debug objects of the modules, which the boot program read from the boot
 // volume and the kernel gave this service. This service maps it read-only
-// into each program with the grant Debug_Image, which names the procedures
+// into each process with the grant Debug_Image, which names the procedures
 // and the lines of a stop report. It reads none of it.
 
 debug_image_memory: system.Handle
@@ -25,8 +25,8 @@ debug_image_take :: proc "contextless" (ctx: ^system.Context) {
 }
 
 // debug_image_give adds the debug image, read-only, to the mappings of a
-// program, and sets its size and its bit in the values. A machine with no
-// debug image gives nothing: the program shows offsets.
+// process, and sets its size and its bit in the values. A machine with no
+// debug image gives nothing: the process shows offsets.
 debug_image_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
 	if debug_image_memory == 0 {
 		return

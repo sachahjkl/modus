@@ -10,7 +10,7 @@ import "core:strings"
 // UEFI verifies Authenticode signatures with RSA keys and X.509
 // certificates, not Ed25519. So the publisher of the system has a second
 // key: the firmware signing key, an RSA-2048 key and its certificate, in the
-// folder of the signing key. Three programs of Nixpkgs do the work that the
+// folder of the signing key. Three processes of Nixpkgs do the work that the
 // tool does not write itself:
 //   openssl         makes the key and the certificate;
 //   sbsign          (sbsigntool) signs the boot program;
@@ -106,21 +106,21 @@ firmware_signing_key_new :: proc(folder: string, test: bool) -> bool {
 // one byte of it for a test that the firmware refuses it. The boot program
 // stays the output of the link with no signature, which the repeated builds
 // compare.
-boot_program_sign :: proc(signature: Firmware_Signature, program_path, signed_path: string) -> bool {
+boot_program_sign :: proc(signature: Firmware_Signature, process_path, signed_path: string) -> bool {
 	key := firmware_signing_key_find() or_return
 	_ = os.remove(signed_path)
-	run({"sbsign", "--key", key.key_path, "--cert", key.certificate_path, "--output", signed_path, program_path}) or_return
+	run({"sbsign", "--key", key.key_path, "--cert", key.certificate_path, "--output", signed_path, process_path}) or_return
 	// A private key that does not belong to its certificate gives a
 	// signature that the enrolled certificate does not verify: the firmware
 	// would refuse the boot program on every machine.
 	run({"sbverify", "--cert", key.certificate_path, signed_path}) or_return
 	if signature == .Signed_Then_Changed {
-		program := read_file(signed_path) or_return
+		process := read_file(signed_path) or_return
 		// The middle of the file is in the boot image that the boot program
 		// holds: a byte that the Authenticode hash covers. The signature is
 		// at the end of the file.
-		program[len(program) / 2] ~= 0x01
-		if err := os.write_entire_file(signed_path, program); err != nil {
+		process[len(process) / 2] ~= 0x01
+		if err := os.write_entire_file(signed_path, process); err != nil {
 			fmt.eprintfln("modustool: cannot write %s: %v", signed_path, err)
 			return false
 		}

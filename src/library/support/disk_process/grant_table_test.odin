@@ -1,5 +1,5 @@
 #+build !freestanding
-package disk_program
+package disk_process
 
 import "core:testing"
 import "modus:contract/root_ring"
@@ -81,7 +81,7 @@ a_full_table :: proc(t: ^testing.T) {
 }
 
 // A nickname with a store has letters, digits, '-' and '_' only: a '.' could
-// name the store of another program or of another principal.
+// name the store of another process or of another principal.
 @(test)
 nicknames_that_a_grant_refuses :: proc(t: ^testing.T) {
 	cases := [?]struct {
@@ -104,8 +104,8 @@ nicknames_that_a_grant_refuses :: proc(t: ^testing.T) {
 		testing.expectf(t, problem == item.problem && offset == item.offset, "the nickname %q: %v at %d, expected %v at %d", item.nickname, problem, offset, item.problem, item.offset)
 	}
 	buffer: [32]u8
-	testing.expect_value(t, store_program_name(&buffer, "visitor"), "disk-visitor")
-	testing.expect_value(t, store_program_name(&buffer, "twenty_three_bytes_long"), "disk-twenty_three_bytes_long")
+	testing.expect_value(t, store_process_name(&buffer, "visitor"), "disk-visitor")
+	testing.expect_value(t, store_process_name(&buffer, "twenty_three_bytes_long"), "disk-twenty_three_bytes_long")
 }
 
 // Only the store is given by a command; the ring of the root service, the
@@ -409,20 +409,20 @@ client_keys_through_the_persisted_form :: proc(t: ^testing.T) {
 	testing.expect_value(t, table.client_key_count, 2)
 }
 
-// No command gives a disk program a start grant of a root ring: each grant
+// No command gives a disk process a start grant of a root ring: each grant
 // of ROOT_RING_GRANTS is Never, and each grant that a command gives now or
-// could give later is outside them. A disk program then has no root ring,
+// could give later is outside them. A disk process then has no root ring,
 // whatever its nickname, and sends no command of the root ring.
 @(test)
-no_command_gives_a_disk_program_a_root_ring :: proc(t: ^testing.T) {
+no_command_gives_a_disk_process_a_root_ring :: proc(t: ^testing.T) {
 	for grant in root_ring.ROOT_RING_GRANTS {
 		_, answer := grant_by_command(grant)
-		testing.expectf(t, answer == .Never, "a command can give a disk program the grant %v of a root ring: %v", grant, answer)
+		testing.expectf(t, answer == .Never, "a command can give a disk process the grant %v of a root ring: %v", grant, answer)
 	}
 	given_by_a_command: bit_set[start_grant.Grant]
 	for grant in start_grant.Grant {
 		if _, answer := grant_by_command(grant); answer != .Never {
-			testing.expectf(t, grant not_in root_ring.ROOT_RING_GRANTS, "a command can give a disk program the grant %v of a root ring", grant)
+			testing.expectf(t, grant not_in root_ring.ROOT_RING_GRANTS, "a command can give a disk process the grant %v of a root ring", grant)
 			given_by_a_command += {grant}
 		}
 	}

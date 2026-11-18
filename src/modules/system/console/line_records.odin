@@ -10,7 +10,7 @@ import terminal "modus:support/terminal"
 // The log records of a line.
 //
 // While a line calls an export, the console shows under the line the log
-// records that the called program writes: grouped by channel, with each
+// records that the called process writes: grouped by channel, with each
 // value in the color of its value kind, as the window of the log draws
 // them (docs/CONSOLE.md, "The log records of a line").
 //
@@ -20,15 +20,15 @@ import terminal "modus:support/terminal"
 // connection that the root service gives. With no service `log`, or with a
 // refusal, a line shows no record: the console gets no other access.
 //
-// Which records: those that a program called by the line wrote, from the
+// Which records: those that a process called by the line wrote, from the
 // first call of the line on. A module that `load` put in the console
 // writes as the console. The lines go to the terminal only: the records are
 // in the log already.
 
 LINE_RECORD_SERVICE :: "log" // The service that serves the log records.
 LINE_RECORD_BATCH :: 32 // The records that the console draws from one answer of the service.
-LINE_RECORD_ANSWERS :: 8 // The most answers that the console reads at one time: a program that writes faster keeps its records in the log.
-LINE_RECORD_PROGRAMS :: 4 // The programs that one line follows.
+LINE_RECORD_ANSWERS :: 8 // The most answers that the console reads at one time: a process that writes faster keeps its records in the log.
+LINE_RECORD_PROCESSES :: 4 // The processes that one line follows.
 LINE_RECORD_ANSWER_LIMIT :: 1000 // Milliseconds: the service that does not answer in this time is not asked again in the line.
 LINE_RECORD_INDENT :: 4 // The column of the text of a record.
 
@@ -40,14 +40,14 @@ Line_Records :: struct {
 	value_runs:  module.Function,
 	value_runs_export: u32,
 	next:        u64, // The number of the first log record that the console did not read.
-	marked:      bool, // The line called a program: next is the first record of the line.
+	marked:      bool, // The line called a process: next is the first record of the line.
 	unavailable: bool, // The service gave no answer for this line.
 	refused:     bool, // The root service gave no connection: the console asks again after a start or a connect.
-	programs:    [LINE_RECORD_PROGRAMS]string, // The programs that the line called.
-	program_count: int,
+	processes:    [LINE_RECORD_PROCESSES]string, // The processes that the line called.
+	process_count: int,
 	// The group of the last record that the console drew: a record of the
-	// same program and channel needs no new head.
-	head_program: [32]u8,
+	// same process and channel needs no new head.
+	head_process: [32]u8,
 	head_channel: [16]u8,
 	head_drawn:   bool,
 	rows:        [LINE_RECORD_BATCH * module.RECORD_SIZE_LIMIT]u8, // The rows of one answer that the console draws.
@@ -57,11 +57,11 @@ line_records: Line_Records
 
 // line_records_start forgets the calls of the line before.
 line_records_start :: proc "contextless" () {
-	line_records.marked, line_records.unavailable, line_records.program_count, line_records.head_drawn = false, false, 0, false
+	line_records.marked, line_records.unavailable, line_records.process_count, line_records.head_drawn = false, false, 0, false
 }
 
 // line_records_try_again lets the console ask for the connection again: a
-// program started, or a service was connected.
+// process started, or a service was connected.
 line_records_try_again :: proc "contextless" () {
 	line_records.refused = false
 }
@@ -96,7 +96,7 @@ line_records_connect :: proc "contextless" () -> bool {
 		}
 		sandbox = place
 	}
-	if sandbox.program == 0 {
+	if sandbox.process == 0 {
 		if line_records.refused {
 			return false
 		}
@@ -143,7 +143,7 @@ line_records_connect :: proc "contextless" () -> bool {
 // more than the buffer, and reads each row with the description.
 line_records_ask :: proc "contextless" (function: module.Function, export: u32, after: u64) -> (table: Value, total: u64, ok: bool) {
 	sandbox, _ := line_records_sandbox()
-	if sandbox == nil || sandbox.program == 0 {
+	if sandbox == nil || sandbox.process == 0 {
 		return {}, 0, false
 	}
 	arguments := [1]isolated.Argument{{integer = after}}
@@ -176,7 +176,7 @@ line_records_ask :: proc "contextless" (function: module.Function, export: u32, 
 			rows, _ := isolated.result_table(sandbox.region, buffer, completion.values[0], u64(described.size))
 			return {kind = .Table, record = rows, file = line_records.file, detail = function.result_detail}, completion.values[0], true
 		}
-		if state, _ := system.program_state(sandbox.program); state == .Stopped {
+		if state, _ := system.process_state(sandbox.process); state == .Stopped {
 			return {}, 0, false
 		}
 		system.wait_records(&wait, &sandbox.ring.completions)
@@ -186,22 +186,22 @@ line_records_ask :: proc "contextless" (function: module.Function, export: u32, 
 	}
 }
 
-// line_records_call_begins notes that the line calls a program now. At the
+// line_records_call_begins notes that the line calls a process now. At the
 // first call of a line, the console finds the number of the next log
 // record: the records before it are not records of the line.
-line_records_call_begins :: proc "contextless" (program: string) {
+line_records_call_begins :: proc "contextless" (process: string) {
 	// The console reads the records through the log service: it does not
 	// call it while the line calls it.
-	if program == LINE_RECORD_SERVICE || line_records.unavailable {
+	if process == LINE_RECORD_SERVICE || line_records.unavailable {
 		return
 	}
 	known := false
-	for name in line_records.programs[:line_records.program_count] {
-		known ||= name == program
+	for name in line_records.processes[:line_records.process_count] {
+		known ||= name == process
 	}
-	if !known && line_records.program_count < LINE_RECORD_PROGRAMS {
-		line_records.programs[line_records.program_count] = program
-		line_records.program_count += 1
+	if !known && line_records.process_count < LINE_RECORD_PROCESSES {
+		line_records.processes[line_records.process_count] = process
+		line_records.process_count += 1
 	}
 	if line_records.marked {
 		return
@@ -237,10 +237,10 @@ line_records_call_begins :: proc "contextless" (program: string) {
 	}
 }
 
-// line_records_follows says if the line called a program with a name.
-line_records_follows :: proc "contextless" (program: string) -> bool {
-	for name in line_records.programs[:line_records.program_count] {
-		if name == program {
+// line_records_follows says if the line called a process with a name.
+line_records_follows :: proc "contextless" (process: string) -> bool {
+	for name in line_records.processes[:line_records.process_count] {
+		if name == process {
 			return true
 		}
 	}
@@ -248,7 +248,7 @@ line_records_follows :: proc "contextless" (program: string) -> bool {
 }
 
 // line_records_show_during shows the new records while a call waits for
-// its program. active: the sandbox of the call; the console does not use
+// its process. active: the sandbox of the call; the console does not use
 // the connection of a call that runs.
 line_records_show_during :: proc "contextless" (active: int) {
 	if _, number := line_records_sandbox(); number == active {
@@ -258,9 +258,9 @@ line_records_show_during :: proc "contextless" (active: int) {
 }
 
 // line_records_show reads the log records that came since the last read,
-// and draws those of the programs that the line called.
+// and draws those of the processes that the line called.
 line_records_show :: proc "contextless" () {
-	if !line_records.marked || line_records.unavailable || line_records.program_count == 0 {
+	if !line_records.marked || line_records.unavailable || line_records.process_count == 0 {
 		return
 	}
 	for _ in 0 ..< LINE_RECORD_ANSWERS {
@@ -274,13 +274,13 @@ line_records_show :: proc "contextless" () {
 			return
 		}
 		number, has_number := table_field(table, "number")
-		program, has_program := table_field(table, "program")
+		process, has_process := table_field(table, "process")
 		runs, has_runs := table_field(table, "runs")
-		if !has_number || !has_program || !has_runs {
+		if !has_number || !has_process || !has_runs {
 			line_records.unavailable = true
 			return
 		}
-		// The rows of the programs of the line, out of the call region:
+		// The rows of the processes of the line, out of the call region:
 		// the next call writes over it.
 		kept := 0
 		taken := 0
@@ -292,7 +292,7 @@ line_records_show :: proc "contextless" () {
 			row := table_row(table, answer, index)
 			taken += 1
 			line_records.next = max(line_records.next, u64(max(module.field_integer(row, number), 0)) + 1)
-			if !line_records_follows(module.field_text(row, program)) {
+			if !line_records_follows(module.field_text(row, process)) {
 				continue
 			}
 			copy(line_records.rows[kept * table.size:][:table.size], row)
@@ -309,13 +309,13 @@ line_records_show :: proc "contextless" () {
 	}
 }
 
-// line_records_draw draws records of one answer: for each program and
+// line_records_draw draws records of one answer: for each process and
 // channel, in the order of its first record, one head line and its
 // records. With runs, the console asks the service for the value runs of
 // the records from the first one on.
 line_records_draw :: proc "contextless" (table: Table, kept_rows: Value, kept: int, with_runs: bool) {
 	number, _ := table_field(table, "number")
-	program, _ := table_field(table, "program")
+	process, _ := table_field(table, "process")
 	channel, has_channel := table_field(table, "channel")
 	level, has_level := table_field(table, "level")
 	text, has_text := table_field(table, "text")
@@ -345,16 +345,16 @@ line_records_draw :: proc "contextless" (table: Table, kept_rows: Value, kept: i
 			continue
 		}
 		first_row := table_row(table, kept_rows, first)
-		group_program := module.field_text(first_row, program)
+		group_process := module.field_text(first_row, process)
 		group_channel := module.field_text(first_row, channel)
-		if !line_records.head_drawn || system.name_of(line_records.head_program[:]) != group_program || system.name_of(line_records.head_channel[:]) != group_channel {
-			line_records.head_program, line_records.head_channel = {}, {}
-			copy(line_records.head_program[:len(line_records.head_program) - 1], group_program)
+		if !line_records.head_drawn || system.name_of(line_records.head_process[:]) != group_process || system.name_of(line_records.head_channel[:]) != group_channel {
+			line_records.head_process, line_records.head_channel = {}, {}
+			copy(line_records.head_process[:len(line_records.head_process) - 1], group_process)
 			copy(line_records.head_channel[:len(line_records.head_channel) - 1], group_channel)
 			line_records.head_drawn = true
 			output_continuation = LINE_RECORD_INDENT
 			emit("  ", {})
-			emit(group_program, value_kind_style(.Module))
+			emit(group_process, value_kind_style(.Module))
 			if group_channel != "" {
 				emit(" ", {})
 				emit(group_channel, {tone = u8(terminal.Tone.Accent)})
@@ -364,7 +364,7 @@ line_records_draw :: proc "contextless" (table: Table, kept_rows: Value, kept: i
 		open := false // The text of the record before goes on in this one.
 		for index in first ..< kept {
 			row := table_row(table, kept_rows, index)
-			if drawn[index] || module.field_text(row, program) != group_program || module.field_text(row, channel) != group_channel {
+			if drawn[index] || module.field_text(row, process) != group_process || module.field_text(row, channel) != group_channel {
 				continue
 			}
 			drawn[index] = true

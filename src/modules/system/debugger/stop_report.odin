@@ -1,11 +1,11 @@
 package debugger
 
-// The stop report of a disk program that stopped on a fault, named with no
-// attach (src/md/features/debug_object_of_a_disk_program.md). The root
-// service holds the only handle of a disk program and closes it at the
-// reap: the kernel forgets the report then, and no program can attach to a
-// program that stopped. The root service keeps a copy of the report, with
-// each value that can be a word of the memory of the program taken out,
+// The stop report of a disk process that stopped on a fault, named with no
+// attach (src/md/features/debug_object_of_a_disk_process.md). The root
+// service holds the only handle of a disk process and closes it at the
+// reap: the kernel forgets the report then, and no process can attach to a
+// process that stopped. The root service keeps a copy of the report, with
+// each value that can be a word of the memory of the process taken out,
 // and gives it to this service with the connection that reads the debug
 // object of its module.
 
@@ -13,41 +13,41 @@ import debug_object "modus:contract/debug_object"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import "modus:support/system"
 
-// One frame of the stop report of a disk program: stop_report(). 256
+// One frame of the stop report of a disk process: stop_report(). 256
 // bytes, the most that a row of a described record has.
 Stop_Frame_Row :: struct {
 	frame:     i64, // 0: the instruction of the fault. Each next one: a caller.
-	module:    [32]u8, // The name of the module in the boot image, or the nickname of the program for its own module.
+	module:    [32]u8, // The name of the module in the boot image, or the nickname of the process for its own module.
 	procedure: [80]u8, // From the debug object of the module. Empty: no object, or no procedure holds the address.
 	offset:    i64, // The offset in the procedure of the instruction (frame 0) or of the return address; in the module with no procedure.
 	file:      [80]u8,
 	line:      i64, // The line of the instruction, or of the call. 0: no source line.
-	stop:      [40]u8, // Frame 0: what stopped the program. A frame whose value the root service hid: "hidden". Else empty.
+	stop:      [40]u8, // Frame 0: what stopped the process. A frame whose value the root service hid: "hidden". Else empty.
 }
 #assert(size_of(Stop_Frame_Row) == 256)
 
-// stop_report gives one row for each frame of the stop report of a disk program that stopped on a fault: the module, the procedure and its offset, the file and the line. It needs no attach.
+// stop_report gives one row for each frame of the stop report of a disk process that stopped on a fault: the module, the procedure and its offset, the file and the line. It needs no attach.
 //
-// The root service keeps the stop report of each disk program that stops
+// The root service keeps the stop report of each disk process that stops
 // on a fault, 8 of them and 4 for one principal, until a run of the
-// nickname ends with no fault: a program that stopped can be attached
+// nickname ends with no fault: a process that stopped can be attached
 // to by no debugger. This export asks the root service for the report, and
 // reads the debug object of the module from the store `module_files`, as
 // `attach` does. The report holds only the frames that a module record
 // holds, as `Inspect` gives them: the root service hid each other value,
-// which can be a word of the memory of the program.
+// which can be a word of the memory of the process.
 //
-// - **program**: the nickname of the disk program, at most 31 bytes.
+// - **process**: the nickname of the disk process, at most 31 bytes.
 //
 // **Errors**:
 //
 // - `No_Grant`, `Acts_For_Principal` (-1): the caller does not act for the
 //   principal.
 // - (-4) the record of the root service: `Absent`, `Stop_Reports` when no
-//   disk program of the principal of the caller with this nickname stopped
+//   disk process of the principal of the caller with this nickname stopped
 //   on a fault, or 8 newer reports took its place; `No_Grant`,
 //   `Debug_Access` when the grant `debug` of the caller was revoked;
 //   `No_Answer` when the root service did not answer in 1500 ms;
@@ -59,17 +59,17 @@ Stop_Frame_Row :: struct {
 // debugger.stop_report("visitor")
 // ```
 @(export, link_name = "stop_report")
-stop_report :: proc "c" (program: ^string, result: ^[]Stop_Frame_Row, error: ^errors.Error_Record) -> i64 {
+stop_report :: proc "c" (process: ^string, result: ^[]Stop_Frame_Row, error: ^errors.Error_Record) -> i64 {
 	caller := system.service_caller()
 	if caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	buffer: [PROGRAM_NAME_LIMIT]u8
-	name, fits := text_copy(buffer[:], program)
+	buffer: [PROCESS_NAME_LIMIT]u8
+	name, fits := text_copy(buffer[:], process)
 	if !fits || name == "" {
-		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(program^)), PROGRAM_NAME_LIMIT)
+		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(process^)), PROCESS_NAME_LIMIT)
 	}
-	kept: disk_program.Kept_Stop_Report
+	kept: disk_process.Kept_Stop_Report
 	// The object of the module lives for this export: it is read again at
 	// the next one, as the store can hold another object since.
 	read_object: Disk_Debug_Object
@@ -147,7 +147,7 @@ stop_report :: proc "c" (program: ^string, result: ^[]Stop_Frame_Row, error: ^er
 	return i64(frame_count)
 }
 
-// stop_cause_write writes what stopped the program: "page fault at 0x0",
+// stop_cause_write writes what stopped the process: "page fault at 0x0",
 // or the vector of another fault.
 stop_cause_write :: proc "contextless" (column: []u8, report: ^op.Stop_Report) {
 	writer := system.Writer{buffer = column}

@@ -8,9 +8,9 @@ import "core:testing"
 // A module build file with each key gives each field of a row.
 @(test)
 module_build_file_with_each_key :: proc(t: ^testing.T) {
-	file, problem := module_build_file_parse("name: my_program\nimports: drawing  cryptography\n\ndefines: DRAWING_THROUGH_MODULE=true SIZE=4\nlibrary: yes\n")
+	file, problem := module_build_file_parse("name: my_process\nimports: drawing  cryptography\n\ndefines: DRAWING_THROUGH_MODULE=true SIZE=4\nlibrary: yes\n")
 	testing.expect_value(t, problem, "")
-	testing.expect_value(t, file.name, "my_program")
+	testing.expect_value(t, file.name, "my_process")
 	testing.expect(t, slice.equal(file.imports, []string{"drawing", "cryptography"}), "the imports keep their order")
 	testing.expect(t, slice.equal(file.defines, []string{"DRAWING_THROUGH_MODULE=true", "SIZE=4"}), "the defines keep their order")
 	testing.expect(t, file.library)
@@ -101,23 +101,23 @@ outside_module_examples_follow_the_module_table :: proc(t: ^testing.T) {
 // it, in the source library, or in the libraries of the compiler.
 @(test)
 outside_module_source_places :: proc(t: ^testing.T) {
-	module_folder :: "/home/someone/projects/my_program"
+	module_folder :: "/home/someone/projects/my_process"
 	library_folder :: "/home/someone/modus/src/library"
 	compiler_folder :: "/nix/store/odin/share"
 	place :: proc(path: string) -> bool {
 		return outside_module_source_has_a_place(path, module_folder, library_folder, compiler_folder)
 	}
-	testing.expect(t, place("/home/someone/projects/my_program/main.odin"))
-	testing.expect(t, place("/home/someone/projects/my_program/parts/draw.odin"))
+	testing.expect(t, place("/home/someone/projects/my_process/main.odin"))
+	testing.expect(t, place("/home/someone/projects/my_process/parts/draw.odin"))
 	testing.expect(t, place("/home/someone/modus/src/library/support/system/system.odin"))
 	testing.expect(t, place("/nix/store/odin/share/base/runtime/core.odin"))
 	// A relative import that leaves the folder of the module.
 	testing.expect(t, !place("/home/someone/projects/shared/text.odin"))
 	// A folder beside the folder of the module whose name starts with it.
-	testing.expect(t, !place("/home/someone/projects/my_program_tools/main.odin"))
+	testing.expect(t, !place("/home/someone/projects/my_process_tools/main.odin"))
 	// A folder of the system that is not its library.
 	testing.expect(t, !place("/home/someone/modus/src/kernel/enter.odin"))
-	testing.expect(t, !place("/home/someone/modus/src/programs/tally/main.odin"))
+	testing.expect(t, !place("/home/someone/modus/src/processes/tally/main.odin"))
 	// With no answer of the compiler, the layout of its installation.
 	testing.expect(t, outside_module_source_has_a_place("/nix/store/other/share/core/fmt/fmt.odin", module_folder, library_folder, ""))
 	testing.expect(t, !outside_module_source_has_a_place("/home/someone/projects/shared/text.odin", module_folder, library_folder, ""))
@@ -127,22 +127,22 @@ outside_module_source_places :: proc(t: ^testing.T) {
 // name of the folder of the module, and no folder above it.
 @(test)
 outside_module_source_path_in_a_debug_object :: proc(t: ^testing.T) {
-	recorded, is_outside := outside_source_path("/home/someone/projects/my_program/main.odin", "/home/someone/projects/my_program")
+	recorded, is_outside := outside_source_path("/home/someone/projects/my_process/main.odin", "/home/someone/projects/my_process")
 	testing.expect(t, is_outside)
-	testing.expect_value(t, recorded, "my_program/main.odin")
-	recorded, is_outside = outside_source_path("/home/someone/projects/my_program/parts/draw.odin", "/home/someone/projects/my_program")
+	testing.expect_value(t, recorded, "my_process/main.odin")
+	recorded, is_outside = outside_source_path("/home/someone/projects/my_process/parts/draw.odin", "/home/someone/projects/my_process")
 	testing.expect(t, is_outside)
-	testing.expect_value(t, recorded, "my_program/parts/draw.odin")
+	testing.expect_value(t, recorded, "my_process/parts/draw.odin")
 	// A folder at the root of the file system.
-	recorded, is_outside = outside_source_path("/my_program/main.odin", "/my_program")
+	recorded, is_outside = outside_source_path("/my_process/main.odin", "/my_process")
 	testing.expect(t, is_outside)
-	testing.expect_value(t, recorded, "my_program/main.odin")
+	testing.expect_value(t, recorded, "my_process/main.odin")
 	// A source of the system, and a build of a module of the system.
-	_, is_outside = outside_source_path("/home/someone/modus/src/library/support/system/system.odin", "/home/someone/projects/my_program")
+	_, is_outside = outside_source_path("/home/someone/modus/src/library/support/system/system.odin", "/home/someone/projects/my_process")
 	testing.expect(t, !is_outside)
-	_, is_outside = outside_source_path("/home/someone/projects/my_program/main.odin", "")
+	_, is_outside = outside_source_path("/home/someone/projects/my_process/main.odin", "")
 	testing.expect(t, !is_outside)
-	_, is_outside = outside_source_path("/home/someone/projects/my_program_tools/main.odin", "/home/someone/projects/my_program")
+	_, is_outside = outside_source_path("/home/someone/projects/my_process_tools/main.odin", "/home/someone/projects/my_process")
 	testing.expect(t, !is_outside)
 }
 
@@ -154,7 +154,7 @@ module_names :: proc(t: ^testing.T) {
 	testing.expect(t, module_name_is_valid(strings.repeat("a", MODULE_NAME_BYTES_MOST, context.temp_allocator)))
 	testing.expect(t, !module_name_is_valid(strings.repeat("a", MODULE_NAME_BYTES_MOST + 1, context.temp_allocator)))
 	testing.expect(t, !module_name_is_valid(""))
-	testing.expect(t, !module_name_is_valid("my-program"))
-	testing.expect(t, !module_name_is_valid("my program"))
+	testing.expect(t, !module_name_is_valid("my-process"))
+	testing.expect(t, !module_name_is_valid("my process"))
 	testing.expect(t, !module_name_is_valid("../tally"))
 }

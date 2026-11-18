@@ -430,7 +430,7 @@ shared_inputs_of_a_test :: proc(image_content: string) -> Boot_Volume_Shared_Inp
 	append(&built_files, Record_Output{path = DEBUG_IMAGE, hash = hash_of_text("the debug image")})
 	append(&built_files, Record_Output{path = SYSTEM_KEY_FILE, hash = hash_of_text("the public key")})
 	settings := make([]string, 1, context.temp_allocator)
-	settings[0] = "program odin: /store/odin"
+	settings[0] = "process odin: /store/odin"
 	return {settings = settings, built_files = built_files[:]}
 }
 
@@ -465,7 +465,7 @@ boot_volume_key_changes_with_each_input :: proc(t: ^testing.T) {
 	first := volume_key_of_a_new_build(t, root, main_volume, shared)
 	testing.expect_value(t, volume_key_of_a_new_build(t, root, main_volume, shared), first)
 
-	testing.expect(t, volume_key_of_a_new_build(t, root, main_volume, shared_inputs_of_a_test("the boot image with one changed program")) != first, "another boot image changes the key")
+	testing.expect(t, volume_key_of_a_new_build(t, root, main_volume, shared_inputs_of_a_test("the boot image with one changed process")) != first, "another boot image changes the key")
 
 	other_kernel := shared_inputs_of_a_test("the boot image")
 	for &file in other_kernel.built_files {
@@ -479,11 +479,11 @@ boot_volume_key_changes_with_each_input :: proc(t: ^testing.T) {
 	other_tool.tool_identity[0] = 1
 	testing.expect(t, volume_key_of_a_new_build(t, root, main_volume, other_tool) != first, "another identity of the tool changes the key")
 
-	other_program := shared
-	programs := make([]string, 1, context.temp_allocator)
-	programs[0] = "program odin: /store/another_odin"
-	other_program.settings = programs
-	testing.expect(t, volume_key_of_a_new_build(t, root, main_volume, other_program) != first, "another compiler changes the key")
+	other_process := shared
+	processes := make([]string, 1, context.temp_allocator)
+	processes[0] = "process odin: /store/another_odin"
+	other_process.settings = processes
+	testing.expect(t, volume_key_of_a_new_build(t, root, main_volume, other_process) != first, "another compiler changes the key")
 
 	// The same volume file with the flag of a self test: one flag of the
 	// compiler differs.
@@ -577,7 +577,7 @@ kept_boot_volume_with_a_changed_file_is_built_again :: proc(t: ^testing.T) {
 	kept, reason = decision(root, record_file, inputs, {volume_file, image_file, fmt.tprintf("%s/BOOTX64.EFI", root)})
 	testing.expect(t, !kept, "an output that the record does not name forces a build")
 
-	other_image, other_readable := boot_volume_key_inputs(main_volume, shared_inputs_of_a_test("the boot image with one changed program"), nil, nil)
+	other_image, other_readable := boot_volume_key_inputs(main_volume, shared_inputs_of_a_test("the boot image with one changed process"), nil, nil)
 	testing.expect(t, other_readable)
 	kept, reason = decision(root, record_file, other_image, {volume_file, image_file})
 	testing.expect(t, !kept, "a volume whose boot image changed is built again")
@@ -684,7 +684,7 @@ only_a_volume_of_this_build_is_ready :: proc(t: ^testing.T) {
 build_host_processes_keep_the_outcome_of_each_command :: proc(t: ^testing.T) {
 	commands := make([][]string, 1, context.temp_allocator)
 	command := make([]string, 1, context.temp_allocator)
-	command[0] = "/a program that is not there"
+	command[0] = "/a process that is not there"
 	commands[0] = command
 	outcomes := build_host_processes_run(commands, 4, context.temp_allocator)
 	testing.expect_value(t, len(outcomes), 1)

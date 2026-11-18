@@ -4,7 +4,7 @@
 // (docs/TOOLS.md, "The debugger").
 //
 // The debugger service (`src/modules/system/debugger`) compiles it in, and gives it
-// the memory of the debugged program through a `Memory_Reader`. The host
+// the memory of the debugged process through a `Memory_Reader`. The host
 // tests give it memory that they made by hand, so each rule is tested with
 // no machine.
 //
@@ -30,16 +30,16 @@ package debugging
 
 import debug_object "modus:contract/debug_object"
 
-// The memory of the debugged program, as its reader gives it. `read` fills
+// The memory of the debugged process, as its reader gives it. `read` fills
 // `into` whole from `address` and gives true, or gives false and the bytes
-// have no meaning: a page that the program does not map, or a range that is
+// have no meaning: a page that the process does not map, or a range that is
 // not whole.
 Memory_Reader :: struct {
 	read:  proc "contextless" (state: rawptr, address: u64, into: []u8) -> bool,
-	state: rawptr, // What `read` receives: the reader of the service names its program here.
+	state: rawptr, // What `read` receives: the reader of the service names its process here.
 }
 
-// memory_read reads bytes of the debugged program. False with no reader.
+// memory_read reads bytes of the debugged process. False with no reader.
 memory_read :: proc "contextless" (reader: Memory_Reader, address: u64, into: []u8) -> bool {
 	if reader.read == nil {
 		return false
@@ -50,7 +50,7 @@ memory_read :: proc "contextless" (reader: Memory_Reader, address: u64, into: []
 	return reader.read(reader.state, address, into)
 }
 
-// memory_word reads one word of 8 bytes of the debugged program.
+// memory_word reads one word of 8 bytes of the debugged process.
 memory_word :: proc "contextless" (reader: Memory_Reader, address: u64) -> (word: u64, ok: bool) {
 	bytes: [8]u8
 	if !memory_read(reader, address, bytes[:]) {
@@ -270,7 +270,7 @@ line_first_offset :: proc "contextless" (object: []u8, path: string, line: u32) 
 	return offset, found
 }
 
-// A value of the debugged program: its type, and where its bytes are.
+// A value of the debugged process: its type, and where its bytes are.
 Located :: struct {
 	type:      u32, // In the type table. 0: no type.
 	in_memory: bool, // True: the bytes are at `address`. False: they are `bytes`, the low bytes of a register.

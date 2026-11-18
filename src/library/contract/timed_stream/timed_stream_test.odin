@@ -227,7 +227,7 @@ the_map_of_the_clocks_is_exact :: proc(t: ^testing.T) {
 		testing.expect(t, ok)
 		reference := u128(passed) * NANOSECONDS_IN_A_SECOND / FRAME_RATE
 		testing.expectf(t, u128(time - anchor.time) == reference, "%d frames after the anchor: %d ns, the reference %d", passed, time - anchor.time, reference)
-		// The time of a frame maps back to that frame: a program that asks
+		// The time of a frame maps back to that frame: a process that asks
 		// the earliest time gets the first frame not given.
 		back, mapped := frame_of_time(anchor, time)
 		testing.expect(t, mapped)

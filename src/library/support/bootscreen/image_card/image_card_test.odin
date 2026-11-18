@@ -281,7 +281,7 @@ names_are_whole_or_absent :: proc(t: ^testing.T) {
 		layout_of(layout, long_names[:], "", CARD_WIDTH, width)
 		names_check(t, layout, width, "a name wider than the card")
 	}
-	// The first name does not fit: no smaller program takes its place.
+	// The first name does not fit: no smaller process takes its place.
 	layout_of(layout, long_names[:], "", CARD_WIDTH, NAMES_WIDTH)
 	testing.expect_value(t, layout.kinds[.Entry].named, 0)
 	testing.expect_value(t, layout.kinds[.Resource].named, 1)
@@ -298,7 +298,7 @@ the_image_of_today_names_twelve_files :: proc(t: ^testing.T) {
 	testing.expect_value(t, layout.kinds[.Entry].count, 67)
 	testing.expect_value(t, layout.kinds[.No_Entry].count, 10)
 	testing.expect_value(t, layout.kinds[.Resource].count, 9)
-	// The largest program, module with no entry and resource each have a tile.
+	// The largest process, module with no entry and resource each have a tile.
 	for name in ([?]string{"console", "cryptography", "pointers_posy"}) {
 		found := false
 		for &tile in layout.tiles[:layout.tile_count] {

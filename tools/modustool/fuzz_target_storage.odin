@@ -2,7 +2,7 @@ package modustool
 
 import "base:runtime"
 import "core:slice"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import format "modus:contract/store"
 import "modus:private/storage/storage_mount"
 import tree "modus:private/storage/storage_tree"
@@ -346,7 +346,7 @@ fuzz_storage_mount_execute :: proc(input: []u8) -> Fuzz_Verdict {
 }
 
 fuzz_mount_file_of :: proc(files: []Module_File, object: Stored_Object) -> (file: Module_File, found: bool) {
-	if object.store != disk_program.STORE_NAME {
+	if object.store != disk_process.STORE_NAME {
 		return {}, false
 	}
 	for item in files {

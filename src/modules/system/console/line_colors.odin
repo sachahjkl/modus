@@ -94,7 +94,7 @@ row_text_make :: proc "contextless" (buffer: ^[terminal.RUN_LIMIT]u8, name, abou
 // row_runs gives the runs of a row of the list: its name, in the kind of
 // what the name is, then what the console says about it. A name with a dot
 // is a module, the dot and its export. A line of the history is a line of
-// code; the name of a module or of a program in quotes is a text.
+// code; the name of a module or of a process in quotes is a text.
 row_runs :: proc "contextless" (row: string, name_length: int, kind: line_editor.Candidate_Kind, runs: []terminal.Code_Run) -> int {
 	count := 0
 	name_kind := terminal.Code_Kind.None
@@ -105,7 +105,7 @@ row_runs :: proc "contextless" (row: string, name_length: int, kind: line_editor
 		name_kind = .Type
 	case .Service:
 		name_kind = .Module
-	case .Module, .Program:
+	case .Module, .Process:
 		name_kind = .Text
 	case .Variable:
 		name_kind = .Variable

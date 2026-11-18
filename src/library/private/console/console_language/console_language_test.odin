@@ -164,7 +164,7 @@ signature_runs_of_the_rows :: proc(t: ^testing.T) {
 		{"record (Integer)", {{"record", .Words}, {"(", .Operator}, {"Integer", .Type}, {")", .Operator}}}, // A parameter with no name.
 		{"variable: Integer", {{"variable", .Words}, {":", .Operator}, {"Integer", .Type}}},
 		{"3 lines ago", {{"3", .Words}, {"lines", .Words}, {"ago", .Words}}},
-		{"program that runs", {{"program", .Words}, {"that", .Words}, {"runs", .Words}}},
+		{"process that runs", {{"process", .Words}, {"that", .Words}, {"runs", .Words}}},
 	}
 	for item in cases {
 		count := signature_runs(item.text, 0, runs[:])

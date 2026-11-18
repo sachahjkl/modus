@@ -120,7 +120,7 @@ input_clear :: proc "contextless" (input: ^Input) {
 	input.key_count = 0
 }
 
-// What the package keeps between frames, in the memory of the program.
+// What the package keeps between frames, in the memory of the process.
 Interface_State :: struct {
 	focus:         Element_Identity, // The element that takes the keys.
 	under_pointer: Element_Identity, // The element under the pointer in the last frame.
@@ -131,7 +131,7 @@ Interface_State :: struct {
 	focus_count:   int, // The entries of `focus_order` in use.
 	// The scroll bar that holds the press (`pressed` is its identity): one
 	// button is down at a time, so one scroll bar at most is held, and no
-	// program keeps a state for its scroll bars.
+	// process keeps a state for its scroll bars.
 	scroll_bar_part:      Scroll_Bar_Part, // The part where the button went down. None: `pressed` is not a scroll bar.
 	scroll_bar_grab:      int, // A held thumb: the pixels from the start of the thumb to the pointer, along the bar.
 	scroll_bar_repeat_at: u64, // A held arrow button: the time of its next step, in milliseconds of the clock of the system. 0: no step is due.
@@ -162,7 +162,7 @@ act_name_text :: proc "contextless" (name: ^Act_Name) -> string {
 // name names: the palette then offers to go to it, and go to gives it the
 // focus. Call it in each frame that draws the element, with the identity
 // that the element has. The first element of a frame with one act name
-// keeps it: a program names the element that go to must reach. A name that
+// keeps it: a process names the element that go to must reach. A name that
 // is empty or longer than display.ACT_NAME_CAPACITY, and a name past the
 // display.ACT_NAME_SET_CAPACITY names of a frame, are counted in
 // Frame.act_names_dropped and kept nowhere.
@@ -263,7 +263,7 @@ frame_end :: proc "contextless" (frame: ^Frame) {
 	state.act_names = frame.act_names
 	state.act_name_count = frame.act_name_count
 	// A held scroll bar that the frame does not have takes no step: with a
-	// step still due, a program that wakes for it would never sleep.
+	// step still due, a process that wakes for it would never sleep.
 	if !frame.scroll_bar_held_drawn {
 		state.scroll_bar_repeat_at = 0
 	}

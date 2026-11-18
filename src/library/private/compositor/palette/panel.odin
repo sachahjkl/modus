@@ -275,11 +275,11 @@ entry_about :: proc "contextless" (builder: ^interface.Text_Builder, list: ^List
 	switch entry.kind {
 	case .Window:
 		if entry.mark == .Has_Focus {
-			interface.text_put(builder, "The window of the program ")
+			interface.text_put(builder, "The window of the process ")
 			interface.text_put(builder, entry_name(entry))
 			interface.text_put(builder, ". It has the focus.")
 		} else {
-			interface.text_put(builder, "Brings the window of the program ")
+			interface.text_put(builder, "Brings the window of the process ")
 			interface.text_put(builder, entry_name(entry))
 			interface.text_put(builder, " to the front and gives it the focus.")
 		}
@@ -294,7 +294,7 @@ entry_about :: proc "contextless" (builder: ^interface.Text_Builder, list: ^List
 			interface.text_put(builder, entry.windows == 1 ? " window now." : " windows now.")
 		}
 	case .Close_Window:
-		interface.text_put(builder, "Stops the program ")
+		interface.text_put(builder, "Stops the process ")
 		interface.text_put(builder, window_title_of(entry))
 		interface.text_put(builder, ": its window closes. Asks for a second Enter.")
 	case .Command, .Export, .Setting:
@@ -361,14 +361,14 @@ signature_fit :: proc "contextless" (detail: string, cells: int, buffer: []u8) -
 }
 
 // The color of the icon of an entry that destroys: the red of "stop a
-// program" in its brighter form, the red of the close button under the
+// process" in its brighter form, the red of the close button under the
 // pointer. The deep red of the button is too near the surface of a card for
 // the thin parts of an icon.
 icon_color_of_stop :: proc "contextless" () -> graphics.Color {
-	return graphics.colors.stop_program_pointer_over
+	return graphics.colors.stop_process_pointer_over
 }
 
-// The color of the icon of an entry in its quiet state: a program with no
+// The color of the icon of an entry in its quiet state: a process with no
 // window, a window that has not the focus, a value of a setting that the
 // machine does not use, a command that the panel cannot run at once.
 icon_color_quiet :: proc "contextless" () -> graphics.Color {
@@ -378,7 +378,7 @@ icon_color_quiet :: proc "contextless" () -> graphics.Color {
 // entry_icon gives the icon of an entry and its color on a row that is not
 // chosen (docs/DESIGN.md, "The icons of the kinds"). The form says what the
 // entry is, so a reader who does not tell the colors apart still tells a
-// window from a program; an entry that destroys has the icon of that act,
+// window from a process; an entry that destroys has the icon of that act,
 // whatever its kind. The color says one fact of the entry: the color of
 // its kind when the thing is there or in use, the quiet color when it is
 // not. in_use: the entry is the value of a setting that the machine uses
@@ -421,7 +421,7 @@ entry_icon :: proc "contextless" (entry: ^Entry, in_use: bool) -> (icon: ^kind_i
 candidate_icon :: proc "contextless" (kind: palette_table.Candidate_Kind) -> (icon: ^kind_icons.Cells, color: graphics.Color) {
 	switch kind {
 	case .None:
-	case .Program, .Module:
+	case .Process, .Module:
 		return kind_icons.cells_of_value_kind(.Module), graphics.value_kind_color(value_kinds.Value_Kind.Module, graphics.appearance)
 	case .Grant:
 		return kind_icons.cells_of_value_kind(.Grant), graphics.value_kind_color(value_kinds.Value_Kind.Grant, graphics.appearance)
@@ -621,10 +621,10 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 				icon, icon_color := entry_icon(entry, in_use)
 				rows[index] = {kind = .Entry, name = entry_name(entry), matched_places = transmute(u128)row.places, icon = icon, icon_color = icon_color, right_text = entry_words(entry)}
 				if prefix := entry_hash_prefix(entry); prefix != "" {
-					// A window of a disk program: the hash prefix of its
+					// A window of a disk process: the hash prefix of its
 					// file, faded after its nickname, one cell apart, as the
 					// menu of the windows shows it. A nickname that looks
-					// like the name of another program is told apart.
+					// like the name of another process is told apart.
 					detail := signatures[index][:]
 					detail[0] = ' '
 					count := 1 + copy(detail[1:], prefix)
@@ -668,7 +668,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 		// with one name stay two things. What Enter does is in the footer.
 		options := interface.List_Rows_Options{chosen = chosen_shown, first = first, total = list.row_count}
 		if panel.state == .Confirm {
-			options.chosen_color = graphics.colors.stop_program
+			options.chosen_color = graphics.colors.stop_process
 		} else {
 			// The scroll bar takes the pointer in the search. The question
 			// of an entry that destroys keeps its row: its bar only shows.
@@ -1041,14 +1041,14 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 		interface.text_put(&act, "): ")
 		interface.text_put(&act, string(form.given.about[:form.given.about_length]))
 		rows[0] = {kind = .Entry, name = interface.text_of(&act), icon = kind_icons.cells_of_desktop_kind(.Stop), icon_color = icon_color_of_stop(), right_text = entry_words(&form.entry)}
-		interface.list_of_rows(frame, list_area, rows[:1], {chosen = 0, chosen_color = graphics.colors.stop_program, total = 1})
+		interface.list_of_rows(frame, list_area, rows[:1], {chosen = 0, chosen_color = graphics.colors.stop_process, total = 1})
 		return
 	}
 	words := ""
 	switch form.candidate_kind {
 	case .None:
-	case .Program:
-		words = "program"
+	case .Process:
+		words = "process"
 	case .Module:
 		words = "module"
 	case .Grant:

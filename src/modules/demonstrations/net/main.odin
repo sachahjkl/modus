@@ -3,21 +3,21 @@
 // datagram to an echo server and its answer, the refusals of the grant, the
 // frames from the wire that the network service refused, and the measures.
 //
-// The program holds one endpoint (src/library/contract/datagram): the root service
+// The process holds one endpoint (src/library/contract/datagram): the root service
 // granted it the remote 10.0.2.2, port 7, and nothing else. It has no
 // address to choose and no port to open. The window shows each case, the
 // answer, and whether it is the expected answer.
 //
-// The program writes the UDP header and the checksum of each datagram that
+// The process writes the UDP header and the checksum of each datagram that
 // it sends, and checks the checksum of each datagram that it receives
 // (src/library/support/network, udp_header_write and udp_data_read): the network
 // service copies a datagram and computes no checksum of it. Two cases show
 // what follows: a datagram with a wrong checksum reaches this endpoint,
-// and this program drops it; a datagram that this program writes with
+// and this process drops it; a datagram that this process writes with
 // another source port is refused by the network service.
 //
 // **What it is for.** It shows that a network grant is a capability: the
-// program reaches the one remote of its grant, and the network service
+// process reaches the one remote of its grant, and the network service
 // refuses each other request with the detail of the grant. It also measures
 // what one datagram costs when no kernel entry is on the path of the data.
 //
@@ -38,21 +38,21 @@
 // then "net: ok, N cases", then the measures:
 //
 // - the header and the checksum of one datagram of 1472 bytes, in this
-//   program;
+//   process;
 // - the round trip of one datagram of 64 bytes, least and middle;
 // - the time from a refused command to its completion;
 // - the rate of a burst with 64 datagrams in flight;
-// - the kernel entries for each datagram, of this program, of the network
+// - the kernel entries for each datagram, of this process, of the network
 //   service and of the frame service.
 //
 // After the measures, each key sends one more datagram to the remote. After
 // `revoke("net", "network")` in the console, that datagram is refused: the
-// grant ends while the program runs.
+// grant ends while the process runs.
 //
 // **What it does not prove**: in the test of the network the echo server at
 // the gateway is the peer of the modus tool (`tools/modustool/peer.odin`),
 // not a stack of another project; the test of TCP against libslirp is the
-// program fetch.
+// process fetch.
 package net
 
 import "modus:contract/byte_order"
@@ -89,12 +89,12 @@ DATA_BYTES :: 64
 
 // The frames that the peer of the test sends before its first answer, and
 // that the network service must refuse: one of each row (tools/modustool,
-// peer.odin). Nine have no endpoint: facts of the machine, that this program
+// peer.odin). Nine have no endpoint: facts of the machine, that this process
 // reads with the right Inspect of its grant. One came to the local port of
 // this endpoint from a remote that its grant does not name: a fact of this
 // endpoint. One more frame of the peer has a wrong UDP checksum: the
 // network service does not read the data of a datagram, so it gives that
-// one to this endpoint, and this program drops it (wrong_checksums).
+// one to this endpoint, and this process drops it (wrong_checksums).
 Expected_Row :: struct {
 	kind:  datagram.Problem_Kind,
 	layer: datagram.Layer,
@@ -114,7 +114,7 @@ expected_machine_rows := [?]Expected_Row {
 
 // The window follows docs/DESIGN.md where it is cheap now: rectangles, a
 // grid of 8 pixels, names in the dim color, values in the text color, the
-// state of a case in the color of a program that runs or in the color
+// state of a case in the color of a process that runs or in the color
 // "failed", with a text that says the same.
 LINE :: interface.TABLE_LINE
 LEFT :: 16
@@ -146,7 +146,7 @@ datagrams: ring.Ring
 region: [^]u8
 local_address: u32 // The address of this machine: the source of each datagram, in its checksum.
 local_port: u16 // The local port of the endpoint: the source port of each datagram.
-wrong_checksums: u64 // Datagrams that this program dropped: their checksum is not the one of their bytes.
+wrong_checksums: u64 // Datagrams that this process dropped: their checksum is not the one of their bytes.
 malformed_datagrams: u64 // Datagrams with no whole header: the network service never gives one.
 next_tag: u32 = CALL_TAG
 cycle_frequency: u64
@@ -154,7 +154,7 @@ cycle_frequency: u64
 // The measures.
 round_least, round_middle: u64 // Microseconds.
 burst_rate, burst_lost: u64
-entries_program, entries_network, entries_frame: u64 // Hundredths of an entry for each datagram.
+entries_process, entries_network, entries_frame: u64 // Hundredths of an entry for each datagram.
 measured: bool
 inspect: bool // The grant has the right Inspect: the facts of the machine.
 
@@ -272,7 +272,7 @@ hundredths :: proc "contextless" (buffer: []u8, value: u64) -> string {
 
 // datagram_wait waits for the answer of one datagram: the Receive of a
 // place. It gives the place, the data and the remote. The network service
-// checked the lengths and the remote, not the checksum: this program
+// checked the lengths and the remote, not the checksum: this process
 // checks it here, drops a datagram with a wrong one, counts it, gives the
 // place back and waits for the next datagram.
 datagram_wait :: proc "contextless" (deadline: u64) -> (place: int, data: []u8, remote: u64, port: u64, ok: bool) {
@@ -337,7 +337,7 @@ cases_run :: proc "contextless" () {
 	}
 
 	// 5. A port that the grant does not give. The network service reads the
-	// port in the header that this program wrote.
+	// port in the header that this process wrote.
 	copy(data_of(SEND_FIRST + 1), "not granted")
 	// The completion of a refusal holds its error record: the note shows
 	// its sentence.
@@ -359,9 +359,9 @@ cases_run :: proc "contextless" () {
 	error = network.completion_error_text(&refusal_writer, refused)
 	note("UDP of 2000 bytes", has_refused && datagram.Status(refused.kind) == .Too_Large && errors.Kind(error.kind) == .Too_Long && error.value == 2000 && error.limit == datagram.DATAGRAM_LIMIT, "refused, no fragment: ", system.written(&refusal_writer))
 
-	// 8. A datagram that this program wrote with another source port, to
+	// 8. A datagram that this process wrote with another source port, to
 	// the remote of the grant, with a correct checksum. The network service
-	// reads the source port in its own copy of the header: a program sends
+	// reads the source port in its own copy of the header: a process sends
 	// from the local port of its endpoint only.
 	copy(data_of(SEND_FIRST + 2), "a forged source port")
 	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 2) * PLACE_SIZE, 1 = u64(datagram_write(SEND_FIRST + 2, 20, ECHO_PORT, FORGED_SOURCE_PORT)), 2 = GATEWAY})
@@ -388,7 +388,7 @@ cases_run :: proc "contextless" () {
 	// before its first answer, so case 4 saw it first: the network service
 	// gave it to this endpoint (the port and the remote are the ones of the
 	// grant), and datagram_wait dropped it.
-	note("UDP from 10.0.2.2 port 7 with a wrong checksum", wrong_checksums == 1 && malformed_datagrams == 0, "dropped by this program: ", wrong_checksums, wrong_checksums == 1 ? " datagram" : " datagrams", "; the network service gave it to the endpoint of its port")
+	note("UDP from 10.0.2.2 port 7 with a wrong checksum", wrong_checksums == 1 && malformed_datagrams == 0, "dropped by this process: ", wrong_checksums, wrong_checksums == 1 ? " datagram" : " datagrams", "; the network service gave it to the endpoint of its port")
 
 	// 10 and 11. The frames that the network service refused. The peer sent
 	// them before its first answer, so they arrived before case 4. A row of
@@ -514,7 +514,7 @@ measure_refusals :: proc "contextless" () {
 	system.log("net: a refused request of the datagram ring (Send of 2000 bytes, Too_Large), from the command to its completion: ", nanoseconds, " ns, ", u64(refused), " of ", u64(REFUSALS), " refused")
 }
 
-// measure_checksum measures what this program writes for each datagram
+// measure_checksum measures what this process writes for each datagram
 // that it sends: the UDP header, and the checksum over the largest data of
 // one frame. The network service computes no checksum of a datagram.
 measure_checksum :: proc "contextless" () {
@@ -524,7 +524,7 @@ measure_checksum :: proc "contextless" () {
 		datagram_write(SEND_FIRST, datagram.DATA_LIMIT)
 	}
 	nanoseconds := microseconds(system.cycles() - start) * 1000 / ROUNDS
-	system.log("net: the header and the checksum of a datagram of ", u64(datagram.DATA_LIMIT), " bytes: ", nanoseconds, " ns, in this program (no offload)")
+	system.log("net: the header and the checksum of a datagram of ", u64(datagram.DATA_LIMIT), " bytes: ", nanoseconds, " ns, in this process (no offload)")
 }
 
 // measure_burst keeps BURST_IN_FLIGHT datagrams in flight for one second:
@@ -559,23 +559,23 @@ measure_burst :: proc "contextless" () {
 		received += 1
 		post(place)
 	}
-	program := system.kernel_entries() - entries
+	process := system.kernel_entries() - entries
 	after, _ := call(.Statistics)
 	burst_rate = received * 1000 / elapsed
 	burst_lost = sent - received
-	entries_program = program * 100 / max(received, 1)
+	entries_process = process * 100 / max(received, 1)
 	entries_network = (after.values[2] - before.values[2]) * 100 / max(received, 1)
 	entries_frame = (after.values[3] - before.values[3]) * 100 / max(received, 1)
 	a, b, c: [16]u8
 	system.log("net: a burst with ", u64(BURST_IN_FLIGHT), " datagrams in flight: ", burst_rate, " datagrams in one second, sent and answered, ", burst_lost, " lost")
-	system.log("net: kernel entries for each datagram: ", hundredths(a[:], entries_program), " of this program, ", hundredths(b[:], entries_network), " of the network service, ", hundredths(c[:], entries_frame), " of the frame service")
+	system.log("net: kernel entries for each datagram: ", hundredths(a[:], entries_process), " of this process, ", hundredths(b[:], entries_network), " of the network service, ", hundredths(c[:], entries_frame), " of the frame service")
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_start(&window_memory, window)
 	table := frame.table
 	interface.draw_text_wrapped(table, LEFT, 16 + 4, WIDTH - 2 * LEFT, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", graphics.colors.dim)
-	interface.draw_text(table, LEFT, 16 + LINE + 4, "the program asks", graphics.colors.dim)
+	interface.draw_text(table, LEFT, 16 + LINE + 4, "the process asks", graphics.colors.dim)
 	interface.draw_text(table, LEFT + ANSWER_X, 16 + LINE + 4, "the network answers", graphics.colors.dim)
 	// The cases: each answer whole, on the lines that it needs. Then one
 	// line for the count of the cases with no room.
@@ -587,7 +587,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		if !item.right {
 			answer = system.format(answer_buffer[:], answer, "  not expected")
 		}
-		if _, drawn := interface.case_lines(&frame, &column, index, item.text, answer, ANSWER_X, graphics.colors.dim, item.right ? graphics.colors.program : graphics.colors.failed, LINE); !drawn {
+		if _, drawn := interface.case_lines(&frame, &column, index, item.text, answer, ANSWER_X, graphics.colors.dim, item.right ? graphics.colors.process : graphics.colors.failed, LINE); !drawn {
 			not_shown += 1
 		}
 	}
@@ -604,9 +604,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 		measures[0] = {"round trip, one datagram of 64 bytes", system.format(values[0][:], round_least, " us at least, ", round_middle, " us in the middle")}
 		measures[1] = {"a burst, 64 datagrams in flight", system.format(values[1][:], burst_rate, " in one second, sent and answered, ", burst_lost, " lost")}
 		if inspect {
-			measures[2] = {"kernel entries for each datagram", system.format(values[2][:], hundredths(a[:], entries_program), " here, ", hundredths(b[:], entries_network), " network, ", hundredths(c[:], entries_frame), " frame")}
+			measures[2] = {"kernel entries for each datagram", system.format(values[2][:], hundredths(a[:], entries_process), " here, ", hundredths(b[:], entries_network), " network, ", hundredths(c[:], entries_frame), " frame")}
 		} else {
-			measures[2] = {"kernel entries for each datagram", system.format(values[2][:], hundredths(a[:], entries_program), " here; the services: no right Inspect")}
+			measures[2] = {"kernel entries for each datagram", system.format(values[2][:], hundredths(a[:], entries_process), " here; the services: no right Inspect")}
 		}
 	} else {
 		measures[0] = {"measures", "not known yet"}
@@ -626,9 +626,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 // The entry opens its window (with none, it stops with the code 1), reads
 // the frequency of the cycle counter, and opens its endpoint and its
 // datagram region. With no endpoint it writes "net: no endpoint: the
-// program has no grant of the network" and stops with the code 1. Then it
+// process has no grant of the network" and stops with the code 1. Then it
 // runs the cases, writes "net: ok, N cases" or "net: WRONG: ...", runs the
-// three measures, and writes "net: the measures are done". The program
+// three measures, and writes "net: the measures are done". The process
 // then waits for keys for ever: each key runs `after_key`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -642,7 +642,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_memory := ctx.handles[datagram.GRANT_RING]
 	status: system.Status
 	if datagrams, status = system.ring_open(ring_memory); status != .Ok {
-		system.log("net: no endpoint: the program has no grant of the network")
+		system.log("net: no endpoint: the process has no grant of the network")
 		system.stop(1)
 	}
 	// The datagram region: the root service made it, with the ring.

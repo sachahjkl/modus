@@ -6,13 +6,13 @@
 // Change or Append.
 // The console calls it with load("sample"), isolate("sample") or
 // connect("sample"): the module has an entry, so the same module also runs
-// as a program that serves its exports. A service holds no export that is
+// as a process that serves its exports. A service holds no export that is
 // wrong on purpose: those are in the module hostile_exports, which no
 // service holds.
 //
 // **What it is for.** It is the reference module of the call form for
 // everything that is not an integer or a text: records, lent handles, and
-// tables in each direction. The program `tables` calls it in three ways
+// tables in each direction. The process `tables` calls it in three ways
 // with the same arguments and compares the answers; the console tests call
 // it the same way.
 //
@@ -25,7 +25,7 @@
 // scale_values(t, 3)     4; t now holds 30, 60, 90, 120
 // ```
 //
-// **As a service**: the root service starts it on demand when a program
+// **As a service**: the root service starts it on demand when a process
 // with the grant to connect to it asks for `sample`. Its only grant is
 // **Serve**.
 //
@@ -279,7 +279,7 @@ upper_case :: proc "c" (text: ^system.Bytes_To_Change) -> i64 {
 	return changed
 }
 
-// scale_values_up_to multiplies the value, the minimum and the maximum of each reading by a factor, in order, in the memory of the caller (the direction Change), while each new value stays at most largest_value, and gives the count of readings. At the first reading whose value would pass it, it stops with -1 and an error record Bad_Value for the factor, with the largest factor that this reading takes: the readings before it are already changed. A caller in another program receives none of these changes: a failed export gives back only its table of error details.
+// scale_values_up_to multiplies the value, the minimum and the maximum of each reading by a factor, in order, in the memory of the caller (the direction Change), while each new value stays at most largest_value, and gives the count of readings. At the first reading whose value would pass it, it stops with -1 and an error record Bad_Value for the factor, with the largest factor that this reading takes: the readings before it are already changed. A caller in another process receives none of these changes: a failed export gives back only its table of error details.
 //
 // A factor under 1 fails at once with -1 and an error record `Too_Small` for the factor, with the limit 1; no
 // reading changes.
@@ -321,7 +321,7 @@ weigh :: proc "c" (first, second, third, fourth, fifth, sixth, seventh, eighth: 
 	return sum
 }
 
-// The same module as a program: a service that serves the exports above.
+// The same module as a process: a service that serves the exports above.
 // An export needs nothing from the entry.
 //
 // The entry opens the service ring; with none it writes "sample: no service

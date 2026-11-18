@@ -9,7 +9,7 @@ import "modus:contract/start_grant"
 // The sentence of an error record (docs/MODULE_CONTRACT.md, section 8). The
 // record holds values only: the names come from the operation table of the
 // kernel, or from the description of the export. The record can come from
-// another program: a value out of an enumeration is written as a number.
+// another process: a value out of an enumeration is written as a number.
 // A value inside an enumeration of the contract is written as its name: a
 // start grant is "the grant Store", never its number.
 
@@ -71,7 +71,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	if !kind_ok {
 		write_part(writer, "an error of the kind ")
 		write_part(writer, record.kind)
-		write_part(writer, ", which this program does not know")
+		write_part(writer, ", which this process does not know")
 		return
 	}
 	switch kind {
@@ -131,7 +131,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_number(writer, u64(record.value))
 		write_part(writer, " with ")
 		amount(writer, record.limit, "bytes")
-		write_part(writer, record.found != 0 ? ", is not memory that this program can write" : ", is not memory that this program can read")
+		write_part(writer, record.found != 0 ? ", is not memory that this process can write" : ", is not memory that this process can read")
 	case .Handle_Absent:
 		subject(writer, record, argument)
 		write_part(writer, ", ")
@@ -139,7 +139,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		if record.unit == i64(errors.Unit.Lent_Handles) {
 			write_part(writer, ", names no handle that the caller lent for this call through the call ring")
 		} else {
-			write_part(writer, ", names no handle of this program")
+			write_part(writer, ", names no handle of this process")
 		}
 	case .Handle_Ended:
 		handle(writer, record, argument)
@@ -176,9 +176,9 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		amount(writer, record.found, unit)
 	case .Budget_Hidden:
 		if record.argument == 0 {
-			write_part(writer, "the budget of the program cannot pay ")
+			write_part(writer, "the budget of the process cannot pay ")
 			amount(writer, record.limit, unit)
-			write_part(writer, "; the program holds it with no right Read, so the budget is not described")
+			write_part(writer, "; the process holds it with no right Read, so the budget is not described")
 			return
 		}
 		handle(writer, record, argument)
@@ -208,12 +208,12 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		}
 	case .State:
 		handle(writer, record, argument)
-		program_state, state_known := enum_word.member_of_word(op.Program_State, u64(record.found))
-		state := state_known ? op.STATE_NAMES[program_state] : "in an unknown state"
-		write_part(writer, " names a program that is ")
+		process_state, state_known := enum_word.member_of_word(op.Process_State, u64(record.found))
+		state := state_known ? op.STATE_NAMES[process_state] : "in an unknown state"
+		write_part(writer, " names a process that is ")
 		write_part(writer, state)
 		if record.limit != 0 {
-			write_part(writer, "; the call needs a program that is created, and not started")
+			write_part(writer, "; the call needs a process that is created, and not started")
 		}
 	case .Absent:
 		if record.unit == i64(errors.Unit.Region) {
@@ -229,7 +229,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		if record.unit == i64(errors.Unit.Bytes) {
 			write_part(writer, ", ")
 			write_number(writer, u64(record.value))
-			write_part(writer, ", names nothing that the program has")
+			write_part(writer, ", names nothing that the process has")
 		} else if record.unit == i64(errors.Unit.Objects) {
 			write_part(writer, ": the store has no object with this name")
 		} else if record.unit == i64(errors.Unit.Places) {
@@ -299,11 +299,11 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			if name, known := start_grant.grant_name(record.found - 1); known {
 				write_part(writer, ": the grant ")
 				write_part(writer, name)
-				write_part(writer, " of the program refuses it")
+				write_part(writer, " of the process refuses it")
 			} else {
-				write_part(writer, ": a grant of the program refuses it, the start grant number ")
+				write_part(writer, ": a grant of the process refuses it, the start grant number ")
 				write_part(writer, record.found - 1)
-				write_part(writer, ", which this program does not know")
+				write_part(writer, ", which this process does not know")
 			}
 		}
 	case .Malformed:
@@ -315,7 +315,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, record.found)
 	case .No_Target:
 		handle(writer, record, argument)
-		write_part(writer, " names memory that no one other program maps or holds: the handle has no program to go to")
+		write_part(writer, " names memory that no one other process maps or holds: the handle has no process to go to")
 	case .Overlap:
 		subject(writer, record, argument)
 		if record.unit == i64(errors.Unit.Region) {
@@ -330,7 +330,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_number(writer, u64(record.value))
 			write_part(writer, ", ")
 			amount(writer, record.limit, "bytes")
-			write_part(writer, ", overlap what the program has")
+			write_part(writer, ", overlap what the process has")
 		}
 	case .Unknown_Operation:
 		write_part(writer, "the kernel has no operation ")
@@ -366,7 +366,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, "the receiver does not do the command ")
 		write_part(writer, record.value)
 	case .Seed_Too_Weak:
-		write_part(writer, "the random seed of this program has the strength ")
+		write_part(writer, "the random seed of this process has the strength ")
 		write_part(writer, seed_strength_name(record.value))
 		write_part(writer, ", and the call asks for ")
 		write_part(writer, seed_strength_name(record.limit))
@@ -384,7 +384,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, " is not authentic: its tag or its signature does not verify, and the call gives no byte of it")
 	case .Reserved:
 		subject(writer, record, argument)
-		write_part(writer, " names a program of the system: it starts at boot, or it is a device service, and the call does not act on it")
+		write_part(writer, " names a process of the system: it starts at boot, or it is a device service, and the call does not act on it")
 	case .Link_Down:
 		write_part(writer, "the link of the network device is down")
 	case .Busy:
@@ -415,7 +415,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		} else {
 			subject(writer, record, argument)
 		}
-		write_part(writer, " names a memory object that another program or another mapping also names; the call needs an object that only this program names, with one mapping at most")
+		write_part(writer, " names a memory object that another process or another mapping also names; the call needs an object that only this process names, with one mapping at most")
 	case .Object_Marked:
 		handle(writer, record, argument)
 		write_part(writer, " names a memory object with ")
@@ -446,7 +446,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_number(writer, u64(record.limit))
 		write_part(writer, " with ")
 		amount(writer, record.found, "bytes")
-		write_part(writer, ", which the starter of the program recorded: only a holder of the program handle changes it")
+		write_part(writer, ", which the starter of the process recorded: only a holder of the process handle changes it")
 	case .Refused:
 		write_part(writer, "refused with the status ")
 		write_part(writer, record.found)
@@ -562,7 +562,7 @@ error_details_rest_text :: proc "contextless" (writer: ^Writer, shown: u64, coun
 
 // export_error_text writes the sentence of the error record of an export:
 // the names come from its description. prefix: the name of the service, or
-// "" for a module in this program.
+// "" for a module in this process.
 export_error_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u32, prefix: string, record: ^errors.Error_Record) {
 	function, described := module.function(file, export)
 	buffer: [96]u8

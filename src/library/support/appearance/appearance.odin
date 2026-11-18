@@ -1,7 +1,7 @@
 // The rule of the day of the setting `auto` (src/md/features/appearance.md):
 // the light appearance from 07:00 to 19:00 of the local time, the dark one
 // from 19:00 to 07:00, and the dark one when the system has no date. The
-// program `settings` gives the appearance in force with it at each change of
+// process `settings` gives the appearance in force with it at each change of
 // a setting, the root service at each edge of the day, and the modus tool
 // checks the line of the log with the same procedure.
 //

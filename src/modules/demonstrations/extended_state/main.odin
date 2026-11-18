@@ -1,7 +1,7 @@
 // The extended state of each thread, kept by the kernel (docs/ARCHITECTURE.md,
 // "The extended state of the processor").
 //
-// The program starts as many threads as the machine has processors, plus
+// The process starts as many threads as the machine has processors, plus
 // two, so that threads share processors and move between them. Each thread
 // fills every register of the widest level that it can use (zmm0 to zmm31
 // and k0 to k7, or ymm0 to ymm15, or xmm0 to xmm15), the x87 stack, the x87
@@ -21,8 +21,8 @@
 // **What it is for.** The kernel keeps the [extended state](term:extended-state)
 // of each thread (the vector registers, the x87 and MXCSR) and saves it
 // only at a [switch of threads](term:switch-of-threads). A fault there
-// leaks the registers of one program into another, or changes the result
-// of a computation in silence. This program puts that work under load,
+// leaks the registers of one process into another, or changes the result
+// of a computation in silence. This process puts that work under load,
 // with a pattern in each register, and checks every bit.
 //
 // **What a reader sees.** Start it from the start menu, or with
@@ -49,12 +49,12 @@ import "modus:support/interface"
 import "modus:support/system"
 
 // The main thread and up to 31 threads that hold their registers.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 928, programs = 1, threads = 32, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 928, processes = 1, threads = 32, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 1000 // The window and its borders fit the screen of 1024 columns.
 HEIGHT :: 704 // And its 768 lines, under the bar and the title of the window.
-WORKER_CAPACITY :: 31 // A program has 32 threads at most: the main thread and these. Its budget has 32.
+WORKER_CAPACITY :: 31 // A process has 32 threads at most: the main thread and these. Its budget has 32.
 RUN_MILLISECONDS :: 3000 // How long the threads hold their registers.
 ROUNDS :: 16 // Kernel entries in one pass: above the round where the x87 control word changes alone (registers.asm).
 SPINS :: 20_000 // Loops between two entries: the timer interrupts some of them.
@@ -117,7 +117,7 @@ foreign _ {
 	measure_xrstor :: proc "c" (area: rawptr, count: u64) -> u64 ---
 }
 
-// The parts of a save and a restore that the program measures alone, on its own
+// The parts of a save and a restore that the process measures alone, on its own
 // area, with the mask of the kernel. Not privileged instructions: the kernel
 // is not changed for the measure.
 Part :: enum {
@@ -434,7 +434,7 @@ worker_run :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
-// part_usable says if this program can run the instructions of a part:
+// part_usable says if this process can run the instructions of a part:
 // xsave, xsaveopt and xrstor need CR4.OSXSAVE, which the kernel sets only
 // when it saves with xsaveopt; vzeroupper and ymm need AVX.
 part_usable :: proc "contextless" (part: Part) -> bool {
@@ -634,7 +634,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	builder: interface.Text_Builder
 
-	content := interface.card(&frame, {8, 8, WIDTH - 16, 152}, "WHAT THE KERNEL SAVES", "XCR0 and CPUID, read by this program with no kernel operation", graphics.colors.kernel)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, 152}, "WHAT THE KERNEL SAVES", "XCR0 and CPUID, read by this process with no kernel operation", graphics.colors.kernel)
 	column := interface.column_of(content)
 	saved := sets.saved_components(facts)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "components", components_text(&builder, saved), graphics.colors.text, 168)
@@ -650,7 +650,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.text_put(&builder, " processors hold ")
 	interface.text_put(&builder, level_names[held_level])
 	interface.text_put(&builder, ", the x87 stack and MXCSR")
-	content = interface.card(&frame, {8, 168, WIDTH - 16, 376}, "EACH REGISTER OF EACH THREAD", interface.text_of(&builder), graphics.colors.program)
+	content = interface.card(&frame, {8, 168, WIDTH - 16, 376}, "EACH REGISTER OF EACH THREAD", interface.text_of(&builder), graphics.colors.process)
 	column = interface.column_of(content)
 	// A row of 16 pixels has room for a line of text. More threads than
 	// 21 (a machine with more than 19 processors) get rows of 11 pixels
@@ -674,7 +674,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		for register in 0 ..< 32 {
 			color: graphics.Color = graphics.colors.not_usable
 			if register < vector_count(held_level) {
-				color = worker.wrong_vectors & (1 << u32(register)) != 0 ? graphics.colors.failed : (done ? graphics.colors.program : graphics.colors.track)
+				color = worker.wrong_vectors & (1 << u32(register)) != 0 ? graphics.colors.failed : (done ? graphics.colors.process : graphics.colors.track)
 			}
 			interface.mark(&frame, x + register * (square_size + 2), row.y + 2, square_size, color)
 		}
@@ -683,7 +683,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		for kind, place in others {
 			color: graphics.Color = graphics.colors.not_usable
 			if kind != .Opmask || held_level >= .Avx_512 {
-				color = worker.wrong_others & (1 << u8(kind)) != 0 ? graphics.colors.failed : (done ? graphics.colors.program : graphics.colors.track)
+				color = worker.wrong_others & (1 << u8(kind)) != 0 ? graphics.colors.failed : (done ? graphics.colors.process : graphics.colors.track)
 			}
 			interface.mark(&frame, x + place * (square_size + 2), row.y + 2, square_size, color)
 		}
@@ -723,7 +723,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.label_value_line(&frame, interface.column_take(&column, LINE), level_names[measured], interface.text_of(&builder), entry_nanoseconds[measured] == 0 ? graphics.colors.dim : graphics.colors.text, ENTRY_VALUE_X)
 	}
 	if finished {
-		interface.label_value_line(&frame, interface.column_take(&column, LINE), "result", passed ? "each register of each thread was kept" : "a register was not kept: see the log", passed ? graphics.colors.program : graphics.colors.failed, ENTRY_VALUE_X)
+		interface.label_value_line(&frame, interface.column_take(&column, LINE), "result", passed ? "each register of each thread was kept" : "a register was not kept: see the log", passed ? graphics.colors.process : graphics.colors.failed, ENTRY_VALUE_X)
 	}
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
@@ -732,7 +732,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 // (`registers.asm` holds the code that touches each register), waits for
 // their passes, writes the summary line, measures the empty kernel entry
 // with each level of registers in use, then keeps the window open until the
-// program is stopped.
+// process is stopped.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "extended_state")
@@ -761,9 +761,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	processor_count = max(system.thread_record().processors, 1)
 	worker_count = min(int(processor_count) + 2, WORKER_CAPACITY)
 	if worker_count < int(processor_count) + 2 {
-		// A program has 32 threads: on a larger machine some processors run
+		// A process has 32 threads: on a larger machine some processors run
 		// no thread of the test, and the threads still move at each wait.
-		system.log("extended_state: ", u64(processor_count), " processors: ", u64(worker_count), " threads, the most that a program can have, fewer than the processors plus two")
+		system.log("extended_state: ", u64(processor_count), " processors: ", u64(worker_count), " threads, the most that a process can have, fewer than the processors plus two")
 	}
 	start_time = system.time()
 	for index in 0 ..< worker_count {
@@ -804,7 +804,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			hand_over_counts[1], hand_over_nanoseconds[1] = hand_over_measure(true)
 		}
 		first_part, second_part, third_part: interface.Text_Builder
-		system.log("extended_state: the parts of a save and a restore, each alone in this program, cycles of the cycle counter for one loop (ns): ", part_text(&first_part, .Loop_Alone, .Fxsave_And_Fxrstor), "; ", part_text(&second_part, .Xsaveopt_And_Xrstor, .Xsaveopt_Vzeroupper_And_Xrstor), "; ", part_text(&third_part, .Xsaveopt_Vzeroupper_And_Xrstor_With_Avx, .Xsave_And_Xrstor))
+		system.log("extended_state: the parts of a save and a restore, each alone in this process, cycles of the cycle counter for one loop (ns): ", part_text(&first_part, .Loop_Alone, .Fxsave_And_Fxrstor), "; ", part_text(&second_part, .Xsaveopt_And_Xrstor, .Xsaveopt_Vzeroupper_And_Xrstor), "; ", part_text(&third_part, .Xsaveopt_Vzeroupper_And_Xrstor_With_Avx, .Xsave_And_Xrstor))
 		system.log("extended_state: each instruction alone, cycles of the cycle counter for one loop (ns), the loop included: ", part_text(&first_part, .Fxsave, .Fxrstor), "; ", part_text(&second_part, .Xsaveopt, .Xrstor), "; ", part_text(&third_part, .Vzeroupper, .Vzeroupper))
 		system.log("extended_state: a hand-over between two threads by the word wait (a wake, a wait, and the save and restore of the thread that waits and of the thread that runs): ", hand_over_nanoseconds[0], " ns with x87 and SSE in use, ", hand_over_nanoseconds[1], " ns with the ymm high halves in use (0: not usable); ", hand_over_counts[0], " and ", hand_over_counts[1], " hand-overs in ", u64(HAND_OVER_MILLISECONDS), " ms each")
 		system.log("extended_state: an empty kernel entry, ", u64(MEASURE_ENTRIES), " times: ", entry_nanoseconds[.Sse], " ns with xmm in use, ", entry_nanoseconds[.Avx], " ns with ymm in use, ", entry_nanoseconds[.Avx_512], " ns with zmm in use (0: not usable)")

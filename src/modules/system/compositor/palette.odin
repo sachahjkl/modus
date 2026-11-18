@@ -1,6 +1,6 @@
 package compositor
 
-import program_page "modus:contract/disk_program_page"
+import process_page "modus:contract/disk_process_page"
 import "modus:contract/errors"
 import "modus:contract/palette_table"
 import "modus:contract/ring"
@@ -16,16 +16,16 @@ import "base:intrinsics"
 // The palette of the desktop (docs/DESIGN.md, "Palette"): the panel that
 // the key super opens. This file is its part in the compositor: the keys
 // and the pointer that reach it, its two sources of entries (the names of
-// the programs and the client table), what a chosen entry does, its draw
+// the processes and the client table), what a chosen entry does, its draw
 // table and its lines in the log. The state, the ranking and the draw
 // records are in src/library/private/compositor/palette, where the host tests run them.
 //
-// The panel holds no right. A program starts through the root service as
+// The panel holds no right. A process starts through the root service as
 // the start menu starts it; a window comes to the front as a
-// press brings it; a close stops a program as the close button does.
+// press brings it; a close stops a process as the close button does.
 
 palette_panel: palette.Panel // The state of the panel. Its list is one of palette_lists.
-kept_key: u32 // A key that the palette took when it was pressed: its release goes to no program.
+kept_key: u32 // A key that the palette took when it was pressed: its release goes to no process.
 // The measures of one open of the panel: the frames drawn while it is
 // open and their time, in nanoseconds.
 palette_frames, palette_time: u64
@@ -65,8 +65,8 @@ Ranking_Window :: struct {
 	title:  system.Name,
 	number: u32,
 	focus:  bool,
-	from_disk:   bool, // A window of a disk program: hash_prefix holds the hash prefix of its file.
-	hash_prefix: [program_page.HASH_PREFIX_DIGITS]u8,
+	from_disk:   bool, // A window of a disk process: hash_prefix holds the hash prefix of its file.
+	hash_prefix: [process_page.HASH_PREFIX_DIGITS]u8,
 }
 
 Ranking :: struct {
@@ -154,7 +154,7 @@ palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
 		// The request, copied under its lock: the list answers this one.
 		query: [palette.TYPED_CAPACITY]u8
 		titles: [CLIENT_CAPACITY]system.Name
-		prefixes: [CLIENT_CAPACITY][program_page.HASH_PREFIX_DIGITS]u8
+		prefixes: [CLIENT_CAPACITY][process_page.HASH_PREFIX_DIGITS]u8
 		windows: [CLIENT_CAPACITY]palette.Window
 		recents: [palette.RECENT_CAPACITY]palette.Recent
 		system.lock(&ranking.lock)
@@ -184,7 +184,7 @@ palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
 		if problem != refused_before {
 			refused_before = problem
 			if problem != .None {
-				system.log_in("surfaces", .Warning, "compositor: the table of the palette provider is refused: ", palette_table.problem_names[problem], ", entry ", u64(problem_index), "; the palette lists the programs and the windows only")
+				system.log_in("surfaces", .Warning, "compositor: the table of the palette provider is refused: ", palette_table.problem_names[problem], ", entry ", u64(problem_index), "; the palette lists the processes and the windows only")
 			}
 		}
 		system.lock(&ranking.lock)
@@ -375,8 +375,8 @@ palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Ha
 	palette_entries_refresh()
 }
 
-// palette_provider_remove ends the palette provider: the program stopped,
-// or its grant ended. The palette keeps the programs and the windows. A
+// palette_provider_remove ends the palette provider: the process stopped,
+// or its grant ended. The palette keeps the processes and the windows. A
 // panel that waits for an answer shows that none comes.
 palette_provider_remove :: proc "contextless" () {
 	if palette_provider_ring.head == nil {
@@ -419,7 +419,7 @@ palette_choose :: proc "contextless" (generation: u32, picked: ^palette.Entry, m
 }
 
 // palette_act_names_take takes the record Act_Names of a window: the set of
-// what its elements act on. The values are those of another program: the
+// what its elements act on. The values are those of another process: the
 // set is checked (palette.act_name_set_of_record), and a set that fails
 // leaves the window with none. The log names the first sets of a window.
 palette_act_names_take :: proc "contextless" (client: ^Client, record: ring.Record) {
@@ -520,7 +520,7 @@ palette_kind_words := [palette_table.Value_Kind]string {
 }
 
 // palette_answer takes one answer of the provider. Each value is the
-// value of another program: the outcome and the kind are checked, and the
+// value of another process: the outcome and the kind are checked, and the
 // result is copied and checked before the panel shows it
 // (palette.result_set). An answer to a choice that the desktop no longer
 // waits for is dropped.
@@ -692,7 +692,7 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 	state_next := palette.state_after(panel.state, action, chosen)
 	switch action {
 	case .None:
-		// A key that the panel does not use: it goes to no program.
+		// A key that the panel does not use: it goes to no process.
 	case .Open:
 		if menu_open != .None {
 			menu_open = .None
@@ -953,7 +953,7 @@ palette_entry_send :: proc "contextless" (picked: ^palette.Entry) {
 	sent := false
 	if picked.kind == .Module {
 		// The prefix of the manual: the provider gets the name of the
-		// program, as a typed value, and shows its page.
+		// process, as a typed value, and shows its page.
 		packed := system.name_pack(palette.entry_name(picked))
 		sent = palette_provider_ring.head != nil && system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Manual), tag = palette_tag_next(), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 		if sent {

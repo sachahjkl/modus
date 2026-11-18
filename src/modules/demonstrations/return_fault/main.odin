@@ -1,36 +1,36 @@
-// The return to a program, with hostile threads (docs/ARCHITECTURE.md, "The
-// return to a program").
+// The return to a process, with hostile threads (docs/ARCHITECTURE.md, "The
+// return to a process").
 //
 // The kernel returns to a thread with iretq. A thread whose saved state the
 // processor refuses there made the processor fault in the kernel, and one
-// program stopped the machine. Each case of this program starts a child
-// program (this module, with a role) that gives the kernel such a thread.
+// process stopped the machine. Each case of this process starts a child
+// process (this module, with a role) that gives the kernel such a thread.
 // The kernel must stop that child as its own fault, or return to it with a
-// state that a program may have; the machine goes on, and the next case
+// state that a process may have; the machine goes on, and the next case
 // runs.
 //
-//   1. A syscall in the last two bytes below the half of a program: its
+//   1. A syscall in the last two bytes below the half of a process: its
 //      return address is 2^47, which is not canonical. The thread holds
 //      values in the high halves of its ymm registers when the kernel stops
 //      it, so a switch saves them.
 //   2. A stack address that is not canonical, held in rsp while the thread
 //      waits for the timer.
 //   3. The flag nested task, set with popfq before a syscall: the kernel
-//      clears it for itself, and the program gets its flags back without it.
+//      clears it for itself, and the process gets its flags back without it.
 //   4. The trap flag, set with popfq right before a syscall: the kernel
 //      clears it for itself, takes no trap, and gives it back; the trap then
-//      comes in the program, after its first instruction: its own fault.
+//      comes in the process, after its first instruction: its own fault.
 //   5. A stack address that is not canonical, held at a syscall: the entry
 //      saves it without a use of it, and the return refuses it.
 //
 // **What it is for.** It is the regression test of a fault of the kernel
-// that let one program stop the machine. Each case is a hostile
+// that let one process stop the machine. Each case is a hostile
 // state that the return of the kernel once trusted; the machine must go on
 // after each one.
 //
 // **Start**: `start("return_fault")` in the console, or the bar of the
 // desktop. The parent starts each child from the boot image, one at a time:
-// its budget has room for two programs.
+// its budget has room for two processes.
 //
 // **Grants**, as the root service gives them:
 //
@@ -38,10 +38,10 @@
 //
 // **What a reader sees**: one row for each case, with the stop code and the
 // stop report of the child. The log has "return_fault: ok, 5 cases: each
-// child stopped as its own fault or returned with the flags of a program,
+// child stopped as its own fault or returned with the flags of a process,
 // and the machine goes on", or "return_fault: failed: N cases of 5".
 //
-// The design: (docs/ARCHITECTURE.md, "The return to a program").
+// The design: (docs/ARCHITECTURE.md, "The return to a process").
 package return_fault
 
 import "modus:contract/enum_word"
@@ -55,7 +55,7 @@ import "modus:support/random"
 import "modus:support/system"
 
 // One child at a time, with one thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1353, programs = 2, threads = 2, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1353, processes = 2, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 896
@@ -67,7 +67,7 @@ HEIGHT :: 320
 VALUE_ROLE :: 7
 VALUE_WITH_AVX :: 1 // 1: the child of the instruction address holds ymm values.
 
-// The last page below the half of a program, and the address of its last
+// The last page below the half of a process, and the address of its last
 // two bytes.
 LAST_PAGE :: u64(op.USER_END) - system.PAGE_SIZE
 LAST_INSTRUCTION :: u64(op.USER_END) - 2
@@ -115,7 +115,7 @@ cases := [5]Case {
 	{name = "a stack address that is not canonical at a syscall", role = .Stack_At_A_Syscall},
 }
 
-program_generator: random.Generator
+process_generator: random.Generator
 image: []u8
 with_avx: bool
 
@@ -123,7 +123,7 @@ window_memory: interface.Window_Memory(256, 4096)
 
 // child_instruction_address writes a syscall in the last two bytes of an
 // object, maps the object with Execute at the last page below the half of a
-// program, and jumps there.
+// process, and jumps there.
 child_instruction_address :: proc "contextless" (holds_ymm: bool) -> ! {
 	memory, created := system.memory_create(1)
 	if created != .Ok {
@@ -165,21 +165,21 @@ case_run :: proc "contextless" (item: ^Case) {
 	values[VALUE_ROLE] = u64(item.role)
 	values[VALUE_WITH_AVX] = with_avx ? 1 : 0
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "return_fault"), "return_fault child", grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 1, processor = 200_000, log_records = 10}, nil, nil, {image = image}, &error)
+	process, status := system.process_start(system.image_find(image, "return_fault"), "return_fault child", grants, random.values_with_seed(&process_generator, values), {pages = 256, processes = 1, threads = 1, processor = 200_000, log_records = 10}, nil, nil, {image = image}, &error)
 	if status != .Ok {
 		system.log("return_fault: ", item.name, ": the child did not start")
 		return
 	}
-	defer system.close(program)
+	defer system.close(process)
 	// The bound only ends a hang.
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		if state, _ := system.program_state(program); state == .Stopped {
+		if state, _ := system.process_state(process); state == .Stopped {
 			break
 		}
 		system.sleep(system.time() + 10)
 	}
-	state, code := system.program_state(program)
-	report := system.program_stop_report(program)
+	state, code := system.process_state(process)
+	report := system.process_stop_report(process)
 	item.ran = true
 	item.code = code
 	item.address = report.address
@@ -191,7 +191,7 @@ case_run :: proc "contextless" (item: ^Case) {
 	case .Nested_Task:
 		item.right = state == .Stopped && code == NESTED_TASK_CLEARED
 	case .Trap_Flag:
-		// A debug exception of the program (vector 1) stops it as its own fault.
+		// A debug exception of the process (vector 1) stops it as its own fault.
 		item.right = state == .Stopped && code == op.STOP_CODE_FAULT + 1
 	case .Stack_At_A_Syscall:
 		item.right = state == .Stopped && code == op.STOP_CODE_RETURN && report.address == 0x8000_0000_0000_0000
@@ -203,7 +203,7 @@ case_run :: proc "contextless" (item: ^Case) {
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE RETURN TO A PROGRAM", "each child gives the kernel a thread that the processor would refuse at iretq", graphics.colors.kernel)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE RETURN TO A PROCESS", "each child gives the kernel a thread that the processor would refuse at iretq", graphics.colors.kernel)
 	column := interface.column_of(content)
 	builder: interface.Text_Builder
 	for &item in cases {
@@ -213,7 +213,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 			interface.text_put(&builder, "not run yet")
 		} else {
 			interface.text_put(&builder, item.right ? "stopped as its own fault, or returned clean; the machine goes on" : "WRONG: see the log")
-			color = item.right ? graphics.colors.program : graphics.colors.failed
+			color = item.right ? graphics.colors.process : graphics.colors.failed
 		}
 		// The answer is a sentence, wider than its box: it has the lines
 		// that it needs, and the next case starts under them.
@@ -258,7 +258,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		syscall_with_a_stack_that_is_not_canonical()
 	case .Parent:
 	}
-	if !random.generator_from_context(&program_generator, ctx) {
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("return_fault: no random seed in the context")
 		system.stop(1)
 	}
@@ -283,7 +283,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		draw(&window)
 	}
 	if right == len(cases) {
-		system.log("return_fault: ok, ", u64(len(cases)), " cases: each child stopped as its own fault or returned with the flags of a program, and the machine goes on")
+		system.log("return_fault: ok, ", u64(len(cases)), " cases: each child stopped as its own fault or returned with the flags of a process, and the machine goes on")
 	} else {
 		system.log("return_fault: failed: ", u64(len(cases) - right), " cases of ", u64(len(cases)))
 	}

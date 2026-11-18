@@ -24,10 +24,11 @@ The word for what runs was "program". That word names the file in common speech 
 
 ## The subtle points
 
-- The glossary refused "process" for the baggage of POSIX. The refusal was of the baggage, not of the word: the definition of the term carries what a process here does not have.
+- A process is the realisation of a module in time, from its start to its stop. The word is general: a chemical process and a manufacturing process run in time too. No system owns the word. Unix took it from common speech, as this system does.
+- The definition of the term states what a process of this system does not have: no parent that it inherits from, no fork, no global number, no ambient environment. Each is a property of this system, stated for a reader who knows another one.
 - The rename comes after the move of the folders, so that two large moves never cross in one tree.
 - A line of the log that a test waits for changes with the rename, in the same commit as its scenario.
 
 ## State
 
-Decided. Not built: the rename of the code, the contract, the guides, the glossary and the lines of the log ([ROADMAP.md](../../../ROADMAP.md)).
+Built: the kernel operations `Process_Create`, `Process_Start`, `Process_Stop`, `Process_State` and `Process_Module`, with their numbers kept, and the kind `Process_Mappings` of `Inspect`; the contract, the code, the guides, the glossary and the lines of the log. A name that holds a process of the host, in the tool, is a host process. A name that holds the file is a module: the service `module_files`, the start menu, the entry of a module. The boot program keeps its name: it is no process of the kernel. The released history, `CHANGELOG.md` and `news/`, keeps the words of its time.

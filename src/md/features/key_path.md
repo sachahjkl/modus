@@ -1,6 +1,6 @@
 # The path of a key: no queue drops a record in silence
 
-A key goes through four queues between the keyboard and the program that reads it. The rule of the system is that none of them loses a key in silence. The queues, their capacities and their log lines are in [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "The path of a key". This file records where the rule comes from and why it has two forms.
+A key goes through four queues between the keyboard and the process that reads it. The rule of the system is that none of them loses a key in silence. The queues, their capacities and their log lines are in [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "The path of a key". This file records where the rule comes from and why it has two forms.
 
 ## The fault that made the rule
 
@@ -26,8 +26,8 @@ For each queue on the path, one of two forms holds.
 Which form a queue takes follows from one question: what stops when the writer waits.
 
 - **The input service can wait.** It must not read a byte that it cannot send. A byte that it does not read stays in the keyboard controller, and the device holds the bytes after it. The back pressure reaches the keyboard, and the tool that types, with no new signal: the tool already waits for the status bit of the controller.
-- **The compositor cannot wait for a window.** One program that does not read must not stop the desktop. So the compositor keeps the records that a ring refused, for each window, and sends them in order before any newer record. The bound of that queue is stated, and a refusal past it is counted.
-- **The terminal cannot wait for its program.** Its first thread also draws the window. Its queue has a stated bound and a counted refusal.
+- **The compositor cannot wait for a window.** One process that does not read must not stop the desktop. So the compositor keeps the records that a ring refused, for each window, and sends them in order before any newer record. The bound of that queue is stated, and a refusal past it is counted.
+- **The terminal cannot wait for its process.** Its first thread also draws the window. Its queue has a stated bound and a counted refusal.
 
 ## The refused forms
 
@@ -38,8 +38,8 @@ Which form a queue takes follows from one question: what stops when the writer w
 
 ## The subtle points
 
-- **No wait can form a cycle.** The input service waits only for the compositor. The compositor waits for no program: each of its sends gives its answer at once. The terminal and the console wait for no program before them on the path.
-- **The compositor waits for room only on a ring that is exactly full.** A program writes the read counter of its own ring. A false count must not make the compositor run with no end.
+- **No wait can form a cycle.** The input service waits only for the compositor. The compositor waits for no process: each of its sends gives its answer at once. The terminal and the console wait for no process before them on the path.
+- **The compositor waits for room only on a ring that is exactly full.** A process writes the read counter of its own ring. A false count must not make the compositor run with no end.
 - **The count of the compositor was a false proof.** The compositor counted a key record before it sent the record to the window. A caller that read the count concluded that the window had the key. The counts are now separate: sent, unread, waiting, refused.
 - **The condition of the tool.** "The keyboard controller holds no byte" means "the input ring took each record" only because of the back pressure. It depends on a setting of the virtual keyboard controller of QEMU that is off by default: with it on, the status bit stays clear for a time after each byte. See [`docs/TOOLS.md`](../../../docs/TOOLS.md), "How the tool sends input and waits".
 - **The echo of the line is the last proof.** The console writes the line on the log before it runs it. After the keys of a typed line, the tool waits for that echo. A lost Enter then fails at the step that typed, not minutes later at the next wait.
@@ -49,4 +49,4 @@ Which form a queue takes follows from one question: what stops when the writer w
 
 Built: the two forms on each of the four queues, the counts as exports of the compositor, the log lines of a loss period, the host tests of the queue of the compositor, and the machine test that types a line while a call holds the console.
 
-Left: the machine test does not fill the queue of the compositor, because no program of the test stops reading its window for a time that the test controls. The one wait of the compositor holds a fixed count of words; with about 30 windows it is full.
+Left: the machine test does not fill the queue of the compositor, because no process of the test stops reading its window for a time that the test controls. The one wait of the compositor holds a fixed count of words; with about 30 windows it is full.

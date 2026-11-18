@@ -28,7 +28,7 @@ build_window :: proc(table: ^Draw_Table, state: ^Interface_State, input: ^Input,
 	column := column_of(content)
 	builder: Text_Builder
 	label_value_line(&frame, column_take(&column, TABLE_LINE), "a number", number_text(&builder, number))
-	bar(&frame, column_take(&column, 8), number, 100, graphics.colors.program)
+	bar(&frame, column_take(&column, 8), number, 100, graphics.colors.process)
 	line := column_take(&column, TABLE_LINE)
 	if moved {
 		line.x += 8
@@ -119,14 +119,14 @@ a_line_ends_at_the_last_space_that_fits :: proc(t: ^testing.T) {
 
 @(test)
 a_path_longer_than_the_box_breaks_after_a_separator :: proc(t: ^testing.T) {
-	PLACE :: "fault::three + 0x4 in fault (src/programs/fault/main.odin:15)"
+	PLACE :: "fault::three + 0x4 in fault (src/processes/fault/main.odin:15)"
 	// 24 characters: the line ends at a space while the text has one.
 	line, rest := text_wrap_line(nil, {}, PLACE, 24 * 8)
 	testing.expect_value(t, line, "fault::three + 0x4 in")
-	testing.expect_value(t, rest, "fault (src/programs/fault/main.odin:15)")
+	testing.expect_value(t, rest, "fault (src/processes/fault/main.odin:15)")
 	// The path is one word of 33 characters: it breaks after a `/`.
-	line, rest = text_wrap_line(nil, {}, "(src/programs/fault/main.odin:15)", 24 * 8)
-	testing.expect_value(t, line, "(src/programs/fault/")
+	line, rest = text_wrap_line(nil, {}, "(src/processes/fault/main.odin:15)", 24 * 8)
+	testing.expect_value(t, line, "(src/processes/fault/")
 	testing.expect_value(t, rest, "main.odin:15)")
 	// A name of the system breaks after a `_`.
 	line, rest = text_wrap_line(nil, {}, "interface_through_module", 20 * 8)
@@ -141,7 +141,7 @@ a_path_longer_than_the_box_breaks_after_a_separator :: proc(t: ^testing.T) {
 @(test)
 no_line_passes_its_box_and_no_byte_is_lost :: proc(t: ^testing.T) {
 	TEXTS := [?]string {
-		"page fault at fault::three + 0x4 in fault (src/programs/fault/main.odin:15), fault::two + 0x9 in fault (src/programs/fault/main.odin:20), fault::one + 0x9 in fault (src/programs/fault/main.odin:26), entry + 0x46 in fault (src/programs/fault/main.odin:60)",
+		"page fault at fault::three + 0x4 in fault (src/processes/fault/main.odin:15), fault::two + 0x9 in fault (src/processes/fault/main.odin:20), fault::one + 0x9 in fault (src/processes/fault/main.odin:26), entry + 0x46 in fault (src/processes/fault/main.odin:60)",
 		"keys: a note; up, down: its versions; enter: restore the version shown; tab: count 1000",
 		"src/library/support/cryptography/_edwards25519/edwards25519_scalar_mul_base.odin",
 		"interface_through_module",
@@ -174,7 +174,7 @@ a_box_narrower_than_a_character_ends :: proc(t: ^testing.T) {
 draw_text_wrapped_places_each_line_under_the_line_before :: proc(t: ^testing.T) {
 	memory: Tables
 	table := table_of(&memory)
-	TEXT :: "fault::three + 0x4 in fault (src/programs/fault/main.odin:15)"
+	TEXT :: "fault::three + 0x4 in fault (src/processes/fault/main.odin:15)"
 	count := draw_text_wrapped(&table, 40, 100, 24 * 8, TEXT, graphics.colors.text)
 	testing.expect_value(t, count, text_wrapped_line_count(&table, {}, TEXT, 24 * 8))
 	testing.expect_value(t, count, 3)
@@ -271,7 +271,7 @@ case_lines_has_a_band_as_high_as_its_answer :: proc(t: ^testing.T) {
 	column := column_of({16, 0, 400, 200})
 	// The answer has the box from 200 to 400: 25 characters.
 	ANSWER :: "refused: the argument address, 10.0.2.2 port 9, is not the remote of the grant"
-	count, drawn := case_lines(&frame, &column, 0, "UDP to 10.0.2.2 port 9", ANSWER, 200, graphics.colors.dim, graphics.colors.program)
+	count, drawn := case_lines(&frame, &column, 0, "UDP to 10.0.2.2 port 9", ANSWER, 200, graphics.colors.dim, graphics.colors.process)
 	testing.expect(t, drawn)
 	testing.expect_value(t, count, text_wrapped_line_count(&table, {}, ANSWER, 200))
 	testing.expect(t, count >= 4)
@@ -299,7 +299,7 @@ case_lines_has_a_band_as_high_as_its_answer :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(joined[:length]), ANSWER)
 	// The case after it has no band, and starts under the band.
 	before := table.record_count
-	case_lines(&frame, &column, 1, "ARP", "answered", 200, graphics.colors.dim, graphics.colors.program)
+	case_lines(&frame, &column, 1, "ARP", "answered", 200, graphics.colors.dim, graphics.colors.process)
 	testing.expect_value(t, record_view(table.records[before]).kind, Draw_Kind.Text)
 	testing.expect_value(t, record_view(table.records[before]).y, record_view(band).height + (TABLE_LINE - LINE) / 2)
 }
@@ -606,7 +606,7 @@ damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
 				draw_clip(table, 10, 10, variant == 0 ? 100 : 60, 50)
 				draw_rectangle(table, 0, 0, 200, 100, graphics.colors.kernel)
 				draw_clip(table, 0, 0, 0, 0)
-				draw_rectangle(table, 150, 150, 20, 20, graphics.colors.program)
+				draw_rectangle(table, 150, 150, 20, 20, graphics.colors.process)
 			}},
 		{"horizontal gradients", proc(table: ^Draw_Table, variant: int) {
 				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
@@ -634,7 +634,7 @@ damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
 		{"more than 8 rectangles of damage", proc(table: ^Draw_Table, variant: int) {
 				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
 				for index in 0 ..< 12 {
-					draw_rectangle(table, (index % 4) * 80 + 4, (index / 4) * 64 + 4, 10, 10, variant == 0 ? graphics.colors.kernel : graphics.Color(graphics.colors.program + u32(index)))
+					draw_rectangle(table, (index % 4) * 80 + 4, (index / 4) * 64 + 4, 10, 10, variant == 0 ? graphics.colors.kernel : graphics.Color(graphics.colors.process + u32(index)))
 				}
 			}},
 		{"a table that is full", proc(table: ^Draw_Table, variant: int) {
@@ -859,7 +859,7 @@ picture_inside_its_picture_memory :: proc(t: ^testing.T) {
 }
 
 // A text record whose range is past its text table (a table from another
-// program, through the interface module): the difference does not fault,
+// process, through the interface module): the difference does not fault,
 // and the record differs, so its rectangle is damaged.
 @(test)
 text_range_past_the_table_is_damaged :: proc(t: ^testing.T) {
@@ -889,7 +889,7 @@ card_caption_stays_inside :: proc(t: ^testing.T) {
 	state: Interface_State
 	input: Input
 	frame := frame_begin(&table, &state, &input)
-	card(&frame, {8, 8, 200, 100}, "SLOTS", "Program_Report and a long caption", graphics.colors.program, "34")
+	card(&frame, {8, 8, 200, 100}, "SLOTS", "Process_Report and a long caption", graphics.colors.process, "34")
 	for record in table.records[:table.record_count] {
 		if view := record_view(record); view.kind == .Text {
 			testing.expectf(t, view.x + view.width <= 8 + 200 - 16 + 1, "a text ends at %d, past the border", view.x + view.width)
@@ -1688,7 +1688,7 @@ clip_that_changes_kind :: proc(t: ^testing.T) {
 	draw_clip(&before, 10, 10, 60, 40)
 	draw_rectangle(&before, 0, 0, 200, 100, graphics.colors.kernel)
 	draw_clip(&before, 0, 0, 0, 0)
-	draw_rectangle(&now, 10, 10, 60, 40, graphics.colors.program)
+	draw_rectangle(&now, 10, 10, 60, 40, graphics.colors.process)
 	draw_rectangle(&now, 0, 0, 200, 100, graphics.colors.kernel)
 	draw_clip(&now, 0, 0, 0, 0)
 	testing.expect(t, screen_after_damage(&before, &now), "a clip that becomes a rectangle")
@@ -1706,7 +1706,7 @@ clip_that_changes_kind :: proc(t: ^testing.T) {
 
 // The picture on the screen is not known: it can show a record that the
 // frame now does not have, far from each changed rectangle. The present
-// covers it, because it is the whole surface. The picture that the program
+// covers it, because it is the whole surface. The picture that the process
 // draws is known, and draws its changed rectangle only.
 @(test)
 two_pictures_unknown_shown_picture_presents_all :: proc(t: ^testing.T) {
@@ -2000,7 +2000,7 @@ kind_icon_is_its_cells_at_each_cell_size :: proc(t: ^testing.T) {
 	for icon in icons {
 		for cell_size in 1 ..= 3 {
 			draw_table_clear(&table)
-			draw_kind_icon(&table, LEFT, TOP, icon, cell_size, graphics.colors.program)
+			draw_kind_icon(&table, LEFT, TOP, icon, cell_size, graphics.colors.process)
 			testing.expect(t, !table.full && table.record_count <= kind_icons.RECTANGLE_LIMIT)
 			pixels: [SIDE * SIDE]graphics.Color
 			execute(&table, {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
@@ -2008,7 +2008,7 @@ kind_icon_is_its_cells_at_each_cell_size :: proc(t: ^testing.T) {
 			for y in 0 ..< SIDE {
 				for x in 0 ..< SIDE {
 					set := x >= LEFT && y >= TOP && kind_icons.cell_is_set(icon, (x - LEFT) / cell_size, (y - TOP) / cell_size)
-					expected := set ? graphics.Color(graphics.colors.program) : graphics.Color(0)
+					expected := set ? graphics.Color(graphics.colors.process) : graphics.Color(0)
 					wrong += pixels[y * SIDE + x] == expected ? 0 : 1
 				}
 			}
@@ -2017,8 +2017,8 @@ kind_icon_is_its_cells_at_each_cell_size :: proc(t: ^testing.T) {
 	}
 	// No icon and no cell size: no record.
 	draw_table_clear(&table)
-	draw_kind_icon(&table, 0, 0, nil, 1, graphics.colors.program)
-	draw_kind_icon(&table, 0, 0, icons[0], 0, graphics.colors.program)
+	draw_kind_icon(&table, 0, 0, nil, 1, graphics.colors.process)
+	draw_kind_icon(&table, 0, 0, icons[0], 0, graphics.colors.process)
 	testing.expect_value(t, table.record_count, 0)
 }
 
@@ -2038,8 +2038,8 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 		{kind = .Heading, name = "windows"},
 		{name = "console", icon = window_icon, icon_color = graphics.colors.title, right_text = "window"},
 		// The bytes 0, 1 and 3 matched: two runs.
-		{name = "plasma", matched_places = 0b1011, icon = module_icon, icon_color = graphics.colors.program, right_text = "program"},
-		{name = "paint", right_text = "program"},
+		{name = "plasma", matched_places = 0b1011, icon = module_icon, icon_color = graphics.colors.process, right_text = "process"},
+		{name = "paint", right_text = "process"},
 	}
 	icon_y :: proc(row: int) -> int {
 		return row * TABLE_LINE + (TABLE_LINE - LIST_ROW_ICON_SIZE) / 2
@@ -2059,7 +2059,7 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	// The words at the right of the two rows that are not chosen.
 	words := 0
 	for record in table.records[:table.record_count] {
-		if found, _, is_text := text_of_record(&table, record); is_text && found == "program" {
+		if found, _, is_text := text_of_record(&table, record); is_text && found == "process" {
 			words += 1
 			view := record_view(record)
 			testing.expect_value(t, view.color, graphics.colors.dim)
@@ -2078,7 +2078,7 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	testing.expect_value(t, all_of_color, count)
 	_, pixels = rectangles_in_box(&table, graphics.COLOR_WHITE, LIST_ROW_ICON_X, icon_y(2), LIST_ROW_ICON_SIZE, LIST_ROW_ICON_SIZE)
 	testing.expect_value(t, pixels, set_cells_of(module_icon))
-	count, _ = rectangles_of_color(&table, graphics.colors.program)
+	count, _ = rectangles_of_color(&table, graphics.colors.process)
 	testing.expect_value(t, count, 0)
 	for record in table.records[:table.record_count] {
 		if view := record_view(record); is_solid_rectangle(view) && view.y >= 3 * TABLE_LINE {
@@ -2117,7 +2117,7 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	testing.expect_value(t, pixels, set_cells_of(window_icon))
 	// The row of the question: the same white icon on the red of the act.
 	frame = frame_begin(&table, &state, &input)
-	list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = 2, chosen_color = graphics.colors.stop_program, total = len(rows)})
+	list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = 2, chosen_color = graphics.colors.stop_process, total = len(rows)})
 	frame_end(&frame)
 	_, pixels = rectangles_in_box(&table, graphics.COLOR_WHITE, LIST_ROW_ICON_X, icon_y(2), LIST_ROW_ICON_SIZE, LIST_ROW_ICON_SIZE)
 	testing.expect_value(t, pixels, set_cells_of(module_icon))

@@ -11,7 +11,7 @@ import "modus:support/line_editor"
 
 // A key, as the panel reads it.
 Key :: enum u8 {
-	Other     = 0, // A key that the panel does not use. It still goes to no program while the panel is open.
+	Other     = 0, // A key that the panel does not use. It still goes to no process while the panel is open.
 	Super     = 1, // The key that opens and closes the panel.
 	Escape    = 2,
 	Enter     = 3,
@@ -186,7 +186,7 @@ chosen_of :: proc "contextless" (panel: ^Panel) -> Chosen {
 	if entry == nil {
 		return .Nothing
 	}
-	// With the prefix of the manual, the choice of a program asks the
+	// With the prefix of the manual, the choice of a process asks the
 	// provider for its page.
 	if prefix, _ := prefix_of(typed_text(panel)); prefix == .Manual && entry.kind == .Module {
 		return .Sends

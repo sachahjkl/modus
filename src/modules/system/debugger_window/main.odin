@@ -1,31 +1,31 @@
 // The window of the debugger: the threads, the stack, the variables, the
-// source lines and the memory of a program, with no line to type in the
+// source lines and the memory of a process, with no line to type in the
 // console (docs/TOOLS.md, "The window of the debugger").
 //
 // **What it is for.** The service `debugger` holds the debug access to one
-// program and serves its exports. The console reaches them by commands.
-// This program reaches the same exports through a connection of its own,
+// process and serves its exports. The console reaches them by commands.
+// This process reaches the same exports through a connection of its own,
 // and shows their rows in one window: a developer follows a thread with a
 // key or a click for each act.
 //
 // **Start**: the start menu, or `start("debugger_window")`. Type
-// the name of a program and press Enter: the window attaches to it.
+// the name of a process and press Enter: the window attaches to it.
 //
 // **Grants**: Connect, for a connection to the service `debugger` and to
 // no other service; Image, to read the description of the exports of that
 // service in the boot image; Acts_For_Principal, because the service
-// debugs a program only for a caller that acts for the principal. It holds
-// no right over a program: the service does, and the root service decides
-// which program a caller can debug.
+// debugs a process only for a caller that acts for the principal. It holds
+// no right over a process: the service does, and the root service decides
+// which process a caller can debug.
 //
-// **What a reader sees.** At the left the program, with the debug place
+// **What a reader sees.** At the left the process, with the debug place
 // field and its threads, and under it the breakpoints. At the right the
 // source line of the chosen frame, the memory view, the stack of the chosen
 // thread and the variables of the chosen frame. The action bar at the
 // bottom names the keys; a press on an item does what its key does, and
 // the items that do not fit are behind its button "more".
 //
-// **Keys**, with a program attached and no focus in the field:
+// **Keys**, with a process attached and no focus in the field:
 //
 // - up, down: the thread. page up, page down: the frame.
 // - h: hold the thread. r: let it run. c: let each thread run.
@@ -51,7 +51,7 @@ import "modus:support/interface"
 import "modus:support/system"
 
 // The draw tables of the interface, and the tables of the rows.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2536, programs = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2536, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 1000
 HEIGHT :: 704
@@ -63,11 +63,11 @@ RIGHT_X :: MARGIN + LEFT_WIDTH + MARGIN
 RIGHT_WIDTH :: WIDTH - RIGHT_X - MARGIN
 KEYS_HEIGHT :: interface.ACTION_BAR_ROW_HEIGHT // The action bar.
 CARDS_HEIGHT :: HEIGHT - 2 * MARGIN - KEYS_HEIGHT
-// The left column: the program above, the breakpoints below. The card of
+// The left column: the process above, the breakpoints below. The card of
 // the breakpoints has a fixed place, so its first row has one.
 BREAKS_HEIGHT :: 168
-PROGRAM_HEIGHT :: CARDS_HEIGHT - BREAKS_HEIGHT - MARGIN
-BREAKS_Y :: MARGIN + PROGRAM_HEIGHT + MARGIN
+PROCESS_HEIGHT :: CARDS_HEIGHT - BREAKS_HEIGHT - MARGIN
+BREAKS_Y :: MARGIN + PROCESS_HEIGHT + MARGIN
 // The right column: the source, the memory, then the stack and the
 // variables side by side.
 SOURCE_HEIGHT :: 144
@@ -79,21 +79,21 @@ STACK_WIDTH :: 296
 VARIABLES_X :: RIGHT_X + STACK_WIDTH + MARGIN
 VARIABLES_WIDTH :: WIDTH - VARIABLES_X - MARGIN
 // The debug place field and its three buttons, from the top of the inside
-// of the card of the program: under the line of the attached program.
+// of the card of the process: under the line of the attached process.
 PLACE_FIELD_Y :: LINE + 8
 BUTTONS_Y :: PLACE_FIELD_Y + ROW_HEIGHT + 8
 BUTTON_GAP :: 8
 BUTTON_WIDTH :: (LEFT_WIDTH - 2 * graphics.CARD_MARGIN - 2 * BUTTON_GAP) / 3
 
 REFRESH_MILLISECONDS :: 500 // The threads are read again: a stop of a thread that ran shows then.
-NAME_LIMIT :: 31 // The bytes of the name of a program, as the service takes it.
+NAME_LIMIT :: 31 // The bytes of the name of a process, as the service takes it.
 PLACE_LIMIT :: 160 // The bytes of a debug place, as the service takes a text.
 THREAD_ROWS :: 32
 FRAME_ROWS :: 16
 VARIABLE_ROWS :: 16
 SOURCE_ROWS :: 16
 EVENT_ROWS :: 8
-BREAK_ROWS :: 4 // The breakpoints of a program: the debug address registers of a thread.
+BREAK_ROWS :: 4 // The breakpoints of a process: the debug address registers of a thread.
 REGISTER_ROWS :: 24
 WATCH_LENGTH :: 8 // The bytes of a watch whose place names no length.
 
@@ -101,7 +101,7 @@ WATCH_LENGTH :: 8 // The bytes of a watch whose place names no length.
 MEMORY_ROWS :: 8
 MEMORY_ROW_BYTES :: 16
 MEMORY_BYTES :: MEMORY_ROWS * MEMORY_ROW_BYTES
-// An address of a program is below the end of the user half, so it has 12
+// An address of a process is below the end of the user half, so it has 12
 // hexadecimal digits at most with no leading zero. A row is that address,
 // 16 bytes of two digits with a space between two of them, and their 16
 // characters, in the font of the cells, with a gap of 8 pixels between two
@@ -115,12 +115,12 @@ MEMORY_ROW_WIDTH :: MEMORY_TEXT_X + MEMORY_ROW_BYTES * graphics.CELL_WIDTH
 #assert(MEMORY_ROWS * LINE <= MEMORY_HEIGHT - graphics.CARD_TITLE - 8)
 
 // The records of the exports of the service, as its description has them
-// (src/modules/system/debugger/exports.odin). The program checks at its start
+// (src/modules/system/debugger/exports.odin). The process checks at its start
 // that the description of each one has the size of its record here, and
 // attaches to nothing when one differs: it never reads a row by a layout
 // that the service does not have.
 Attached :: struct {
-	program:   [32]u8,
+	process:   [32]u8,
 	slot:      i64,
 	threads:   i64,
 	modules:   i64,
@@ -128,7 +128,7 @@ Attached :: struct {
 }
 
 Detached :: struct {
-	program:     [32]u8,
+	process:     [32]u8,
 	breakpoints: i64,
 	threads:     i64,
 }
@@ -306,7 +306,7 @@ Frame_Acts :: struct {
 // does the same. Detach has the lowest priority: it is the first item to
 // go into the list, and the rarest act.
 // Procedures, not global arrays: an item is made by a call, and a
-// freestanding program runs no call before its entry.
+// freestanding process runs no call before its entry.
 attached_items :: proc "contextless" () -> [14]interface.Action_Bar_Item {
 	return {
 		interface.action_bar_item("thread before", 6, "Up"),
@@ -451,7 +451,7 @@ thread_can_be_read :: proc "contextless" () -> bool {
 
 // tables_read reads the threads again, then the stack, the variables and
 // the source line of the chosen thread and frame, and the memory view. A
-// thread that runs has none of the three first; the memory of a program
+// thread that runs has none of the three first; the memory of a process
 // is read with no held thread.
 tables_read :: proc "contextless" () {
 	frame_count, variable_count, source_count = 0, 0, 0
@@ -534,16 +534,16 @@ attach :: proc "contextless" () {
 	attached, attached_row = true, rows[0]
 	thread_chosen, frame_chosen = 0, 0
 	place_count, memory_place_count = 0, 0
-	status_set(false, "attached to ", system.name_of(attached_row.program[:]), ": ", attached_row.threads, " threads, ", attached_row.described, " of ", attached_row.modules, " modules with a debug object")
-	system.log("debugger_window: attached to ", system.name_of(attached_row.program[:]))
+	status_set(false, "attached to ", system.name_of(attached_row.process[:]), ": ", attached_row.threads, " threads, ", attached_row.described, " of ", attached_row.modules, " modules with a debug object")
+	system.log("debugger_window: attached to ", system.name_of(attached_row.process[:]))
 	tables_read()
 }
 
 detach :: proc "contextless" () {
 	rows: [1]Detached
 	if _, ok := call(.Detach, nil, bytes_of(rows[:])); ok {
-		status_set(false, "detached from ", system.name_of(rows[0].program[:]))
-		system.log("debugger_window: detached from ", system.name_of(rows[0].program[:]))
+		status_set(false, "detached from ", system.name_of(rows[0].process[:]))
+		system.log("debugger_window: detached from ", system.name_of(rows[0].process[:]))
 	}
 	attached = false
 	memory_place_count = 0
@@ -849,24 +849,24 @@ state_color :: proc "contextless" (state: string) -> graphics.Color {
 	case "held":
 		return graphics.colors.boot_program
 	}
-	return graphics.colors.program
+	return graphics.colors.process
 }
 
-draw_program :: proc "contextless" (frame: ^interface.Frame) {
-	inside := interface.card(frame, {MARGIN, MARGIN, LEFT_WIDTH, PROGRAM_HEIGHT}, "PROGRAM", "debugger.attach", graphics.colors.program)
+draw_process :: proc "contextless" (frame: ^interface.Frame) {
+	inside := interface.card(frame, {MARGIN, MARGIN, LEFT_WIDTH, PROCESS_HEIGHT}, "PROCESS", "debugger.attach", graphics.colors.process)
 	y := 0
 	if !attached {
-		// With no program, the name field is the one element: it keeps the
+		// With no process, the name field is the one element: it keeps the
 		// focus, so the keys type the name.
 		name_field := interface.identity("debugger_window name field")
 		frame.state.focus = name_field
-		if interface.text_input(frame, {inside.x, inside.y, inside.width, ROW_HEIGHT}, name_field, name[:], &name_count, "the name of a program").activated {
+		if interface.text_input(frame, {inside.x, inside.y, inside.width, ROW_HEIGHT}, name_field, name[:], &name_count, "the name of a process").activated {
 			act_ask(.Attach)
 		}
-		y = lines(inside, 0, ROW_HEIGHT + 8, inside.width, ready ? "type the name of a program that runs, then Enter" : "the service debugger is not reachable: this window can attach to nothing", graphics.colors.dim)
+		y = lines(inside, 0, ROW_HEIGHT + 8, inside.width, ready ? "type the name of a process that runs, then Enter" : "the service debugger is not reachable: this window can attach to nothing", graphics.colors.dim)
 	} else {
 		x := write(inside, 0, y, "attached to ", graphics.colors.dim)
-		write(inside, x, y, system.name_of(attached_row.program[:]), graphics.colors.text)
+		write(inside, x, y, system.name_of(attached_row.process[:]), graphics.colors.text)
 		place_field := interface.identity("debugger_window debug place field")
 		if interface.text_input(frame, {inside.x, inside.y + PLACE_FIELD_Y, inside.width, ROW_HEIGHT}, place_field, place_text[:], &place_count, "the debug place").activated {
 			act_ask(.Break_At_Place)
@@ -925,7 +925,7 @@ draw_program :: proc "contextless" (frame: ^interface.Frame) {
 draw_breakpoints :: proc "contextless" (frame: ^interface.Frame) {
 	inside := interface.card(frame, {MARGIN, BREAKS_Y, LEFT_WIDTH, BREAKS_HEIGHT}, "BREAKPOINTS", "debugger.breaks", graphics.colors.boot_program)
 	if !attached {
-		lines(inside, 0, 0, inside.width, "no program is attached", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, "no process is attached", graphics.colors.dim)
 		return
 	}
 	if break_count == 0 {
@@ -960,7 +960,7 @@ draw_breakpoints :: proc "contextless" (frame: ^interface.Frame) {
 draw_source :: proc "contextless" (frame: ^interface.Frame) {
 	inside := interface.card(frame, {RIGHT_X, MARGIN, RIGHT_WIDTH, SOURCE_HEIGHT}, "SOURCE", "debugger.source", graphics.colors.resource)
 	if source_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : thread_can_be_read() ? "the frame has no source line: its module has no debug object, or the service does not have the file" : "the thread runs: hold it (h) to read its line", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : thread_can_be_read() ? "the frame has no source line: its module has no debug object, or the service does not have the file" : "the thread runs: hold it (h) to read its line", graphics.colors.dim)
 		return
 	}
 	y := lines(inside, 0, 0, inside.width, system.name_of(source_rows[0].path[:]), graphics.colors.dim) + 4
@@ -996,7 +996,7 @@ draw_memory :: proc "contextless" (frame: ^interface.Frame) {
 	count := memory_place_count > 0 && memory_count > 0 ? system.format(count_buffer[:], u64(memory_count), " rows") : ""
 	inside := interface.card(frame, {RIGHT_X, MEMORY_Y, RIGHT_WIDTH, MEMORY_HEIGHT}, "MEMORY", "debugger.memory", graphics.colors.memory, count)
 	if !attached {
-		lines(inside, 0, 0, inside.width, "no program is attached", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, "no process is attached", graphics.colors.dim)
 		return
 	}
 	if memory_place_count == 0 {
@@ -1028,7 +1028,7 @@ draw_memory :: proc "contextless" (frame: ^interface.Frame) {
 draw_stack :: proc "contextless" (frame: ^interface.Frame) {
 	inside := interface.card(frame, {RIGHT_X, LOW_Y, STACK_WIDTH, LOW_HEIGHT}, "STACK", "debugger.stack", graphics.colors.kernel)
 	if frame_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : "the thread runs: it has no stack to read", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : "the thread runs: it has no stack to read", graphics.colors.dim)
 		return
 	}
 	y := 0
@@ -1059,7 +1059,7 @@ draw_stack :: proc "contextless" (frame: ^interface.Frame) {
 draw_registers :: proc "contextless" (frame: ^interface.Frame) {
 	inside := interface.card(frame, {VARIABLES_X, LOW_Y, VARIABLES_WIDTH, LOW_HEIGHT}, "REGISTERS", "debugger.registers", graphics.colors.machine)
 	if register_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : "the thread runs: hold it (h) to read its registers", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : "the thread runs: hold it (h) to read its registers", graphics.colors.dim)
 		return
 	}
 	// A column holds a name and a value of up to 16 digits after its "0x".
@@ -1105,7 +1105,7 @@ draw_variables :: proc "contextless" (frame: ^interface.Frame) {
 	}
 	inside := interface.card(frame, {VARIABLES_X, LOW_Y, VARIABLES_WIDTH, LOW_HEIGHT}, "VARIABLES", "debugger.locals", graphics.colors.machine)
 	if variable_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : thread_can_be_read() ? "the frame has no variable that the debug object describes" : "the thread runs: it has no variable to read", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : thread_can_be_read() ? "the frame has no variable that the debug object describes" : "the thread runs: it has no variable to read", graphics.colors.dim)
 		return
 	}
 	y := 0
@@ -1135,7 +1135,7 @@ draw :: proc "contextless" (window: ^display.Window) -> Frame_Acts {
 	// The keys of the open list of the action bar, and a press on it, go
 	// to the bar before any element of the window.
 	interface.action_bar_input_take(&frame, &bar)
-	draw_program(&frame)
+	draw_process(&frame)
 	draw_breakpoints(&frame)
 	draw_source(&frame)
 	draw_memory(&frame)
@@ -1155,7 +1155,7 @@ draw :: proc "contextless" (window: ^display.Window) -> Frame_Acts {
 	}
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	if bar_result.ran {
-		// A press on an item acts as its key. With a program attached the
+		// A press on an item acts as its key. With a process attached the
 		// letters are acts, so the debug place field gives up the focus:
 		// else `h` would type in the field and not hold the thread. With
 		// none, the name field keeps it, and Enter attaches.
@@ -1209,7 +1209,7 @@ service_reach :: proc "contextless" (ctx: ^system.Context) -> (problem: string) 
 		export_indexes[export] = index
 	}
 	if ctx.handles[system.GRANT_ROOT] == 0 {
-		return "this program has no ring to the root service"
+		return "this process has no ring to the root service"
 	}
 	status: system.Status
 	requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT])

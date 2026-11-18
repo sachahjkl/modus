@@ -1,14 +1,14 @@
-// A program that the program `locks` starts several times, to load the
-// kernel from several programs at one time (package modus:support/lockers). It
-// works only on its own objects: another program never waits for it, unless
+// A process that the process `locks` starts several times, to load the
+// kernel from several processes at one time (package modus:support/lockers). It
+// works only on its own objects: another process never waits for it, unless
 // the kernel makes it wait.
 //
 //
-// **What it is for.** The program `locks` needs load on the kernel from
-// several programs whose kernel entries touch no common object: then a
+// **What it is for.** The process `locks` needs load on the kernel from
+// several processes whose kernel entries touch no common object: then a
 // locker waits for another one only when a lock of the kernel makes it
 // wait, and the waits that `locks` counts are the cost of the
-// [locks of the kernel](term:lock-of-the-kernel). This program is that
+// [locks of the kernel](term:lock-of-the-kernel). This process is that
 // load.
 //
 // **What a reader sees.** Nothing of its own: no window, no menu line. It
@@ -23,7 +23,7 @@
 // first use: create, map, write one byte in each page, unmap, close), or
 // `Large` (create and close a memory object of 600 pages). It counts its
 // operations and its kernel entries in its slot. In the stress case
-// (`lockers.ROLE_CHURN`) it starts and stops programs with a peer instead.
+// (`lockers.ROLE_CHURN`) it starts and stops processes with a peer instead.
 //
 // **Its grants**: none of the root service. The board and its role come
 // from `locks`.
@@ -98,8 +98,8 @@ churn :: proc "contextless" (stop_after: u64, peer: system.Handle) -> ! {
 			if peer == 0 {
 				system.stop(0)
 			}
-			// Two programs stop each other: `locks` stops this one now too.
-			system.call(.Program_Stop, u64(peer), 5)
+			// Two processes stop each other: `locks` stops this one now too.
+			system.call(.Process_Stop, u64(peer), 5)
 			stop_after = 0
 		}
 		if thread, status := system.thread_start(brief, nil); status == .Ok {
@@ -144,7 +144,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			continue
 		}
 		seen = command
-		// The program locks writes the mode: a word that names no mode is
+		// The process locks writes the mode: a word that names no mode is
 		// refused with a line and a stop, never read as a mode.
 		mode, mode_ok := enum_word.member_of_word(lockers.Mode, u64(slot.mode))
 		if !mode_ok {

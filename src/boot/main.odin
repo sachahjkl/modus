@@ -315,7 +315,7 @@ print :: proc "contextless" (text: string) {
 }
 
 // The Odin runtime refers to these two symbols on a Windows object target.
-// The C runtime normally defines them; this program has none.
+// The C runtime normally defines them; this process has none.
 
 @(export, link_name = "_fltused")
 _fltused: i32 = 0x9875

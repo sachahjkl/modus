@@ -41,7 +41,7 @@ the_result_kinds_come_from_the_reference_comments :: proc(t: ^testing.T) {
 	results, ok := fuzz_operation_results_read(fuzz_operation_reference)
 	testing.expect(t, ok)
 	testing.expect_value(t, results[.Memory_Create], Fuzz_Operation_Result{handle = true, kind = .Memory})
-	testing.expect_value(t, results[.Program_Create], Fuzz_Operation_Result{handle = true, kind = .Program})
+	testing.expect_value(t, results[.Process_Create], Fuzz_Operation_Result{handle = true, kind = .Process})
 	testing.expect_value(t, results[.Thread_Create], Fuzz_Operation_Result{handle = true, kind = .Thread})
 	testing.expect_value(t, results[.Budget_Create], Fuzz_Operation_Result{handle = true, kind = .Budget})
 	testing.expect_value(t, results[.Handle_Give], Fuzz_Operation_Result{handle = true})

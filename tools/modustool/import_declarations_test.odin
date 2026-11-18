@@ -32,7 +32,7 @@ sum_values :: proc "c" (readings: ^system.Table_To_Read(Reading), factor: i64, n
 
 // The source of an importer: the record has other names and the same
 // layout, the procedure has another name and the attribute link_name, and
-// the block is inside a when, as a program declares an import for one
+// the block is inside a when, as a process declares an import for one
 // build setting.
 @(private = "file")
 IMPORTER_HEAD :: `package importer_of_the_test
@@ -504,7 +504,7 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 		}
 		append(&paths, ..own_files)
 		// The declarations of the drawing module are in the window layer of
-		// the interface package, for each program with the setting.
+		// the interface package, for each process with the setting.
 		if slice.contains(build.defines, DRAWING_THROUGH_MODULE) {
 			append(&paths, SOURCE_FOLDER_SUPPORT + "/interface/window_drawing.odin")
 		}
@@ -528,16 +528,16 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 	}
 }
 
-// The rules of a program that draws its window through the drawing module
+// The rules of a process that draws its window through the drawing module
 // (src/library/support/interface, window_drawing.odin):
 //   - it imports the module, which is a library module of the table, and
 //     the module is before it in the table;
 //   - it starts no child of its own file with no load source: the loader
 //     of the child would not find the import.
 // A picture and a grid of text cells are named by values, so such a
-// program can draw both.
+// process can draw both.
 @(test)
-programs_that_draw_through_the_module_follow_its_rules :: proc(t: ^testing.T) {
+processes_that_draw_through_the_module_follow_its_rules :: proc(t: ^testing.T) {
 	library_found := false
 	library_place := -1
 	for build, index in module_builds {
@@ -547,12 +547,12 @@ programs_that_draw_through_the_module_follow_its_rules :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect(t, library_found, "the drawing module is a library module of the table")
-	programs := 0
+	processes := 0
 	for build, index in module_builds {
 		if !slice.contains(build.defines, DRAWING_THROUGH_MODULE) {
 			continue
 		}
-		programs += 1
+		processes += 1
 		testing.expectf(t, slice.contains(build.imports, DRAWING_MODULE), "%s has the setting and does not import the drawing module", build.name)
 		testing.expectf(t, library_place >= 0 && library_place < index, "%s draws through the module, and the module is not before it in the table", build.name)
 		paths, listed := files_with_suffix(build.source, ".odin")
@@ -567,11 +567,11 @@ programs_that_draw_through_the_module_follow_its_rules :: proc(t: ^testing.T) {
 			}
 			rest := string(source)
 			for line in strings.split_lines_iterator(&rest) {
-				if strings.contains(line, "program_start(") && strings.contains(line, own_file) {
+				if strings.contains(line, "process_start(") && strings.contains(line, own_file) {
 					testing.expectf(t, strings.contains(line, "image = "), "%s starts a child of its own file with no load source in %s: the child would not find the drawing module", build.name, path)
 				}
 			}
 		}
 	}
-	testing.expect(t, programs > 0, "no program draws through the module")
+	testing.expect(t, processes > 0, "no process draws through the module")
 }

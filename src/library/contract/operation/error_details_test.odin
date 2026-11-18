@@ -38,11 +38,11 @@ the_operations_that_take_error_details :: proc(t: ^testing.T) {
 @(test)
 a_count_above_its_limit :: proc(t: ^testing.T) {
 	values := [7]u64{0, 0, 32, 0, 0, 0, 0}
-	problem, limit := argument_value_problem(.Program_Create, 2, values)
+	problem, limit := argument_value_problem(.Process_Create, 2, values)
 	testing.expect_value(t, problem, errors.Kind.Too_Long)
 	testing.expect_value(t, limit, u64(31))
 	values[2] = 31
-	problem, _ = argument_value_problem(.Program_Create, 2, values)
+	problem, _ = argument_value_problem(.Process_Create, 2, values)
 	testing.expect_value(t, problem, errors.Kind.None)
 	// A count whose form has no limit is never refused here.
 	values = {0, max(u64), 0, 0, 0, 0, 0}
@@ -131,7 +131,7 @@ a_choice_out_of_its_range :: proc(t: ^testing.T) {
 @(test)
 the_bounds_of_the_table_are_the_named_constants :: proc(t: ^testing.T) {
 	testing.expect_value(t, OPERATIONS[.Log].parameters[2].limit, u64(LOG_TEXT_BYTES_MOST))
-	testing.expect_value(t, OPERATIONS[.Program_Create].parameters[2].limit, u64(PROGRAM_NAME_BYTES_MOST))
+	testing.expect_value(t, OPERATIONS[.Process_Create].parameters[2].limit, u64(PROCESS_NAME_BYTES_MOST))
 	testing.expect_value(t, OPERATIONS[.Memory_Create].parameters[2].limit, MEMORY_FLAGS_KNOWN)
 	testing.expect_value(t, OPERATIONS[.Memory_Map].parameters[3].limit, MAP_FLAGS_KNOWN)
 	testing.expect_value(t, OPERATIONS[.Memory_Protect].parameters[2].limit, MAP_FLAGS_KNOWN)
@@ -152,9 +152,9 @@ the_bounds_of_the_table_are_the_named_constants :: proc(t: ^testing.T) {
 		commit_flags += {flag}
 	}
 	testing.expect_value(t, COMMIT_FLAGS_KNOWN, transmute(u64)commit_flags)
-	// The name of a program fits its field, with the zero byte after it.
-	report: Program_Report
-	testing.expect_value(t, len(report.name), PROGRAM_NAME_BYTES_MOST + 1)
+	// The name of a process fits its field, with the zero byte after it.
+	report: Process_Report
+	testing.expect_value(t, len(report.name), PROCESS_NAME_BYTES_MOST + 1)
 	// The code of Machine_Stop fits the one byte that the host receives.
 	testing.expect_value(t, u64(MACHINE_STOP_CODE_MOST), u64(max(u8)))
 	testing.expect_value(t, OPERATIONS[.Machine_Stop].parameters[1].limit, u64(MACHINE_STOP_CODE_MOST))
@@ -240,13 +240,13 @@ the_arguments_that_the_operation_reads :: proc(t: ^testing.T) {
 }
 
 // A handle, an address and a value outside the command are never refused
-// here: the kernel checks a handle against the table of the program.
+// here: the kernel checks a handle against the table of the process.
 @(test)
 what_the_form_alone_does_not_refuse :: proc(t: ^testing.T) {
 	values := [7]u64{max(u64), max(u64), 0, 0, 0, 0, 0}
 	problem, _ := argument_value_problem(.Memory_Map, 0, values)
 	testing.expect_value(t, problem, errors.Kind.None)
-	problem, _ = argument_value_problem(.Program_Create, 1, values)
+	problem, _ = argument_value_problem(.Process_Create, 1, values)
 	testing.expect_value(t, problem, errors.Kind.None)
 	problem, _ = argument_value_problem(.Memory_Map, 7, values)
 	testing.expect_value(t, problem, errors.Kind.None)

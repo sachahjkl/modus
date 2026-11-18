@@ -7,22 +7,22 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
-// A small tree of sources in a new folder: a program that imports a
+// A small tree of sources in a new folder: a process that imports a
 // library, an assembly file, a file that `#load` reads, and a package that
-// the program does not use.
+// the process does not use.
 @(private = "file")
 source_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	folder, error := os.make_directory_temp("", "incremental_build_test_*", context.temp_allocator)
 	testing.expect_value(t, error, nil)
 	// The two parts of the library are at the folders of the tool: the tool
 	// finds the package of an import of the library there.
-	for name in ([]string{"program", "library", "unused", "tool", SOURCE_FOLDER_CONTRACT + "/record", SOURCE_FOLDER_SUPPORT + "/draw", SOURCE_FOLDER_SUPPORT + "/idle"}) {
+	for name in ([]string{"process", "library", "unused", "tool", SOURCE_FOLDER_CONTRACT + "/record", SOURCE_FOLDER_SUPPORT + "/draw", SOURCE_FOLDER_SUPPORT + "/idle"}) {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
-	file_write(folder, "program/main.odin", "package program\n\nimport \"../library\"\n\nmain :: proc() {library.work()}\n")
-	file_write(folder, "program/main_test.odin", "#+build !freestanding\npackage program\n")
-	file_write(folder, "program/entry.asm", "global entry\nentry: ret\n")
-	file_write(folder, "program/picture.pixels", "pixels")
+	file_write(folder, "process/main.odin", "package process\n\nimport \"../library\"\n\nmain :: proc() {library.work()}\n")
+	file_write(folder, "process/main_test.odin", "#+build !freestanding\npackage process\n")
+	file_write(folder, "process/entry.asm", "global entry\nentry: ret\n")
+	file_write(folder, "process/picture.pixels", "pixels")
 	file_write(folder, "library/library.odin", "package library\n\nwork :: proc() {}\n")
 	file_write(folder, "unused/unused.odin", "package unused\n")
 	file_write(folder, "tool/main.odin", "package tool\n\nimport \"core:fmt\"\nimport record \"modus:contract/record\"\n\t import \"modus:support/draw\"\nSAMPLE :: `\nimport \"modus:support/absent\"\n`\n")
@@ -38,23 +38,23 @@ file_write :: proc(root, name, text: string) {
 }
 
 @(private = "file")
-SOURCE_TREE_FOLDERS :: [?]string{"program", "library", "unused", "tool", SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT}
+SOURCE_TREE_FOLDERS :: [?]string{"process", "library", "unused", "tool", SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT}
 
-// The inputs of the key of the program of the tree, as a compiler lists them.
+// The inputs of the key of the process of the tree, as a compiler lists them.
 @(private = "file")
-program_inputs :: proc(root: string) -> Build_Key_Inputs {
+process_inputs :: proc(root: string) -> Build_Key_Inputs {
 	sources := make([]string, 2, context.temp_allocator)
-	sources[0] = fmt.tprintf("%s/program/main.odin", root)
+	sources[0] = fmt.tprintf("%s/process/main.odin", root)
 	sources[1] = fmt.tprintf("%s/library/library.odin", root)
 	loads := make([]string, 1, context.temp_allocator)
-	loads[0] = fmt.tprintf("%s/program/picture.pixels", root)
+	loads[0] = fmt.tprintf("%s/process/picture.pixels", root)
 	settings := make([]string, 3, context.temp_allocator)
 	settings[0] = "odin"
 	settings[1] = "build"
 	settings[2] = "-o:speed"
 	fixed := make([]string, 1, context.temp_allocator)
-	fixed[0] = "program/entry.asm"
-	return {subject = "module program", settings = settings, fixed_files = fixed, source_files = sources, load_files = loads}
+	fixed[0] = "process/entry.asm"
+	return {subject = "module process", settings = settings, fixed_files = fixed, source_files = sources, load_files = loads}
 }
 
 // The key of the inputs, with a new table: as a new build computes it.
@@ -75,11 +75,11 @@ key_of_a_new_build :: proc(t: ^testing.T, root: string, inputs: Build_Key_Inputs
 build_key_changes_with_each_input_file :: proc(t: ^testing.T) {
 	root := source_tree_make(t)
 	defer os.remove_all(root)
-	inputs := program_inputs(root)
+	inputs := process_inputs(root)
 	first := key_of_a_new_build(t, root, inputs)
 	testing.expect_value(t, key_of_a_new_build(t, root, inputs), first)
 
-	file_write(root, "program/main.odin", "package program\n\nimport \"../library\"\n\nmain :: proc() {library.work(); library.work()}\n")
+	file_write(root, "process/main.odin", "package process\n\nimport \"../library\"\n\nmain :: proc() {library.work(); library.work()}\n")
 	after_source := key_of_a_new_build(t, root, inputs)
 	testing.expect(t, after_source != first, "a byte of a source file changes the key")
 
@@ -87,11 +87,11 @@ build_key_changes_with_each_input_file :: proc(t: ^testing.T) {
 	after_import := key_of_a_new_build(t, root, inputs)
 	testing.expect(t, after_import != after_source, "a byte of a file of an imported package changes the key")
 
-	file_write(root, "program/entry.asm", "global entry\nentry: nop\nret\n")
+	file_write(root, "process/entry.asm", "global entry\nentry: nop\nret\n")
 	after_assembly := key_of_a_new_build(t, root, inputs)
 	testing.expect(t, after_assembly != after_import, "a byte of an assembly file changes the key")
 
-	file_write(root, "program/picture.pixels", "other pixels")
+	file_write(root, "process/picture.pixels", "other pixels")
 	after_load := key_of_a_new_build(t, root, inputs)
 	testing.expect(t, after_load != after_assembly, "a byte of a file of #load changes the key")
 }
@@ -102,7 +102,7 @@ build_key_changes_with_each_input_file :: proc(t: ^testing.T) {
 build_key_changes_with_a_flag_and_with_the_tool :: proc(t: ^testing.T) {
 	root := source_tree_make(t)
 	defer os.remove_all(root)
-	inputs := program_inputs(root)
+	inputs := process_inputs(root)
 	first := key_of_a_new_build(t, root, inputs)
 
 	with_flag := inputs
@@ -136,14 +136,14 @@ build_key_changes_with_a_flag_and_with_the_tool :: proc(t: ^testing.T) {
 build_key_follows_the_folders_of_the_packages_only :: proc(t: ^testing.T) {
 	root := source_tree_make(t)
 	defer os.remove_all(root)
-	inputs := program_inputs(root)
+	inputs := process_inputs(root)
 	first := key_of_a_new_build(t, root, inputs)
 
 	file_write(root, "unused/unused.odin", "package unused\n\nchanged :: 1\n")
 	file_write(root, "unused/new.odin", "package unused\n")
 	testing.expect_value(t, key_of_a_new_build(t, root, inputs), first)
 
-	file_write(root, "program/main_test.odin", "package program\n")
+	file_write(root, "process/main_test.odin", "package process\n")
 	after_tag := key_of_a_new_build(t, root, inputs)
 	testing.expect(t, after_tag != first, "a file that the compiler left out is an input: its build tag can change")
 
@@ -156,7 +156,7 @@ build_key_follows_the_folders_of_the_packages_only :: proc(t: ^testing.T) {
 build_key_does_not_depend_on_the_order_of_the_list :: proc(t: ^testing.T) {
 	root := source_tree_make(t)
 	defer os.remove_all(root)
-	inputs := program_inputs(root)
+	inputs := process_inputs(root)
 	first := key_of_a_new_build(t, root, inputs)
 	inputs.source_files[0], inputs.source_files[1] = inputs.source_files[1], inputs.source_files[0]
 	testing.expect_value(t, key_of_a_new_build(t, root, inputs), first)
@@ -168,7 +168,7 @@ build_key_does_not_depend_on_the_order_of_the_list :: proc(t: ^testing.T) {
 build_key_is_not_complete_with_a_lost_or_a_changed_input :: proc(t: ^testing.T) {
 	root := source_tree_make(t)
 	defer os.remove_all(root)
-	inputs := program_inputs(root)
+	inputs := process_inputs(root)
 	folders := SOURCE_TREE_FOLDERS
 	{
 		first_table := input_file_table_make(root, folders[:])
@@ -183,7 +183,7 @@ build_key_is_not_complete_with_a_lost_or_a_changed_input :: proc(t: ^testing.T) 
 		_, complete_after := build_key(inputs, first_table, true)
 		testing.expect(t, !complete_after, "a key with a file that changed during the build is not recorded")
 	}
-	_ = os.remove(fmt.tprintf("%s/program/picture.pixels", root))
+	_ = os.remove(fmt.tprintf("%s/process/picture.pixels", root))
 	table := input_file_table_make(root, folders[:])
 	defer input_file_table_destroy(table)
 	_, complete := build_key(inputs, table)
@@ -197,19 +197,19 @@ build_key_is_not_complete_with_a_lost_or_a_changed_input :: proc(t: ^testing.T) 
 input_file_must_be_older_than_the_build :: proc(t: ^testing.T) {
 	root := source_tree_make(t)
 	defer os.remove_all(root)
-	table := input_file_table_make(root, {"program"})
+	table := input_file_table_make(root, {"process"})
 	defer input_file_table_destroy(table)
 	library := fmt.tprintf("%s/library/library.odin", root)
-	program := fmt.tprintf("%s/program/main.odin", root)
+	process := fmt.tprintf("%s/process/main.odin", root)
 	testing.expect(t, input_file(table, library).readable, "a file outside the folders of the table is read at its first use")
 	// A build that starts one hour after the files were written.
 	table.started = time.time_add(time.now(), time.Hour)
 	testing.expect(t, input_file_is_unchanged(table, library), "a file that is older than the build, read at its first use")
-	testing.expect(t, input_file_is_unchanged(table, program), "a file that is older than the build, hashed with the table")
+	testing.expect(t, input_file_is_unchanged(table, process), "a file that is older than the build, hashed with the table")
 	// A build that started before the files were written.
 	table.started = time.Time{}
 	testing.expect(t, !input_file_is_unchanged(table, library), "a file newer than the start of the build is not trusted")
-	testing.expect(t, !input_file_is_unchanged(table, program), "also when the table hashed it")
+	testing.expect(t, !input_file_is_unchanged(table, process), "also when the table hashed it")
 	testing.expect(t, !input_file_is_unchanged(table, fmt.tprintf("%s/absent.odin", root)), "a file that is not there is not trusted")
 }
 
@@ -219,12 +219,12 @@ input_file_must_be_older_than_the_build :: proc(t: ^testing.T) {
 build_record_keeps_the_hash_of_each_output :: proc(t: ^testing.T) {
 	root := source_tree_make(t)
 	defer os.remove_all(root)
-	module_file := fmt.tprintf("%s/program.module", root)
-	debug_file := fmt.tprintf("%s/program.debug", root)
-	record_file := fmt.tprintf("%s/program%s", root, BUILD_RECORD_SUFFIX)
+	module_file := fmt.tprintf("%s/process.module", root)
+	debug_file := fmt.tprintf("%s/process.debug", root)
+	record_file := fmt.tprintf("%s/process%s", root, BUILD_RECORD_SUFFIX)
 	_ = os.write_entire_file(module_file, "the module")
 	_ = os.write_entire_file(debug_file, "the debug object")
-	inputs := program_inputs(root)
+	inputs := process_inputs(root)
 	key := key_of_a_new_build(t, root, inputs)
 	testing.expect(t, build_record_write(record_file, key, {module_file, debug_file}, inputs.source_files, inputs.load_files), "the record is written")
 
@@ -257,9 +257,9 @@ build_record_keeps_the_hash_of_each_output :: proc(t: ^testing.T) {
 build_record_is_removed_when_an_output_is_missing :: proc(t: ^testing.T) {
 	root := source_tree_make(t)
 	defer os.remove_all(root)
-	record_file := fmt.tprintf("%s/program%s", root, BUILD_RECORD_SUFFIX)
+	record_file := fmt.tprintf("%s/process%s", root, BUILD_RECORD_SUFFIX)
 	_ = os.write_entire_file(record_file, "an old record")
-	inputs := program_inputs(root)
+	inputs := process_inputs(root)
 	testing.expect(t, !build_record_write(record_file, {}, {fmt.tprintf("%s/absent.module", root)}, inputs.source_files, nil), "no record without the output")
 	testing.expect(t, !os.exists(record_file), "the old record is removed")
 }
@@ -269,7 +269,7 @@ build_record_is_removed_when_an_output_is_missing :: proc(t: ^testing.T) {
 @(test)
 damaged_build_record_is_no_record :: proc(t: ^testing.T) {
 	hash := strings.repeat("ab", 32, context.temp_allocator)
-	good := fmt.tprintf("%s\nkey %s\noutput %s build/modules/console.module\nsource /repository/programs/console/main.odin\nload /repository/resources/fonts/paper_mono.ttf\n", BUILD_RECORD_FIRST_LINE, hash, hash)
+	good := fmt.tprintf("%s\nkey %s\noutput %s build/modules/console.module\nsource /repository/processes/console/main.odin\nload /repository/resources/fonts/paper_mono.ttf\n", BUILD_RECORD_FIRST_LINE, hash, hash)
 	record, recorded := build_record_parse(good)
 	testing.expect(t, recorded, "the text of a whole record is a record")
 	testing.expect_value(t, record.key[0], 0xab)
@@ -311,14 +311,14 @@ damaged_build_record_is_no_record :: proc(t: ^testing.T) {
 // The list of the compiler, in the form that it writes.
 @(test)
 dependency_list_of_the_compiler_is_read :: proc(t: ^testing.T) {
-	text := "{\n\t\"source_files\": [\n\t\t\"/nix/store/odin/share/base/runtime/core.odin\",\n\t\t\"/repository/programs/hall_of_fame/main.odin\"\n\t],\n\t\"load_files\": [\n\t\t\"/repository/programs/hall_of_fame/portraits/linus_torvalds.pixels\"\n\t]\n}\n"
+	text := "{\n\t\"source_files\": [\n\t\t\"/nix/store/odin/share/base/runtime/core.odin\",\n\t\t\"/repository/processes/hall_of_fame/main.odin\"\n\t],\n\t\"load_files\": [\n\t\t\"/repository/processes/hall_of_fame/portraits/linus_torvalds.pixels\"\n\t]\n}\n"
 	sources, loads, listed := dependency_list_parse(text)
 	testing.expect(t, listed, "the list is read")
 	testing.expect_value(t, len(sources), 2)
 	testing.expect_value(t, sources[0], "/nix/store/odin/share/base/runtime/core.odin")
-	testing.expect_value(t, sources[1], "/repository/programs/hall_of_fame/main.odin")
+	testing.expect_value(t, sources[1], "/repository/processes/hall_of_fame/main.odin")
 	testing.expect_value(t, len(loads), 1)
-	testing.expect_value(t, loads[0], "/repository/programs/hall_of_fame/portraits/linus_torvalds.pixels")
+	testing.expect_value(t, loads[0], "/repository/processes/hall_of_fame/portraits/linus_torvalds.pixels")
 
 	without_loads := "{\n\t\"source_files\": [\n\t\t\"/repository/kernel/main.odin\"\n\t],\n\t\"load_files\": [\n\t]\n}\n"
 	sources, loads, listed = dependency_list_parse(without_loads)
@@ -364,7 +364,7 @@ tool_identity_follows_the_imports_of_the_tool :: proc(t: ^testing.T) {
 	testing.expect_value(t, identity_of(t, root), first)
 
 	file_write(root, SOURCE_FOLDER_SUPPORT + "/idle/idle.odin", "package idle\n\nchanged :: 1\n")
-	file_write(root, "program/main.odin", "package program\n")
+	file_write(root, "process/main.odin", "package process\n")
 	testing.expect_value(t, identity_of(t, root), first)
 
 	file_write(root, SOURCE_FOLDER_SUPPORT + "/draw/draw.odin", "package draw\n\nimport \"modus:contract/record\"\n\nchanged :: 1\n")
@@ -428,7 +428,7 @@ build_measure_lines_name_the_counts_and_the_steps :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(lines[2], "0 built, 18 kept, 0 not needed"), lines[2])
 }
 
-// A library and a program that imports it, in a new folder: the sources of
+// A library and a process that imports it, in a new folder: the sources of
 // each, and the files of a build of the two. No compiler runs: the test
 // writes the output of each step itself, as a function of what the step
 // reads, so a step that the tool skips leaves a stale file that the test
@@ -438,8 +438,8 @@ Two_Modules :: struct {
 	root:    string,
 	table:   ^Input_File_Table,
 	library: Module_Steps,
-	program: Module_Steps,
-	final:   Module_Steps, // A module that imports the program: the second level of the chain.
+	process: Module_Steps,
+	final:   Module_Steps, // A module that imports the process: the second level of the chain.
 }
 
 @(private = "file")
@@ -476,16 +476,16 @@ two_modules_steps :: proc(root, name: string, imports: []string) -> Module_Steps
 two_modules_make :: proc(t: ^testing.T) -> (modules: Two_Modules) {
 	folder, error := os.make_directory_temp("", "module_steps_test_*", context.temp_allocator)
 	testing.expect_value(t, error, nil)
-	for name in ([]string{"library", "program", "final", "build"}) {
+	for name in ([]string{"library", "process", "final", "build"}) {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
 	file_write(folder, "library/main.odin", "package library\n\n@(export)\nwork :: proc \"c\" (count: i64) -> i64 {return count}\n")
-	file_write(folder, "program/main.odin", "package program\n\nforeign _ {\n\twork :: proc \"c\" (count: i64) -> i64 ---\n}\n")
+	file_write(folder, "process/main.odin", "package process\n\nforeign _ {\n\twork :: proc \"c\" (count: i64) -> i64 ---\n}\n")
 	file_write(folder, "final/main.odin", "package final\n\nforeign _ {\n\trun :: proc \"c\" () -> i64 ---\n}\n")
 	modules.root = folder
 	modules.library = two_modules_steps(folder, "library", nil)
-	modules.program = two_modules_steps(folder, "program", {"library"})
-	modules.final = two_modules_steps(folder, "final", {"program"})
+	modules.process = two_modules_steps(folder, "process", {"library"})
+	modules.final = two_modules_steps(folder, "final", {"process"})
 	two_modules_new_build(&modules)
 	return modules
 }
@@ -498,7 +498,7 @@ two_modules_new_build :: proc(modules: ^Two_Modules) {
 	if modules.table != nil {
 		input_file_table_destroy(modules.table)
 	}
-	modules.table = input_file_table_make(modules.root, {"library", "program", "final"})
+	modules.table = input_file_table_make(modules.root, {"library", "process", "final"})
 	modules.table.started = time.time_add(time.now(), time.Hour)
 }
 
@@ -558,10 +558,10 @@ test_build_one :: proc(t: ^testing.T, modules: ^Two_Modules, steps: Module_Steps
 
 // One build of the three modules, in the order of their levels.
 @(private = "file")
-test_build_all :: proc(t: ^testing.T, modules: ^Two_Modules) -> (library, program, final: Module_Step) {
+test_build_all :: proc(t: ^testing.T, modules: ^Two_Modules) -> (library, process, final: Module_Step) {
 	two_modules_new_build(modules)
 	library = test_build_one(t, modules, modules.library)
-	program = test_build_one(t, modules, modules.program)
+	process = test_build_one(t, modules, modules.process)
 	final = test_build_one(t, modules, modules.final)
 	return
 }
@@ -570,10 +570,10 @@ test_build_all :: proc(t: ^testing.T, modules: ^Two_Modules) -> (library, progra
 @(private = "file")
 expect_the_modules_of_a_whole_build :: proc(t: ^testing.T, modules: ^Two_Modules) {
 	kept: [3]string
-	for steps, index in ([3]Module_Steps{modules.library, modules.program, modules.final}) {
+	for steps, index in ([3]Module_Steps{modules.library, modules.process, modules.final}) {
 		kept[index] = strings.clone(file_text(steps.convert_outputs[0]), context.temp_allocator)
 	}
-	for steps, index in ([3]Module_Steps{modules.library, modules.program, modules.final}) {
+	for steps, index in ([3]Module_Steps{modules.library, modules.process, modules.final}) {
 		test_compile(steps)
 		test_convert(steps)
 		testing.expectf(t, file_text(steps.convert_outputs[0]) == kept[index], "module %d of the incremental build is the module of a whole build", index)
@@ -585,13 +585,13 @@ expect_the_modules_of_a_whole_build :: proc(t: ^testing.T, modules: ^Two_Modules
 module_steps_build_first_and_keep_after :: proc(t: ^testing.T) {
 	modules := two_modules_make(t)
 	defer two_modules_destroy(&modules)
-	library, program, final := test_build_all(t, &modules)
+	library, process, final := test_build_all(t, &modules)
 	testing.expect_value(t, library, Module_Step.Built)
-	testing.expect_value(t, program, Module_Step.Built)
+	testing.expect_value(t, process, Module_Step.Built)
 	testing.expect_value(t, final, Module_Step.Built)
-	library, program, final = test_build_all(t, &modules)
+	library, process, final = test_build_all(t, &modules)
 	testing.expect_value(t, library, Module_Step.Kept)
-	testing.expect_value(t, program, Module_Step.Kept)
+	testing.expect_value(t, process, Module_Step.Kept)
 	testing.expect_value(t, final, Module_Step.Kept)
 }
 
@@ -604,24 +604,24 @@ change_inside_an_import_converts_the_importers_in_a_chain :: proc(t: ^testing.T)
 	modules := two_modules_make(t)
 	defer two_modules_destroy(&modules)
 	test_build_all(t, &modules)
-	linked_before := strings.clone(file_text(modules.program.compile_outputs[0]), context.temp_allocator)
-	module_before := strings.clone(file_text(modules.program.convert_outputs[0]), context.temp_allocator)
+	linked_before := strings.clone(file_text(modules.process.compile_outputs[0]), context.temp_allocator)
+	module_before := strings.clone(file_text(modules.process.convert_outputs[0]), context.temp_allocator)
 	final_before := strings.clone(file_text(modules.final.convert_outputs[0]), context.temp_allocator)
 
 	// The same export, with the same description, and another body.
 	file_write(modules.root, "library/main.odin", "package library\n\n@(export)\nwork :: proc \"c\" (count: i64) -> i64 {return count + 1}\n")
-	library, program, final := test_build_all(t, &modules)
+	library, process, final := test_build_all(t, &modules)
 	testing.expect_value(t, library, Module_Step.Built)
-	testing.expect_value(t, program, Module_Step.Converted)
+	testing.expect_value(t, process, Module_Step.Converted)
 	testing.expect_value(t, final, Module_Step.Converted)
-	testing.expect_value(t, file_text(modules.program.compile_outputs[0]), linked_before)
-	testing.expect(t, file_text(modules.program.convert_outputs[0]) != module_before, "the module of the importer names the new hash of its import")
+	testing.expect_value(t, file_text(modules.process.compile_outputs[0]), linked_before)
+	testing.expect(t, file_text(modules.process.convert_outputs[0]) != module_before, "the module of the importer names the new hash of its import")
 	testing.expect(t, file_text(modules.final.convert_outputs[0]) != final_before, "the module of the second level names the new hash of the importer")
 	expect_the_modules_of_a_whole_build(t, &modules)
 
-	library, program, final = test_build_all(t, &modules)
+	library, process, final = test_build_all(t, &modules)
 	testing.expect_value(t, library, Module_Step.Kept)
-	testing.expect_value(t, program, Module_Step.Kept)
+	testing.expect_value(t, process, Module_Step.Kept)
 	testing.expect_value(t, final, Module_Step.Kept)
 }
 
@@ -638,16 +638,16 @@ change_of_the_declaration_of_an_import_compiles_the_importer :: proc(t: ^testing
 	// The library gives its export one more parameter. The importer still
 	// declares the old form: its compiled code is the same.
 	file_write(modules.root, "library/main.odin", "package library\n\n@(export)\nwork :: proc \"c\" (count, step: i64) -> i64 {return count + step}\n")
-	library, program, final := test_build_all(t, &modules)
+	library, process, final := test_build_all(t, &modules)
 	testing.expect_value(t, library, Module_Step.Built)
-	testing.expect_value(t, program, Module_Step.Converted)
+	testing.expect_value(t, process, Module_Step.Converted)
 	testing.expect_value(t, final, Module_Step.Converted)
 
 	// The importer declares the new form: this is a change of its source.
-	file_write(modules.root, "program/main.odin", "package program\n\nforeign _ {\n\twork :: proc \"c\" (count, step: i64) -> i64 ---\n}\n")
-	library, program, final = test_build_all(t, &modules)
+	file_write(modules.root, "process/main.odin", "package process\n\nforeign _ {\n\twork :: proc \"c\" (count, step: i64) -> i64 ---\n}\n")
+	library, process, final = test_build_all(t, &modules)
 	testing.expect_value(t, library, Module_Step.Kept)
-	testing.expect_value(t, program, Module_Step.Built)
+	testing.expect_value(t, process, Module_Step.Built)
 	testing.expect_value(t, final, Module_Step.Converted)
 	expect_the_modules_of_a_whole_build(t, &modules)
 }
@@ -659,9 +659,9 @@ import_built_to_the_same_bytes_keeps_the_importer :: proc(t: ^testing.T) {
 	defer two_modules_destroy(&modules)
 	test_build_all(t, &modules)
 	_ = os.remove(modules.library.compile_record_path)
-	library, program, final := test_build_all(t, &modules)
+	library, process, final := test_build_all(t, &modules)
 	testing.expect_value(t, library, Module_Step.Built)
-	testing.expect_value(t, program, Module_Step.Kept)
+	testing.expect_value(t, process, Module_Step.Kept)
 	testing.expect_value(t, final, Module_Step.Kept)
 }
 
@@ -673,42 +673,42 @@ missing_output_or_record_forces_its_step :: proc(t: ^testing.T) {
 	modules := two_modules_make(t)
 	defer two_modules_destroy(&modules)
 	test_build_all(t, &modules)
-	program := modules.program
+	process := modules.process
 
 	expect_step :: proc(t: ^testing.T, modules: ^Two_Modules, wanted: Module_Step, wanted_reason: string, what: string) {
 		two_modules_new_build(modules)
-		step, reason := module_step_needed(modules.program, modules.table)
+		step, reason := module_step_needed(modules.process, modules.table)
 		testing.expectf(t, step == wanted, "%s: the step is %v, not %v", what, step, wanted)
 		testing.expectf(t, reason == wanted_reason, "%s: the reason is \"%s\", not \"%s\"", what, reason, wanted_reason)
 		// The build that follows puts each file back.
-		test_build_one(t, modules, modules.program)
-		again, _ := module_step_needed(modules.program, modules.table)
+		test_build_one(t, modules, modules.process)
+		again, _ := module_step_needed(modules.process, modules.table)
 		testing.expectf(t, again == .Kept, "%s: after its step the module is kept", what)
 	}
 
-	_ = os.remove(program.convert_outputs[0])
+	_ = os.remove(process.convert_outputs[0])
 	expect_step(t, &modules, .Converted, OUTPUT_CHANGED_REASON, "the module file is gone")
-	_ = os.write_entire_file(program.convert_outputs[1], "another debug object")
+	_ = os.write_entire_file(process.convert_outputs[1], "another debug object")
 	expect_step(t, &modules, .Converted, OUTPUT_CHANGED_REASON, "the debug object changed")
-	_ = os.remove(program.convert_record_path)
+	_ = os.remove(process.convert_record_path)
 	expect_step(t, &modules, .Converted, "no build record of the conversion", "the record of the conversion is gone")
-	_ = os.write_entire_file(program.convert_record_path, "not a record")
+	_ = os.write_entire_file(process.convert_record_path, "not a record")
 	expect_step(t, &modules, .Converted, "no build record of the conversion", "the record of the conversion is damaged")
-	_ = os.remove(program.compile_outputs[0])
+	_ = os.remove(process.compile_outputs[0])
 	expect_step(t, &modules, .Built, OUTPUT_CHANGED_REASON, "the linked file is gone")
-	_ = os.write_entire_file(program.compile_outputs[0], "another linked file")
+	_ = os.write_entire_file(process.compile_outputs[0], "another linked file")
 	expect_step(t, &modules, .Built, OUTPUT_CHANGED_REASON, "the linked file changed")
-	_ = os.remove(program.compile_record_path)
+	_ = os.remove(process.compile_record_path)
 	expect_step(t, &modules, .Built, "no build record", "the record of the compile step is gone")
 	// The file of the import is gone: the conversion runs, and says so.
 	_ = os.remove(modules.library.convert_outputs[0])
 	two_modules_new_build(&modules)
-	step, reason := module_step_needed(modules.program, modules.table)
+	step, reason := module_step_needed(modules.process, modules.table)
 	testing.expect_value(t, step, Module_Step.Converted)
 	testing.expect_value(t, reason, "the file of an import cannot be read")
-	test_convert(modules.program)
-	testing.expect(t, !module_step_records_write(modules.program, modules.table, false, modules.program.compile_inputs.source_files, nil), "no record of a conversion whose import cannot be read")
-	testing.expect(t, !os.exists(program.convert_record_path), "the old record of the conversion is removed")
+	test_convert(modules.process)
+	testing.expect(t, !module_step_records_write(modules.process, modules.table, false, modules.process.compile_inputs.source_files, nil), "no record of a conversion whose import cannot be read")
+	testing.expect(t, !os.exists(process.convert_record_path), "the old record of the conversion is removed")
 }
 
 // A record of the conversion is the record of one compile step: a linked
@@ -720,26 +720,26 @@ conversion_record_holds_the_key_of_its_compile_step :: proc(t: ^testing.T) {
 	modules := two_modules_make(t)
 	defer two_modules_destroy(&modules)
 	test_build_all(t, &modules)
-	program := modules.program
+	process := modules.process
 
 	// The compile step runs for a new source, and the build stops before
 	// the conversion: the record of the compile step is new, the record of
 	// the conversion and the module file are old.
-	file_write(modules.root, "program/main.odin", "package program\n\nforeign _ {\n\twork :: proc \"c\" (count: i64) -> i64 ---\n}\n\nmore :: 1\n")
+	file_write(modules.root, "process/main.odin", "package process\n\nforeign _ {\n\twork :: proc \"c\" (count: i64) -> i64 ---\n}\n\nmore :: 1\n")
 	two_modules_new_build(&modules)
-	test_compile(program)
-	inputs := program.compile_inputs
+	test_compile(process)
+	inputs := process.compile_inputs
 	key, complete := build_key(inputs, modules.table, true)
 	testing.expect(t, complete, "the key of the new source is complete")
-	testing.expect(t, build_record_write(program.compile_record_path, key, program.compile_outputs, inputs.source_files, nil), "the record of the compile step is written")
-	step, reason := module_step_needed(program, modules.table)
+	testing.expect(t, build_record_write(process.compile_record_path, key, process.compile_outputs, inputs.source_files, nil), "the record of the compile step is written")
+	step, reason := module_step_needed(process, modules.table)
 	testing.expect_value(t, step, Module_Step.Converted)
 	testing.expect_value(t, reason, CONVERSION_INPUT_CHANGED_REASON)
 
 	// The order of the imports is an input of the conversion: it is the
 	// order of the import table of the module file.
-	first, first_complete := module_convert_key(two_modules_steps(modules.root, "program", {"library", "final"}), key, nil, modules.table)
-	second, second_complete := module_convert_key(two_modules_steps(modules.root, "program", {"final", "library"}), key, nil, modules.table)
+	first, first_complete := module_convert_key(two_modules_steps(modules.root, "process", {"library", "final"}), key, nil, modules.table)
+	second, second_complete := module_convert_key(two_modules_steps(modules.root, "process", {"final", "library"}), key, nil, modules.table)
 	testing.expect(t, first_complete && second_complete, "the files of the two imports can be read")
 	testing.expect(t, first != second, "two orders of the imports give two keys")
 }
@@ -751,20 +751,20 @@ no_conversion_record_with_a_source_that_changed_during_the_build :: proc(t: ^tes
 	modules := two_modules_make(t)
 	defer two_modules_destroy(&modules)
 	test_build_all(t, &modules)
-	// The import changes, so the program is converted in the next build.
+	// The import changes, so the process is converted in the next build.
 	file_write(modules.root, "library/main.odin", "package library\n\n@(export)\nwork :: proc \"c\" (count: i64) -> i64 {return count + 2}\n")
 	two_modules_new_build(&modules)
 	testing.expect_value(t, test_build_one(t, &modules, modules.library), Module_Step.Built)
-	step, _ := module_step_needed(modules.program, modules.table)
+	step, _ := module_step_needed(modules.process, modules.table)
 	testing.expect_value(t, step, Module_Step.Converted)
-	// A source of the program is saved while the conversion runs.
-	file_write(modules.root, "program/main.odin", "package program\n\nforeign _ {\n\twork :: proc \"c\" (count: i64) -> i64 ---\n}\n\nlate :: 1\n")
-	test_convert(modules.program)
-	testing.expect(t, !module_step_records_write(modules.program, modules.table, false, modules.program.compile_inputs.source_files, nil), "no record with a source that changed during the build")
-	testing.expect(t, !os.exists(modules.program.convert_record_path), "the old record of the conversion is removed")
-	testing.expect(t, os.exists(modules.program.compile_record_path), "the record of the compile step stays: its linked file is the same")
+	// A source of the process is saved while the conversion runs.
+	file_write(modules.root, "process/main.odin", "package process\n\nforeign _ {\n\twork :: proc \"c\" (count: i64) -> i64 ---\n}\n\nlate :: 1\n")
+	test_convert(modules.process)
+	testing.expect(t, !module_step_records_write(modules.process, modules.table, false, modules.process.compile_inputs.source_files, nil), "no record with a source that changed during the build")
+	testing.expect(t, !os.exists(modules.process.convert_record_path), "the old record of the conversion is removed")
+	testing.expect(t, os.exists(modules.process.compile_record_path), "the record of the compile step stays: its linked file is the same")
 	two_modules_new_build(&modules)
-	step, _ = module_step_needed(modules.program, modules.table)
+	step, _ = module_step_needed(modules.process, modules.table)
 	testing.expect_value(t, step, Module_Step.Built)
 }
 

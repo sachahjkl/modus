@@ -27,7 +27,7 @@ Code_Class_Color :: struct {
 }
 
 // The kernel blue for the words of the language, the violet of the
-// firmware for types, the memory teal for values, the program green for
+// firmware for types, the memory teal for values, the process green for
 // the names of functions, the machine pink for directives, the dim color
 // for comments and, a little lighter, for punctuation.
 @(rodata)
@@ -36,7 +36,7 @@ code_class_colors := [Code_Class]Code_Class_Color {
 	.Keyword     = {accent = DARK_KERNEL, dark_percent = 115, light_percent = 55},
 	.Type        = {accent = DARK_FIRMWARE, dark_percent = 115, light_percent = 60},
 	.Literal     = {accent = DARK_MEMORY, dark_percent = 100, light_percent = 50},
-	.Name        = {accent = DARK_PROGRAM, dark_percent = 100, light_percent = 45},
+	.Name        = {accent = DARK_PROCESS, dark_percent = 100, light_percent = 45},
 	.Directive   = {accent = DARK_MACHINE, dark_percent = 115, light_percent = 55},
 	.Comment     = {accent = DARK_DIM, dark_percent = 125, light_percent = 60},
 	.Punctuation = {accent = DARK_DIM, dark_percent = 140, light_percent = 50},
@@ -44,7 +44,7 @@ code_class_colors := [Code_Class]Code_Class_Color {
 
 // code_class_color gives the color of a class in one appearance: on the
 // surfaces of the dark appearance and of the dark page of the site, or of
-// the light appearance and the light page. A program passes
+// the light appearance and the light page. A process passes
 // `graphics.appearance`, the appearance in force. The class None has no
 // color: the caller keeps the color of the text around it.
 code_class_color :: proc "contextless" (class: Code_Class, of: Appearance) -> Color {

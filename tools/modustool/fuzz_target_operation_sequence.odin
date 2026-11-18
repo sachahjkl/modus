@@ -22,7 +22,7 @@ import "modus:contract/operation_sequence"
 fuzz_operation_reference := #load("../../src/library/contract/operation/operation.odin", string)
 
 // The first address of the upper half, which only the kernel maps: a
-// canonical address that a program never reaches.
+// canonical address that a process never reaches.
 FUZZ_KERNEL_HALF_FIRST :: u64(0xFFFF_8000_0000_0000)
 
 // What the first value of the completion of an operation is, from the
@@ -30,7 +30,7 @@ FUZZ_KERNEL_HALF_FIRST :: u64(0xFFFF_8000_0000_0000)
 Fuzz_Operation_Result :: struct {
 	handle:  bool, // A handle.
 	kind:    operation.Object_Kind, // The kind of the handle; None when the reference names no kind ("the handle in the target").
-	address: bool, // An address in the program that a later step can name: the mapping of `Memory_Map`.
+	address: bool, // An address in the process that a later step can name: the mapping of `Memory_Map`.
 }
 
 // One address parameter of `OPERATIONS`, and what the generator writes
@@ -59,17 +59,17 @@ fuzz_address_parameters := [?]Fuzz_Address_Parameter {
 	{operation = .Log, parameter = 1},
 	{operation = .Memory_Map, parameter = 2},
 	{operation = .Memory_Unmap, parameter = 1},
-	{operation = .Program_Create, parameter = 1},
-	{operation = .Program_Start, parameter = 1},
-	{operation = .Program_Start, parameter = 2},
-	{operation = .Program_Start, parameter = 3},
-	{operation = .Program_State, parameter = 1},
+	{operation = .Process_Create, parameter = 1},
+	{operation = .Process_Start, parameter = 1},
+	{operation = .Process_Start, parameter = 2},
+	{operation = .Process_Start, parameter = 3},
+	{operation = .Process_State, parameter = 1},
 	{operation = .Inspect, parameter = 3},
 	{operation = .Thread_Create, parameter = 1, code = true},
 	{operation = .Thread_Create, parameter = 2},
 	{operation = .Word_Wait, parameter = 0},
 	{operation = .Word_Wake, parameter = 0},
-	{operation = .Program_Module, parameter = 1},
+	{operation = .Process_Module, parameter = 1},
 	{operation = .Memory_Commit, parameter = 2, record = .Page_Range_Table},
 	{operation = .Memory_Protect, parameter = 0},
 	{operation = .Events_Set, parameter = 2},

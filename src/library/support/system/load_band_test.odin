@@ -5,7 +5,7 @@ import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 import "core:testing"
 
-// The modules of a program end before the band of the fixed ranges: a
+// The modules of a process end before the band of the fixed ranges: a
 // module and the page with no memory after it end at MODULES_END or
 // before.
 @(test)

@@ -7,10 +7,10 @@
 // message interrupt, memory for the queues, the machine with the right
 // Physical only, a copy of the configuration of the device, and the stream
 // ring. The root service found the device, enabled it and set its
-// interrupt (src/library/support/pci), when the program with the grant
-// **Sound_Device** started; it stops this service when that program stops.
+// interrupt (src/library/support/pci), when the process with the grant
+// **Sound_Device** started; it stops this service when that process stops.
 //
-// **What it is for.** A program plays sound at a time of the system clock,
+// **What it is for.** A process plays sound at a time of the system clock,
 // and never sees the device, its queues or its clock.
 //
 // **The commands of the stream ring** (`src/library/contract/timed_stream`):
@@ -46,12 +46,12 @@ import "modus:support/virtio"
 // entropy service, the tables of the domain of the device under the IOMMU
 // are paid from it; the periods and their list take PERIOD_PAGES + 1 more,
 // and the map of the sample region of the client its page tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 190, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 190, processes = 1, threads = 1}
 
 // The memory of the queues (pci.QUEUE_PAGES): pages 0 to 2 the control
 // queue, pages 3 to 5 the transmit queue, page 6 the messages that the
 // device reads and writes. The device reaches no other memory of this
-// program but the periods.
+// process but the periods.
 PAGE_CONTROL_QUEUE :: 0
 PAGE_TRANSMIT_QUEUE :: PAGE_CONTROL_QUEUE + virtio.QUEUE_PAGES
 PAGE_MESSAGES :: PAGE_TRANSMIT_QUEUE + virtio.QUEUE_PAGES
@@ -67,7 +67,7 @@ MESSAGE_SLOT_BYTES :: 16
 #assert(MESSAGE_RESPONSE + MESSAGE_RESPONSE_BYTES <= MESSAGE_HEADERS)
 #assert(MESSAGE_STATUSES + timed_stream.PERIODS_GIVEN * MESSAGE_SLOT_BYTES <= system.PAGE_SIZE)
 
-// The periods that the device reads: one memory object of this program.
+// The periods that the device reads: one memory object of this process.
 PERIOD_PAGES :: (timed_stream.PERIODS_GIVEN * timed_stream.PERIOD_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 
 // The queues of a virtio sound device (virtio 1.2, 5.14.2).
@@ -84,7 +84,7 @@ CONFIGURATION_BYTES :: 12
 CONFIGURATION_STREAMS :: 4
 
 // A device answers a control request in microseconds. The bound only ends
-// a hang of the device, and it is the one hang bound of a program, so the
+// a hang of the device, and it is the one hang bound of a process, so the
 // line of this service comes before the bound of a step of a machine test.
 DEVICE_ANSWER_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
 

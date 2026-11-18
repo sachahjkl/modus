@@ -1,4 +1,4 @@
-// The contract of the entropy service: what the program `entropy` and its
+// The contract of the entropy service: what the process `entropy` and its
 // one client, the root service, agree on (src/md/features/entropy_device.md).
 //
 // The entropy service is the device service of the entropy device of the

@@ -73,10 +73,10 @@ the_folders_that_take_the_kernel_parts :: proc(t: ^testing.T) {
 // the folder of a group alone, a group whose name a longer folder starts
 // with. Then the table and the tree: each row that is not a kernel is in a
 // group, each folder of a group is a row, src/modules holds the groups and
-// nothing else, no two rows have one name, and each program has an entry.
+// nothing else, no two rows have one name, and each process has an entry.
 @(test)
 the_group_of_a_module_is_its_folder :: proc(t: ^testing.T) {
-	for source in ([]string{"", SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_MODULES + "/root", SOURCE_FOLDER_MODULES + "/programs/root", SYSTEM_MODULE_SOURCES, SOURCE_FOLDER_MODULES + "/systems/root", "src/programs/root"}) {
+	for source in ([]string{"", SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_MODULES + "/root", SOURCE_FOLDER_MODULES + "/processes/root", SYSTEM_MODULE_SOURCES, SOURCE_FOLDER_MODULES + "/systems/root", "src/processes/root"}) {
 		_, found := module_group_of_source(source)
 		testing.expectf(t, !found, "%q is in no group", source)
 	}
@@ -98,7 +98,7 @@ the_group_of_a_module_is_its_folder :: proc(t: ^testing.T) {
 		_, found := module_group_of_source(build.source)
 		testing.expectf(t, found, "the source %s of the module %s is in no module group", build.source, build.name)
 		if build.entry {
-			testing.expectf(t, module_source_declares_entry(build.source), "the program %s has no entry function in %s", build.name, build.source)
+			testing.expectf(t, module_source_declares_entry(build.source), "the process %s has no entry function in %s", build.name, build.source)
 		}
 	}
 	entries, error := os.read_all_directory_by_path(SOURCE_FOLDER_MODULES, context.temp_allocator)

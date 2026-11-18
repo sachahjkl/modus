@@ -2,22 +2,22 @@
 //
 // The root service gathers the seed of the system at its start, from the
 // sources of the processor, mixes in the bytes of the entropy device when
-// the machine has one, and gives this program the facts of that gathering
+// the machine has one, and gives this process the facts of that gathering
 // (the values 0 to 7 of its context): which sources were there,
 // how many values each one gave, how many it refused, and the strength
-// that the seed can claim. Like each program, this one has its own
+// that the seed can claim. Like each process, this one has its own
 // generator, seeded by its starter (the values 9 to 12). The window shows
 // both, a live draw of the stream, the counts of each byte value in 1 MiB,
 // and the speed of the generator.
 //
-// **What it is for.** It shows where the random bytes of a program come
+// **What it is for.** It shows where the random bytes of a process come
 // from, and what the system claims of them: the strength of the seed is a
-// fact that the root service measured, not a promise. A program that makes
+// fact that the root service measured, not a promise. A process that makes
 // a key (`remote`, `quic_echo`, `unlock`) refuses a seed under the strength
-// that it needs; this program shows that strength.
+// that it needs; this process shows that strength.
 //
 // **Start**: `start("randomness")` in the console, or the bar of the
-// desktop. Its row of `program_roles` has no grant: the root service writes the
+// desktop. Its row of `process_roles` has no grant: the root service writes the
 // facts of the seed into its context because of its name, and these are
 // facts, not the seed.
 //
@@ -28,14 +28,14 @@
 // byte, and the speed. The log has:
 //
 // - "randomness: the seed of the system: strength ...; the first bytes of
-//   the stream of this program: ...";
+//   the stream of this process: ...";
 // - "randomness: the entropy device: N bytes mixed after the gathering;
 //   refused reads: N", or "randomness: the entropy device: absent";
 // - "randomness: 1 MiB by the high 4 bits of each byte: from A to B in each
 //   of 16 (the mean is 65536)";
 // - "randomness: the generator: 4 MiB in T us, R MB/s";
 // - "randomness: the fresh bytes of the root service are mixed into the
-//   generator of this program, at the change C of its page", once, at the
+//   generator of this process, at the change C of its page", once, at the
 //   first mix (src/md/features/fresh_bytes.md).
 //
 // **What it does not prove**: even bars are no test of quality; a weak
@@ -56,9 +56,9 @@ HEIGHT :: 584 // One more line for the fresh bytes than the cards had: the bars 
 MEASURE_SIZE :: 4 << 20 // The bytes of the measure of the speed.
 HISTOGRAM_SIZE :: 1 << 20 // The bytes whose values the window counts.
 
-program_generator: random.Generator
+process_generator: random.Generator
 report: random.Entropy_Report
-first_bytes: [16]u8 // The first bytes of the stream of this program: the log has them, so a test compares two programs and two boots.
+first_bytes: [16]u8 // The first bytes of the stream of this process: the log has them, so a test compares two processes and two boots.
 live_bytes: [32]u8 // A draw of each picture.
 byte_counts: [16]u64 // The bytes of HISTOGRAM_SIZE by their high 4 bits.
 megabytes_per_second_tenths: u64
@@ -83,7 +83,7 @@ hex_text :: proc "contextless" (builder: ^interface.Text_Builder, bytes: []u8) -
 strength_color :: proc "contextless" (strength: random.Seed_Strength) -> graphics.Color {
 	switch strength {
 	case .Entropy:
-		return graphics.colors.program
+		return graphics.colors.process
 	case .Processor:
 		return graphics.colors.text
 	case .None, .Weak:
@@ -109,7 +109,7 @@ source_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.C
 }
 
 // device_line shows the entropy device: absent, or the bytes that the root
-// service mixed in before this program started, and the reads that added
+// service mixed in before this process started, and the reads that added
 // nothing.
 device_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.Column) {
 	if !report.device_present {
@@ -124,14 +124,14 @@ device_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.C
 	interface.label_value_line(frame, interface.column_take(column, LINE), "entropy device", interface.text_of(&builder), report.device_reads_refused == 0 ? graphics.colors.text : graphics.colors.failed, 168)
 }
 
-// fresh_bytes_line shows the fresh bytes page of this program: the changes
+// fresh_bytes_line shows the fresh bytes page of this process: the changes
 // that the generator mixed, or why there are none.
 fresh_bytes_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.Column) {
 	area := interface.column_take(column, LINE)
-	mixes, change_count := random.fresh_bytes_mixes(&program_generator)
+	mixes, change_count := random.fresh_bytes_mixes(&process_generator)
 	switch {
-	case program_generator.fresh_page == nil:
-		interface.label_value_line(frame, area, "fresh bytes", "none: the root service gave this program no page", graphics.colors.dim, 168)
+	case process_generator.fresh_page == nil:
+		interface.label_value_line(frame, area, "fresh bytes", "none: the root service gave this process no page", graphics.colors.dim, 168)
 	case !report.device_present:
 		interface.label_value_line(frame, area, "fresh bytes", "none: the machine has no entropy device", graphics.colors.dim, 168)
 	case mixes == 0:
@@ -143,7 +143,7 @@ fresh_bytes_line :: proc "contextless" (frame: ^interface.Frame, column: ^interf
 		interface.text_put(&builder, mixes == 1 ? " time, the last at the change " : " times, the last at the change ")
 		interface.text_put_number(&builder, u64(change_count))
 		interface.text_put(&builder, " of the page")
-		interface.label_value_line(frame, area, "fresh bytes", interface.text_of(&builder), graphics.colors.program, 168)
+		interface.label_value_line(frame, area, "fresh bytes", interface.text_of(&builder), graphics.colors.process, 168)
 	}
 }
 
@@ -167,16 +167,16 @@ draw :: proc "contextless" (window: ^display.Window) {
 	device_line(&frame, &column)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "mixed by", "BLAKE3 of each value, with its length", graphics.colors.text, 168)
 
-	// The generator of this program.
-	content = interface.card(&frame, {8, 212, WIDTH - 16, HEIGHT - 220}, "THE GENERATOR OF THIS PROGRAM", "random.Generator: ChaCha20, fast key erasure", graphics.colors.program)
+	// The generator of this process.
+	content = interface.card(&frame, {8, 212, WIDTH - 16, HEIGHT - 220}, "THE GENERATOR OF THIS PROCESS", "random.Generator: ChaCha20, fast key erasure", graphics.colors.process)
 	column = interface.column_of(content)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "seed", "32 bytes from its starter (the context values 9 to 12), erased after", graphics.colors.text, 168)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "first bytes", hex_text(&builder, first_bytes[:]), graphics.colors.text, 168)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "now", hex_text(&builder, live_bytes[:]), graphics.colors.program, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "now", hex_text(&builder, live_bytes[:]), graphics.colors.process, 168)
 	builder.count = 0
-	interface.text_put_number(&builder, program_generator.served)
+	interface.text_put_number(&builder, process_generator.served)
 	interface.text_put(&builder, " bytes served, ")
-	interface.text_put_number(&builder, program_generator.refills)
+	interface.text_put_number(&builder, process_generator.refills)
 	interface.text_put(&builder, " refills of 832 bytes")
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "drawn", interface.text_of(&builder), graphics.colors.text, 168)
 	fresh_bytes_line(&frame, &column)
@@ -218,7 +218,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 // the first picture.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if !random.generator_from_context(&program_generator, ctx) {
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("randomness: no random seed in the context")
 		system.stop(1)
 	}
@@ -231,9 +231,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	random.fill(&program_generator, first_bytes[:])
+	random.fill(&process_generator, first_bytes[:])
 	hex: interface.Text_Builder
-	system.log("randomness: the seed of the system: strength ", op.seed_strength_names[report.strength], "; the first bytes of the stream of this program: ", hex_text(&hex, first_bytes[:]))
+	system.log("randomness: the seed of the system: strength ", op.seed_strength_names[report.strength], "; the first bytes of the stream of this process: ", hex_text(&hex, first_bytes[:]))
 	if report.device_present {
 		system.log("randomness: the entropy device: ", u64(report.device_bytes), " bytes mixed after the gathering; refused reads: ", u64(report.device_reads_refused))
 	} else {
@@ -244,7 +244,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The counts of the byte values of 1 MiB, then the speed on 4 MiB.
 	chunk: [4096]u8
 	for _ in 0 ..< HISTOGRAM_SIZE / len(chunk) {
-		random.fill(&program_generator, chunk[:])
+		random.fill(&process_generator, chunk[:])
 		for byte in chunk {
 			byte_counts[byte >> 4] += 1
 		}
@@ -256,7 +256,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("randomness: 1 MiB by the high 4 bits of each byte: from ", least, " to ", most, " in each of 16 (the mean is 65536)")
 	start := system.nanoseconds()
 	for _ in 0 ..< MEASURE_SIZE / len(chunk) {
-		random.fill(&program_generator, chunk[:])
+		random.fill(&process_generator, chunk[:])
 	}
 	took := max(system.nanoseconds() - start, 1)
 	measure_microseconds = took / 1000
@@ -268,11 +268,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// test that waits for the line finds the row in the window.
 	fresh_bytes_logged := false
 	for {
-		random.fill(&program_generator, live_bytes[:])
+		random.fill(&process_generator, live_bytes[:])
 		draw(&window)
-		if mixes, change_count := random.fresh_bytes_mixes(&program_generator); mixes > 0 && !fresh_bytes_logged {
+		if mixes, change_count := random.fresh_bytes_mixes(&process_generator); mixes > 0 && !fresh_bytes_logged {
 			fresh_bytes_logged = true
-			system.log("randomness: the fresh bytes of the root service are mixed into the generator of this program, at the change ", u64(change_count), " of its page")
+			system.log("randomness: the fresh bytes of the root service are mixed into the generator of this process, at the change ", u64(change_count), " of its page")
 		}
 		deadline += 500
 		display.wait(&window, deadline)

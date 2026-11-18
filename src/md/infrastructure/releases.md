@@ -17,7 +17,7 @@ What changed: a release was a section of the changelog only, with its day, and t
 
 ## The chosen form
 
-- **The heading is `## [0.93.0] - 2026-11-15 18:48`.** The day, a space, the hour and the minute, in UTC. Several releases come out on one day: the time tells them apart and orders them. UTC, because the host of the next release can be in another time zone; the text of the heading has no zone, so the zone is fixed by the rule. The format is the format of the other programs of the same publisher, so one reader reads all their changelogs.
+- **The heading is `## [0.93.0] - 2026-11-15 18:48`.** The day, a space, the hour and the minute, in UTC. Several releases come out on one day: the time tells them apart and orders them. UTC, because the host of the next release can be in another time zone; the text of the heading has no zone, so the zone is fixed by the rule. The format is the format of the other processes of the same publisher, so one reader reads all their changelogs.
 - **A release link for each release, at the end of the file.** `[0.93.0]: https://github.com/sachahjkl/modus/releases/tag/v0.93.0`, one line for each release, newest first, after the last release, with no empty line between them. Keep a Changelog defines these lines: the number of a heading then links to its tag on a forge that renders Markdown. `changelog release` writes the line of the new release above the others. `changelog check` refuses a release with no link, a link with another address, a link for a number that is not a release, and links in another order.
 - **The tag is `v<release number>`, annotated and signed.** `git tag -s -a`: the git configuration of the publisher signs it, with SSH today. An annotated tag holds who released, when, and the message; a light tag holds none of these. The signature lets a reader prove that the publisher of the system made the release.
 - **`modustool ship <step|correction|<release number>> [--dry-run]`.** `step` gives `0.(N+1).0` after the newest release `0.N.x`; `correction` gives `0.N.(x+1)`; an exact number must come after the newest. The newest release is the larger of `RELEASE_NUMBER` in the source and the highest tag `v*`, both read after the fetch: the tool reads the source file, not the constant that it was compiled with.
@@ -37,7 +37,7 @@ What changed: a release was a section of the changelog only, with its day, and t
 - **A made-up time for an old release.** Most old releases were written together, after the fact, and no commit holds their moment. A time of `00:00`, or the time of the commit that wrote them all, would be false.
 - **The tool computes the number from the commit messages.** A message is free text. The source file and the tags are the records.
 - **The full check inside `ship`.** The full check takes a long time and drives machines; `ship` runs after it, on the commit that passed it. `ship` checks what can change between the two: the changelog, through the release command.
-- **The packages of the other programs of the publisher.** They depend on a window layer that the tool must not import. The formats are copied, not the code.
+- **The packages of the other processes of the publisher.** They depend on a window layer that the tool must not import. The formats are copied, not the code.
 
 ## Subtle points
 

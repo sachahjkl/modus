@@ -78,7 +78,7 @@ memory_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	}
 
 	// The kernel keeps the upper half of the page table of the boot program:
-	// the direct map and the kernel itself. The lower half belongs to programs.
+	// the direct map and the kernel itself. The lower half belongs to processes.
 	kernel_table = frames_allocate(1)
 	for i in 256 ..< 512 {
 		direct(kernel_table, [512]u64)[i] = direct(boot.page_table, [512]u64)[i]
@@ -233,7 +233,7 @@ TEST_BUILD_CHECKS_FRAME_SUMS :: #config(TEST_BUILD_CHECKS_FRAME_SUMS, true)
 // from the stack of this processor; an empty stack takes the frame from the
 // frame table and a batch for the stack, in one section of the frame lock.
 // The caller holds no frame lock and no cache lock. It runs only for a
-// page on first use of a memory object of a program, so after the first
+// page on first use of a memory object of a process, so after the first
 // processor has its record (processor_self): the first memory object that
 // is not contiguous is made in root_start, after processor_start.
 frame_reserved_take :: proc "contextless" () -> u64 {
@@ -421,12 +421,12 @@ page_directory_entry :: proc "contextless" (table: u64, address: u64) -> ^u64 {
 	return &direct(current, [512]u64)[address >> 21 & 511]
 }
 
-// The held entries of the page tables of a program (docs/ARCHITECTURE.md,
-// "The page tables of a program"). An entry is held while a mapping covers
+// The held entries of the page tables of a process (docs/ARCHITECTURE.md,
+// "The page tables of a process"). An entry is held while a mapping covers
 // it: a page of a mapping, present or not, a large page, or an entry that
 // names a table with held entries. A table with no held entry is freed at
 // once, and the budget that paid for it gets its page back; the top table
-// lives as long as the program.
+// lives as long as the process.
 //
 // The count of the held entries of a table is in the entry that names the
 // table, in the bits 52 to 62. The processor ignores those bits in an entry
@@ -439,7 +439,7 @@ page_directory_entry :: proc "contextless" (table: u64, address: u64) -> ^u64 {
 //
 // The count changes with an atomic addition: a processor that walks the
 // table sets the bit Accessed of the same entry with a locked write, and a
-// plain write of the kernel could undo it. The program lock orders the
+// plain write of the kernel could undo it. The process lock orders the
 // writers of the kernel.
 TABLE_HELD_SHIFT :: 52
 TABLE_HELD_ONE :: u64(1) << TABLE_HELD_SHIFT
@@ -455,7 +455,7 @@ table_held_count :: #force_inline proc "contextless" (entry: u64) -> u64 {
 	return (entry & TABLE_HELD_MASK) >> TABLE_HELD_SHIFT
 }
 
-// The tables that left a page table of a program and wait for the
+// The tables that left a page table of a process and wait for the
 // shoot-down before their frames return (page_tables_free). They are linked
 // through their first entry: a physical address on 4096 bytes has the bit
 // Present clear, so a processor that still walks into such a table finds
@@ -473,7 +473,7 @@ Freed_Tables :: struct {
 // caller keeps inside that one table. The budget
 // pays for each new table. nil: the budget has no page; a table made by this
 // call goes to freed, and the caller frees it after its shoot-down. The
-// caller holds the program lock.
+// caller holds the process lock.
 @(private = "file")
 tables_hold :: proc "contextless" (table: u64, address: u64, lowest_level: uint, count: u64, budget: ^u32, freed: ^Freed_Tables) -> ^u64 {
 	current := table
@@ -538,7 +538,7 @@ page_directory_entry_hold :: proc "contextless" (table: u64, address: u64, budge
 // and the parent loses one held entry, up to the top table, which never
 // leaves. A count of 0 frees the table if it holds nothing (the undo of a
 // hold). The cost when the table keeps held entries: one walk of the upper
-// levels and one atomic subtraction. The caller holds the program lock, then
+// levels and one atomic subtraction. The caller holds the process lock, then
 // makes the shoot-down, then calls page_tables_free.
 page_entries_release :: proc "contextless" (table: u64, address: u64, holder_level: uint, count: u64, freed: ^Freed_Tables) {
 	holders: [4]^u64
@@ -586,7 +586,7 @@ freed_tables_add :: proc "contextless" (freed: ^Freed_Tables, table: u64) {
 }
 
 // page_tables_free gives the frames of the freed tables back, and the
-// budget of the program one page for each. The caller cleared the entries
+// budget of the process one page for each. The caller cleared the entries
 // that named them, then made the shoot-down (processor_sync to each other
 // processor whose table is this one: each reloads cr3).
 //
@@ -601,7 +601,7 @@ freed_tables_add :: proc "contextless" (freed: ^Freed_Tables, table: u64) {
 // write of cr3 removes every entry of the paging-structure caches of the
 // address space, with no condition. It runs once for each release that
 // freed a table, never for one that freed none. The caller holds the
-// program lock.
+// process lock.
 page_tables_free :: proc "contextless" (table: u64, budget: ^u32, freed: ^Freed_Tables) {
 	if freed.count == 0 {
 		return
@@ -625,7 +625,7 @@ page_tables_free :: proc "contextless" (table: u64, budget: ^u32, freed: ^Freed_
 // a mistake of the kernel.
 page_table_count_broken :: proc "contextless" (what: string) -> ! {
 	fault_report_begin()
-	log("kernel: the page tables of a program do not keep their counts: ", what)
+	log("kernel: the page tables of a process do not keep their counts: ", what)
 	machine_stop(.Invariant_Broken)
 }
 
@@ -679,16 +679,16 @@ address_space_create :: proc "contextless" (budget: ^u32) -> u64 {
 	return table
 }
 
-// address_space_free frees the top table of a program with no mapping. The
+// address_space_free frees the top table of a process with no mapping. The
 // budget receives the page. Each unmap freed the tables below that it
-// emptied, so no entry of the program half of the top table is present: a
+// emptied, so no entry of the process half of the top table is present: a
 // table there would be a page that no count names, and the machine stops.
 // Only the bit Present counts: an entry that is not present names no table,
 // whatever its other bits hold.
 address_space_free :: proc "contextless" (table: u64, budget: ^u32) {
 	for entry in direct(table, [512]u64)^[:256] {
 		if entry & PAGE_PRESENT != 0 {
-			page_table_count_broken("a table outlived the mappings of its program")
+			page_table_count_broken("a table outlived the mappings of its process")
 		}
 	}
 	lock_take(&frame_lock, .Frame)
@@ -697,10 +697,10 @@ address_space_free :: proc "contextless" (table: u64, budget: ^u32) {
 	lock_free(&frame_lock, .Frame)
 }
 
-// user_range says if a program can read (or write) all bytes of a range.
+// user_range says if a process can read (or write) all bytes of a range.
 // It makes each page of the range present: a page on first use gets its
 // frame now, so the copy that follows does not fault in the kernel.
-user_range :: proc "contextless" (program: ^Program, address: u64, size: u64, write: bool) -> bool {
+user_range :: proc "contextless" (process: ^Process, address: u64, size: u64, write: bool) -> bool {
 	if size == 0 {
 		return true
 	}
@@ -708,9 +708,9 @@ user_range :: proc "contextless" (program: ^Program, address: u64, size: u64, wr
 		return false
 	}
 	for page := address &~ (PAGE_SIZE - 1); page < address + size; page += PAGE_SIZE {
-		entry := page_entry(program.table, page)
-		if (entry == nil || entry^ & PAGE_PRESENT == 0) && page_give(program, page, write, false) {
-			entry = page_entry(program.table, page)
+		entry := page_entry(process.table, page)
+		if (entry == nil || entry^ & PAGE_PRESENT == 0) && page_give(process, page, write, false) {
+			entry = page_entry(process.table, page)
 		}
 		if entry == nil || entry^ & (PAGE_PRESENT | PAGE_USER) != PAGE_PRESENT | PAGE_USER {
 			return false
@@ -725,7 +725,7 @@ user_range :: proc "contextless" (program: ^Program, address: u64, size: u64, wr
 // display_memory_range says if a range that device_range accepts holds the
 // framebuffer of the firmware: the one range that Device_Create of the kind
 // Display_Memory maps with the cache rule of the firmware. Over registers,
-// that rule could let the processor read a register ahead of the program;
+// that rule could let the processor read a register ahead of the process;
 // over a range that another handle maps with no cache, two rules for the
 // same frames are undefined for the processor (src/md/infrastructure/whole_frame.md).
 display_memory_range :: proc "contextless" (start: u64, page_count: u64) -> bool {

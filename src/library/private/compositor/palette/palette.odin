@@ -6,7 +6,7 @@
 // panel (panel.odin).
 //
 // The compositor owns one `Panel` and the two sources of entries that it
-// has itself: the names of the programs and the windows. It gives them to
+// has itself: the names of the processes and the windows. It gives them to
 // `entries_collect` when one of them changes, sends each key through
 // `key_action`, and draws with `panel_draw`.
 //
@@ -21,7 +21,7 @@
 // a list is never copied.
 package palette
 
-import program_page "modus:contract/disk_program_page"
+import process_page "modus:contract/disk_process_page"
 import "modus:contract/palette_table"
 import "modus:support/display"
 import "modus:support/interface"
@@ -42,7 +42,7 @@ State :: enum u8 {
 Entry_Kind :: enum u8 {
 	Window       = 0, // A window: the choice brings it to the front.
 	Module       = 1, // A module of the table bar.names: the choice starts it.
-	Close_Window = 2, // The close of a window: the choice stops its program, after a second Enter.
+	Close_Window = 2, // The close of a window: the choice stops its process, after a second Enter.
 	Command      = 3, // A command of the palette provider: the provider runs it.
 	Export       = 4, // An export of a module or of a service, which the palette provider calls.
 	Setting      = 5, // A setting of the machine, or a state that the palette provider sets (the scheduling strategy): a setting row with one button for each value, or one value alone. The provider sets it.
@@ -60,8 +60,8 @@ Entry_Flags :: bit_set[Entry_Flag;u8]
 // "Palette").
 Entry_Mark :: enum u8 {
 	None       = 0, // No fact: the icon has the color of the kind.
-	Has_Window = 1, // A program that has a window now.
-	No_Window  = 2, // A program that has no window now.
+	Has_Window = 1, // A process that has a window now.
+	No_Window  = 2, // A process that has no window now.
 	Has_Focus  = 3, // The window that has the focus.
 	Destroys   = 4, // The entry destroys something.
 	Window     = 5, // A window that has not the focus.
@@ -69,7 +69,7 @@ Entry_Mark :: enum u8 {
 }
 
 NAME_CAPACITY :: 64 // The bytes of the name of an entry. A longer name is not listed: a name is whole or absent.
-ENTRY_CAPACITY :: 512 // The entries of a list: the programs, the windows with their closes, and the entries of a provider.
+ENTRY_CAPACITY :: 512 // The entries of a list: the processes, the windows with their closes, and the entries of a provider.
 ROW_CAPACITY :: 128 // The rows of the list: the entries that match and the headings of the groups.
 RECENT_CAPACITY :: 16 // The chosen entries that the panel remembers, the newest first.
 RECENT_ROWS :: 5 // The rows of the group "recent" when no letter is typed.
@@ -97,22 +97,22 @@ Entry :: struct {
 	recent:      u8, // 0: not chosen lately. Else its age among the remembered choices: 1 is the newest.
 	name_length: u8, // The bytes of `name` in use.
 	flags:       Entry_Flags, // Its facts.
-	windows:     u8, // A program: the windows that it has now.
+	windows:     u8, // A process: the windows that it has now.
 	// A setting row: its values, the entries of the snapshot from `number`
 	// on, 1 to BUTTON_CAPACITY. 0: the entry is no setting row.
 	value_count: u8,
 	number:      u32, // For the owner of the source: the index of the thing in its own table. An entry of a provider: its index in the snapshot of the list; of a setting row, the index of its first value.
 	act:         u64, // An entry of a provider with an act name: display.act_name_hash of it. 0: none, and no window can offer go to.
 	name:        [NAME_CAPACITY]u8, // The name that the list shows and that the typed part matches.
-	// The window of a disk program and its close: the hash prefix of its
+	// The window of a disk process and its close: the hash prefix of its
 	// file, which the root service gave, so that a nickname that looks like
-	// the name of another program is told apart. Zero bytes for another
+	// the name of another process is told apart. Zero bytes for another
 	// entry.
-	hash_prefix: [program_page.HASH_PREFIX_DIGITS]u8,
+	hash_prefix: [process_page.HASH_PREFIX_DIGITS]u8,
 }
 
 // entry_hash_prefix gives the hash prefix of an entry, or "" for an entry
-// that is no window of a disk program.
+// that is no window of a disk process.
 entry_hash_prefix :: proc "contextless" (entry: ^Entry) -> string {
 	count := 0
 	for count < len(entry.hash_prefix) && entry.hash_prefix[count] != 0 {
@@ -148,7 +148,7 @@ Window :: struct {
 	title:  string, // The title of the window.
 	number: u32, // The index of the window in the table of its owner.
 	focus:  bool, // The window has the focus.
-	hash_prefix: string, // A window of a disk program: the hash prefix of its file, as the root service gave it. "" for another window.
+	hash_prefix: string, // A window of a disk process: the hash prefix of its file, as the root service gave it. "" for another window.
 }
 
 // What a row of the list is.
@@ -175,9 +175,9 @@ Recent :: struct {
 
 // What the list knows of the palette provider.
 Provider_State :: enum u8 {
-	Absent  = 0, // No program gives entries: the list has the programs and the windows only.
+	Absent  = 0, // No process gives entries: the list has the processes and the windows only.
 	Ready   = 1, // The snapshot of the list holds the entries of the provider.
-	Refused = 2, // The table of the provider failed a check: the list has the programs and the windows only.
+	Refused = 2, // The table of the provider failed a check: the list has the processes and the windows only.
 }
 
 // The entries of each source and their list for one typed part. The owner
@@ -276,14 +276,14 @@ entry_add :: proc "contextless" (list: ^List, recents: []Recent, added: Entry, n
 CLOSE_NAME_START :: "close " // The start of the name of the close of a window: "close plasma".
 
 // list_collect makes the entries of a list again from the sources: the
-// windows, the front one first; the names of the programs, in the order of
+// windows, the front one first; the names of the processes, in the order of
 // their table; the close of each window; then the entries of the palette
 // provider. table is the mapping of the table of the provider, or nil with
 // no provider: the list copies it and checks the copy
 // (palette_table.snapshot_take), and reads only the copy after that. A
 // table that fails gives a list with no entry of a provider, and its
 // problem. recents: the choices that the panel remembers.
-list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_names: []string, windows: []Window, table: []u8) -> (problem: palette_table.Problem, problem_index: int) {
+list_collect :: proc "contextless" (list: ^List, recents: []Recent, process_names: []string, windows: []Window, table: []u8) -> (problem: palette_table.Problem, problem_index: int) {
 	list.entry_count = 0
 	list.provider = .Absent
 	for window in windows {
@@ -291,7 +291,7 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 		copy(added.hash_prefix[:], window.hash_prefix)
 		entry_add(list, recents, added, window.title, "")
 	}
-	for name, index in program_names {
+	for name, index in process_names {
 		count := 0
 		for window in windows {
 			if window.title == name {
@@ -401,11 +401,11 @@ setting_run_length :: proc "contextless" (snapshot: ^palette_table.Snapshot, ind
 //
 // A panel that asked for a second Enter goes back to the search: the entry
 // that it showed can be gone.
-entries_collect :: proc "contextless" (panel: ^Panel, program_names: []string, windows: []Window) -> Adoption {
+entries_collect :: proc "contextless" (panel: ^Panel, process_names: []string, windows: []Window) -> Adoption {
 	// The list is made in its own memory: what the panel showed is kept
 	// first.
 	shown := panel_shown(panel)
-	list_collect(panel.list, panel.recents[:clamp(panel.recent_count, 0, RECENT_CAPACITY)], program_names, windows, nil)
+	list_collect(panel.list, panel.recents[:clamp(panel.recent_count, 0, RECENT_CAPACITY)], process_names, windows, nil)
 	list_rank(panel.list, typed_text(panel))
 	return panel_adopt_after(panel, panel.list, shown)
 }
@@ -548,7 +548,7 @@ action_runs :: proc "contextless" (action: Action) -> bool {
 
 // kind_tie_order gives the place of a kind among entries of one score: a
 // window first, because to reach a window is the most frequent act; then a
-// program, a setting, a command, an export; the close of a window last.
+// process, a setting, a command, an export; the close of a window last.
 @(private)
 kind_tie_order :: proc "contextless" (kind: Entry_Kind) -> u32 {
 	switch kind {
@@ -584,7 +584,7 @@ Prefix :: enum u8 {
 	Commands = 1, // ">": the commands and the exports.
 	Windows  = 2, // "@": the windows and their closes.
 	Settings = 3, // ":": the values of the settings.
-	Manual   = 4, // "?": the programs; the choice opens the page of the manual of the program.
+	Manual   = 4, // "?": the processes; the choice opens the page of the manual of the process.
 }
 
 // prefix_of gives the prefix of a typed part, and the part after it: the
@@ -647,7 +647,7 @@ prefix_admits :: proc "contextless" (prefix: Prefix, kind: Entry_Kind) -> bool {
 // With a typed part: one list, the best match first (the fuzzy match of
 // src/library/support/line_editor), with no heading: the best match is the first row.
 // With no typed part: three groups, each under its heading: the entries
-// chosen lately, the windows with the front one first, the programs in the
+// chosen lately, the windows with the front one first, the processes in the
 // order of their table. A group with no entry is absent. The entries that
 // destroy and the entries of a provider show only for a typed part.
 list_rank :: proc "contextless" (list: ^List, query: string) {

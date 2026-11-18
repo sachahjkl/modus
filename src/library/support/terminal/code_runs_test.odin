@@ -91,7 +91,7 @@ code_kind_of_refuses_a_byte_that_names_no_kind :: proc(t: ^testing.T) {
 	}
 }
 
-// test_run writes one run with the byte of its kind, as a program does.
+// test_run writes one run with the byte of its kind, as a process does.
 test_run :: proc(start, length: u8, kind: Code_Kind) -> Code_Run {
 	return {start = start, length = length, kind = u8(kind)}
 }
@@ -220,7 +220,7 @@ list_rows_take_their_runs :: proc(t: ^testing.T) {
 	list_keep_code_runs(&keeping, {0 = u64(Kind.List_Row), 1 = 3}, bytes[:5], nil)
 	testing.expect_value(t, keeping.runs_refused, 3)
 	testing.expect_value(t, keeping.pending[3].count, 0)
-	// The count stays when the program stops; the runs go.
+	// The count stays when the process stops; the runs go.
 	list_keep_code_runs(&keeping, {0 = u64(Kind.List_Row), 1 = 4}, bytes[:], nil)
 	list_keep_forget(&keeping)
 	testing.expect_value(t, keeping.runs_refused, 3)

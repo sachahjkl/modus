@@ -1,48 +1,48 @@
-// The terminal: how a program gives text to a terminal, and how the
-// terminal gives keys to the program: records of a fixed size in a ring, as
-// between any two programs, and only to the program that the terminal was
+// The terminal: how a process gives text to a terminal, and how the
+// terminal gives keys to the process: records of a fixed size in a ring, as
+// between any two processes, and only to the process that the terminal was
 // given to.
 //
-// A program does not write a stream of bytes with commands hidden in it:
-// no escape character and no escape sequence exists. A program sends
+// A process does not write a stream of bytes with commands hidden in it:
+// no escape character and no escape sequence exists. A process sends
 // records. Each record has a kind and typed fields: a run of text with its
 // style, the end of a line, a status with a value and a total.
 //
-// The program and the terminal share two memory objects:
+// The process and the terminal share two memory objects:
 //   the terminal ring   One command record is one Record of this file.
-//   the text region     The bytes of the text. The program writes them one
+//   the text region     The bytes of the text. The process writes them one
 //                       after the other, and starts again at the first byte
 //                       after the last. A record gives only the count of
-//                       its bytes: a program cannot name another place.
+//                       its bytes: a process cannot name another place.
 //
-// The terminal reads the records as fast as the program writes them. It
+// The terminal reads the records as fast as the process writes them. It
 // draws at the rate of the screen, and it draws only the lines that the
-// window shows: the display does not slow the program. When the ring is
-// full, the program waits for the terminal.
+// window shows: the display does not slow the process. When the ring is
+// full, the process waits for the terminal.
 //
 // The input goes the other way, in the completion queue of the terminal
 // ring: one record for each key that the input presses (Input). The
-// program edits its line: the terminal does not know what a line of input
-// is. The program shows the line with an Edit record; the terminal draws it
+// process edits its line: the terminal does not know what a line of input
+// is. The process shows the line with an Edit record; the terminal draws it
 // after the last line, with a cursor.
 //
 // The root service makes the terminal ring and the text region, and starts
-// the two programs. The terminal starts no program and holds three things:
+// the two processes. The terminal starts no process and holds three things:
 // a surface, the two memory objects, and a handle that reads the state of
-// the program. The program holds what its role gives, and no surface.
+// the process. The process holds what its role gives, and no surface.
 //
 // The ring keeps at most RING_CAPACITY records that the terminal did not
-// read, of RUN_LIMIT bytes at most: the program never writes over text
+// read, of RUN_LIMIT bytes at most: the process never writes over text
 // that the terminal did not read.
 //
-// Who uses it: the console and each program that the root service starts
-// with a terminal (`open`, `write`, `edit`, `key`), and the program
+// Who uses it: the console and each process that the root service starts
+// with a terminal (`open`, `write`, `edit`, `key`), and the process
 // `terminal` (the reading side: `List_Keeping`, `hint_form_choose`,
 // `picture_wait_choose`). The parts:
 //
 // - `Kind`, `Input`, `Style`, `Tone`, `Flag`: the records of the ring.
 // - `Terminal`, `open`, `write`, `line`, `status`, `edit`, `hint`, `key`,
-//   `clear`: the side of the program.
+//   `clear`: the side of the process.
 // - `Code_Kind`, `Code_Run`, `Code_Runs` (`code_runs.odin`): the colors of a
 //   line of code.
 // - `List_Row`, `List_Shown`, `List_Keeping`: the completion list, as the
@@ -66,39 +66,39 @@ import "modus:contract/ring"
 import "modus:contract/text_encoding"
 import "modus:support/system"
 
-// The roles of the context of a program that has a terminal, and of the
+// The roles of the context of a process that has a terminal, and of the
 // terminal itself: slots of the one table of the context slots
 // (src/library/support/system/grants.odin).
-GRANT_RING :: system.GRANT_TERMINAL_RING // Memory: the terminal ring. The program writes its command queue.
+GRANT_RING :: system.GRANT_TERMINAL_RING // Memory: the terminal ring. The process writes its command queue.
 GRANT_TEXT :: system.GRANT_TERMINAL_TEXT // Memory: the text region. The terminal has the right Read only.
-GRANT_PROGRAM :: system.GRANT_TERMINAL_PROGRAM // For the terminal only: the program that writes, with the right Read.
+GRANT_PROCESS :: system.GRANT_TERMINAL_PROCESS // For the terminal only: the process that writes, with the right Read.
 
 // The values of the context of the terminal itself.
-VALUE_NAME :: system.GRANT_VALUE_TERMINAL_NAME // 4 values: the name of the program. It is the title of the window.
+VALUE_NAME :: system.GRANT_VALUE_TERMINAL_NAME // 4 values: the name of the process. It is the title of the window.
 VALUE_COLUMNS :: system.GRANT_VALUE_TERMINAL_COLUMNS // The columns of the window, at most COLUMNS_LIMIT.
 VALUE_ROWS :: system.GRANT_VALUE_TERMINAL_ROWS // The rows of the window, at most ROWS_LIMIT.
-VALUE_MEASURE :: system.GRANT_VALUE_TERMINAL_MEASURE // 1: the window shows the rates of the program.
+VALUE_MEASURE :: system.GRANT_VALUE_TERMINAL_MEASURE // 1: the window shows the rates of the process.
 // The handles that a terminal receives from its starter, the root service.
 Terminal_Handles :: struct {
 	display: system.Handle, // The ring to the compositor.
 	ring:    system.Handle, // The terminal ring.
 	text:    system.Handle, // The text region.
-	writer:  system.Handle, // The program that writes in it.
+	writer:  system.Handle, // The process that writes in it.
 	log:     system.Grant, // The log, with the rights that the starter chose.
 }
 
 // context_of writes the handles and the values of the context of a
 // terminal through the checked writes of the context, so that a test reads
 // the layout that the root service starts it with: the display ring, the
-// terminal ring and the program with the rights that the terminal needs, the
-// text region with Read only, the name of the program and the size of the
+// terminal ring and the process with the rights that the terminal needs, the
+// text region with Read only, the name of the process and the size of the
 // window. A slot or a value that the caller wrote already is refused, and
 // its refusal stays in the record.
 context_of :: proc "contextless" (grants: ^system.Context_Grants, values: ^system.Context_Values, handles: Terminal_Handles, name: [4]u64, columns, rows: u64, measure: bool) {
 	system.grant_put(grants, system.GRANT_DISPLAY, {handles.display, {.Read, .Write}})
 	system.grant_put(grants, GRANT_RING, {handles.ring, {.Read, .Write}})
 	system.grant_put(grants, GRANT_TEXT, {handles.text, {.Read}})
-	system.grant_put(grants, GRANT_PROGRAM, {handles.writer, {.Read}})
+	system.grant_put(grants, GRANT_PROCESS, {handles.writer, {.Read}})
 	system.grant_put(grants, op.CONTEXT_LOG, handles.log)
 	words := name
 	system.values_put(values, VALUE_NAME, words[:])
@@ -124,8 +124,8 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           text. values[0]: a Style. values[1]: the value. values[2]: the
 //           total; 0 removes the status.
 //   Clear   The terminal forgets all the lines.
-//   Edit    The line that the program changes: the line of input of the
-//           input, or a line that says what the program does now. The
+//   Edit    The line that the process changes: the line of input of the
+//           input, or a line that says what the process does now. The
 //           terminal shows it after the last line. A new one replaces the
 //           one before. tag: the count of bytes of its text. values[0]: a
 //           Style. values[1]: the place of the cursor, in bytes from the
@@ -133,7 +133,7 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           newest key (Key.serial) whose character the line shows, or 0.
 //           No text and no cursor: the terminal shows no such line.
 //   Hint    One line under the edit line, in the dim color: what the
-//           program says about the line (the signature of the call at the
+//           process says about the line (the signature of the call at the
 //           cursor). It has a long form, and a short form for a terminal
 //           that is too narrow for the long one (hint_form_choose); the
 //           text is the long form, then the short form. The terminal keeps
@@ -156,7 +156,7 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           the edit line: the rows that List_Row gave before. values[0]:
 //           the count of rows, at most LIST_ROWS; 0 removes the list.
 //           values[1]: the row that is chosen, or NO_CHOICE. values[2]: the
-//           place of the first row in all the names of the program, and
+//           place of the first row in all the names of the process, and
 //           values[3] their count: with more names than rows, the list
 //           shows a scroll bar. values[4]: the byte of the edit line where
 //           the name starts: the list starts at its column.
@@ -172,7 +172,7 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 // and each count is a count of bytes. The library cuts a text after a whole
 // character only. The terminal shows one cell for each character, and the
 // replacement glyph for each invalid sequence and for each character that the font
-// lacks: the text of these records comes from other programs.
+// lacks: the text of these records comes from other processes.
 Kind :: enum u32 {
 	None     = 0, // Not a record: the terminal skips it.
 	Text     = 1, // A run of text.
@@ -191,22 +191,22 @@ LIST_ROWS :: 8 // The rows of a completion list.
 
 // What a row of a completion list is: the terminal draws the kind icon of
 // it before the name, as a row of the palette has one
-// (docs/glossary/desktop.md, "Kind icon"). The program says what the name is; the terminal
+// (docs/glossary/desktop.md, "Kind icon"). The process says what the name is; the terminal
 // chooses the form and the color. None: the row has no icon, and a list
 // with no icon in any row keeps no room for one.
 List_Icon :: enum u8 {
 	None         = 0, // No icon.
-	Command      = 1, // A command of the program itself.
+	Command      = 1, // A command of the process itself.
 	Export       = 2, // An export of a module or of a service.
 	Record       = 3, // A command that makes a record from its fields.
-	Service      = 4, // A service that the program is connected to.
+	Service      = 4, // A service that the process is connected to.
 	Module       = 5, // A module of the boot image.
-	Program      = 6, // A program that runs.
-	Variable     = 7, // A variable of the program.
+	Process      = 6, // A process that runs.
+	Variable     = 7, // A variable of the process.
 	History_Line = 8, // A line of the history.
 }
 
-// The kind of a completion record: what the terminal gives to the program.
+// The kind of a completion record: what the terminal gives to the process.
 //   Key     A key was pressed. tag: the code of the key
 //           (display.KEY_*). values[0]: its character, or 0. values[1]:
 //           the modifiers that were held (display.MODIFIER_*).
@@ -215,32 +215,32 @@ List_Icon :: enum u8 {
 //           Control-R gives the character 'r' with MODIFIER_CONTROL.
 //   List_First  The pointer moved the scroll bar of the completion list.
 //           values[0]: the first row of the whole list that the scroll
-//           bar asks for. The program owns the list: it moves its view
+//           bar asks for. The process owns the list: it moves its view
 //           there and its choice into the view, and sends the rows
-//           again (List_Row, List). A program that has no list, or that
+//           again (List_Row, List). A process that has no list, or that
 //           reads only its keys (`key`), skips the record.
 // The terminal keeps the keys Page Up and Page Down: they move its view.
-// If the program does not read and the queue is full, the newest keys are
-// lost: the terminal never waits for a program.
+// If the process does not read and the queue is full, the newest keys are
+// lost: the terminal never waits for a process.
 Input :: enum u32 {
-	None       = 0, // Not a record: the program skips it.
+	None       = 0, // Not a record: the process skips it.
 	Key        = 1, // A key was pressed.
 	List_First = 2, // The scroll bar of the completion list asks for a first row.
 }
 
-// One input record, as `input` gives it to the program.
+// One input record, as `input` gives it to the process.
 Input_Record :: struct {
 	kind:       Input, // Key or List_First.
 	key:        Key, // Key: the key.
 	list_first: int, // List_First: the first row of the whole list that the scroll bar asks for.
 }
 
-// One key, as `key` gives it to the program.
+// One key, as `key` gives it to the process.
 Key :: struct {
 	code:      u32, // The code of the key (display.KEY_*).
-	character: rune, // Its character as a code point, or 0. A program that keeps it writes its UTF-8.
+	character: rune, // Its character as a code point, or 0. A process that keeps it writes its UTF-8.
 	modifiers: u32, // The modifiers held (display.MODIFIER_*).
-	serial:    u64, // The serial that the compositor gave the key, or 0: a program that shows the key names it with edit.
+	serial:    u64, // The serial that the compositor gave the key, or 0: a process that shows the key names it with edit.
 }
 
 // What a run of text is. The terminal chooses the color of each tone.
@@ -256,7 +256,7 @@ Tone :: enum u8 {
 }
 
 // tone_of_byte is the border of the tone byte of a Style that another
-// program wrote: the member, or false for a byte that names no tone. The
+// process wrote: the member, or false for a byte that names no tone. The
 // terminal then draws the run in the color of plain text.
 tone_of_byte :: proc "contextless" (value: u8) -> (tone: Tone, ok: bool) {
 	return enum_word.member_of_word(Tone, u64(value))
@@ -277,7 +277,7 @@ Flag :: enum u8 {
 // a line written before a change of the appearance takes the new colors.
 //
 // The tone and the code kind are bytes, not members: the terminal reads a
-// record that another program wrote, and takes each byte through its
+// record that another process wrote, and takes each byte through its
 // border (tone_of_byte, code_kind_of), so it never holds a member that the
 // writer did not name.
 //
@@ -291,14 +291,14 @@ Style :: struct {
 }
 #assert(size_of(Style) == 8)
 
-// A terminal, as the program that writes sees it.
+// A terminal, as the process that writes sees it.
 Terminal :: struct {
-	ring:    ring.Ring, // The terminal ring: this program writes its commands.
+	ring:    ring.Ring, // The terminal ring: this process writes its commands.
 	text:    []u8, // The text region.
-	written: u64, // The bytes that the program wrote since the start.
+	written: u64, // The bytes that the process wrote since the start.
 }
 
-// open gives the terminal of this program. false: the program that started
+// open gives the terminal of this process. false: the process that started
 // this one gave no terminal (the record No_Grant, unit Terminal), or a
 // kernel operation failed (its record).
 // error: the record of a failure, if the caller gives one:
@@ -392,7 +392,7 @@ status :: proc "contextless" (terminal: ^Terminal, text: string, value, total: u
 	system.wake_reader(&terminal.ring.commands)
 }
 
-// edit sets the line that the program changes, with the place of its
+// edit sets the line that the process changes, with the place of its
 // cursor. edit(terminal, "") removes the line. key_serial: the newest key
 // (Key.serial) whose character the line shows, or 0; the terminal names it
 // with the picture that shows the line, for the measure of a key to the
@@ -434,7 +434,7 @@ hint :: proc "contextless" (terminal: ^Terminal, long: Hint_Text, short: Hint_Te
 
 // hint_form_choose chooses the form of a hint line for a width of columns
 // cells, from the cells of each form (one for each character): the long
-// form when it fits; if not, the short form when the program gave one; if
+// form when it fits; if not, the short form when the process gave one; if
 // not, the long form. shown is the cells of the form that the row shows:
 // the form, cut to the columns.
 hint_form_choose :: proc "contextless" (long_count, short_count, columns: int) -> (form: Hint_Form, shown: int) {
@@ -466,12 +466,12 @@ list_show :: proc "contextless" (terminal: ^Terminal, row_count: int, chosen: u6
 	system.wake_reader(&terminal.ring.commands)
 }
 
-// What a terminal keeps of the completion list of its program: the rows
+// What a terminal keeps of the completion list of its process: the rows
 // that List_Row records gave, and the list that the last List record shows.
-// The values come from the program: each one is brought inside its array
+// The values come from the process: each one is brought inside its array
 // before it is kept. The rows given before a List go to that List only: a
 // List with no new rows shows empty rows, never the rows of a list before,
-// which can come from another program of the same terminal.
+// which can come from another process of the same terminal.
 List_Row :: struct {
 	text:        [RUN_LIMIT]u8, // The name, then what the name is.
 	length:      int, // The bytes of `text` in use.
@@ -561,7 +561,7 @@ list_keep_show :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64) {
 	shown.anchor = int(min(values[4], RUN_LIMIT))
 }
 
-// list_keep_forget forgets the list and the rows given: the program of the
+// list_keep_forget forgets the list and the rows given: the process of the
 // terminal stopped.
 list_keep_forget :: proc "contextless" (keeping: ^List_Keeping) {
 	refused := keeping.runs_refused
@@ -602,10 +602,10 @@ record_part :: proc "contextless" (text: string, room: int) -> int {
 }
 
 // edit_key_serial_take keeps the key serial of an Edit record in kept, the
-// newest one, when the terminal forwarded that key to its program: a
+// newest one, when the terminal forwarded that key to its process: a
 // serial past forwarded, the newest serial that the terminal forwarded,
-// names no key that the program got. It is refused, and kept stays: a
-// program cannot hold the measure of the keys with a serial of its own.
+// names no key that the process got. It is refused, and kept stays: a
+// process cannot hold the measure of the keys with a serial of its own.
 // 0 names no key.
 edit_key_serial_take :: proc "contextless" (kept: ^u64, serial, forwarded: u64) -> (refused: bool) {
 	if serial > forwarded {
@@ -616,7 +616,7 @@ edit_key_serial_take :: proc "contextless" (kept: ^u64, serial, forwarded: u64) 
 }
 
 // key gives the next key that was pressed. false: no key waits.
-// A program waits for a key with system.wait_records on
+// A process waits for a key with system.wait_records on
 // terminal.ring.completions.
 key :: proc "contextless" (terminal: ^Terminal) -> (pressed: Key, ok: bool) {
 	for {
@@ -640,8 +640,8 @@ key_character_of :: proc "contextless" (value: u64) -> rune {
 }
 
 // input gives the next input record: a key, or what the pointer asked of
-// the scroll bar of the completion list. false: no record waits. A program
-// with a completion list reads its input here; a program that reads only
+// the scroll bar of the completion list. false: no record waits. A process
+// with a completion list reads its input here; a process that reads only
 // keys uses `key`. A record that input_of_record refuses costs one line of
 // the log, and the next record is read.
 input :: proc "contextless" (terminal: ^Terminal) -> (given: Input_Record, ok: bool) {
@@ -656,7 +656,7 @@ input :: proc "contextless" (terminal: ^Terminal) -> (given: Input_Record, ok: b
 }
 
 // kind_of_ring_word is the border of the kind of a record of the terminal
-// ring, which the program of the terminal writes: the kind, or false for a
+// ring, which the process of the terminal writes: the kind, or false for a
 // word that names no record, None included. The terminal counts a refusal.
 // It reads and changes no state.
 kind_of_ring_word :: proc "contextless" (word: u32) -> (kind: Kind, ok: bool) {
@@ -675,7 +675,7 @@ input_of_record :: proc "contextless" (record: ring.Record) -> (given: Input_Rec
 	case .Key:
 		return {kind = .Key, key = {code = record.tag, character = key_character_of(record.values[0]), modifiers = u32(record.values[1]), serial = record.values[2]}}, true
 	case .List_First:
-		// The number is the number of another program: the reader
+		// The number is the number of another process: the reader
 		// cuts it to its own list.
 		return {kind = .List_First, list_first = int(min(record.values[0], u64(max(i32))))}, true
 	}
@@ -687,7 +687,7 @@ input_of_record :: proc "contextless" (record: ring.Record) -> (given: Input_Rec
 // terminal that writes such records with no end costs its reader no wait.
 @(private)
 input_refusal_log :: proc "contextless" (record: ring.Record) {
-	system.log_in("programs", .Warning, "terminal: the terminal sent an input record of the kind ", u64(record.kind), ", which names no input: it is refused")
+	system.log_in("processes", .Warning, "terminal: the terminal sent an input record of the kind ", u64(record.kind), ", which names no input: it is refused")
 }
 
 // clear tells the terminal to forget all the lines.

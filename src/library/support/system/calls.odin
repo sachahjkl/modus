@@ -12,7 +12,7 @@ import "modus:contract/root_ring"
 // The caller side of one description, three ways to call
 // (docs/MODULE_CONTRACT.md, "Tables and bytes as parameters"):
 //
-//   call_direct      a module in this program (a module space): the
+//   call_direct      a module in this process (a module space): the
 //                    registers of the call form, no copy.
 //   call_isolated    a call host or a service: the same arguments go into
 //                    the call region or into a lent memory object, and
@@ -25,15 +25,15 @@ import "modus:contract/root_ring"
 // have: the receiver of an isolated call passes its isolated.Call to it.
 #assert(CALL_INTEGERS == module.PARAMETER_CAPACITY)
 
-// A way to the exports of a module in another program: a call host that
-// this program started, or a connection to a service.
+// A way to the exports of a module in another process: a call host that
+// this process started, or a connection to a service.
 Call_Connection :: struct {
-	program:       Handle, // The call host or the service: its state says if it stopped.
+	process:       Handle, // The call host or the service: its state says if it stopped.
 	ring_memory:   Handle, // The memory of the call ring.
 	region_memory: Handle, // The memory of the call region.
 	files_memory:  Handle, // A call host: the page of the list of its files.
-	calls:         ring.Ring, // The call ring, mapped in this program.
-	region:        []u8, // The call region, mapped in this program.
+	calls:         ring.Ring, // The call ring, mapped in this process.
+	region:        []u8, // The call region, mapped in this process.
 	tag:           u32, // The tag of the last call: each call takes the next one, and its completion must have it.
 }
 
@@ -43,9 +43,9 @@ Call_Status :: enum u32 {
 	Lend_Failed  = 1, // A handle of the arguments could not be lent: `lend` says why.
 	No_Room      = 2, // The arguments do not fit in the call region: isolated.room_missing says which table.
 	Ring_Full    = 3, // The call ring had no room for the command.
-	Stopped      = 4, // The other program stopped during the call.
-	Refused      = 5, // The other program gave a status that is not Ok: Bad_Export, Bad_Arguments, Bad_Handle. The error record has its refusal.
-	Wrong_Answer = 6, // The other program gave a count of a table that is smaller than the count on entry. The error record names the parameter.
+	Stopped      = 4, // The other process stopped during the call.
+	Refused      = 5, // The other process gave a status that is not Ok: Bad_Export, Bad_Arguments, Bad_Handle. The error record has its refusal.
+	Wrong_Answer = 6, // The other process gave a count of a table that is smaller than the count on entry. The error record names the parameter.
 	Failed       = 7, // The export failed: its integer result is negative, and the error record is filled.
 	Not_Done     = 8, // call_direct does not do this description: a result that is not an Integer, a record of a table that is not valid. The error record says which.
 	// The export failed, and the error record is its own; but its table of
@@ -56,7 +56,7 @@ Call_Status :: enum u32 {
 	Failed_With_Wrong_Details = 9,
 }
 
-// call_direct calls an export of a module that is in this program, with
+// call_direct calls an export of a module that is in this process, with
 // the call form: an Integer and a Handle in a register, a Text as the
 // address of its slice, a Record as its address, a Table or Bytes as the
 // address of a table place over the memory of the argument. The export
@@ -133,7 +133,7 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 	return result, function.error_record != 0 && result < 0 ? .Failed : .Ok
 }
 
-// call_isolated calls an export of a module in another program, through a
+// call_isolated calls an export of a module in another process, through a
 // connection. It lends the handles and the memory objects of the
 // arguments, writes the argument record, waits for the answer, and copies
 // the answer of each Change and Append table back into the memory of the
@@ -144,7 +144,7 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 // The seam of the three forms: a table argument with a memory object
 // (Table_Argument.memory_handle) goes into the call region when it fits there, and
 // through its memory object only when it does not: the measures of the
-// program tables give the call region the lower cost at each size that
+// process tables give the call region the lower cost at each size that
 // fits (docs/MODULE_CONTRACT.md). keep_memory_objects lends each memory
 // object as given: for a measure, or for a table that the caller wants in
 // one place.
@@ -233,7 +233,7 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 				return result, .Wrong_Answer
 			}
 			// A Table result: the records are in the call region, and the
-			// count comes from the other program. The caller gets the
+			// count comes from the other process. The caller gets the
 			// records that fit `rows`, and the count of them as the result:
 			// never more than the region holds.
 			if rows != nil && function.result == u8(module.Type.Table) && result > 0 {
@@ -247,7 +247,7 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 			}
 			return result, .Ok
 		}
-		if state, _ := program_state(connection.program); state == .Stopped || state == .None {
+		if state, _ := process_state(connection.process); state == .Stopped || state == .None {
 			return 0, .Stopped
 		}
 		wait_records(&wait, &connection.calls.completions)
@@ -261,13 +261,13 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 // The log records of each second that a call host gets by default.
 CALL_HOST_LOG_RECORDS :: 100
 
-// call_host_start starts a call host (the program "host" of the boot
+// call_host_start starts a call host (the process "host" of the boot
 // image) for one module, and maps the file of the module and of its
 // imports in it, read-only: the call host has the call ring and the call
 // region, and no other handle. image_memory is the handle of the boot
 // image. values_with_seed has the random seed of the call host, which the
 // caller draws from its own generator (random.values_with_seed of no
-// values): a program does not start with no seed. On a failure of the load,
+// values): a process does not start with no seed. On a failure of the load,
 // load_error has the record that the call host wrote. log_records are the
 // log records of each second that the call host takes from the budget of
 // the caller: 100 by default, so a caller with 1000 records starts nine
@@ -315,12 +315,12 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	grants[isolated.GRANT_REGION] = {connection.region_memory, {.Read, .Write}}
 	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
 	values[isolated.VALUE_FILE_SIZE] = offset
-	connection.program = program_start(image_find(image, "host"), name, grants, values, {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = log_records}, mappings[:count + 1]) or_return
+	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = 512, processes = 1, threads = 1, processor = 500_000, log_records = log_records}, mappings[:count + 1]) or_return
 	// The first completion says if the call host loaded the module.
 	limit := time() + 5000
 	for {
 		wait := wait_begin()
-		state, _ := program_state(connection.program)
+		state, _ := process_state(connection.process)
 		for _ in 0 ..< ring.CAPACITY {
 			completion, has := receive(&connection.calls.completions)
 			if !has {
@@ -365,7 +365,7 @@ service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: 
 				refused, _ := status_of_word(record.kind)
 				return {}, refused
 			}
-			connection = {program = Handle(record.values[0]), ring_memory = Handle(record.values[1]), region_memory = Handle(record.values[2])}
+			connection = {process = Handle(record.values[0]), ring_memory = Handle(record.values[1]), region_memory = Handle(record.values[2])}
 			defer if status != .Ok {
 				call_connection_end(&connection)
 			}
@@ -383,7 +383,7 @@ service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: 
 	}
 }
 
-// call_connection_end closes what this program holds of a connection. A
+// call_connection_end closes what this process holds of a connection. A
 // call host stops: no handle names it. A service continues.
 call_connection_end :: proc "contextless" (connection: ^Call_Connection) {
 	if connection.calls.head != nil {
@@ -392,7 +392,7 @@ call_connection_end :: proc "contextless" (connection: ^Call_Connection) {
 	if connection.region != nil {
 		memory_unmap(raw_data(connection.region))
 	}
-	for handle in ([4]Handle{connection.program, connection.ring_memory, connection.region_memory, connection.files_memory}) {
+	for handle in ([4]Handle{connection.process, connection.ring_memory, connection.region_memory, connection.files_memory}) {
 		if handle != 0 {
 			close(handle)
 		}

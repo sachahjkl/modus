@@ -1,4 +1,4 @@
-; The instructions that a program needs and that Odin cannot write.
+; The instructions that a process needs and that Odin cannot write.
 bits 64
 default rel
 section .text

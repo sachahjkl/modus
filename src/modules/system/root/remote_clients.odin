@@ -29,7 +29,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/remote"
 import "modus:contract/ring"
-import "modus:support/disk_program"
+import "modus:support/disk_process"
 import "modus:support/principals"
 import "modus:contract/root_ring"
 import "modus:support/system"
@@ -94,7 +94,7 @@ key_head_text :: proc "contextless" (buffer: ^[16]u8, key: [32]u8) -> string {
 // values of the command hold a key where a name would be.
 remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
 	kind := u32(root_ring.Root_Command.Remote_Client)
-	// The principal gives a grant: only a program that acts for it may ask,
+	// The principal gives a grant: only a process that acts for it may ask,
 	// and the grant is of that principal only.
 	if .Acts_For_Principal not_in grants_held(caller) {
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
@@ -195,7 +195,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		}
 		// A new row takes the state of the session of its principal: no
 		// key opens a connection for a principal whose session is locked,
-		// whichever program asked.
+		// whichever process asked.
 		locked: u64 = principal_records[principal].state == .Locked ? 1 : 0
 		for &row, free in client_table.clients {
 			if row.serial != 0 {
@@ -205,7 +205,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			client_row_write(free, {key = key, principal = principal, serial = client_serial_last, session_locked = locked})
 			// It fits: the count of the keys of the table is under the
 			// bound of one principal, and the key is not zero bytes.
-			_ = disk_program.table_client_key_add(table, key)
+			_ = disk_process.table_client_key_add(table, key)
 			system.log_in("calls", .Info, "root: principal ", principal, " allowed the client key ", key_head_text(&head, key), " of remote: each call of that client acts for it", client_key_lasts(principal))
 			persisted_table_changed(principal)
 			return .Ok
@@ -217,7 +217,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			// A contested key of the disk grant table of the caller, whose
 			// row is a row of another principal: the revocation takes it
 			// out of the table, and the key holds again for the other.
-			if disk_program.table_client_key_remove(table, key) == .None {
+			if disk_process.table_client_key_remove(table, key) == .None {
 				values[0] = 0
 				system.log_in("calls", .Info, "root: principal ", principal, " revoked the client key ", key_head_text(&head, key), " of remote, which was contested: connections to services ended: 0")
 				values[1] = persisted_table_revocation(principal, key) ? root_ring.REMOTE_CLIENT_KEY_CAN_COME_BACK : 0
@@ -231,7 +231,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		count := client_connections_end(place)
 		values[0] = count
 		system.log_in("calls", .Info, "root: principal ", principal, " revoked the client key ", key_head_text(&head, key), " of remote: connections to services ended: ", count)
-		_ = disk_program.table_client_key_remove(table, key)
+		_ = disk_process.table_client_key_remove(table, key)
 		values[1] = persisted_table_revocation(principal, key) ? root_ring.REMOTE_CLIENT_KEY_CAN_COME_BACK : 0
 		// The key has no row now: a principal whose disk grant table holds
 		// it too, for which it was contested, takes it.
@@ -285,7 +285,7 @@ client_keys_restore :: proc "contextless" () {
 	head: [16]u8
 	for principal in 0 ..< u64(principals.PRINCIPAL_CAPACITY) {
 		table := &disk_grant_tables[principal]
-		for index in 0 ..< clamp(table.client_key_count, 0, disk_program.CLIENT_KEY_CAPACITY) {
+		for index in 0 ..< clamp(table.client_key_count, 0, disk_process.CLIENT_KEY_CAPACITY) {
 			key := table.client_keys[index]
 			action, place := remote.client_restore_decision(&client_table.clients, key, principal)
 			switch action {
@@ -341,7 +341,7 @@ client_keys_after_read :: proc "contextless" (principal: u64) {
 	table := &disk_grant_tables[principal]
 	head: [16]u8
 	for row, place in client_table.clients {
-		if row.serial == 0 || row.principal != principal || disk_program.table_client_key_find(table, row.key) >= 0 {
+		if row.serial == 0 || row.principal != principal || disk_process.table_client_key_find(table, row.key) >= 0 {
 			continue
 		}
 		client_row_write(place, {})
@@ -381,10 +381,10 @@ remote_clients_session_changed :: proc "contextless" (principal: u64, locked: bo
 client_grant_of :: proc "contextless" (caller: ^Started, row_number: u64, serial: u64, values: ^[7]u64) -> (client: Client_Grant, status: system.Status) {
 	kind := u32(root_ring.Root_Command.Connect)
 	if .Remote_Clients not_in caller.role.grants || row_number == 0 {
-		// Only the program of the client table connects for a row, and it
+		// Only the process of the client table connects for a row, and it
 		// connects for a row only: a call from another machine acts for a
 		// principal that allowed its client, and never for the session of
-		// that program.
+		// that process.
 		values^ = errors.ring_fail(kind, .No_Grant, .Connection, 2)
 		return {}, .No_Right
 	}
@@ -428,7 +428,7 @@ connection_principal :: proc "contextless" (connection: ^Connection) -> u64 {
 // client_connection_grant gives what the caller of a connection for a row
 // receives in its service: the principal of the row, and the flag to act
 // for it while the caller holds the grant to act for a principal. No store:
-// the program of the client table has none.
+// the process of the client table has none.
 client_connection_grant :: proc "contextless" (caller: ^Started, client: Client_Grant) -> u64 {
 	acts := .Acts_For_Principal in caller.role.grants && .Acts_For_Principal not_in caller.revoked
 	return isolated.caller_grant_make(0, client.principal, acts)

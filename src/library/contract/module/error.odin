@@ -1,7 +1,7 @@
 package module
 
 // The error of a load: a record that the caller of a loader owns. Zero is
-// "no error". It is data, not text: a program in any language reads it,
+// "no error". It is data, not text: a process in any language reads it,
 // and a call host gives it to its caller in the call region. A loader fills
 // it when a load fails; the caller writes it as a sentence for its reader.
 

@@ -43,7 +43,7 @@ site_operations_of_the_repository :: proc(t: ^testing.T) {
 			continue
 		}
 		operation := site_operation_parts(member)
-		testing.expect(t, strings.has_prefix(operation.parameters, "memory, program, address"))
+		testing.expect(t, strings.has_prefix(operation.parameters, "memory, process, address"))
 		testing.expect_value(t, operation.result, "address")
 	}
 	statuses, status_problem := site_enumeration_read(text, SITE_OPERATION_FILE, "Status")
@@ -114,7 +114,7 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 		testing.expectf(t, known && name == grant.name, "the start grant %s has the number %d, which grant_name names %q", grant.name, grant.number, name)
 	}
 	testing.expect_value(t, len(at_start), len(start_grant.Grant))
-	rows, rows_problem := site_role_table_read(roles_text, SITE_ROOT_ROLES_FILE, PROGRAM_ROLES_TABLE)
+	rows, rows_problem := site_role_table_read(roles_text, SITE_ROOT_ROLES_FILE, PROCESS_ROLES_TABLE)
 	testing.expect_value(t, rows_problem, "")
 	console, named := site_role_row_of(rows, "console")
 	testing.expect(t, named && len(console.grants) > 1 && console.grants[0] == "Root_Ring", "a set is read as its members, with no period")
@@ -125,9 +125,9 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 	// A row with no grant is a row of the table, with no grant.
 	plasma, plasma_named := site_role_row_of(rows, "plasma")
 	testing.expect(t, plasma_named && len(plasma.grants) == 0)
-	_, system_parts, parts_problem := program_roles_read(roles_text)
+	_, system_parts, parts_problem := process_roles_read(roles_text)
 	testing.expect_value(t, parts_problem, "")
-	testing.expect_value(t, len(program_roles_problems(rows, system_parts, module_builds[:], SITE_ROOT_ROLES_FILE)), 0)
+	testing.expect_value(t, len(process_roles_problems(rows, system_parts, module_builds[:], SITE_ROOT_ROLES_FILE)), 0)
 }
 
 // The reader of the table of the roles reads the tree of the parser: each
@@ -139,36 +139,36 @@ site_role_table_refuses_another_form :: proc(t: ^testing.T) {
 	head :: "package root\n\nGrant :: enum {A, B}\nRow :: struct {name: string, grants: bit_set[Grant], terms: struct {a: int}}\n\n"
 	forms := [?]string {
 		// A row from a constant: the page cannot name its parts.
-		head + "ROW :: Row{name = \"one\"}\nprogram_roles := [?]Row {\n\tROW,\n}\n",
+		head + "ROW :: Row{name = \"one\"}\nprocess_roles := [?]Row {\n\tROW,\n}\n",
 		// A row with its type.
-		head + "program_roles := [?]Row {\n\tRow{name = \"one\"},\n}\n",
+		head + "process_roles := [?]Row {\n\tRow{name = \"one\"},\n}\n",
 		// A row with no name, and a row with an empty name.
-		head + "program_roles := [?]Row {\n\t{grants = {.A}},\n}\n",
-		head + "program_roles := [?]Row {\n\t{name = \"\"},\n}\n",
+		head + "process_roles := [?]Row {\n\t{grants = {.A}},\n}\n",
+		head + "process_roles := [?]Row {\n\t{name = \"\"},\n}\n",
 		// A set of grants from a constant, with its type, or a union.
-		head + "SET :: bit_set[Grant]{.A}\nprogram_roles := [?]Row {\n\t{name = \"one\", grants = SET},\n}\n",
-		head + "program_roles := [?]Row {\n\t{name = \"one\", grants = bit_set[Grant]{.A}},\n}\n",
-		head + "program_roles := [?]Row {\n\t{name = \"one\", grants = {.A} + {.B}},\n}\n",
+		head + "SET :: bit_set[Grant]{.A}\nprocess_roles := [?]Row {\n\t{name = \"one\", grants = SET},\n}\n",
+		head + "process_roles := [?]Row {\n\t{name = \"one\", grants = bit_set[Grant]{.A}},\n}\n",
+		head + "process_roles := [?]Row {\n\t{name = \"one\", grants = {.A} + {.B}},\n}\n",
 		// A field that a row does not have, and a field written twice.
-		head + "program_roles := [?]Row {\n\t{name = \"one\", budget = 3},\n}\n",
-		head + "program_roles := [?]Row {\n\t{name = \"one\", name = \"two\"},\n}\n",
+		head + "process_roles := [?]Row {\n\t{name = \"one\", budget = 3},\n}\n",
+		head + "process_roles := [?]Row {\n\t{name = \"one\", name = \"two\"},\n}\n",
 		// A value in place of a field.
-		head + "program_roles := [?]Row {\n\t{\"one\"},\n}\n",
+		head + "process_roles := [?]Row {\n\t{\"one\"},\n}\n",
 		// A comment inside the terms.
-		head + "program_roles := [?]Row {\n\t{name = \"one\", terms = {\n\t\ta = 1, // The reason.\n\t}},\n}\n",
+		head + "process_roles := [?]Row {\n\t{name = \"one\", terms = {\n\t\ta = 1, // The reason.\n\t}},\n}\n",
 		// A table with no row.
-		head + "program_roles := [?]Row {\n}\n",
+		head + "process_roles := [?]Row {\n}\n",
 	}
 	for form, index in forms {
-		_, refused := site_role_table_read(form, "file.odin", "program_roles")
+		_, refused := site_role_table_read(form, "file.odin", "process_roles")
 		testing.expectf(t, strings.has_prefix(refused, "file.odin, line "), "form %d: the reader accepts it, or gives no line: %q", index, refused)
 	}
-	_, absent := site_role_table_read(head, "file.odin", "program_roles")
+	_, absent := site_role_table_read(head, "file.odin", "process_roles")
 	testing.expect(t, strings.contains(absent, "no table"), absent)
-	_, broken := site_role_table_read(head + "program_roles := [?]Row {\n", "file.odin", "program_roles")
+	_, broken := site_role_table_read(head + "process_roles := [?]Row {\n", "file.odin", "process_roles")
 	testing.expect(t, strings.contains(broken, "the parser of Odin refuses the file"), broken)
-	good := head + "program_roles := [?]Row {\n\t// The first line,\n\t// and the second.\n\t{name = \"one\", grants = {\n\t\t.A,\n\t\t.B,\n\t}, terms = {a = 1}}, // Its own.\n\t{name = \"two\"},\n}\n"
-	rows, problem := site_role_table_read(good, "file.odin", "program_roles")
+	good := head + "process_roles := [?]Row {\n\t// The first line,\n\t// and the second.\n\t{name = \"one\", grants = {\n\t\t.A,\n\t\t.B,\n\t}, terms = {a = 1}}, // Its own.\n\t{name = \"two\"},\n}\n"
+	rows, problem := site_role_table_read(good, "file.odin", "process_roles")
 	testing.expect_value(t, problem, "")
 	testing.expect_value(t, len(rows), 2)
 	if len(rows) == 2 {
@@ -241,7 +241,7 @@ site_readers_refuse_a_damaged_file :: proc(t: ^testing.T) {
 	_, command := site_console_commands_read("\tcommand(\"help\", {}, .None, help)\n", "file.odin")
 	testing.expect(t, strings.has_prefix(command, "file.odin, line 1:"), command)
 	// The row on line 3 has no name: the reader names its line.
-	_, no_name := site_role_table_read("package root\nprogram_roles := [?]Row {\n\t{grants = {}},\n}\n", "file.odin", "program_roles")
+	_, no_name := site_role_table_read("package root\nprocess_roles := [?]Row {\n\t{grants = {}},\n}\n", "file.odin", "process_roles")
 	testing.expect(t, strings.has_prefix(no_name, "file.odin, line 3:"), no_name)
 }
 
@@ -271,7 +271,7 @@ site_readers_of_small_files :: proc(t: ^testing.T) {
 	testing.expect_value(t, operation.parameters, "a, b (or 0)")
 	testing.expect_value(t, operation.result, "the count")
 	testing.expect_value(t, operation.text, "More text.")
-	no_result := site_operation_parts(Site_Enumeration_Member{name = "Go", comment = "(program, entry): the first thread."})
+	no_result := site_operation_parts(Site_Enumeration_Member{name = "Go", comment = "(process, entry): the first thread."})
 	testing.expect_value(t, no_result.result, "")
 	testing.expect_value(t, no_result.text, "the first thread.")
 }

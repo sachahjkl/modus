@@ -53,7 +53,7 @@ TEST_TPM_KEY_DISK :: BUILD_FOLDER + "/test_tpm_key_disk.img"
 // The disk of machine 5: the store of `unlock` with the record of machine 4,
 // one byte of its creation ticket changed.
 TEST_TPM_KEY_CHANGED_TICKET_DISK :: BUILD_FOLDER + "/test_tpm_key_changed_ticket_disk.img"
-// The store of `unlock`: a store of principal 0 has the name of its program.
+// The store of `unlock`: a store of principal 0 has the name of its process.
 UNLOCK_STORE :: "unlock"
 TEST_OUTPUT_TPM_KEY :: BUILD_FOLDER + "/test_output_tpm_key_%d.txt"
 // The state of the software TPM that the ten machines share.
@@ -294,7 +294,7 @@ scenario_tpm_principal_create := [?]Step {
 	{kind = .Wait, text = RECOVERY_KEY_ENTER_LINE, fails_on = "root: principal 1 \"alice\" is recorded"},
 	{kind = .Wait, text = "root: principal 1 \"alice\" is recorded, its public key ", any_order = true},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is created: its keys are sealed by the TPM with its passphrase, with a copy under a recovery key", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0"},
 }
 
@@ -322,7 +322,7 @@ scenario_tpm_principal_same_system := [?]Step {
 	// counts no failure at the start of the next one.
 	{kind = .Wait, text = TPM_SHUTDOWN_LINE, any_order = true},
 	{kind = .Wait, text = "unlock: the TPM releases the keys of principal 1 \"alice\" to its passphrase: the system is the system of the seal", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
 
@@ -341,7 +341,7 @@ tpm_principal_recovery_and_new_passphrase := [?]Step {
 	{kind = .Wait, text = "unlock: the keys of principal 1 \"alice\" are sealed again to PCR 7 and PCR 11 of the system that runs and to the new passphrase: its next unlock needs no recovery key", any_order = true},
 	// The file of before the new seal is a version: unlock erases it.
 	{kind = .Wait, text = PRINCIPAL_FILE_ERASED_LINE, any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
 
@@ -381,7 +381,7 @@ scenario_tpm_principal_change := [?]Step {
 	{kind = .Type, text = NEW_PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = TPM_LOCKOUT_FOUND_LINE, any_order = true, fails_on = TPM_LOCKOUT_SET_LINE},
 	{kind = .Wait, text = "unlock: the TPM releases the keys of principal 1 \"alice\" to its passphrase: the system is the system of the seal", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 	// A console of the session acts for alice: the console of the machine
 	// cannot ask for a change.
@@ -468,7 +468,7 @@ scenario_tpm_principal_change := [?]Step {
 	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" is wrong: the TPM refuses it and counts it, nothing is unlocked (1 in all)", fails_on = TPM_SHUTDOWN_LINE},
 	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = "unlock: the TPM releases the keys of principal 1 \"alice\" to its passphrase: the system is the system of the seal", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
 
@@ -506,7 +506,7 @@ scenario_tpm_principal_old_recovery_key := [?]Step {
 	{kind = .Wait, text = TPM_LOCKOUT_FOUND_LINE, any_order = true, fails_on = TPM_LOCKOUT_SET_LINE},
 	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
 	{kind = .Wait, text = "unlock: the keys of principal 1 \"alice\" are sealed again to PCR 7 and PCR 11 of the system that runs and to the new passphrase: its next unlock needs no recovery key", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
 

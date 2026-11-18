@@ -1,7 +1,7 @@
-// The random generator of a program (docs/RANDOMNESS.md): ChaCha20 with
+// The random generator of a process (docs/RANDOMNESS.md): ChaCha20 with
 // fast key erasure (D. J. Bernstein, "Fast-key-erasure random-number
 // generators", 2017). Its state is a record of fixed size in the memory of
-// the program; a draw makes no kernel entry and no call.
+// the process; a draw makes no kernel entry and no call.
 //
 // Each refill runs ChaCha20 with the key and the nonce 0 for 13 blocks: the
 // first 32 bytes are the next key, the next 800 bytes are served in order.
@@ -12,17 +12,17 @@
 // The ChaCha20 is the code of Odin's core:crypto that the system took
 // (src/library/support/cryptography, docs/CRYPTOGRAPHY.md), checked against RFC 8439.
 //
-// Who uses it: each program that draws random bytes. A program seeds its
+// Who uses it: each process that draws random bytes. A process seeds its
 // generator from its context (`generator_from_context`), where its starter
 // wrote a seed; the root service gathers its own seed (`entropy_gather`,
 // `entropy.odin`). The parts:
 //
 // - `Generator`, `generator_seed`, `generator_from_context`: the state.
 // - `fill`, `fill_for_a_key`: the draws.
-// - `seed_for_a_child`, `values_with_seed`: the seed of a program that this
+// - `seed_for_a_child`, `values_with_seed`: the seed of a process that this
 //   one starts, or of another thread.
 // - `reseed`: mix fresh bytes into the key.
-// - `fresh_bytes_attach`: the fresh bytes page of the program, whose new
+// - `fresh_bytes_attach`: the fresh bytes page of the process, whose new
 //   bytes the generator mixes into its key at a refill and before a key,
 //   never at each draw (src/md/features/fresh_bytes.md).
 // - `Seed_Strength`, `Entropy_Report`, `entropy_gather`: the gathering of
@@ -52,14 +52,14 @@ REFILL_BLOCKS :: 13 // The blocks of 64 bytes of ChaCha20 of one refill: 832 byt
 REFILL_SIZE :: REFILL_BLOCKS * 64 // The bytes of one refill.
 BUFFER_SIZE :: REFILL_SIZE - SEED_SIZE // The bytes served from one refill: 800, after the next key.
 
-// A zero Generator is not seeded: a draw from it stops the program (a
-// check), so that no program draws numbers from a known key.
+// A zero Generator is not seeded: a draw from it stops the process (a
+// check), so that no process draws numbers from a known key.
 //
 // One generator belongs to one thread. Two threads that draw from one
 // generator at once would get the same bytes (two equal nonces, two equal
 // seeds): a second thread gets its own generator, seeded with
 // seed_for_a_child of the first. A draw that finds the generator in use by
-// another draw stops the program with a sentence that says so.
+// another draw stops the process with a sentence that says so.
 Generator :: struct {
 	key:       [SEED_SIZE]u8, // The key of the next refill.
 	buffer:    [BUFFER_SIZE]u8, // The bytes of the last refill; a served byte is zero.
@@ -69,7 +69,7 @@ Generator :: struct {
 	in_use:    bool, // A draw runs: a second draw at the same time is refused.
 	refills:   u64, // The refills since the seed.
 	served:    u64, // Bytes served since the seed.
-	fresh_page:         ^fresh_bytes.Page, // The fresh bytes page of the program; nil: none.
+	fresh_page:         ^fresh_bytes.Page, // The fresh bytes page of the process; nil: none.
 	fresh_change_count: u32, // The change count of the page that the key has: a change is mixed once.
 	fresh_mixes:        u64, // The changes of the page mixed into the key since the seed.
 }
@@ -90,7 +90,7 @@ generator_seed :: proc "contextless" (generator: ^Generator, seed: ^[SEED_SIZE]u
 }
 
 // seed_strength gives the strength of the seed of the system from which the
-// seed of this generator comes: weak, processor or entropy. A program that
+// seed of this generator comes: weak, processor or entropy. A process that
 // makes keys reads it.
 seed_strength :: proc "contextless" (generator: ^Generator) -> Seed_Strength {
 	return generator.strength
@@ -119,7 +119,7 @@ refill :: #force_no_inline proc "contextless" (generator: ^Generator) {
 }
 
 // fill writes random bytes in output. A generator that is not seeded stops
-// the program.
+// the process.
 fill :: proc "contextless" (generator: ^Generator, output: []u8) {
 	fill_bytes(generator, output, false)
 }
@@ -156,7 +156,7 @@ fill_bytes :: proc "contextless" (generator: ^Generator, output: []u8, for_a_key
 
 // fill_for_a_key writes random bytes in output for a key, a nonce or
 // another secret, when the seed of this generator has least_strength at
-// least. Each program chooses what it accepts; a seed that is weaker gives
+// least. Each process chooses what it accepts; a seed that is weaker gives
 // the error Seed_Too_Weak and writes no byte. A plain draw with no
 // requirement is fill.
 fill_for_a_key :: proc "contextless" (generator: ^Generator, output: []u8, least_strength: Seed_Strength, error: ^errors.Error_Record) -> bool {
@@ -170,7 +170,7 @@ fill_for_a_key :: proc "contextless" (generator: ^Generator, output: []u8, least
 
 // The context of the key derivation of a mix of the fresh bytes page: a
 // hash of other bytes never gives this key.
-DOMAIN_FRESH_BYTES :: "kernel random: the fresh bytes of a program, version 1"
+DOMAIN_FRESH_BYTES :: "kernel random: the fresh bytes of a process, version 1"
 
 // fresh_bytes_take mixes the bytes of the fresh bytes page into the key when
 // the page has a change that the key does not have: the next key is BLAKE3
@@ -195,9 +195,9 @@ fresh_bytes_take :: proc "contextless" (generator: ^Generator) {
 	generator.fresh_mixes += 1
 }
 
-// fresh_bytes_attach gives a generator the fresh bytes page of the program
+// fresh_bytes_attach gives a generator the fresh bytes page of the process
 // (fresh_bytes.page_of); nil gives none. generator_from_context attaches the
-// page of the context. A program that gives another thread its own
+// page of the context. A process that gives another thread its own
 // generator attaches the page to it too: each generator mixes the bytes
 // into its own key.
 fresh_bytes_attach :: proc "contextless" (generator: ^Generator, page: ^fresh_bytes.Page) {
@@ -206,7 +206,7 @@ fresh_bytes_attach :: proc "contextless" (generator: ^Generator, page: ^fresh_by
 
 // fresh_bytes_mixes gives the changes of the fresh bytes page that the
 // generator mixed into its key, and the change count of the last one (0:
-// none yet). The program `randomness` shows them.
+// none yet). The process `randomness` shows them.
 fresh_bytes_mixes :: proc "contextless" (generator: ^Generator) -> (mixes: u64, change_count: u32) {
 	return generator.fresh_mixes, generator.fresh_change_count
 }
@@ -218,9 +218,9 @@ next_u64 :: proc "contextless" (generator: ^Generator) -> u64 {
 	return value
 }
 
-// seed_for_a_child gives the seed of a program that this program starts:
+// seed_for_a_child gives the seed of a process that this process starts:
 // 32 bytes of its own stream, which it never serves again. The starter
-// knows the seed of its child: a child has no secret from the program that
+// knows the seed of its child: a child has no secret from the process that
 // starts it, which already chooses its code and its grants.
 seed_for_a_child :: proc "contextless" (generator: ^Generator) -> (seed: [SEED_SIZE]u8) {
 	fill_bytes(generator, seed[:], true)
@@ -241,7 +241,7 @@ reseed :: proc "contextless" (generator: ^Generator, fresh: []u8) {
 	intrinsics.atomic_store(&generator.in_use, false)
 }
 
-// generator_from_context seeds the generator of a program with the seed of
+// generator_from_context seeds the generator of a process with the seed of
 // its context (the values 9 to 12) and its strength (the value 16), and
 // erases the seed there. It attaches the fresh bytes page of the context,
 // when the starter mapped one. false: the context has no seed (the root
@@ -270,8 +270,8 @@ generator_from_context :: proc "contextless" (generator: ^Generator, ctx: ^syste
 	return true
 }
 
-// values_with_seed gives the values of a program to start with a seed for
-// it from the generator of this program (system.program_start refuses a
+// values_with_seed gives the values of a process to start with a seed for
+// it from the generator of this process (system.process_start refuses a
 // start with no seed).
 values_with_seed :: proc "contextless" (generator: ^Generator, values: [op.CONTEXT_VALUES]u64) -> (with_seed: [op.CONTEXT_VALUES]u64) {
 	with_seed = values

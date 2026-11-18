@@ -8,7 +8,7 @@
 // `src/library/support/mark`, and plays its 15 animations in an order of chance. Four
 // animations move the whole heron: in the dash it leaves the window by the
 // right and comes back by the left, in the forms of the crouch and of the
-// run. The program draws again only the part of its window that changed,
+// run. The process draws again only the part of its window that changed,
 // and its log says how long a picture takes and how many pixels it damages.
 //
 // **What a reader sees.** Start it from the start menu, or with
@@ -37,11 +37,11 @@
 //   free picture.
 //
 // **The window is shown whole or not at all.** Its surface has two
-// pictures: the program draws one while the compositor reads the other,
+// pictures: the process draws one while the compositor reads the other,
 // and it draws only when the compositor took the picture before.
 //
 // **The log.** `heron: ok, the first picture is presented` after the first
-// picture. Each key writes one line, after the program presented its
+// picture. Each key writes one line, after the process presented its
 // state:
 //
 // - an animation that a key or a call asked for, when it ends: `heron:
@@ -160,7 +160,7 @@ lines_shown: bool // The stage shows the lines between the cells and the cells t
 way: Move_Way // How a move is drawn: on the grid, or free.
 cell_size_index: int // The index in cell_sizes of the cell size.
 order_memory: mark.Order_Memory // The animations that were played in this round.
-program_generator: random.Generator // The numbers of chance of the order and of the still times.
+process_generator: random.Generator // The numbers of chance of the order and of the still times.
 
 // asked: the animation that plays was asked for by a key or by a call.
 // The log gets one line when an animation ends; the values below count the
@@ -173,7 +173,7 @@ asked_pictures: u64
 asked_draw_time: u64 // Nanoseconds: the sum of the times of its pictures.
 asked_damage: u64 // Pixels: the sum of the damage of its pictures.
 played_line_waits: bool // An animation ended: its line is written after the picture.
-measure_line_written: bool // The measure of the pictures is on the log: the program writes it once.
+measure_line_written: bool // The measure of the pictures is on the log: the process writes it once.
 shows_line_waits: bool // A key or a call changed what the window shows (the lines, the way, a held frame): its line is written after the picture.
 pause_line_waits: bool // Space paused the play or let it go on: its line is written after the picture.
 speed_line_waits: bool // The key s changed the speed: its line is written after the picture.
@@ -303,9 +303,9 @@ grid :: proc "c" (on: i64) -> i64 {
 }
 
 // chance gives a whole number of chance from the random generator of the
-// program, for the order of the animations and for a still time.
+// process, for the order of the animations and for a still time.
 chance :: proc "contextless" () -> u32 {
-	return u32(random.next_u64(&program_generator))
+	return u32(random.next_u64(&process_generator))
 }
 
 // animation_start starts an animation at its first frame. by_request: a
@@ -674,7 +674,7 @@ band_key :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, key, te
 // state_color gives the color of the text of a key of the band: the color
 // of a state that runs when its state is on, else the dim color.
 state_color :: proc "contextless" (on: bool) -> graphics.Color {
-	return graphics.Color(on ? graphics.colors.program : graphics.colors.dim)
+	return graphics.Color(on ? graphics.colors.process : graphics.colors.dim)
 }
 
 // way_text gives the plain words of the way of a move.
@@ -756,7 +756,7 @@ band_draw :: proc "contextless" (frame: ^interface.Frame) {
 	interface.text_put_number(&builder, u64(cell_sizes[cell_size_index]))
 	band_key(table, CONTROL_CELL_X, y, "z", interface.text_of(&builder), graphics.colors.dim)
 	// The way of a move is one of two states, and each has its words.
-	band_key(table, CONTROL_WAY_X, y, "g", way_text(way), graphics.Color(way == .On_The_Grid ? graphics.colors.program : graphics.colors.boot_program))
+	band_key(table, CONTROL_WAY_X, y, "g", way_text(way), graphics.Color(way == .On_The_Grid ? graphics.colors.process : graphics.colors.boot_program))
 }
 
 // damage_pixels gives the count of the pixels of the damage rectangles of
@@ -825,7 +825,7 @@ played_line_write :: proc "contextless" () {
 // shows_line_write writes the line of what the window shows, after a
 // change of the lines or of the way, a step of a frame, or an animation
 // key while the play is paused. Each value of the line is what the
-// program drew: the animation and its frame, whether the play holds it,
+// process drew: the animation and its frame, whether the play holds it,
 // the way with the form and the place of src/library/support/mark or with the size of
 // the stretched frame, the lines, and the cells that the frame changed.
 shows_line_write :: proc "contextless" () {
@@ -844,7 +844,7 @@ shows_line_write :: proc "contextless" () {
 	system.log("heron: shows ", mark.animation_names[animation], " at frame ", u64(frame_now()), " of ", u64(mark.animation_frame_count(animation)), held, ", free: the frame stretched to ", u64(max(shown.body.right - shown.body.left, 0)), " by ", u64(max(shown.body.bottom - shown.body.top, 0)), " pixels; the lines of the cells ", lines, "; ", changed, " cells of the frame differ from the still heron")
 }
 
-// entry opens the window and plays the animations until the program is
+// entry opens the window and plays the animations until the process is
 // stopped.
 //
 // **The loop**: it runs the calls of its exports, takes the keys of the
@@ -857,12 +857,12 @@ shows_line_write :: proc "contextless" () {
 // with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if !random.generator_from_context(&program_generator, ctx) {
+	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("heron: no random seed in the context")
 		system.stop(1)
 	}
 	service, _ := system.service_open(ctx)
-	// The surface has two pictures, as each surface has: the program draws
+	// The surface has two pictures, as each surface has: the process draws
 	// one while the compositor reads the other, so the screen never shows
 	// a damage rectangle that is cleared and does not hold the heron yet.
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "heron")
@@ -896,7 +896,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		// The compositor did not take the last picture yet: it can still
-		// read the picture that the program would draw in. The keys are
+		// read the picture that the process would draw in. The keys are
 		// taken; the picture waits. The wait ends when the compositor has
 		// read the ring of the window, at a key or at a call. The time
 		// since the last picture goes on, so the play loses nothing.

@@ -37,7 +37,7 @@ The check names the file, the line of the `return` and the export. It reads a pr
 - `manual.about`, `manual.problem`: `Absent` with the unit `Modules` for a name that names no module. An empty text stays the answer of a module with no documentation, and of a module that keeps each rule.
 - `manual.signature`: `Absent` for the name; `Bad_Value` of argument 2 for a number that names no export, with the count of the described exports as `limit`.
 - `settings.get`: `Absent` for a name that names no setting, `Too_Long` for a name of more than 32 bytes, with the codes of `settings.set`.
-- `storage.stores`: `No_Grant` with the unit `Acts_For_Principal` for a caller that does not act for a principal. It gave the text "no grant to see the stores": a text that says no is a failure that a program cannot read.
+- `storage.stores`: `No_Grant` with the unit `Acts_For_Principal` for a caller that does not act for a principal. It gave the text "no grant to see the stores": a text that says no is a failure that a process cannot read.
 - `math.next_prime`: `Bad_Value` above 2^40. It gave 0, which a caller can take as a prime.
 
 **How they were found.** The check does not find them (see "The refused forms"). A scan of the sources listed each export with no record that gives a literal 0, an empty text or a text that says no. Each one was read: it is a failure, or an answer that stays.
@@ -45,7 +45,7 @@ The check names the file, the line of the `return` and the export. It reads a pr
 ## The refused forms
 
 - **A list of exports that the check skips.** The module `hostile_exports` is wrong on purpose, but only in the ways that the call path must refuse: a table past its capacity, a handle kept after its call. Its failures are not part of that test, so it gives records as each module does. A list of exceptions grows in silence.
-- **A check of the results when a program runs.** The console can refuse a negative result with a zero record. But a negative result can be an answer, and the fault is then found only on the path that a test runs.
+- **A check of the results when a process runs.** The console can refuse a negative result with a zero record. But a negative result can be an answer, and the fault is then found only on the path that a test runs.
 - **A check of the description in the module file.** The description says if an export has an error record. It does not say if the export can fail.
 - **A check that follows the values of variables.** It needs a type checker and a flow analysis in the tool. The forms above are the forms that the sources use; a `return` of a variable that holds -1 is not seen, and review holds it.
 - **A check of a `return 0` or of an empty text.** A 0 and an empty text are answers of many exports: `tally.last()` before the first add, `roman(0)`, `manual.problem` of a module that keeps each rule. The source does not say which 0 is a failure, so the check needs a list of exceptions, which is refused above.

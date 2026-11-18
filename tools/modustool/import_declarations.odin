@@ -91,7 +91,7 @@ attribute_text :: proc(attributes: []^ast.Attribute, name: string) -> (text: str
 
 // foreign_declarations_collect adds each procedure of each `foreign` block
 // of a list of statements, also those of a block inside a `when`: a
-// program can declare an import for one build setting only. A block in
+// process can declare an import for one build setting only. A block in
 // the body of a procedure is not read: the check of the slots
 // (declared_symbols_problem) then finds a symbol with no declaration.
 foreign_declarations_collect :: proc(statements: []^ast.Stmt, list: ^[dynamic]Foreign_Declaration) {
@@ -587,7 +587,7 @@ source_of_the_repository :: proc(path: string) -> (relative: string, ok: bool) {
 // it. The call is still in the code, so its symbol is a slot: a slot with
 // no compared declaration stops the build. Two declarations of one symbol
 // are allowed: each one is compared with the same description, so each is
-// the call form of the export. A program and a package that it compiles
+// the call form of the export. A process and a package that it compiles
 // can both declare an export, one of them in a `when` that this build
 // leaves out.
 declared_symbols_problem :: proc(slot_symbols: []string, compared_names: []string) -> string {
@@ -665,7 +665,7 @@ import_declarations_check :: proc(build: Module_Build, imports: []Import_File, s
 // (an import). The loader writes it for one base, so a starter keeps one
 // prepared part of it for each address where an importer has the module:
 // with many importers, its table of prepared modules fills, and the next
-// program does not start (src/library/support/system, load.odin).
+// process does not start (src/library/support/system, load.odin).
 //
 // A segment of that range of the linker that the loader writes nowhere is
 // not such a segment: the conversion gives it the flags of a constant

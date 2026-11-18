@@ -1,6 +1,6 @@
 // The design rules (docs/DESIGN.md) as one table of constants: the grid,
 // the surfaces, the colors of the concepts and the colors of the desktop.
-// The boot display, the compositor and the programs read this one table.
+// The boot display, the compositor and the processes read this one table.
 package graphics
 
 // The grid (DESIGN.md, section 6).
@@ -35,12 +35,12 @@ Color_Tokens :: struct {
 	firmware:     Color, // The firmware.
 	boot_program: Color, // Also the state "starts".
 	kernel:       Color, // The kernel.
-	program:      Color, // Also the state "runs", and an expected answer.
+	process:      Color, // Also the state "runs", and an expected answer.
 	memory:       Color, // Memory, and the values that count it.
 	machine:      Color, // The machine and its devices.
 	no_entry:     Color, // A module with no entry export: other modules import it.
 	resource:     Color, // A resource of the boot image: a file that is not a module.
-	failed:       Color, // A failure: a check that did not pass, a program that stopped on a fault.
+	failed:       Color, // A failure: a check that did not pass, a process that stopped on a fault.
 	not_usable:   Color, // Something that is there and cannot be used: reserved memory, a disabled control.
 	text:         Color, // The text.
 	dim:          Color, // A text of less weight: a unit, a caption.
@@ -52,7 +52,7 @@ Color_Tokens :: struct {
 	link:         Color, // A name that leads to another page: a link of a page of `manual`.
 	// The series colors: they tell apart the members of one series, several
 	// things of one kind that no concept of the rules tells apart (the
-	// threads of a program, the programs of the log, the records of a ring,
+	// threads of a process, the processes of the log, the records of a ring,
 	// the protections of a page). A member takes the color of its number in
 	// the series; a series of more members starts again at the first.
 	series:       [SERIES_COLOR_COUNT]Color,
@@ -69,14 +69,14 @@ Color_Tokens :: struct {
 	chosen:          Color,
 	title_quiet:     Color, // The left end of the title bar of a window that has not the focus.
 	title_quiet_end: Color, // Its right end.
-	// The concept "stop a program": the close button of a window, in a
+	// The concept "stop a process": the close button of a window, in a
 	// rich red, so that the cross that closes a window is seen at once. A
-	// deep red, not the coral of `failed`: to stop a program is not a
+	// deep red, not the coral of `failed`: to stop a process is not a
 	// failure.
-	stop_program:              Color, // On the window that has the focus.
-	stop_program_pointer_over: Color, // The pointer is over the button.
-	stop_program_quiet:        Color, // On a window that is not in front.
-	stop_program_quiet_mark:   Color, // The x on the quiet button.
+	stop_process:              Color, // On the window that has the focus.
+	stop_process_pointer_over: Color, // The pointer is over the button.
+	stop_process_quiet:        Color, // On a window that is not in front.
+	stop_process_quiet_mark:   Color, // The x on the quiet button.
 }
 
 // The values of the dark appearance, as constants: the accents of the
@@ -92,7 +92,7 @@ DARK_TRACK :: 0x1C2633
 DARK_FIRMWARE :: 0x8E7CC3
 DARK_BOOT_PROGRAM :: 0xE0A040
 DARK_KERNEL :: 0x4A9CF0
-DARK_PROGRAM :: 0x58D878
+DARK_PROCESS :: 0x58D878
 DARK_MEMORY :: 0x38C0B0
 DARK_MACHINE :: 0xD070B0
 DARK_NO_ENTRY :: 0xC8C058
@@ -104,7 +104,7 @@ DARK_DIM :: 0x7C8A99
 DARK_WARNING :: 0xF0C050
 DARK_LINK :: 0x6CB4F0
 SERIES_COLOR_COUNT :: 8
-// The series colors of the dark appearance. A program that computes a
+// The series colors of the dark appearance. A process that computes a
 // picture in the color of a member reads these: a picture keeps its pixels
 // in both appearances, and its legend takes the color of the same hue.
 DARK_SERIES :: [SERIES_COLOR_COUNT]Color{0x4696FF, 0xFF963C, 0x5AE66E, 0xDC64FA, 0xE06890, 0x60D8D0, 0xD8D860, 0x9CC040}
@@ -113,10 +113,10 @@ DARK_TITLE_END :: 0x162C45
 DARK_CHOSEN :: 0x3C76BB
 DARK_TITLE_QUIET :: 0x2A3442
 DARK_TITLE_QUIET_END :: 0x161D27
-DARK_STOP_PROGRAM :: 0xB82232
-DARK_STOP_PROGRAM_POINTER_OVER :: 0xE0343F
-DARK_STOP_PROGRAM_QUIET :: 0x4E2229
-DARK_STOP_PROGRAM_QUIET_MARK :: 0xC09098
+DARK_STOP_PROCESS :: 0xB82232
+DARK_STOP_PROCESS_POINTER_OVER :: 0xE0343F
+DARK_STOP_PROCESS_QUIET :: 0x4E2229
+DARK_STOP_PROCESS_QUIET_MARK :: 0xC09098
 
 COLOR_BLACK :: 0x000000 // Black: no surface of the design uses it as a background. Not a token: the pointer is black and white in both appearances.
 COLOR_WHITE :: 0xFFFFFF // White: a text on the chosen blue, on the title blue and on the red of the close button, in both appearances.
@@ -134,7 +134,7 @@ DARK_COLOR_TOKENS :: Color_Tokens {
 	firmware                  = DARK_FIRMWARE,
 	boot_program              = DARK_BOOT_PROGRAM,
 	kernel                    = DARK_KERNEL,
-	program                   = DARK_PROGRAM,
+	process                   = DARK_PROCESS,
 	memory                    = DARK_MEMORY,
 	machine                   = DARK_MACHINE,
 	no_entry                  = DARK_NO_ENTRY,
@@ -152,10 +152,10 @@ DARK_COLOR_TOKENS :: Color_Tokens {
 	chosen                    = DARK_CHOSEN,
 	title_quiet               = DARK_TITLE_QUIET,
 	title_quiet_end           = DARK_TITLE_QUIET_END,
-	stop_program              = DARK_STOP_PROGRAM,
-	stop_program_pointer_over = DARK_STOP_PROGRAM_POINTER_OVER,
-	stop_program_quiet        = DARK_STOP_PROGRAM_QUIET,
-	stop_program_quiet_mark   = DARK_STOP_PROGRAM_QUIET_MARK,
+	stop_process              = DARK_STOP_PROCESS,
+	stop_process_pointer_over = DARK_STOP_PROCESS_POINTER_OVER,
+	stop_process_quiet        = DARK_STOP_PROCESS_QUIET,
+	stop_process_quiet_mark   = DARK_STOP_PROCESS_QUIET_MARK,
 }
 
 // The light appearance: the light form of the site. The background is the
@@ -175,7 +175,7 @@ LIGHT_COLOR_TOKENS :: Color_Tokens {
 	firmware                  = 0x7566A1, // shade(DARK_FIRMWARE, 83).
 	boot_program              = 0x906729, // shade(DARK_BOOT_PROGRAM, 65).
 	kernel                    = 0x3571AF, // shade(DARK_KERNEL, 73).
-	program                   = 0x327C45, // shade(DARK_PROGRAM, 58).
+	process                   = 0x327C45, // shade(DARK_PROCESS, 58).
 	memory                    = 0x247C71, // shade(DARK_MEMORY, 65).
 	machine                   = 0xA15688, // shade(DARK_MACHINE, 78).
 	no_entry                  = 0x6D6930, // shade(DARK_NO_ENTRY, 55).
@@ -197,17 +197,17 @@ LIGHT_COLOR_TOKENS :: Color_Tokens {
 	chosen                    = DARK_CHOSEN,
 	title_quiet               = 0xE4E8ED,
 	title_quiet_end           = 0xD3D9E0,
-	stop_program              = DARK_STOP_PROGRAM,
-	stop_program_pointer_over = DARK_STOP_PROGRAM_POINTER_OVER,
-	stop_program_quiet        = 0xF2D5D9,
-	stop_program_quiet_mark   = 0x8E3A47,
+	stop_process              = DARK_STOP_PROCESS,
+	stop_process_pointer_over = DARK_STOP_PROCESS_POINTER_OVER,
+	stop_process_quiet        = 0xF2D5D9,
+	stop_process_quiet_mark   = 0x8E3A47,
 }
 
-// The tokens of the appearance in force in this program. Each program, and
+// The tokens of the appearance in force in this process. Each process, and
 // each copy of the drawing module, has its own: display sets it from the
-// settings page. A program with no settings page keeps the dark appearance.
+// settings page. A process with no settings page keeps the dark appearance.
 colors := DARK_COLOR_TOKENS
-// The appearance in force in this program: the one whose tokens `colors` holds.
+// The appearance in force in this process: the one whose tokens `colors` holds.
 appearance: Appearance
 
 // color_tokens_of gives the tokens of one appearance.
@@ -221,7 +221,7 @@ color_tokens_of :: proc "contextless" (of: Appearance) -> Color_Tokens {
 }
 
 // appearance_use makes one appearance the appearance in force of this
-// program: each draw after it reads its tokens. The caller draws its whole
+// process: each draw after it reads its tokens. The caller draws its whole
 // window again: a frame that kept a part of the picture before would show
 // two appearances.
 appearance_use :: proc "contextless" (of: Appearance) {

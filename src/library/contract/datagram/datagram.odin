@@ -1,18 +1,18 @@
-// The datagram contract: what a program and the network service agree on.
+// The datagram contract: what a process and the network service agree on.
 // The network service is the one client of the frame service of the network
-// device; it gives each program that has the grant one endpoint.
+// device; it gives each process that has the grant one endpoint.
 //
-// An endpoint is UDP or TCP over IPv4 for one program, with a grant. The
-// root service names the grant; the program cannot choose another one
+// An endpoint is UDP or TCP over IPv4 for one process, with a grant. The
+// root service names the grant; the process cannot choose another one
 // (no ambient network and no global port names: docs/PROPERTIES.md, "No
 // ambient access").
 //
-//   a datagram endpoint  UDP: the program writes and reads whole
+//   a datagram endpoint  UDP: the process writes and reads whole
 //                        datagrams, with the UDP header and its checksum
 //                        (src/library/support/network, udp_header_write and
 //                        udp_data_read); the network service writes the
 //                        IPv4 header. A client grant names the one remote
-//                        address and remote UDP port that the program
+//                        address and remote UDP port that the process
 //                        reaches; the network service gives the local
 //                        port. A listen grant names one local UDP
 //                        port, and can name one remote address: then a
@@ -20,11 +20,11 @@
 //                        only the admitted remotes: each
 //                        remote that sent a datagram of LISTEN_FIRST_LEAST
 //                        bytes at least to that port, ADMITTED_CAPACITY at
-//                        most, until the program releases it (a QUIC
+//                        most, until the process releases it (a QUIC
 //                        server: docs/QUIC.md, section 6). To a remote that
-//                        the program did not validate, it sends at most 3
+//                        the process did not validate, it sends at most 3
 //                        times the bytes that came from that remote.
-//   a segment endpoint   TCP: the program writes and reads whole segments
+//   a segment endpoint   TCP: the process writes and reads whole segments
 //                        (src/library/support/tcp); the network service writes the IPv4
 //                        header and keeps no state of a connection. A client
 //                        grant names one remote, and the network service
@@ -32,27 +32,27 @@
 //                        listen grant names one local TCP port, and answers
 //                        only the admitted remotes: each remote that sent a
 //                        segment to that port, ADMITTED_CAPACITY at most,
-//                        until the program releases it (docs/NETWORK.md).
+//                        until the process releases it (docs/NETWORK.md).
 //
 // A datagram or a segment from a remote that the grant does not name does
 // not reach the endpoint.
 //
-// The program and the network service share two memory objects:
+// The process and the network service share two memory objects:
 //
 //   the datagram ring    a ring (package ring). One command record is one
 //                        request: send a datagram, give a place for a
 //                        datagram that arrives, and the requests below.
-//   the datagram region  REGION_PAGES pages. The program writes the data of
+//   the datagram region  REGION_PAGES pages. The process writes the data of
 //                        a datagram there; the network service writes the
 //                        data of a datagram that arrives there. A request
 //                        names a place in the region, never an address.
 //
 // The root service makes the two memory objects and gives them to the two
-// programs, as it makes the call region of a connection. A program does not
+// processes, as it makes the call region of a connection. A process does not
 // give a region of its own: it would hold the origin of the mapping of the
 // network service, and its revocation would stop the network service on a
-// page fault, for all programs: a thread that uses memory that its program
-// lost stops its program on a page fault.
+// page fault, for all processes: a thread that uses memory that its process
+// lost stops its process on a page fault.
 // The region is contiguous: the network service lends it to the frame
 // service with the right Read only, and the device reads the data of each
 // datagram or segment to send there.
@@ -61,17 +61,17 @@
 // from its frame to the region. One that leaves is not copied: the network
 // service copies its first 8 bytes (the ports, and the length of UDP) for
 // its check, and the device reads the rest from the region. It computes no
-// checksum of the transport: the program writes the checksum of what it
+// checksum of the transport: the process writes the checksum of what it
 // sends, and checks the checksum of what it receives. The network service
-// checks the ports of what a program sends in its own copy, which the
-// program cannot change: a program sends only from the local ports of its
-// endpoint, to the remote of its grant. A program that writes a wrong
+// checks the ports of what a process sends in its own copy, which the
+// process cannot change: a process sends only from the local ports of its
+// endpoint, to the remote of its grant. A process that writes a wrong
 // checksum, that does not check one, or that writes a place before the
 // completion of its Send, harms its own traffic only
 // (docs/NETWORK.md, "The path of a datagram and of a segment").
 //
 // Many requests are in flight. A Receive stays in flight until a datagram
-// arrives: the program gives the places before (the caller supplies the
+// arrives: the process gives the places before (the caller supplies the
 // memory: the service allocates none for it), and the
 // network service drops a datagram when no place waits (Statistics counts
 // it). A completion record has the tag of its command, and a Status as its
@@ -102,14 +102,14 @@ LISTEN_FIRST_LEAST :: 1200
 
 REGION_PAGES :: 128 // The datagram region: 512 KiB.
 
-// The roles of the endpoint in the context of a program.
+// The roles of the endpoint in the context of a process.
 GRANT_RING :: 11 // Memory: the datagram ring of the endpoint.
 GRANT_REGION :: 13 // Memory: the datagram region of the endpoint.
 // The roles in the context of the network service: the frame ring is the
 // role frame.GRANT_RING; the control ring from the root service is this one.
 SERVICE_CONTROL :: 12
 
-// A command of a program to its endpoint, as the kind of a command record of
+// A command of a process to its endpoint, as the kind of a command record of
 // the datagram ring.
 Command :: enum u32 {
 	None       = 0, // Not a command: Bad_Command.
@@ -140,10 +140,10 @@ Command :: enum u32 {
 	// port. The place holds the whole datagram, with its UDP header; a
 	// segment endpoint: a whole segment. The network service checked the
 	// lengths, the ports and the remote, not the checksum of the datagram
-	// or of the segment: the program checks it (network.udp_data_read,
+	// or of the segment: the process checks it (network.udp_data_read,
 	// src/library/support/tcp), with the remote address of values[2] and its local
 	// address. A frame whose port the wire damaged can so reach the
-	// endpoint of another port: its checksum is wrong, and the program
+	// endpoint of another port: its checksum is wrong, and the process
 	// drops it.
 	Receive    = 3,
 	// values[0]: an address. The network service asks its hardware address
@@ -164,8 +164,8 @@ Command :: enum u32 {
 	// service, values[3] those of the frame service, values[5] the echo
 	// requests that the network service answered, and values[4] also counts
 	// the frames that no endpoint owns. Without the right they are 0: they
-	// tell of the traffic of other programs, and a program without the right
-	// learns nothing of another program.
+	// tell of the traffic of other processes, and a process without the right
+	// learns nothing of another process.
 	Statistics = 6,
 	// values[0]: a place in the region. values[1]: the room there, in
 	// Problem_Row records. The network service writes one row for each kind
@@ -175,16 +175,16 @@ Command :: enum u32 {
 	// endpoint. The completion has the count of the full table in values[0].
 	Problems   = 7,
 	// A listen grant: values[0], values[1]: the address and the port of an
-	// admitted remote, whose connection ended or that the program refused.
+	// admitted remote, whose connection ended or that the process refused.
 	// The network service forgets it: a segment or a datagram to it is
 	// refused until it is admitted again. The completion: values[0] 1 if the
 	// remote was admitted, else 0.
 	Release    = 8,
 	// A UDP listen grant: values[0], values[1]: the address and the port of
-	// an admitted remote that proved its address to the program (a QUIC
+	// an admitted remote that proved its address to the process (a QUIC
 	// server: a token of its Retry). Until then, the network service sends
 	// to that remote at most 3 times the bytes that came from it (status
-	// Amplification). A program that validates each remote removes that
+	// Amplification). A process that validates each remote removes that
 	// limit for the remotes that sent to it; it still reaches no address
 	// that did not send it a datagram, and a remote with no datagram for
 	// 120 s loses its place. The completion: values[0] 1 if the remote was
@@ -227,7 +227,7 @@ Control :: enum u32 {
 	// with or without the right Inspect. A grant word with a bit outside
 	// GRANT_KNOWN_BITS: Bad_Command, Bad_Value of the argument 3, value:
 	// the unknown bits shifted down by GRANT_KNOWN_BIT_COUNT, limit 0.
-	// values[3..6]: the name of the program, 32 bytes. The completion:
+	// values[3..6]: the name of the process, 32 bytes. The completion:
 	// values[0] the local port of the endpoint.
 	Endpoint_Add    = 1,
 	// values[0]: the datagram ring. values[1]: the new grant (grant_pack);
@@ -297,8 +297,8 @@ Problem_Row :: struct {
 
 // The right Inspect of a grant: the endpoint reads the facts of the network
 // of the machine (Statistics, Problems). The root service gives it only to
-// a program that holds the machine with the right Inspect, which reads the
-// facts of all programs already.
+// a process that holds the machine with the right Inspect, which reads the
+// facts of all processes already.
 GRANT_INSPECT :: u64(1) << 48
 GRANT_TCP :: u64(1) << 49 // A segment endpoint.
 GRANT_LISTEN :: u64(1) << 50 // A listen grant: the port is the local TCP or UDP port. A UDP listen grant can name one remote address; no remote port is named.

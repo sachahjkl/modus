@@ -9,7 +9,7 @@ import "core:time"
 // as the principal does (src/md/features/window_resize.md). The window
 // grows to the left and down: a new window is placed at the left of the
 // screen, with room at its left and under it. The compositor
-// sends the program the event Resized at the release, the program makes
+// sends the process the event Resized at the release, the process makes
 // the surface of the new size, and the compositor writes its line when the
 // window takes it, at the first picture of that surface:
 // "compositor: window clock resized from 816x336 to 880x384".
@@ -73,7 +73,7 @@ window_resize_step :: proc(machine: ^Machine, step: Step, index: int) -> bool {
 	for start := time.now(); time.since(start) < HANG_BOUND; {
 		text := log_read(machine)
 		if len(text) > before && strings.contains(text[before:], wanted) {
-			test_passed_print("the window %s is %dx%d: its program drew the new size", step.text, step.to_x, step.to_y)
+			test_passed_print("the window %s is %dx%d: its process drew the new size", step.text, step.to_x, step.to_y)
 			return true
 		}
 		log_change_wait(machine)

@@ -1,22 +1,22 @@
-// The storage service: it keeps the store of each program on the data disk, through a block service: a tree of entries, each an object or a tree inside it (docs/STORAGE.md). No program sees a shared tree of names.
+// The storage service: it keeps the store of each process on the data disk, through a block service: a tree of entries, each an object or a tree inside it (docs/STORAGE.md). No process sees a shared tree of names.
 //
 // The root service decides who has a store: it names the store of each connection, and its limit of blocks. A connection reaches the tree of its store and what is under it: each export takes a place (0 is the root of the connection) and a name of one step under it, never a path, and never the name of a store. A connection that [share](storage.share) makes reaches a tree of the store of its maker only, and **can read only**; [unshare](storage.unshare) revokes it.
 //
-// **A change is one commit**, on the disk when the call returns: the system has no save action. The state of an object before a change is a version: a program reads, compares, restores and clones versions with no code of its own, and [erase_versions](storage.erase_versions) ends them and writes zeros over their blocks. The disk always has the state of the last commit, or of the one before: a stop of the machine during a commit never shows a part of it. The checks of the blocks show each change that the service did not make.
+// **A change is one commit**, on the disk when the call returns: the system has no save action. The state of an object before a change is a version: a process reads, compares, restores and clones versions with no code of its own, and [erase_versions](storage.erase_versions) ends them and writes zeros over their blocks. The disk always has the state of the last commit, or of the one before: a stop of the machine during a commit never shows a part of it. The checks of the blocks show each change that the service did not make.
 //
-// A program that acts for a principal (the console, remote for the host) sees the stores of that principal with [stores](storage.stores), and opens a place on one of them with [open_store](storage.open_store).
+// A process that acts for a principal (the console, remote for the host) sees the stores of that principal with [stores](storage.stores), and opens a place on one of them with [open_store](storage.open_store).
 //
 // **Grants**, as the root service gives them:
 //
-// - **Serve**: each program with the grant **Store** reaches its private store through a connection.
+// - **Serve**: each process with the grant **Store** reaches its private store through a connection.
 // - **Data_Disk**: the block service of the data disk and its block ring. The storage service is the one client of
-//   that disk: no other program reads its blocks.
+//   that disk: no other process reads its blocks.
 //
-// **Start**: no line starts it. The root service starts it when a program asks for a connection to `storage`, or
-// before a program with a private store. From the console: `connect("storage")`, then for example
+// **Start**: no line starts it. The root service starts it when a process asks for a connection to `storage`, or
+// before a process with a private store. From the console: `connect("storage")`, then for example
 // `storage.write(0, "greeting", "kept on the disk")` and `storage.read(0, "greeting")`.
 //
-// **What it proves**: a program keeps its state across a stop of the machine with no file system, no path and no
+// **What it proves**: a process keeps its state across a stop of the machine with no file system, no path and no
 // save action, and it reaches no store but its own. It does not prove secrecy against a reader of the disk: the
 // blocks are not encrypted.
 //
@@ -46,7 +46,7 @@ import "modus:support/system"
 // pending blocks of the ranges (4 MB), and the object nodes that one commit
 // copies (7 MB). The working memory: the regions of its connections, and
 // the rest of the 10240 pages that it had before the tool counted.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1829, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1829, processes = 1, threads = 1}
 
 // failure gives the result of an export that fails with an answer: the
 // word of the member (answers.Export_Error), which the client reads back.
@@ -140,7 +140,7 @@ caller_of :: proc "contextless" () -> (caller: Caller) {
 		caller.acts_for_principal = connection.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 		caller.principal = isolated.caller_principal(connection.grant)
 		// The root service gives a connection that reads only, for the
-		// debug object of a disk program: each change is refused on it, as
+		// debug object of a disk process: each change is refused on it, as
 		// on a share that reads only.
 		caller.read_only = connection.grant & isolated.CALLER_READS_ONLY != 0
 		// A share never has it: the field stays false below.
@@ -161,7 +161,7 @@ caller_of :: proc "contextless" () -> (caller: Caller) {
 }
 
 // reaches_whole_store says if the root of the connection of a caller is the
-// root of its store: the connection of the program of the store, or a
+// root of its store: the connection of the process of the store, or a
 // share of the whole store. Only such a caller finds an object by its hash
 // (docs/STORAGE.md, "4.7 The same object one time"): a share of one tree
 // must not learn from its count of blocks what the rest of the store holds.
@@ -616,7 +616,7 @@ Shared :: struct {
 	region: i64, // Memory: the call region.
 }
 
-// share makes a new connection to this service whose root is the tree of a place, and gives its call ring and its call region to the caller, which can give them to another program. With read_only 1 the connection changes nothing. A connection that reads only makes shares that read only. The share ends when the caller calls unshare, or when the connection that made it loses its store. The result is one row, or a negative number with an error record.
+// share makes a new connection to this service whose root is the tree of a place, and gives its call ring and its call region to the caller, which can give them to another process. With read_only 1 the connection changes nothing. A connection that reads only makes shares that read only. The share ends when the caller calls unshare, or when the connection that made it loses its store. The result is one row, or a negative number with an error record.
 //
 // **Error kinds**
 //
@@ -682,7 +682,7 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 	return 1
 }
 
-// share_end revokes the handles of a share in each program that has them,
+// share_end revokes the handles of a share in each process that has them,
 // and frees it and its places.
 share_end :: proc "contextless" (item: ^Share) {
 	system.handle_revoke(item.connection.ring_memory)
@@ -699,7 +699,7 @@ share_end :: proc "contextless" (item: ^Share) {
 	item^ = {}
 }
 
-// unshare ends a share that this connection made: the kernel ends its handles in each program that has them, and its places end. The result is 0, or a negative number with an error record.
+// unshare ends a share that this connection made: the kernel ends its handles in each process that has them, and its places end. The result is 0, or a negative number with an error record.
 //
 // **Error kinds**
 //
@@ -1090,7 +1090,7 @@ Erase_Measure :: struct {
 	damaged:    i64, // The version indexes, leaves and states with a wrong block that the erase ended without zeros over their bytes.
 }
 
-// erase_versions ends each version of the object `name` under a place, in one commit, and then writes zero bytes over each block that no other state, version or entry names after that commit: the data and the object nodes of the versions, their index and their leaves, and the tree nodes that the commit replaced. The current version stays, with its generation. A block that another state still names keeps its bytes, and the row counts it. Before the zeros, the commit reads back its blocks and its root, past the cache of the service, then the service writes the root of the commit again with the next generation and reads it back, so that no root on the disk names a block of zeros; after the zeros it reads them back. A loss of power leaves the versions or none of them. The disk device can keep old copies of a block that the service does not see (src/md/features/version_erase.md). Only a program with the grant Versions_Erase may call it, on its own store: a program without it, a share, a place of another store and a connection that reads only are refused. An object with no version makes no commit. The result is one row: the generation of the last root, the versions ended, the blocks written with zeros, the blocks kept because another state names them, and the damaged parts of the versions that were ended without zeros; or a negative number with an error record.
+// erase_versions ends each version of the object `name` under a place, in one commit, and then writes zero bytes over each block that no other state, version or entry names after that commit: the data and the object nodes of the versions, their index and their leaves, and the tree nodes that the commit replaced. The current version stays, with its generation. A block that another state still names keeps its bytes, and the row counts it. Before the zeros, the commit reads back its blocks and its root, past the cache of the service, then the service writes the root of the commit again with the next generation and reads it back, so that no root on the disk names a block of zeros; after the zeros it reads them back. A loss of power leaves the versions or none of them. The disk device can keep old copies of a block that the service does not see (src/md/features/version_erase.md). Only a process with the grant Versions_Erase may call it, on its own store: a process without it, a share, a place of another store and a connection that reads only are refused. An object with no version makes no commit. The result is one row: the generation of the last root, the versions ended, the blocks written with zeros, the blocks kept because another state names them, and the damaged parts of the versions that were ended without zeros; or a negative number with an error record.
 //
 // **Error kinds**
 //
@@ -1110,10 +1110,10 @@ erase_versions :: proc "c" (place: i64, name: ^string, result: ^[]Erase_Measure,
 	if share_of(named.caller.connection) != nil {
 		return errors.fail(error, failure(.Place), .No_Grant, .Changes)
 	}
-	// The versions protect the principal against a fault of the program of
-	// the store: only a program that the root service allows ends them, for
+	// The versions protect the principal against a fault of the process of
+	// the store: only a process that the root service allows ends them, for
 	// a secret that an earlier version must not keep (docs/PROPERTIES.md,
-	// "Persistence: no save action, and versions for all programs").
+	// "Persistence: no save action, and versions for all processes").
 	if !named.caller.erases_versions {
 		return errors.fail(error, failure(.Place), .No_Grant, .Versions_Erase)
 	}
@@ -1169,7 +1169,7 @@ shares_serve :: proc "contextless" () -> (calls: int) {
 // The entry of the storage service: it attaches to the block service of the data disk, opens the disk, then
 // serves the calls of its connections for the life of the machine.
 //
-// The root service starts it on demand: at the first connection to `storage`, or before the first program with a
+// The root service starts it on demand: at the first connection to `storage`, or before the first process with a
 // private store. The entry, in order:
 //
 // 1. opens its service ring and the block ring; with no ring, it writes "storage: no service ring" or
@@ -1198,7 +1198,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// of the key in the data of the module.
 	slot_key_generator: random.Generator
 	if !random.generator_from_context(&slot_key_generator, ctx) {
-		system.log_in("storage", .Error, "storage: no seed in the context of the program")
+		system.log_in("storage", .Error, "storage: no seed in the context of the process")
 		system.stop(1)
 	}
 	slot_key: [8]u8

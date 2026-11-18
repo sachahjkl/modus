@@ -377,7 +377,7 @@ records_and_handles_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, call.lent_count, 2)
 	testing.expect_value(t, call.lent[0], Lent{0x1_0007, 6})
 	testing.expect_value(t, call.lent[1], Lent{0x2_0009, 3})
-	// The copy is private: the other program changes the call region, and
+	// The copy is private: the other process changes the call region, and
 	// the export still reads what decode read.
 	for &b in region[int(size):] {
 		b = 0xEE

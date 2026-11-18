@@ -1,13 +1,13 @@
-// A program that keeps its state when it stops and when the machine stops: a note and a count, in its private store.
+// A process that keeps its state when it stops and when the machine stops: a note and a count, in its private store.
 //
-// Each change goes to the storage service when it happens: the program has no save action. The note is the object "note". The count is the object "count": three blocks that each hold the count in each of their 512 numbers, so that a part of one commit with a part of another would show.
+// Each change goes to the storage service when it happens: the process has no save action. The note is the object "note". The count is the object "count": three blocks that each hold the count in each of their 512 numbers, so that a part of one commit with a part of another would show.
 //
 // Keys: a character adds to the note, Backspace removes the last one, Enter writes the note on the log. Tab counts 1000 more, one commit for each step.
 //
-// Versions: each key is one commit, and the storage service keeps the state before it as a version, so the program has undo to any earlier version with no code of its own to keep them. Up shows the version before the one shown, Down the one after; Enter restores the version shown (a new commit: nothing is lost); Escape goes back to the current note. The bar under the note has one mark for each version.
+// Versions: each key is one commit, and the storage service keeps the state before it as a version, so the process has undo to any earlier version with no code of its own to keep them. Up shows the version before the one shown, Down the one after; Enter restores the version shown (a new commit: nothing is lost); Escape goes back to the current note. The bar under the note has one mark for each version.
 //
-// **What it is for.** It is the smallest program that shows persistence as a property of the system and not of
-// the program: no file, no path, no save action, and undo with no code of its own. The test of a loss of power
+// **What it is for.** It is the smallest process that shows persistence as a property of the system and not of
+// the process: no file, no path, no save action, and undo with no code of its own. The test of a loss of power
 // stops the machine during the run of Tab, then checks at the next start that the three blocks of the count agree.
 //
 // **Start**: `start("notes")` in the console, or the bar of the desktop. The note holds 60 characters at most.
@@ -23,10 +23,10 @@
 // - `notes: a new store: no note, the count 0`;
 // - `notes: restored the note "..." and the count N, its 3 blocks agree`;
 // - `notes: WRONG: ...` when an object is damaged or the 3 blocks do not agree;
-// - `notes: no store` when the program has no store: it then keeps nothing.
+// - `notes: no store` when the process has no store: it then keeps nothing.
 //
-// **What it does not prove**: one writer only. Two programs never share the note: each private store belongs to
-// one program.
+// **What it does not prove**: one writer only. Two processes never share the note: each private store belongs to
+// one process.
 //
 // The design: (docs/STORAGE.md, "Versions, thinning and the limit") and (docs/STORAGE.md, "A loss of power").
 package notes
@@ -48,7 +48,7 @@ MARGIN :: 12
 VERSION_LABEL :: "version  "
 // The window has the width of its widest line: an older version of the
 // note at its full length, after its label. Each other line of the window
-// is a text of this program, placed in this width with
+// is a text of this process, placed in this width with
 // interface.draw_text_wrapped: a line that the window cannot hold goes on
 // two lines, it is never cut at the edge.
 TEXT_ROOM :: (len(VERSION_LABEL) + NOTE_CAPACITY) * graphics.CELL_WIDTH
@@ -62,7 +62,7 @@ HEIGHT :: KEYS_Y + interface.ACTION_BAR_WRAP_ROWS * interface.ACTION_BAR_ROW_HEI
 // action bar"). A printable character writes the note: the caret after
 // the note says it.
 // A procedure, not a global array: an item is made by a call, and a
-// freestanding program runs no call before its entry.
+// freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [5]interface.Action_Bar_Item {
 	return {
 		interface.action_bar_item("older version", 4, "Up"),
@@ -164,7 +164,7 @@ restore :: proc "contextless" () {
 	text, found, status := storage.read(&client, storage.ROOT, "note", note[:])
 	note_damaged := status == .Damaged
 	if status != .Ok && !note_damaged {
-		restored, gone = "no store: the program keeps nothing", true
+		restored, gone = "no store: the process keeps nothing", true
 		system.log("notes: no store")
 		return
 	}
@@ -217,7 +217,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	// which is the token of its accent in both appearances.
 	x = interface.draw_text(table, 12, 40, "count ", graphics.colors.dim)
 	x = interface.draw_text(table, x, 40, system.format(buffer[:], count), graphics.colors.memory)
-	if generation > 0 { // The generation of the last commit of this program, after its first change.
+	if generation > 0 { // The generation of the last commit of this process, after its first change.
 		x = interface.draw_text(table, x + 24, 40, "generation ", graphics.colors.dim)
 		interface.draw_text(table, x, 40, system.format(buffer[:], generation), graphics.colors.text)
 	}
@@ -230,9 +230,9 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	// The status of the start, then, when the store is gone, what that
 	// means for the keys: each in the width of the window.
 	status_y := 156
-	status_y += graphics.CELL_HEIGHT * interface.draw_text_wrapped(table, MARGIN, status_y, TEXT_ROOM, restored, restored_good ? graphics.colors.program : graphics.colors.failed)
+	status_y += graphics.CELL_HEIGHT * interface.draw_text_wrapped(table, MARGIN, status_y, TEXT_ROOM, restored, restored_good ? graphics.colors.process : graphics.colors.failed)
 	if gone {
-		interface.draw_text_wrapped(table, MARGIN, status_y, TEXT_ROOM, "the grant of the store ended: the program keeps nothing", graphics.colors.failed)
+		interface.draw_text_wrapped(table, MARGIN, status_y, TEXT_ROOM, "the grant of the store ended: the process keeps nothing", graphics.colors.failed)
 	}
 	// The versions of the note: one mark for each state, the shown one lit.
 	// The count is on one line; the generation and the date of the version
@@ -288,7 +288,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	if client, ok = storage.open(ctx); !ok {
-		restored, gone = "no store: the program keeps nothing", true
+		restored, gone = "no store: the process keeps nothing", true
 		system.log("notes: no store")
 	} else {
 		restore()
