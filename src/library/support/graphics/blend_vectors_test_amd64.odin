@@ -670,7 +670,7 @@ test_caches_build :: proc(t: ^testing.T) -> (caches: [3]Test_Cache) {
 }
 
 // The three blends of a glyph give the same bytes: the table blend of the
-// processes (character_vector_with, with its fallback in the form of the
+// modules (character_vector_with, with its fallback in the form of the
 // target), the SSE2 form alone and the scalar form alone. For each cache of
 // the system, each scale that it has, each order of the stripes, three
 // colors, over a flat color, the gradient of a card, a gradient across and
@@ -747,7 +747,7 @@ three_blends_give_the_same_bytes_for_each_cache :: proc(t: ^testing.T) {
 // The time of one glyph at scale 1 of Paper Mono in each blend, over a
 // flat color, a gradient across and noise, on the host: run with `taskset
 // -c N` and -o:speed, the least of SPEED_BATCHES batches of one line (as
-// text_speed_parts). The table blend is the path of the processes; the SSE2
+// text_speed_parts). The table blend is the path of the modules; the SSE2
 // form alone and the scalar form alone draw each row with that form.
 @(test)
 text_speed_of_each_blend :: proc(t: ^testing.T) {

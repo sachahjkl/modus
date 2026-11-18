@@ -186,7 +186,7 @@ chosen_of :: proc "contextless" (panel: ^Panel) -> Chosen {
 	if entry == nil {
 		return .Nothing
 	}
-	// With the prefix of the manual, the choice of a process asks the
+	// With the prefix of the manual, the choice of a module asks the
 	// provider for its page.
 	if prefix, _ := prefix_of(typed_text(panel)); prefix == .Manual && entry.kind == .Module {
 		return .Sends

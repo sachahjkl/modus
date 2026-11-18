@@ -81,7 +81,7 @@ a_full_table :: proc(t: ^testing.T) {
 }
 
 // A nickname with a store has letters, digits, '-' and '_' only: a '.' could
-// name the store of another process or of another principal.
+// name the store of another module or of another principal.
 @(test)
 nicknames_that_a_grant_refuses :: proc(t: ^testing.T) {
 	cases := [?]struct {

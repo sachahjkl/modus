@@ -386,14 +386,14 @@ name_unpack :: proc "contextless" (values: [3]u64) -> (name: [NAME_LIMIT]u8, len
 
 // store_name_write writes the name of the store that the root service gives
 // to the connection of a process to the storage service: the name of the
-// process for principal 0, so the stores of the system keep their names;
-// "<process>.principal.<number>" for a named principal, so two principals
-// that run one process have two stores. history adds ".history" after the
-// name of the process (the store of the line history of the console). It
+// module for principal 0, so the stores of the system keep their names;
+// "<module>.principal.<number>" for a named principal, so two principals
+// that run one module have two stores. history adds ".history" after the
+// name of the module (the store of the line history of the console). It
 // gives false when the name and its zero byte do not fit in 32 bytes: the
 // root service then refuses the connection, as a cut name could be the
 // name of another store. This is the one place that builds the name: the
-// identity of the package of the process (the key of the principal that
+// identity of the package of the module (the key of the principal that
 // signs it, and its name) enters here when storage attaches data to it
 // (docs/PRINCIPALS.md, section 6).
 store_name_write :: proc "contextless" (out: ^[32]u8, process: string, principal: u64, history: bool) -> bool {

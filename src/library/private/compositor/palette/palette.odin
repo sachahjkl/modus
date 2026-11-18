@@ -6,7 +6,7 @@
 // panel (panel.odin).
 //
 // The compositor owns one `Panel` and the two sources of entries that it
-// has itself: the names of the processes and the windows. It gives them to
+// has itself: the names of the modules and the windows. It gives them to
 // `entries_collect` when one of them changes, sends each key through
 // `key_action`, and draws with `panel_draw`.
 //
@@ -60,8 +60,8 @@ Entry_Flags :: bit_set[Entry_Flag;u8]
 // "Palette").
 Entry_Mark :: enum u8 {
 	None       = 0, // No fact: the icon has the color of the kind.
-	Has_Window = 1, // A process that has a window now.
-	No_Window  = 2, // A process that has no window now.
+	Has_Window = 1, // A module whose process has a window now.
+	No_Window  = 2, // A module whose process has no window now.
 	Has_Focus  = 3, // The window that has the focus.
 	Destroys   = 4, // The entry destroys something.
 	Window     = 5, // A window that has not the focus.
@@ -69,7 +69,7 @@ Entry_Mark :: enum u8 {
 }
 
 NAME_CAPACITY :: 64 // The bytes of the name of an entry. A longer name is not listed: a name is whole or absent.
-ENTRY_CAPACITY :: 512 // The entries of a list: the processes, the windows with their closes, and the entries of a provider.
+ENTRY_CAPACITY :: 512 // The entries of a list: the modules, the windows with their closes, and the entries of a provider.
 ROW_CAPACITY :: 128 // The rows of the list: the entries that match and the headings of the groups.
 RECENT_CAPACITY :: 16 // The chosen entries that the panel remembers, the newest first.
 RECENT_ROWS :: 5 // The rows of the group "recent" when no letter is typed.
@@ -97,7 +97,7 @@ Entry :: struct {
 	recent:      u8, // 0: not chosen lately. Else its age among the remembered choices: 1 is the newest.
 	name_length: u8, // The bytes of `name` in use.
 	flags:       Entry_Flags, // Its facts.
-	windows:     u8, // A process: the windows that it has now.
+	windows:     u8, // A module: the windows that its processes have now.
 	// A setting row: its values, the entries of the snapshot from `number`
 	// on, 1 to BUTTON_CAPACITY. 0: the entry is no setting row.
 	value_count: u8,
@@ -175,9 +175,9 @@ Recent :: struct {
 
 // What the list knows of the palette provider.
 Provider_State :: enum u8 {
-	Absent  = 0, // No process gives entries: the list has the processes and the windows only.
+	Absent  = 0, // No process gives entries: the list has the modules and the windows only.
 	Ready   = 1, // The snapshot of the list holds the entries of the provider.
-	Refused = 2, // The table of the provider failed a check: the list has the processes and the windows only.
+	Refused = 2, // The table of the provider failed a check: the list has the modules and the windows only.
 }
 
 // The entries of each source and their list for one typed part. The owner
@@ -276,7 +276,7 @@ entry_add :: proc "contextless" (list: ^List, recents: []Recent, added: Entry, n
 CLOSE_NAME_START :: "close " // The start of the name of the close of a window: "close plasma".
 
 // list_collect makes the entries of a list again from the sources: the
-// windows, the front one first; the names of the processes, in the order of
+// windows, the front one first; the names of the modules, in the order of
 // their table; the close of each window; then the entries of the palette
 // provider. table is the mapping of the table of the provider, or nil with
 // no provider: the list copies it and checks the copy
@@ -548,7 +548,7 @@ action_runs :: proc "contextless" (action: Action) -> bool {
 
 // kind_tie_order gives the place of a kind among entries of one score: a
 // window first, because to reach a window is the most frequent act; then a
-// process, a setting, a command, an export; the close of a window last.
+// module, a setting, a command, an export; the close of a window last.
 @(private)
 kind_tie_order :: proc "contextless" (kind: Entry_Kind) -> u32 {
 	switch kind {
@@ -584,7 +584,7 @@ Prefix :: enum u8 {
 	Commands = 1, // ">": the commands and the exports.
 	Windows  = 2, // "@": the windows and their closes.
 	Settings = 3, // ":": the values of the settings.
-	Manual   = 4, // "?": the processes; the choice opens the page of the manual of the process.
+	Manual   = 4, // "?": the modules; the choice opens the page of the manual of the module.
 }
 
 // prefix_of gives the prefix of a typed part, and the part after it: the
@@ -647,7 +647,7 @@ prefix_admits :: proc "contextless" (prefix: Prefix, kind: Entry_Kind) -> bool {
 // With a typed part: one list, the best match first (the fuzzy match of
 // src/library/support/line_editor), with no heading: the best match is the first row.
 // With no typed part: three groups, each under its heading: the entries
-// chosen lately, the windows with the front one first, the processes in the
+// chosen lately, the windows with the front one first, the modules in the
 // order of their table. A group with no entry is absent. The entries that
 // destroy and the entries of a provider show only for a typed part.
 list_rank :: proc "contextless" (list: ^List, query: string) {

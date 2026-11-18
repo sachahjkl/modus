@@ -368,7 +368,7 @@ icon_color_of_stop :: proc "contextless" () -> graphics.Color {
 	return graphics.colors.stop_process_pointer_over
 }
 
-// The color of the icon of an entry in its quiet state: a process with no
+// The color of the icon of an entry in its quiet state: a module with no
 // window, a window that has not the focus, a value of a setting that the
 // machine does not use, a command that the panel cannot run at once.
 icon_color_quiet :: proc "contextless" () -> graphics.Color {
@@ -378,7 +378,7 @@ icon_color_quiet :: proc "contextless" () -> graphics.Color {
 // entry_icon gives the icon of an entry and its color on a row that is not
 // chosen (docs/DESIGN.md, "The icons of the kinds"). The form says what the
 // entry is, so a reader who does not tell the colors apart still tells a
-// window from a process; an entry that destroys has the icon of that act,
+// window from a module; an entry that destroys has the icon of that act,
 // whatever its kind. The color says one fact of the entry: the color of
 // its kind when the thing is there or in use, the quiet color when it is
 // not. in_use: the entry is the value of a setting that the machine uses

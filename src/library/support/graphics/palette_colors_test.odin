@@ -60,7 +60,7 @@ palette_icon_colors_keep_their_contrast :: proc(t: ^testing.T) {
 	for of in Appearance {
 		tokens := color_tokens_of(of)
 		icon_colors := [?]Color {
-			value_kind_color(.Module, of), // A process that has a window, an export.
+			value_kind_color(.Module, of), // A module whose process has a window, an export.
 			value_kind_color(.Command, of), // A command.
 			value_kind_color(.Grant, of), // A grant, as a candidate of a field.
 			tokens.title, // The window that has the focus.

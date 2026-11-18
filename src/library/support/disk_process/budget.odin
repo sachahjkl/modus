@@ -4,7 +4,7 @@ import module "modus:contract/module"
 
 // The budget that pays every disk process together: the root service makes
 // it from its own budget at the first disk process, and keeps it. A disk
-// process is a file that its principal chose, not a process of the
+// process runs a file that its principal chose, not a module of the
 // system, so the sum of all of them has one bound, and the processes of the
 // boot image keep the rest of the budget of the root service
 // (docs/MODULE_CONTRACT.md, "The budget that a module asks for").

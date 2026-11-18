@@ -1,5 +1,5 @@
 // The system library: what a process uses to talk to the kernel and to other
-// processes. It is compiled into each process. It allocates no hidden memory.
+// processes. It is compiled into each module. It allocates no hidden memory.
 //
 // Every process, every service and every module that calls the kernel
 // imports it; the kernel does not. Each kernel operation has a procedure

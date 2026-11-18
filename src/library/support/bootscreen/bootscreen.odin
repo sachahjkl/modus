@@ -6,7 +6,7 @@
 // gave, the firmware, the framebuffer), the state of the memory, the
 // processors, the processes, and the modules of the boot image.
 //
-// Three processes draw it. The boot program draws what it knows before the
+// Three parts of the system draw it. The boot program draws what it knows before the
 // kernel exists. The root service draws it while it starts the first
 // processes: if the start fails, the display stays, with the failure. The
 // process `boot` draws it in a window at any time.

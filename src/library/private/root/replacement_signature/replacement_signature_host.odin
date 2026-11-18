@@ -2,7 +2,7 @@
 package replacement_signature
 
 // The part of the tool: it signs a row and writes a list. Only a host
-// holds a private key, so the processes of the system do not build it.
+// holds a private key, so the modules of the system do not build it.
 
 import "modus:contract/replacement_list"
 import "modus:support/cryptography/ed25519"

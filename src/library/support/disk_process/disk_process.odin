@@ -47,7 +47,7 @@
 package disk_process
 
 // The store whose root tree holds the module files: one entry for each
-// process, its name the name of the process. For a named principal the
+// module, its name the name of the module. For a named principal the
 // root service adds the principal to this name, as for each store.
 STORE_NAME :: "module_files"
 

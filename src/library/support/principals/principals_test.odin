@@ -4,9 +4,9 @@ package principals
 import "core:testing"
 import "modus:support/tpm2"
 
-// The store of a process has the name of the process for the machine, so
+// The store of a module has the name of the module for the machine, so
 // the stores of the system keep their names; a named principal has a store
-// of its own for each process.
+// of its own for each module.
 @(test)
 store_names_carry_the_principal :: proc(t: ^testing.T) {
 	out: [32]u8
@@ -34,7 +34,7 @@ store_names_carry_the_principal :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, store_name_principal("principal.1"), u64(MACHINE))
 	testing.expect_value(t, store_name_principal("notes.principal."), u64(MACHINE))
-	// Two principals that run one process: two stores.
+	// Two principals that run one module: two stores.
 	first, second: [32]u8
 	testing.expect(t, store_name_write(&first, "notes", MACHINE, false))
 	testing.expect(t, store_name_write(&second, "notes", 1, false))

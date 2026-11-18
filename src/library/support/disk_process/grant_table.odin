@@ -46,7 +46,7 @@ disk_grant_names := [Disk_Grant]string {
 }
 
 // The prefix of the name of the store of a nickname. The name of a module
-// has no byte '-', so no store of a process of the boot image has it.
+// has no byte '-', so no store of a module of the boot image has it.
 STORE_PREFIX :: "disk-"
 
 // What a command can do with a start grant (start_grant.Grant), for a disk
@@ -178,7 +178,7 @@ start_file :: proc "contextless" (table: ^Grant_Table, nickname: string, asked: 
 }
 
 // table_allow gives a grant to the file that a nickname names: hash is the
-// hash of its row, or with no row the hash of the process that runs. A new
+// hash of its row, or with no row the hash of the module that runs. A new
 // row starts with the global setting.
 table_allow :: proc "contextless" (table: ^Grant_Table, nickname: string, hash: [HASH_SIZE]u8, grant: Disk_Grant) -> Table_Problem {
 	if hash == {} {

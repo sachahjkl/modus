@@ -1,6 +1,6 @@
 // The design rules (docs/DESIGN.md) as one table of constants: the grid,
 // the surfaces, the colors of the concepts and the colors of the desktop.
-// The boot display, the compositor and the processes read this one table.
+// The boot display, the compositor and the other modules read this one table.
 package graphics
 
 // The grid (DESIGN.md, section 6).
