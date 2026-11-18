@@ -378,7 +378,7 @@ fuzz_print_literal :: proc(name: string, input: []u8) {
 
 // run_fuzz is the command `fuzz` (docs/TOOLS.md, "The fuzzing").
 run_fuzz :: proc(args: []string) -> int {
-	usage_text :: "modustool: fuzz list | <target> [<executions> [<processes> [<seed>]]] | all [<executions>] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target> | operations <executions> [<seed>] | replay operations <file>"
+	usage_text :: "modustool: fuzz list | <target> [<executions> [<processes> [<seed>]]] | all [<executions>] | show <target> <file> | minimize <target> <file> | regression <target> <file> | corpus <target> | operations <executions> [<seed>] | regression operations <finding folder> | replay operations <file>"
 	if len(args) == 0 {
 		fmt.eprintln(usage_text)
 		return EXIT_USAGE
@@ -407,11 +407,19 @@ run_fuzz :: proc(args: []string) -> int {
 			reach := fuzz_inputs_read(fuzz_corpus_folder(target.name, FUZZ_REACH_PART), context.temp_allocator)
 			fmt.printfln("  %-26s %-9v %3d regression, %3d reach  %s", target.name, target.kind, len(regression), len(reach), target.about)
 		}
+		operation_regressions := fuzz_inputs_read(OPERATION_REGRESSION_FOLDER, context.temp_allocator)
+		operation_reach := fuzz_inputs_read(OPERATION_REACH_FOLDER, context.temp_allocator)
+		fmt.printfln("  %-26s %-9s %3d regression, %3d reach  %s", OPERATION_CORPUS_NAME, "machine", len(operation_regressions), len(operation_reach), "The kernel operations on a machine of the kernel that ships: `fuzz operations`, `fuzz regression operations`")
 		return 0
 	case "show", "minimize", "regression":
 		if len(args) != 3 {
 			fmt.eprintln(usage_text)
 			return EXIT_USAGE
+		}
+		if args[0] == "regression" && args[1] == OPERATION_CORPUS_NAME {
+			// A minimized finding of the kernel operations, run on a machine
+			// of the kernel that ships (operation_corpus.odin).
+			return operation_regression_add(args[2])
 		}
 		target, found := fuzz_target_find(targets, args[1])
 		if !found {

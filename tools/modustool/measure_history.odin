@@ -69,6 +69,10 @@ measure_history_series := [?]Measure_History_Series {
 	{sentence = "TCP: 1 MiB that the program `fetch` receives from a server of the host", title = "TCP: 1 MiB received", before = "as expected, ", after = " MB/s", unit = "megabytes in one second", faster = .Higher},
 	{sentence = "TCP: 1 MiB that the program `fetch` sends to a server of the host", title = "TCP: 1 MiB sent", before = "the same hash, ", after = " MB/s", unit = "megabytes in one second", faster = .Higher},
 	{sentence = "ChaCha20-Poly1305: the seal of one QUIC datagram of 1200 bytes, through the module `cryptography`", title = "The seal of one QUIC datagram of 1200 bytes", before = "ChaCha20-Poly1305: ", after = " ns for 1200 bytes", unit = "nanoseconds", faster = .Lower},
+	{sentence = "A clear and a present of a frame of 1920 x 1080 on the processor", title = "A clear and a present at 1920 x 1080, the least of 21", before = PROCESSOR_FRAME_LEAST, after = PROCESSOR_FRAME_MEDIAN, unit = "microseconds", faster = .Lower},
+	{sentence = "A full frame of the compositor at 1920 x 1080 with 4 windows, on the processor", title = "A full frame of the compositor at 1920 x 1080, the least of 21", before = PROCESSOR_FRAME_LEAST, after = PROCESSOR_FRAME_MEDIAN, unit = "microseconds", faster = .Lower},
+	{sentence = "A frame of the compositor at 1920 x 1080 in its damage, on the processor", title = "A frame of the compositor in its damage at 1920 x 1080, the least of 21", before = PROCESSOR_FRAME_LEAST, after = PROCESSOR_FRAME_MEDIAN, unit = "microseconds", faster = .Lower},
+	{sentence = "The execution of a draw table of a desktop at 1920 x 1080, on the processor", title = "A draw table of a desktop at 1920 x 1080, the least of 21", before = PROCESSOR_FRAME_LEAST, after = PROCESSOR_FRAME_MEDIAN, unit = "microseconds", faster = .Lower},
 }
 
 // What the release command or the history command does with a record.

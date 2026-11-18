@@ -436,7 +436,7 @@ COMMANDS :: [?]Command {
 	//
 	// The tool checks no speed: a program checks its counts, and the numbers
 	// are printed for a reader (docs/TOOLS.md, "The bounds of the tests").
-	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure clock|crowd|disk|flow|limits`: the program alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
+	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, then the frame at 1920x1080 of processor_frame, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure clock|crowd|disk|flow|limits`: the program alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	// Builds, starts a machine that runs the scenario of a film, and films
 	// it: the pictures of the screen, taken while the scenario types, become
 	// a film with ffmpeg, which must be on the path. The film is for the
@@ -1046,6 +1046,8 @@ TEST_OUTPUT_MEASURE :: BUILD_FOLDER + "/test_output_measure.txt"
 // run_measure runs the measures of the program `locks` on a machine where
 // only the desktop runs: the numbers have no load of the other programs of
 // the test. The program checks its counts; the tool does not check a speed.
+// The same machine then runs processor_frame, whose lines the tool reads
+// for their form only (processor_frame_measure.odin).
 // The machine is a measure run: its boot image holds the resource
 // `measure_run`, so each program measures its rates over a duration
 // (measure_runs.odin). `measure <program>`: one program of
@@ -1110,7 +1112,7 @@ run_measure :: proc(args: []string) -> int {
 		fmt.eprintln("modustool: measure [without_checks] [scheduler <count> | windows | address_space | shortage | clock | crowd | disk | flow | limits]")
 		return EXIT_USAGE
 	}
-	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) {
+	if !machine_test(&part, scenario_measure[:], {volume = BOOT_VOLUME_MEASURE, output = TEST_OUTPUT_MEASURE, exit_status = MACHINE_STOP_OK}) || !processor_frame_lines_check(TEST_OUTPUT_MEASURE) {
 		return EXIT_FAILURE
 	}
 	return 0
