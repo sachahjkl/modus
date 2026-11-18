@@ -71,25 +71,117 @@ Blend_Form :: enum u8 {
 VECTOR_FORMS :: [?]Blend_Form{.Sse2}
 
 @(private = "file")
-coverage_row_in_form :: proc(form: Blend_Form, line: [^]Color, words: [^]u32, first, last: int, color: Color, order: Subpixel_Order, table: ^[4096]u8) {
+coverage_row_in_form :: proc(form: Blend_Form, line: [^]Color, words: [^]u32, first, last: int, color: Color, order: Subpixel_Order, table: ^[4096]u8, alpha: u32 = OPAQUE) {
 	switch order {
 	case .Red_Green_Blue:
-		coverage_row_in_form_and_order(form, line, words, first, last, color, .Red_Green_Blue, table)
+		coverage_row_in_form_and_order(form, line, words, first, last, color, .Red_Green_Blue, table, alpha)
 	case .Blue_Green_Red:
-		coverage_row_in_form_and_order(form, line, words, first, last, color, .Blue_Green_Red, table)
+		coverage_row_in_form_and_order(form, line, words, first, last, color, .Blue_Green_Red, table, alpha)
 	case .None:
-		coverage_row_in_form_and_order(form, line, words, first, last, color, .None, table)
+		coverage_row_in_form_and_order(form, line, words, first, last, color, .None, table, alpha)
 	}
 }
 
 @(private = "file")
-coverage_row_in_form_and_order :: proc(form: Blend_Form, line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, table: ^[4096]u8) {
+coverage_row_in_form_and_order :: proc(form: Blend_Form, line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, table: ^[4096]u8, alpha: u32) {
 	switch form {
 	case .Scalar:
-		blend_coverage_row_in_order(line, words, first, last, color, ORDER, table)
+		blend_coverage_row_in_order(line, words, first, last, color, ORDER, table, alpha)
 	case .Sse2:
-		blend_coverage_row_sse2(line, words, first, last, color, ORDER, table)
+		blend_coverage_row_sse2(line, words, first, last, color, ORDER, table, alpha)
 	}
+}
+
+// The coverage of a text with alpha: the SSE2 form gives the bytes of the
+// scalar form for each alpha of the edges (1, 2, 127, 128, 254) and others,
+// every length from 0 to 67, every place against 16 bytes, three first
+// columns and the three orders.
+@(test)
+coverage_forms_with_alpha_give_the_bytes_of_the_scalar_form :: proc(t: ^testing.T) {
+	table: [4096]u8
+	square_root_table_fill(&table)
+	forms := VECTOR_FORMS
+	random := Test_Random{state = 0xA0761D6478BD642F}
+	GUARD :: 16
+	LONGEST :: 67
+	SIZE :: GUARD + 3 + 2 + LONGEST + GUARD
+	alphas := [?]u32{1, 2, 127, 128, 200, 254}
+	wrong := 0
+	for alpha in alphas {
+		for order in Subpixel_Order {
+			for length in 0 ..= LONGEST {
+				for place in 0 ..< 4 {
+					for first in 0 ..< 3 {
+						words, reference: [SIZE]u32
+						for &word in words {
+							word = edge_word(&random)
+						}
+						for &pixel in reference {
+							pixel = edge_word(&random)
+						}
+						color := edge_word(&random) & 0xFFFFFF
+						before := reference
+						coverage_row_in_form(.Scalar, raw_data(reference[GUARD + place:]), raw_data(words[GUARD + (3 - place):]), first, first + length, color, order, &table, alpha)
+						for form in forms {
+							pixels := before
+							coverage_row_in_form(form, raw_data(pixels[GUARD + place:]), raw_data(words[GUARD + (3 - place):]), first, first + length, color, order, &table, alpha)
+							if pixels != reference {
+								wrong += 1
+								if wrong <= 5 {
+									drawn_start := GUARD + place + first
+									found := difference_of(reference[:], pixels[:], drawn_start, drawn_start + length)
+									testing.expectf(t, false, "%v, alpha %d, order %v, length %d, place %d, first %d: index %d: scalar %08x, the form %08x; %d pixels differ outside", form, alpha, order, length, place, first, found.index, found.expected, found.found, found.outside_count)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+}
+
+// The alpha scales the coverage: the scalar form with an alpha gives the
+// bytes of the scalar form with no alpha over words whose coverage the
+// test scaled by coverage_with_alpha, for each coverage and each alpha but
+// where a scaled coverage is 0 over a word that is not 0 (it keeps the
+// channels of its pixel, with the high byte 0). Alpha 255 gives the bytes
+// of no alpha; coverage_with_alpha is round(c * a / 255).
+@(test)
+coverage_with_alpha_is_the_coverage_times_the_alpha :: proc(t: ^testing.T) {
+	table: [4096]u8
+	square_root_table_fill(&table)
+	wrong := 0
+	for alpha in u32(0) ..= 255 {
+		for coverage in u32(0) ..= 255 {
+			expected := (coverage * alpha * 2 + 255) / 510
+			wrong += int(coverage_with_alpha(coverage, alpha) != expected)
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+	mismatch := 0
+	alphas := [4]u32{1, 77, 254, OPAQUE}
+	for alpha in alphas {
+		words, scaled: [256]u32
+		pixels, reference: [256]Color
+		for column in 0 ..< 256 {
+			coverage := u32(column)
+			words[column] = coverage << 16 | (255 - coverage) << 8 | coverage / 2
+			scaled[column] = coverage_with_alpha(coverage, alpha) << 16 | coverage_with_alpha(255 - coverage, alpha) << 8 | coverage_with_alpha(coverage / 2, alpha)
+			pixels[column] = u32(column) * 0x010203 & 0x00FFFFFF
+		}
+		reference = pixels
+		blend_coverage_row_in_order(raw_data(pixels[:]), raw_data(words[:]), 0, 256, 0x00C08040, .Red_Green_Blue, &table, alpha)
+		blend_coverage_row_in_order(raw_data(reference[:]), raw_data(scaled[:]), 0, 256, 0x00C08040, .Red_Green_Blue, &table)
+		for column in 0 ..< 256 {
+			if scaled[column] == 0 && words[column] != 0 {
+				continue
+			}
+			mismatch += int(pixels[column] != reference[column])
+		}
+	}
+	testing.expect_value(t, mismatch, 0)
 }
 
 @(private = "file")

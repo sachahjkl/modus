@@ -415,8 +415,8 @@ scroll_bar_at_rest_draws_the_table :: proc(t: ^testing.T) {
 	// The track: its border under the whole bar, then its three stops as
 	// two gradients across the 15 pixels inside the border.
 	expect_record(t, records[0], .Rectangle, 0, 0, 17, 428, colors.track_border)
-	expect_record(t, records[1], .Horizontal_Gradient, 1, 1, 8, 426, colors.track[0], colors.track[1])
-	expect_record(t, records[2], .Horizontal_Gradient, 8, 1, 8, 426, colors.track[1], colors.track[2])
+	expect_record(t, records[1], .Gradient, 1, 1, 8, 426, colors.track[0], colors.track[1])
+	expect_record(t, records[2], .Gradient, 8, 1, 8, 426, colors.track[1], colors.track[2])
 	// At rest an arrow button is its triangle: rows of 1, 3, 5 and 7
 	// pixels, the point toward its end of the bar, on the column 8.
 	expect_record(t, records[3], .Rectangle, 8, 6, 1, 1, colors.triangle)
@@ -433,12 +433,12 @@ scroll_bar_at_rest_draws_the_table :: proc(t: ^testing.T) {
 	for &color, index in lined {
 		color = graphics.mix(colors.thumb_rest[index], graphics.COLOR_WHITE, colors.thumb_line_level)
 	}
-	expect_record(t, records[12], .Horizontal_Gradient, 1, 164, 7, 100, lined[0], lined[1])
-	expect_record(t, records[13], .Horizontal_Gradient, 7, 164, 3, 100, lined[1], lined[2])
-	expect_record(t, records[14], .Horizontal_Gradient, 9, 164, 7, 100, lined[2], lined[3])
-	expect_record(t, records[15], .Horizontal_Gradient, 1, 165, 7, 98, colors.thumb_rest[0], colors.thumb_rest[1])
-	expect_record(t, records[16], .Horizontal_Gradient, 7, 165, 3, 98, colors.thumb_rest[1], colors.thumb_rest[2])
-	expect_record(t, records[17], .Horizontal_Gradient, 9, 165, 7, 98, colors.thumb_rest[2], colors.thumb_rest[3])
+	expect_record(t, records[12], .Gradient, 1, 164, 7, 100, lined[0], lined[1])
+	expect_record(t, records[13], .Gradient, 7, 164, 3, 100, lined[1], lined[2])
+	expect_record(t, records[14], .Gradient, 9, 164, 7, 100, lined[2], lined[3])
+	expect_record(t, records[15], .Gradient, 1, 165, 7, 98, colors.thumb_rest[0], colors.thumb_rest[1])
+	expect_record(t, records[16], .Gradient, 7, 165, 3, 98, colors.thumb_rest[1], colors.thumb_rest[2])
+	expect_record(t, records[17], .Gradient, 9, 165, 7, 98, colors.thumb_rest[2], colors.thumb_rest[3])
 	expect_record(t, records[18], .Rectangle, 1, 165, 1, 98, lined[0])
 	expect_record(t, records[19], .Rectangle, 15, 165, 1, 98, lined[3])
 	// The grip: four lines of 7 pixels in the middle of the thumb.
@@ -472,13 +472,13 @@ scroll_bar_states_draw_the_colors_of_the_table :: proc(t: ^testing.T) {
 	count, record = records_of(&table, .Rectangle, colors.lit_border)
 	testing.expect_value(t, count, 2)
 	expect_record(t, record, .Rectangle, 0, 411, 17, 17, colors.lit_border)
-	count, record = records_of(&table, .Horizontal_Gradient, colors.arrow_lit[0])
+	count, record = records_of(&table, .Gradient, colors.arrow_lit[0])
 	testing.expect_value(t, count, 2)
-	expect_record(t, record, .Horizontal_Gradient, 1, 412, 15, 15, colors.arrow_lit[0], colors.arrow_lit[1])
+	expect_record(t, record, .Gradient, 1, 412, 15, 15, colors.arrow_lit[0], colors.arrow_lit[1])
 	count, record = records_of(&table, .Rectangle, colors.hot_border)
 	testing.expect_value(t, count, 1)
 	expect_record(t, record, .Rectangle, 0, 163, 17, 102, colors.hot_border)
-	count, _ = records_of(&table, .Horizontal_Gradient, colors.thumb_hot[0])
+	count, _ = records_of(&table, .Gradient, colors.thumb_hot[0])
 	testing.expect_value(t, count, 1)
 	count, _ = records_of(&table, .Rectangle, colors.grip_lit)
 	testing.expect_value(t, count, 4)
@@ -489,10 +489,10 @@ scroll_bar_states_draw_the_colors_of_the_table :: proc(t: ^testing.T) {
 	// the other one lit.
 	pointer_at(&input, 8, 420, false)
 	bar_frame(&table, &state, &input, 37)
-	count, record = records_of(&table, .Horizontal_Gradient, colors.arrow_hot[0])
+	count, record = records_of(&table, .Gradient, colors.arrow_hot[0])
 	testing.expect_value(t, count, 1)
-	expect_record(t, record, .Horizontal_Gradient, 1, 412, 15, 15, colors.arrow_hot[0], colors.arrow_hot[1])
-	count, _ = records_of(&table, .Horizontal_Gradient, colors.arrow_lit[0])
+	expect_record(t, record, .Gradient, 1, 412, 15, 15, colors.arrow_hot[0], colors.arrow_hot[1])
+	count, _ = records_of(&table, .Gradient, colors.arrow_lit[0])
 	testing.expect_value(t, count, 1)
 	count, _ = records_of(&table, .Rectangle, colors.triangle_hot)
 	testing.expect_value(t, count, 4)
@@ -505,9 +505,9 @@ scroll_bar_states_draw_the_colors_of_the_table :: proc(t: ^testing.T) {
 	// The button held: the pressed fill.
 	pointer_at(&input, 8, 420, true)
 	bar_frame(&table, &state, &input, 37)
-	count, record = records_of(&table, .Horizontal_Gradient, colors.arrow_pressed[0])
+	count, record = records_of(&table, .Gradient, colors.arrow_pressed[0])
 	testing.expect_value(t, count, 1)
-	expect_record(t, record, .Horizontal_Gradient, 1, 412, 15, 15, colors.arrow_pressed[0], colors.arrow_pressed[1])
+	expect_record(t, record, .Gradient, 1, 412, 15, 15, colors.arrow_pressed[0], colors.arrow_pressed[1])
 	pointer_at(&input, 8, 420, false)
 	bar_frame(&table, &state, &input, 37)
 
@@ -517,7 +517,7 @@ scroll_bar_states_draw_the_colors_of_the_table :: proc(t: ^testing.T) {
 	bar_frame(&table, &state, &input, 37)
 	pointer_at(&input, 300, 200, true)
 	bar_frame(&table, &state, &input, 37)
-	count, _ = records_of(&table, .Horizontal_Gradient, colors.thumb_pressed[0])
+	count, _ = records_of(&table, .Gradient, colors.thumb_pressed[0])
 	testing.expect_value(t, count, 1)
 	count, _ = records_of(&table, .Rectangle, colors.lit_border)
 	testing.expect_value(t, count, 2)
@@ -545,8 +545,8 @@ scroll_bar_horizontal_is_the_vertical_one_turned :: proc(t: ^testing.T) {
 	}
 	// The gradients go from the top down.
 	expect_record(t, records[0], .Rectangle, 0, 0, 428, 17, colors.track_border)
-	expect_record(t, records[1], .Vertical_Gradient, 1, 1, 426, 8, colors.track[0], colors.track[1])
-	expect_record(t, records[2], .Vertical_Gradient, 1, 8, 426, 8, colors.track[1], colors.track[2])
+	expect_record(t, records[1], .Gradient, 1, 1, 426, 8, colors.track[0], colors.track[1])
+	expect_record(t, records[2], .Gradient, 1, 8, 426, 8, colors.track[1], colors.track[2])
 	// The triangle of the first arrow button points to the left.
 	expect_record(t, records[3], .Rectangle, 6, 8, 1, 1, colors.triangle)
 	expect_record(t, records[6], .Rectangle, 9, 5, 1, 7, colors.triangle)

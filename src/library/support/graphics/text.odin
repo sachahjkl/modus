@@ -110,10 +110,11 @@ text_bold_cache_use :: proc "contextless" (cache: glyph_cache.Cache) -> glyph_ca
 
 // text_bold draws characters at scale 1 in the bold weight of the vector
 // font: the titles of the cards. With Spleen, or with no bold cache, it is
-// text. It gives the x after the last character.
-text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color) -> int {
+// text. It gives the x after the last character. alpha is the alpha of the
+// color, as in text_scaled.
+text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color, alpha: u32 = OPAQUE) -> int {
 	if !text_vector_drawn() || !text_state.has_bold_cache {
-		return text(canvas, x, y, characters, color)
+		return text_scaled(canvas, x, y, characters, color, 1, alpha)
 	}
 	bytes := transmute([]u8)characters
 	at, place := x, 0
@@ -125,13 +126,13 @@ text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, 
 		place += length
 		if at < canvas.width && at + CELL_WIDTH > 0 {
 			if cell_font_draws(character) {
-				character_vector_with(&text_state.bold_cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, at, y, character, color, 1)
+				character_vector_with(&text_state.bold_cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, at, y, character, color, 1, alpha)
 			} else {
 				if !face_found {
 					face, face_found = fallback_glyphs.face_of_cache(&text_state.bold_cache), true
 				}
-				if !character_fallback(face, canvas, at, y, character, color, 1) {
-					character_replacement(canvas, at, y, color, 1)
+				if !character_fallback(face, canvas, at, y, character, color, 1, alpha) {
+					character_replacement(canvas, at, y, color, 1, alpha)
 				}
 			}
 		}
@@ -146,13 +147,28 @@ text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, 
 // no font of the chain draws it: the caller draws the replacement glyph. A
 // glyph of a face of cells stays in its cell.
 @(private)
-character_fallback :: proc "contextless" (face: fallback_glyphs.Face, canvas: Canvas, x, y: int, character: rune, color: Color, scale: int) -> bool {
+character_fallback :: proc "contextless" (face: fallback_glyphs.Face, canvas: Canvas, x, y: int, character: rune, color: Color, scale: int, alpha: u32 = OPAQUE) -> bool {
 	glyph, words, source := fallback_glyphs.glyph(face, character, scale, 0)
 	if source == .Missing {
 		return false
 	}
-	glyph_words_draw(glyph, words, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, x, y, color)
+	glyph_words_draw(glyph, words, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, x, y, color, alpha)
 	return true
+}
+
+// paint fills a rectangle of a glyph drawn by its pixels (Spleen, the
+// replacement box) in a color with an alpha: fill when it is opaque, else
+// the blend of the draw records, with the table given, or the table of the
+// text state for nil. The rectangles of one glyph never overlap, so each
+// pixel blends once.
+@(private)
+paint :: #force_inline proc "contextless" (canvas: Canvas, x, y, width, height: int, color: Color, alpha: u32, square_root: ^[4096]u8) {
+	if alpha == OPAQUE {
+		fill(canvas, x, y, width, height, color)
+		return
+	}
+	table := square_root != nil ? square_root : &text_state.square_root
+	blend_fill(canvas, x, y, width, height, alpha << 24 | color & 0x00FFFFFF, table)
 }
 
 // cell_face gives the fallback face of the glyph cache of cells of the
@@ -221,18 +237,23 @@ cell_font_draws :: #force_inline proc "contextless" (character: rune) -> bool {
 // the outline of a box from the top of a capital letter to the baseline,
 // in each font and at each scale. A reader draws it for a character that
 // the font lacks and for each invalid sequence of a text, so that a byte is never
-// drawn as a glyph and a reader sees that a character is there.
-character_replacement :: proc "contextless" (canvas: Canvas, x, y: int, color: Color, scale: int) {
+// drawn as a glyph and a reader sees that a character is there. The two
+// sides stop at the top and the bottom bars, so no pixel is painted twice:
+// a color with alpha blends once in each pixel.
+character_replacement :: proc "contextless" (canvas: Canvas, x, y: int, color: Color, scale: int, alpha: u32 = OPAQUE, square_root: ^[4096]u8 = nil) {
 	BOX_LEFT :: 1
 	BOX_TOP :: 3
 	BOX_WIDTH :: 6
 	BOX_HEIGHT :: 9
+	if alpha == 0 {
+		return
+	}
 	left, top := x + BOX_LEFT * scale, y + BOX_TOP * scale
 	width, height := BOX_WIDTH * scale, BOX_HEIGHT * scale
-	fill(canvas, left, top, width, scale, color)
-	fill(canvas, left, top + height - scale, width, scale, color)
-	fill(canvas, left, top, scale, height, color)
-	fill(canvas, left + width - scale, top, scale, height, color)
+	paint(canvas, left, top, width, scale, color, alpha, square_root)
+	paint(canvas, left, top + height - scale, width, scale, color, alpha, square_root)
+	paint(canvas, left, top + scale, scale, height - 2 * scale, color, alpha, square_root)
+	paint(canvas, left + width - scale, top + scale, scale, height - 2 * scale, color, alpha, square_root)
 }
 
 // character draws one character in the cell at (x, y), at scale 1.
@@ -258,9 +279,17 @@ character :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: 
 // pixels. A character past the glyph cache draws from the fallback chain
 // with the vector font, and the replacement glyph when no font of the
 // chain has it or with Spleen. It gives the x after the last character.
-text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color, scale_asked: int) -> int {
+//
+// alpha is the alpha of the color: 255 draws the color opaque, a lower
+// alpha scales the cover of each pixel of ink, in each font: the coverage
+// of a glyph of a cache, and each pixel of Spleen and of the replacement
+// box. Alpha 0 draws nothing.
+text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color, scale_asked: int, alpha: u32 = OPAQUE) -> int {
 	scale := clamp(scale_asked, 1, 3)
 	advance := CELL_WIDTH * scale
+	if alpha == 0 {
+		return x + text_encoding.character_count(transmute([]u8)characters) * advance
+	}
 	vector := text_vector_drawn()
 	// The fallback face, found at the first character past the cache.
 	face, face_found := fallback_glyphs.Face.None, false
@@ -277,15 +306,15 @@ text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string
 				if !face_found {
 					face, face_found = cell_face(), true
 				}
-				if !character_fallback(face, canvas, at, y, character, color, scale) {
-					character_replacement(canvas, at, y, color, scale)
+				if !character_fallback(face, canvas, at, y, character, color, scale, alpha) {
+					character_replacement(canvas, at, y, color, scale, alpha)
 				}
 			case vector:
-				character_vector(canvas, at, y, character, color, scale)
+				character_vector(canvas, at, y, character, color, scale, alpha)
 			case scale == 1:
-				character_spleen(canvas, at, y, character, color)
+				character_spleen(canvas, at, y, character, color, alpha)
 			case:
-				character_spleen_enlarged(canvas, at, y, character, color, scale)
+				character_spleen_enlarged(canvas, at, y, character, color, scale, alpha)
 			}
 		}
 		at += advance
@@ -303,18 +332,18 @@ text_width :: proc "contextless" (characters: string) -> int {
 // character_vector draws one character of the glyph cache: each word of the
 // glyph blends the color over the pixel of the canvas, one coverage for
 // each channel.
-character_vector :: #force_inline proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: Color, scale: int) {
-	character_vector_with(&text_state.cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, x, y, value, color, scale)
+character_vector :: #force_inline proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: Color, scale: int, alpha: u32 = OPAQUE) {
+	character_vector_with(&text_state.cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, x, y, value, color, scale, alpha)
 }
 
 // character_vector_with draws one character with the fast blend: the same
 // pixels as character_vector_reference.
-character_vector_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, value: rune, color: Color, scale: int) {
+character_vector_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, value: rune, color: Color, scale: int, alpha: u32 = OPAQUE) {
 	_, entry, found := glyph_cache.glyph(cache, value, scale)
 	if !found || entry.row_count == 0 {
 		return
 	}
-	glyph_entry_draw(cache, entry, square_root, tables, order, canvas, x, y, color)
+	glyph_entry_draw(cache, entry, square_root, tables, order, canvas, x, y, color, alpha)
 }
 
 // glyph_entry_draw draws one glyph entry of a valid cache with the fast
@@ -322,7 +351,7 @@ character_vector_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_r
 // the canvas. The text of cells and the text of a proportional font both
 // draw through it, so both have the same blend.
 @(private)
-glyph_entry_draw :: proc "contextless" (cache: ^glyph_cache.Cache, entry: glyph_cache.Glyph_Entry, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color) #no_bounds_check {
+glyph_entry_draw :: proc "contextless" (cache: ^glyph_cache.Cache, entry: glyph_cache.Glyph_Entry, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32 = OPAQUE) #no_bounds_check {
 	if entry.row_count == 0 {
 		return
 	}
@@ -338,7 +367,7 @@ glyph_entry_draw :: proc "contextless" (cache: ^glyph_cache.Cache, entry: glyph_
 		return
 	}
 	words := raw_data(cache.words[entry.word_offset:])
-	blend_glyph_rows(canvas.pixels[(y + int(entry.first_row)) * canvas.stride + column_x:], canvas.stride, words, width, first_row, last_row, first_column, last_column, color, order, square_root, tables)
+	blend_glyph_rows(canvas.pixels[(y + int(entry.first_row)) * canvas.stride + column_x:], canvas.stride, words, width, first_row, last_row, first_column, last_column, color, order, square_root, tables, alpha)
 }
 
 // glyph_words_draw draws one glyph past the glyph cache from its first
@@ -347,7 +376,7 @@ glyph_entry_draw :: proc "contextless" (cache: ^glyph_cache.Cache, entry: glyph_
 // program wrote. Its words are row_count rows of width words; the draw is
 // the draw of a glyph of a glyph cache.
 @(private)
-glyph_words_draw :: proc "contextless" (entry: glyph_cache.Glyph_Entry, words: [^]u32, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color) #no_bounds_check {
+glyph_words_draw :: proc "contextless" (entry: glyph_cache.Glyph_Entry, words: [^]u32, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32 = OPAQUE) #no_bounds_check {
 	if entry.row_count == 0 {
 		return
 	}
@@ -363,14 +392,14 @@ glyph_words_draw :: proc "contextless" (entry: glyph_cache.Glyph_Entry, words: [
 	if words == nil {
 		return
 	}
-	blend_glyph_rows(canvas.pixels[(y + int(entry.first_row)) * canvas.stride + column_x:], canvas.stride, words, width, first_row, last_row, first_column, last_column, color, order, square_root, tables)
+	blend_glyph_rows(canvas.pixels[(y + int(entry.first_row)) * canvas.stride + column_x:], canvas.stride, words, width, first_row, last_row, first_column, last_column, color, order, square_root, tables, alpha)
 }
 
 // character_vector_reference draws one character of a glyph cache that
 // glyph_cache.validate accepted: each entry and each word is inside the
 // file, so the loop has no bounds check (the rows and the columns are cut
 // to the canvas here).
-character_vector_reference :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: rune, color: Color, scale: int) #no_bounds_check {
+character_vector_reference :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: rune, color: Color, scale: int, alpha: u32 = OPAQUE) #no_bounds_check {
 	_, entry, found := glyph_cache.glyph(cache, value, scale)
 	if !found || entry.row_count == 0 {
 		return
@@ -389,17 +418,28 @@ character_vector_reference :: proc "contextless" (cache: ^glyph_cache.Cache, squ
 	words := raw_data(cache.words[entry.word_offset:])
 	for row in first_row ..< last_row {
 		line := canvas.pixels[(y + int(entry.first_row) + row) * canvas.stride + column_x:]
-		blend_coverage_row(line, words[row * width:], first_column, last_column, color, order, square_root)
+		blend_coverage_row(line, words[row * width:], first_column, last_column, color, order, square_root, alpha)
 	}
 }
 
 // character_spleen draws one character of Spleen 8x16 at its native size.
-character_spleen :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: Color) {
+// With an alpha below 255, each pixel of the glyph blends once.
+character_spleen :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: Color, alpha: u32 = OPAQUE, square_root: ^[4096]u8 = nil) {
 	index, found := glyph_cache.character_index(value)
 	if !found {
 		return
 	}
 	glyph := font[index]
+	if alpha != OPAQUE {
+		for bits, row in glyph {
+			for column in 0 ..< CELL_WIDTH {
+				if bits << uint(column) & 0x80 != 0 {
+					paint(canvas, x + column, y + row, 1, 1, color, alpha, square_root)
+				}
+			}
+		}
+		return
+	}
 	if x >= 0 && y >= 0 && x + CELL_WIDTH <= canvas.width && y + CELL_HEIGHT <= canvas.height {
 		// The whole glyph is inside the canvas: no test for each pixel.
 		for bits, row in glyph {
@@ -423,7 +463,7 @@ character_spleen :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, 
 
 // character_spleen_enlarged draws one character of Spleen with each pixel
 // as a square of scale pixels: the large sizes when the setting is Spleen.
-character_spleen_enlarged :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: Color, scale: int) {
+character_spleen_enlarged :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: Color, scale: int, alpha: u32 = OPAQUE, square_root: ^[4096]u8 = nil) {
 	index, found := glyph_cache.character_index(value)
 	if !found {
 		return
@@ -431,7 +471,7 @@ character_spleen_enlarged :: proc "contextless" (canvas: Canvas, x, y: int, valu
 	for bits, row in font[index] {
 		for column in 0 ..< CELL_WIDTH {
 			if bits << uint(column) & 0x80 != 0 {
-				fill(canvas, x + column * scale, y + row * scale, scale, scale, color)
+				paint(canvas, x + column * scale, y + row * scale, scale, scale, color, alpha, square_root)
 			}
 		}
 	}
@@ -456,17 +496,18 @@ PROPORTIONAL_INK_MARGIN :: 2
 // face of the cache (fallback_glyphs.glyph): the demand cache or the
 // private glyph cache of the program. A glyph that no font of the chain
 // draws is the replacement glyph, at the advance that the shaper gave it.
-text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, cache: ^glyph_cache.Cache, scale: int, color: Color) {
+text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, cache: ^glyph_cache.Cache, scale: int, color: Color, alpha: u32 = OPAQUE) {
 	if text_state.square_root[4095] == 0 {
 		square_root_table_fill(&text_state.square_root)
 	}
-	text_proportional_with(cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, place, y, placed, scale, color)
+	text_proportional_with(cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, place, y, placed, scale, color, alpha)
 }
 
 // text_proportional_with is text_proportional with its state given: the
-// tests draw with it, each with its own tables.
-text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, scale: int, color: Color) {
-	if scale < 1 || scale > len(cache.sizes) {
+// tests draw with it, each with its own tables. alpha is the alpha of the
+// color, as in text_scaled.
+text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, scale: int, color: Color, alpha: u32 = OPAQUE) {
+	if scale < 1 || scale > len(cache.sizes) || alpha == 0 {
 		return
 	}
 	position_count := int(cache.sizes[scale - 1].position_count)
@@ -485,7 +526,7 @@ text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_
 			continue
 		}
 		if replacement {
-			character_replacement(canvas, int(pixel), y, color, scale)
+			character_replacement(canvas, int(pixel), y, color, scale, alpha)
 			continue
 		}
 		if fallback {
@@ -494,9 +535,9 @@ text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_
 			}
 			entry, words, source := fallback_glyphs.glyph(face, rune(glyph.glyph - text_shaping.FALLBACK_GLYPH_FIRST), scale, position)
 			if source == .Missing {
-				character_replacement(canvas, int(pixel), y, color, scale)
+				character_replacement(canvas, int(pixel), y, color, scale, alpha)
 			} else {
-				glyph_words_draw(entry, words, square_root, tables, order, canvas, int(pixel), y, color)
+				glyph_words_draw(entry, words, square_root, tables, order, canvas, int(pixel), y, color, alpha)
 			}
 			continue
 		}
@@ -504,6 +545,6 @@ text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_
 		if !found {
 			continue
 		}
-		glyph_entry_draw(cache, entry, square_root, tables, order, canvas, int(pixel), y, color)
+		glyph_entry_draw(cache, entry, square_root, tables, order, canvas, int(pixel), y, color, alpha)
 	}
 }

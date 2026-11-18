@@ -197,3 +197,161 @@ fast_blend_is_the_reference :: proc(t: ^testing.T) {
 	testing.expectf(t, differences == 0, "the fast blend differs from the reference in %v pixels", differences)
 	fmt.printfln("graphics: the fast blend and the reference: %v pixels differ; %v tables made", differences, tables.made)
 }
+
+// A text with alpha: the fast blend, its tables shared with the opaque
+// colors of the same channels, gives the bytes of the reference blend with
+// the same alpha, over each background, at each scale, for alphas at the
+// edges. Alpha 0 draws nothing.
+@(test)
+fast_blend_with_alpha_is_the_reference :: proc(t: ^testing.T) {
+	bytes := #load("../../../../resources/fonts/jetbrains_mono.ttf")
+	font, _ := vector_font.font_open(bytes)
+	memory := new(vector_font.Render_Memory)
+	defer free(memory)
+	out := make([]u64, vector_font.GLYPH_CACHE_LIMIT / 8)
+	defer delete(out)
+	file := ([^]u8)(raw_data(out))[:vector_font.GLYPH_CACHE_LIMIT]
+	size, _ := vector_font.glyph_cache_build(&font, bytes, "jetbrains_mono", true, memory, file)
+	cache, _ := glyph_cache.validate(file[:size])
+	table: [4096]u8
+	square_root_table_fill(&table)
+	tables := new(Blend_Tables)
+	defer free(tables)
+	WIDTH :: 24 * 96
+	first := make([]Color, WIDTH * 48)
+	second := make([]Color, WIDTH * 48)
+	untouched := make([]Color, WIDTH * 48)
+	defer delete(first)
+	defer delete(second)
+	defer delete(untouched)
+	a := Canvas{pixels = raw_data(first), width = WIDTH, height = 48, stride = WIDTH}
+	b := Canvas{pixels = raw_data(second), width = WIDTH, height = 48, stride = WIDTH}
+	alphas := [?]u32{1, 2, 128, 254}
+	differences := 0
+	for background in Speed_Background {
+		for order in Subpixel_Order {
+			for alpha in alphas {
+				for scale in 1 ..= 3 {
+					background_fill(a, background)
+					background_fill(b, background)
+					for character in 32 ..< 127 {
+						x := (character - 32) * 8 * scale % (WIDTH - 24)
+						character_vector_reference(&cache, &table, order, a, x, 0, rune(character), DARK_TEXT, scale, alpha)
+						character_vector_with(&cache, &table, tables, order, b, x, 0, rune(character), DARK_TEXT, scale, alpha)
+						// The opaque color of the same channels between, so
+						// both share the tables.
+						character_vector_with(&cache, &table, tables, order, b, x + 1, 24, rune(character), DARK_TEXT, scale)
+						character_vector_reference(&cache, &table, order, a, x + 1, 24, rune(character), DARK_TEXT, scale)
+					}
+					for pixel, index in first {
+						differences += int(pixel != second[index])
+					}
+				}
+			}
+		}
+	}
+	testing.expectf(t, differences == 0, "the fast blend with alpha differs from the reference in %v pixels", differences)
+	background_fill(a, .Flat)
+	// In this package copy is graphics.copy, which draws a canvas: the
+	// pixels are copied one by one.
+	for pixel, index in first {
+		untouched[index] = pixel
+	}
+	for character in 32 ..< 127 {
+		character_vector_with(&cache, &table, tables, .Red_Green_Blue, a, (character - 32) * 8, 0, rune(character), DARK_TEXT, 1, 0)
+	}
+	testing.expect(t, slice_equal_colors(first, untouched), "a text of alpha 0 draws")
+}
+
+// The paths of a text that paint pixels, Spleen at scale 1, its enlarged
+// form at scale 2 and 3, and the replacement box at each scale, with
+// alpha: each pixel of ink is the blend of the color with that alpha over
+// the pixel, once, and each other pixel stays; with no alpha they paint the
+// pixels of before, the replacement box too, whose sides no longer overlap
+// its bars. The test passes its own table, and changes no text state.
+@(test)
+painted_text_with_alpha_blends_each_pixel_once :: proc(t: ^testing.T) {
+	table: [4096]u8
+	square_root_table_fill(&table)
+	WIDTH :: 80
+	HEIGHT :: 60
+	Path :: enum {
+		Spleen,
+		Spleen_Enlarged,
+		Replacement,
+	}
+	Case :: struct {
+		path:  Path,
+		scale: int,
+	}
+	cases := [?]Case{{.Spleen, 1}, {.Spleen_Enlarged, 2}, {.Spleen_Enlarged, 3}, {.Replacement, 1}, {.Replacement, 3}}
+	draw :: proc(path: Path, canvas: Canvas, scale: int, color: Color, alpha: u32, table: ^[4096]u8) {
+		characters := [3]rune{'A', 'g', '#'}
+		for character, index in characters {
+			x := 3 + index * CELL_WIDTH * scale
+			switch path {
+			case .Spleen:
+				character_spleen(canvas, x, 2, character, color, alpha, table)
+			case .Spleen_Enlarged:
+				character_spleen_enlarged(canvas, x, 2, character, color, scale, alpha, table)
+			case .Replacement:
+				character_replacement(canvas, x, 2, color, scale, alpha, table)
+			}
+		}
+	}
+	alphas := [3]u32{OPAQUE, 129, 1}
+	for item in cases {
+		for alpha in alphas {
+			opaque_pixels, drawn, expected: [WIDTH * HEIGHT]Color
+			for &pixel, index in opaque_pixels {
+				pixel = u32(index) * 0x00010307 & 0x007F7F7F
+			}
+			drawn, expected = opaque_pixels, opaque_pixels
+			background := opaque_pixels
+			canvas_of :: proc(pixels: ^[WIDTH * HEIGHT]Color) -> Canvas {
+				return {pixels = raw_data(pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+			}
+			// The ink: white over this background changes each pixel of ink,
+			// for no channel of the background passes 0x7F.
+			draw(item.path, canvas_of(&opaque_pixels), item.scale, 0x00FFFFFF, OPAQUE, &table)
+			draw(item.path, canvas_of(&drawn), item.scale, 0x00C08040, alpha, &table)
+			for index in 0 ..< WIDTH * HEIGHT {
+				if opaque_pixels[index] == background[index] {
+					continue
+				}
+				// A pixel of ink: the opaque white text wrote it.
+				x, y := index % WIDTH, index / WIDTH
+				blend_fill(canvas_of(&expected), x, y, 1, 1, alpha << 24 | 0x00C08040, &table)
+			}
+			testing.expectf(t, drawn == expected, "%v at scale %d with alpha %d: other pixels than one blend of each pixel of ink", item.path, item.scale, alpha)
+		}
+	}
+	// The replacement box with no alpha: the pixels of the four bars of
+	// before, which overlapped in the corners.
+	before, now: [WIDTH * HEIGHT]Color
+	canvas_before := Canvas{pixels = raw_data(before[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	for scale in 1 ..= 3 {
+		left, top := 5 + 1 * scale, 4 + 3 * scale
+		width, height := 6 * scale, 9 * scale
+		fill(canvas_before, left, top, width, scale, 0x00ABCDEF)
+		fill(canvas_before, left, top + height - scale, width, scale, 0x00ABCDEF)
+		fill(canvas_before, left, top, scale, height, 0x00ABCDEF)
+		fill(canvas_before, left + width - scale, top, scale, height, 0x00ABCDEF)
+		character_replacement({pixels = raw_data(now[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}, 5, 4, 0x00ABCDEF, scale)
+		testing.expectf(t, before == now, "the replacement box at scale %d draws other pixels", scale)
+	}
+}
+
+// slice_equal_colors says if two runs of pixels are equal, pixel by pixel.
+@(private = "file")
+slice_equal_colors :: proc(first, second: []Color) -> bool {
+	if len(first) != len(second) {
+		return false
+	}
+	for pixel, index in first {
+		if pixel != second[index] {
+			return false
+		}
+	}
+	return true
+}

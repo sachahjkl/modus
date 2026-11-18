@@ -32,8 +32,7 @@ expected_fields :: proc() -> []Expected_Field {
 	budget: module.Budget_Request
 	draw: draw_record.Draw_Record
 	rectangle: draw_record.Rectangle_Fields
-	vertical: draw_record.Vertical_Gradient_Fields
-	horizontal: draw_record.Horizontal_Gradient_Fields
+	gradient: draw_record.Gradient_Fields
 	text: draw_record.Text_Fields
 	picture: draw_record.Picture_Fields
 	grid: draw_record.Text_Grid_Fields
@@ -118,12 +117,12 @@ expected_fields :: proc() -> []Expected_Field {
 		{"draw_record.Rectangle_Fields", "step_x", offset_of(draw_record.Rectangle_Fields, step_x), size_of(rectangle.step_x)},
 		{"draw_record.Rectangle_Fields", "step_y", offset_of(draw_record.Rectangle_Fields, step_y), size_of(rectangle.step_y)},
 		{"draw_record.Rectangle_Fields", "reserved", offset_of(draw_record.Rectangle_Fields, reserved), size_of(rectangle.reserved)},
-		{"draw_record.Vertical_Gradient_Fields", "top_color", offset_of(draw_record.Vertical_Gradient_Fields, top_color), size_of(vertical.top_color)},
-		{"draw_record.Vertical_Gradient_Fields", "bottom_color", offset_of(draw_record.Vertical_Gradient_Fields, bottom_color), size_of(vertical.bottom_color)},
-		{"draw_record.Vertical_Gradient_Fields", "reserved", offset_of(draw_record.Vertical_Gradient_Fields, reserved), size_of(vertical.reserved)},
-		{"draw_record.Horizontal_Gradient_Fields", "left_color", offset_of(draw_record.Horizontal_Gradient_Fields, left_color), size_of(horizontal.left_color)},
-		{"draw_record.Horizontal_Gradient_Fields", "right_color", offset_of(draw_record.Horizontal_Gradient_Fields, right_color), size_of(horizontal.right_color)},
-		{"draw_record.Horizontal_Gradient_Fields", "reserved", offset_of(draw_record.Horizontal_Gradient_Fields, reserved), size_of(horizontal.reserved)},
+		{"draw_record.Gradient_Fields", "start_x", offset_of(draw_record.Gradient_Fields, start_x), size_of(gradient.start_x)},
+		{"draw_record.Gradient_Fields", "start_y", offset_of(draw_record.Gradient_Fields, start_y), size_of(gradient.start_y)},
+		{"draw_record.Gradient_Fields", "end_x", offset_of(draw_record.Gradient_Fields, end_x), size_of(gradient.end_x)},
+		{"draw_record.Gradient_Fields", "end_y", offset_of(draw_record.Gradient_Fields, end_y), size_of(gradient.end_y)},
+		{"draw_record.Gradient_Fields", "start_color", offset_of(draw_record.Gradient_Fields, start_color), size_of(gradient.start_color)},
+		{"draw_record.Gradient_Fields", "end_color", offset_of(draw_record.Gradient_Fields, end_color), size_of(gradient.end_color)},
 		{"draw_record.Text_Fields", "first", offset_of(draw_record.Text_Fields, first), size_of(text.first)},
 		{"draw_record.Text_Fields", "count", offset_of(draw_record.Text_Fields, count), size_of(text.count)},
 		{"draw_record.Text_Fields", "color", offset_of(draw_record.Text_Fields, color), size_of(text.color)},

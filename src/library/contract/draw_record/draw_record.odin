@@ -17,10 +17,11 @@
 // border; the bytes are the contract. `record_of` writes a record from a
 // primitive, so the kind of a record always matches its fields.
 //
-// Places are in units of 1/64 pixel. The kinds of this version draw on
-// whole pixels, so the border refuses a box whose edges are not whole
-// pixels; the origin of a text in the interface font is the one place
-// inside a pixel, on a third of a pixel.
+// Places are in units of 1/64 pixel. A rectangle with no pattern and a
+// gradient draw inside a pixel: the part of an edge pixel that the box
+// covers scales the alpha of that pixel. The other kinds draw on whole
+// pixels, so the border refuses their box off whole pixels; the origin of
+// a text in the interface font is on a third of a pixel.
 //
 // A color is a Draw_Color, 0xAARRGGBB with straight alpha: alpha 255 is
 // opaque, and a color of 0 is transparent. A record blends its color over
@@ -36,7 +37,7 @@ import "modus:contract/enum_word"
 // of a bound that changes what a record draws, or of a rule of the
 // execution is a new version, and the names of the exports of the drawing
 // module carry it.
-VERSION :: 14
+VERSION :: 15
 
 RECORD_SIZE :: 48 // The bytes of one record.
 HEADER_SIZE :: 24 // The bytes of the header: the kind, the reserved bytes, the element and the box.
@@ -61,6 +62,12 @@ LINE_THICKNESS_LIMIT :: 32
 // of a billion points would stop the program.
 LINE_COORDINATE_LIMIT :: 1 << 15
 
+// The largest distance between the two points of a gradient on each axis,
+// in pixels. The execution multiplies the distance of a pixel from the
+// first point (at most 2^30 units) by this span in units (2^21) and by
+// 255: with it, each product and their sum fit an i64.
+GRADIENT_SPAN_LIMIT :: 1 << 15
+
 TEXT_SCALE_LIMIT :: 3 // The largest scale of a text: 1, 2 or 3 times the size of the font.
 
 // The most bytes of one text in the interface font: the execution places
@@ -76,17 +83,17 @@ INK_MARGIN_LIMIT :: 16
 // module, so they are stated. The format holds primitives only: the look
 // of the system (the grid of points, the folded gap) is elements of the
 // interface package, drawn with them. A text run is one kind for each font:
-// its font is a field. The values 6, 7 and 11 name no kind.
+// its font is a field, and a gradient is one kind along any line. The
+// values 2, 3, 6, 7 and 11 name no kind.
 Draw_Kind :: enum u8 {
-	None                = 0, // Nothing.
-	Rectangle           = 1, // The box in one color, or a pattern of cells of that color that repeats, cut to the box.
-	Vertical_Gradient   = 2, // The box from a color on its top line to a color on its bottom line.
-	Horizontal_Gradient = 3, // The box from a color on its left column to a color on its right column.
-	Text                = 4, // A text run in a font, from its origin at the top of the box.
-	Clip                = 5, // The next records are cut to the box; a box of no width ends the cut.
-	Picture             = 8, // The pixels of a picture of the caller, by values in a picture memory.
-	Text_Grid           = 9, // A grid of text cells, copied into the text table.
-	Line                = 10, // A straight line between two whole pixels, with a thickness.
+	None      = 0, // Nothing.
+	Rectangle = 1, // The box in one color, or a pattern of cells of that color that repeats, cut to the box.
+	Text      = 4, // A text run in a font, from its origin at the top of the box.
+	Clip      = 5, // The next records are cut to the box; a box of no width ends the cut.
+	Picture   = 8, // The pixels of a picture of the caller, by values in a picture memory.
+	Text_Grid = 9, // A grid of text cells, copied into the text table.
+	Line      = 10, // A straight line between two whole pixels, with a thickness.
+	Gradient  = 12, // The box in a color that goes from a color at one point to a color at another, along the line of the two points.
 }
 
 // The weight of a text. Bold draws at scale 1 only (the titles of the
@@ -126,8 +133,8 @@ Problem :: enum u8 {
 	Reserved_Not_Zero         = 2, // A reserved byte of the header, or a byte that the kind does not name, is not 0.
 	Box_Inverted              = 3, // The right edge of the box is left of its left edge, or its bottom above its top.
 	Box_Past_Coordinate_Limit = 4, // An edge of the box is past COORDINATE_LIMIT.
-	Box_Not_On_Whole_Pixels   = 5, // An edge of the box is not a whole pixel: no kind of this version draws inside a pixel.
-	Field_Past_Bound          = 6, // A field of the kind is out of its range: a color that is not canonical or not opaque where the kind asks for it, a format, a scale, a weight, a thickness, an end of a line, a count, an origin.
+	Box_Not_On_Whole_Pixels   = 5, // An edge of the box is not a whole pixel, in a kind that draws on whole pixels only: each kind but a rectangle with no pattern and a gradient.
+	Field_Past_Bound          = 6, // A field of the kind is out of its range: a color that is not canonical or not opaque where the kind asks for it, a format, a scale, a weight, a thickness, an end of a line, the two points of a gradient, a count, an origin.
 }
 
 // One draw record, 48 bytes, little-endian. A record holds values only:
@@ -171,22 +178,21 @@ Rectangle_Fields :: struct {
 	reserved:    [4]u8, // 0.
 }
 
-// The fields of a Vertical_Gradient. The two colors mix in their encoded
-// values, alpha too, so the red, the green and the blue of an end with
-// alpha 0 still color the lines between: a fade to a transparent red stays
-// red. Two ends with alpha 0 draw nothing, and are both 0.
-Vertical_Gradient_Fields :: struct {
-	top_color:    u32, // A Draw_Color: the color of the top line.
-	bottom_color: u32, // A Draw_Color: the color of the bottom line.
-	reserved:     [16]u8, // 0.
-}
-
-// The fields of a Horizontal_Gradient, with the colors of a
-// Vertical_Gradient.
-Horizontal_Gradient_Fields :: struct {
-	left_color:  u32, // A Draw_Color: the color of the left column.
-	right_color: u32, // A Draw_Color: the color of the right column.
-	reserved:    [16]u8, // 0.
+// The fields of a Gradient. The color of a pixel comes from the projection
+// of its center on the line of the two points, cut to the two ends, in
+// steps of 1/255: the level is 255 times the projection over the length,
+// rounded down. The two colors mix at that level in their encoded values,
+// alpha too, so the red, the green and the blue of an end with alpha 0
+// still color the pixels between: a fade to a transparent red stays red.
+// Two ends with alpha 0 draw nothing, and are both 0. The two points
+// differ, and are at most GRADIENT_SPAN_LIMIT pixels apart on each axis.
+Gradient_Fields :: struct {
+	start_x:     i32, // The first point, in 1/64 pixel of the surface, inside COORDINATE_LIMIT.
+	start_y:     i32,
+	end_x:       i32, // The second point, in 1/64 pixel of the surface.
+	end_y:       i32,
+	start_color: u32, // A Draw_Color: the color at the first point and before it.
+	end_color:   u32, // A Draw_Color: the color at the second point and past it.
 }
 
 // The fields of a Text: a run of text in one font. The box holds every
@@ -198,7 +204,7 @@ Horizontal_Gradient_Fields :: struct {
 Text_Fields :: struct {
 	first:    u32, // The first byte of the text in the text table.
 	count:    u32, // The bytes of the text; in the interface font, at most INTERFACE_TEXT_LIMIT.
-	color:    u32, // An opaque Draw_Color: the glyphs do not blend with alpha yet.
+	color:    u32, // A Draw_Color, canonical: a color with alpha 0 is 0. The alpha scales the coverage of each glyph.
 	origin_x: i32, // The origin of the text, in 1/64 pixel, at most INK_MARGIN_LIMIT pixels right of the left edge of the box: on a whole pixel in the font of the cells, on a third of a pixel in the interface font.
 	font:     u8, // The word of a Font_Kind.
 	scale:    u8, // 1 to TEXT_SCALE_LIMIT.
@@ -237,8 +243,7 @@ Line_Fields :: struct {
 }
 
 #assert(size_of(Rectangle_Fields) == FIELDS_SIZE)
-#assert(size_of(Vertical_Gradient_Fields) == FIELDS_SIZE)
-#assert(size_of(Horizontal_Gradient_Fields) == FIELDS_SIZE)
+#assert(size_of(Gradient_Fields) == FIELDS_SIZE)
 #assert(size_of(Text_Fields) == FIELDS_SIZE)
 #assert(size_of(Picture_Fields) == FIELDS_SIZE)
 #assert(size_of(Text_Grid_Fields) == FIELDS_SIZE)
@@ -258,15 +263,13 @@ Repetition :: struct {
 	cell_x, cell_y:                              i32,
 	cell_width, cell_height, step_x, step_y: u16,
 }
-Draw_Vertical_Gradient :: struct {
-	top_color, bottom_color: Draw_Color,
-}
-Draw_Horizontal_Gradient :: struct {
-	left_color, right_color: Draw_Color,
+Draw_Gradient :: struct {
+	start_x, start_y, end_x, end_y: i32, // In 1/64 pixel of the surface.
+	start_color, end_color:         Draw_Color,
 }
 Draw_Text :: struct {
 	first, count:        u32,
-	color:               Draw_Color, // Opaque.
+	color:               Draw_Color,
 	origin_x:            i32, // In 1/64 pixel.
 	font:                Font_Kind,
 	scale:               u8,
@@ -292,8 +295,7 @@ Draw_Line :: struct {
 Draw_Primitive :: union {
 	Draw_Nothing,
 	Draw_Rectangle,
-	Draw_Vertical_Gradient,
-	Draw_Horizontal_Gradient,
+	Draw_Gradient,
 	Draw_Text,
 	Draw_Clip,
 	Draw_Picture,
@@ -368,9 +370,11 @@ copy_once :: #force_inline proc "contextless" (record: ^Draw_Record) -> Draw_Rec
 // problem that refuses it: a word of a kind that names no member, a
 // reserved byte or a byte that the kind does not name that is not 0, a box
 // whose right is left of its left or whose bottom is above its top, an
-// edge past COORDINATE_LIMIT or not on a whole pixel, and a field of the
-// kind out of its range: a color that is not canonical, and a color of a
-// text or a line that is not opaque, too. A refused record draws nothing.
+// edge past COORDINATE_LIMIT, an edge not on a whole pixel in a kind that
+// draws on whole pixels, and a field of the kind out of its range: a color
+// that is not canonical, a color of a line that is not opaque, and two
+// points of a gradient that are equal, past the limit or too far apart,
+// too. A refused record draws nothing.
 // The checks run in that order, so a record with two faults gives the
 // problem of the first check.
 //
@@ -400,7 +404,10 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 	if record.right < record.left || record.bottom < record.top {
 		return nil, .Box_Inverted
 	}
-	if !on_whole_pixel(record.left) || !on_whole_pixel(record.top) || !on_whole_pixel(record.right) || !on_whole_pixel(record.bottom) {
+	// A rectangle and a gradient draw inside a pixel; each other kind, and
+	// a rectangle with a pattern (below), draws on whole pixels.
+	whole := on_whole_pixel(record.left) && on_whole_pixel(record.top) && on_whole_pixel(record.right) && on_whole_pixel(record.bottom)
+	if !whole && kind != .Rectangle && kind != .Gradient {
 		return nil, .Box_Not_On_Whole_Pixels
 	}
 	switch kind {
@@ -420,28 +427,22 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 			return nil, .Reserved_Not_Zero
 		}
 		repetition := Repetition{cell_x = fields.cell_x, cell_y = fields.cell_y, cell_width = fields.cell_width, cell_height = fields.cell_height, step_x = fields.step_x, step_y = fields.step_y}
+		// The cells of a pattern are whole pixels, and its box cuts them:
+		// a box inside a pixel would cut a cell inside a pixel.
+		if !whole && repetition != (Repetition{}) {
+			return nil, .Box_Not_On_Whole_Pixels
+		}
 		if !color_canonical(Draw_Color(fields.color)) || !repetition_valid(repetition) {
 			return nil, .Field_Past_Bound
 		}
 		return Draw_Rectangle{color = Draw_Color(fields.color), repetition = repetition}, .None
-	case .Vertical_Gradient:
-		fields := transmute(Vertical_Gradient_Fields)record.fields
-		if !all_zero(fields.reserved) {
-			return nil, .Reserved_Not_Zero
-		}
-		if !gradient_colors_canonical(Draw_Color(fields.top_color), Draw_Color(fields.bottom_color)) {
+	case .Gradient:
+		fields := transmute(Gradient_Fields)record.fields
+		gradient := Draw_Gradient{start_x = fields.start_x, start_y = fields.start_y, end_x = fields.end_x, end_y = fields.end_y, start_color = Draw_Color(fields.start_color), end_color = Draw_Color(fields.end_color)}
+		if !gradient_line_valid(gradient) || !gradient_colors_canonical(gradient.start_color, gradient.end_color) {
 			return nil, .Field_Past_Bound
 		}
-		return Draw_Vertical_Gradient{top_color = Draw_Color(fields.top_color), bottom_color = Draw_Color(fields.bottom_color)}, .None
-	case .Horizontal_Gradient:
-		fields := transmute(Horizontal_Gradient_Fields)record.fields
-		if !all_zero(fields.reserved) {
-			return nil, .Reserved_Not_Zero
-		}
-		if !gradient_colors_canonical(Draw_Color(fields.left_color), Draw_Color(fields.right_color)) {
-			return nil, .Field_Past_Bound
-		}
-		return Draw_Horizontal_Gradient{left_color = Draw_Color(fields.left_color), right_color = Draw_Color(fields.right_color)}, .None
+		return gradient, .None
 	case .Text:
 		fields := transmute(Text_Fields)record.fields
 		if !all_zero(fields.reserved) {
@@ -449,7 +450,7 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 		}
 		font, font_ok := font_kind_of_word(fields.font)
 		weight, weight_ok := font_weight_of_word(fields.weight)
-		if !font_ok || !weight_ok || fields.scale < 1 || fields.scale > TEXT_SCALE_LIMIT || !color_opaque(Draw_Color(fields.color)) || !origin_valid(fields.origin_x, record.left) {
+		if !font_ok || !weight_ok || fields.scale < 1 || fields.scale > TEXT_SCALE_LIMIT || !color_canonical(Draw_Color(fields.color)) || !origin_valid(fields.origin_x, record.left) {
 			return nil, .Field_Past_Bound
 		}
 		// The font of the cells draws from a whole pixel and has no bound of
@@ -511,12 +512,9 @@ record_of :: proc "contextless" (primitive: Draw_Primitive, element: u32, left, 
 		record.kind = u8(Draw_Kind.Rectangle)
 		pattern := value.repetition
 		record.fields = transmute([FIELDS_SIZE]u8)Rectangle_Fields{color = u32(value.color), cell_x = pattern.cell_x, cell_y = pattern.cell_y, cell_width = pattern.cell_width, cell_height = pattern.cell_height, step_x = pattern.step_x, step_y = pattern.step_y}
-	case Draw_Vertical_Gradient:
-		record.kind = u8(Draw_Kind.Vertical_Gradient)
-		record.fields = transmute([FIELDS_SIZE]u8)Vertical_Gradient_Fields{top_color = u32(value.top_color), bottom_color = u32(value.bottom_color)}
-	case Draw_Horizontal_Gradient:
-		record.kind = u8(Draw_Kind.Horizontal_Gradient)
-		record.fields = transmute([FIELDS_SIZE]u8)Horizontal_Gradient_Fields{left_color = u32(value.left_color), right_color = u32(value.right_color)}
+	case Draw_Gradient:
+		record.kind = u8(Draw_Kind.Gradient)
+		record.fields = transmute([FIELDS_SIZE]u8)Gradient_Fields{start_x = value.start_x, start_y = value.start_y, end_x = value.end_x, end_y = value.end_y, start_color = u32(value.start_color), end_color = u32(value.end_color)}
 	case Draw_Text:
 		record.kind = u8(Draw_Kind.Text)
 		record.fields = transmute([FIELDS_SIZE]u8)Text_Fields{first = value.first, count = value.count, color = u32(value.color), origin_x = value.origin_x, font = u8(value.font), scale = value.scale, weight = u8(value.weight)}
@@ -542,7 +540,7 @@ byte_range_of :: proc "contextless" (primitive: Draw_Primitive) -> (first, count
 		return value.first, value.count, true
 	case Draw_Text_Grid:
 		return value.first, value.count, true
-	case Draw_Nothing, Draw_Clip, Draw_Rectangle, Draw_Vertical_Gradient, Draw_Horizontal_Gradient, Draw_Picture, Draw_Line:
+	case Draw_Nothing, Draw_Clip, Draw_Rectangle, Draw_Gradient, Draw_Picture, Draw_Line:
 	}
 	return 0, 0, false
 }
@@ -561,7 +559,7 @@ with_byte_place :: proc "contextless" (primitive: Draw_Primitive, first: u32) ->
 		moved := value
 		moved.first = first
 		return moved
-	case Draw_Nothing, Draw_Clip, Draw_Rectangle, Draw_Vertical_Gradient, Draw_Horizontal_Gradient, Draw_Picture, Draw_Line:
+	case Draw_Nothing, Draw_Clip, Draw_Rectangle, Draw_Gradient, Draw_Picture, Draw_Line:
 	}
 	return primitive
 }
@@ -614,6 +612,52 @@ repetition_valid :: proc "contextless" (pattern: Repetition) -> bool {
 		return false
 	}
 	return inside_coordinate_limit(pattern.cell_x) && inside_coordinate_limit(pattern.cell_y) && on_whole_pixel(pattern.cell_x) && on_whole_pixel(pattern.cell_y)
+}
+
+// gradient_line_valid says if the two points of a gradient are in their
+// bounds: each inside COORDINATE_LIMIT, not equal, and at most
+// GRADIENT_SPAN_LIMIT pixels apart on each axis. In 64 bits: two points at
+// the two ends of the limit are 2^30 units apart.
+gradient_line_valid :: proc "contextless" (gradient: Draw_Gradient) -> bool {
+	points := [4]i32{gradient.start_x, gradient.start_y, gradient.end_x, gradient.end_y}
+	for place in points {
+		if !inside_coordinate_limit(place) {
+			return false
+		}
+	}
+	span_x := abs(i64(gradient.end_x) - i64(gradient.start_x))
+	span_y := abs(i64(gradient.end_y) - i64(gradient.start_y))
+	if span_x == 0 && span_y == 0 {
+		return false
+	}
+	return span_x <= GRADIENT_SPAN_LIMIT * UNITS_PER_PIXEL && span_y <= GRADIENT_SPAN_LIMIT * UNITS_PER_PIXEL
+}
+
+// GRADIENT_LEVELS is the count of steps from the first color of a gradient
+// to the second.
+GRADIENT_LEVELS :: 255
+
+// gradient_level gives the level of a place of the surface, in units, on
+// the line of a gradient that the border read: 0 at the first point and
+// before it, GRADIENT_LEVELS at the second point and past it, and between
+// them GRADIENT_LEVELS times the projection over the length, rounded down.
+// On an axis, with the points at the centers of the first and the last
+// pixel, it gives the level of the line r of h: r * 255 / (h - 1). The
+// bounds of the border keep each product inside an i64: a distance of at
+// most 2^30 + 2^29 units times a span of at most 2^21, two such terms, and
+// GRADIENT_LEVELS.
+gradient_level :: proc "contextless" (gradient: Draw_Gradient, x, y: i64) -> u32 {
+	direction_x := i64(gradient.end_x) - i64(gradient.start_x)
+	direction_y := i64(gradient.end_y) - i64(gradient.start_y)
+	along := (x - i64(gradient.start_x)) * direction_x + (y - i64(gradient.start_y)) * direction_y
+	length := direction_x * direction_x + direction_y * direction_y
+	if along <= 0 {
+		return 0
+	}
+	if along >= length {
+		return GRADIENT_LEVELS
+	}
+	return u32(along * GRADIENT_LEVELS / length)
 }
 
 // line_end_valid says if a coordinate can be an end of a line: a whole
@@ -672,8 +716,8 @@ gradient_colors_canonical :: proc "contextless" (first, second: Draw_Color) -> b
 	return alpha_of(first) != 0 || alpha_of(second) != 0 || (first == 0 && second == 0)
 }
 
-// color_opaque says if a color has alpha 255: the color of a text and of a
-// line, whose drawing does not blend with alpha yet.
+// color_opaque says if a color has alpha 255: the color of a line, whose
+// squares overlap, so a translucent one would blend twice.
 color_opaque :: proc "contextless" (color: Draw_Color) -> bool {
 	return alpha_of(color) == OPAQUE_ALPHA
 }

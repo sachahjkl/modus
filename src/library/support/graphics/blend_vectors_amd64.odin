@@ -162,15 +162,57 @@ coverage_four_pixels :: #force_inline proc "contextless" (address: ^Four_Pixels,
 	intrinsics.unaligned_store(address, coverage_blend_finish(under_pixels, under, coverage, from_table, words, color))
 }
 
+// coverage_with_alpha_in_lanes is coverage_with_alpha in each lane: t =
+// coverage * alpha + 128 is at most 65153, and t + t >> 8 at most 65407,
+// so no lane passes 16 bits.
+@(private)
+coverage_with_alpha_in_lanes :: #force_inline proc "contextless" (coverage: Sixteen_Channels, alpha: u32) -> Sixteen_Channels {
+	a := u16(alpha)
+	alphas := Sixteen_Channels{a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, a}
+	t := coverage * alphas + Sixteen_Channels(128)
+	return intrinsics.simd_shr(t + intrinsics.simd_shr(t, Sixteen_Channels(8)), Sixteen_Channels(8))
+}
+
+// coverage_four_pixels_with_alpha blends the four pixels at address with
+// the coverage of each channel scaled by an alpha below 255. No coverage
+// reaches 255, so no word covers its pixel whole: a word of 0 keeps its
+// pixel whole, and each other pixel gets the channels that the table and
+// the choice of each lane give, as in the scalar form.
+@(private)
+coverage_four_pixels_with_alpha :: #force_inline proc "contextless" (address: ^Four_Pixels, words: Four_Pixels, color: ^Coverage_Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8, alpha: u32) {
+	under_pixels := intrinsics.unaligned_load(address)
+	under := channels_of_four_pixels(under_pixels)
+	coverage := coverage_with_alpha_in_lanes(coverage_in_pixel_order(words, ORDER), alpha)
+	from_table := square_roots_one_at_a_time(square_root_indices(under, coverage, color.squares), square_root)
+	no_coverage := intrinsics.simd_lanes_eq(coverage, Sixteen_Channels(0))
+	channels := intrinsics.simd_select(no_coverage, under, from_table)
+	blended := four_pixels_of_channels(intrinsics.simd_bit_and(channels, COLOR_LANES_OF_FOUR_PIXELS))
+	word_is_zero := intrinsics.simd_lanes_eq(words, Four_Pixels(0))
+	intrinsics.unaligned_store(address, intrinsics.simd_select(word_is_zero, under_pixels, blended))
+}
+
 // blend_coverage_row_sse2 is the SSE2 form of blend_coverage_row_in_order:
 // four pixels at a time. A group whose four words are 0 is not read; a
 // group whose four words cover the three stripes gets the color: the
-// general path gives the same bytes for both, at a higher cost.
+// general path gives the same bytes for both, at a higher cost. With an
+// alpha below 255 the coverage of each lane is scaled first, and no group
+// is covered whole.
 @(private)
-blend_coverage_row_sse2 :: proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8) #no_bounds_check {
+blend_coverage_row_sse2 :: proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8, alpha: u32 = OPAQUE) #no_bounds_check {
 	blend_color: Coverage_Color
 	coverage_color_of(color, ORDER, &blend_color)
 	column := first
+	if alpha != OPAQUE {
+		for ; column + 4 <= last; column += 4 {
+			group_words := intrinsics.unaligned_load((^Four_Pixels)(&words[column]))
+			if intrinsics.simd_reduce_or(group_words) == 0 {
+				continue
+			}
+			coverage_four_pixels_with_alpha((^Four_Pixels)(&line[column]), group_words, &blend_color, ORDER, square_root, alpha)
+		}
+		blend_coverage_row_in_order(line, words, column, last, color, ORDER, square_root, alpha)
+		return
+	}
 	for ; column + 4 <= last; column += 4 {
 		group_words := intrinsics.unaligned_load((^Four_Pixels)(&words[column]))
 		if intrinsics.simd_reduce_or(group_words) == 0 {

@@ -47,7 +47,7 @@ blend_premultiplied_alpha_row :: #force_inline proc "contextless" (to: [^]Color,
 - the edge values often: 0, 1, 254 and 255 in each byte, whole words of 0, of all ones and of full coverage;
 - guard words before and after each row: a form that writes outside its columns changes them.
 
-When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`, `straight_alpha_forms_give_the_bytes_of_the_scalar_form`, `straight_alpha_forms_meet_each_channel_value`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). `modustool check` runs them.
+When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`, `straight_alpha_forms_give_the_bytes_of_the_scalar_form`, `straight_alpha_forms_meet_each_channel_value`, `coverage_forms_with_alpha_give_the_bytes_of_the_scalar_form`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). `modustool check` runs them.
 
 ## 2. One form: SSE2
 
@@ -126,6 +126,8 @@ The table is kept: 12 reads of one byte cost less than a square root computed in
 
 **The blend of colors with straight alpha** is the same arithmetic, with the alpha of each color as the coverage of its three channels and the channels of each color in place of one color: `blend_straight_alpha_row_sse2`, 4 pixels at a time. A group of four colors with alpha 0 is not read; a group of four opaque colors is written whole, with the high byte 0. A draw record of one color with alpha (`graphics.blend_fill`) blends a row of that color, 64 pixels at a time; an opaque record is a fill and takes no blend. The host test `straight_alpha_forms_meet_each_channel_value` also checks that the scalar form gives the bytes of the blend of a glyph whose word covers the three channels with the alpha: one rule for both.
 
+**The blend of a glyph with alpha**, for a text whose color has an alpha below 255: each coverage is first scaled, `round(coverage * alpha / 255)` (`coverage_with_alpha`, `t = c * a + 128`, then `(t + t >> 8) >> 8`, exact for each product of two bytes, in lanes of 16 bits in the SSE2 form). No scaled coverage reaches 255, so the SSE2 form drops the test of a group covered whole, and keeps the test of a group of four words of 0. The blend tables give the result of each coverage, so the scaled coverage reads the table of the opaque color of the same channels. The host test `coverage_forms_with_alpha_give_the_bytes_of_the_scalar_form` compares the two forms for six alphas, and `fast_blend_with_alpha_is_the_reference` (`text_test.odin`) compares the blend tables with the reference.
+
 **The flag of the scalar form.** The scalar form keeps the channels of the previous pixel, with a flag for "no previous pixel" (`previous_known`). The value `0xFFFFFFFF` cannot mean "no previous pixel": a first pixel `0xFFFFFFFF` is then blended as black. A canvas of the system holds `0x00RRGGBB` only, but the blend must be right for every word. The host test `coverage_scalar_form_reads_a_pixel_of_all_ones` keeps the flag.
 
 **The blend table is a third path, not a vector form.** For a text over one flat color, `graphics.blend_glyph_rows` reads the result of each channel from a blend table: three loads and a store for a pixel, with no arithmetic (`docs/FONTS.md`, "Where the time goes, and the fast blend"). The two paths meet in this way:
@@ -154,9 +156,11 @@ The compositor draws each frame of the screen. This table says, for each kind of
 | The copy of the background and of a surface into the frame, and of the frame into the screen | `copy_bytes_without_overlap` of `src/runtime/memory.asm`: already vector moves |
 | The swap of red and blue when the screen is blue-green-red | the compiler makes it a vector loop (`psrld $0x10`, `pand`, `por` on 16 bytes, in `entry` of the compositor) |
 | The blend of the pointer picture (`blend_premultiplied_alpha`) | SSE2 form, `blend_premultiplied_alpha_row_sse2` |
-| Opaque rectangles (`Rectangle` records), opaque vertical gradients (a fill for each line) | `graphics.fill`: a vector loop of the compiler |
-| Opaque horizontal gradients (`graphics.gradient`: one row of colors, then a copy for each line) | scalar: one row for each record, then copies |
-| Rectangles, gradients and pictures with alpha (`graphics.blend_fill`, `graphics.blend_copy`) | SSE2 form, `blend_straight_alpha_row_sse2`; the row of a gradient with alpha is scalar |
+| Opaque rectangles on whole pixels (`Rectangle` records), opaque gradients down (a fill for each line) | `graphics.fill`: a vector loop of the compiler |
+| Rectangles inside the pixels: at most nine parts, each of one covered alpha | SSE2 form, `blend_straight_alpha_row_sse2`, one `blend_fill` for each part: no coverage is computed for each pixel |
+| Gradients across (one row of colors for each span of rows) and at an angle (one row for each line) | the row of colors is scalar: the level of each pixel, one division, and its mix; an opaque gradient across covered whole copies its row into each line (`copy_bytes_without_overlap`), else the SSE2 form blends the row, and a group of four opaque colors is a store |
+| Rectangles, gradients and pictures with alpha (`graphics.blend_fill`, `graphics.blend_copy`) | SSE2 form, `blend_straight_alpha_row_sse2` |
+| A text with alpha | the blend of a glyph with each coverage times the alpha: SSE2 form `blend_coverage_row_sse2`, and the blend tables, which the scaled coverage reads; Spleen and the replacement box blend each pixel of ink with `blend_fill` |
 
 **The blend of the pointer picture.** A pointer picture has one alpha for each pixel, premultiplied (`docs/POINTERS.md`, "3. The format of the system: one pointer theme file"). For each channel, with `d` the pixel and `a` the alpha of the source:
 
@@ -209,7 +213,7 @@ nix develop -c odin test src/library/contract/blake3 -o:speed -vet -collection:m
 
 ## 7. Limits
 
-- The horizontal gradient and the outline renderer (`src/library/support/vector_font`, at build time) stay scalar.
+- The row of colors of a gradient across or at an angle (a division and a mix for each pixel) and the outline renderer (`src/library/support/vector_font`, at build time) stay scalar.
 - The object code of the SSE2 forms is not read yet: the measures say if the compiler lowered the 16-bit products to `pmullw` and `pmulhuw`.
 - The cryptography of the system has no vector form: it keeps the portable implementations of its origin (`docs/CRYPTOGRAPHY.md`).
 - No vector form uses a usable instruction set above SSE2. The package `src/library/support/instruction_sets` has two users, the test programs `extended_state` and `return_fault`.

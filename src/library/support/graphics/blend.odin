@@ -101,34 +101,58 @@ blend_premultiplied_alpha_row_scalar :: proc "contextless" (to: [^]Color, from: 
 //
 // No bounds check: the caller cuts first and last to the row, and an index
 // of square_root is at most 255 * 255 * 255 >> 12 = 4048.
-blend_coverage_row :: proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, order: Subpixel_Order, square_root: ^[4096]u8) {
+//
+// alpha is the alpha of the color of a text with alpha: it scales the
+// coverage of each channel, coverage_with_alpha, before the blend, so the
+// cover of a channel is the alpha times its coverage, the rule of the draw
+// records. Alpha 255 keeps each coverage; alpha 0 draws nothing.
+blend_coverage_row :: proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, order: Subpixel_Order, square_root: ^[4096]u8, alpha: u32 = OPAQUE) {
 	switch order {
 	case .Red_Green_Blue:
-		blend_coverage_row_in_form_of_target(line, words, first, last, color, .Red_Green_Blue, square_root)
+		blend_coverage_row_in_form_of_target(line, words, first, last, color, .Red_Green_Blue, square_root, alpha)
 	case .Blue_Green_Red:
-		blend_coverage_row_in_form_of_target(line, words, first, last, color, .Blue_Green_Red, square_root)
+		blend_coverage_row_in_form_of_target(line, words, first, last, color, .Blue_Green_Red, square_root, alpha)
 	case .None:
-		blend_coverage_row_in_form_of_target(line, words, first, last, color, .None, square_root)
+		blend_coverage_row_in_form_of_target(line, words, first, last, color, .None, square_root, alpha)
 	}
+}
+
+// The alpha of an opaque color, which keeps each coverage.
+OPAQUE :: 255
+
+// coverage_with_alpha gives round(coverage * alpha / 255) for a coverage and
+// an alpha of 0 to 255: t = coverage * alpha + 128, then (t + t >> 8) >> 8,
+// the division by 255 of blend_premultiplied_alpha, exact for each product
+// of two bytes. Alpha 255 gives the coverage, and no alpha below 255 gives
+// a full coverage of 255.
+coverage_with_alpha :: #force_inline proc "contextless" (coverage, alpha: u32) -> u32 {
+	t := coverage * alpha + 128
+	return (t + (t >> 8)) >> 8
 }
 
 // blend_coverage_row_in_form_of_target blends one row in the form of the
 // target, for one order of the stripes.
 @(private)
-blend_coverage_row_in_form_of_target :: #force_inline proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8) {
+blend_coverage_row_in_form_of_target :: #force_inline proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8, alpha: u32) {
+	if alpha == 0 {
+		return
+	}
 	when ODIN_ARCH == .amd64 {
-		blend_coverage_row_sse2(line, words, first, last, color, ORDER, square_root)
+		blend_coverage_row_sse2(line, words, first, last, color, ORDER, square_root, alpha)
 	} else {
-		blend_coverage_row_in_order(line, words, first, last, color, ORDER, square_root)
+		blend_coverage_row_in_order(line, words, first, last, color, ORDER, square_root, alpha)
 	}
 }
 
 // blend_coverage_row_in_order is the scalar form, for one order of the
 // stripes, a constant: no test of the order for each pixel. The channels of
 // the last pixel that is not covered whole stay: on a plain background,
-// each pixel has the same.
+// each pixel has the same. With an alpha below 255 each coverage is
+// coverage_with_alpha of it, so no pixel is covered whole, and a word whose
+// coverages all become 0 writes the channels of its pixel, with the high
+// byte 0, as the SSE2 form does.
 @(private)
-blend_coverage_row_in_order :: #force_inline proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8) #no_bounds_check {
+blend_coverage_row_in_order :: #force_inline proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8, alpha: u32 = OPAQUE) #no_bounds_check {
 	color_red, color_green, color_blue := color >> 16 & 0xFF, color >> 8 & 0xFF, color & 0xFF
 	red_square, green_square, blue_square := color_red * color_red, color_green * color_green, color_blue * color_blue
 	// The channels of previous are known only after the first pixel: a
@@ -160,6 +184,9 @@ blend_coverage_row_in_order :: #force_inline proc "contextless" (line: [^]Color,
 		} else {
 			red = word >> 24
 			green, blue = red, red
+		}
+		if alpha != OPAQUE {
+			red, green, blue = coverage_with_alpha(red, alpha), coverage_with_alpha(green, alpha), coverage_with_alpha(blue, alpha)
 		}
 		if red & green & blue == 255 {
 			line[column] = color
@@ -349,22 +376,28 @@ blend_table_of :: proc "contextless" (tables: ^Blend_Tables, color, under: Color
 }
 
 // blend_glyph_rows draws the rows of a glyph with the fast blend: the same
-// pixels as blend_coverage_row for each row.
-blend_glyph_rows :: proc "contextless" (canvas_row: [^]Color, stride: int, words: [^]u32, width, first_row, last_row, first, last: int, color: Color, order: Subpixel_Order, square_root: ^[4096]u8, tables: ^Blend_Tables) {
+// pixels as blend_coverage_row for each row, with the same alpha. A table
+// gives the result of each coverage, so the coverage that the alpha scaled
+// reads the same table: a color with alpha shares the tables of its
+// channels.
+blend_glyph_rows :: proc "contextless" (canvas_row: [^]Color, stride: int, words: [^]u32, width, first_row, last_row, first, last: int, color: Color, order: Subpixel_Order, square_root: ^[4096]u8, tables: ^Blend_Tables, alpha: u32 = OPAQUE) {
+	if alpha == 0 {
+		return
+	}
 	switch order {
 	case .Red_Green_Blue:
-		blend_glyph_rows_in_order(canvas_row, stride, words, width, first_row, last_row, first, last, color, .Red_Green_Blue, square_root, tables)
+		blend_glyph_rows_in_order(canvas_row, stride, words, width, first_row, last_row, first, last, color, .Red_Green_Blue, square_root, tables, alpha)
 	case .Blue_Green_Red:
-		blend_glyph_rows_in_order(canvas_row, stride, words, width, first_row, last_row, first, last, color, .Blue_Green_Red, square_root, tables)
+		blend_glyph_rows_in_order(canvas_row, stride, words, width, first_row, last_row, first, last, color, .Blue_Green_Red, square_root, tables, alpha)
 	case .None:
-		blend_glyph_rows_in_order(canvas_row, stride, words, width, first_row, last_row, first, last, color, .None, square_root, tables)
+		blend_glyph_rows_in_order(canvas_row, stride, words, width, first_row, last_row, first, last, color, .None, square_root, tables, alpha)
 	}
 }
 
 // blend_glyph_rows_in_order is blend_glyph_rows for one subpixel order, as
 // a constant: the compiler makes one loop for each order.
 @(private)
-blend_glyph_rows_in_order :: #force_inline proc "contextless" (canvas_row: [^]Color, stride: int, words: [^]u32, width, first_row, last_row, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8, tables: ^Blend_Tables) #no_bounds_check {
+blend_glyph_rows_in_order :: #force_inline proc "contextless" (canvas_row: [^]Color, stride: int, words: [^]u32, width, first_row, last_row, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8, tables: ^Blend_Tables, alpha: u32) #no_bounds_check {
 	for row in first_row ..< last_row {
 		line := canvas_row[row * stride:]
 		row_words := words[row * width:]
@@ -372,7 +405,7 @@ blend_glyph_rows_in_order :: #force_inline proc "contextless" (canvas_row: [^]Co
 		if line[last - 1] != under {
 			// A row over a gradient across or a picture: no table holds it;
 			// the form of the target (SSE2 on amd64), the same bytes.
-			blend_coverage_row_in_form_of_target(line, row_words, first, last, color, ORDER, square_root)
+			blend_coverage_row_in_form_of_target(line, row_words, first, last, color, ORDER, square_root, alpha)
 			continue
 		}
 		table := blend_table_of(tables, color, under)
@@ -407,7 +440,7 @@ blend_glyph_rows_in_order :: #force_inline proc "contextless" (canvas_row: [^]Co
 			if line[column] != under {
 				// One pixel: the SSE2 form works on groups of four and
 				// gives a lone pixel to this scalar form anyway.
-				blend_coverage_row_in_order(line, row_words, column, column + 1, color, ORDER, square_root)
+				blend_coverage_row_in_order(line, row_words, column, column + 1, color, ORDER, square_root, alpha)
 				continue
 			}
 			red, green, blue: u32
@@ -418,6 +451,9 @@ blend_glyph_rows_in_order :: #force_inline proc "contextless" (canvas_row: [^]Co
 			} else {
 				red = word >> 24
 				green, blue = red, red
+			}
+			if alpha != OPAQUE {
+				red, green, blue = coverage_with_alpha(red, alpha), coverage_with_alpha(green, alpha), coverage_with_alpha(blue, alpha)
 			}
 			line[column] = (value_of(red_values, red, generation, under_red, color_red, 16, square_root) | value_of(green_values, green, generation, under_green, color_green, 8, square_root) | value_of(blue_values, blue, generation, under_blue, color_blue, 0, square_root)) & 0x00FFFFFF
 		}

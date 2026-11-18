@@ -204,13 +204,39 @@ draw_vertical_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width, h
 
 // draw_vertical_gradient_with_alpha appends a vertical gradient between two
 // colors with alpha, which mix in their encoded values, alpha too: a fade
-// to the same color with alpha 0 keeps the color.
+// to the same color with alpha 0 keeps the color. It is a Gradient whose
+// points are the centers of the first and the last line, so line r of h
+// has the level r * 255 / (h - 1). A box of one line is a rectangle of the
+// top color, the color of its one line.
+//
+// A gradient whose first and last lines are more than GRADIENT_SPAN_LIMIT
+// pixels apart, after the cut of its box to COORDINATE_LIMIT, is not
+// written, and sets refused. Its points cannot be cut: the table knows the
+// limit and not the surface, and the limit is far past the span, so a cut
+// keeps the span; and two records of a part each would round the level of
+// each part again, so the colors at the edge of a part would move. A box
+// that the cut leaves empty draws nothing, and needs no record.
 draw_vertical_gradient_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, top, bottom: Draw_Color, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
 	}
+	left, right := cut_edges(x, width)
+	first, last := cut_edges(y, height)
+	if last - first == 1 {
+		record_append(table, record_of_pixels(draw_record.Draw_Rectangle{color = canonical_color(top)}, element, left, first, right, last))
+		return
+	}
+	if last - first <= 0 {
+		return
+	}
+	if last - first - 1 > draw_record.GRADIENT_SPAN_LIMIT {
+		table.refused = true
+		return
+	}
 	top_color, bottom_color := canonical_gradient_colors(top, bottom)
-	record_append(table, placed_record(draw_record.Draw_Vertical_Gradient{top_color = top_color, bottom_color = bottom_color}, element, x, y, width, height))
+	HALF :: draw_record.UNITS_PER_PIXEL / 2
+	gradient := draw_record.Draw_Gradient{start_x = draw_record.units_of_pixels(left), start_y = draw_record.units_of_pixels(first) + HALF, end_x = draw_record.units_of_pixels(left), end_y = draw_record.units_of_pixels(last - 1) + HALF, start_color = top_color, end_color = bottom_color}
+	record_append(table, record_of_pixels(gradient, element, left, first, right, last))
 }
 
 // draw_horizontal_gradient appends a rectangle whose color goes from left,
@@ -220,13 +246,68 @@ draw_horizontal_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width,
 }
 
 // draw_horizontal_gradient_with_alpha appends a horizontal gradient between
-// two colors with alpha, as draw_vertical_gradient_with_alpha.
+// two colors with alpha, as draw_vertical_gradient_with_alpha, with the
+// points at the centers of the first and the last column; a span past
+// GRADIENT_SPAN_LIMIT sets refused in the same way.
 draw_horizontal_gradient_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, left, right: Draw_Color, element: u32 = 0) {
 	if width <= 0 || height <= 0 {
 		return
 	}
+	first, last := cut_edges(x, width)
+	top, bottom := cut_edges(y, height)
+	if last - first == 1 {
+		record_append(table, record_of_pixels(draw_record.Draw_Rectangle{color = canonical_color(left)}, element, first, top, last, bottom))
+		return
+	}
+	if last - first <= 0 {
+		return
+	}
+	if last - first - 1 > draw_record.GRADIENT_SPAN_LIMIT {
+		table.refused = true
+		return
+	}
 	left_color, right_color := canonical_gradient_colors(left, right)
-	record_append(table, placed_record(draw_record.Draw_Horizontal_Gradient{left_color = left_color, right_color = right_color}, element, x, y, width, height))
+	HALF :: draw_record.UNITS_PER_PIXEL / 2
+	gradient := draw_record.Draw_Gradient{start_x = draw_record.units_of_pixels(first) + HALF, start_y = draw_record.units_of_pixels(top), end_x = draw_record.units_of_pixels(last - 1) + HALF, end_y = draw_record.units_of_pixels(top), start_color = left_color, end_color = right_color}
+	record_append(table, record_of_pixels(gradient, element, first, top, last, bottom))
+}
+
+// draw_gradient appends a gradient along any line, in a box: the two
+// points and the four edges of the box are in units of 1/64 pixel of the
+// surface (draw_record.UNITS_PER_PIXEL), so the box can start and end
+// inside a pixel, whose part inside the box scales its alpha. A box or a
+// line that the border refuses is not written, and sets refused: two equal
+// points, a point or an edge past COORDINATE_LIMIT, points further apart
+// than GRADIENT_SPAN_LIMIT.
+draw_gradient :: proc "contextless" (table: ^Draw_Table, left, top, right, bottom: i32, start_x, start_y, end_x, end_y: i32, start, end: Draw_Color, element: u32 = 0) {
+	if right <= left || bottom <= top {
+		return
+	}
+	start_color, end_color := canonical_gradient_colors(start, end)
+	gradient := draw_record.Draw_Gradient{start_x = start_x, start_y = start_y, end_x = end_x, end_y = end_y, start_color = start_color, end_color = end_color}
+	record := draw_record.record_of(gradient, element, left, top, right, bottom)
+	if _, problem := draw_record.read(record); problem != .None {
+		table.refused = true
+		return
+	}
+	record_append(table, record)
+}
+
+// draw_rectangle_in_units appends a rectangle of one color with alpha whose
+// edges are in units of 1/64 pixel of the surface: a pixel that the box
+// covers in part blends with the alpha of the color times that part, so an
+// edge can lie between two pixels. A box that the border refuses (an edge
+// past COORDINATE_LIMIT) is not written, and sets refused.
+draw_rectangle_in_units :: proc "contextless" (table: ^Draw_Table, left, top, right, bottom: i32, color: Draw_Color, element: u32 = 0) {
+	if right <= left || bottom <= top {
+		return
+	}
+	record := draw_record.record_of(draw_record.Draw_Rectangle{color = canonical_color(color)}, element, left, top, right, bottom)
+	if _, problem := draw_record.read(record); problem != .None {
+		table.refused = true
+		return
+	}
+	record_append(table, record)
 }
 
 // canonical_color gives the one form of a color of one color: a color with
@@ -464,7 +545,7 @@ text_of_record :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -
 	switch fields in primitive {
 	case draw_record.Draw_Text:
 		first, count, scale = fields.first, fields.count, int(fields.scale)
-	case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Rectangle, draw_record.Draw_Vertical_Gradient, draw_record.Draw_Horizontal_Gradient, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Line:
+	case draw_record.Draw_Nothing, draw_record.Draw_Clip, draw_record.Draw_Rectangle, draw_record.Draw_Gradient, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Line:
 		return "", 0, false
 	}
 	if u64(first) + u64(count) > u64(table.text_count) || u64(first) + u64(count) > u64(len(table.text)) {
@@ -549,9 +630,18 @@ draw_clip :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
 // COORDINATE_LIMIT has no record: no surface reaches it, and its origin
 // would leave its box.
 draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, color: graphics.Color, font: Font = {}, element: u32 = 0) -> int {
+	return draw_text_with_alpha(table, x, y, text, draw_record.opaque(color), font, element)
+}
+
+// draw_text_with_alpha appends a run of text as draw_text does, in a color
+// with alpha: the alpha scales the cover of each pixel of its ink, in each
+// font. draw_record.with_alpha gives such a color from a token.
+draw_text_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, draw_color: Draw_Color, font: Font = {}, element: u32 = 0) -> int {
+	color := draw_record.channels_of(draw_color)
+	alpha := draw_record.alpha_of(draw_color)
 	used := font_in_use(table, font, len(text))
 	if used.kind == .Interface {
-		return interface_text_append(table, i64(x) * 64, y, text, color, used, element)
+		return interface_text_append(table, i64(x) * 64, y, text, color, used, element, alpha)
 	}
 	width := text_width(used, text)
 	if len(text) == 0 {
@@ -568,7 +658,7 @@ draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, co
 	copy(table.text[start:], text)
 	table.text_count += len(text)
 	scale := font_scale(used)
-	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.opaque(color), origin_x = draw_record.units_of_pixels(x), font = .Cells_8x16, scale = u8(scale), weight = used.weight}
+	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.with_alpha(color, alpha), origin_x = draw_record.units_of_pixels(x), font = .Cells_8x16, scale = u8(scale), weight = used.weight}
 	record_append(table, placed_record(fields, element, x, y, width, graphics.CELL_HEIGHT * scale))
 	return x + width
 }
@@ -595,9 +685,10 @@ draw_text_right :: proc "contextless" (table: ^Draw_Table, right, y: int, text: 
 // by the ink margin of the font on each side (graphics.PROPORTIONAL_INK_MARGIN
 // times the scale), so the damage of the record holds each pixel of its ink.
 // A text whose box would start past COORDINATE_LIMIT has no record: no
-// surface reaches it, and its origin would leave its box.
+// surface reaches it, and its origin would leave its box. alpha is the
+// alpha of the color.
 @(private)
-interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: int, text: string, color: graphics.Color, font: Font, element: u32) -> int {
+interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: int, text: string, color: graphics.Color, font: Font, element: u32, alpha: u8 = draw_record.OPAQUE_ALPHA) -> int {
 	width := interface_width_subpixels(table.interface_font, font, text)
 	pixel, third := glyph_cache.position_of(place, 3)
 	origin := pixel * 64 + i64(third) * 64 / 3
@@ -618,7 +709,7 @@ interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: 
 	start := table.text_count
 	copy(table.text[start:], text)
 	table.text_count += len(text)
-	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.opaque(color), origin_x = i32(origin), font = .Interface, scale = u8(scale), weight = font.weight}
+	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.with_alpha(color, alpha), origin_x = i32(origin), font = .Interface, scale = u8(scale), weight = font.weight}
 	// The top and the bottom by the rule of each writer: the edges of a
 	// place and a size, each cut to the limit, so no sum passes the int.
 	top, bottom := cut_edges(y, graphics.CELL_HEIGHT * scale)

@@ -71,47 +71,29 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 		switch fields in primitive {
 		case draw_record.Draw_Nothing, draw_record.Draw_Clip:
 		case draw_record.Draw_Rectangle:
-			if fields.repetition == (draw_record.Repetition{}) {
-				graphics.blend_fill(view, x, y, width, height, u32(fields.color), &graphics.text_state.square_root)
-			} else {
+			switch {
+			case fields.repetition != (draw_record.Repetition{}):
 				pattern_draw(view, area, fields.repetition, fields.color)
+			case record_on_whole_pixels(record):
+				graphics.blend_fill(view, x, y, width, height, u32(fields.color), &graphics.text_state.square_root)
+			case:
+				rectangle_inside_pixels_draw(view, area, record, fields.color)
 			}
-		case draw_record.Draw_Vertical_Gradient:
-			// One mix for each line: only the lines in the view. A line
-			// blends by its mixed alpha; an opaque line is a fill.
-			first := max(0, -y)
-			last := min(height, view.height - y)
-			for row in first ..< last {
-				graphics.blend_fill(view, x, y + row, width, 1, graphics.mix_with_alpha(u32(fields.top_color), u32(fields.bottom_color), u32(row * 255 / max(height - 1, 1))), &graphics.text_state.square_root)
-			}
-		case draw_record.Draw_Horizontal_Gradient:
-			// One row of colors for the columns in the view, in parts of
-			// 512 pixels, then a copy of the row to each line. With two
-			// opaque ends each column is opaque, and the row is copied as
-			// it is; else each line blends the row.
-			row: [512]graphics.Color
-			last := min(width, view.width - x)
-			opaque := draw_record.alpha_of(fields.left_color) == draw_record.OPAQUE_ALPHA && draw_record.alpha_of(fields.right_color) == draw_record.OPAQUE_ALPHA
-			for part := max(0, -x); part < last; part += len(row) {
-				count := min(len(row), last - part)
-				if opaque {
-					graphics.gradient(row[:count], u32(fields.left_color), u32(fields.right_color), width, part)
-					graphics.copy(view, x + part, y, {pixels = raw_data(row[:]), width = count, height = height})
-				} else {
-					graphics.gradient_with_alpha(row[:count], u32(fields.left_color), u32(fields.right_color), width, part)
-					graphics.blend_copy(view, x + part, y, {pixels = raw_data(row[:]), width = count, height = height}, &graphics.text_state.square_root)
-				}
-			}
+		case draw_record.Draw_Gradient:
+			gradient_draw(view, area, record, fields)
 		case draw_record.Draw_Text:
-			// The border keeps the color of a text opaque: its channels.
-			color := draw_record.channels_of(fields.color)
+			// A color of alpha 0 is the color 0, which draws nothing.
+			color, alpha := draw_record.channels_of(fields.color), u32(draw_record.alpha_of(fields.color))
+			if alpha == 0 {
+				continue
+			}
 			switch fields.font {
 			case .Cells_8x16:
 				// The origin of a text in the font of the cells is a whole
 				// pixel: the writer makes it the left edge of the box.
 				start, count := u64(fields.first), u64(fields.count)
 				if start + count <= u64(table.text_count) {
-					text_draw(view, draw_record.pixels_floor(fields.origin_x) - area.left, y, string(table.text[start:][:count]), color, int(fields.scale), fields.weight)
+					text_draw(view, draw_record.pixels_floor(fields.origin_x) - area.left, y, string(table.text[start:][:count]), color, int(fields.scale), fields.weight, alpha)
 				}
 			case .Interface:
 				interface_text_draw(table, fields, view, area.left, y)
@@ -136,6 +118,194 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			// The border keeps the color of a line opaque: its channels.
 			graphics.line(view, start_x, start_y, end_x, end_y, int(fields.thickness), draw_record.channels_of(fields.color))
 		}
+	}
+}
+
+// record_on_whole_pixels says if each edge of the box of a record is a
+// whole pixel.
+@(private)
+record_on_whole_pixels :: proc "contextless" (record: Draw_Record) -> bool {
+	return draw_record.on_whole_pixel(record.left) && draw_record.on_whole_pixel(record.top) && draw_record.on_whole_pixel(record.right) && draw_record.on_whole_pixel(record.bottom)
+}
+
+// Edge_Span is a run of whole pixels on one axis of a box, each covered by
+// the same part of the box: covered units of UNITS_PER_PIXEL.
+@(private)
+Edge_Span :: struct {
+	first, count: int, // The first pixel of the surface and the count of pixels.
+	covered:      int, // The units of each pixel inside the box: 1 to UNITS_PER_PIXEL.
+}
+
+// edge_spans cuts the two edges of a box on one axis, in units, into the
+// runs of pixels of one coverage: the first pixel when the box covers a
+// part of it, the whole pixels, and the last pixel when the box covers a
+// part of it. A box inside one pixel is one span. An edge on a whole pixel
+// makes no span of its own, so a box on whole pixels is one span.
+@(private)
+edge_spans :: proc "contextless" (start, end: i32) -> (spans: [3]Edge_Span, count: int) {
+	UNITS :: draw_record.UNITS_PER_PIXEL
+	if end <= start {
+		return
+	}
+	first := draw_record.pixels_floor(start)
+	last := draw_record.pixels_ceiling(end) // One past the last pixel.
+	if last - first == 1 {
+		spans[0] = {first = first, count = 1, covered = int(end) - int(start)}
+		return spans, 1
+	}
+	head := (first + 1) * UNITS - int(start)
+	tail := int(end) - (last - 1) * UNITS
+	whole_first, whole_last := first + 1, last - 1
+	if head == UNITS {
+		whole_first = first
+	} else {
+		spans[count] = {first = first, count = 1, covered = head}
+		count += 1
+	}
+	if tail == UNITS {
+		whole_last = last
+	}
+	if whole_last > whole_first {
+		spans[count] = {first = whole_first, count = whole_last - whole_first, covered = UNITS}
+		count += 1
+	}
+	if tail != UNITS {
+		spans[count] = {first = last - 1, count = 1, covered = tail}
+		count += 1
+	}
+	return spans, count
+}
+
+// covered_alpha gives the alpha of a pixel that a box covers in part: the
+// alpha of the color times the part of the pixel inside the box, the
+// product of the parts on each axis, rounded to the nearest. A pixel
+// covered whole keeps the alpha: 255 * 64 * 64 + 2048 >> 12 is 255.
+@(private)
+covered_alpha :: proc "contextless" (alpha: u32, covered_x, covered_y: int) -> u32 {
+	return (alpha * u32(covered_x) * u32(covered_y) + 2048) >> 12
+}
+
+#assert(draw_record.UNITS_PER_PIXEL * draw_record.UNITS_PER_PIXEL == 1 << 12)
+
+// rectangle_inside_pixels_draw draws a Rectangle with no pattern whose box
+// is not on whole pixels: its coverage is the same on each of its parts,
+// at most nine (the corners, the four sides and the inside), so each part
+// is one blend_fill of the color with the covered alpha, through the SSE2
+// form of the blend, with no coverage computed for each pixel. view shows
+// area of the surface from its top left corner.
+@(private)
+rectangle_inside_pixels_draw :: proc "contextless" (view: graphics.Canvas, area: Rectangle, record: Draw_Record, color: draw_record.Draw_Color) {
+	columns, column_count := edge_spans(record.left, record.right)
+	rows, row_count := edge_spans(record.top, record.bottom)
+	alpha, channels := u32(draw_record.alpha_of(color)), draw_record.channels_of(color)
+	for row in rows[:row_count] {
+		for column in columns[:column_count] {
+			part_alpha := covered_alpha(alpha, column.covered, row.covered)
+			if part_alpha == 0 {
+				continue
+			}
+			graphics.blend_fill(view, column.first - area.left, row.first - area.top, column.count, row.count, part_alpha << 24 | channels, &graphics.text_state.square_root)
+		}
+	}
+}
+
+// gradient_draw draws a Gradient in the part of the surface that the view
+// shows (area). The level of a pixel is draw_record.gradient_level at its
+// center; its color is the mix of the two colors at that level, alpha too;
+// a pixel that the box covers in part takes the covered alpha. The pixels
+// of a row blend through the SSE2 form of the blend.
+//
+// Three forms, by the line of the gradient: a line down (the two points on
+// one x) gives one color to each row, which is one blend_fill for each
+// span of columns, a fill when it is opaque; a line across (on one y) gives
+// one row of colors for the columns of the view and each span of rows, the
+// level and the mix of each column one time, then copied into each line of
+// the span when it is opaque and covered whole, else blended; another line
+// computes the level of each pixel, one division each.
+@(private)
+gradient_draw :: proc "contextless" (view: graphics.Canvas, area: Rectangle, record: Draw_Record, gradient: draw_record.Draw_Gradient) {
+	UNITS :: draw_record.UNITS_PER_PIXEL
+	HALF :: UNITS / 2
+	columns, column_count := edge_spans(record.left, record.right)
+	rows, row_count := edge_spans(record.top, record.bottom)
+	// A box of no width or no height covers no pixel, also when its edges
+	// lie inside one.
+	if column_count == 0 || row_count == 0 {
+		return
+	}
+	start, end := u32(gradient.start_color), u32(gradient.end_color)
+	square_root := &graphics.text_state.square_root
+	if gradient.start_x == gradient.end_x {
+		for span in rows[:row_count] {
+			for y in max(span.first, area.top) ..< min(span.first + span.count, area.bottom) {
+				color := graphics.mix_with_alpha(start, end, draw_record.gradient_level(gradient, i64(gradient.start_x), i64(y) * UNITS + HALF))
+				for column in columns[:column_count] {
+					part_alpha := covered_alpha(color >> 24, column.covered, span.covered)
+					if part_alpha != 0 {
+						graphics.blend_fill(view, column.first - area.left, y - area.top, column.count, 1, part_alpha << 24 | color & 0x00FFFFFF, square_root)
+					}
+				}
+			}
+		}
+		return
+	}
+	// The colors of the pixels of one row, a part of the view at a time.
+	row: [512]u32
+	across := gradient.start_y == gradient.end_y
+	first_x, last_x := max(area.left, columns[0].first), min(area.right, columns[column_count - 1].first + columns[column_count - 1].count)
+	// Two opaque ends: each mixed color is opaque. With columns covered
+	// whole too, a row covered whole needs no blend: it is copied into
+	// each line, with the high byte 0, as the horizontal gradient of
+	// before was (the title bars, the scroll bar).
+	opaque_ends := draw_record.alpha_of(gradient.start_color) == draw_record.OPAQUE_ALPHA && draw_record.alpha_of(gradient.end_color) == draw_record.OPAQUE_ALPHA
+	columns_whole := column_count == 1 && columns[0].covered == UNITS
+	for span in rows[:row_count] {
+		first_y, last_y := max(span.first, area.top), min(span.first + span.count, area.bottom)
+		if first_y >= last_y {
+			continue
+		}
+		for part := first_x; part < last_x; part += len(row) {
+			count := min(len(row), last_x - part)
+			if across {
+				// One row of colors for each span of rows: the level does
+				// not change down the box.
+				gradient_row(row[:count], gradient, part, i64(gradient.start_y), columns[:column_count], span.covered)
+				source := graphics.Canvas{pixels = raw_data(row[:]), width = count, height = last_y - first_y}
+				if opaque_ends && columns_whole && span.covered == UNITS {
+					for &color in row[:count] {
+						color &= 0x00FFFFFF
+					}
+					graphics.copy(view, part - area.left, first_y - area.top, source)
+				} else {
+					graphics.blend_copy(view, part - area.left, first_y - area.top, source, square_root)
+				}
+				continue
+			}
+			for y in first_y ..< last_y {
+				gradient_row(row[:count], gradient, part, i64(y) * UNITS + HALF, columns[:column_count], span.covered)
+				graphics.blend_copy(view, part - area.left, y - area.top, {pixels = raw_data(row[:]), width = count, height = 1}, square_root)
+			}
+		}
+	}
+}
+
+// gradient_row puts in row the colors with alpha of the pixels from the
+// column first of the surface, on the place y of the line of their centers,
+// each with the covered alpha of its span of columns and of the span of
+// rows (covered_y).
+@(private)
+gradient_row :: proc "contextless" (row: []u32, gradient: draw_record.Draw_Gradient, first: int, y: i64, columns: []Edge_Span, covered_y: int) {
+	UNITS :: draw_record.UNITS_PER_PIXEL
+	HALF :: UNITS / 2
+	start, end := u32(gradient.start_color), u32(gradient.end_color)
+	span := 0
+	for &color, index in row {
+		x := first + index
+		for span < len(columns) - 1 && x >= columns[span].first + columns[span].count {
+			span += 1
+		}
+		mixed := graphics.mix_with_alpha(start, end, draw_record.gradient_level(gradient, i64(x) * UNITS + HALF, y))
+		color = covered_alpha(mixed >> 24, columns[span].covered, covered_y) << 24 | mixed & 0x00FFFFFF
 	}
 }
 
@@ -305,8 +475,9 @@ interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_reco
 	// The origin in 1/64 pixel from the left of the view; the border keeps
 	// it on a third of a pixel and inside the box.
 	origin := i64(fields.origin_x) - i64(view_left) * draw_record.UNITS_PER_PIXEL
+	color, alpha := draw_record.channels_of(fields.color), u32(draw_record.alpha_of(fields.color))
 	if table.interface_font == nil {
-		text_draw(view, int(origin >> draw_record.UNIT_SHIFT), y, string(text), draw_record.channels_of(fields.color), scale, font.weight)
+		text_draw(view, int(origin >> draw_record.UNIT_SHIFT), y, string(text), color, scale, font.weight, alpha)
 		return
 	}
 	cache := interface_cache_of(table.interface_font, font)
@@ -316,17 +487,18 @@ interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_reco
 	}
 	placed: [INTERFACE_TEXT_LIMIT]text_shaping.Placed_Glyph
 	placed_count, _, _ := text_shaping.shape(&spacing, text, placed[:])
-	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], cache, scale, draw_record.channels_of(fields.color))
+	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], cache, scale, color, alpha)
 }
 
 // text_draw draws characters of the font of the system, each pixel of the
-// font as a square of scale pixels.
-text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int, weight: Font_Weight = .Regular) {
+// font as a square of scale pixels. alpha is the alpha of the color: below
+// 255 each pixel of ink blends (graphics.text_scaled).
+text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int, weight: Font_Weight = .Regular, alpha: u32 = graphics.OPAQUE) {
 	if weight == .Bold && scale <= 1 {
-		graphics.text_bold(canvas, x, y, text, color)
+		graphics.text_bold(canvas, x, y, text, color, alpha)
 		return
 	}
-	graphics.text_scaled(canvas, x, y, text, color, scale)
+	graphics.text_scaled(canvas, x, y, text, color, scale, alpha)
 }
 
 // intersection gives the part that two rectangles share. It is empty

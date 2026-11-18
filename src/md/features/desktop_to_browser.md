@@ -163,7 +163,7 @@ The reasons:
 The hot paths of these phases have a vector form after the rules of [`docs/SIMD.md`](../../../docs/SIMD.md), "1. The rule of the same bytes" and "2. One form: SSE2": the vector form gives the bytes of the scalar form, a host test compares the two, and a measure decides each form. `docs/SIMD.md` holds this design; no file of `src/md` repeats it.
 
 - **The rasterizer**: the coverage of a path of the draw table, and the triangles of the processor back end of the WebGPU subset with its shaders.
-- **The compositor**: the horizontal gradient, which is scalar today ([`docs/SIMD.md`](../../../docs/SIMD.md), "7. Limits"), and the translucent records over the windows.
+- **The compositor**: the row of colors of a gradient across, which is scalar today ([`docs/SIMD.md`](../../../docs/SIMD.md), "7. Limits"), and the translucent records over the windows.
 - **The blend** in linear light of a translucent rectangle, of an antialiased edge and of a picture with alpha, as the blend of a glyph has today.
 - **The picture decoders**: the filters of PNG, the inverse transform and the color conversion of JPEG.
 

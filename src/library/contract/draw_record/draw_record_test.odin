@@ -11,8 +11,8 @@ sample_primitives :: proc() -> [11]Draw_Primitive {
 		Draw_Nothing{},
 		Draw_Rectangle{color = 0xFF102030},
 		Draw_Rectangle{color = 0xFF18212D, repetition = SAMPLE_PATTERN},
-		Draw_Vertical_Gradient{top_color = 0xFF101010, bottom_color = 0xFF202020},
-		Draw_Horizontal_Gradient{left_color = 0xFF303030, right_color = 0xFF404040},
+		Draw_Gradient{start_x = units_of_pixels(10), start_y = units_of_pixels(20) + 32, end_x = units_of_pixels(10), end_y = units_of_pixels(43) + 32, start_color = 0xFF101010, end_color = 0xFF202020},
+		Draw_Gradient{start_x = units_of_pixels(10) + 5, start_y = units_of_pixels(25), end_x = units_of_pixels(90) + 7, end_y = units_of_pixels(40) + 1, start_color = 0xFF303030, end_color = 0x80404040},
 		Draw_Text{origin_x = units_of_pixels(10), first = 3, count = 5, color = 0xFFABCDEF, scale = 2, weight = .Bold},
 		Draw_Clip{},
 		Draw_Picture{memory = 1, first = 7, stride = 40, generation = 9},
@@ -62,10 +62,9 @@ reserved_runs_of :: proc(kind: Draw_Kind) -> (runs: [2]Reserved_Run, count: int)
 		return {{0, FIELDS_SIZE}, {}}, 1
 	case .Rectangle:
 		return {{int(offset_of(Rectangle_Fields, reserved)), size_of(Rectangle_Fields{}.reserved)}, {}}, 1
-	case .Vertical_Gradient:
-		return {{int(offset_of(Vertical_Gradient_Fields, reserved)), size_of(Vertical_Gradient_Fields{}.reserved)}, {}}, 1
-	case .Horizontal_Gradient:
-		return {{int(offset_of(Horizontal_Gradient_Fields, reserved)), size_of(Horizontal_Gradient_Fields{}.reserved)}, {}}, 1
+	case .Gradient:
+		// Each byte of the fields of a gradient is named.
+		return {}, 0
 	case .Text:
 		return {{int(offset_of(Text_Fields, reserved)), size_of(Text_Fields{}.reserved)}, {}}, 1
 	case .Picture:
@@ -99,6 +98,161 @@ read_refuses_the_words_of_the_kinds_that_left :: proc(t: ^testing.T) {
 		record.fields[2] = 0x18
 		primitive, problem = read(record)
 		testing.expectf(t, problem == .Unknown_Kind && primitive == nil, "the word %d with a color: %v", word, problem)
+	}
+}
+
+// The words of the vertical (2) and the horizontal (3) gradient, which
+// became one Gradient, name no kind: a record of the form of version 14,
+// with two opaque colors and the rest 0, is refused with each word. The
+// same bytes with the word of the Gradient are refused too: read as points,
+// the two opaque colors are a first point at 0xFF000000 units on each axis
+// (-2^24, inside the limit) and the zeros a second point at 0, a span of
+// 2^24 units, past GRADIENT_SPAN_LIMIT.
+@(test)
+read_refuses_the_words_of_the_two_gradients :: proc(t: ^testing.T) {
+	VERTICAL_GRADIENT_WORD :: 2
+	HORIZONTAL_GRADIENT_WORD :: 3
+	words := [2]u8{VERTICAL_GRADIENT_WORD, HORIZONTAL_GRADIENT_WORD}
+	old_fields: [FIELDS_SIZE]u8
+	old_fields[3], old_fields[7] = 0xFF, 0xFF
+	for word in words {
+		_, known := draw_kind_of_word(word)
+		testing.expectf(t, !known, "the word %d names a kind", word)
+		record := sample_record(Draw_Nothing{})
+		record.kind = word
+		record.fields = old_fields
+		primitive, problem := read(record)
+		testing.expectf(t, problem == .Unknown_Kind && primitive == nil, "the word %d: %v", word, problem)
+	}
+	as_gradient := sample_record(Draw_Nothing{})
+	as_gradient.kind = u8(Draw_Kind.Gradient)
+	as_gradient.fields = old_fields
+	primitive, problem := read(as_gradient)
+	testing.expectf(t, problem == .Field_Past_Bound && primitive == nil, "the bytes of an old gradient as a Gradient: %v", problem)
+	// The refusal is for the span: the points are inside the limit and
+	// differ, and the same points one span apart are read.
+	fields := transmute(Gradient_Fields)as_gradient.fields
+	testing.expect_value(t, fields.start_x, i32(-1 << 24))
+	testing.expect_value(t, fields.start_y, i32(-1 << 24))
+	testing.expect(t, inside_coordinate_limit(fields.start_x) && fields.start_x != fields.end_x, "the old bytes are not two different points inside the limit")
+	testing.expect(t, i64(fields.end_x) - i64(fields.start_x) > GRADIENT_SPAN_LIMIT * UNITS_PER_PIXEL, "the old bytes are not past the span")
+	fields.end_x = fields.start_x + GRADIENT_SPAN_LIMIT * UNITS_PER_PIXEL
+	fields.end_y = fields.start_y
+	as_gradient.fields = transmute([FIELDS_SIZE]u8)fields
+	_, within := read(as_gradient)
+	testing.expectf(t, within == .None, "the old colors as points one span apart: %v", within)
+}
+
+// The two points of a gradient, each other field valid: equal points are
+// refused, at each place, also with other colors; a span on one axis of
+// GRADIENT_SPAN_LIMIT pixels is read and one unit more is refused, on each
+// axis and in each direction; a point past COORDINATE_LIMIT is refused, at
+// the limit it is read.
+@(test)
+read_refuses_the_points_of_a_gradient_out_of_their_bounds :: proc(t: ^testing.T) {
+	colors := gradient_of_colors(opaque(0x0010_2030), opaque(0x00F0_E0D0))
+	equal_places := [4]i32{0, 1, -COORDINATE_UNIT_LIMIT, COORDINATE_UNIT_LIMIT}
+	for place in equal_places {
+		gradient := colors
+		gradient.start_x, gradient.start_y, gradient.end_x, gradient.end_y = place, place / 2, place, place / 2
+		_, problem := read(sample_record(gradient))
+		testing.expectf(t, problem == .Field_Past_Bound, "two equal points at %d: %v", place, problem)
+	}
+	SPAN :: GRADIENT_SPAN_LIMIT * UNITS_PER_PIXEL
+	directions := [2]i32{1, -1}
+	extras := [2]i32{0, 1}
+	for axis in 0 ..< 2 {
+		for direction in directions {
+			for extra in extras {
+				gradient := colors
+				gradient.start_x, gradient.start_y = 0, 0
+				gradient.end_x, gradient.end_y = 0, 0
+				distance := direction * (SPAN + extra)
+				if axis == 0 {
+					gradient.end_x = distance
+				} else {
+					gradient.end_y = distance
+				}
+				_, problem := read(sample_record(gradient))
+				expected := extra == 0 ? Problem.None : Problem.Field_Past_Bound
+				testing.expectf(t, problem == expected, "a span of %d units on the axis %d: %v", distance, axis, problem)
+			}
+		}
+	}
+	limits := [4]i32{COORDINATE_UNIT_LIMIT, -COORDINATE_UNIT_LIMIT, COORDINATE_UNIT_LIMIT + 1, -COORDINATE_UNIT_LIMIT - 1}
+	for limit, index in limits {
+		gradient := colors
+		gradient.start_x, gradient.start_y = limit, limit
+		gradient.end_x, gradient.end_y = limit - (limit > 0 ? UNITS_PER_PIXEL : -UNITS_PER_PIXEL), limit
+		_, problem := read(sample_record(gradient))
+		expected := index < 2 ? Problem.None : Problem.Field_Past_Bound
+		testing.expectf(t, problem == expected, "a point at %d: %v", limit, problem)
+	}
+	// The second point alone past the limit, one unit past it and at the
+	// largest and the smallest i32, the first point inside: refused.
+	past_ends := [4]i32{COORDINATE_UNIT_LIMIT + 1, -COORDINATE_UNIT_LIMIT - 1, max(i32), min(i32)}
+	for end in past_ends {
+		for axis in 0 ..< 2 {
+			gradient := colors
+			gradient.start_x, gradient.start_y = 0, 0
+			gradient.end_x, gradient.end_y = 0, 0
+			if axis == 0 {
+				gradient.end_x = end
+			} else {
+				gradient.end_y = end
+			}
+			_, problem := read(sample_record(gradient))
+			testing.expectf(t, problem == .Field_Past_Bound, "a second point at %d on the axis %d: %v", end, axis, problem)
+		}
+	}
+	// The first point alone at the largest i32.
+	largest := colors
+	largest.start_x, largest.start_y, largest.end_x, largest.end_y = max(i32), 0, 0, 0
+	_, problem := read(sample_record(largest))
+	testing.expectf(t, problem == .Field_Past_Bound, "a first point at the largest i32: %v", problem)
+}
+
+// The level of a gradient: on an axis with the points at the centers of the
+// first and the last of h lines, the line r has r * 255 / (h - 1), each r of
+// each h from 2 to 300; before the first point it is 0 and past the second
+// GRADIENT_LEVELS. At the far ends of the bounds, with the largest span and
+// the farthest pixel, it equals the level computed in 128 bits: no product
+// wraps.
+@(test)
+gradient_level_of_each_line_and_at_the_bounds :: proc(t: ^testing.T) {
+	HALF :: UNITS_PER_PIXEL / 2
+	wrong := 0
+	for height in 2 ..= 300 {
+		gradient := Draw_Gradient{start_x = 0, start_y = HALF, end_x = 0, end_y = i32(height - 1) * UNITS_PER_PIXEL + HALF}
+		for line in 0 ..< height {
+			level := gradient_level(gradient, 0, i64(line) * UNITS_PER_PIXEL + HALF)
+			wrong += int(level != u32(line * 255 / (height - 1)))
+		}
+		wrong += int(gradient_level(gradient, 0, -1000 * UNITS_PER_PIXEL) != 0)
+		wrong += int(gradient_level(gradient, 0, i64(height + 1000) * UNITS_PER_PIXEL) != GRADIENT_LEVELS)
+	}
+	testing.expect_value(t, wrong, 0)
+	SPAN :: GRADIENT_SPAN_LIMIT * UNITS_PER_PIXEL
+	extremes := [?]Draw_Gradient {
+		{start_x = -COORDINATE_UNIT_LIMIT, start_y = -COORDINATE_UNIT_LIMIT, end_x = -COORDINATE_UNIT_LIMIT + SPAN, end_y = -COORDINATE_UNIT_LIMIT + SPAN},
+		{start_x = COORDINATE_UNIT_LIMIT, start_y = COORDINATE_UNIT_LIMIT, end_x = COORDINATE_UNIT_LIMIT - SPAN, end_y = COORDINATE_UNIT_LIMIT - 7},
+		{start_x = 0, start_y = 0, end_x = SPAN, end_y = -SPAN},
+		{start_x = 3, start_y = 0, end_x = 2, end_y = 0},
+	}
+	places := [?]i64{-COORDINATE_UNIT_LIMIT, -COORDINATE_UNIT_LIMIT / 3, 0, 17, COORDINATE_UNIT_LIMIT / 2 + 5, COORDINATE_UNIT_LIMIT}
+	for gradient, index in extremes {
+		testing.expectf(t, gradient_line_valid(gradient), "the gradient %d is not valid", index)
+		for x in places {
+			for y in places {
+				direction_x := i128(gradient.end_x) - i128(gradient.start_x)
+				direction_y := i128(gradient.end_y) - i128(gradient.start_y)
+				along := (i128(x) - i128(gradient.start_x)) * direction_x + (i128(y) - i128(gradient.start_y)) * direction_y
+				length := direction_x * direction_x + direction_y * direction_y
+				expected := along <= 0 ? 0 : along >= length ? GRADIENT_LEVELS : u32(along * GRADIENT_LEVELS / length)
+				level := gradient_level(gradient, x, y)
+				testing.expectf(t, level == expected, "the gradient %d at %d, %d: %d, not %d", index, x, y, level, expected)
+			}
+		}
 	}
 }
 
@@ -257,15 +411,58 @@ read_refuses_each_reserved_byte_of_the_header :: proc(t: ^testing.T) {
 	}
 }
 
+// The bytes of the fields that a kind with no reserved run names, field by
+// field, each field starting where the one before it ends: FIELDS_SIZE
+// when the fields fill the 24 bytes with no gap. 0 for a kind that has
+// reserved runs.
+@(private = "file")
+named_bytes_of :: proc(kind: Draw_Kind) -> int {
+	switch kind {
+	case .Gradient:
+		fields: Gradient_Fields
+		ends := [6]int {
+			int(offset_of(Gradient_Fields, start_x)) + size_of(fields.start_x),
+			int(offset_of(Gradient_Fields, start_y)) + size_of(fields.start_y),
+			int(offset_of(Gradient_Fields, end_x)) + size_of(fields.end_x),
+			int(offset_of(Gradient_Fields, end_y)) + size_of(fields.end_y),
+			int(offset_of(Gradient_Fields, start_color)) + size_of(fields.start_color),
+			int(offset_of(Gradient_Fields, end_color)) + size_of(fields.end_color),
+		}
+		starts := [6]int {
+			int(offset_of(Gradient_Fields, start_x)),
+			int(offset_of(Gradient_Fields, start_y)),
+			int(offset_of(Gradient_Fields, end_x)),
+			int(offset_of(Gradient_Fields, end_y)),
+			int(offset_of(Gradient_Fields, start_color)),
+			int(offset_of(Gradient_Fields, end_color)),
+		}
+		named := 0
+		for start, index in starts {
+			if start != named {
+				return named
+			}
+			named = ends[index]
+		}
+		return named
+	case .None, .Rectangle, .Text, .Clip, .Picture, .Text_Grid, .Line:
+	}
+	return 0
+}
+
 // Each byte of the fields that the kind does not name is refused, for each
-// kind, with the smallest and the largest value that is not 0.
+// kind, with the smallest and the largest value that is not 0. A kind with
+// no such byte names each of the 24 bytes, with no gap.
 @(test)
 read_refuses_each_byte_that_the_kind_does_not_name :: proc(t: ^testing.T) {
 	checked := 0
 	for primitive in sample_primitives() {
 		base := sample_record(primitive)
 		runs, run_count := reserved_runs_of(sample_kind(base))
-		testing.expectf(t, run_count > 0, "%v has no reserved run", sample_kind(base))
+		if run_count == 0 {
+			named := named_bytes_of(sample_kind(base))
+			testing.expectf(t, named == FIELDS_SIZE, "%v has no reserved run, and its fields name %d of the %d bytes", sample_kind(base), named, FIELDS_SIZE)
+			continue
+		}
 		for run in runs[:run_count] {
 			for index in run.offset ..< run.offset + run.size {
 				for value in ([2]u8{1, max(u8)}) {
@@ -316,18 +513,44 @@ read_refuses_a_box_past_the_coordinate_limit :: proc(t: ^testing.T) {
 	}
 }
 
-// An edge that is not a whole pixel is refused: one unit past a pixel, one
-// unit before it, and a third of a pixel.
+// An edge that is not a whole pixel, one unit past a pixel, one unit before
+// it and a third of a pixel, on each side of the box of each sample: a
+// rectangle with no pattern and a gradient read it, each other kind and a
+// rectangle with a pattern refuse it, each other field valid.
 @(test)
-read_refuses_a_box_inside_a_pixel :: proc(t: ^testing.T) {
+read_takes_a_box_inside_a_pixel_for_a_rectangle_and_a_gradient :: proc(t: ^testing.T) {
 	parts := [?]i32{1, UNITS_PER_PIXEL - 1, UNITS_PER_PIXEL / 3}
-	for part in parts {
-		for side in 0 ..< 4 {
-			box := [4]i32{0, 0, units_of_pixels(4), units_of_pixels(4)}
-			box[side] += part
-			record := record_of(Draw_Rectangle{color = SAMPLE_COLOR}, 0, box[0], box[1], box[2], box[3])
-			_, problem := read(record)
-			testing.expectf(t, problem == .Box_Not_On_Whole_Pixels, "the edge %d is %d units, and the border gives %v", side, box[side], problem)
+	samples := sample_primitives()
+	for primitive in samples {
+		whole := sample_record(primitive)
+		_, problem_whole := read(whole)
+		testing.expectf(t, problem_whole == .None, "the sample %v on whole pixels: %v", sample_kind(whole), problem_whole)
+		inside := false
+		switch value in primitive {
+		case Draw_Rectangle:
+			inside = value.repetition == (Repetition{})
+		case Draw_Gradient:
+			inside = true
+		case Draw_Nothing, Draw_Clip, Draw_Text, Draw_Picture, Draw_Text_Grid, Draw_Line:
+		}
+		for part in parts {
+			for side in 0 ..< 4 {
+				record := whole
+				// Each edge moves inward, so the box stays the right way.
+				switch side {
+				case 0:
+					record.left += part
+				case 1:
+					record.top += part
+				case 2:
+					record.right -= part
+				case 3:
+					record.bottom -= part
+				}
+				_, problem := read(record)
+				expected := inside ? Problem.None : Problem.Box_Not_On_Whole_Pixels
+				testing.expectf(t, problem == expected, "the sample %v with the edge %d moved by %d units: %v", sample_kind(record), side, part, problem)
+			}
 		}
 	}
 }
@@ -514,29 +737,42 @@ pixels_of_a_place :: proc(t: ^testing.T) {
 	testing.expect_value(t, pixels_floor(-COORDINATE_UNIT_LIMIT), -COORDINATE_LIMIT)
 }
 
+// A gradient down the box of sample_record, whose other fields are valid:
+// the cases give it their colors.
+@(private = "file")
+SAMPLE_GRADIENT :: Draw_Gradient {
+	start_x = 10 * UNITS_PER_PIXEL,
+	start_y = 20 * UNITS_PER_PIXEL + UNITS_PER_PIXEL / 2,
+	end_x   = 10 * UNITS_PER_PIXEL,
+	end_y   = 43 * UNITS_PER_PIXEL + UNITS_PER_PIXEL / 2,
+}
+
+@(private = "file")
+gradient_of_colors :: proc(start, end: Draw_Color) -> Draw_Gradient {
+	gradient := SAMPLE_GRADIENT
+	gradient.start_color, gradient.end_color = start, end
+	return gradient
+}
+
 // The records whose one color is the color given: a rectangle, a pattern,
-// and each end of each gradient, the other end transparent.
+// each end of a gradient with the other end transparent, and a text in
+// each font.
 @(private = "file")
 records_of_one_color :: proc(color: Draw_Color) -> [6]Draw_Primitive {
 	return [6]Draw_Primitive {
 		Draw_Rectangle{color = color},
 		Draw_Rectangle{color = color, repetition = SAMPLE_PATTERN},
-		Draw_Vertical_Gradient{top_color = color},
-		Draw_Vertical_Gradient{bottom_color = color},
-		Draw_Horizontal_Gradient{left_color = color},
-		Draw_Horizontal_Gradient{right_color = color},
+		gradient_of_colors(color, 0),
+		gradient_of_colors(0, color),
+		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = color, scale = 1},
+		Draw_Text{font = .Interface, count = 1, color = color, origin_x = units_of_pixels(12), scale = 1},
 	}
 }
 
-// The records whose color must be opaque: a text in each font and a line.
+// The record whose color must be opaque: a line.
 @(private = "file")
-records_of_an_opaque_color :: proc(color: Draw_Color) -> [3]Draw_Primitive {
-	line := Draw_Line{start_x = units_of_pixels(1), start_y = units_of_pixels(1), end_x = units_of_pixels(9), end_y = units_of_pixels(1), color = color, thickness = 1}
-	return [3]Draw_Primitive {
-		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = color, scale = 1},
-		line,
-		Draw_Text{font = .Interface, count = 1, color = color, origin_x = units_of_pixels(12), scale = 1},
-	}
+line_of_color :: proc(color: Draw_Color) -> Draw_Line {
+	return Draw_Line{start_x = units_of_pixels(1), start_y = units_of_pixels(1), end_x = units_of_pixels(9), end_y = units_of_pixels(1), color = color, thickness = 1}
 }
 
 // A color with alpha 0 draws nothing whatever its channels, so its one form
@@ -553,12 +789,9 @@ read_refuses_a_transparent_color_that_is_not_zero :: proc(t: ^testing.T) {
 			_, problem := read(sample_record(primitive))
 			testing.expectf(t, problem == .Field_Past_Bound, "the color field %d of %08x: %v", index, value, problem)
 		}
-		vertical := Draw_Vertical_Gradient{top_color = Draw_Color(value), bottom_color = Draw_Color(value)}
-		horizontal := Draw_Horizontal_Gradient{left_color = Draw_Color(value), right_color = 0}
-		_, problem := read(sample_record(vertical))
-		testing.expectf(t, problem == .Field_Past_Bound, "a vertical gradient of two ends of alpha 0 and channels %06x: %v", value, problem)
-		_, problem = read(sample_record(horizontal))
-		testing.expectf(t, problem == .Field_Past_Bound, "a horizontal gradient of two ends of alpha 0 and channels %06x: %v", value, problem)
+		both := gradient_of_colors(Draw_Color(value), Draw_Color(value))
+		_, problem := read(sample_record(both))
+		testing.expectf(t, problem == .Field_Past_Bound, "a gradient of two ends of alpha 0 and channels %06x: %v", value, problem)
 	}
 	// The one transparent color is read, each alpha from 1 to 255 with any
 	// channels is read, and a gradient keeps the channels of an end of
@@ -576,32 +809,25 @@ read_refuses_a_transparent_color_that_is_not_zero :: proc(t: ^testing.T) {
 			testing.expectf(t, problem == .None, "the color field %d with alpha %d: %v", index, alpha, problem)
 		}
 	}
-	fade := Draw_Vertical_Gradient{top_color = Draw_Color(0x0012_3456), bottom_color = opaque(0x0012_3456)}
+	fade := gradient_of_colors(Draw_Color(0x0012_3456), opaque(0x0012_3456))
 	_, problem := read(sample_record(fade))
 	testing.expect_value(t, problem, Problem.None)
 }
 
-// The color of a text and of a line is opaque: its glyphs and its squares
-// do not blend with alpha yet. Each other alpha is refused, 0 too.
+// The color of a line is opaque: its squares overlap. Each other alpha is
+// refused, 0 too.
 @(test)
-read_refuses_a_text_or_a_line_that_is_not_opaque :: proc(t: ^testing.T) {
+read_refuses_a_line_that_is_not_opaque :: proc(t: ^testing.T) {
 	alphas := [4]u8{0, 1, 128, OPAQUE_ALPHA - 1}
 	for alpha in alphas {
-		refused := records_of_an_opaque_color(Draw_Color(u32(alpha) << ALPHA_SHIFT | 0x0012_3456))
-		for primitive, index in refused {
-			_, problem := read(sample_record(primitive))
-			testing.expectf(t, problem == .Field_Past_Bound, "the record %d with alpha %d: %v", index, alpha, problem)
-		}
+		_, problem := read(sample_record(line_of_color(Draw_Color(u32(alpha) << ALPHA_SHIFT | 0x0012_3456))))
+		testing.expectf(t, problem == .Field_Past_Bound, "the line with alpha %d: %v", alpha, problem)
 	}
-	transparent := records_of_an_opaque_color(0)
-	for primitive, index in transparent {
-		_, problem := read(sample_record(primitive))
-		testing.expectf(t, problem == .Field_Past_Bound, "the record %d with the color 0: %v", index, problem)
-	}
-	white := records_of_an_opaque_color(opaque(CHANNELS_MASK))
-	for primitive, index in white {
-		_, problem := read(sample_record(primitive))
-		testing.expectf(t, problem == .None, "the record %d in opaque white: %v", index, problem)
+	_, problem := read(sample_record(line_of_color(0)))
+	testing.expectf(t, problem == .Field_Past_Bound, "the line with the color 0: %v", problem)
+	{
+		_, white := read(sample_record(line_of_color(opaque(CHANNELS_MASK))))
+		testing.expectf(t, white == .None, "the line in opaque white: %v", white)
 	}
 }
 
