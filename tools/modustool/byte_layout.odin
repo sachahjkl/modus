@@ -112,8 +112,7 @@ byte_layout_draw_record_sources :: proc() -> []Byte_Layout_Source {
 	sources := [?]Byte_Layout_Source {
 		{key = "draw_record.Draw_Record", file = file, declaration = "Draw_Record", info = type_info_of(draw_record.Draw_Record), what = "one record of a draw table"},
 		{key = "draw_record.Rectangle_Fields", file = file, declaration = "Rectangle_Fields", info = type_info_of(draw_record.Rectangle_Fields), what = "the fields of a Rectangle"},
-		{key = "draw_record.Vertical_Gradient_Fields", file = file, declaration = "Vertical_Gradient_Fields", info = type_info_of(draw_record.Vertical_Gradient_Fields), what = "the fields of a Vertical_Gradient"},
-		{key = "draw_record.Horizontal_Gradient_Fields", file = file, declaration = "Horizontal_Gradient_Fields", info = type_info_of(draw_record.Horizontal_Gradient_Fields), what = "the fields of a Horizontal_Gradient"},
+		{key = "draw_record.Gradient_Fields", file = file, declaration = "Gradient_Fields", info = type_info_of(draw_record.Gradient_Fields), what = "the fields of a Gradient"},
 		{key = "draw_record.Text_Fields", file = file, declaration = "Text_Fields", info = type_info_of(draw_record.Text_Fields), what = "the fields of a Text"},
 		{key = "draw_record.Picture_Fields", file = file, declaration = "Picture_Fields", info = type_info_of(draw_record.Picture_Fields), what = "the fields of a Picture"},
 		{key = "draw_record.Text_Grid_Fields", file = file, declaration = "Text_Grid_Fields", info = type_info_of(draw_record.Text_Grid_Fields), what = "the fields of a Text_Grid"},

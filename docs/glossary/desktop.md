@@ -274,7 +274,7 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each program that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_14` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_14` once to draw the records in them, into the pixels of its surface. Each argument is memory of the program, passed by address. The 14 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the program that calls it.
+It is the first library module. A window calls `damage_of_draw_table_15` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_15` once to draw the records in them, into the pixels of its surface. Each argument is memory of the program, passed by address. The 15 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the program that calls it.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each program, the drawing in a module".
 
@@ -309,6 +309,26 @@ It blends over the pixels by one rule in linear light, the rule of the glyphs wi
 The design: `docs/INTERFACE.md`, "2.1 Draw record".
 
 Do not use: RGBA color, premultiplied color, opacity.
+
+### Gradient record
+
+A gradient record is a draw record that fills its box with a color that goes from one color at one point to another at a second point, along the line of the two points.
+
+The level of a pixel is the projection of its center on that line, cut to the two ends, in steps of 1/255; the two colors mix at that level, alpha too. A gradient down or across is one with its points on one x or one y: `draw_vertical_gradient` and `draw_horizontal_gradient` write them. A gradient record is not a gradient of several stops: a writer puts one record for each pair of stops.
+
+The design: `docs/INTERFACE.md`, "2.1 Draw record".
+
+Do not use: linear gradient, ramp, blend record.
+
+### Covered alpha
+
+The covered alpha of a pixel is the alpha of a color times the part of that pixel that the box of a rectangle or a gradient covers.
+
+The part is the product of the parts on each axis, in 1/64 of a pixel, so an edge of a box can lie between two pixels: `(alpha × x × y + 2048) >> 12`. A pixel covered whole keeps the alpha of its color, so a box on whole pixels draws the pixels of a fill. The covered alpha is not the coverage of a glyph, which has one value for each channel.
+
+The design: `docs/INTERFACE.md`, "2.1 Draw record".
+
+Do not use: antialiasing value, edge alpha, opacity.
 
 ### Draw table
 

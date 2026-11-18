@@ -64,7 +64,7 @@ bar_with_value_stays_inside_its_area_at_each_edge :: proc(t: ^testing.T) {
 		texts := 0
 		for record in memory.table.records[:memory.table.record_count] {
 			view := record_view(record)
-			if view.kind == .Vertical_Gradient {
+			if view.kind == .Gradient && view.axis == .Down {
 				full = view.width
 			} else if view.kind == .Text {
 				texts += 1

@@ -14,11 +14,10 @@ import "modus:support/graphics"
 
 // The execution blends with the table of the text state, which a program
 // fills once at its start: the tests of this program fill it once, before
-// the first test that blends reads it, and no test writes it again.
-@(private = "file")
+// the first test that blends reads it, and no test writes it again. Each
+// test file of the package that blends takes the table here: one fill.
 blend_table_once: sync.Once
 
-@(private = "file")
 blend_table :: proc() -> ^[4096]u8 {
 	sync.once_do(&blend_table_once, proc() {
 		graphics.text_state_start()
@@ -79,7 +78,7 @@ pattern_reference :: proc(canvas: graphics.Canvas, box: Rectangle, color: graphi
 
 // Each record with opaque colors draws the pixels that the drawing before
 // alpha gave: a rectangle is fill, a vertical gradient a fill of the mix of
-// each line, a horizontal gradient the colors of gradient, the grid of
+// each line, a horizontal gradient the mix of each column, the grid of
 // points its cells, a line the squares of graphics.line. Each record is
 // partly outside the canvas, and each reference is cut to the canvas. The
 // frame is drawn whole and in the parts of a damage.
@@ -111,8 +110,12 @@ opaque_records_keep_their_pixels :: proc(t: ^testing.T) {
 	for row in 0 ..< 30 {
 		graphics.fill(canvas, 50, 30 + row, 40, 1, graphics.mix(0x00102030, 0x00F0E0D0, u32(row * 255 / 29)))
 	}
+	// A gradient across is the mix of its column, at the level of the 1/255
+	// steps, as a gradient down mixes its line.
 	columns: [75]graphics.Color
-	graphics.gradient(columns[:], 0x00FF0000, 0x000000FF, len(columns), 0)
+	for &color, column in columns {
+		color = graphics.mix(0x00FF0000, 0x000000FF, u32(column * 255 / (len(columns) - 1)))
+	}
 	for row in 14 ..< 23 {
 		for column in 0 ..< len(columns) {
 			x := column - 10
@@ -178,7 +181,9 @@ translucent_records_blend_by_the_rule_in_each_cut :: proc(t: ^testing.T) {
 		graphics.blend_fill(canvas, 30, -4 + row, 30, 1, graphics.mix_with_alpha(0xFFFF8000, 0x00FF8000, u32(row * 255 / 39)), square_root)
 	}
 	columns: [80]u32
-	graphics.gradient_with_alpha(columns[:], 0x0000FF00, 0xC800FF00, len(columns), 0)
+	for &color, column in columns {
+		color = graphics.mix_with_alpha(0x0000FF00, 0xC800FF00, u32(column * 255 / (len(columns) - 1)))
+	}
 	graphics.blend_copy(canvas, -6, 30, {pixels = raw_data(columns[:]), width = len(columns), height = 10, stride = 0}, square_root)
 	for y in 0 ..< ALPHA_HEIGHT {
 		for x in 0 ..< ALPHA_WIDTH {
