@@ -3,6 +3,7 @@ package display
 
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/text_encoding"
 import "modus:support/key_path"
 import "core:testing"
 
@@ -305,39 +306,115 @@ clipboard_text_problem_refuses_each_text_that_is_not_text :: proc(t: ^testing.T)
 	testing.expect_value(t, clipboard_text_problem(euro[:], len(euro)), Clipboard_Problem.None)
 }
 
+// Each character that a reader does not see, or that changes the order of
+// a text, is refused: each range at its first and its last code point, and
+// each single one. The code points just outside each range are taken.
+@(test)
+clipboard_text_problem_refuses_each_hidden_character :: proc(t: ^testing.T) {
+	hidden := [?]rune{0x200B, 0x200F, 0x202A, 0x202E, 0x2066, 0x2069, 0x2028, 0x2029, 0xFEFF}
+	for character in hidden {
+		text: [8]u8
+		text[0] = 'a'
+		length := 1 + text_encoding.character_encode(character, text[1:])
+		problem := clipboard_text_problem(text[:length], CLIPBOARD_TEXT_LIMIT)
+		testing.expectf(t, problem == .Hidden_Character, "U+%X gives %v", character, problem)
+		testing.expectf(t, character_hidden(character), "U+%X is not hidden", character)
+	}
+	shown := [?]rune{0x200A, 0x2010, 0x2027, 0x202F, 0x2065, 0x206A, 0xFEFE, 0xFF00}
+	for character in shown {
+		text: [8]u8
+		length := text_encoding.character_encode(character, text[:])
+		problem := clipboard_text_problem(text[:length], CLIPBOARD_TEXT_LIMIT)
+		testing.expectf(t, problem == .None, "U+%X gives %v", character, problem)
+	}
+}
+
 // A Pasted whose words are out of their range is refused, and gives the
 // zero event: a handle of 0 and past 32 bits, a kind of None, past the last
 // member and the largest word, a count of 0, one past the limit and the
-// largest word. Then a paste and a copy that hold.
+// largest word, a serial of 0. A Copy_Asked with the serial 0 too. Then a
+// paste and a copy that hold.
 @(test)
 event_of_record_refuses_a_paste_out_of_its_range :: proc(t: ^testing.T) {
 	TEXT :: u64(Clipboard_Kind.Text)
-	refused := [?][3]u64{
-		{0, TEXT, 5},
-		{u64(max(u32)) + 1, TEXT, 5},
-		{max(u64), TEXT, 5},
-		{7, u64(Clipboard_Kind.None), 5},
-		{7, u64(max(Clipboard_Kind)) + 1, 5},
-		{7, max(u64), 5},
-		{7, TEXT, 0},
-		{7, TEXT, CLIPBOARD_TEXT_LIMIT + 1},
-		{7, TEXT, max(u64)},
+	refused := [?][4]u64{
+		{0, TEXT, 5, 1},
+		{u64(max(u32)) + 1, TEXT, 5, 1},
+		{max(u64), TEXT, 5, 1},
+		{7, u64(Clipboard_Kind.None), 5, 1},
+		{7, u64(max(Clipboard_Kind)) + 1, 5, 1},
+		{7, max(u64), 5, 1},
+		{7, TEXT, 0, 1},
+		{7, TEXT, CLIPBOARD_TEXT_LIMIT + 1, 1},
+		{7, TEXT, max(u64), 1},
+		{7, TEXT, 5, 0},
 	}
 	for words in refused {
 		record := ring.Record{kind = u32(Event_Kind.Pasted)}
-		record.values[0], record.values[1], record.values[2] = words[0], words[1], words[2]
+		record.values[0], record.values[1], record.values[2], record.values[3] = words[0], words[1], words[2], words[3]
 		event, ok := event_of_record(record)
 		testing.expectf(t, !ok, "the paste %v is taken", words)
 		testing.expect_value(t, event, Event{})
 	}
+	event, ok := event_of_record(ring.Record{kind = u32(Event_Kind.Copy_Asked)})
+	testing.expect(t, !ok)
+	testing.expect_value(t, event, Event{})
 	record := ring.Record{kind = u32(Event_Kind.Pasted)}
-	record.values[0], record.values[1], record.values[2] = u64(max(u32)), TEXT, CLIPBOARD_TEXT_LIMIT
-	event, ok := event_of_record(record)
+	record.values[0], record.values[1], record.values[2], record.values[3] = u64(max(u32)), TEXT, CLIPBOARD_TEXT_LIMIT, max(u64)
+	event, ok = event_of_record(record)
 	testing.expect(t, ok)
-	testing.expect_value(t, event, Event{kind = .Pasted, paste_handle = op.Handle(max(u32)), clipboard_kind = .Text, byte_count = CLIPBOARD_TEXT_LIMIT})
-	event, ok = event_of_record(ring.Record{kind = u32(Event_Kind.Copy_Asked)})
+	testing.expect_value(t, event, Event{kind = .Pasted, paste_handle = op.Handle(max(u32)), clipboard_kind = .Text, byte_count = CLIPBOARD_TEXT_LIMIT, clipboard_serial = max(u64)})
+	asked := ring.Record{kind = u32(Event_Kind.Copy_Asked)}
+	asked.values[0] = 1
+	event, ok = event_of_record(asked)
 	testing.expect(t, ok)
-	testing.expect_value(t, event, Event{kind = .Copy_Asked})
+	testing.expect_value(t, event, Event{kind = .Copy_Asked, clipboard_serial = 1})
+}
+
+// The facts of a paste that holds: 5 bytes of text in one page that the
+// compositor gave, for a field of 16 bytes of room.
+@(private = "file")
+paste_of_test :: proc() -> Paste_Facts {
+	return {event = {kind = .Pasted, paste_handle = 7, clipboard_kind = .Text, byte_count = 5, clipboard_serial = 1}, is_memory = true, readable = true, through = true, memory_bytes = 4096, room = 16}
+}
+
+// Each refusal of a paste before any byte is read, from the edges: an event
+// that is no paste, a kind that is not text, a handle that is no memory,
+// with no Read, or that the compositor did not give through the ring, a
+// count of 0, a negative count, one byte past the room of the field, past
+// the limit, memory one byte too small and of 0 bytes. The pastes that hold
+// come last: a count that fills the room, and the memory just large enough.
+@(test)
+paste_problem_refuses_each_broken_rule :: proc(t: ^testing.T) {
+	Case :: struct {
+		facts:   Paste_Facts,
+		problem: Clipboard_Problem,
+	}
+	cases: [12]Case
+	for &each in cases {
+		each.facts = paste_of_test()
+	}
+	cases[0].facts.event.kind, cases[0].problem = .Key, .Unknown_Kind
+	cases[1].facts.event.clipboard_kind, cases[1].problem = .None, .Unknown_Kind
+	cases[2].facts.is_memory, cases[2].problem = false, .Not_Given
+	cases[3].facts.readable, cases[3].problem = false, .Not_Given
+	cases[4].facts.through, cases[4].problem = false, .Not_Given
+	cases[5].facts.event.byte_count, cases[5].problem = 0, .Empty
+	cases[6].facts.event.byte_count, cases[6].problem = -1, .Empty
+	cases[7].facts.event.byte_count, cases[7].problem = 17, .Too_Large
+	cases[8].facts.event.byte_count, cases[8].facts.room, cases[8].problem = CLIPBOARD_TEXT_LIMIT + 1, CLIPBOARD_TEXT_LIMIT * 2, .Too_Large
+	cases[9].facts.memory_bytes, cases[9].problem = 4, .Too_Small
+	cases[10].facts.memory_bytes, cases[10].problem = 0, .Too_Small
+	cases[11].facts.room, cases[11].problem = 0, .Too_Large
+	for each, index in cases {
+		problem := paste_problem(each.facts)
+		testing.expectf(t, problem == each.problem, "case %d gives %v, not %v", index, problem, each.problem)
+	}
+	facts := paste_of_test()
+	facts.event.byte_count = 16
+	testing.expect_value(t, paste_problem(facts), Clipboard_Problem.None)
+	facts.memory_bytes = 16
+	testing.expect_value(t, paste_problem(facts), Clipboard_Problem.None)
 }
 
 // The kind of a content refuses None, one past the last member and the

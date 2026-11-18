@@ -3111,7 +3111,10 @@ scenario := [?]Step {
 	{kind = .Key, text = "ctrl-v"},
 	{kind = .Wait, text = "compositor: a paste of 5 bytes of text from interface_elements goes to console", any_order = true},
 	{kind = .Wait, text = "display: console: a paste of 5 bytes of text"},
-	{kind = .Wait, text = "terminal: a paste of 5 characters goes to console"},
+	{kind = .Wait, text = "terminal: a paste of 5 characters goes to console", any_order = true},
+	// The console gave the terminal its line with the paste: the terminal
+	// says that a picture is due, and the picture waits for it.
+	{kind = .Wait, text = "console: the line shows \"hello\" after a paste"},
 	{kind = .Shot, text = "clipboard_paste"},
 	// The pasted characters leave the line of the console for the steps
 	// that type in it later.
@@ -3120,6 +3123,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "backspace"},
 	{kind = .Key, text = "backspace"},
 	{kind = .Key, text = "backspace"},
+	{kind = .Wait, text = "console: the line is empty again after a paste"},
 	{kind = .Click_Element, text = "interface_elements", element = "element before"},
 	{kind = .Click_Element, text = "interface_elements", element = "line before"},
 	{kind = .Wait, text = "interface_elements: the list chooses boot"},

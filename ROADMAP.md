@@ -21,6 +21,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **A kernel copy out of a memory object.** A program copies bytes of a memory object that another program gave into its own memory with no mapping, and gets a refusal in place of a fault when the giver revokes the object. A paste then never stops the terminal, whatever the program that copied does. [Design](src/md/features/clipboard.md)
 - **A selection, a cut and a paste in the palette.** The principal chooses a part of a text to copy, cuts it with Control+X, copies from the terminal and pastes into the palette, and each window with its own loop of events takes the clipboard keys. [Design](src/md/features/clipboard.md)
 - **A terminal that the principal resizes.** The window of the terminal, and so the console, takes a size that the principal drags, and the program of the terminal gets the new count of columns and rows of its text grid. [Design](src/md/features/window_resize.md)
 - **The ring of counter sets of the counted kernel.** The tool writes several operation sequences ahead, and each counted runner counts into its own set of counters, so the machine waits less for the tool. It comes only if the measure of the loop and of the counted kernel shows that these waits cost more than the sequences. [Design](src/md/infrastructure/kernel_fuzzing.md)

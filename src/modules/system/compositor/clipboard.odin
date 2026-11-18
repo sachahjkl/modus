@@ -13,8 +13,11 @@ import "modus:support/system"
 // Copy_Declined. Control+V lends the window in front a handle with Read to
 // the content, from a copy of the handle of the slot that the compositor
 // revokes at Paste_Taken, at the next key of the clipboard, or at the end
-// of the program. The compositor reads no byte of the content: the reader
-// copies it, then checks its copy.
+// of the program that pastes or of the program that copied. Each key has a
+// serial that the event carries and the answer names: an answer to a key
+// that a newer key replaced, or to a lend that ended, is refused. The
+// compositor reads no byte of the content: the reader copies it, then
+// checks its copy.
 
 #assert(clipboard_rules.MODIFIER_CONTROL == display.MODIFIER_CONTROL)
 #assert(clipboard_rules.TEXT_LIMIT == display.CLIPBOARD_TEXT_LIMIT)
@@ -29,15 +32,20 @@ Clipboard_Content :: struct {
 }
 
 clipboard_content: Clipboard_Content
+clipboard_serials: clipboard_rules.Serials
 
-// The one lend of a paste: the client, and the copy of the handle of the
-// slot in this program that its handle came from. client -1: no lend.
+// The one lend of a paste: the client, the copy of the handle of the slot
+// in this program that its handle came from, and the client that copied
+// what it lends. client -1: no lend.
 clipboard_lend_client := -1
 clipboard_lend_handle: system.Handle
+clipboard_lend_owner := -1
 
 // clipboard_key takes a key record of the input service that is a key of
-// the clipboard, and gives false for any other key. The press acts; the
-// release is taken too, so no program sees half of the key.
+// the clipboard, and gives false for any other key. The press of C or V
+// with Control acts. Its release is taken too, so no program sees the
+// release of a key whose press it did not see. The Control key itself is a
+// record of its own, which goes on its usual path.
 clipboard_key :: proc "contextless" (character: rune, modifiers: u32, pressed: bool) -> bool {
 	key := clipboard_rules.clipboard_key_of(character, modifiers)
 	switch key {
@@ -63,12 +71,13 @@ clipboard_lend_end :: proc "contextless" () {
 	}
 	system.handle_revoke(clipboard_lend_handle)
 	system.close(clipboard_lend_handle)
-	clients[clipboard_lend_client].clipboard.lend_waits = false
-	clipboard_lend_client, clipboard_lend_handle = -1, 0
+	clients[clipboard_lend_client].clipboard.lend_serial = 0
+	clipboard_lend_client, clipboard_lend_handle, clipboard_lend_owner = -1, 0, -1
 }
 
-// clipboard_copy_key sends Copy_Asked to the window in front, once until
-// it answers.
+// clipboard_copy_key sends Copy_Asked with a new serial to the window in
+// front. A copy that waited for it is replaced: a program that lost the
+// event answers the newest one.
 clipboard_copy_key :: proc "contextless" () {
 	clipboard_lend_end()
 	if order_count == 0 {
@@ -76,15 +85,15 @@ clipboard_copy_key :: proc "contextless" () {
 		return
 	}
 	client := &clients[order[order_count - 1]]
-	if clipboard_rules.copy_key_take(&client.clipboard) {
-		send(client, .Copy_Asked, {})
-		system.log_in("surfaces", .Info, "compositor: the copy key goes to ", system.name_of(client.title[:]))
-	}
+	serial := clipboard_rules.serial_next(&clipboard_serials)
+	clipboard_rules.copy_key_take(&client.clipboard, serial)
+	send(client, .Copy_Asked, {0 = serial})
+	system.log_in("surfaces", .Info, "compositor: the copy key goes to ", system.name_of(client.title[:]))
 }
 
 // clipboard_paste_key lends the content to the window in front: a copy of
 // the handle of the slot in this program, then a handle with Read from it
-// to the program, and the event Pasted.
+// to the program, and the event Pasted with a new serial.
 clipboard_paste_key :: proc "contextless" () {
 	clipboard_lend_end()
 	empty_state: clipboard_rules.Window_State
@@ -95,7 +104,8 @@ clipboard_paste_key :: proc "contextless" () {
 		client = &clients[index]
 	}
 	state := client != nil ? &client.clipboard : &empty_state
-	refusal, _ := clipboard_rules.paste_key_take(state, client != nil, clipboard_content.memory != 0)
+	serial := clipboard_rules.serial_next(&clipboard_serials)
+	refusal, _ := clipboard_rules.paste_key_take(state, client != nil, clipboard_content.memory != 0, serial)
 	switch refusal {
 	case .None:
 	case .No_Window:
@@ -114,29 +124,32 @@ clipboard_paste_key :: proc "contextless" () {
 		}
 	}
 	if status != .Ok {
-		client.clipboard.lend_waits = false
+		client.clipboard.lend_serial = 0
 		system.log_in("surfaces", .Warning, "compositor: the paste to ", system.name_of(client.title[:]), " is refused by the kernel: nothing goes")
 		return
 	}
-	clipboard_lend_client, clipboard_lend_handle = index, lent
-	send(client, .Pasted, {0 = u64(given), 1 = u64(clipboard_content.kind), 2 = u64(clipboard_content.count)})
+	clipboard_lend_client, clipboard_lend_handle, clipboard_lend_owner = index, lent, clipboard_content.owner
+	send(client, .Pasted, {0 = u64(given), 1 = u64(clipboard_content.kind), 2 = u64(clipboard_content.count), 3 = serial})
 	system.log_in("surfaces", .Info, "compositor: a paste of ", u64(clipboard_content.count), " bytes of text from ", system.name_of(clipboard_content.owner_title[:]), " goes to ", system.name_of(client.title[:]))
 }
 
-// clipboard_copy_take takes the record Copy of a window: the content of a
-// copy that the principal asked for. The checks are
+// clipboard_copy_take takes the record Copy of a window: the content of
+// the copy that the newest key of the principal asked for. The checks are
 // clipboard_rules.copy_refusal; a refused record changes nothing and is
 // counted. A taken one replaces the slot.
 clipboard_copy_take :: proc "contextless" (index: int, record: ring.Record) {
 	client := &clients[index]
 	// The program wrote the number of the handle: a number with no proof
-	// of this program is neither used nor closed (surface_create).
+	// of this program is neither used nor closed (surface_create), and a
+	// number of a handle that this service holds already is not closed.
 	memory := system.Handle(record.values[0])
 	kind, rights, through := system.handle_state(memory, client.ring_memory)
 	content_kind, kind_known := display.clipboard_kind_of_word(record.values[1])
+	serial := record.values[3]
 	facts := clipboard_rules.Copy_Facts {
-		asked      = client.clipboard.copy_waits,
+		asked      = clipboard_rules.copy_names_the_request(client.clipboard, serial),
 		through    = through,
+		names_held = memory != 0 && (memory == clipboard_content.memory || memory == clipboard_lend_handle),
 		is_memory  = kind == .Memory,
 		readable   = .Read in rights,
 		giveable   = .Give in rights,
@@ -144,19 +157,19 @@ clipboard_copy_take :: proc "contextless" (index: int, record: ring.Record) {
 		kind_known = kind_known,
 		count      = record.values[2],
 	}
-	if facts.through && facts.is_memory {
+	if facts.through && !facts.names_held && facts.is_memory {
 		if pages, size_status := system.memory_size(memory); size_status == .Ok {
 			facts.memory_bytes = pages * system.PAGE_SIZE
 		}
 	}
 	if refusal := clipboard_rules.copy_refusal(facts); refusal != .None {
-		if facts.through {
+		if facts.through && !facts.names_held {
 			system.close(memory)
 		}
 		client.clipboard_refused += 1
 		return
 	}
-	clipboard_rules.answer_take(&client.clipboard, .Copy)
+	clipboard_rules.answer_take(&client.clipboard, .Copy, serial)
 	if clipboard_content.memory != 0 {
 		system.close(clipboard_content.memory)
 	}
@@ -164,11 +177,13 @@ clipboard_copy_take :: proc "contextless" (index: int, record: ring.Record) {
 	system.log_in("surfaces", .Info, "compositor: a copy of ", facts.count, " bytes of text from ", system.name_of(client.title[:]))
 }
 
-// clipboard_answer_take takes Copy_Declined or Paste_Taken: only when the
-// state that it ends waits for this window, else it is refused and counted.
-clipboard_answer_take :: proc "contextless" (index: int, answer: clipboard_rules.Answer) {
+// clipboard_answer_take takes Copy_Declined or Paste_Taken, whose first
+// value is the serial that it answers: only when that serial is the one of
+// the state that waits for this window, else it is refused and counted. A
+// late Paste_Taken of a lend that ended so never ends the next lend.
+clipboard_answer_take :: proc "contextless" (index: int, answer: clipboard_rules.Answer, record: ring.Record) {
 	client := &clients[index]
-	if !clipboard_rules.answer_take(&client.clipboard, answer) {
+	if !clipboard_rules.answer_take(&client.clipboard, answer, record.values[0]) {
 		client.clipboard_refused += 1
 		return
 	}
@@ -185,13 +200,15 @@ clipboard_answer_take :: proc "contextless" (index: int, answer: clipboard_rules
 }
 
 // clipboard_client_remove ends what the clipboard holds of a client that
-// leaves: its lend, and the content that it copied, whose memory belongs to
-// a program that ends.
+// leaves (clipboard_rules.client_end_effects): a lend to it or of what it
+// copied, and the content that it copied, whose memory belongs to a program
+// that ends.
 clipboard_client_remove :: proc "contextless" (index: int) {
-	if clipboard_lend_client == index {
+	effects := clipboard_rules.client_end_effects(index, clipboard_content.owner, clipboard_lend_client, clipboard_lend_owner, clipboard_content.memory != 0)
+	if effects.lend_ends {
 		clipboard_lend_end()
 	}
-	if clipboard_content.memory != 0 && clipboard_content.owner == index {
+	if effects.content_ends {
 		system.close(clipboard_content.memory)
 		clipboard_content = {}
 		system.log_in("surfaces", .Info, "compositor: the clipboard is empty: ", system.name_of(clients[index].title[:]), " ended")

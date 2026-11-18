@@ -63,7 +63,7 @@ copy_send :: proc "contextless" (window: ^Window, text: []u8, error: ^errors.Err
 		copy_decline(window)
 		return .Kernel_Refused, status
 	}
-	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Copy), values = {0 = u64(granted), 1 = u64(Clipboard_Kind.Text), 2 = u64(len(text))}})
+	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Copy), values = {0 = u64(granted), 1 = u64(Clipboard_Kind.Text), 2 = u64(len(text)), 3 = window.copy_serial}})
 	window.copy_asked = false
 	system.log_in("programs", .Info, "display: ", title, ": a copy of ", u64(len(text)), " bytes of text")
 	return .None, .Ok
@@ -73,7 +73,7 @@ copy_send :: proc "contextless" (window: ^Window, text: []u8, error: ^errors.Err
 // to copy. It gives false when there was no request, or when the command
 // ring was full: the request then waits, and the caller answers later.
 copy_decline :: proc "contextless" (window: ^Window) -> bool {
-	if !window.copy_asked || !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Copy_Declined)}) {
+	if !window.copy_asked || !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Copy_Declined), values = {0 = window.copy_serial}}) {
 		return false
 	}
 	window.copy_asked = false
@@ -91,11 +91,17 @@ copy_decline :: proc "contextless" (window: ^Window) -> bool {
 // count is the bytes of the text in room when problem is None. With a
 // problem, the bytes of room past the text of the caller are not text, and
 // the caller keeps its text as it was. The handle is closed and the answer
-// sent in each case, so the compositor ends the lend.
+// sent in each case, with the serial of the paste, so the compositor ends
+// that lend and no later one.
+//
+// A known risk: the read is a read of a mapping. A program that copied and
+// kept its own handle can revoke it while this program reads, and this
+// program then faults. No kernel operation copies bytes out of a memory
+// object with a refusal in place of a fault (src/md/features/clipboard.md,
+// "Subtle points"; ROADMAP.md).
 paste_read :: proc "contextless" (window: ^Window, event: Event, room: []u8) -> (count: int, problem: Clipboard_Problem) {
 	count, problem = paste_copy(window, event, room)
-	system.close(event.paste_handle)
-	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Paste_Taken)})
+	paste_answer(window, event)
 	title := string(window.title[:window.title_count])
 	if problem == .None {
 		system.log_in("programs", .Info, "display: ", title, ": a paste of ", u64(count), " bytes of text")
@@ -105,23 +111,57 @@ paste_read :: proc "contextless" (window: ^Window, event: Event, room: []u8) -> 
 	return count, problem
 }
 
+// The facts of a paste before its copy: the event, the state of its handle,
+// the size of its memory and the room of the caller.
+Paste_Facts :: struct {
+	event:        Event,
+	is_memory:    bool, // The handle names a memory object.
+	readable:     bool, // The handle has Read.
+	through:      bool, // The compositor gave it through the ring of the window.
+	memory_bytes: u64, // The size of the memory. 0 when the kernel refused to give it.
+	room:         int, // The bytes that the caller takes.
+}
+
+// paste_problem decides a paste from its facts, before any byte is read.
+// It reads and changes no state, so a host test gives it each refused
+// case.
+paste_problem :: proc "contextless" (facts: Paste_Facts) -> Clipboard_Problem {
+	event := facts.event
+	switch {
+	case event.kind != .Pasted || event.clipboard_kind != .Text:
+		return .Unknown_Kind
+	case !facts.is_memory || !facts.readable || !facts.through:
+		return .Not_Given
+	case event.byte_count <= 0:
+		return .Empty
+	case event.byte_count > CLIPBOARD_TEXT_LIMIT || event.byte_count > facts.room:
+		return .Too_Large
+	case facts.memory_bytes < u64(event.byte_count):
+		return .Too_Small
+	}
+	return .None
+}
+
+// paste_answer closes the lent handle and answers Paste_Taken with the
+// serial of the paste.
+@(private = "file")
+paste_answer :: proc "contextless" (window: ^Window, event: Event) {
+	system.close(event.paste_handle)
+	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Paste_Taken), values = {0 = event.clipboard_serial}})
+}
+
 // paste_copy does the checks and the copy of paste_read, with no answer.
 @(private = "file")
 paste_copy :: proc "contextless" (window: ^Window, event: Event, room: []u8) -> (count: int, problem: Clipboard_Problem) {
 	kind, rights, through := system.handle_state(event.paste_handle, window.ring_memory)
-	switch {
-	case event.kind != .Pasted || event.clipboard_kind != .Text:
-		return 0, .Unknown_Kind
-	case kind != .Memory || .Read not_in rights || !through:
-		return 0, .Not_Given
-	case event.byte_count <= 0:
-		return 0, .Empty
-	case event.byte_count > CLIPBOARD_TEXT_LIMIT || event.byte_count > len(room):
-		return 0, .Too_Large
+	facts := Paste_Facts{event = event, is_memory = kind == .Memory, readable = .Read in rights, through = through, room = len(room)}
+	if facts.is_memory {
+		if pages, size_status := system.memory_size(event.paste_handle); size_status == .Ok {
+			facts.memory_bytes = pages * system.PAGE_SIZE
+		}
 	}
-	pages, size_status := system.memory_size(event.paste_handle)
-	if size_status != .Ok || pages * system.PAGE_SIZE < u64(event.byte_count) {
-		return 0, .Too_Small
+	if refused := paste_problem(facts); refused != .None {
+		return 0, refused
 	}
 	address, map_status := system.memory_map(event.paste_handle, {}) // Read only.
 	if map_status != .Ok {
@@ -140,7 +180,6 @@ paste_copy :: proc "contextless" (window: ^Window, event: Event, room: []u8) -> 
 // closes the lent handle and answers Paste_Taken, so the compositor ends
 // the lend at once.
 paste_refuse :: proc "contextless" (window: ^Window, event: Event) {
-	system.close(event.paste_handle)
-	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Paste_Taken)})
+	paste_answer(window, event)
 	system.log_in("programs", .Info, "display: ", string(window.title[:window.title_count]), ": no part of the window takes the paste")
 }

@@ -819,9 +819,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case .Copy:
 					clipboard_copy_take(index, record) // clipboard.odin
 				case .Copy_Declined:
-					clipboard_answer_take(index, .Copy_Declined)
+					clipboard_answer_take(index, .Copy_Declined, record)
 				case .Paste_Taken:
-					clipboard_answer_take(index, .Paste_Taken)
+					clipboard_answer_take(index, .Paste_Taken, record)
 				}
 			}
 			// The program can wait until this loop took its last picture

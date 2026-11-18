@@ -98,15 +98,16 @@ Command :: enum u32 {
 	// The answer to the event Copy_Asked: the content of the copy, a
 	// memory object of this program that the compositor reads with Read
 	// and lends with Give (src/md/features/clipboard.md). values: memory
-	// handle (in the compositor), the Clipboard_Kind, the count of bytes
-	// (copy_send).
+	// handle (in the compositor), the Clipboard_Kind, the count of bytes,
+	// the serial of the Copy_Asked that it answers (copy_send).
 	Copy            = 9,
 	// The other answer to Copy_Asked: the window has nothing to copy, or
-	// refused its text or its budget. No values (copy_decline).
+	// refused its text or its budget. values: the serial of the Copy_Asked
+	// (copy_decline).
 	Copy_Declined   = 10,
 	// The answer to the event Pasted: the program copied the content, and
-	// closed the handle. The compositor revokes the lent handle. No values
-	// (paste_read, paste_refuse).
+	// closed the handle. The compositor revokes the lent handle. values:
+	// the serial of the Pasted (paste_read, paste_refuse).
 	Paste_Taken     = 11,
 }
 
@@ -136,6 +137,7 @@ Clipboard_Problem :: enum {
 	Empty, // No byte.
 	Too_Large, // Past CLIPBOARD_TEXT_LIMIT, or past the room of the field that pastes.
 	Not_Text, // A byte that starts no well-formed sequence of UTF-8, or a control character.
+	Hidden_Character, // A character that a reader does not see, or that changes the order of the text (character_hidden).
 	Unknown_Kind, // A kind that this program does not read.
 	Not_Given, // The handle of a paste is not memory with Read that the compositor gave through the ring.
 	Too_Small, // The memory of a paste does not hold its count of bytes.
@@ -151,6 +153,7 @@ CLIPBOARD_PROBLEM_SENTENCES := [Clipboard_Problem]string {
 	.Empty          = "the text is empty",
 	.Too_Large      = "the text is larger than the room",
 	.Not_Text       = "the bytes are not UTF-8 with no control character",
+	.Hidden_Character = "the text has a character that a reader does not see, or that changes the order of the text",
 	.Unknown_Kind   = "the kind is not text",
 	.Not_Given      = "the handle is not memory that the compositor gave",
 	.Too_Small      = "the memory does not hold the count of bytes",
@@ -171,7 +174,31 @@ clipboard_text_problem :: proc "contextless" (text: []u8, room: int) -> Clipboar
 	case !text_encoding.text_valid(text):
 		return .Not_Text
 	}
+	for place := 0; place < len(text); {
+		character, length, _ := text_encoding.character_decode(text, place)
+		if length == 0 {
+			break
+		}
+		if character_hidden(character) {
+			return .Hidden_Character
+		}
+		place += length
+	}
 	return .None
+}
+
+// character_hidden says if a character is one that a reader does not see,
+// or one that changes the order in which a text shows: the spaces and the
+// joiners of no width, the marks and the embeddings of direction, the
+// isolates, the separators of lines and of paragraphs, and the mark of the
+// byte order. A pasted text with one of them could show as another text,
+// in a line of the console that the principal then runs.
+character_hidden :: proc "contextless" (character: rune) -> bool {
+	switch character {
+	case 0x200B ..= 0x200F, 0x202A ..= 0x202E, 0x2066 ..= 0x2069, 0x2028, 0x2029, 0xFEFF:
+		return true
+	}
+	return false
 }
 
 ACT_NAME_SET_CAPACITY :: 6 // The act names of one window: the values of one record after its count.
@@ -223,11 +250,13 @@ Event_Kind :: enum u32 {
 	// values: the width, the height of the surface.
 	Resized          = 5,
 	// The principal pressed the key of a copy: the program answers once,
-	// with copy_send or copy_decline. No values.
+	// with copy_send or copy_decline. A newer Copy_Asked replaces it.
+	// values: the serial of the key, never 0.
 	Copy_Asked       = 6,
 	// The principal pressed the key of a paste: a handle with Read to the
 	// content, lent until the program answers (paste_read). values: the
-	// handle (in this program), the Clipboard_Kind, the count of bytes.
+	// handle (in this program), the Clipboard_Kind, the count of bytes,
+	// the serial of the key, never 0.
 	Pasted           = 7,
 }
 
@@ -363,6 +392,7 @@ Event :: struct {
 	paste_handle:   system.Handle, // Pasted: the lent handle of the content.
 	clipboard_kind: Clipboard_Kind, // Pasted: the kind of the content, never None.
 	byte_count:     int, // Pasted: the bytes of the content, 1 to CLIPBOARD_TEXT_LIMIT.
+	clipboard_serial: u64, // Copy_Asked and Pasted: the serial of the key, never 0; the answer names it.
 }
 
 // One window of a program: its ring to the compositor and its surface.
@@ -386,6 +416,7 @@ Window :: struct {
 	resize_asked: bool,
 	resize_asked_width, resize_asked_height: int,
 	copy_asked: bool, // A Copy_Asked came, and no answer went: copy_send or copy_decline answers it.
+	copy_serial: u64, // The serial of the newest Copy_Asked, which the answer names.
 	// The measure of the time of a picture (docs/DESIGN.md, section 7):
 	// picture_begin marks the start, present the end; in a measure run the
 	// log has their mean after 1, 3 and 10 pictures.
@@ -822,7 +853,9 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 			window.resize_asked_width, window.resize_asked_height = read.width, read.height
 		}
 		if read.kind == .Copy_Asked {
-			window.copy_asked = true
+			// The newest request replaces the one before: the compositor
+			// takes only an answer to it.
+			window.copy_asked, window.copy_serial = true, read.clipboard_serial
 		}
 		return read, true
 	}
@@ -851,7 +884,8 @@ command_of_ring_word :: proc "contextless" (word: u32) -> (command: Command, ok:
 
 // event_of_record is the border of an input record of the compositor: the
 // event, or false for a kind that names no event, None included, and for a
-// Resized whose size is 0 or past SURFACE_LIMIT. It reads
+// Resized whose size is 0 or past SURFACE_LIMIT, and for a Copy_Asked or a
+// Pasted whose words are out of their range. It reads
 // and changes no state, so a host test gives it each refused kind.
 event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok: bool) {
 	kind := enum_word.member_of_word(Event_Kind, u64(record.kind)) or_return
@@ -883,15 +917,20 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 		}
 		event.width, event.height = int(width), int(height)
 	case .Copy_Asked:
-	case .Pasted:
-		// A handle is 32 bits, a kind a member, a count 1 to the limit:
-		// each is checked as the word that the compositor wrote.
-		handle, count := record.values[0], record.values[2]
-		kind, kind_ok := clipboard_kind_of_word(record.values[1])
-		if handle == 0 || handle > u64(max(u32)) || !kind_ok || count == 0 || count > CLIPBOARD_TEXT_LIMIT {
+		if record.values[0] == 0 {
 			return {}, false
 		}
-		event.paste_handle, event.clipboard_kind, event.byte_count = system.Handle(handle), kind, int(count)
+		event.clipboard_serial = record.values[0]
+	case .Pasted:
+		// A handle is 32 bits, a kind a member, a count 1 to the limit, a
+		// serial not 0: each is checked as the word that the compositor
+		// wrote.
+		handle, count, serial := record.values[0], record.values[2], record.values[3]
+		kind, kind_ok := clipboard_kind_of_word(record.values[1])
+		if handle == 0 || handle > u64(max(u32)) || !kind_ok || count == 0 || count > CLIPBOARD_TEXT_LIMIT || serial == 0 {
+			return {}, false
+		}
+		event.paste_handle, event.clipboard_kind, event.byte_count, event.clipboard_serial = system.Handle(handle), kind, int(count), serial
 	}
 	return event, true
 }

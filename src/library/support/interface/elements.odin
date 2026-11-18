@@ -408,13 +408,12 @@ text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 		// a copy takes the whole text, and a paste goes at its end. The
 		// paste is copied after the text, then checked: a refused paste
 		// leaves the text as it was.
-		input := frame.input
-		if input.copy_asked && !frame.copy_given {
+		if frame.input.copy_asked && !frame.copy_given {
 			frame.copied, frame.copy_given = text[:count^], true
 		}
-		if input.paste.kind == .Pasted && !frame.paste_taken && input.paste_window != nil {
+		if frame.input.paste.kind == .Pasted && !frame.paste_taken && frame.input.paste_window != nil {
 			frame.paste_taken = true
-			if pasted, problem := display.paste_read(input.paste_window, input.paste, text[count^:]); problem == .None {
+			if pasted, problem := display.paste_read(frame.input.paste_window, frame.input.paste, text[count^:]); problem == .None {
 				count^ += pasted
 				result.changed = true
 			}
