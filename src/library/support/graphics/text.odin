@@ -5,12 +5,14 @@ import "modus:contract/text_encoding"
 import "modus:support/text_rendering"
 
 // The text of the system (docs/FONTS.md). Two fonts draw on one grid of
-// cells of 8 x 16 pixels at scale 1 (16 x 32, 24 x 48 at the scales 2 and
-// 3): the vector font, whose glyphs the process draws from the font
-// outlines into its private glyph cache (src/library/support/text_rendering),
-// and Spleen 8x16 (font.odin), the fallback and the other value of the
-// setting. A process calls text, character and text_scaled; it does not
-// know which font draws.
+// cells: a cell is half the text size wide, a half up, and two widths high
+// (text_rendering.cell_columns): 8 x 16 pixels at the size of the body, 16
+// x 32 and 24 x 48 at the large and the largest size. The vector font draws
+// its glyphs from the font outlines into the private glyph cache of the
+// process (src/library/support/text_rendering), at any size; Spleen 8x16
+// (font.odin), the fallback and the other value of the setting, draws at a
+// whole scale in the middle of its cell. A process calls text, character
+// and text_sized; it does not know which font draws.
 //
 // The state is in this package, one for the process, and changes only
 // through text_faces_use and text_choice_set (src/library/support/display
@@ -22,10 +24,6 @@ Text_Font :: enum u8 {
 	Vector, // The vector font of the system, from the font outlines.
 	Spleen, // Spleen 8x16, a bitmap font in the library itself.
 }
-
-// The most scale of a text of cells, and of a text of the interface font
-// that a draw record names.
-TEXT_SCALE_LIMIT :: 3
 
 // The order of the color stripes of the pixels of the screen: the setting
 // "subpixel_order". None draws the vector font in grayscale.
@@ -45,7 +43,7 @@ Text_State :: struct {
 	// opened: Cells or Cells_Without_Grid_Fit. None: the vector font cannot
 	// draw, and the text is Spleen.
 	cell_face:   text_rendering.Face,
-	// The face of the bold weight at scale 1, for emphasis: the titles of
+	// The face of the bold weight of the cells, for emphasis: the titles of
 	// the cards. None: the titles are the regular weight.
 	bold_face:   text_rendering.Face,
 	// The blend in linear light: square_root[i] is the 8-bit value whose
@@ -80,40 +78,22 @@ text_faces_use :: proc "contextless" (cells, bold: text_rendering.Face) {
 	}
 }
 
-// text_bold draws characters at scale 1 in the bold weight of the vector
-// font: the titles of the cards. With Spleen, or with no bold face, it is
-// text. It gives the x after the last character. alpha is the alpha of the
-// color, as in text_scaled.
+// text_bold draws characters at the size of the body in the bold weight of
+// the vector font: the titles of the cards. With Spleen, or with no bold
+// face, it is the regular weight. It gives the x after the last character.
+// alpha is the alpha of the color, as in text_sized.
 text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color, alpha: u32 = OPAQUE) -> int {
-	if !text_vector_drawn() || text_state.bold_face == .None {
-		return text_scaled(canvas, x, y, characters, color, 1, alpha)
-	}
-	if alpha == 0 {
-		return x + text_encoding.character_count(transmute([]u8)characters) * CELL_WIDTH
-	}
-	bytes := transmute([]u8)characters
-	at, place := x, 0
-	for place < len(bytes) {
-		character, length, _ := text_encoding.character_decode(bytes, place)
-		place += length
-		if at < canvas.width && at + CELL_WIDTH > 0 {
-			if !character_of_face(text_state.bold_face, canvas, at, y, character, color, 1, alpha) {
-				character_replacement(canvas, at, y, color, 1, alpha)
-			}
-		}
-		at += CELL_WIDTH
-	}
-	return at
+	return text_sized(canvas, x, y, characters, color, text_rendering.TEXT_SIZE_OF_SCALE_ONE, true, alpha)
 }
 
 // character_of_face draws a character in the cell at (x, y) from a face of
-// cells at the text size of a scale (text_rendering: the private glyph
-// cache of the process), and gives true; false when no font of the chain
-// of the face draws it, and for the face None: the caller draws the
-// replacement glyph. A glyph of a face of cells stays in its cell.
+// cells at a text size (text_rendering: the private glyph cache of the
+// process), and gives true; false when no font of the chain of the face
+// draws it, and for the face None: the caller draws the replacement glyph.
+// A glyph of a face of cells stays in its cell.
 @(private)
-character_of_face :: proc "contextless" (face: text_rendering.Face, canvas: Canvas, x, y: int, character: rune, color: Color, scale: int, alpha: u32 = OPAQUE) -> bool {
-	return face_glyph_draw(face, character, text_rendering.size_of_scale(scale), 0, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, x, y, color, alpha)
+character_of_face :: proc "contextless" (face: text_rendering.Face, canvas: Canvas, x, y: int, character: rune, color: Color, size: int, alpha: u32 = OPAQUE) -> bool {
+	return face_glyph_draw(face, character, size, 0, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, x, y, color, alpha)
 }
 
 // face_glyph_draw draws the glyph of a character of a face at a text size
@@ -217,9 +197,9 @@ text_vector_drawn :: #force_inline proc "contextless" () -> bool {
 }
 
 // text draws characters from (x, y), the top left corner of the first cell,
-// at scale 1. It gives the x after the last character.
+// at the size of the body. It gives the x after the last character.
 text :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color) -> int {
-	return text_scaled(canvas, x, y, characters, color, 1)
+	return text_sized(canvas, x, y, characters, color, text_rendering.TEXT_SIZE_OF_SCALE_ONE)
 }
 
 // cell_font_draws says if Spleen has a glyph for a character: ASCII 32 to
@@ -231,37 +211,47 @@ cell_font_draws :: #force_inline proc "contextless" (character: rune) -> bool {
 	return found
 }
 
-// character_replacement draws the replacement glyph in the cell at (x, y):
-// the outline of a box from the top of a capital letter to the baseline,
-// in each font and at each scale. A reader draws it for a character that
-// the font lacks and for each invalid sequence of a text, so that a byte is never
-// drawn as a glyph and a reader sees that a character is there. The two
-// sides stop at the top and the bottom bars, so no pixel is painted twice:
-// a color with alpha blends once in each pixel.
+// character_replacement draws the replacement glyph in the cell at (x, y)
+// at a whole scale of the cell of the body: the boot display draws it so,
+// in Spleen. It is character_replacement_sized at the size of the scale.
 character_replacement :: proc "contextless" (canvas: Canvas, x, y: int, color: Color, scale: int, alpha: u32 = OPAQUE, square_root: ^[4096]u8 = nil) {
-	BOX_LEFT :: 1
-	BOX_TOP :: 3
-	BOX_WIDTH :: 6
-	BOX_HEIGHT :: 9
-	if alpha == 0 {
-		return
-	}
-	left, top := x + BOX_LEFT * scale, y + BOX_TOP * scale
-	width, height := BOX_WIDTH * scale, BOX_HEIGHT * scale
-	paint(canvas, left, top, width, scale, color, alpha, square_root)
-	paint(canvas, left, top + height - scale, width, scale, color, alpha, square_root)
-	paint(canvas, left, top + scale, scale, height - 2 * scale, color, alpha, square_root)
-	paint(canvas, left + width - scale, top + scale, scale, height - 2 * scale, color, alpha, square_root)
+	character_replacement_sized(canvas, x, y, color, text_rendering.size_of_scale(scale), alpha, square_root)
 }
 
-// character draws one character in the cell at (x, y), at scale 1: from
-// the face of the cells with the vector font, else from Spleen. A
-// character that no font of the chain has, and with Spleen a character
+// character_replacement_sized draws the replacement glyph in the cell at
+// (x, y) of a text size: the outline of a box from the top of a capital
+// letter to the baseline, in each font and at each size. A reader draws it
+// for a character that the font lacks and for each invalid sequence of a
+// text, so that a byte is never drawn as a glyph and a reader sees that a
+// character is there. The box is a part of the cell of 8 by 16 at the body
+// (1, 3, 6 and 9 of it, its bars 1 thick), grown with the cell and rounded:
+// at a whole scale of the body each number is that scale times the one of
+// the body. The two sides stop at the top and the bottom bars, so no pixel
+// is painted twice: a color with alpha blends once in each pixel. A size
+// that text_rendering.size_check refuses draws nothing.
+character_replacement_sized :: proc "contextless" (canvas: Canvas, x, y: int, color: Color, size: int, alpha: u32 = OPAQUE, square_root: ^[4096]u8 = nil) {
+	if alpha == 0 || text_rendering.size_check(size) != .None {
+		return
+	}
+	cell := text_rendering.cell_columns(size)
+	line := 2 * cell
+	bar := max(1, line / CELL_HEIGHT)
+	left, top := x + (cell + CELL_WIDTH / 2) / CELL_WIDTH, y + 3 * line / CELL_HEIGHT
+	width, height := 6 * cell / CELL_WIDTH, 9 * line / CELL_HEIGHT
+	paint(canvas, left, top, width, bar, color, alpha, square_root)
+	paint(canvas, left, top + height - bar, width, bar, color, alpha, square_root)
+	paint(canvas, left, top + bar, bar, height - 2 * bar, color, alpha, square_root)
+	paint(canvas, left + width - bar, top + bar, bar, height - 2 * bar, color, alpha, square_root)
+}
+
+// character draws one character in the cell at (x, y), at the size of the
+// body: from the face of the cells with the vector font, else from Spleen.
+// A character that no font of the chain has, and with Spleen a character
 // that Spleen lacks, draws the replacement glyph.
 character :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: Color) {
 	switch {
 	case text_vector_drawn():
-		if !character_of_face(text_state.cell_face, canvas, x, y, value, color, 1) {
+		if !character_of_face(text_state.cell_face, canvas, x, y, value, color, text_rendering.TEXT_SIZE_OF_SCALE_ONE) {
 			character_replacement(canvas, x, y, color, 1)
 		}
 	case cell_font_draws(value):
@@ -271,25 +261,54 @@ character :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: 
 	}
 }
 
-// text_scaled draws characters in cells of scale times the size of a cell:
-// 1, 2 or 3 (docs/DESIGN.md, section 5). The vector font draws each
-// character from the face of the cells at the text size of the scale;
-// Spleen draws each of its pixels as a square of scale pixels. A character
-// that no font of the chain has, and with Spleen a character that Spleen
-// lacks, draws the replacement glyph. It gives the x after the last
-// character.
+// text_scaled draws characters at a whole scale of the body: the text size
+// of the scale (text_rendering.size_of_scale), with text_sized. A scale
+// whose size text_rendering.size_check refuses draws nothing.
+text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color, scale: int, alpha: u32 = OPAQUE) -> int {
+	return text_sized(canvas, x, y, characters, color, text_rendering.size_of_scale(scale), false, alpha)
+}
+
+// spleen_scale_of gives the scale at which Spleen 8x16 draws a text size:
+// the largest whole scale whose line is not above the line of the cell, and
+// 1 under it. Spleen is the fallback, so under the body a glyph of it is
+// one row or one column larger than its cell, which the box of its record
+// cuts; its last column and its first row are empty in most glyphs.
+@(private)
+spleen_scale_of :: proc "contextless" (size: int) -> int {
+	return max(1, 2 * text_rendering.cell_columns(size) / CELL_HEIGHT)
+}
+
+// text_sized draws characters in the cells of a text size in 1/64 pixel
+// (text_rendering.cell_columns: half the size wide, a half up, two widths
+// high), from (x, y), the top left corner of the first cell (docs/DESIGN.md,
+// "5. Text"). The vector font draws each character from the face of the
+// cells at the size, in the bold weight when bold is true and the process
+// opened a bold face; Spleen draws each of its pixels as a square of its
+// scale (spleen_scale_of), in the middle of the cell. A character that no
+// font of the chain has, and with Spleen a character that Spleen lacks,
+// draws the replacement glyph. It gives the x after the last character. A
+// size that text_rendering.size_check refuses draws nothing and gives x.
 //
 // alpha is the alpha of the color: 255 draws the color opaque, a lower
 // alpha scales the cover of each pixel of ink, in each font: the coverage
 // of a glyph, and each pixel of Spleen and of the replacement box. Alpha 0
 // draws nothing.
-text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color, scale_asked: int, alpha: u32 = OPAQUE) -> int {
-	scale := clamp(scale_asked, 1, TEXT_SCALE_LIMIT)
-	advance := CELL_WIDTH * scale
+text_sized :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color, size: int, bold := false, alpha: u32 = OPAQUE) -> int {
+	if text_rendering.size_check(size) != .None {
+		return x
+	}
+	advance := text_rendering.cell_columns(size)
 	if alpha == 0 {
 		return x + text_encoding.character_count(transmute([]u8)characters) * advance
 	}
 	vector := text_vector_drawn()
+	face := text_state.cell_face
+	if bold && text_state.bold_face != .None {
+		face = text_state.bold_face
+	}
+	spleen_scale := spleen_scale_of(size)
+	spleen_x := (advance - CELL_WIDTH * spleen_scale) / 2
+	spleen_y := (2 * advance - CELL_HEIGHT * spleen_scale) / 2
 	// The text is UTF-8: one cell for each character, and one for each
 	// invalid sequence, which draws the replacement glyph.
 	bytes := transmute([]u8)characters
@@ -300,15 +319,15 @@ text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string
 		if at < canvas.width && at + advance > 0 {
 			switch {
 			case vector:
-				if !character_of_face(text_state.cell_face, canvas, at, y, character, color, scale, alpha) {
-					character_replacement(canvas, at, y, color, scale, alpha)
+				if !character_of_face(face, canvas, at, y, character, color, size, alpha) {
+					character_replacement_sized(canvas, at, y, color, size, alpha)
 				}
 			case !cell_font_draws(character):
-				character_replacement(canvas, at, y, color, scale, alpha)
-			case scale == 1:
+				character_replacement_sized(canvas, at, y, color, size, alpha)
+			case spleen_scale == 1 && spleen_x == 0 && spleen_y == 0:
 				character_spleen(canvas, at, y, character, color, alpha)
 			case:
-				character_spleen_enlarged(canvas, at, y, character, color, scale, alpha)
+				character_spleen_enlarged(canvas, at + spleen_x, y + spleen_y, character, color, spleen_scale, alpha)
 			}
 		}
 		at += advance
@@ -447,39 +466,39 @@ character_spleen_enlarged :: proc "contextless" (canvas: Canvas, x, y: int, valu
 
 // The ink of a text of a proportional font can pass the box that its
 // measure gives (text_rendering.text_width), on each side, by at most this
-// many pixels at scale 1: a glyph that starts left of its origin (B612: at
-// most 126 units, 0.84 pixel), the spread of the filter (two thirds of a
-// pixel), and the rounding to a third of a pixel (one sixth). A caller that
-// damages the place of a text widens the measured box by it, times the
-// scale (docs/FONTS.md, section 12.5).
+// many pixels at a line of 16 pixels: a glyph that starts left of its
+// origin (B612: at most 126 units, 0.84 pixel), the spread of the filter
+// (two thirds of a pixel), and the rounding to a third of a pixel (one
+// sixth). A caller that damages the place of a text widens the measured box
+// by it, grown with the size and rounded up (docs/FONTS.md, section 12.5).
 PROPORTIONAL_INK_MARGIN :: 2
 
 // text_proportional draws the placed glyphs of a text of a proportional
-// face (text_rendering.shape) at the text size of a scale: place is the x
-// of the origin of the text in 1/64 of a pixel, y the top of its line.
+// face (text_rendering.shape) at a text size in 1/64 pixel, the size of its
+// shape: place is the x of the origin of the text in 1/64 of a pixel, y the
+// top of its line.
 // Each glyph is drawn from the private glyph cache of the process
 // (text_rendering.glyph) at the nearest third of a pixel, through the
 // blend of the text of cells, cut to the canvas. The state of the process
 // gives the order of the stripes and the blend tables. A glyph that no
 // font of the chain draws is the replacement glyph, at the advance that
 // the shaper gave it.
-text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, placed: []text_rendering.Placed_Glyph, face: text_rendering.Face, scale: int, color: Color, alpha: u32 = OPAQUE) {
+text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, placed: []text_rendering.Placed_Glyph, face: text_rendering.Face, size: int, color: Color, alpha: u32 = OPAQUE) {
 	if text_state.square_root[4095] == 0 {
 		square_root_table_fill(&text_state.square_root)
 	}
-	text_proportional_with(face, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, place, y, placed, scale, color, alpha)
+	text_proportional_with(face, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, place, y, placed, size, color, alpha)
 }
 
 // text_proportional_with is text_proportional with its state given: the
 // tests draw with it, each with its own tables. alpha is the alpha of the
-// color, as in text_scaled. A scale out of 1 to TEXT_SCALE_LIMIT, a face
-// that is not proportional, and a glyph past the character indices that
-// is neither a fallback glyph nor the replacement glyph draw nothing.
-text_proportional_with :: proc "contextless" (face: text_rendering.Face, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, place: i64, y: int, placed: []text_rendering.Placed_Glyph, scale: int, color: Color, alpha: u32 = OPAQUE) {
-	if scale < 1 || scale > TEXT_SCALE_LIMIT || alpha == 0 || !text_rendering.face_forms[face].proportional {
+// color, as in text_sized. A size that text_rendering.size_check refuses,
+// a face that is not proportional, and a glyph past the character indices
+// that is neither a fallback glyph nor the replacement glyph draw nothing.
+text_proportional_with :: proc "contextless" (face: text_rendering.Face, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, place: i64, y: int, placed: []text_rendering.Placed_Glyph, size: int, color: Color, alpha: u32 = OPAQUE) {
+	if text_rendering.size_check(size) != .None || alpha == 0 || !text_rendering.face_forms[face].proportional {
 		return
 	}
-	size := text_rendering.size_of_scale(scale)
 	position_count := text_rendering.positions_of(face)
 	for glyph in placed {
 		replacement := glyph.glyph == text_rendering.REPLACEMENT_GLYPH
@@ -502,7 +521,7 @@ text_proportional_with :: proc "contextless" (face: text_rendering.Face, square_
 			continue
 		}
 		if replacement || !face_glyph_draw(face, character, size, position, square_root, tables, order, canvas, int(pixel), y, color, alpha) {
-			character_replacement(canvas, int(pixel), y, color, scale, alpha)
+			character_replacement_sized(canvas, int(pixel), y, color, size, alpha)
 		}
 	}
 }

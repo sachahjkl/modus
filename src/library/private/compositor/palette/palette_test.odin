@@ -1167,14 +1167,14 @@ running_and_result :: proc(t: ^testing.T) {
 		}
 		testing.expectf(t, found, "the panel shows %q", text)
 	}
-	// An Integer: its one number at three times the size of the font.
+	// An Integer: its one number at the largest text size.
 	length = write(result_area, {{"", "42"}})
 	panel.state = .Running
 	result_set(panel, u64(palette_table.Outcome.Shown_In_Panel), u64(palette_table.Value_Kind.Integer), table, length)
 	panel_build(screen, panel)
 	large := false
 	for record in screen.table.records[:screen.table.record_count] {
-		if shown, scale, is_text := interface.text_of_record(&screen.table, record); is_text && scale == 3 && shown == "42" {
+		if shown, size, is_text := interface.text_of_record(&screen.table, record); is_text && size == interface.font_text_size(interface.FONT_LARGEST) && shown == "42" {
 			large = true
 		}
 	}
@@ -1359,7 +1359,7 @@ the_form_of_an_entry :: proc(t: ^testing.T) {
 	for text in texts {
 		found := false
 		for record in screen.table.records[:screen.table.record_count] {
-			if shown, scale, is_text := interface.text_of_record(&screen.table, record); is_text && scale == INPUT_SCALE && strings.contains(shown, text) {
+			if shown, size, is_text := interface.text_of_record(&screen.table, record); is_text && size == INPUT_SIZE && strings.contains(shown, text) {
 				found = true
 			}
 		}

@@ -12,7 +12,8 @@ import "modus:support/kind_icons"
 PANEL_WIDTH :: 640
 PANEL_TOP :: 96 // The top of the panel on the screen: fixed, so the input band never moves when the list changes.
 INPUT_BAND_HEIGHT :: 48 // The input band, with the line of 2 pixels that is its last 2 pixels.
-INPUT_SCALE :: 2 // The typed part: cells of 16 x 32 pixels.
+INPUT_SCALE :: 2 // The typed part: cells of 16 x 32 pixels, two cells of the body.
+INPUT_SIZE :: INPUT_SCALE * graphics.TEXT_BODY * interface.TEXT_SIZE_UNITS // The text size of the typed part: graphics.TEXT_LARGE.
 ROW_HEIGHT :: interface.TABLE_LINE // One row of the list.
 LIST_TOP :: INPUT_BAND_HEIGHT // From the top of the panel to the list.
 LIST_HEIGHT :: LIST_ROWS * ROW_HEIGHT
@@ -502,7 +503,7 @@ band_text_end :: proc "contextless" (table: ^interface.Draw_Table, typed: string
 	cell := graphics.CELL_WIDTH * INPUT_SCALE
 	caret := 2 * INPUT_SCALE
 	if len(typed) == 0 {
-		return interface.TEXT_INPUT_LINE_MARGIN + cell + interface.text_measured_width(table, interface.Font{kind = .Interface, scale = INPUT_SCALE}, PLACEHOLDER)
+		return interface.TEXT_INPUT_LINE_MARGIN + cell + interface.text_measured_width(table, interface.Font{kind = .Interface, size = INPUT_SIZE}, PLACEHOLDER)
 	}
 	fit := max((PANEL_WIDTH - 2 * interface.TEXT_INPUT_LINE_MARGIN - caret) / cell, 1)
 	return interface.TEXT_INPUT_LINE_MARGIN + min(len(typed), fit) * cell + caret
@@ -565,7 +566,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 	if with_form {
 		form_band_draw(frame, &panel.form, x, y)
 	} else {
-		interface.text_input_line(frame, {x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT}, typed_text(panel), panel.line.caret, INPUT_SCALE, PLACEHOLDER)
+		interface.text_input_line(frame, {x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT}, typed_text(panel), panel.line.caret, INPUT_SIZE, PLACEHOLDER)
 		// At the right of the band: the word of the prefix, what the list
 		// is restricted to, and the mode of the chosen entry.
 		band_chosen: ^Entry
@@ -960,7 +961,7 @@ form_band_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, x, y
 	text_x := x + interface.TEXT_INPUT_LINE_MARGIN
 	text_y := y + (INPUT_BAND_HEIGHT - text_height) / 2
 	interface.draw_rectangle(table, text_x + (caret - first) * BAND_CELL_WIDTH, text_y, BAND_CARET_WIDTH, text_height, graphics.colors.title)
-	font := interface.Font{scale = INPUT_SCALE}
+	font := interface.Font{size = INPUT_SIZE}
 	// One text record for each run of one class.
 	start := first
 	for start < last {

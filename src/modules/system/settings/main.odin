@@ -529,7 +529,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	for line, index in lines {
 		interface.draw_text(frame.table, sample.x, sample.y + index * 16, line, graphics.colors.text)
 	}
-	interface.draw_text(frame.table, sample.x, sample.y + 56, "EEVDF fair", graphics.colors.process, interface.FONT_MEDIUM)
+	interface.draw_text(frame.table, sample.x, sample.y + 56, "EEVDF fair", graphics.colors.process, interface.FONT_LARGE)
 	after := interface.large_number(&frame, sample.x, sample.y + 88, "12 345", graphics.colors.text)
 	interface.draw_text(frame.table, after + 16, sample.y + 112, "wakes in one second", graphics.colors.dim)
 	// The hash of the font file of the cells, which the record of the font

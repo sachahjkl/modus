@@ -216,7 +216,7 @@ The desktop lists four kinds of things that are not values (`kind_icons.Desktop_
 
 - A process can draw a text at any size from 4 to 256 pixels (`src/md/features/text_rendering.md`). The desktop and the elements of the interface package use the tokens only, so the texts of two windows line up.
 - 14 is the smallest size at which both fonts keep an x-height of 6 whole rows; 24 is a whole count of pixels at each scale factor.
-- The font of the cells is monospace: its advance is half the text size, the width of a cell, so a layout in cells holds with the vector font and with Spleen. A glyph of the font of the cells stays inside its cell.
+- The font of the cells is monospace: its advance is half the text size, a half up to a whole pixel, the width of a cell, so a layout in cells holds with the vector font and with Spleen. A line is two cells high: 16 at the body, 14 at the caption. A glyph of the font of the cells stays inside its cell.
 - The boot display takes no text size token and is not drawn by the text rendering module: its text is Spleen in cells of 8 x 16 logical pixels, at the size of Spleen of its scale (above).
 - An enlarged picture of the screen shows colored edges on each letter: the subpixel bands, not a fault. The setting `subpixel_order` `none` gives gray edges.
 - The title of a card is in capital letters, in the bold weight of the interface font, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
@@ -752,7 +752,7 @@ With the boot image of the last build (77 modules and 9 resources), the card nam
 
 - The boot display follows all rules.
 - The desktop (the compositor: background, bar, menus, windows, pointer, palette) follows all rules. The pointer pictures of both pointer themes are the one exception of their own (section 9, "Pointer").
-- Section 5 is not built yet: the text draws at the three sizes 16, 32 and 48 only, with no caption and no heading size. The text size tokens are constants of `src/library/support/graphics/rules.odin` that no element reads yet. The steps that build it are in `ROADMAP.md`.
+- Section 5 is built in part: a draw record holds any text size from 4 to 256 pixels, and the elements still draw at the three sizes 16, 32 and 48 only, with no caption and no heading size. The one number of a card is at 48, `text_largest`, not at 32. The elements at the text size tokens are an entry of `ROADMAP.md`.
 - `clock`, the window of `remote`, the palette of the compositor, `interface_elements`, `vector_glyphs`, `settings` and `hall_of_fame` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `src/library/support/graphics`.
 - Each other process takes each of its colors from `src/library/support/graphics`, by its meaning (`src/md/features/appearance.md`, "The colors of the processes"): an expected answer and a failure, the kernel entries in the kernel blue, the pages in the color of memory, the levels of the log, the states of `rings` and `threads`, the members of a series. The terminal has its tones in both appearances.
 - The appearances (section 4, "The appearances"): the desktop, the palette, each window of a process, the terminal with its tones, the console and its results follow the light appearance. The paper of `paint` is light in both. The boot display, the process `boot` that shows it, and the stage of `heron` are dark in both.

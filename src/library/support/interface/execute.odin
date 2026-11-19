@@ -105,7 +105,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 				// pixel: the writer makes it the left edge of the box.
 				start, count := u64(fields.first), u64(fields.count)
 				if start + count <= u64(table.text_count) {
-					text_draw(view, draw_record.pixels_floor(fields.origin_x) - area.left, y, string(table.text[start:][:count]), color, int(fields.scale), fields.weight, alpha)
+					text_draw(view, draw_record.pixels_floor(fields.origin_x) - area.left, y, string(table.text[start:][:count]), color, int(fields.size), fields.weight, alpha)
 				}
 			case .Interface:
 				interface_text_draw(table, fields, view, area.left, y)
@@ -401,31 +401,36 @@ divide_down :: proc "contextless" (dividend, divisor: int) -> int {
 }
 
 // text_grid_draw draws the cells of a grid that the view shows, with its
-// first cell at (x, y). The cells of one color that follow each other are
-// one text: the font draws each text once.
+// first cell at (x, y), each cell of the width and the height of the text
+// size of the grid. The cells of one color that follow each other are one
+// text: the font draws each text once. A grid of a size that no record
+// holds draws nothing.
 text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: Text_Grid) {
-	if !grid_valid(grid) {
+	font := grid_font(grid)
+	if !grid_valid(grid) || !font_size_valid(font) {
 		return
 	}
-	first_row := max(0, -y / graphics.CELL_HEIGHT)
-	last_row := min(grid.rows, (canvas.height - y + graphics.CELL_HEIGHT - 1) / graphics.CELL_HEIGHT)
-	first_column := max(0, -x / graphics.CELL_WIDTH)
-	last_column := min(grid.columns, (canvas.width - x + graphics.CELL_WIDTH - 1) / graphics.CELL_WIDTH)
+	size := font_text_size(font)
+	cell_width, cell_height := cell_width_of(font), line_height(font)
+	first_row := max(0, -y / cell_height)
+	last_row := min(grid.rows, (canvas.height - y + cell_height - 1) / cell_height)
+	first_column := max(0, -x / cell_width)
+	last_column := min(grid.columns, (canvas.width - x + cell_width - 1) / cell_width)
 	// The text of a run of cells, as UTF-8: the font draws one cell for
 	// each character.
 	RUN_CHARACTERS :: 256
 	run: [RUN_CHARACTERS * text_encoding.CHARACTER_BYTES_LIMIT]u8
 	for row in first_row ..< last_row {
 		cells := grid.cells[row * grid.stride:][:grid.columns]
-		top := y + row * graphics.CELL_HEIGHT
+		top := y + row * cell_height
 		column := first_column
 		for column < last_column {
 			cell := cells[column]
-			left := x + column * graphics.CELL_WIDTH
+			left := x + column * cell_width
 			if cell.reverse {
-				graphics.fill(canvas, left, top, graphics.CELL_WIDTH, graphics.CELL_HEIGHT, cell.color)
+				graphics.fill(canvas, left, top, cell_width, cell_height, cell.color)
 				bytes := cell_character_put(run[:], 0, max(cell.character, ' '))
-				text_draw(canvas, left, top, string(run[:bytes]), graphics.colors.background, 1)
+				text_draw(canvas, left, top, string(run[:bytes]), graphics.colors.background, size)
 				column += 1
 				continue
 			}
@@ -441,8 +446,8 @@ text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: 
 					bytes = cell_character_put(run[:], bytes, max(next.character, ' '))
 					count += 1
 				}
-				graphics.fill(canvas, left, top, count * graphics.CELL_WIDTH, graphics.CELL_HEIGHT, cell.background)
-				text_draw(canvas, left, top, string(run[:bytes]), cell.color, 1)
+				graphics.fill(canvas, left, top, count * cell_width, cell_height, cell.background)
+				text_draw(canvas, left, top, string(run[:bytes]), cell.color, size)
 				column += count
 				continue
 			}
@@ -461,7 +466,7 @@ text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: 
 				bytes = cell_character_put(run[:], bytes, next.character)
 				count += 1
 			}
-			text_draw(canvas, left, top, string(run[:bytes]), cell.color, 1)
+			text_draw(canvas, left, top, string(run[:bytes]), cell.color, size)
 			column += count
 		}
 	}
@@ -481,7 +486,7 @@ cell_character_put :: proc "contextless" (run: []u8, place: int, character: rune
 }
 
 // interface_text_draw draws a Text record in the interface font that the
-// border read: its origin, its count, its scale and its weight are in their
+// border read: its origin, its count, its size and its weight are in their
 // bounds. view starts at the column view_left of the surface, and y is the
 // top of the record in the view. A record with a range outside the text
 // table draws nothing. With no interface font, the text is drawn in the
@@ -491,18 +496,18 @@ cell_character_put :: proc "contextless" (run: []u8, place: int, character: rune
 interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_record.Draw_Text, view: graphics.Canvas, view_left, y: int) {
 	start := u64(fields.first)
 	count := u64(fields.count)
-	scale := int(fields.scale)
+	size := int(fields.size)
 	if start + count > u64(table.text_count) {
 		return
 	}
 	text := table.text[start:][:count]
-	font := Font{kind = .Interface, scale = u8(scale), weight = fields.weight}
+	font := Font{kind = .Interface, size = fields.size, weight = fields.weight}
 	// The origin in 1/64 pixel from the left of the view; the border keeps
 	// it on a third of a pixel and inside the box.
 	origin := i64(fields.origin_x) - i64(view_left) * draw_record.UNITS_PER_PIXEL
 	color, alpha := draw_record.channels_of(fields.color), u32(draw_record.alpha_of(fields.color))
 	if table.interface_font == nil {
-		text_draw(view, int(origin >> draw_record.UNIT_SHIFT), y, string(text), color, scale, font.weight, alpha)
+		text_draw(view, int(origin >> draw_record.UNIT_SHIFT), y, string(text), color, size, font.weight, alpha)
 		return
 	}
 	// The places from the font file, as the measure of the writer; the
@@ -514,18 +519,15 @@ interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_reco
 	}
 	placed: [INTERFACE_TEXT_LIMIT]text_rendering.Placed_Glyph
 	placed_count, _, _ := text_rendering.shape(&spacing, text, placed[:])
-	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], face, scale, color, alpha)
+	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], face, size, color, alpha)
 }
 
-// text_draw draws characters of the font of the system, each pixel of the
-// font as a square of scale pixels. alpha is the alpha of the color: below
-// 255 each pixel of ink blends (graphics.text_scaled).
-text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int, weight: Font_Weight = .Regular, alpha: u32 = graphics.OPAQUE) {
-	if weight == .Bold && scale <= 1 {
-		graphics.text_bold(canvas, x, y, text, color, alpha)
-		return
-	}
-	graphics.text_scaled(canvas, x, y, text, color, scale, alpha)
+// text_draw draws characters of the font of the cells at a text size in
+// 1/64 pixel, one cell of cell_width_of the size for each character, in a
+// weight. alpha is the alpha of the color: below 255 each pixel of ink
+// blends (graphics.text_sized).
+text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, size: int, weight: Font_Weight = .Regular, alpha: u32 = graphics.OPAQUE) {
+	graphics.text_sized(canvas, x, y, text, color, size, weight == .Bold, alpha)
 }
 
 // intersection gives the part that two rectangles share. It is empty

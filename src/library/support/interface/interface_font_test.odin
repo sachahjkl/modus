@@ -163,7 +163,7 @@ build_labels :: proc(table: ^Draw_Table, seed: u32, changed: int) {
 	value := words[pick(&state, &part, changed) % len(words)]
 	label_value_line(&frame, {8, 140, 300, 16}, label, value)
 	button(&frame, {8, 164, 140, 24}, identity("press"), words[pick(&state, &part, changed) % len(words)])
-	draw_text(table, 160, 168, words[pick(&state, &part, changed) % len(words)], graphics.colors.text, {kind = .Interface, scale = 2})
+	draw_text(table, 160, 168, words[pick(&state, &part, changed) % len(words)], graphics.colors.text, {kind = .Interface, size = graphics.TEXT_LARGE * TEXT_SIZE_UNITS})
 }
 
 // The damage of a frame in the interface font, drawn as a window draws it
@@ -384,17 +384,17 @@ hostile_interface_text_records_draw_nothing :: proc(t: ^testing.T) {
 	// inside it: the ink margin of the font.
 	right, bottom := draw_record.units_of_pixels(60), draw_record.units_of_pixels(16)
 	origin := draw_record.units_of_pixels(2)
-	good := interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 1}, 0, 0, right, bottom)
+	good := interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom)
 	hostile := [?]Draw_Record {
-		interface_text_record_of(Fields{first = 3, count = 5, color = graphics.colors.text, origin_x = origin, scale = 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{first = max(u32), count = max(u32), color = graphics.colors.text, origin_x = origin, scale = 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin + 1, scale = 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = max(i32), scale = 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = draw_record.units_of_pixels(INK_MARGIN_LIMIT + 1), scale = 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 0}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = draw_record.TEXT_SCALE_LIMIT + 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 1, weight = u8(max(Font_Weight)) + 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 1}, max(i32) - 63, max(i32) - 63, max(i32) - 63, max(i32) - 63),
+		interface_text_record_of(Fields{first = 3, count = 5, color = graphics.colors.text, origin_x = origin, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{first = max(u32), count = max(u32), color = graphics.colors.text, origin_x = origin, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin + 1, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = max(i32), size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = draw_record.units_of_pixels(INK_MARGIN_LIMIT + 1), size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, size = 0}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, size = draw_record.TEXT_SIZE_LIMIT + 1}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS, weight = u8(max(Font_Weight)) + 1}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, max(i32) - 63, max(i32) - 63, max(i32) - 63, max(i32) - 63),
 	}
 	pixels: [64 * 16]graphics.Color
 	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = 64, height = 16, stride = 64}
@@ -431,7 +431,7 @@ interface_text_reference :: proc(canvas: graphics.Canvas, box: Rectangle, origin
 	}
 	placed: [INTERFACE_TEXT_LIMIT]text_rendering.Placed_Glyph
 	count, _, _ := text_rendering.shape(&spacing, transmute([]u8)text, placed[:])
-	graphics.text_proportional(view, origin - i64(box.left) * 64, 0, placed[:min(count, len(placed))], interface_face_of(font), font_scale(font), color)
+	graphics.text_proportional(view, origin - i64(box.left) * 64, 0, placed[:min(count, len(placed))], interface_face_of(font), font_text_size(font), color)
 }
 
 // The old path of a text in the font of the cells: the cells from the top
@@ -440,15 +440,14 @@ interface_text_reference :: proc(canvas: graphics.Canvas, box: Rectangle, origin
 // ink past the right edge onto the next line.
 @(private = "file")
 cells_text_reference :: proc(canvas: graphics.Canvas, x, y: int, text: string, font: Font, color: graphics.Color) {
-	scale := font_scale(font)
-	view := graphics.view(canvas, x, y, min(text_width(font, text), canvas.width - x), min(graphics.CELL_HEIGHT * scale, canvas.height - y))
-	text_draw(view, 0, 0, text, color, scale, font.weight)
+	view := graphics.view(canvas, x, y, min(text_width(font, text), canvas.width - x), min(line_height(font), canvas.height - y))
+	text_draw(view, 0, 0, text, color, font_text_size(font), font.weight)
 }
 
 // Each text drawn through the one Text record equals, pixel by pixel, the
 // old path of its kind, whole and in the rectangles of a damage: in the
 // interface font at each third of a pixel, and in the font of the cells,
-// for several texts, each scale and each weight.
+// for several texts, each text size token and each weight.
 @(test)
 each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 	interface_text_drawing_begin()
@@ -475,12 +474,14 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 	}
 	color := graphics.colors.text
 	checked := 0
+	tokens := [?]int{graphics.TEXT_CAPTION, graphics.TEXT_BODY, graphics.TEXT_HEADING, graphics.TEXT_LARGE, graphics.TEXT_LARGEST}
 	for text in texts {
-		for scale in 1 ..= 3 {
+		for token in tokens {
+			size := u16(token * TEXT_SIZE_UNITS)
 			for weight in weights {
 				for third in 0 ..< 3 {
 					// The interface font, its origin at 20 pixels and a third.
-					used := Font{kind = .Interface, scale = u8(scale), weight = weight}
+					used := Font{kind = .Interface, size = size, weight = weight}
 					memory := new(Font_Tables)
 					table := font_table_of(memory, &font.font)
 					place := i64(20) * 64 + i64(third) * 64 / 3
@@ -496,11 +497,11 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 					rectangles := TEXT_PARTS
 					execute_in_rectangles(&table, canvas_of(parts), rectangles[:])
 					interface_text_reference(canvas_of(expected), record_rectangle(table.records[0]), origin, text, used, color)
-					testing.expectf(t, slice.equal(drawn, expected), "%q, scale %d, weight %v, third %d: the interface font draws other pixels", text, scale, weight, third)
-					testing.expectf(t, slice.equal(parts, expected), "%q, scale %d, weight %v, third %d: the interface font in parts draws other pixels", text, scale, weight, third)
+					testing.expectf(t, slice.equal(drawn, expected), "%q, size %d, weight %v, third %d: the interface font draws other pixels", text, token, weight, third)
+					testing.expectf(t, slice.equal(parts, expected), "%q, size %d, weight %v, third %d: the interface font in parts draws other pixels", text, token, weight, third)
 					free(memory)
 					// The font of the cells, at a whole pixel of each third.
-					cells := Font{kind = .Cells_8x16, scale = u8(scale), weight = weight}
+					cells := Font{kind = .Cells_8x16, size = size, weight = weight}
 					cells_memory := new(Font_Tables)
 					cells_table := font_table_of(cells_memory, nil)
 					x := 13 + third
@@ -514,15 +515,15 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 					execute(&cells_table, canvas_of(drawn))
 					execute_in_rectangles(&cells_table, canvas_of(parts), rectangles[:])
 					cells_text_reference(canvas_of(expected), x, 8, text, cells, color)
-					testing.expectf(t, slice.equal(drawn, expected), "%q, scale %d, weight %v: the font of the cells draws other pixels", text, scale, weight)
-					testing.expectf(t, slice.equal(parts, expected), "%q, scale %d, weight %v: the font of the cells in parts draws other pixels", text, scale, weight)
+					testing.expectf(t, slice.equal(drawn, expected), "%q, size %d, weight %v: the font of the cells draws other pixels", text, token, weight)
+					testing.expectf(t, slice.equal(parts, expected), "%q, size %d, weight %v: the font of the cells in parts draws other pixels", text, token, weight)
 					free(cells_memory)
 					checked += 1
 				}
 			}
 		}
 	}
-	testing.expect_value(t, checked, len(texts) * 3 * len(weights) * 3)
+	testing.expect_value(t, checked, len(texts) * len(tokens) * len(weights) * 3)
 	// A text with no interface font in the table is drawn in the font of
 	// the cells at the pixel of its origin, as the old kind drew it.
 	memory := new(Font_Tables)
@@ -534,6 +535,6 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 	execute(&table, canvas_of(drawn))
 	box := record_rectangle(table.records[0])
 	view := graphics.view(canvas_of(expected), box.left, box.top, box.right - box.left, box.bottom - box.top)
-	text_draw(view, 20 - box.left, 0, "To LT", color, 1, .Regular)
+	text_draw(view, 20 - box.left, 0, "To LT", color, font_text_size({}), .Regular)
 	testing.expect(t, slice.equal(drawn, expected), "a text in the interface font with no font draws other pixels than the font of the cells")
 }

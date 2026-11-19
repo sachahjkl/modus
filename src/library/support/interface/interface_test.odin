@@ -6,6 +6,7 @@ import "modus:contract/ring"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/kind_icons"
+import "modus:support/text_rendering"
 import "core:testing"
 
 @(private = "file")
@@ -68,8 +69,8 @@ column_gives_areas_down :: proc(t: ^testing.T) {
 @(test)
 text_measure :: proc(t: ^testing.T) {
 	testing.expect_value(t, text_width({}, "abc"), 24)
-	testing.expect_value(t, text_width(FONT_LARGE, "12"), 48)
-	testing.expect_value(t, line_height(FONT_MEDIUM), 32)
+	testing.expect_value(t, text_width(FONT_LARGEST, "12"), 48)
+	testing.expect_value(t, line_height(FONT_LARGE), 32)
 }
 
 // The lines of a text, joined with one space where a line ended at a space,
@@ -185,9 +186,9 @@ draw_text_wrapped_places_each_line_under_the_line_before :: proc(t: ^testing.T) 
 		testing.expect_value(t, record_view(record).y, 100 + line * graphics.CELL_HEIGHT)
 		testing.expect(t, record_view(record).width <= 24 * 8, "a line stays in the box")
 	}
-	// At scale 2 a character is 16 pixels wide and a line 32 pixels high.
+	// At the large size a character is 16 pixels wide and a line 32 pixels high.
 	table.record_count, table.text_count = 0, 0
-	count = draw_text_wrapped(&table, 0, 0, 10 * 16, "one two three four", graphics.colors.text, FONT_MEDIUM)
+	count = draw_text_wrapped(&table, 0, 0, 10 * 16, "one two three four", graphics.colors.text, FONT_LARGE)
 	testing.expect_value(t, count, 2)
 	testing.expect_value(t, record_view(table.records[1]).y, 32)
 }
@@ -623,11 +624,11 @@ damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
 				draw_horizontal_gradient(table, 5, 5, 300, 24, graphics.colors.title, variant == 0 ? graphics.colors.title_end : graphics.colors.failed)
 				draw_horizontal_gradient(table, -40, 60, 700, 3, graphics.colors.text, graphics.colors.dim)
 			}},
-		{"text at the scales 1, 2 and 3", proc(table: ^Draw_Table, variant: int) {
+		{"text at the sizes of the body, the large and the largest", proc(table: ^Draw_Table, variant: int) {
 				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
 				draw_text(table, 4, 4, variant == 0 ? "one" : "two", graphics.colors.text)
-				draw_text(table, 4, 30, variant == 0 ? "12" : "13", graphics.colors.text, FONT_MEDIUM)
-				draw_text(table, 4, 70, variant == 0 ? "45" : "46", graphics.colors.text, FONT_LARGE)
+				draw_text(table, 4, 30, variant == 0 ? "12" : "13", graphics.colors.text, FONT_LARGE)
+				draw_text(table, 4, 70, variant == 0 ? "45" : "46", graphics.colors.text, FONT_LARGEST)
 			}},
 		{"records outside the surface", proc(table: ^Draw_Table, variant: int) {
 				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
@@ -889,7 +890,7 @@ picture_inside_its_picture_memory :: proc(t: ^testing.T) {
 text_range_past_the_table_is_damaged :: proc(t: ^testing.T) {
 	text := [4]u8{'a', 'b', 'c', 'd'}
 	text_record :: proc(first: u32) -> Draw_Record {
-		return draw_record.record_of(draw_record.Draw_Text{first = first, count = 4, color = draw_record.opaque(0), origin_x = draw_record.units_of_pixels(8), scale = 1}, 0, draw_record.units_of_pixels(8), 0, draw_record.units_of_pixels(16), draw_record.units_of_pixels(16))
+		return draw_record.record_of(draw_record.Draw_Text{first = first, count = 4, color = draw_record.opaque(0), origin_x = draw_record.units_of_pixels(8), size = BODY_TEXT_SIZE}, 0, draw_record.units_of_pixels(8), 0, draw_record.units_of_pixels(16), draw_record.units_of_pixels(16))
 	}
 	records := [1]Draw_Record{text_record(2)}
 	before := Draw_Table{records = records[:], record_count = 1, text = text[:], text_count = 4}
@@ -1018,7 +1019,7 @@ text_grid_records_of_a_hostile_caller :: proc(t: ^testing.T) {
 	bytes := grid_text(words[:])
 	table := Draw_Table{text = bytes, text_count = len(bytes)}
 	grid_record :: proc(first, count, columns: u32) -> Draw_Record {
-		return draw_record.record_of(draw_record.Draw_Text_Grid{first = first, count = count, columns = columns}, 0, 0, 0, draw_record.units_of_pixels(16), draw_record.units_of_pixels(16))
+		return draw_record.record_of(draw_record.Draw_Text_Grid{first = first, count = count, columns = columns, size = BODY_TEXT_SIZE}, 0, 0, 0, draw_record.units_of_pixels(16), draw_record.units_of_pixels(16))
 	}
 	hostile := [?]Draw_Record {
 		grid_record(0, 32, 0),
@@ -2227,7 +2228,7 @@ text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
 	input: Input
 	build :: proc(table: ^Draw_Table, state: ^Interface_State, input: ^Input, text: string, caret: int, scale: int) {
 		frame := frame_begin(table, state, input)
-		text_input_line(&frame, {32, 16, 320, 48}, text, caret, scale, "type here")
+		text_input_line(&frame, {32, 16, 320, 48}, text, caret, text_size_of_scale(scale), "type here")
 		frame_end(&frame)
 	}
 	caret_of :: proc(table: ^Draw_Table) -> Draw_Record {
@@ -2276,6 +2277,55 @@ text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
 		view := record_view(record)
 		testing.expect(t, view.x >= 32 && view.x + view.width <= 32 + 320, "no record passes the field")
 	}
+	// A size that no record holds draws nothing and sets refused: 1, one
+	// unit under the smallest size, one past the largest, the largest u16.
+	for size in ([4]u16{1, draw_record.TEXT_SIZE_MINIMUM - 1, draw_record.TEXT_SIZE_LIMIT + 1, max(u16)}) {
+		draw_table_clear(&table)
+		frame := frame_begin(&table, &state, &input)
+		text_input_line(&frame, {32, 16, 320, 48}, "plasma", 2, size, "type here")
+		testing.expectf(t, table.record_count == 0 && table.refused, "an input line of size %d: %d records, refused %v", size, table.record_count, table.refused)
+		frame_end(&frame)
+	}
+}
+
+// A text of a size that no record holds is refused, in each font, with no
+// record and no byte of text, and with refused set: 1, one unit under the
+// smallest size, one past the largest, and the largest u16. A grid of such
+// a size is refused the same way. Then the edges that are taken: the
+// smallest and the largest size, and a caption, whose cells are 7 pixels.
+@(test)
+a_text_of_a_refused_size_is_not_written :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	refused := [4]u16{1, draw_record.TEXT_SIZE_MINIMUM - 1, draw_record.TEXT_SIZE_LIMIT + 1, max(u16)}
+	kinds := [2]Font_Kind{.Cells_8x16, .Interface}
+	for size in refused {
+		for kind in kinds {
+			draw_table_clear(&table)
+			end := draw_text(&table, 10, 4, "plasma", graphics.colors.text, {kind = kind, size = size})
+			testing.expectf(t, end == 10 && table.record_count == 0 && table.text_count == 0 && table.refused, "a text of size %d in %v: written", size, kind)
+			draw_table_clear(&table)
+			draw_text_right(&table, 200, 4, "plasma", graphics.colors.text, {kind = kind, size = size})
+			testing.expectf(t, table.record_count == 0 && table.text_count == 0 && table.refused, "a right text of size %d in %v: written", size, kind)
+		}
+		cells: [2]Text_Grid_Cell
+		draw_table_clear(&table)
+		draw_text_grid(&table, 0, 0, {cells = cells[:], columns = 2, rows = 1, stride = 2, size = size})
+		testing.expectf(t, table.record_count == 0 && table.text_count == 0 && table.refused, "a grid of size %d: written", size)
+	}
+	taken := [3]u16{draw_record.TEXT_SIZE_MINIMUM, draw_record.TEXT_SIZE_LIMIT, graphics.TEXT_CAPTION * TEXT_SIZE_UNITS}
+	for size in taken {
+		draw_table_clear(&table)
+		draw_text(&table, 10, 4, "ab", graphics.colors.text, {size = size})
+		testing.expectf(t, table.record_count == 1 && !table.refused, "a text of size %d: not written", size)
+		view := record_view(table.records[0])
+		testing.expectf(t, view.read && view.size == int(size), "a text of size %d: the record holds %d", size, view.size)
+		cell := text_rendering.cell_columns(int(size))
+		testing.expectf(t, view.width == 2 * cell && view.height == 2 * cell, "a text of size %d: a box of %d by %d", size, view.width, view.height)
+	}
+	draw_table_clear(&table)
+	draw_text(&table, 10, 4, "ab", graphics.colors.text, {size = graphics.TEXT_CAPTION * TEXT_SIZE_UNITS})
+	testing.expect_value(t, record_view(table.records[0]).width, 14)
 }
 
 // The act names of a frame: the first element that names one keeps it, a
@@ -2558,15 +2608,20 @@ grid_of_and_picture_of_refuse_what_the_table_does_not_hold :: proc(t: ^testing.T
 	words: [32]u32
 	table := Draw_Table{text = grid_text(words[:]), text_count = len(words) * 4}
 	refused := [?]draw_record.Draw_Text_Grid {
-		{first = 0, count = 32, columns = 0},
-		{first = 2, count = 32, columns = 2},
-		{first = 0, count = 32 + 16, columns = 2},
+		{first = 0, count = 32, columns = 0, size = BODY_TEXT_SIZE},
+		{first = 2, count = 32, columns = 2, size = BODY_TEXT_SIZE},
+		{first = 0, count = 32 + 16, columns = 2, size = BODY_TEXT_SIZE},
 	}
 	for fields, index in refused {
 		_, ok := grid_of(&table, record_in_pixels(fields, 0, 0, 16, 16))
 		testing.expectf(t, !ok, "the grid %d names cells", index)
 	}
-	_, ok := grid_of(&table, record_in_pixels(draw_record.Draw_Text_Grid{first = 4, count = 32, columns = 2}, 0, 0, 16, 16))
+	// A grid of a size that the border refuses names no cells.
+	for size in ([5]u16{0, 1, draw_record.TEXT_SIZE_MINIMUM - 1, draw_record.TEXT_SIZE_LIMIT + 1, max(u16)}) {
+		_, read := grid_of(&table, record_in_pixels(draw_record.Draw_Text_Grid{first = 4, count = 32, columns = 2, size = size}, 0, 0, 16, 16))
+		testing.expectf(t, !read, "a grid of size %d names cells", size)
+	}
+	_, ok := grid_of(&table, record_in_pixels(draw_record.Draw_Text_Grid{first = 4, count = 32, columns = 2, size = BODY_TEXT_SIZE}, 0, 0, 16, 16))
 	testing.expect(t, ok, "a grid at a multiple of 4 is read")
 	memory: [16]graphics.Color
 	memories := [][]graphics.Color{memory[:]}

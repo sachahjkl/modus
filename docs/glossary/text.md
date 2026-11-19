@@ -484,7 +484,7 @@ Do not use: label box, text area, text field (a text input is the element that t
 
 A text size is the height of the line of a face, in 1/64 pixel, which a process gives to measure and draw a text.
 
-A line of 16 pixels is the size 1 024, so the three scales of a text record are 1 024, 2 048 and 3 072. The text rendering module takes any size from 256 to 16 384, a line of 4 to 256 pixels, and refuses another. The frame of a face turns it into units of the font. A label and its value at one text size share one line. It is not an em, not a size in points and not a scale factor.
+A line of 16 pixels is the size 1 024. A text record and a text grid carry it, and the text rendering module and the border of the record take any size from 256 to 16 384, a line of 4 to 256 pixels, and refuse another, 0 too. The frame of a face turns it into units of the font. A label and its value at one text size share one line. It is not an em, not a size in points and not a scale factor.
 
 The design: `src/md/features/text_rendering.md`, "The text size".
 
@@ -524,7 +524,7 @@ Do not use: font engine, text service, font server.
 
 A text size token is a named text size of the design rules, in logical pixels: `text_caption` 14, `text_body` 16, `text_heading` 24, `text_large` 32 and `text_largest` 48.
 
-It is the design of the coming steps. The desktop and the elements of the interface package draw their texts at these sizes only, so the texts of two windows line up; a process can draw any text size. 14 is the smallest size at which both fonts keep an x-height of 6 whole rows. Example: the caption of a card is `text_caption`, its one number `text_large`.
+A token times 64 is the text size of a record. The desktop and the elements of the interface package draw their texts at these sizes only, so the texts of two windows line up; a process can draw any text size. The elements use 16, 32 and 48 today; the caption and the heading are an entry of `ROADMAP.md`. 14 is the smallest size at which both fonts keep an x-height of 6 whole rows. Example: the caption of a card is `text_caption`, its one number `text_large`.
 
 The design: `src/md/features/text_rendering.md`, "The text size tokens".
 

@@ -1036,7 +1036,7 @@ view_grid :: proc "contextless" () -> interface.Text_Grid {
 tile :: proc "contextless" (table: ^interface.Draw_Table, x: int, label: string, value: u64, color: graphics.Color) {
 	buffer: [27]u8
 	interface.draw_text(table, x, 8, label, graphics.colors.dim)
-	interface.draw_text(table, x, 28, number(&buffer, value), color, interface.FONT_MEDIUM)
+	interface.draw_text(table, x, 28, number(&buffer, value), color, interface.FONT_LARGE)
 }
 
 draw :: proc "contextless" (window: ^display.Window, follow: bool) {

@@ -1474,7 +1474,7 @@ write :: proc "contextless" (area: interface.Area, x, y: int, characters: string
 }
 
 large :: proc "contextless" (area: interface.Area, x, y: int, characters: string, scale: int, color: graphics.Color) -> int {
-	return interface.draw_text(frame_table, area.x + x, area.y + y, characters, color, {scale = u8(scale)}) - area.x
+	return interface.draw_text(frame_table, area.x + x, area.y + y, characters, color, {size = interface.text_size_of_scale(scale)}) - area.x
 }
 
 card :: proc "contextless" (frame: ^interface.Frame, x, y, width, height: int, title, caption: string) -> interface.Area {

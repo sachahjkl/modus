@@ -225,10 +225,10 @@ mark :: proc "contextless" (frame: ^Frame, x, y, size: int, color: graphics.Colo
 	draw_rectangle(frame.table, x, y, size, size, color)
 }
 
-// large_number draws the one number of a card, three times the size of the
-// font, and gives the x after it.
+// large_number draws the one number of a card, at the largest text size
+// (graphics.TEXT_LARGEST), and gives the x after it.
 large_number :: proc "contextless" (frame: ^Frame, x, y: int, text: string, color: graphics.Color) -> int {
-	return draw_text(frame.table, x, y, text, color, FONT_LARGE)
+	return draw_text(frame.table, x, y, text, color, FONT_LARGEST)
 }
 
 // button draws a button with a label: the track, blue when it has the focus
@@ -638,20 +638,25 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 TEXT_INPUT_LINE_MARGIN :: 16 // From the left and the right of the field to its text.
 
 // text_input_line draws a field of one line whose text has a caret at any
-// place, at a scale of 1 to 3: the track, the line of 2 pixels in the blue
-// of the title bar at its bottom, the text in white in the font of the
-// cells, the caret (2 pixels wide for each unit of the scale, as high as
-// the text), and the placeholder in the dim color when the text is empty.
-// The field has no border: its fill reaches each edge of its area. A text
+// place, at a text size in 1/64 pixel (the size of a Font: 0 is the body):
+// the track, the line of 2 pixels in the blue of the title bar at its
+// bottom, the text in white in the font of the cells, the caret (2 pixels
+// wide for each cell of the body in a cell of the size, as high as the
+// text), and the placeholder in the dim color when the text is empty. The
+// field has no border: its fill reaches each edge of its area. A text
 // longer than the field shows the part that holds the caret. It takes no
-// input: the caller edits the line (src/library/support/line_editor).
-text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, caret: int, scale: int, placeholder := "") {
+// input: the caller edits the line (src/library/support/line_editor). A
+// size that no record holds draws nothing and sets `refused`.
+text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, caret: int, size: u16, placeholder := "") {
 	table := frame.table
-	used_scale := clamp(scale, 1, 3)
-	font := Font{scale = u8(used_scale)}
-	cell_width := graphics.CELL_WIDTH * used_scale
-	text_height := graphics.CELL_HEIGHT * used_scale
-	caret_width := 2 * used_scale
+	font := Font{size = size}
+	if !font_size_valid(font) {
+		table.refused = true
+		return
+	}
+	cell_width := cell_width_of(font)
+	text_height := line_height(font)
+	caret_width := 2 * max(1, cell_width / graphics.CELL_WIDTH)
 	draw_rectangle(table, area.x, area.y, area.width, area.height - 2, graphics.colors.track)
 	draw_rectangle(table, area.x, area.y + area.height - 2, area.width, 2, graphics.colors.title)
 	text_x := area.x + TEXT_INPUT_LINE_MARGIN
@@ -681,7 +686,7 @@ text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, 
 	draw_text(table, text_x, text_y, shown, graphics.colors.text_strong, font)
 	if len(text) == 0 && placeholder != "" {
 		placeholder_x := text_x + cell_width
-		placeholder_font := Font{kind = .Interface, scale = u8(used_scale)}
+		placeholder_font := Font{kind = .Interface, size = size}
 		draw_text(table, placeholder_x, text_y, text_fit(table, placeholder_font, placeholder, area.x + area.width - TEXT_INPUT_LINE_MARGIN - placeholder_x), graphics.colors.dim, placeholder_font)
 	}
 }
