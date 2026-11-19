@@ -763,6 +763,25 @@ table_value :: proc(table: ^Call_Table, row: int, name: string) -> string {
 	return ""
 }
 
+// table_field_bytes gives the bytes of the field with a name of row `row`,
+// as the row holds them. nil: no field has the name, or the field is past
+// the row.
+table_field_bytes :: proc(table: ^Call_Table, row: int, name: string) -> []u8 {
+	bytes := table.rows[row * table.size:][:table.size]
+	for number in 0 ..< table.described.field_count {
+		item, _ := module.field(table.file, table.described, number)
+		if module.string_at(table.file, item.name_offset, item.name_count) != name {
+			continue
+		}
+		size := module.field_size(item)
+		if u64(item.offset) + u64(size) > u64(len(bytes)) {
+			return nil
+		}
+		return bytes[item.offset:][:size]
+	}
+	return nil
+}
+
 // hex_of gives bytes in hexadecimal.
 hex_of :: proc(bytes: []u8) -> string {
 	builder := strings.builder_make(context.temp_allocator)

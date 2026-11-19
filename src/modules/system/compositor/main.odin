@@ -730,7 +730,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			quality_record_read()
 			kind, kind_ok := display.control_of_ring_word(record.kind)
 			if !kind_ok {
-				system.log(.Info, "compositor: the root service sent the control word ", u64(record.kind), ", which names no control command")
+				system.log_fact(.Info, Control_Word_Refused{word = u64(record.kind)})
 				continue
 			}
 			switch kind {
@@ -747,7 +747,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .None, .Start, .Stop:
 				// The border refused None above. Start and Stop go from the
 				// compositor to the root service, never to the compositor.
-				system.log(.Info, "compositor: the root service sent the control command ", u64(record.kind), ", which the compositor does not take")
+				system.log_fact(.Info, Control_Command_Not_Taken{word = u64(record.kind)})
 			}
 		}
 		window_events_pass() // The records that wait go before the new ones.
@@ -755,7 +755,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			quality_record_read()
 			kind, kind_ok := display.input_of_ring_word(record.kind)
 			if !kind_ok {
-				system.log(.Info, "compositor: the input service sent the word ", u64(record.kind), ", which names no input")
+				system.log_fact(.Info, Input_Word_Refused{word = u64(record.kind)})
 				continue
 			}
 			switch kind {
@@ -802,7 +802,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				command, command_ok := display.command_of_ring_word(record.kind)
 				if !command_ok {
 					if client.commands_refused == 0 {
-						system.log(.Info, "compositor: a window sent the word ", u64(record.kind), ", which names no command; the next ones are counted, and the count comes when the window closes")
+						system.log_fact(.Info, Window_Word_Refused{word = u64(record.kind)})
 					}
 					client.commands_refused += 1
 					continue
@@ -848,7 +848,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						// that menu waits for this line, not for the line of
 						// the surface, which comes before any picture.
 						if client.presents == 0 {
-							system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " is shown")
+							system.log_fact(.Info, Window_Shown{window = window_field(client.title[:])})
 						}
 						// The first picture of a new surface: each pixel
 						// of it changed too.
@@ -1026,7 +1026,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 			system.memory_unmap(client.resize_pictures)
 		}
 		if client.commands_refused != 0 {
-			system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " closed after ", client.commands_refused, " records whose word names no command")
+			system.log_fact(.Info, Window_Closed_After_Refused_Commands{window = window_field(client.title[:]), refused = client.commands_refused})
 		}
 		clipboard_client_remove(index) // clipboard.odin
 		if capture.client == index {
@@ -1089,7 +1089,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	order[order_count] = index
 	order_count += 1
 	damage_window(client)
-	system.log(.Info, "compositor: surface ", system.name_of(client.title[:]), " ", width, "x", height, " at ", u64(client.x), ",", u64(client.y))
+	system.log_fact(.Info, Surface_Made{window = window_field(client.title[:]), width = width, height = height, x = u64(client.x), y = u64(client.y)})
 	palette_entries_refresh() // A window appeared.
 }
 
@@ -1195,7 +1195,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 						break
 					}
 				}
-				system.log(.Info, "compositor: window ", system.name_of(clients[index].title[:]), " in front")
+				system.log_fact(.Info, Window_In_Front{window = window_field(clients[index].title[:])})
 			}
 			menu_open = .None
 			menu_line = -1

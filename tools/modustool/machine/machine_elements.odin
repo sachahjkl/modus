@@ -6,72 +6,43 @@ import "core:strings"
 import "core:time"
 
 import "modus:private/compositor/bar"
+import "modustool:build"
 import "modustool:foundation"
 
 // The press of a machine test on an element by its name
 // (src/md/infrastructure/test_pointer.md; docs/TOOLS.md, "The scenario
-// steps"). A window writes the place of each named element when it
-// changes: "interface: debugger_window: the element watch at x,y,width,height",
-// in pixels of its surface. The palette is a panel of the compositor, not
-// a window: the compositor writes the places of its fields and of its
-// buttons, in pixels of the screen: "compositor: the palette: the element
-// round_robin at x,y,width,height". A step names the element; the tool reads
-// its place from the last line, and so follows a change of the layout.
+// steps"). A window writes the log fact interface.Element_Placed for each
+// named element whose place changes, in pixels of its surface: "interface:
+// debugger_window: the element watch at x,y,width,height". The palette is
+// a panel of the compositor, not a window: the compositor writes
+// compositor.Palette_Element_Placed for its fields and its buttons, in
+// pixels of the screen. A step names the element; the tool reads its place
+// from the fields of the last such fact (build.element_line_read), never
+// from its sentence, and so follows a change of the layout.
 
 // The owner of the step Click_Element that names an element of the
 // palette, in place of the title of a window.
-PALETTE_ELEMENTS :: "the palette"
+PALETTE_ELEMENTS :: build.PALETTE_ELEMENTS
 
 // Where the last element line of an element puts it.
-Element_Line :: enum {
-	Absent, // The log has no line of the element yet.
-	Gone, // The last line says that the element is gone.
-	Placed, // The last line gives its rectangle.
-}
+Element_Line :: build.Element_Line
 
-// element_line_prefix gives the start of each element line of an owner:
-// "interface: debugger_window: the element " or "compositor: the palette:
-// the element ".
-element_line_prefix :: proc(owner: string) -> string {
-	if owner == PALETTE_ELEMENTS {
-		return strings.concatenate({"compositor: ", PALETTE_ELEMENTS, ": the element "}, context.temp_allocator)
-	}
-	return strings.concatenate({"interface: ", owner, ": the element "}, context.temp_allocator)
-}
-
-// element_line_read reads the last element line of an element in a log:
-// the rectangle that it gives, in pixels of the surface of the window or
-// of the screen for the palette. The name ends with " at " or " is gone",
-// so the line of "frame 1" is not the line of "frame 10".
-element_line_read :: proc(log: string, owner, element: string) -> (x, y, width, height: int, found: Element_Line) {
-	prefix := element_line_prefix(owner)
-	placed_mark := strings.concatenate({prefix, element, " at "}, context.temp_allocator)
-	gone_mark := strings.concatenate({prefix, element, " is gone"}, context.temp_allocator)
-	placed_at := strings.last_index(log, placed_mark)
-	gone_at := strings.last_index(log, gone_mark)
-	if placed_at < 0 && gone_at < 0 {
+// element_place_read reads the last element line of an element from the
+// log of a machine. The types come from the catalog of the machine, which
+// the first line of a fact makes: before it, the log has no element line.
+// The first read that has the catalog finds them, in the temporary memory
+// of the step.
+element_place_read :: proc(machine: ^Machine, types: ^build.Element_Fact_Types, typed: ^bool, owner, element: string) -> (x, y, width, height: int, found: Element_Line) {
+	// The read renders the new lines of facts into machine.fact_lines.
+	_ = log_read(machine)
+	if machine.fact_catalog == nil {
 		return 0, 0, 0, 0, .Absent
 	}
-	if gone_at > placed_at {
-		return 0, 0, 0, 0, .Gone
+	if !typed^ {
+		types^ = build.element_fact_types(build.fact_catalog_types(machine.fact_catalog), owner)
+		typed^ = true
 	}
-	rest := log[placed_at + len(placed_mark):]
-	if end := strings.index_byte(rest, '\n'); end >= 0 {
-		rest = rest[:end]
-	}
-	numbers := strings.split(strings.trim_space(rest), ",", context.temp_allocator)
-	if len(numbers) != 4 {
-		return 0, 0, 0, 0, .Absent
-	}
-	values: [4]int
-	for text, index in numbers {
-		value, ok := strconv.parse_int(text)
-		if !ok {
-			return 0, 0, 0, 0, .Absent
-		}
-		values[index] = value
-	}
-	return values[0], values[1], values[2], values[3], .Placed
+	return build.element_line_read(machine.fact_lines[:], types^, owner, element)
 }
 
 // element_center_wait waits until the log places an element, then gives
@@ -81,8 +52,10 @@ element_line_read :: proc(log: string, owner, element: string) -> (x, y, width, 
 element_center_wait :: proc(machine: ^Machine, owner, element: string, index: int) -> (x, y: int, ok: bool) {
 	found := Element_Line.Absent
 	element_x, element_y, width, height: int
+	types: build.Element_Fact_Types
+	typed := false
 	for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
-		element_x, element_y, width, height, found = element_line_read(log_read(machine), owner, element)
+		element_x, element_y, width, height, found = element_place_read(machine, &types, &typed, owner, element)
 		if found == .Placed {
 			break
 		}

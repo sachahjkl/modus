@@ -122,6 +122,7 @@ import "modus:support/disk_process"
 import "modus:contract/settings"
 import "modus:contract/palette_table"
 import "modus:contract/start_grant"
+import "modus:contract/value_kinds"
 
 ROOT_MARK :: "root: ok"
 
@@ -442,7 +443,7 @@ shortage_start :: proc "contextless" () -> system.Status {
 		shortage_failed()
 	}
 	part_place_fill(slot, "shortage", process)
-	system.log(.Info, "root: started shortage with ", system.Size{amounts.pages, .Pages})
+	system.log_fact(.Info, Process_Started_With_Budget{started_process = module_name_field("shortage"), pages = value_kinds.Size_In_Pages(amounts.pages)})
 	return .Ok
 }
 
@@ -514,7 +515,7 @@ operation_fuzzing_start :: proc "contextless" () -> system.Status {
 		return status
 	}
 	part_place_fill(slot, OPERATION_FUZZING_NAME, process)
-	system.log(.Info, "root: started operation_fuzzing with ", system.Size{amounts.pages, .Pages})
+	system.log_fact(.Info, Process_Started_With_Budget{started_process = module_name_field(OPERATION_FUZZING_NAME), pages = value_kinds.Size_In_Pages(amounts.pages)})
 	return .Ok
 }
 
@@ -831,7 +832,7 @@ input_start :: proc "contextless" () -> system.Status {
 		return status
 	}
 	part_place_fill(slot, "input", process)
-	started_log("input", principals.MACHINE, "")
+	started_log("input", principals.MACHINE, false)
 	return .Ok
 }
 
@@ -970,7 +971,7 @@ compositor_start :: proc "contextless" () -> system.Status {
 	served.process = compositor
 	served.role = role
 	copy(served.name[:len(served.name) - 1], "compositor")
-	started_log("compositor", principals.MACHINE, "")
+	started_log("compositor", principals.MACHINE, false)
 	return .Ok
 }
 
@@ -1092,14 +1093,22 @@ budget_pages_note :: proc "contextless" () {
 	}
 }
 
-// started_log writes the line of a start, with the session of a named
-// principal: "root: started notes, in the session of principal 1 \"alice\"".
-started_log :: proc "contextless" (name: string, principal: u64, terminal: string) {
+// started_log writes the fact of a start, with a terminal or not, and with
+// the session of a named principal: "root: started notes, in the session
+// of principal 1 \"alice\"".
+started_log :: proc "contextless" (name: string, principal: u64, with_terminal: bool) {
 	budget_pages_note()
-	if principal == principals.MACHINE {
-		system.log(.Info, "root: started ", system.Module_Name{name}, terminal)
-	} else {
-		system.log(.Info, "root: started ", system.Module_Name{name}, terminal, ", in the session of principal ", principal, " \"", principal_name(principal), "\"")
+	started_process := module_name_field(name)
+	machine_principal := principal == principals.MACHINE
+	switch {
+	case machine_principal && !with_terminal:
+		system.log_fact(.Info, Process_Started{started_process = started_process})
+	case machine_principal && with_terminal:
+		system.log_fact(.Info, Process_Started_With_Terminal{started_process = started_process})
+	case !with_terminal:
+		system.log_fact(.Info, Process_Started_In_Session{started_process = started_process, principal = principal, principal_name = text_field(principal_name(principal), 24)})
+	case:
+		system.log_fact(.Info, Process_Started_With_Terminal_In_Session{started_process = started_process, principal = principal, principal_name = text_field(principal_name(principal), 24)})
 	}
 }
 
@@ -1315,7 +1324,7 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 	caller.granted += {.Debug}
 	hash := transmute([4]u64)target.hash
 	values^ = {u64(given), hash[0], hash[1], hash[2], hash[3], target.principal, 0}
-	system.log(.Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " the right to debug ", system.Module_Name{name}, " for ", system.Module_Name{system.name_of(caller.name[:])}, ", for principal ", caller_principal)
+	system.log_fact(.Info, Debug_Right_Given{debugger = module_name_field(system.name_of(holder.name[:])), target = module_name_field(name), caller = module_name_field(system.name_of(caller.name[:])), principal = caller_principal})
 	return .Ok
 }
 
@@ -1417,7 +1426,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.granted -= {which}
 		item.revoked += {which}
 		values[0] = count
-		system.log(.Info, "root: revoked the grant store of ", system.Module_Name{name}, ", connections changed: ", count)
+		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
 		return .Ok
 	case .Acts_For_Principal:
 		// The grant is data of each service that the process is connected
@@ -1447,7 +1456,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 			}
 		}
 		values[0] = count
-		system.log(.Info, "root: revoked the grant acts_for_principal of ", system.Module_Name{name}, ", connections changed: ", count)
+		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
 		return .Ok
 	case .History:
 		// The store of the history is data of the storage service, as the
@@ -1466,7 +1475,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 			count += 1
 		}
 		values[0] = count
-		system.log(.Info, "root: revoked the grant history of ", system.Module_Name{name}, ", connections changed: ", count)
+		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
 		return .Ok
 	case .Network:
 		// The endpoint is data of the network service, as a store is data of
@@ -1475,7 +1484,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.granted -= {which}
 		item.revoked += {which}
 		values[0] = count
-		system.log(.Info, "root: revoked the grant network of ", system.Module_Name{name}, ", endpoints changed: ", count)
+		system.log_fact(.Info, Grant_Revoked_Endpoints{holder = module_name_field(name), endpoints = count})
 		return .Ok
 	case .Debug:
 		// One handle for each process that the command Debug named for
@@ -1491,7 +1500,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.granted -= {which}
 		item.revoked += {which}
 		values[0] = count
-		system.log(.Info, "root: revoked the grant debug of ", system.Module_Name{name}, ", holdings ended: ", count)
+		system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
 		return .Ok
 	case .Palette:
 		// The table and the ring end in the process, and the compositor
@@ -1500,7 +1509,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.granted -= {which}
 		item.revoked += {which}
 		values[0] = count
-		system.log(.Info, "root: revoked the grant palette of ", system.Module_Name{name}, ", holdings ended: ", count)
+		system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
 		return .Ok
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
@@ -1515,7 +1524,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 	item.granted -= {which}
 	item.revoked += {which}
 	values[0] = count
-	system.log(.Info, "root: revoked the grant ", system.root_grant_names[which], " of ", system.Module_Name{name}, ", holdings ended: ", count)
+	system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
 	return .Ok
 }
 
@@ -1675,13 +1684,19 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), hash[0], hash[1], hash[2], hash[3]}
 	// The principal of the connection, and whether the caller acts for it.
 	acts := connection_grant(free) & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
-	if history {
-		system.log(.Info, "root: connected ", system.Module_Name{system.name_of(caller.name[:])}, " to the store of its line history in the service ", system.Module_Name{name}, ", ", system.Size{HISTORY_STORE_LIMIT, .Blocks}, ", for principal ", caller.principal)
-	} else if client.place != 0 {
+	switch {
+	case history:
+		system.log_fact(.Info, Connected_History{caller = module_name_field(system.name_of(caller.name[:])), service = module_name_field(name), limit = HISTORY_STORE_LIMIT, principal = caller.principal})
+	case client.place != 0 && acts:
 		head: [16]u8
-		system.log(.Info, "root: connected ", system.Module_Name{system.name_of(caller.name[:])}, " to the service ", system.Module_Name{name}, acts ? ", acting for principal " : ", for principal ", client.principal, ", for the client key ", key_head_text(&head, client.key))
-	} else {
-		system.log(.Info, "root: connected ", system.Module_Name{system.name_of(caller.name[:])}, " to the service ", system.Module_Name{name}, acts ? ", acting for principal " : ", for principal ", caller.principal)
+		system.log_fact(.Info, Connected_Acting_With_Client_Key{caller = module_name_field(system.name_of(caller.name[:])), service = module_name_field(name), principal = client.principal, client_key = text_field(key_head_text(&head, client.key), 24)})
+	case client.place != 0:
+		head: [16]u8
+		system.log_fact(.Info, Connected_With_Client_Key{caller = module_name_field(system.name_of(caller.name[:])), service = module_name_field(name), principal = client.principal, client_key = text_field(key_head_text(&head, client.key), 24)})
+	case acts:
+		system.log_fact(.Info, Connected_Acting{caller = module_name_field(system.name_of(caller.name[:])), service = module_name_field(name), principal = caller.principal})
+	case:
+		system.log_fact(.Info, Connected{caller = module_name_field(system.name_of(caller.name[:])), service = module_name_field(name), principal = caller.principal})
 	}
 	return .Ok
 }
@@ -1846,7 +1861,7 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 	if connection.service.process != 0 {
 		system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Disconnect), values = {0 = u64(connection.ring), 1 = u64(connection.region)}})
 	}
-	system.log(.Info, "root: disconnected ", system.Module_Name{system.name_of(connection.caller.name[:])}, " from the service ", system.Module_Name{system.name_of(connection.service.name[:])})
+	system.log_fact(.Info, Disconnected{caller = module_name_field(system.name_of(connection.caller.name[:])), service = module_name_field(system.name_of(connection.service.name[:]))})
 	// The connection of this service for a load from the disk: the load
 	// learns here that it ended.
 	if disk_load.connection == connection {
@@ -1948,9 +1963,6 @@ reap :: proc "contextless" () {
 		}
 		state, cause, outcome := system.process_state(item.process)
 		if state == .Stopped {
-			buffer: [64]u8
-			stop_text := system.Writer{buffer = buffer[:]}
-			system.stop_write(&stop_text, cause, outcome)
 			// A finished work, a clean stop that a call or an event asked,
 			// and a stop by a holder are the expected ends; each other stop
 			// is a warning.
@@ -1968,11 +1980,20 @@ reap :: proc "contextless" () {
 			}
 			// The run of `unlock` before the start policy has a line of its
 			// own: a wait for the stop of the run of the start list never
-			// takes it.
-			if unlock_without_window_running(&item) {
-				system.log(level, "root: unlock read the machine key with no window and stopped: ", system.written(&stop_text))
-			} else {
-				system.log(level, "root: ", system.Module_Name{system.name_of(item.name[:])}, " stopped: ", system.written(&stop_text))
+			// takes it. A template has no condition: a stop of itself has
+			// its outcome, each other stop has none, so each sentence is a
+			// fact type.
+			stopped_process := module_name_field(system.name_of(item.name[:]))
+			without_window := unlock_without_window_running(&item)
+			switch {
+			case without_window && cause == .Itself:
+				system.log_fact(level, Unlock_Without_Window_Stopped{stopped_process = stopped_process, cause = cause, outcome = outcome})
+			case without_window:
+				system.log_fact(level, Unlock_Without_Window_Stopped_Without_Outcome{stopped_process = stopped_process, cause = cause})
+			case cause == .Itself:
+				system.log_fact(level, Process_Stopped{stopped_process = stopped_process, cause = cause, outcome = outcome})
+			case:
+				system.log_fact(level, Process_Stopped_Without_Outcome{stopped_process = stopped_process, cause = cause})
 			}
 			// The kernel forgets the stop report with the last handle,
 			// which release closes: a disk process keeps it here.
