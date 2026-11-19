@@ -214,7 +214,7 @@ It is the one place of the plans: the changelog lists the work that is done, the
 
 The design: `docs/TOOLS.md`, "The roadmap".
 
-Do not use: plan, backlog, to-do list, next steps, milestones.
+Do not use: plan (for this), backlog, to-do list, next steps, milestones.
 
 ### Roadmap entry
 
