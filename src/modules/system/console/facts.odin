@@ -9,7 +9,7 @@ import "modus:support/system"
 import terminal "modus:support/terminal"
 
 // The log facts in the console (src/md/features/log_facts.md, "The reader
-// path" and "Filters of a reader: one form").
+// path"; src/md/features/log_facts.md, "Filters of a reader: one form").
 //
 // A log fact is a record with no text: its values and the hash of the
 // module whose file describes it. The console holds the boot image, its

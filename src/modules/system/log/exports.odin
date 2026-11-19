@@ -91,17 +91,12 @@ own_records_read :: proc "contextless" (scope: log_scope.Scope, after: i64) -> (
 // row_fill writes the row of a record with its number: the number in the
 // whole log, or the own number for a reader of its own records. A fact has
 // no text and no runs: its bytes are not text, and fact_records gives them.
-// The form passes its border, as each reader of a record does. A record of
-// an unknown form gives its head and its form word, and no body: the reader
-// of the row takes the word through its own border and shows the number,
-// never the name of a form.
-row_fill :: proc "contextless" (row: ^Record, number: i64, record: ^op.Log_Record) {
-	row^ = {number = number, time = i64(record.time), slot = i64(record.process), level = record.level, form = op.Log_Record_Form(record.form)}
+// The form passes its border before this call: the caller gives no row for
+// a record of a form that names no member, and counts it as lost, as a torn
+// record, because no reader can read its bytes.
+row_fill :: proc "contextless" (row: ^Record, number: i64, record: ^op.Log_Record, form: op.Log_Record_Form) {
+	row^ = {number = number, time = i64(record.time), slot = i64(record.process), level = record.level, form = form}
 	copy(row.process[:len(row.process) - 1], system.name_of(record.name[:]))
-	form, known := op.log_record_form(record)
-	if !known {
-		return
-	}
 	switch form {
 	case .Text:
 		text_count := min(int(record.text_count), len(record.text))
@@ -272,9 +267,18 @@ records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, resu
 		// The numbers and `lost` count the records of that process only,
 		// so the reader learns no count of the records of others.
 		own, own_lost, own_total := own_records_read(scope, after)
-		own_count := min(len(own), len(result^))
-		for index in 0 ..< own_count {
-			row_fill(&result[index], i64(own[index].own_number), &own[index])
+		own_count := 0
+		for index in 0 ..< len(own) {
+			if own_count == len(result^) {
+				break
+			}
+			form, known := op.log_record_form(&own[index])
+			if !known {
+				own_lost += 1
+				continue
+			}
+			row_fill(&result[own_count], i64(own[index].own_number), &own[index], form)
+			own_count += 1
 		}
 		if own_count > 0 {
 			result[0].lost = i64(own_lost)
@@ -296,10 +300,15 @@ records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, resu
 			lost += 1
 			continue
 		}
+		form, known := op.log_record_form(&record)
+		if !known {
+			lost += 1
+			continue
+		}
 		total += 1
 		// Each place of the result has a row (a Table result: the caller
 		// reads min(count, capacity) rows).
-		row_fill(&result[count], i64(record.sequence), &record)
+		row_fill(&result[count], i64(record.sequence), &record, form)
 		count += 1
 	}
 	if count > 0 {

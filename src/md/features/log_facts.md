@@ -139,7 +139,7 @@ The body after the head has 192 bytes. Today a record is a text record: the valu
 
 Text records and fact records follow each other in the whole log and in each own log ring, with one number sequence. The records of each second of a budget count a fact as one record.
 
-**The version rule.** The record changes in place. Each reader takes the byte of the form through one border, which refuses a byte that names no member: the reader shows "a record of an unknown form" with its head, and no body. A new form is a new member. The fact record itself has no version: its module hash pins its description.
+**The version rule.** The record changes in place. Each reader takes the byte of the form through one border, which refuses a byte that names no member: the reader shows "a record of an unknown form" with its head, and no body. The service `log` gives no row of `log.records` for such a record and counts it in `lost`, as a torn record: the field `form` of a row is the enum, and an enum field never holds a word that names no member. A new form is a new member. The fact record itself has no version: its module hash pins its description.
 
 **The module hash.** A module file cannot hold its own hash, and the kernel does not know which code of a process called `Log`. So the module file names an own-hash place in its writable data, and the loader writes the hash of the module there when it binds the module. `system.log_fact` copies those 32 bytes. The kernel writes the place of the root service when it starts it, because the root service has no loader for imports. A place of zero is no module: a reader shows the fact raw.
 
