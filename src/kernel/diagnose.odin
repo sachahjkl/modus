@@ -916,8 +916,8 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 		// The text, then its value runs, at the address.
 		if v[2] > op.LOG_TEXT_BYTES_MOST {
 			record_set(record, .Too_Long, .Bytes, 3, v[2], op.LOG_TEXT_BYTES_MOST, 0)
-		} else if v[6] <= op.LOG_CALL_RUN_LIMIT && !read_range(process, v[1], v[2] + v[6] * size_of(value_kinds.Value_Run_In_Call)) {
-			record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2] + v[6] * size_of(value_kinds.Value_Run_In_Call), 0)
+		} else if v[4] <= op.LOG_CALL_RUN_LIMIT && !read_range(process, v[1], v[2] + v[4] * size_of(value_kinds.Value_Run_In_Call)) {
+			record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2] + v[4] * size_of(value_kinds.Value_Run_In_Call), 0)
 		} else {
 			return false
 		}
@@ -1278,8 +1278,8 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Log:
-		if v[6] > op.LOG_CALL_RUN_LIMIT {
-			record_set(record, .Too_Long, .Records, 7, v[6], op.LOG_CALL_RUN_LIMIT, 0)
+		if v[4] > op.LOG_CALL_RUN_LIMIT {
+			record_set(record, .Too_Long, .Records, 5, v[4], op.LOG_CALL_RUN_LIMIT, 0)
 			return true
 		}
 	case .Inspect:

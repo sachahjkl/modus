@@ -2,14 +2,16 @@ package resources
 
 import "core:fmt"
 import "core:os"
+import "modus:contract/glyph_cache"
 import "modus:support/graphics"
 import "modustool:foundation"
 
 // The picture of the choice of the font (docs/FONTS.md, "The font file"):
 // the same lines of the system in each candidate and in Spleen, at the
 // scales 1, 2 and 3, then one word of each enlarged 5 times so that the
-// pixels and the color stripes show. src/library/support/graphics draws it, as in the
-// system: the same glyph cache, the same blend.
+// pixels and the color stripes show. src/library/support/graphics draws it
+// with the blend of the system, each candidate from a glyph cache that the
+// renderer of the system draws from its font file.
 
 CANDIDATE_LINES := [?]string {
 	"> print(monitor.processes())   31 processes, 4 processors, 1 204 pages",
@@ -27,6 +29,30 @@ Picture_Font :: struct {
 	label:    string,
 	cache:    []u8, // nil: Spleen.
 	grid_fit: bool,
+}
+
+// The cache of the font that picture_text draws from, validated by
+// picture_font_use; none: Spleen.
+@(private = "file")
+picture_cache: glyph_cache.Cache
+@(private = "file")
+picture_cache_valid: bool
+
+// picture_text draws a text in cells of 8 x 16 pixels times the scale, in
+// the font of picture_font_use: from its cache, with the fast blend of the
+// system, or in Spleen.
+@(private = "file")
+picture_text :: proc(canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int = 1) {
+	if !picture_cache_valid {
+		graphics.text_scaled(canvas, x, y, text, color, scale)
+		return
+	}
+	state := &graphics.text_state
+	cell := 0
+	for character in text {
+		graphics.character_vector_with(&picture_cache, &state.square_root, &state.blend_tables, state.order, canvas, x + cell * graphics.CELL_WIDTH * scale, y, character, color, scale)
+		cell += 1
+	}
 }
 
 candidates_picture_write :: proc() -> bool {
@@ -58,16 +84,16 @@ candidates_picture_write :: proc() -> bool {
 		y := 8 + (index / 2) * BLOCK_HEIGHT
 		graphics.block(canvas, x, y, BLOCK_WIDTH, BLOCK_HEIGHT - 8, graphics.DARK_CARD_TOP, graphics.DARK_CARD_BOTTOM)
 		graphics.fill(canvas, x + 16, y + 12, 4, 16, graphics.DARK_MACHINE)
-		graphics.text(canvas, x + 28, y + 12, font.label, graphics.DARK_MACHINE)
+		picture_text(canvas, x + 28, y + 12, font.label, graphics.DARK_MACHINE)
 		line_y := y + 40
 		for line, line_index in CANDIDATE_LINES {
 			color := graphics.Color(line_index == 2 ? graphics.DARK_KERNEL : graphics.DARK_TEXT)
-			graphics.text(canvas, x + 16, line_y, line, color)
+			picture_text(canvas, x + 16, line_y, line, color)
 			line_y += 16
 		}
-		graphics.text_scaled(canvas, x + 16, line_y + 8, "EEVDF fair 1.5x", graphics.DARK_PROCESS, 2)
-		graphics.text_scaled(canvas, x + 16, line_y + 48, "12 345", graphics.DARK_TEXT, 3)
-		graphics.text(canvas, x + 176, line_y + 72, "wakes in one second", graphics.DARK_DIM)
+		picture_text(canvas, x + 16, line_y + 8, "EEVDF fair 1.5x", graphics.DARK_PROCESS, 2)
+		picture_text(canvas, x + 16, line_y + 48, "12 345", graphics.DARK_TEXT, 3)
+		picture_text(canvas, x + 176, line_y + 72, "wakes in one second", graphics.DARK_DIM)
 	}
 	// The crops: one word at scale 1, each pixel as a square of CROP_SCALE.
 	crop_top := 8 + rows * BLOCK_HEIGHT
@@ -76,10 +102,10 @@ candidates_picture_write :: proc() -> bool {
 		small: [8 * len(CROP_TEXT) * 16]graphics.Color
 		small_canvas := graphics.Canvas{pixels = raw_data(small[:]), width = 8 * len(CROP_TEXT), height = 16, stride = 8 * len(CROP_TEXT)}
 		graphics.clear(small_canvas, graphics.DARK_CARD_BOTTOM)
-		graphics.text(small_canvas, 0, 0, CROP_TEXT, graphics.DARK_TEXT)
+		picture_text(small_canvas, 0, 0, CROP_TEXT, graphics.DARK_TEXT)
 		x := 8 + (index % 4) * 320
 		y := crop_top + (index / 4) * crop_height
-		graphics.text(canvas, x, y, font.label[:min(len(font.label), 38)], graphics.DARK_DIM)
+		picture_text(canvas, x, y, font.label[:min(len(font.label), 38)], graphics.DARK_DIM)
 		for row in 0 ..< 16 {
 			for column in 0 ..< small_canvas.width {
 				graphics.fill(canvas, x + column * CROP_SCALE, y + 20 + row * CROP_SCALE, CROP_SCALE, CROP_SCALE, small[row * small_canvas.width + column])
@@ -107,12 +133,17 @@ candidates_picture_write :: proc() -> bool {
 
 @(private = "file")
 picture_font_use :: proc(font: Picture_Font) {
+	graphics.text_choice_set(.Spleen, .Red_Green_Blue)
+	graphics.text_state_start()
+	picture_cache_valid = false
 	if font.cache == nil {
-		graphics.text_choice_set(.Spleen, .Red_Green_Blue)
 		return
 	}
-	if problem := graphics.text_cache_set(font.cache); problem.kind != .None {
+	problem: glyph_cache.Problem
+	picture_cache, problem = glyph_cache.validate(font.cache)
+	if problem.kind != .None {
 		fmt.eprintfln("modustool: a glyph cache of the picture is refused: %v", problem)
+		return
 	}
-	graphics.text_choice_set(.Vector, .Red_Green_Blue)
+	picture_cache_valid = true
 }

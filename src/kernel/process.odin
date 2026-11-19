@@ -2330,11 +2330,11 @@ process_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: 
 		}
 	}
 	if found == nil {
-		log_in("fault", .Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address))
+		log_with_level(.Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address))
 	} else if found.replaces == {} {
-		log_in("fault", .Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", Hash{found.hash[:8]}, " at offset ", Hex(frame.rip - found.base))
+		log_with_level(.Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", Hash{found.hash[:8]}, " at offset ", Hex(frame.rip - found.base))
 	} else {
-		log_in("fault", .Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", Hash{found.hash[:8]}, " at offset ", Hex(frame.rip - found.base), ", which replaces ", Hash{found.replaces[:8]})
+		log_with_level(.Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", Hash{found.hash[:8]}, " at offset ", Hex(frame.rip - found.base), ", which replaces ", Hash{found.replaces[:8]})
 	}
 	// The stack trace: the page table of the process is the one of this
 	// processor, and the process lock is held (user_range, user_copy).

@@ -268,7 +268,7 @@ attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_
 		if matches == 0 {
 			return errors.fail(error, ERROR_ENDED, .Absent, .Processes, 1)
 		}
-		system.log("debugger: ", u64(matches), " processes have the name ", system.Module_Name{name}, " and the same module: the service cannot tell which one its handle names")
+		system.log(.Info, "debugger: ", u64(matches), " processes have the name ", system.Module_Name{name}, " and the same module: the service cannot tell which one its handle names")
 		return errors.fail(error, ERROR_AMBIGUOUS, .Bad_Value, .Processes, 1, i64(matches), 1)
 	}
 	// The records of an earlier debugging are of no thread of this process.
@@ -304,7 +304,7 @@ attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_
 		}
 	}
 	thread_count := min(report_threads.count, op.THREAD_REPORT_CAPACITY)
-	system.log("debugger: attached to ", system.Module_Name{name}, " for ", system.Module_Name{system.name_of(caller.caller[:])}, ": ", thread_count, " threads, ", u64(module_count), " modules, ", u64(described), " with a debug object")
+	system.log(.Info, "debugger: attached to ", system.Module_Name{name}, " for ", system.Module_Name{system.name_of(caller.caller[:])}, ": ", thread_count, " threads, ", u64(module_count), " modules, ", u64(described), " with a debug object")
 	if len(result^) > 0 {
 		row := &result[0]
 		row^ = {slot = i64(slot), threads = i64(thread_count), modules = i64(module_count), described = i64(described)}
@@ -1353,7 +1353,7 @@ call_run_to_return :: proc "contextless" (number: u64, return_address: u64, stac
 		if registers.rsp == session.step_over.stack {
 			// One line of the log: a reader sees that the thread ran through
 			// the call, and did not stop in it.
-			system.log("debugger: the thread ", number, " of ", system.Module_Name{session_name()}, " ran a call to its end, for step_over")
+			system.log(.Info, "debugger: the thread ", number, " of ", system.Module_Name{session_name()}, " ran a call to its end, for step_over")
 			status = step_over_end()
 			return true, false, status
 		}
@@ -1557,7 +1557,7 @@ event_rows :: proc "contextless" (result: ^[]Event_Row) -> i64 {
 	}
 	session.event_count -= given
 	if session.events_lost != 0 {
-		system.log("debugger: ", session.events_lost, " stops of ", system.Module_Name{session_name()}, " found the table of the events full, and have no row")
+		system.log(.Info, "debugger: ", session.events_lost, " stops of ", system.Module_Name{session_name()}, " found the table of the events full, and have no row")
 		session.events_lost = 0
 	}
 	return i64(total)

@@ -125,7 +125,7 @@ process_return_refused :: proc "contextless" (thread: ^Thread, refusal: Return_R
 			process.stop.module = found^
 		}
 	}
-	log_in("fault", .Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: the kernel cannot return to its thread: ", return_refusal_sentences[refusal], Hex(value))
+	log_with_level(.Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: the kernel cannot return to its thread: ", return_refusal_sentences[refusal], Hex(value))
 	process_unlock(index, taken)
 	process_stop(index, .Cannot_Return, 0)
 }

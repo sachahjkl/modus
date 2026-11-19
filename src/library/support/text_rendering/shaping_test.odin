@@ -2,37 +2,35 @@
 package text_rendering
 
 import "core:testing"
-import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 import "modus:support/vector_font"
 
 @(private = "file")
 b612_regular := #load("../../../../resources/fonts/b612.ttf")
-@(private = "file")
-paper_mono_regular := #load("../../../../resources/fonts/paper_mono.ttf")
 
-// test_spacing builds the glyph cache of B612 (three positions at scale 1,
-// one at the scales 2 and 3) and gives the spacing of scale 1. The memory
-// of the cache stays for the test: the spacing reads it in place.
+// test_spacing opens the four fonts of the repository in the state of the
+// package and gives the spacing of the interface face at the size of a
+// line of 16 pixels. The caller frees the words of the resource, which the
+// open fonts read.
 @(private = "file")
 test_spacing :: proc(t: ^testing.T) -> (spacing: Spacing, memory: []u64) {
-	font, problem := vector_font.font_open(b612_regular)
-	testing.expect_value(t, problem, vector_font.Font_Problem.None)
-	render := new(vector_font.Render_Memory)
-	defer free(render)
-	memory = make([]u64, vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT / 8)
-	out := ([^]u8)(raw_data(memory))[:vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT]
-	positions := [3]int{3, 1, 1}
-	size: int
-	size, problem = vector_font.glyph_cache_build_proportional(&font, b612_regular, "b612", true, render, out, positions[:])
-	testing.expect_value(t, problem, vector_font.Font_Problem.None)
-	cache, refused := glyph_cache.validate(out[:size])
-	testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
+	fonts := repository_fonts()
+	missing: Outline_Fonts
+	missing, memory = outlines_open(t, fonts[:])
+	testing.expect_value(t, missing, Outline_Fonts{})
 	ok: bool
-	spacing, ok = spacing_of(&cache, 1)
+	spacing, ok = spacing_of(.Interface, TEXT_SIZE_OF_SCALE_ONE)
 	testing.expect(t, ok)
 	return spacing, memory
+}
+
+// advance_at gives the advance of a character of the interface face at
+// the size of the spacing of the tests.
+@(private = "file")
+advance_at :: proc(character: rune) -> i32 {
+	value, _ := advance(.Interface, character, TEXT_SIZE_OF_SCALE_ONE)
+	return value
 }
 
 // The width of a text is the sum of the advances of its placed glyphs, and
@@ -63,9 +61,9 @@ the_width_is_the_sum_of_the_placed_glyphs :: proc(t: ^testing.T) {
 // The pair adjustment is that of the font file: "To" is -100 units, -43 in
 // 1/64 of a pixel at scale 1 (one unit is 1/150 of a pixel); "AV" has no
 // pair in B612, so its advance is the advance of "A" alone (555). The rule
-// of the sum: the cache rounds the advance and the adjustment each on its
-// own, and the shaper adds the two integers: "T" before "o" is 512 - 43 =
-// 469.
+// of the sum: the advance and the adjustment are rounded each on its own,
+// and the shaper adds the two integers: "T" before "o" is 512 - 43 = 469.
+// A spacing with no pair places "T" at its advance alone.
 @(test)
 a_pair_changes_the_advance_by_the_value_of_the_file :: proc(t: ^testing.T) {
 	test_state_take()
@@ -74,16 +72,90 @@ a_pair_changes_the_advance_by_the_value_of_the_file :: proc(t: ^testing.T) {
 	defer delete(memory)
 	placed: [2]Placed_Glyph
 	shape(&spacing, transmute([]u8)string("To"), placed[:])
-	testing.expect_value(t, placed[0].advance, spacing.advances['T' - glyph_cache.ASCII_FIRST] - 43)
-	testing.expect_value(t, spacing.advances['T' - glyph_cache.ASCII_FIRST], 512) // 1200 units.
+	testing.expect_value(t, placed[0].advance, advance_at('T') - 43)
+	testing.expect_value(t, advance_at('T'), 512) // 1200 units.
 	testing.expect_value(t, placed[0].advance, 469)
 	testing.expect_value(t, placed[1].x, placed[0].advance)
 	shape(&spacing, transmute([]u8)string("AV"), placed[:])
-	testing.expect_value(t, placed[0].advance, spacing.advances['A' - glyph_cache.ASCII_FIRST])
+	testing.expect_value(t, placed[0].advance, advance_at('A'))
 	testing.expect_value(t, placed[0].advance, 555) // 1300 units.
 	// The last glyph of a text has no pair after it.
 	shape(&spacing, transmute([]u8)string("T"), placed[:1])
 	testing.expect_value(t, placed[0].advance, 512)
+	without := spacing
+	without.without_pairs = true
+	shape(&without, transmute([]u8)string("To"), placed[:])
+	testing.expect_value(t, placed[0].advance, 512)
+}
+
+// The measure from the font files is the measure of the glyph caches of
+// the boot image: at the three sizes of the caches, each advance of the
+// 192 characters and each pair of two of them, in B612 and B612 Bold, has
+// the number of the cache that the build draws from the same font file. So
+// no place of a text of today moves.
+@(test)
+the_measure_of_the_font_file_is_the_measure_of_the_cache :: proc(t: ^testing.T) {
+	test_state_take()
+	state = {}
+	_, memory := test_spacing(t)
+	defer delete(memory)
+	b612_bold := #load("../../../../resources/fonts/b612_bold.ttf")
+	Weight :: struct {
+		face:      Face,
+		bytes:     []u8,
+		name:      string,
+		positions: []int,
+	}
+	regular_positions := [3]int{3, 1, 1}
+	bold_positions := [1]int{3}
+	weights := [2]Weight{{.Interface, b612_regular, "b612", regular_positions[:]}, {.Interface_Bold, b612_bold, "b612_bold", bold_positions[:]}}
+	render := new(vector_font.Render_Memory)
+	defer free(render)
+	cache_memory := make([]u64, vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT / 8)
+	defer delete(cache_memory)
+	out := ([^]u8)(raw_data(cache_memory))[:vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT]
+	for weight in weights {
+		file, problem := vector_font.font_open(weight.bytes)
+		testing.expect_value(t, problem, vector_font.Font_Problem.None)
+		size: int
+		size, problem = vector_font.glyph_cache_build_proportional(&file, weight.bytes, weight.name, true, render, out, weight.positions)
+		testing.expect_value(t, problem, vector_font.Font_Problem.None)
+		cache, refused := glyph_cache.validate(out[:size])
+		testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
+		for scale in 1 ..= len(weight.positions) {
+			spacing, ok := spacing_of(weight.face, size_of_scale(scale))
+			testing.expect(t, ok)
+			advances := glyph_cache.advances_of(&cache, scale)
+			for index in 0 ..< CHARACTER_COUNT {
+				character, _ := glyph_cache.character_of_index(index)
+				value, found := advance(weight.face, character, size_of_scale(scale))
+				testing.expectf(t, found && value == advances[index], "%s at scale %d: %c has the advance %d, the cache %d", weight.name, scale, character, value, advances[index])
+			}
+			// Each pair of the cache, in its order, and 0 for each pair that
+			// the cache lacks.
+			pairs := glyph_cache.pairs_of(&cache, scale)
+			next_pair := 0
+			for left in 0 ..< CHARACTER_COUNT {
+				for right in 0 ..< CHARACTER_COUNT {
+					left_character, _ := glyph_cache.character_of_index(left)
+					right_character, _ := glyph_cache.character_of_index(right)
+					text: [2 * text_encoding.CHARACTER_BYTES_LIMIT]u8
+					length := text_encoding.character_encode(left_character, text[:])
+					length += text_encoding.character_encode(right_character, text[length:])
+					placed: [2]Placed_Glyph
+					shape(&spacing, text[:length], placed[:])
+					adjustment := placed[0].advance - advances[left]
+					expected := i32(0)
+					if next_pair < len(pairs) && int(pairs[next_pair].left) == left && int(pairs[next_pair].right) == right {
+						expected = pairs[next_pair].adjustment
+						next_pair += 1
+					}
+					testing.expectf(t, adjustment == expected, "%s at scale %d: the pair %d %d is %d, the cache %d", weight.name, scale, left, right, adjustment, expected)
+				}
+			}
+			testing.expect_value(t, next_pair, len(pairs))
+		}
+	}
 }
 
 // An empty text has no glyph and no width. A control, an invalid sequence
@@ -101,7 +173,7 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	placed: [4]Placed_Glyph
 	count, width, ok = shape(&spacing, outside[:], placed[:])
 	testing.expect(t, ok && count == 3)
-	zero := spacing.advances['0' - glyph_cache.ASCII_FIRST]
+	zero := advance_at('0')
 	for glyph_placed, index in placed[:3] {
 		testing.expect_value(t, glyph_placed.glyph, REPLACEMENT_GLYPH)
 		testing.expect_value(t, glyph_placed.advance, zero)
@@ -123,8 +195,8 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	testing.expect_value(t, placed[1].glyph, REPLACEMENT_GLYPH)
 	testing.expect_value(t, placed[2].glyph, u32('T' - glyph_cache.ASCII_FIRST))
 	testing.expect_value(t, placed[2].cluster, u32(1 + length))
-	testing.expect_value(t, placed[0].advance, spacing.advances['T' - glyph_cache.ASCII_FIRST]) // No pair with the replacement glyph.
-	testing.expect_value(t, width, 2 * i64(spacing.advances['T' - glyph_cache.ASCII_FIRST]) + i64(zero))
+	testing.expect_value(t, placed[0].advance, advance_at('T')) // No pair with the replacement glyph.
+	testing.expect_value(t, width, 2 * i64(advance_at('T')) + i64(zero))
 	// "é" is in the cache: two bytes and its own glyph.
 	e_acute, _ := glyph_cache.character_index('é')
 	count, _, ok = shape(&spacing, transmute([]u8)string("TéT"), placed[:])
@@ -137,7 +209,7 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	testing.expect(t, ok && count == 3)
 	testing.expect_value(t, placed[2].glyph, u32(glyph_cache.ADDED_FIRST_INDEX))
 	testing.expect_value(t, placed[2].cluster, u32(2))
-	testing.expect_value(t, placed[2].advance, spacing.advances[glyph_cache.ADDED_FIRST_INDEX])
+	testing.expect_value(t, placed[2].advance, advance_at(glyph_cache.EURO_SIGN))
 	// A text over the limit writes nothing.
 	long := make([]u8, TEXT_LIMIT + 1)
 	defer delete(long)
@@ -152,25 +224,18 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 // the spacing and no pair; the advance is the same at each measure,
 // whatever the private glyph cache holds. A character that no font has
 // (ā, Ж), an invalid sequence, and a code point past Unicode are the
-// replacement glyph, with the advance of "0". A spacing with no face (the
-// module text_shaping) places the replacement glyph, last.
+// replacement glyph, with the advance of "0". A spacing with no face
+// places the replacement glyph with no advance, last.
 @(test)
 a_fallback_glyph_has_the_advance_of_its_font :: proc(t: ^testing.T) {
 	test_state_take()
 	defer state = {}
-	fonts := [2]font_outlines.Font_Input{{"b612", b612_regular}, {"paper_mono", paper_mono_regular}}
-	outlines, words := resource_of(t, fonts[:])
-	defer delete(words)
-	state = {}
-	memory_reset_for_test()
-	_ = open(&outlines)
-
 	spacing, memory := test_spacing(t)
 	defer delete(memory)
 	testing.expect_value(t, spacing.face, Face.Interface)
 	OMEGA :: rune(0x03A9)
 	text := "AΩB\xffāЖ─"
-	zero := spacing.advances['0' - glyph_cache.ASCII_FIRST]
+	zero := advance_at('0')
 	placed: [8]Placed_Glyph
 	count, width, shaped := shape(&spacing, transmute([]u8)text, placed[:])
 	testing.expect(t, shaped && count == 7)
@@ -182,7 +247,7 @@ a_fallback_glyph_has_the_advance_of_its_font :: proc(t: ^testing.T) {
 	testing.expect_value(t, placed[1].glyph, FALLBACK_GLYPH_FIRST + u32(OMEGA))
 	testing.expect_value(t, placed[1].advance, omega_advance) // No pair with a fallback glyph.
 	testing.expect_value(t, placed[2].x, placed[1].x + omega_advance)
-	testing.expect_value(t, placed[0].advance, spacing.advances['A' - glyph_cache.ASCII_FIRST])
+	testing.expect_value(t, placed[0].advance, advance_at('A'))
 	testing.expect_value(t, placed[6].glyph, FALLBACK_GLYPH_FIRST + 0x2500) // From Paper Mono, the second font.
 	// Draws in the private glyph cache change no advance.
 	for character in ([?]rune{OMEGA, 0x2500}) {
@@ -200,10 +265,83 @@ a_fallback_glyph_has_the_advance_of_its_font :: proc(t: ^testing.T) {
 	_, _, _ = shape(&spacing, transmute([]u8)string("Ω"), placed[:1])
 	large, _ := advance(.Interface, OMEGA, size_of_scale(3))
 	testing.expect_value(t, placed[0].advance, large)
-	// A spacing with no face: the replacement glyph.
+	// A spacing with no face: the replacement glyph, with no advance.
 	spacing.face = .None
 	_, _, _ = shape(&spacing, transmute([]u8)string("Ω"), placed[:1])
 	testing.expect_value(t, placed[0].glyph, REPLACEMENT_GLYPH)
+	testing.expect_value(t, placed[0].advance, i32(0))
+}
+
+// A spacing of a face is refused for the face None, for a size at each
+// edge out of its range (0, 1, one under the least, one past the largest,
+// the largest int, a negative size), and before the fonts are open; the
+// least and the largest size pass, last. A grid of cells keeps its width
+// in its bound: 0 and a negative width are one pixel, a width past the
+// bound is the bound.
+@(test)
+a_spacing_is_refused_out_of_its_range :: proc(t: ^testing.T) {
+	test_state_take()
+	defer state = {}
+	state = {}
+	_, closed := spacing_of(.Interface, TEXT_SIZE_OF_SCALE_ONE)
+	testing.expect(t, !closed)
+	_, memory := test_spacing(t)
+	defer delete(memory)
+	_, none := spacing_of(.None, TEXT_SIZE_OF_SCALE_ONE)
+	testing.expect(t, !none)
+	for size in ([?]int{0, 1, TEXT_SIZE_MINIMUM - 1, TEXT_SIZE_LIMIT + 1, max(int), -1, min(int)}) {
+		_, ok := spacing_of(.Interface, size)
+		testing.expectf(t, !ok, "the size %v is refused", size)
+	}
+	for size in ([?]int{TEXT_SIZE_MINIMUM, TEXT_SIZE_LIMIT}) {
+		_, ok := spacing_of(.Interface, size)
+		testing.expectf(t, ok, "the size %v passes", size)
+	}
+	for width in ([?]int{0, -1, min(int)}) {
+		testing.expect_value(t, cell_spacing(width).cell_advance, i32(SUBPIXEL))
+	}
+	testing.expect_value(t, cell_spacing(max(int)).cell_advance, i32(CELL_ADVANCE_LIMIT))
+	testing.expect_value(t, cell_spacing(CELL_ADVANCE_LIMIT / SUBPIXEL + 1).cell_advance, i32(CELL_ADVANCE_LIMIT))
+	testing.expect_value(t, cell_spacing(8).cell_advance, i32(8 * SUBPIXEL))
+}
+
+// The bounds at any size: at the least and at the largest size, each
+// advance of the 192 characters is from 0 to one line, each pair within
+// half a line, and the longest text of the widest pair of letters keeps
+// each x the sum of the advances before it, in an i32.
+@(test)
+the_bounds_of_the_shaper_at_each_size :: proc(t: ^testing.T) {
+	test_state_take()
+	defer state = {}
+	_, memory := test_spacing(t)
+	defer delete(memory)
+	long := make([]u8, TEXT_LIMIT)
+	defer delete(long)
+	for &value, index in long {
+		value = index % 2 == 0 ? 'W' : 'T'
+	}
+	placed := make([]Placed_Glyph, TEXT_LIMIT)
+	defer delete(placed)
+	for size in ([?]int{TEXT_SIZE_MINIMUM, TEXT_SIZE_OF_SCALE_ONE, TEXT_SIZE_LIMIT}) {
+		for face in ([?]Face{.Interface, .Interface_Bold, .Cells, .Cells_Bold}) {
+			spacing, ok := spacing_of(face, size)
+			testing.expect(t, ok)
+			for index in 0 ..< CHARACTER_COUNT {
+				character, _ := glyph_cache.character_of_index(index)
+				value, _ := advance(face, character, size)
+				testing.expectf(t, value >= 0 && i64(value) <= advance_limit_of_size(size), "%v at %v: %c has %v", face, size, character, value)
+			}
+			count, width, shaped := shape(&spacing, long, placed)
+			testing.expect(t, shaped && count == TEXT_LIMIT)
+			sum: i64
+			for glyph_placed in placed {
+				testing.expect_value(t, i64(glyph_placed.x), sum)
+				testing.expect(t, i64(glyph_placed.advance) >= -pair_limit_of_size(size) && i64(glyph_placed.advance) <= advance_limit_of_size(size) + pair_limit_of_size(size))
+				sum += i64(glyph_placed.advance)
+			}
+			testing.expect(t, width == sum && sum < 1 << 31)
+		}
+	}
 }
 
 // 10 000 texts in one call give the widths of 10 000 calls of one text.

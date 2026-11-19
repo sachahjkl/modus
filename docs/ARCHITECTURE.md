@@ -343,7 +343,7 @@ The terms are in `glossary/storage.md`.
 | Range | How the process knows that it is mapped |
 |---|---|
 | The settings page, the date page | Their bits |
-| The five glyph caches | Their bits; each cache states its size in its header (`glyph_cache.validate_at`, bounded by the span of the range) |
+| The font outlines | Its bit; the resource states its size in its header (`font_outlines.open`, bounded by the span of the range) |
 | The pointer themes | The values 6 and 7, 18 and 19 of the compositor: an address and a size each. A value, not a bit: the size is needed, and the theme file does not state it in a header that the reader trusts before its validation |
 | The storage file | The value 3 of the storage service: its size. A value, not a bit: the size is needed |
 | The files of a module | The values 0 to 3 of `modus:contract/isolated` (address, size, the replacements): values, not bits, because the sizes are needed |
@@ -444,7 +444,7 @@ The counts are exports of the compositor, for a caller that acts for the princip
 
 No helper of the system cuts a text without saying so. A text that does not fit in its place is one of three:
 
-- **Written whole, in several parts.** The log takes a text of any length: `system.log_in` and `system.log` write the parts of a text in a buffer of 512 bytes, and send it to the kernel as one line each time it is full, after a whole character; the text continues on the next line. `system.log_text` sends lines of 4096 bytes, the text of one Log call. The kernel writes the text of one Log call in as many log records (152 bytes of text each) as it needs, chained by `more`: no byte of a call is lost. A terminal writes a run in as many records as it needs.
+- **Written whole, in several parts.** The log takes a text of any length: `system.log` writes the parts of a text in a buffer of 512 bytes, and send it to the kernel as one line each time it is full, after a whole character; the text continues on the next line. `system.log_text` sends lines of 4096 bytes, the text of one Log call. The kernel writes the text of one Log call in as many log records (168 bytes of text each) as it needs, chained by `more`: no byte of a call is lost. A terminal writes a run in as many records as it needs.
 - **Cut with the cut mark.** The start of the text, after a whole character, then "... and N bytes more" (`modus:contract/cut_mark`, the one form; the kernel and the processes share it). The writer of `src/library/support/sentence` counts the bytes that its buffer does not hold (`Writer.dropped`), and `written` ends its text with the mark: each sentence, each `format`, each text that a process builds with it. The kernel ends a record of its own that passes its 352 bytes with the mark. A Text field of a record of the information functions (`information.text_put`) ends with it. A line that a terminal record holds whole (the edit line, the status) ends with it past 256 bytes.
 - **Refused, with an error that the caller takes.** An export with a Text result gives the count of the whole text: a caller whose buffer is smaller sees it and says so ("the result of ... has N bytes: it does not fit"). The storage service and `settings.get` give that count. The console refuses a name longer than the 31 bytes of a name of the root ring, because a cut name can be the name of another process. The kernel refuses a Log call of more than 4096 bytes.
 

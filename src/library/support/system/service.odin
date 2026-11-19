@@ -124,7 +124,7 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 		// knows of: it closes nothing.
 		service_command, known := service_command_of_record(command)
 		if !known {
-			log_in("processes", .Warning, "service: the root service sent a command of the kind ", u64(command.kind), ", which names no service command: it is refused")
+			log(.Warning, "service: the root service sent a command of the kind ", u64(command.kind), ", which names no service command: it is refused")
 			continue
 		}
 		switch service_command {

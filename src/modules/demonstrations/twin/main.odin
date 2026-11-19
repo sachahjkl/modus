@@ -33,7 +33,7 @@ import "modus:support/twins"
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	mode, mode_ok := twins.twin_mode_of_word(ctx.values[twins.VALUE_MODE])
 	if !mode_ok {
-		system.log("twin: the mode ", ctx.values[twins.VALUE_MODE], " names no mode of a twin: nothing is done")
+		system.log(.Info, "twin: the mode ", ctx.values[twins.VALUE_MODE], " names no mode of a twin: nothing is done")
 		system.stop(1)
 	}
 	switch mode {

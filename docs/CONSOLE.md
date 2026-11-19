@@ -394,7 +394,7 @@ While a line calls an export, the console shows under the line the log records t
 ```
 
 - **Which records.** The records that a process called by the line wrote, from the first call of the line on: a service, a sandboxed process of `isolate`, and the console itself for a module that `load` put in it. A line follows 4 processes at most. A process that `start` starts is not followed: the line ends before the process writes.
-- **By channel.** The records of one process and one channel follow one head line: the name of the process, in the color of a module, and the channel. A record of another channel starts a new group.
+- **By process.** The records of one process follow one head line: the name of the process, in the color of a module. A record of another process starts a new group.
 - **The value runs.** Each value run of a record is in the color of its value kind, as in the window of the log (`docs/TOOLS.md`, "The log"). A record of the level error is in the color of a failure.
 - **While the line runs.** During an isolated call or a call of a service, the console reads the new records each 100 ms (`STATUS_INTERVAL`), and once more when the line ends, before it draws the result. During a direct call the console waits in the module: the records show when the call returns.
 - **To the terminal only.** These lines do not go to the log: the records are in the log already.
@@ -411,7 +411,7 @@ A fact that a service holds is an export of that service, and the console calls 
 
 | Built-in command | Where the fact comes from |
 |---|---|
-| `processes()` | The export `monitor.processes()`. With no service `monitor`, or when `monitor` lost its grant, the line fails with the error of the connection or of the export |
+| `processes()` | The export `monitor.processes()`. The root service starts `monitor` at its first connection, in each start policy, the rescue included. When `monitor` cannot start, or lost its grant, the line fails with the error of the connection or of the export |
 | `setting(name, value)`, `manual_page(name)`, `strategy(name)` | The exports `settings.set`, `manual.show` and `scheduler.strategy_set`. The palette runs them ("8. The palette provider"). Each process must run: the command starts none. `strategy("eevdf")` sets the scheduling strategy of the machine, with `round_robin`, `fair` or `eevdf`: the console holds no right to change it, and the process `scheduler` holds it (`SCHEDULING.md`, "The change at run time") |
 | `debug`, `detach`, `threads`, `hold`, `resume`, `continue_all`, `registers`, `stack`, `locals`, `value`, `source`, `break_at`, `watch`, `breaks`, `break_remove`, `step`, `step_line`, `step_over`, `debug_memory`, `events`, `wait_stop`, `stop_report` | The exports of the service `debugger`, which the root service starts when the console connects to it ("The commands of the debugger") |
 | `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `machine_passphrase`, `machine_seal`, `replace`, `connect`, `remote_allow`, `remote_disallow`, `remote_clients` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |

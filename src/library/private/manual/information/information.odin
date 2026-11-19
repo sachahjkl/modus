@@ -527,7 +527,7 @@ running :: proc "contextless" (machine: system.Handle, catalog: Catalog, rows: [
 				if writer, writer_ok := op.module_writer_of_word(record.writer); writer_ok {
 					text_put(row.writer[:], op.module_writer_name(writer))
 				} else {
-					system.log("information: the module record at ", record.base, " of the process slot ", slot, " has the writer word ", record.writer, ", which names no writer")
+					system.log(.Info, "information: the module record at ", record.base, " of the process slot ", slot, " has the writer word ", record.writer, ", which names no writer")
 				}
 			}
 			count += 1

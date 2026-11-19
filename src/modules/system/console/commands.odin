@@ -975,7 +975,7 @@ process_modules :: proc "contextless" (arguments: []Value) -> Value {
 			if writer, writer_ok := op.module_writer_of_word(item.writer); writer_ok {
 				made_text(&table, row, 5, op.module_writer_name(writer))
 			} else {
-				system.log("console: process_modules: the module record at ", item.base, " of the process slot ", slot, " has the writer word ", item.writer, ", which names no writer")
+				system.log(.Info, "console: process_modules: the module record at ", item.base, " of the process slot ", slot, " has the writer word ", item.writer, ", which names no writer")
 			}
 		}
 	}

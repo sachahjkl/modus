@@ -36,8 +36,11 @@ import "modus:support/system"
 import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module, its threads and its window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1389, processes = 1, threads = 6, window_width = WIDTH, window_height = HEIGHT}
+// by its name, once the tool counts its module, its threads and its
+// window: 1389 pages. And the glyph memory of the copy of the text
+// rendering of the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 1389 + 354 = 1743.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1743, processes = 1, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 SQUARE :: 176
 MARGIN :: 12
@@ -159,7 +162,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if adder, status := system.thread_start(add_numbers, &sum); status == .Ok {
 		system.thread_wait(adder)
 	}
-	system.log("threads: a thread added the numbers to 1000: ", sum.result)
+	system.log(.Info, "threads: a thread added the numbers to 1000: ", sum.result)
 
 	for &worker, index in workers {
 		// A square shows the background until its thread draws it.
@@ -168,7 +171,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		worker.number = index
 		worker.canvas = square_pictures[index]
 		if !worker_start(index) {
-			system.log("threads: cannot start a thread")
+			system.log(.Info, "threads: cannot start a thread")
 			system.stop(1)
 		}
 	}
@@ -187,9 +190,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if worker.runs {
 				system.thread_end(worker.thread)
 				worker.runs = false
-				system.log("threads: thread ", u64(index + 1), " stopped at frame ", worker.frames)
+				system.log(.Info, "threads: thread ", u64(index + 1), " stopped at frame ", worker.frames)
 			} else if worker_start(index) {
-				system.log("threads: thread ", u64(index + 1), " started")
+				system.log(.Info, "threads: thread ", u64(index + 1), " started")
 			}
 		}
 		drawn := 0
@@ -221,7 +224,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if drawn == WORKER_COUNT && !ready {
 			ready = true
-			system.log("threads: ok, ", u64(WORKER_COUNT), " threads draw in one surface")
+			system.log(.Info, "threads: ok, ", u64(WORKER_COUNT), " threads draw in one surface")
 		}
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window, system.time() + FRAME_TIME)

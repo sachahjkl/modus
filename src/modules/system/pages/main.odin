@@ -273,12 +273,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if !logged {
 			logged = true
-			system.log("pages: the kernel half: ", kernel_half.pages, " pages in ", kernel_half.run_count, " runs, ", kernel_half.write_execute_pages, " write and execute, ", kernel_half.guard_pages, " guard pages of ", kernel_half.guards_expected)
-			system.log("pages: this process: ", process_half.pages, " pages in ", process_half.run_count, " runs, ", process_half.write_execute_pages, " write and execute")
+			system.log(.Info, "pages: the kernel half: ", kernel_half.pages, " pages in ", kernel_half.run_count, " runs, ", kernel_half.write_execute_pages, " write and execute, ", kernel_half.guard_pages, " guard pages of ", kernel_half.guards_expected)
+			system.log(.Info, "pages: this process: ", process_half.pages, " pages in ", process_half.run_count, " runs, ", process_half.write_execute_pages, " write and execute")
 			kept := kernel_half.pages != 0 && process_half.pages != 0 && kernel_half.write_execute_pages == 0 && process_half.write_execute_pages == 0 && kernel_half.guard_pages == kernel_half.guards_expected && kernel_half.guards_expected != 0
 			guards := kernel_half.kernel_no_execute != 0 && kernel_half.kernel_guard != 0
-			system.log(kept ? "pages: ok, the page tables keep the rules" : "pages: failed, the page tables do not keep the rules")
-			system.log(guards ? "pages: the processor refuses the memory of processes to the kernel" : "pages: the processor has no guard for the memory of processes")
+			system.log(.Info, kept ? "pages: ok, the page tables keep the rules" : "pages: failed, the page tables do not keep the rules")
+			system.log(.Info, guards ? "pages: the processor refuses the memory of processes to the kernel" : "pages: the processor has no guard for the memory of processes")
 		}
 		for _ in display.next_event(&window) {}
 		system.sleep(system.time() + INTERVAL)

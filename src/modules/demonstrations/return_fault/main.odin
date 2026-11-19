@@ -54,8 +54,10 @@ import "modus:support/interface"
 import "modus:support/random"
 import "modus:support/system"
 
-// One child at a time, with one thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1353, processes = 2, threads = 2, window_width = WIDTH, window_height = HEIGHT}
+// One child at a time, with one thread: 1353 pages. And the glyph memory
+// of the copy of the text rendering of the drawing module, which draws its
+// text: 354 pages (display.TEXT_MEMORY_PAGES). 1353 + 354 = 1707.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1707, processes = 2, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 896
@@ -121,12 +123,12 @@ window_memory: interface.Window_Memory(256, 4096)
 child_instruction_address :: proc "contextless" (holds_ymm: bool) -> ! {
 	memory, created := system.memory_create(1)
 	if created != .Ok {
-		system.log("return_fault: the child of the instruction address could not make its page: ", op.STATUS_NAMES[created])
+		system.log(.Info, "return_fault: the child of the instruction address could not make its page: ", op.STATUS_NAMES[created])
 		system.stop(1)
 	}
 	address, mapped := system.memory_map(memory, {.Write})
 	if mapped != .Ok {
-		system.log("return_fault: the child of the instruction address could not map its page to write it: ", op.STATUS_NAMES[mapped])
+		system.log(.Info, "return_fault: the child of the instruction address could not map its page to write it: ", op.STATUS_NAMES[mapped])
 		system.stop(1)
 	}
 	page := ([^]u8)(address)
@@ -134,7 +136,7 @@ child_instruction_address :: proc "contextless" (holds_ymm: bool) -> ! {
 	page[system.PAGE_SIZE - 1] = 0x05
 	system.memory_unmap(address)
 	if _, at_the_end := system.memory_map(memory, {.Execute}, 0, LAST_PAGE); at_the_end != .Ok {
-		system.log("return_fault: the child of the instruction address could not map its page at the last page: ", op.STATUS_NAMES[at_the_end])
+		system.log(.Info, "return_fault: the child of the instruction address could not map its page at the last page: ", op.STATUS_NAMES[at_the_end])
 		system.stop(1)
 	}
 	jump_to_the_last_instruction(rawptr(uintptr(LAST_INSTRUCTION)), holds_ymm)
@@ -149,10 +151,10 @@ child_nested_task :: proc "contextless" () -> ! {
 	after := syscall_with_nested_task(&before)
 	switch {
 	case before & NESTED_TASK == 0:
-		system.log("return_fault: the child of the nested task: popfq did not set the flag, so the case did not run")
+		system.log(.Info, "return_fault: the child of the nested task: popfq did not set the flag, so the case did not run")
 		system.stop(1)
 	case after & NESTED_TASK != 0:
-		system.log("return_fault: the child of the nested task: the flag came back after the entry")
+		system.log(.Info, "return_fault: the child of the nested task: the flag came back after the entry")
 		system.stop(1)
 	}
 	system.stop(0)
@@ -168,7 +170,7 @@ case_run :: proc "contextless" (item: ^Case) {
 	error: module.Load_Error
 	process, status := system.process_start(system.image_find(image, "return_fault"), "return_fault child", grants, random.values_with_seed(&process_generator, values), {pages = 256, processes = 1, threads = 1, processor = 200_000, log_records = 10}, nil, nil, {image = image}, &error)
 	if status != .Ok {
-		system.log("return_fault: ", item.name, ": the child did not start")
+		system.log(.Info, "return_fault: ", item.name, ": the child did not start")
 		return
 	}
 	defer system.close(process)
@@ -203,11 +205,11 @@ case_run :: proc "contextless" (item: ^Case) {
 	verdict := item.right ? string(": as it must") : string(": WRONG")
 	switch cause {
 	case .Itself, .Holder:
-		system.log("return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", code ", u64(code), ", the address ", system.Hex(item.address), verdict)
+		system.log(.Info, "return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", code ", u64(code), ", the address ", system.Hex(item.address), verdict)
 	case .Fault:
-		system.log("return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", vector ", u64(report.vector), ", the address ", system.Hex(item.address), verdict)
+		system.log(.Info, "return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", vector ", u64(report.vector), ", the address ", system.Hex(item.address), verdict)
 	case .None, .Last_Thread_Ended, .Handles_Closed, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
-		system.log("return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", the address ", system.Hex(item.address), verdict)
+		system.log(.Info, "return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", the address ", system.Hex(item.address), verdict)
 	}
 }
 
@@ -252,7 +254,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	role, role_ok := enum_word.member_of_word(Role, ctx.values[VALUE_ROLE])
 	if !role_ok {
-		system.log("return_fault: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
+		system.log(.Info, "return_fault: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
 		system.stop(1)
 	}
 	switch role {
@@ -264,14 +266,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		child_nested_task()
 	case .Trap_Flag:
 		syscall_with_the_trap_flag()
-		system.log("return_fault: the child of the trap flag: no trap came")
+		system.log(.Info, "return_fault: the child of the trap flag: no trap came")
 		system.stop(1)
 	case .Stack_At_A_Syscall:
 		syscall_with_a_stack_that_is_not_canonical()
 	case .Parent:
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("return_fault: no random seed in the context")
+		system.log(.Info, "return_fault: no random seed in the context")
 		system.stop(1)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "return_fault")
@@ -280,7 +282,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		system.log("return_fault: no boot image")
+		system.log(.Info, "return_fault: no boot image")
 		system.stop(1)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -295,9 +297,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		draw(&window)
 	}
 	if right == len(cases) {
-		system.log("return_fault: ok, ", u64(len(cases)), " cases: each child stopped as its own fault or returned with the flags of a process, and the machine goes on")
+		system.log(.Info, "return_fault: ok, ", u64(len(cases)), " cases: each child stopped as its own fault or returned with the flags of a process, and the machine goes on")
 	} else {
-		system.log("return_fault: failed: ", u64(len(cases) - right), " cases of ", u64(len(cases)))
+		system.log(.Info, "return_fault: failed: ", u64(len(cases) - right), " cases of ", u64(len(cases)))
 	}
 	for {
 		draw(&window)

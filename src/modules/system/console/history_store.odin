@@ -51,12 +51,12 @@ history_copy: line_editor.History
 history_store_open :: proc "contextless" () -> (opened: bool) {
 	completion, answered := request_record(.Connect_History, "storage", 0, HISTORY_CONNECT_TIME)
 	if !answered {
-		system.log("console: the line history stays in memory: the root service did not answer")
+		system.log(.Info, "console: the line history stays in memory: the root service did not answer")
 		return false
 	}
 	if system.Status(completion.kind) != .Ok {
 		text: [240]u8
-		system.log("console: the line history stays in memory: ", root_refusal_text(text[:], completion))
+		system.log(.Info, "console: the line history stays in memory: ", root_refusal_text(text[:], completion))
 		return false
 	}
 	client := storage.Client {
@@ -71,7 +71,7 @@ history_store_open :: proc "contextless" () -> (opened: bool) {
 		file = image[entry.offset:][:entry.size]
 	}
 	if file == nil || blake3.hash(file) != hash || module.validate(file) != .None {
-		system.log("console: the line history stays in memory: the boot image has no valid file of the storage service")
+		system.log(.Info, "console: the line history stays in memory: the boot image has no valid file of the storage service")
 		history_store_close(&client)
 		return false
 	}
@@ -83,7 +83,7 @@ history_store_open :: proc "contextless" () -> (opened: bool) {
 	region_pages: u64
 	region_pages, size_status = system.memory_size(client.region_memory)
 	if ring_status != .Ok || region_status != .Ok || size_status != .Ok {
-		system.log("console: the line history stays in memory: the call ring or the call region does not map")
+		system.log(.Info, "console: the line history stays in memory: the call ring or the call region does not map")
 		history_store_close(&client)
 		return false
 	}
@@ -115,7 +115,7 @@ history_load :: proc "contextless" () {
 	bytes, found, status := storage.read(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, buffer[:], &error)
 	switch {
 	case status == .Damaged:
-		system.log("console: the line history is damaged in its store: the history starts empty")
+		system.log(.Info, "console: the line history is damaged in its store: the history starts empty")
 	case status != .Ok:
 		text: [240]u8
 		writer := system.Writer {
@@ -126,16 +126,16 @@ history_load :: proc "contextless" () {
 		} else {
 			system.write_part(&writer, "the storage service did not answer the read")
 		}
-		system.log("console: the line history cannot be read: ", system.written(&writer), ": the history starts empty")
+		system.log(.Info, "console: the line history cannot be read: ", system.written(&writer), ": the history starts empty")
 	case !found:
-		system.log("console: no line history kept: the history starts empty")
+		system.log(.Info, "console: no line history kept: the history starts empty")
 	case len(bytes) > line_editor.HISTORY_FILE_SIZE_LIMIT:
-		system.log("console: the line history has more than ", u64(line_editor.HISTORY_FILE_SIZE_LIMIT), " bytes: the history starts empty")
+		system.log(.Info, "console: the line history has more than ", u64(line_editor.HISTORY_FILE_SIZE_LIMIT), " bytes: the history starts empty")
 	case:
 		if problem := line_editor.history_file_read(bytes, &history); problem != .None {
-			system.log("console: the line history is refused, ", line_editor.history_file_problem_texts[problem], ": the history starts empty")
+			system.log(.Info, "console: the line history is refused, ", line_editor.history_file_problem_texts[problem], ": the history starts empty")
 		} else {
-			system.log("console: the line history: ", u64(line_editor.history_count(&history)), " lines kept from before the stop")
+			system.log(.Info, "console: the line history: ", u64(line_editor.history_count(&history)), " lines kept from before the stop")
 		}
 	}
 	history_saved_lines = history.lines_written
@@ -179,7 +179,7 @@ history_save :: proc "contextless" () {
 		} else {
 			system.write_part(&writer, "the store of the history is not reachable")
 		}
-		system.log("console: the line history is not kept: ", system.written(&writer))
+		system.log(.Info, "console: the line history is not kept: ", system.written(&writer))
 	}
 }
 

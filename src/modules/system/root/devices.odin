@@ -160,7 +160,7 @@ bridge_devices_hold :: proc "contextless" (group: Bridge_Group, place: pci.Place
 				// its own: only the devices behind it, which are on these buses.
 				if header_type & 0x7F == 0 && member != place {
 					if count == pci.BRIDGE_DEVICE_COUNT {
-						system.log_in("devices", .Error, "root: more than ", u64(pci.BRIDGE_DEVICE_COUNT + 1), " devices behind the conventional bridge in front of the bus ", u64(group.first_bus), ": no service for them")
+						system.log(.Error, "root: more than ", u64(pci.BRIDGE_DEVICE_COUNT + 1), " devices behind the conventional bridge in front of the bus ", u64(group.first_bus), ": no service for them")
 						return handles, count, .No_Slot
 					}
 					// The handle names the device for the IOMMU by the first
@@ -196,9 +196,9 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	identity := pci.read_32(place, 0)
 	if identity & 0xFFFF != pci.VENDOR_VIRTIO || identity >> 16 != kind.device {
 		if place.bus == 0 {
-			system.log_in("devices", .Error, "root: no virtio device for ", system.Module_Name{kind.name}, " at the place ", u64(place.device), " of the bus")
+			system.log(.Error, "root: no virtio device for ", system.Module_Name{kind.name}, " at the place ", u64(place.device), " of the bus")
 		} else {
-			system.log_in("devices", .Error, "root: no virtio device for ", system.Module_Name{kind.name}, " at the place ", u64(place.device), " of the bus ", u64(place.bus), ", behind a bridge")
+			system.log(.Error, "root: no virtio device for ", system.Module_Name{kind.name}, " at the place ", u64(place.device), " of the bus ", u64(place.bus), ", behind a bridge")
 		}
 		return nil, 0, .Bad_Handle
 	}
@@ -375,12 +375,12 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	driver.granted = {.Log}
 	copy(driver.name[:len(driver.name) - 1], kind.name)
 	if place.bus == 0 {
-		system.log_in("devices", .Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(place.device), " of the bus")
+		system.log(.Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(place.device), " of the bus")
 	} else {
-		system.log_in("devices", .Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(place.device), " of the bus ", u64(place.bus), ", behind a bridge")
+		system.log(.Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(place.device), " of the bus ", u64(place.bus), ", behind a bridge")
 	}
 	if behind_conventional_bridge {
-		system.log_in("devices", .Info, "root: ", system.Module_Name{kind.name}, " also holds the registers of each other device behind the conventional bridge in front of the bus ", u64(group.first_bus), ", which shares its requester; other devices: ", u64(bridge_device_count))
+		system.log(.Info, "root: ", system.Module_Name{kind.name}, " also holds the registers of each other device behind the conventional bridge in front of the bus ", u64(group.first_bus), ", which shares its requester; other devices: ", u64(bridge_device_count))
 	}
 	return driver, ring_memory, .Ok
 }
@@ -406,7 +406,7 @@ display_open :: proc "contextless" (framebuffer_address, width, height, pixels_p
 	place := pci.Place{device = bochs_display.PLACE_DEVICE}
 	identity := pci.read_32(place, 0)
 	if identity & 0xFFFF != bochs_display.VENDOR || identity >> 16 != bochs_display.DEVICE {
-		system.log_in("devices", .Info, "root: no standard VGA at the place ", u64(bochs_display.PLACE_DEVICE), " of the bus: the compositor writes the screen page that the display shows")
+		system.log(.Info, "root: no standard VGA at the place ", u64(bochs_display.PLACE_DEVICE), " of the bus: the compositor writes the screen page that the display shows")
 		return 0, 0
 	}
 	// The addresses only, with no size: a size turns the memory of the
@@ -419,7 +419,7 @@ display_open :: proc "contextless" (framebuffer_address, width, height, pixels_p
 	page_bytes := pixels_per_line * height * size_of(u32)
 	decodes_memory := pci.read_16(place, pci.OFFSET_COMMAND) & pci.COMMAND_MEMORY != 0
 	if !decodes_memory || video_address != framebuffer_address || registers_address == 0 || registers_address % system.PAGE_SIZE != 0 {
-		system.log_in("devices", .Info, "root: the standard VGA does not hold the framebuffer of the firmware and its display registers: the compositor writes the screen page that the display shows")
+		system.log(.Info, "root: the standard VGA does not hold the framebuffer of the firmware and its display registers: the compositor writes the screen page that the display shows")
 		return 0, 0
 	}
 	status: system.Status
@@ -434,7 +434,7 @@ display_open :: proc "contextless" (framebuffer_address, width, height, pixels_p
 	}
 	display_registers := rawptr(uintptr(address) + bochs_display.DISPLAY_REGISTERS_OFFSET)
 	if bochs_display.screen_pages(display_registers, width, height, pixels_per_line) < bochs_display.PAGE_COUNT {
-		system.log_in("devices", .Info, "root: the display registers of the standard VGA do not say the mode of the framebuffer of the firmware with two screen pages: the compositor writes the screen page that the display shows")
+		system.log(.Info, "root: the display registers of the standard VGA do not say the mode of the framebuffer of the firmware with two screen pages: the compositor writes the screen page that the display shows")
 		system.memory_unmap(address)
 		system.close(registers)
 		return 0, 0

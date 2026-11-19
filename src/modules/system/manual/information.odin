@@ -321,7 +321,7 @@ overview_build :: proc "contextless" () -> int {
 	put_built(0, graphics.colors.dim, padded("all", name_width), right(totals[0], 6), right(totals[1], 8), right(totals[2], 8), right(totals[3], 8), right(i64(export_total), 9), right(i64(import_total), 8), "     ", right(i64(run_total), 6))
 	put("", 0, 0)
 	put("green: a process runs it. yellow: no entry, a library. red: it breaks a rule.", 0, graphics.colors.dim)
-	system.log("manual: overview: ", u64(count), " modules, ", u64(export_total), " exports, ", u64(import_total), " imports, ", u64(run_count), " modules that run in processes")
+	system.log(.Info, "manual: overview: ", u64(count), " modules, ", u64(export_total), " exports, ", u64(import_total), " imports, ", u64(run_count), " modules that run in processes")
 	return count
 }
 
@@ -448,5 +448,5 @@ information_start :: proc "contextless" (ctx: ^system.Context) {
 	for &row in module_rows[:min(modules_count, len(module_rows))] {
 		problems += int(row.problem[0] != 0)
 	}
-	system.log("manual: information: ", u64(modules_count), " modules and ", u64(exports_count), " exports listed in ", list_time, " us; who imports calendar: ", u64(importer_total), " modules, in ", question_time, " us; ", u64(problems), " modules break a rule")
+	system.log(.Info, "manual: information: ", u64(modules_count), " modules and ", u64(exports_count), " exports listed in ", list_time, " us; who imports calendar: ", u64(importer_total), " modules, in ", question_time, " us; ", u64(problems), " modules break a rule")
 }

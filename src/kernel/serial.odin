@@ -289,18 +289,19 @@ log_start :: proc "contextless" () {
 	log_head = head
 }
 
-// log writes one record of the kernel with no channel.
+// log writes one record of the kernel with the level Info.
 log :: proc "contextless" (parts: ..Log_Part) {
-	log_in("", .Info, ..parts)
+	log_with_level(.Info, ..parts)
 }
 
-// log_in writes one record of the kernel. A part is a string, or a value
-// with a kind (Log_Part): the record keeps where each value is in the text.
+// log_with_level writes one record of the kernel. A part is a string, or a
+// value with a kind (Log_Part): the record keeps where each value is in the
+// text.
 //
 // The text of one record of the kernel has at most 352 bytes: the stack of
 // the kernel is small. A longer text ends with the cut mark and the count
 // of the missing bytes (modus:contract/cut_mark): never cut in silence.
-log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log_Part) {
+log_with_level :: proc "contextless" (level: op.Log_Level, parts: ..Log_Part) {
 	buffer: [352]u8
 	count := 0
 	dropped := 0
@@ -369,7 +370,7 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log
 	if taken && log_head != nil {
 		name := KERNEL_NAME
 		if kernel_log_fits(log_records_of_text(buffer[:count])) {
-			log_record(0, 0, nil, 0, name[:], transmute([]u8)channel, level, buffer[:count], runs[:run_count])
+			log_record(0, 0, nil, 0, name[:], level, buffer[:count], runs[:run_count])
 		}
 		log_free(taken)
 		serial_drain_before_the_tick()
@@ -415,7 +416,7 @@ kernel_log_fits :: proc "contextless" (records: u64) -> bool {
 		text_count += copy(text[text_count:], decimal_digits(&digits, kernel_log_lines_over))
 		text_count += copy(text[text_count:], " lines of the kernel were over its limit of 64 records in each second")
 		name := KERNEL_NAME
-		log_record(0, 0, nil, 0, name[:], nil, .Warning, text[:text_count], nil)
+		log_record(0, 0, nil, 0, name[:], .Warning, text[:text_count], nil)
 		kernel_log_lines_over = 0
 	}
 	kernel_logged = second << 32 | (count + note + records)
@@ -676,9 +677,9 @@ serial_line_put :: proc "contextless" (bytes: []u8) {
 }
 
 // serial_record_line puts in serial_line the part of a line that one record
-// holds. The text of a record is UTF-8 with no control character, a name
-// and a channel are checked when the kernel takes them: a record cannot
-// forge or hide a line of the serial port.
+// holds. The text of a record is UTF-8 with no control character, and a
+// name is checked when the kernel takes it: a record cannot forge or hide a
+// line of the serial port.
 @(private = "file")
 serial_record_line :: proc "contextless" (record: ^op.Log_Record) {
 	head: [op.LOG_LINE_HEAD_CAPACITY]u8
@@ -989,7 +990,7 @@ log_records_of_text :: proc "contextless" (text: []u8) -> u64 {
 // only its own records fill: a reader of its own records reads them there,
 // and the records of the others never push them out
 // (src/md/features/own_log_ring.md).
-log_record :: proc "contextless" (process: u32, process_serial: u32, owner: ^Process, thread: u32, name: []u8, channel: []u8, level: op.Log_Level, text: []u8, runs: []value_kinds.Value_Run_In_Call) {
+log_record :: proc "contextless" (process: u32, process_serial: u32, owner: ^Process, thread: u32, name: []u8, level: op.Log_Level, text: []u8, runs: []value_kinds.Value_Run_In_Call) {
 	if log_head == nil || log_serial_only {
 		return
 	}
@@ -1030,7 +1031,6 @@ log_record :: proc "contextless" (process: u32, process_serial: u32, owner: ^Pro
 			text_count     = u16(len(part)),
 		}
 		copy(record.name[:len(record.name) - 1], name)
-		copy(record.channel[:], channel)
 		copy(record.text[:], part)
 		record.run_count = u8(value_kinds.value_runs_of_record(runs, offset, len(part), record.runs[:]))
 		offset += len(part)

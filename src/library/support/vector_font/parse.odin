@@ -55,6 +55,7 @@ Font_File :: struct {
 	head, hhea, maxp:    Table, // The tables that the reader needs.
 	hmtx, loca, glyf:    Table, // The metrics and the glyphs.
 	character_map:       Table, // The cmap subtable of format 4.
+	map_segments:        int, // The segments of the cmap subtable, whose ends font_open checked to grow strictly.
 	name, os2, post:     Table, // Read by the tool only.
 	kern:                Table, // The pair adjustments; absent in many fonts (spacing.odin).
 	gsub:                Table, // The substitutions of glyphs; read by the tool only (substitution.odin).
@@ -225,19 +226,69 @@ font_open :: proc "contextless" (bytes: []u8, directory: int = 0) -> (font: Font
 	if !found {
 		return font, .Unknown_Format
 	}
+	font.map_segments = character_map_segments_check(bytes[font.character_map.offset:][:font.character_map.length]) or_return
 	return font, .None
 }
 
-// glyph_of gives the glyph of a character, from the cmap of format 4.
+// The places in a subtable of format 4 of the cmap: the count of segments
+// times 2, the first end code, and the size of the header and of the four
+// arrays of 2 bytes for each segment (end, start, delta, range offset) with
+// the reserved word after the ends.
+@(private)
+CHARACTER_MAP_SEGMENT_COUNT_PLACE :: 6
+@(private)
+CHARACTER_MAP_ENDS_PLACE :: 14
+@(private)
+CHARACTER_MAP_FIXED_SIZE :: 16
+
+// character_map_segments_check checks the segments of a subtable of format
+// 4 once, at the open: an even count of segments times 2, the four arrays
+// inside the subtable, and end codes that grow strictly from one segment
+// to the next. glyph_of then finds a segment by halves, which holds only
+// over sorted ends; a hostile font whose ends are not sorted is refused
+// here, not searched in a line of up to 32 767 segments at each character.
+@(private)
+character_map_segments_check :: proc "contextless" (table: []u8) -> (segments: int, problem: Font_Problem) {
+	doubled, read := read_u16(table, CHARACTER_MAP_SEGMENT_COUNT_PLACE)
+	if !read {
+		return 0, .Too_Short
+	}
+	if doubled % 2 != 0 {
+		return 0, .Unknown_Format
+	}
+	segments = doubled / 2
+	if CHARACTER_MAP_FIXED_SIZE + 8 * segments > len(table) {
+		return 0, .Too_Short
+	}
+	previous := -1
+	for segment in 0 ..< segments {
+		end := read_u16(table, CHARACTER_MAP_ENDS_PLACE + 2 * segment) or_else -1
+		if end <= previous {
+			return 0, .Unknown_Format
+		}
+		previous = end
+	}
+	return segments, .None
+}
+
+// glyph_of gives the glyph of a character, from the cmap of format 4: the
+// first segment whose end is at or past the character, found by halves
+// over the ends that font_open checked to be sorted.
 glyph_of :: proc "contextless" (font: ^Font_File, character: rune) -> (glyph: int, problem: Font_Problem) {
 	table := font.bytes[font.character_map.offset:][:font.character_map.length]
-	segments := (read_u16(table, 6) or_else 0) / 2
+	segments := font.map_segments
 	code := int(character)
-	for segment in 0 ..< segments {
-		end := read_u16(table, 14 + 2 * segment) or_else -1
-		if code > end {
-			continue
+	low, high := 0, segments
+	for low < high {
+		middle := low + (high - low) / 2
+		end := read_u16(table, CHARACTER_MAP_ENDS_PLACE + 2 * middle) or_else -1
+		if end < code {
+			low = middle + 1
+		} else {
+			high = middle
 		}
+	}
+	for segment in low ..< min(low + 1, segments) {
 		start := read_u16(table, 16 + 2 * segments + 2 * segment) or_else 0x10000
 		if code < start {
 			return 0, .No_Glyph

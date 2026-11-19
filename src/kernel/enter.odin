@@ -268,23 +268,16 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Log:
 		_ = handle_find(process, v[0], .Log, {.Write}) or_return
-		if v[6] > op.LOG_CALL_RUN_LIMIT {
+		if v[4] > op.LOG_CALL_RUN_LIMIT {
 			return .Bad_Operation
 		}
-		run_bytes := v[6] * size_of(value_kinds.Value_Run_In_Call)
+		run_bytes := v[4] * size_of(value_kinds.Value_Run_In_Call)
 		if v[2] > op.LOG_TEXT_BYTES_MOST || !user_range(process, v[1], v[2] + run_bytes, false) {
 			return .Bad_Address
 		}
 		level, level_known := enum_word.member_of_word(op.Log_Level, v[3])
 		if !level_known {
 			return .Bad_Operation
-		}
-		// The channel: the characters before the first one that is not a
-		// character of a text.
-		channel := transmute([op.LOG_CHANNEL_CAPACITY]u8)[2]u64{v[4], v[5]}
-		channel_count := 0
-		for channel_count < len(channel) && channel[channel_count] > ' ' && channel[channel_count] < 127 {
-			channel_count += 1
 		}
 		name := transmute([]u8)process_name(process)
 		log_text := &processor_self().log_text
@@ -297,7 +290,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		text_encoding.invalid_sequences_replace(log_text[:v[2]])
 		// A Log spends the records that its text takes, counted in the copy
 		// as log_record cuts it: the amount bounds the lines of the serial
-		// port, and a text of LOG_TEXT_BYTES_MOST bytes is 27 records.
+		// port, and a text of LOG_TEXT_BYTES_MOST bytes is 25 records.
 		if !budget_log(process.budget, log_records_of_text(log_text[:v[2]])) {
 			process.log_lines_refused += 1
 			return .No_Budget
@@ -305,7 +298,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		process.log_lines_refused = 0
 		// The value runs: checked once, in the copy of this processor. Runs
 		// that do not fit the text leave the record plain; the text is whole.
-		log_runs := processor_self().log_runs[:v[6]]
+		log_runs := processor_self().log_runs[:v[4]]
 		user_copy(raw_data(log_runs), rawptr(uintptr(v[1] + v[2])), run_bytes)
 		if !value_kinds.value_runs_check(log_runs, int(v[2])) {
 			log_runs = nil
@@ -316,7 +309,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// other processes wrote (src/md/features/log_side_channels.md).
 		taken := log_take()
 		if taken && log_head != nil {
-			log_record(process_index, intrinsics.atomic_load(&process.serial), process, index, name, channel[:channel_count], level, log_text[:v[2]], log_runs)
+			log_record(process_index, intrinsics.atomic_load(&process.serial), process, index, name, level, log_text[:v[2]], log_runs)
 			log_free(taken)
 			serial_drain_before_the_tick()
 			return .Ok
@@ -324,10 +317,6 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// No memory of the log: the serial port only.
 		log_bytes({'['})
 		log_bytes(name)
-		if channel_count != 0 {
-			log_bytes({':'})
-			log_bytes(channel[:channel_count])
-		}
 		log_bytes({']', ' '})
 		log_bytes(log_text[:v[2]])
 		log_bytes({'\r', '\n'})

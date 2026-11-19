@@ -39,8 +39,11 @@ import "modus:support/system"
 import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module, its threads and its window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1154, processes = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
+// by its name, once the tool counts its module, its threads and its
+// window: 1154 pages. And the glyph memory of the copy of the text
+// rendering of the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 1154 + 354 = 1508.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1508, processes = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
 
 TILE :: 32
 COLUMNS :: 14
@@ -220,10 +223,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	made_locked = add_with_threads(true)
 	made_free = add_with_threads(false)
-	system.log("workers: with the lock, 4 threads made ", made_locked, " additions: the number is ", sum_locked, ", ", u64(sum_lock.waits), " waits")
-	system.log("workers: with no lock, 4 threads made ", made_free, " additions: the number is ", sum_free)
+	system.log(.Info, "workers: with the lock, 4 threads made ", made_locked, " additions: the number is ", sum_locked, ", ", u64(sum_lock.waits), " waits")
+	system.log(.Info, "workers: with no lock, 4 threads made ", made_free, " additions: the number is ", sum_free)
 	if made_locked == sum_locked {
-		system.log("workers: the lock lost no addition")
+		system.log(.Info, "workers: the lock lost no addition")
 	}
 
 	queue.next = COLUMNS * ROWS
@@ -234,7 +237,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		status: system.Status
 		worker.thread, status = system.thread_start(compute, &worker)
 		if status != .Ok {
-			system.log("workers: cannot start a thread")
+			system.log(.Info, "workers: cannot start a thread")
 			system.stop(1)
 		}
 	}
@@ -248,7 +251,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if done == COLUMNS * ROWS && complete_at == 0 {
 			complete_at = now
 			if pictures_made == 1 {
-				system.log("workers: ok, 4 threads computed ", u64(COLUMNS * ROWS), " tiles: ", workers[0].tiles, " ", workers[1].tiles, " ", workers[2].tiles, " ", workers[3].tiles)
+				system.log(.Info, "workers: ok, 4 threads computed ", u64(COLUMNS * ROWS), " tiles: ", workers[0].tiles, " ", workers[1].tiles, " ", workers[2].tiles, " ", workers[3].tiles)
 			}
 		}
 		if done == COLUMNS * ROWS && now >= complete_at + (pictures_made == 0 ? 0 : PICTURE_PAUSE) {

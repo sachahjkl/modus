@@ -154,7 +154,7 @@ Do not use: task bar, panel, dock.
 
 The bar layout is the widths of the texts of the bar, measured in the font that draws them, from which come the place of each button and of each line of a menu.
 
-The names of the bar are in the interface font, which has proportional widths. With places from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` at its start and when the font changes, and writes it on the log. The modus tool measures the same layout from the same glyph cache, so it presses the right places. The bar layout is not a set of constants: it depends on the font in use.
+The names of the bar are in the interface font, which has proportional widths. With places from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` at its start and when the font changes, and writes it on the log. The modus tool measures the same layout from the same font file, so it presses the right places. The bar layout is not a set of constants: it depends on the font in use.
 
 The design: `docs/FONTS.md`, "12.8 The parts, each one working".
 
@@ -732,7 +732,7 @@ Do not use: straight alpha (for this).
 
 A resource is a file of the boot image that is not a module: data that a process reads in place, named by the hash of its bytes.
 
-The resources are the pointer theme files, the glyph caches, the link pages of the manual, and the system description with its signature. Their table is apart from the table of the modules, so a reader of modules never takes a resource for a module. No process reads the resource table by itself: the root service finds a resource by its name, checks its hash, and gives one process a read-only mapping of it. A resource is not an asset that a process loads by a path: it has no path.
+The resources are the pointer theme files, the font outlines, the link pages of the manual, and the system description with its signature. Their table is apart from the table of the modules, so a reader of modules never takes a resource for a module. No process reads the resource table by itself: the root service finds a resource by its name, checks its hash, and gives one process a read-only mapping of it. A resource is not an asset that a process loads by a path: it has no path.
 
 The design: `docs/ARCHITECTURE.md`, "U2b. Resources of the boot image".
 

@@ -70,7 +70,7 @@ stop_report_keep :: proc "contextless" (item: ^Started) {
 	}
 	disk_process.stop_report_hide(&report)
 	if disk_process.kept_stop_report_keep(&kept_stop_reports, item.principal, name, item.hash, &report) {
-		system.log_in("processes", .Info, "root: kept the stop report of ", system.Module_Name{name}, ", a disk process of principal ", item.principal, ": stop_report(\"", system.Module_Name{name}, "\") names its frames")
+		system.log(.Info, "root: kept the stop report of ", system.Module_Name{name}, ", a disk process of principal ", item.principal, ": stop_report(\"", system.Module_Name{name}, "\") names its frames")
 	}
 }
 
@@ -142,7 +142,7 @@ debug_store_open :: proc "contextless" (holder: ^Started, name: string, connecti
 	}
 	debug_store.target = target
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), 0, 0, 0, 0}
-	system.log_in("processes", .Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " a connection that reads only to the store ", disk_process.STORE_NAME, " of principal ", target.principal, ", for the debug object of ", system.Module_Name{name})
+	system.log(.Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " a connection that reads only to the store ", disk_process.STORE_NAME, " of principal ", target.principal, ", for the debug object of ", system.Module_Name{name})
 	return .Ok
 }
 
@@ -212,7 +212,7 @@ debug_store_open_for_report :: proc "contextless" (holder: ^Started, caller: ^St
 	debug_store.report_for_row = row
 	debug_store.holder = holder
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), u64(given_page), principal, 0, 0}
-	system.log_in("processes", .Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " the kept stop report of ", system.Module_Name{name}, " and a connection that reads only to the store ", disk_process.STORE_NAME, " of principal ", principal, ", for ", system.Module_Name{system.name_of(caller.name[:])})
+	system.log(.Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " the kept stop report of ", system.Module_Name{name}, " and a connection that reads only to the store ", disk_process.STORE_NAME, " of principal ", principal, ", for ", system.Module_Name{system.name_of(caller.name[:])})
 	return .Ok
 }
 

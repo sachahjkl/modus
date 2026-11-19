@@ -49,8 +49,10 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
 
-// The pointer themes that it checks.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1616, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The pointer themes that it checks: 1616 pages. And the glyph memory of
+// its own copy of the text rendering, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 1616 + 354 = 1970.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1970, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 976
 HEIGHT :: 704
@@ -127,7 +129,7 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 		result := interface.button(frame, area, interface.identity_with(interface.identity("theme"), index), label, index == shown)
 		if result.activated {
 			shown = index
-			system.log("pointers: the theme ", label, " is shown")
+			system.log(.Info, "pointers: the theme ", label, " is shown")
 		}
 	}
 	interface.column_take(&column, 8)
@@ -333,7 +335,7 @@ frame_draw :: proc "contextless" (window: ^display.Window) -> u64 {
 	if under != tile_under_pointer {
 		tile_under_pointer = under
 		if under >= 0 {
-			system.log("pointers: the pointer is over the tile ", pointer_pictures.SHAPE_NAMES[shape])
+			system.log(.Info, "pointers: the pointer is over the tile ", pointer_pictures.SHAPE_NAMES[shape])
 		}
 	}
 	return system.nanoseconds() - start
@@ -354,7 +356,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	image_size := ctx.values[system.GRANT_VALUE_IMAGE_SIZE]
 	address, status := system.memory_map(image_handle, {}) // Read only.
 	if status != .Ok || image_size == 0 {
-		system.log("pointers: no boot image")
+		system.log(.Info, "pointers: no boot image")
 		system.stop(1)
 	}
 	image := ([^]u8)(address)[:image_size]
@@ -380,13 +382,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if theme.valid {
 			head := pointer_pictures.header(theme.file)
-			system.log("pointers: ", name, ": ", pointer_pictures.text_of(head.theme_name[:]), ", ", pointer_pictures.text_of(head.license[:]), ", ", u64(head.shape_count), " shapes, ", u64(head.picture_count), " pictures, ", entry.size, " bytes; the hash and the validation in ", theme.check_time / 1000, " us")
+			system.log(.Info, "pointers: ", name, ": ", pointer_pictures.text_of(head.theme_name[:]), ", ", pointer_pictures.text_of(head.license[:]), ", ", u64(head.shape_count), " shapes, ", u64(head.picture_count), " pictures, ", entry.size, " bytes; the hash and the validation in ", theme.check_time / 1000, " us")
 		} else {
-			system.log("pointers: ", name, " is not valid: ", string(theme.problem[:theme.problem_count]))
+			system.log(.Info, "pointers: ", name, " is not valid: ", string(theme.problem[:theme.problem_count]))
 		}
 	}
 	if theme_count == 0 {
-		system.log("pointers: the boot image has no pointer theme")
+		system.log(.Info, "pointers: the boot image has no pointer theme")
 		system.stop(1)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "pointers")
@@ -395,7 +397,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	table = {records = table_records[:], text = table_text[:]}
 	spent := frame_draw(&window)
-	system.log("pointers: ok, ", u64(theme_count), " themes; the window of ", themes[shown].resource, " drawn in ", spent / 1000, " us")
+	system.log(.Info, "pointers: ok, ", u64(theme_count), " themes; the window of ", themes[shown].resource, " drawn in ", spent / 1000, " us")
 	for {
 		display.wait(&window)
 		came := false

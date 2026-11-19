@@ -40,7 +40,7 @@ import "modus:support/system"
 // with one of the two handles lost. A slot is an int that the starter
 // named, which can be negative: the line writes its word.
 grant_slot_refused :: proc "contextless" (name: string, slot: int) {
-	system.log_in("processes", .Error, "root: cannot start ", system.Module_Name{name}, ": two grants of its role take the handle ", u64(slot), " of its context, and a handle would be lost")
+	system.log(.Error, "root: cannot start ", system.Module_Name{name}, ": two grants of its role take the handle ", u64(slot), " of its context, and a handle would be lost")
 }
 
 // context_refused says if a write into the context of a process was
@@ -55,7 +55,7 @@ context_refused :: proc "contextless" (name: string, grants: ^system.Context_Gra
 	case .Handle:
 		grant_slot_refused(name, place)
 	case .Value:
-		system.log_in("processes", .Error, "root: cannot start ", system.Module_Name{name}, ": two parts of its start write the value ", u64(place), " of its context, and a value would be lost")
+		system.log(.Error, "root: cannot start ", system.Module_Name{name}, ": two parts of its start write the value ", u64(place), " of its context, and a value would be lost")
 	}
 	return true
 }

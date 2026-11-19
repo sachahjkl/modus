@@ -45,7 +45,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	record: errors.Error_Record
 	arena, created := system.arena_create(reservation, error = &record)
 	if created != .Ok {
-		system.log("arena: WRONG: the reservation of ", reservation, " pages failed with ", created)
+		system.log(.Info, "arena: WRONG: the reservation of ", reservation, " pages failed with ", created)
 		system.stop(0)
 	}
 
@@ -73,7 +73,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	kept := arena
 	held, _ := system.budget_read()
 	refusal_is_of_the_budget := refused == .No_Budget && (record.kind == i64(errors.Kind.Budget) || record.kind == i64(errors.Kind.Budget_Hidden))
-	system.log("arena: grew to ", arena.committed_pages, " pages in ", arena.commit_count, " commits, in a reservation of ", reservation, " pages, and gave ", pushes, " pushes of one page; the budget held ", before.pages, " pages before, and ", held.pages, " after the refusal")
+	system.log(.Info, "arena: grew to ", arena.committed_pages, " pages in ", arena.commit_count, " commits, in a reservation of ", reservation, " pages, and gave ", pushes, " pushes of one page; the budget held ", before.pages, " pages before, and ", held.pages, " after the refusal")
 
 	// A second refused push: the process still runs, and nothing changed.
 	_, again := system.arena_push(&arena, system.PAGE_SIZE, system.PAGE_SIZE)
@@ -97,17 +97,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	switch {
 	case !refusal_is_of_the_budget:
-		system.log("arena: WRONG: the growth stopped with ", refused, " and the error kind ", record.kind, ", not with No_Budget")
+		system.log(.Info, "arena: WRONG: the growth stopped with ", refused, " and the error kind ", record.kind, ", not with No_Budget")
 	case pushes == 0 || nonzero != 0:
-		system.log("arena: WRONG: ", pushes, " pushes, and ", nonzero, " pages that did not read zero before their first write")
+		system.log(.Info, "arena: WRONG: ", pushes, " pushes, and ", nonzero, " pages that did not read zero before their first write")
 	case held.pages != 0 || !unchanged:
-		system.log("arena: WRONG: after the refusal the budget held ", held.pages, " pages, and a second push gave ", again, " or changed the arena")
+		system.log(.Info, "arena: WRONG: after the refusal the budget held ", held.pages, " pages, and a second push gave ", again, " or changed the arena")
 	case !reused:
-		system.log("arena: WRONG: after a reset the same pushes did not take the same pages with no commit")
+		system.log(.Info, "arena: WRONG: after a reset the same pushes did not take the same pages with no commit")
 	case ended != .Ok || after.pages != before.pages:
-		system.log("arena: WRONG: the end gave ", ended, ", and the budget holds ", after.pages, " pages of ", before.pages)
+		system.log(.Info, "arena: WRONG: the end gave ", ended, ", and the budget holds ", after.pages, " pages of ", before.pages)
 	case:
-		system.log("arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must")
+		system.log(.Info, "arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must")
 	}
 	system.stop(0)
 }

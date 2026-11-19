@@ -122,7 +122,7 @@ show :: proc "contextless" (place: int) {
 	bytes, status := storage.version(&client, storage.ROOT, "note", history[place].generation, shown_text[:])
 	shown_count = status == .Ok ? len(bytes) : 0
 	date_text: [24]u8
-	system.log("notes: the version ", u64(place + 1), " of ", u64(history_count()), ", generation ", history[place].generation, history[place].date != 0 ? ", " : "", history[place].date != 0 ? calendar.iso_text(date_text[:], history[place].date) : "", ": \"", string(shown_text[:shown_count]), "\"")
+	system.log(.Info, "notes: the version ", u64(place + 1), " of ", u64(history_count()), ", generation ", history[place].generation, history[place].date != 0 ? ", " : "", history[place].date != 0 ? calendar.iso_text(date_text[:], history[place].date) : "", ": \"", string(shown_text[:shown_count]), "\"")
 }
 
 // keep writes one object. It gives false when the store is gone or refuses.
@@ -140,7 +140,7 @@ keep :: proc "contextless" (name: string, data: []u8) -> bool {
 			buffer: [256]u8
 			writer := system.Writer{buffer = buffer[:]}
 			storage.error_text(&writer, &client, &error)
-			system.log("notes: the storage service refused the object ", name, ": ", system.written(&writer))
+			system.log(.Info, "notes: the storage service refused the object ", name, ": ", system.written(&writer))
 		}
 		return false
 	}
@@ -165,7 +165,7 @@ restore :: proc "contextless" () {
 	note_damaged := status == .Damaged
 	if status != .Ok && !note_damaged {
 		restored, gone = "no store: the process keeps nothing", true
-		system.log("notes: no store")
+		system.log(.Info, "notes: no store")
 		return
 	}
 	if found {
@@ -174,7 +174,7 @@ restore :: proc "contextless" () {
 	bytes, has_count, count_status := storage.read(&client, storage.ROOT, "count", ([^]u8)(&words)[:size_of(words)])
 	if !found && !has_count && !note_damaged && count_status == .Ok {
 		restored, restored_good = "a new store: no note, the count 0", true
-		system.log("notes: a new store: no note, the count 0")
+		system.log(.Info, "notes: a new store: no note, the count 0")
 		return
 	}
 	agree := has_count && len(bytes) == size_of(words)
@@ -190,16 +190,16 @@ restore :: proc "contextless" () {
 	switch {
 	case count_status == .Damaged:
 		restored = "WRONG: the count is damaged on the disk: tab writes a new count"
-		system.log("notes: WRONG: the storage service cannot give the count: the object is damaged")
+		system.log(.Info, "notes: WRONG: the storage service cannot give the count: the object is damaged")
 	case !agree:
 		restored = "WRONG: the 3 blocks of the count do not agree"
-		system.log("notes: WRONG: the 3 blocks of the count do not agree")
+		system.log(.Info, "notes: WRONG: the 3 blocks of the count do not agree")
 	case note_damaged:
 		restored = "WRONG: the note is damaged on the disk: a key writes a new note"
-		system.log("notes: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", count, ", its 3 blocks agree")
+		system.log(.Info, "notes: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", count, ", its 3 blocks agree")
 	case:
 		restored = "restored at the start: the note and the count, 3 blocks agree"
-		system.log("notes: restored the note \"", string(note[:note_count]), "\" and the count ", count, ", its 3 blocks agree", count % RUN_STEPS != 0 ? ", the last run stopped before its end" : "")
+		system.log(.Info, "notes: restored the note \"", string(note[:note_count]), "\" and the count ", count, ", its 3 blocks agree", count % RUN_STEPS != 0 ? ", the last run stopped before its end" : "")
 	}
 }
 
@@ -289,7 +289,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if client, ok = storage.open(ctx); !ok {
 		restored, gone = "no store: the process keeps nothing", true
-		system.log("notes: no store")
+		system.log(.Info, "notes: no store")
 	} else {
 		restore()
 		history_read()
@@ -301,7 +301,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// knows from this line that the window shows the note.
 		if first_picture {
 			first_picture = false
-			system.log("notes: ok, the first picture is presented")
+			system.log(.Info, "notes: ok, the first picture is presented")
 		}
 		// A press on an item of the action bar runs its key, as the key
 		// does; the next turn draws what it changed.
@@ -369,7 +369,7 @@ key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Pre
 		if status == .Ok && commit > 0 {
 			generation = commit
 			note_count = copy(note[:], shown_text[:shown_count])
-			system.log("notes: restored the version of generation ", generation_shown, ": \"", string(note[:note_count]), "\", in the commit of generation ", commit, " in ", restore_time_last, " us; the note before it is a version")
+			system.log(.Info, "notes: restored the version of generation ", generation_shown, ": \"", string(note[:note_count]), "\", in the commit of generation ", commit, " in ", restore_time_last, " us; the note before it is a version")
 		}
 		shown = -1
 		history_read()
@@ -385,20 +385,20 @@ key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Pre
 				break
 			}
 			if step == RUN_STEPS {
-				system.log("notes: count ", count, ", stopped: ", u64(RUN_STEPS), " commits in ", system.time() - started, " ms")
+				system.log(.Info, "notes: count ", count, ", stopped: ", u64(RUN_STEPS), " commits in ", system.time() - started, " ms")
 				measure_started := system.nanoseconds()
 				_, total, status := storage.versions(&client, storage.ROOT, "count", count_versions[:])
 				if status == .Ok {
-					system.log("notes: the versions of the count: ", total, " rows in ", (system.nanoseconds() - measure_started) / 1000, " us")
+					system.log(.Info, "notes: the versions of the count: ", total, " rows in ", (system.nanoseconds() - measure_started) / 1000, " us")
 				}
 			} else if step % 100 == 0 {
-				system.log("notes: count ", count)
+				system.log(.Info, "notes: count ", count)
 				draw(window)
 			}
 		}
 	case '\n':
 		history_read()
-		system.log("notes: the note is \"", string(note[:note_count]), "\", generation ", generation, ", ", u64(max(history_total - 1, 0)), " versions; one commit of the note: ", commit_time_total / max(commit_count, 1), " us in the mean of ", commit_count)
+		system.log(.Info, "notes: the note is \"", string(note[:note_count]), "\", generation ", generation, ", ", u64(max(history_total - 1, 0)), " versions; one commit of the note: ", commit_time_total / max(commit_count, 1), " us in the mean of ", commit_count)
 	case 8:
 		// The note is UTF-8: Backspace removes its last whole
 		// character.

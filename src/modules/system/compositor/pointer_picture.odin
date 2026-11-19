@@ -86,16 +86,16 @@ pointer_theme_open :: proc "contextless" (ctx: ^system.Context) {
 		spent := system.nanoseconds() - start
 		if problem.kind != .None {
 			buffer: [256]u8
-			system.log_in("surfaces", .Warning, "compositor: the pointer theme file ", pointer_pictures.RESOURCE_PREFERENCE[index], " is not valid, not used: ", pointer_pictures.sentence(problem, buffer[:]))
+			system.log(.Warning, "compositor: the pointer theme file ", pointer_pictures.RESOURCE_PREFERENCE[index], " is not valid, not used: ", pointer_pictures.sentence(problem, buffer[:]))
 			continue
 		}
 		theme = file
 		head := pointer_pictures.header(file)
-		system.log_in("surfaces", .Info, "compositor: the pointer theme ", pointer_pictures.text_of(head.theme_name[:]), " (", pointer_pictures.text_of(head.license[:]), "): ", u64(head.shape_count), " shapes, ", u64(head.picture_count), " pictures, ", size, " bytes, validated in ", spent / 1000, " us")
+		system.log(.Info, "compositor: the pointer theme ", pointer_pictures.text_of(head.theme_name[:]), " (", pointer_pictures.text_of(head.license[:]), "): ", u64(head.shape_count), " shapes, ", u64(head.picture_count), " pictures, ", size, " bytes, validated in ", spent / 1000, " us")
 	}
 	pointer_theme_choose(.Of_The_Owner)
 	if pointer_theme == nil {
-		system.log_in("surfaces", .Warning, "compositor: no pointer theme: the arrow of squares")
+		system.log(.Warning, "compositor: no pointer theme: the arrow of squares")
 		pointer_update(0)
 		return
 	}
@@ -125,7 +125,7 @@ pointer_form_choose :: proc "contextless" (form: pointer_pictures.Pointer_Form) 
 	pointer_form = form
 	pointer_drawn_valid = false // The next update chooses its picture in the new form.
 	pointer_update(0)
-	system.log_in("surfaces", .Info, "compositor: the pointer form in use: ", pointer_form_name(form))
+	system.log(.Info, "compositor: the pointer form in use: ", pointer_form_name(form))
 }
 
 // pointer_theme_choose takes the theme of the setting: the first theme of
@@ -149,7 +149,7 @@ pointer_theme_choose :: proc "contextless" (setting: settings.Pointer_Theme) {
 	pointer_drawn_valid = false // The next update chooses its picture in the new theme.
 	pointer_update(0)
 	if chosen != nil {
-		system.log_in("surfaces", .Info, "compositor: the pointer theme in use: ", pointer_pictures.text_of(pointer_pictures.header(chosen).theme_name[:]))
+		system.log(.Info, "compositor: the pointer theme in use: ", pointer_pictures.text_of(pointer_pictures.header(chosen).theme_name[:]))
 	}
 }
 
@@ -258,11 +258,11 @@ pointer_wake :: proc "contextless" () -> u64 {
 pointer_shape_request :: proc "contextless" (client: ^Client, record: ring.Record) {
 	shape, shape_ok := enum_word.member_of_word(pointer_pictures.Pointer_Shape, record.values[0])
 	if !shape_ok {
-		system.log_in("surfaces", .Warning, "compositor: ", system.name_of(client.title[:]), " asks for the pointer shape ", record.values[0], ", which names no shape: it is refused")
+		system.log(.Warning, "compositor: ", system.name_of(client.title[:]), " asks for the pointer shape ", record.values[0], ", which names no shape: it is refused")
 		return
 	}
 	client.pointer_shape = shape
-	system.log_in("surfaces", .Info, "compositor: ", system.name_of(client.title[:]), " asks for the pointer shape ", pointer_pictures.SHAPE_NAMES[client.pointer_shape], " over its surface")
+	system.log(.Info, "compositor: ", system.name_of(client.title[:]), " asks for the pointer shape ", pointer_pictures.SHAPE_NAMES[client.pointer_shape], " over its surface")
 }
 
 // pointer_draw draws the pointer in one damage rectangle: the canvas is the
@@ -307,7 +307,7 @@ pointer_frame_end :: proc "contextless" () {
 	pointer_measure_longest = max(pointer_measure_longest, pointer_frame_time)
 	pointer_frame_time = 0
 	if pointer_measure_frames == POINTER_MEASURE_FRAMES {
-		system.log_in("surfaces", .Info, "compositor: the pointer picture in ", u64(POINTER_MEASURE_FRAMES), " frames: ", pointer_measure_time / POINTER_MEASURE_FRAMES, " ns for a frame in the mean, ", pointer_measure_longest, " ns the longest")
+		system.log(.Info, "compositor: the pointer picture in ", u64(POINTER_MEASURE_FRAMES), " frames: ", pointer_measure_time / POINTER_MEASURE_FRAMES, " ns for a frame in the mean, ", pointer_measure_longest, " ns the longest")
 	}
 }
 
@@ -335,5 +335,5 @@ pointer_blend_measure :: proc "contextless" () {
 			transparent += 1
 		}
 	}
-	system.log_in("surfaces", .Info, "compositor: the blend of the arrow of ", u64(picture.width), "x", u64(picture.height), " (", u64(transparent), " of ", u64(len(chosen.pixels)), " pixels transparent): ", blend, " ns; a copy of the same size: ", copied, " ns")
+	system.log(.Info, "compositor: the blend of the arrow of ", u64(picture.width), "x", u64(picture.height), " (", u64(transparent), " of ", u64(len(chosen.pixels)), " pixels transparent): ", blend, " ns; a copy of the same size: ", copied, " ns")
 }

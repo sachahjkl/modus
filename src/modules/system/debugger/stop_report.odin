@@ -143,7 +143,7 @@ stop_report :: proc "c" (process: ^string, result: ^[]Stop_Frame_Row, error: ^er
 		row.line = i64(place.line)
 		named += 1
 	}
-	system.log("debugger: the stop report of ", system.Module_Name{name}, ": ", u64(frame_count), " frames, ", u64(named), " named by the debug objects of their modules")
+	system.log(.Info, "debugger: the stop report of ", system.Module_Name{name}, ": ", u64(frame_count), " frames, ", u64(named), " named by the debug objects of their modules")
 	return i64(frame_count)
 }
 

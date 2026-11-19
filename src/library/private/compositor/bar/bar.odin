@@ -6,7 +6,6 @@
 package bar
 
 import process_page "modus:contract/disk_process_page"
-import "modus:contract/glyph_cache"
 import "modus:support/mark"
 import "modus:support/text_rendering"
 
@@ -33,35 +32,35 @@ COLUMN_LEAST :: 120 // The title of the menu fits.
 // place of each button and of each line of a menu comes from it, so a
 // press lands on the entry that the eye sees. The compositor measures it
 // once, and again when the font changes; it writes in its log which font
-// it is, and the modus tool measures the same layout from the same cache.
+// it is, and the modus tool measures the same layout from the same font
+// file.
 Layout :: struct {
 	label_width:         int, // LABEL.
 	windows_label_width: int, // WINDOWS_LABEL.
 	longest_name_width:  int, // The widest of the names and of LABEL.
 }
 
-// text_width_in gives the width of a text in pixels in the regular weight
-// of a glyph cache of the interface font at scale 1, rounded up: the
-// measure of src/library/support/interface (text_measured_width). nil: the font of the
-// cells.
-text_width_in :: proc "contextless" (cache: ^glyph_cache.Cache, text: string) -> int {
-	if cache != nil {
-		if spacing, ok := text_rendering.spacing_of(cache, 1); ok {
-			width, _ := text_rendering.text_width(&spacing, transmute([]u8)text)
-			return int((width + 63) / 64)
-		}
+// text_width_in gives the width of a text in pixels in a face at the text
+// size of scale 1, rounded up: the measure of src/library/support/interface
+// (text_measured_width), from the font file that the copy of the text
+// rendering of the caller opened. None, or a face that the caller has not
+// opened: the font of the cells.
+text_width_in :: proc "contextless" (face: text_rendering.Face, text: string) -> int {
+	if spacing, ok := text_rendering.spacing_of(face, text_rendering.TEXT_SIZE_OF_SCALE_ONE); ok {
+		width, _ := text_rendering.text_width(&spacing, transmute([]u8)text)
+		return int((width + 63) / 64)
 	}
 	return len(text) * CHARACTER_WIDTH
 }
 
-// layout_of measures the texts of the bar in a font: the regular cache of
-// the interface font, or nil for the font of the cells.
-layout_of :: proc "contextless" (cache: ^glyph_cache.Cache) -> (layout: Layout) {
-	layout.label_width = text_width_in(cache, LABEL)
-	layout.windows_label_width = text_width_in(cache, WINDOWS_LABEL)
+// layout_of measures the texts of the bar in a face: the regular weight of
+// the interface font, or None for the font of the cells.
+layout_of :: proc "contextless" (face: text_rendering.Face) -> (layout: Layout) {
+	layout.label_width = text_width_in(face, LABEL)
+	layout.windows_label_width = text_width_in(face, WINDOWS_LABEL)
 	layout.longest_name_width = layout.label_width
 	for name in names {
-		layout.longest_name_width = max(layout.longest_name_width, text_width_in(cache, name))
+		layout.longest_name_width = max(layout.longest_name_width, text_width_in(face, name))
 	}
 	return layout
 }

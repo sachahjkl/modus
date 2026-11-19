@@ -230,7 +230,7 @@ answered: u64 // Echo requests from the wire that this service answered.
 machine_problems: network.Problem_Table // The frames that no endpoint owns.
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log_in("network", .Error, "network: ", text)
+	system.log(.Error, "network: ", text)
 	system.stop(1)
 }
 
@@ -241,7 +241,7 @@ place_bytes :: proc "contextless" (place: int) -> []u8 {
 frame_command :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {}) {
 	if !ring.push(&frames.commands, ring.Record{kind = u32(command), tag = tag, values = values}) {
 		// The accounting of the places keeps room: this does not happen.
-		system.log_in("network", .Error, "network: the frame ring is full")
+		system.log(.Error, "network: the frame ring is full")
 	}
 	frames_changed = true
 }
@@ -1059,19 +1059,19 @@ controlled :: proc "contextless" (record: ring.Record) {
 			switch {
 			case grant.tcp && grant.listen:
 				endpoint.local_port = grant.port
-				system.log("network: an endpoint for ", system.name_of(name[:]), ": TCP, the listen port ", u64(grant.port), ", the remotes that send to it")
+				system.log(.Info, "network: an endpoint for ", system.name_of(name[:]), ": TCP, the listen port ", u64(grant.port), ", the remotes that send to it")
 			case grant.listen && grant.address != 0:
 				endpoint.local_port = grant.port
-				system.log("network: an endpoint for ", system.name_of(name[:]), ": UDP, the listen port ", u64(grant.port), ", the remotes of the address ", system.written(&writer), " only that send 1200 bytes to it")
+				system.log(.Info, "network: an endpoint for ", system.name_of(name[:]), ": UDP, the listen port ", u64(grant.port), ", the remotes of the address ", system.written(&writer), " only that send 1200 bytes to it")
 			case grant.listen:
 				endpoint.local_port = grant.port
-				system.log("network: an endpoint for ", system.name_of(name[:]), ": UDP, the listen port ", u64(grant.port), ", the remotes that send 1200 bytes to it")
+				system.log(.Info, "network: an endpoint for ", system.name_of(name[:]), ": UDP, the listen port ", u64(grant.port), ", the remotes that send 1200 bytes to it")
 			case grant.tcp:
 				endpoint.local_port = u16(TCP_PORT_FIRST + free * datagram.PORT_BLOCK)
 				endpoint.port_count = datagram.PORT_BLOCK
-				system.log("network: an endpoint for ", system.name_of(name[:]), ": TCP, the local ports ", u64(endpoint.local_port), " to ", u64(endpoint.local_port) + datagram.PORT_BLOCK - 1, ", the grant ", system.written(&writer), " port ", u64(grant.port))
+				system.log(.Info, "network: an endpoint for ", system.name_of(name[:]), ": TCP, the local ports ", u64(endpoint.local_port), " to ", u64(endpoint.local_port) + datagram.PORT_BLOCK - 1, ", the grant ", system.written(&writer), " port ", u64(grant.port))
 			case:
-				system.log("network: an endpoint for ", system.name_of(name[:]), ": the local port ", u64(endpoint.local_port), ", the grant ", system.written(&writer), " port ", u64(grant.port))
+				system.log(.Info, "network: an endpoint for ", system.name_of(name[:]), ": the local port ", u64(endpoint.local_port), ", the grant ", system.written(&writer), " port ", u64(grant.port))
 			}
 			values[0] = u64(endpoint.local_port)
 		}
@@ -1090,7 +1090,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 				}
 				item.admitted = {}
 				sends_waiting_refuse(&item, index)
-				system.log("network: the grant of the endpoint of ", system.name_of(item.name[:]), " changed: ", datagram.granted(item.grant) ? "a new remote" : "none")
+				system.log(.Info, "network: the grant of the endpoint of ", system.name_of(item.name[:]), " changed: ", datagram.granted(item.grant) ? "a new remote" : "none")
 				result = .Ok
 				values = {}
 			}
@@ -1128,7 +1128,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 				system.memory_unmap(raw_data(item.region))
 				system.close(item.region_memory)
 			}
-			system.log("network: the endpoint of ", system.name_of(item.name[:]), " ended: ", item.sent, " datagrams sent, ", item.received, " received")
+			system.log(.Info, "network: the endpoint of ", system.name_of(item.name[:]), " ended: ", item.sent, " datagrams sent, ", item.received, " received")
 			data_passes_log(&item)
 			item = {}
 			result = .Ok
@@ -1155,9 +1155,9 @@ data_passes_log :: proc "contextless" (endpoint: ^Endpoint) {
 	unit := endpoint.tcp ? " segments), " : " datagrams), "
 	arrived, left := endpoint.arrived_data, endpoint.left_data
 	arrived_text, left_text: [24]u8
-	system.log("network: a measure: the endpoint of ", name, ", ", protocol, ": the passes of this service over the data for each payload byte: ", hundredths(arrived_text[:], arrived), " on receive (", arrived.payload_bytes, " bytes in ", arrived.units, unit, hundredths(left_text[:], left), " on send (", left.payload_bytes, " bytes in ", left.units, unit, "the payload is the datagram or the segment with its header; the bytes of the data that this service read on send: ", left.data_bytes_read)
+	system.log(.Info, "network: a measure: the endpoint of ", name, ", ", protocol, ": the passes of this service over the data for each payload byte: ", hundredths(arrived_text[:], arrived), " on receive (", arrived.payload_bytes, " bytes in ", arrived.units, unit, hundredths(left_text[:], left), " on send (", left.payload_bytes, " bytes in ", left.units, unit, "the payload is the datagram or the segment with its header; the bytes of the data that this service read on send: ", left.data_bytes_read)
 	right := arrived.bytes_passed == arrived.payload_bytes && left.bytes_passed == left.units * SEND_HEADER_COPIED && left.data_bytes_read == 0
-	system.log("network: the endpoint of ", name, ", ", protocol, ": this service read each payload byte one time on receive, for the copy, and on send only the ", u64(SEND_HEADER_COPIED), " bytes of each header that it checks, and ", left.data_bytes_read, " bytes of the data; it computed no checksum", right ? ": as it must" : " (WRONG)")
+	system.log(.Info, "network: the endpoint of ", name, ", ", protocol, ": this service read each payload byte one time on receive, for the copy, and on send only the ", u64(SEND_HEADER_COPIED), " bytes of each header that it checks, and ", left.data_bytes_read, " bytes of the data; it computed no checksum", right ? ": as it must" : " (WRONG)")
 }
 
 // frame_service_stopped_fail writes the line of a frame service that
@@ -1186,7 +1186,7 @@ call :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {
 		case .Stopped:
 			frame_service_stopped_fail()
 		case .Silent:
-			system.log_in("network", .Error, "network: the frame service did not answer the command ", frame.command_name(i64(command)), " in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms: this service stops")
+			system.log(.Error, "network: the frame service did not answer the command ", frame.command_name(i64(command)), " in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms: this service stops")
 			system.stop(1)
 		}
 		system.wait_records(&wait, &frames.completions)
@@ -1295,7 +1295,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	network.address_write(&writer, LOCAL_ADDRESS)
 	system.write_bytes(&writer, {'/', '2', '4', ' '})
 	network.hardware_write(&writer, hardware)
-	system.log("network: ok, the address ", system.written(&writer), ", the gateway 10.0.2.2, the link is ", link_up ? "up" : "down", ", ", u64(min(RECEIVE_PLACES, int(info.values[3]))), " places for frames that arrive")
+	system.log(.Info, "network: ok, the address ", system.written(&writer), ", the gateway 10.0.2.2, the link is ", link_up ? "up" : "down", ", ", u64(min(RECEIVE_PLACES, int(info.values[3]))), " places for frames that arrive")
 	// The cost of what this process writes for each datagram or segment that leaves:
 	// the headers of IPv4 and Ethernet, with the checksum of the IPv4
 	// header. No byte of the payload is read: its checksum is the work of
@@ -1310,7 +1310,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		took := system.time() - start
 		send_place_free(place)
-		system.log("network: the headers of IPv4 and Ethernet of a frame with a payload of ", u64(PAYLOAD), " bytes: ", took * 1_000_000 / ROUNDS, " ns, in this process (no checksum of the payload)")
+		system.log(.Info, "network: the headers of IPv4 and Ethernet of a frame with a payload of ", u64(PAYLOAD), " bytes: ", took * 1_000_000 / ROUNDS, " ns, in this process (no checksum of the payload)")
 	}
 
 	for {
@@ -1349,7 +1349,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// No_Region.
 				if frame.Status(record.kind) != .Ok {
 					endpoint := &endpoints[tag - TAG_READ_REGION_ADD]
-					system.log_in("network", .Error, "network: the frame service refused the datagram region of ", system.name_of(endpoint.name[:]), " as a read region: status ", u64(record.kind))
+					system.log(.Error, "network: the frame service refused the datagram region of ", system.name_of(endpoint.name[:]), " as a read region: status ", u64(record.kind))
 				}
 			case tag >= TAG_READ_REGION_REMOVE && tag < TAG_READ_REGION_REMOVE + ENDPOINT_CAPACITY:
 			case tag == TAG_STATISTICS:

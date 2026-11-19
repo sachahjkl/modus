@@ -95,7 +95,7 @@ image_of_today := [?]Test_File {
 	{"tables", 163840, .Entry},
 	{"interface_module", 57344, .No_Entry},
 	{"interface_through_module", 49152, .Entry},
-	{"text_shaping", 12288, .No_Entry},
+	{"text_rendering", 12288, .No_Entry},
 	{"vector_glyphs", 221184, .Entry},
 	{"interface_font", 86016, .Entry},
 	{"pointers", 96136, .Entry},
@@ -103,11 +103,7 @@ image_of_today := [?]Test_File {
 	{"date", 45056, .Entry},
 	{"pointers_posy", 883008, .Resource},
 	{"pointers_system", 208512, .Resource},
-	{"glyph_cache", 378368, .Resource},
-	{"glyph_cache_no_grid_fit", 383104, .Resource},
-	{"glyph_cache_bold", 29600, .Resource},
-	{"interface_glyph_cache", 424784, .Resource},
-	{"interface_glyph_cache_bold", 108324, .Resource},
+	{"font_outlines", 194912, .Resource},
 	{"system_description", 6816, .Resource},
 	{"system_description_signature", 64, .Resource},
 }
@@ -297,7 +293,7 @@ the_image_of_today_names_twelve_files :: proc(t: ^testing.T) {
 	testing.expectf(t, layout.tile_count >= 12, "%d names", layout.tile_count)
 	testing.expect_value(t, layout.kinds[.Entry].count, 67)
 	testing.expect_value(t, layout.kinds[.No_Entry].count, 10)
-	testing.expect_value(t, layout.kinds[.Resource].count, 9)
+	testing.expect_value(t, layout.kinds[.Resource].count, 5)
 	// The largest module with an entry, module with no entry and resource each have a tile.
 	for name in ([?]string{"console", "cryptography", "pointers_posy"}) {
 		found := false

@@ -158,7 +158,7 @@ colors_write :: proc "contextless" (kept: int) {
 // completion_measure_log writes one line of the measure on the log, in
 // microseconds with one decimal: the machine tests read the measure there.
 completion_measure_log :: proc "contextless" (what: string, least: Key_Time, name_count: int) {
-	system.log("console: one key with the completion list: the collect ", least.collect / 1000, ".", least.collect / 100 % 10, " us, the rank ", least.rank / 1000, ".", least.rank / 100 % 10, " us, the rows ", least.rows / 1000, ".", least.rows / 100 % 10, " us, the colors ", least.colors / 1000, ".", least.colors / 100 % 10, " us, over ", u64(name_count), " names (", what, ", the least of ", u64(COMPLETION_MEASURE_BATCHES), " batches of ", u64(COMPLETION_MEASURE_KEYS), ")")
+	system.log(.Info, "console: one key with the completion list: the collect ", least.collect / 1000, ".", least.collect / 100 % 10, " us, the rank ", least.rank / 1000, ".", least.rank / 100 % 10, " us, the rows ", least.rows / 1000, ".", least.rows / 100 % 10, " us, the colors ", least.colors / 1000, ".", least.colors / 100 % 10, " us, over ", u64(name_count), " names (", what, ", the least of ", u64(COMPLETION_MEASURE_BATCHES), " batches of ", u64(COMPLETION_MEASURE_KEYS), ")")
 }
 
 // completion_measure_row adds the measure as one row of the result, in

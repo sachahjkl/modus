@@ -44,8 +44,11 @@ import "modus:support/system"
 import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module, its threads and its window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1112, processes = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
+// by its name, once the tool counts its module, its threads and its
+// window: 1112 pages. And the glyph memory of the copy of the text
+// rendering of the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 1112 + 354 = 1466.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1466, processes = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
 
 PICTURE_WIDTH :: 448
 PICTURE_HEIGHT :: 320
@@ -148,7 +151,7 @@ run_together :: proc "contextless" () {
 		status: system.Status
 		thread, status = system.thread_start(spin, nil)
 		if status != .Ok {
-			system.log("processors: cannot start a thread")
+			system.log(.Info, "processors: cannot start a thread")
 			system.stop(1)
 		}
 	}
@@ -251,16 +254,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
 	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
-		system.log("processors: no grant to inspect the machine")
+		system.log(.Info, "processors: no grant to inspect the machine")
 		system.stop(1)
 	}
 	processor_count = report.processors
 
 	run_together()
 	if together == min(processor_count, WORKER_COUNT + 1) {
-		system.log("processors: ok, ", together, " processors ran the process at the same time")
+		system.log(.Info, "processors: ok, ", together, " processors ran the process at the same time")
 	} else {
-		system.log("processors: at most ", together, " of ", processor_count, " processors ran the process at the same time")
+		system.log(.Info, "processors: at most ", together, " of ", processor_count, " processors ran the process at the same time")
 	}
 
 	job.next = PICTURE_HEIGHT
@@ -268,7 +271,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for &worker, index in workers {
 		worker.number = index
 		if _, status := system.thread_start(compute, &worker); status != .Ok {
-			system.log("processors: cannot start a thread")
+			system.log(.Info, "processors: cannot start a thread")
 			system.stop(1)
 		}
 	}
@@ -289,7 +292,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			if phase == len(thread_counts) - 1 && !logged {
 				logged = true
-				system.log("processors: the picture took ", times[0], " ms with 1 thread, ", times[1], " ms with 2 threads, ", times[2], " ms with 4 threads")
+				system.log(.Info, "processors: the picture took ", times[0], " ms with 1 thread, ", times[1], " ms with 2 threads, ", times[2], " ms with 4 threads")
 			}
 		}
 		// The pause between two pictures is for a reader. The first three
