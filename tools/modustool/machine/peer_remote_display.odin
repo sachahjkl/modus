@@ -505,6 +505,10 @@ peer_display_begin :: proc(state: ^Peer_Remote_Display, private_key: [32]u8, hol
 	}
 	sync.mutex_lock(&state.lock)
 	state.wanted = true
+	// The thread of the peer clears the session when it starts the new
+	// connection, later: until then a wait for frames must not count the
+	// frames of the session before, or it ends before the new one exists.
+	state.frames_taken = 0
 	state.hold_frames = hold
 	state.start_bytes_length = copy(state.start_bytes[:], start_bytes)
 	sync.mutex_unlock(&state.lock)
@@ -624,7 +628,7 @@ peer_display_compare_run :: proc(machine: ^Machine, state: ^Peer_Remote_Display,
 			return false, fmt.tprintf("the session ended: %s", peer_display_end_text(state))
 		}
 		if frames <= after_frames {
-			time.sleep(10 * CONDITION_POLL_PERIOD)
+			time.sleep(CONDITION_POLL_PERIOD)
 			continue
 		}
 		if pointer.right - pointer.left > PEER_DISPLAY_POINTER_LIMIT || pointer.bottom - pointer.top > PEER_DISPLAY_POINTER_LIMIT {
@@ -644,7 +648,7 @@ peer_display_compare_run :: proc(machine: ^Machine, state: ^Peer_Remote_Display,
 		if different == 0 {
 			return true, fmt.tprintf("the screen that the viewer rebuilt from %d viewer frames is the picture of QEMU, %d pixels outside the pointer at (%d, %d), after %d tries", frames, compared, pointer.x, pointer.y, attempts)
 		}
-		time.sleep(10 * CONDITION_POLL_PERIOD)
+		time.sleep(CONDITION_POLL_PERIOD)
 	}
 	return false, fmt.tprintf("in %d tries, the screen of the viewer was never the picture of QEMU of the same moment", attempts)
 }
@@ -783,7 +787,7 @@ remote_display_case_run :: proc(machine: ^Machine, name: string) -> (passed: boo
 			if place.x == x && place.y == y {
 				return peer_display_compare_run(machine, state, frames)
 			}
-			time.sleep(10 * CONDITION_POLL_PERIOD)
+			time.sleep(CONDITION_POLL_PERIOD)
 		}
 		return false, "no viewer frame named the place of the pointer over the clock"
 	case "small frames":
@@ -796,7 +800,7 @@ remote_display_case_run :: proc(machine: ^Machine, name: string) -> (passed: boo
 			if count == PEER_DISPLAY_SMALL_FRAMES {
 				break
 			}
-			time.sleep(10 * CONDITION_POLL_PERIOD)
+			time.sleep(CONDITION_POLL_PERIOD)
 		}
 		sync.mutex_lock(&state.lock)
 		count := state.small_count
