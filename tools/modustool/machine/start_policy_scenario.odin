@@ -63,7 +63,7 @@ scenario_start_policy_key := [?]Step {
 
 @(rodata)
 scenario_start_policy_missing_console := [?]Step {
-	{kind = .Wait, text = "start_policy: the start list has 6 rows: each starts in its order"},
+	{kind = .Wait, text = "start_policy: the start list has 5 rows: each starts in its order"},
 	// shortage is not in this image: the root service refuses it before its
 	// procedure, which would stop the machine, and the machine runs on.
 	{kind = .Wait, text = "start_policy: cannot start shortage: status ", fails_on = "kernel: the machine stops with code"},
