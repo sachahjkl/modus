@@ -516,21 +516,38 @@ a_release_refuses_the_modules_of_a_test_image :: proc(t: ^testing.T) {
 	testing.expect_value(t, build.release_test_module_problem(build.boot_image_encode(files, len(files)), "an image"), "")
 }
 
-// The two modules of the operation sequences, and shortage, are in no
-// image but their own: the boot image of the build, and so a release, does
-// not hold them.
+// The two modules of the operation sequences, shortage, and the two
+// modules of the restarts of the rescue list are in no image but their
+// own: the boot image of the build, and so a release, does not hold them.
 @(test)
 the_modules_of_the_operation_sequences_are_in_their_image_only :: proc(t: ^testing.T) {
+	Only_In_Image :: struct {
+		name:  string,
+		image: string,
+	}
+	expected := [?]Only_In_Image {
+		{foundation.OPERATION_FUZZING_MODULE, foundation.BOOT_IMAGE_OPERATION_SEQUENCES},
+		{foundation.OPERATION_SEQUENCE_RUNNER_MODULE, foundation.BOOT_IMAGE_OPERATION_SEQUENCES},
+		{"shortage", foundation.BOOT_IMAGE_SHORTAGE},
+		{"stops_refused", foundation.BOOT_IMAGE_MISSING_CONSOLE},
+		{"stops_failed", foundation.BOOT_IMAGE_MISSING_CONSOLE},
+	}
 	found := 0
 	for build in foundation.module_builds {
 		if build.only_in_image == "" {
 			continue
 		}
 		found += 1
-		testing.expectf(t, build.name == foundation.OPERATION_FUZZING_MODULE || build.name == foundation.OPERATION_SEQUENCE_RUNNER_MODULE || build.name == "shortage", "%s is in one image only", build.name)
-		testing.expect_value(t, build.only_in_image, build.name == "shortage" ? foundation.BOOT_IMAGE_SHORTAGE : foundation.BOOT_IMAGE_OPERATION_SEQUENCES)
+		image, named := "", false
+		for row in expected {
+			if row.name == build.name {
+				image, named = row.image, true
+			}
+		}
+		testing.expectf(t, named, "%s is in one image only", build.name)
+		testing.expect_value(t, build.only_in_image, image)
 		testing.expect(t, !foundation.module_in_boot_image(build), "a module of one image is in the boot image")
 		testing.expect(t, foundation.module_in_a_boot_image(build), "a module of one image is in no image")
 	}
-	testing.expect_value(t, found, 3)
+	testing.expect_value(t, found, len(expected))
 }
