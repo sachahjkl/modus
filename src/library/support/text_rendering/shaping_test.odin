@@ -163,7 +163,7 @@ a_fallback_glyph_has_the_advance_of_its_font :: proc(t: ^testing.T) {
 	defer delete(words)
 	state = {}
 	memory_reset_for_test()
-	_ = open(&outlines, 0)
+	_ = open(&outlines)
 
 	spacing, memory := test_spacing(t)
 	defer delete(memory)

@@ -1,9 +1,7 @@
 #+build !freestanding
 package graphics
 
-import "modus:contract/demand_cache"
 import "modus:contract/glyph_cache"
-import "core:mem"
 import "core:sync"
 import "core:testing"
 import "modus:support/text_rendering"
@@ -31,10 +29,10 @@ b612_cache_of :: proc(t: ^testing.T) -> (cache: glyph_cache.Cache, memory: []u64
 }
 
 // A text whose glyphs are fallback glyphs draws the pixels of the same text
-// from the glyph cache, at each third of a pixel, from the demand cache and
-// from the private glyph cache alike: both draw with the renderer of the
-// build. A fallback glyph that no font of the chain has draws the
-// replacement glyph; so does each glyph with no outlines open.
+// from the glyph cache, at each third of a pixel, from the private glyph
+// cache: both draw with the renderer of the build. A fallback glyph that no
+// font of the chain has draws the replacement glyph; so does each glyph
+// with no outlines open.
 @(test)
 a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
@@ -42,27 +40,7 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	defer text_rendering.state = {}
 	cache, memory := b612_cache_of(t)
 	defer delete(memory)
-	render := new(vector_font.Render_Memory)
-	defer free(render)
-	demand_font, problem := vector_font.demand_font_open(#load("../../../../resources/fonts/b612.ttf"), .Interface, render)
-	testing.expect_value(t, problem, vector_font.Font_Problem.None)
-	bytes, allocation := mem.alloc_bytes(demand_cache.SIZE, demand_cache.PAGE_SIZE)
-	testing.expect(t, allocation == nil)
-	defer mem.free_bytes(bytes)
-	base := uintptr(raw_data(bytes))
-	faces: [demand_cache.Face]demand_cache.Face_Header
-	faces[.Interface] = {font_hash = cache.header.font_hash, flags = demand_font.flags}
-	writer := demand_cache.writer_open(base, vector_font.RENDERER_VERSION, faces)
 	TEXT :: "Rag To é"
-	for character in TEXT {
-		place, search := demand_cache.place_find(&writer, .Interface, character)
-		if search != .Free {
-			continue
-		}
-		entry, result := vector_font.demand_glyph_draw(&demand_font, &writer, character, render)
-		testing.expect_value(t, result, vector_font.Demand_Result.Drawn)
-		demand_cache.publish(&writer, place, .Interface, character, entry)
-	}
 	square_root: [4096]u8
 	square_root_table_fill(&square_root)
 	tables := new(Blend_Tables)
@@ -95,7 +73,7 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	testing.expect(t, built_pixels == fallback_pixels)
 	// A character that no font has, Ж, as a fallback glyph: the
 	// replacement glyph.
-	words := fallback_open_for_test(t, base)
+	words := fallback_open_for_test(t)
 	defer delete(words)
 	no_font := [1]text_rendering.Placed_Glyph{{glyph = text_rendering.FALLBACK_GLYPH_FIRST + 0x0416}}
 	no_glyph := [1]text_rendering.Placed_Glyph{{glyph = text_rendering.REPLACEMENT_GLYPH}}
@@ -104,33 +82,16 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 0, 0, no_glyph[:], 1, DARK_TEXT)
 	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, no_font[:], 1, DARK_TEXT)
 	testing.expect(t, built_pixels == fallback_pixels)
-	// The demand cache, then the private glyph cache: the pixels of the
-	// glyph cache.
-	Layer :: enum {
-		Demand_Cache,
-		Private_Cache,
-	}
-	for layer in Layer {
-		switch layer {
-		case .Demand_Cache:
-			text_rendering.frame_begin()
-		case .Private_Cache:
-			delete(words)
-			words = fallback_open_for_test(t, 0)
-		}
-		expected := text_rendering.Glyph_Source.Private_Cache
-		if layer == .Demand_Cache {
-			expected = .Demand_Cache
-		}
-		_, _, source := text_rendering.glyph(.Interface, 'R', text_rendering.size_of_scale(1), 0)
-		testing.expectf(t, source == expected, "%v: R comes from %v", layer, source)
-		for fraction in ([3]i64{0, 21, 43}) {
-			clear(built, DARK_CARD_BOTTOM)
-			clear(drawn, DARK_CARD_BOTTOM)
-			text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 2 * glyph_cache.SUBPIXEL + fraction, 0, placed[:count], 1, DARK_TEXT)
-			text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 2 * glyph_cache.SUBPIXEL + fraction, 0, fallback[:count], 1, DARK_TEXT)
-			testing.expectf(t, built_pixels == fallback_pixels, "%v, the place %v/64: the pixels of the glyph cache", layer, fraction)
-		}
+	// The private glyph cache: the pixels of the glyph cache.
+	text_rendering.frame_begin()
+	_, _, source := text_rendering.glyph(.Interface, 'R', text_rendering.size_of_scale(1), 0)
+	testing.expectf(t, source == .Private_Cache, "R comes from %v", source)
+	for fraction in ([3]i64{0, 21, 43}) {
+		clear(built, DARK_CARD_BOTTOM)
+		clear(drawn, DARK_CARD_BOTTOM)
+		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 2 * glyph_cache.SUBPIXEL + fraction, 0, placed[:count], 1, DARK_TEXT)
+		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 2 * glyph_cache.SUBPIXEL + fraction, 0, fallback[:count], 1, DARK_TEXT)
+		testing.expectf(t, built_pixels == fallback_pixels, "the place %v/64: the pixels of the glyph cache", fraction)
 	}
 }
 

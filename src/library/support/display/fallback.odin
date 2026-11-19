@@ -1,7 +1,5 @@
 package display
 
-import "modus:contract/demand_cache"
-import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
 import op "modus:contract/operation"
 import "modus:support/graphics"
@@ -9,18 +7,19 @@ import "modus:support/system"
 import "modus:support/text_rendering"
 
 // The glyphs past the glyph caches (src/md/features/glyphs_on_demand.md):
-// the side of a process. The starter maps the font outlines and the demand
-// cache read-only beside the glyph caches; text_settings_load opens them,
-// and then each spacing and each draw of the process finds the fallback
-// face of its glyph cache with no other call. A frame starts with
+// the side of a process. The starter maps the font outlines read-only
+// beside the glyph caches; text_settings_load opens them, and then each
+// spacing and each draw of the process finds the fallback face of its
+// glyph cache with no other call. The process draws each such glyph
+// itself, into its private glyph cache. A frame starts with
 // text_frame_begin: interface.window_frame_begin and the drawing module
 // call it, and a process that draws text by hand calls it at its frame.
 
-// fallback_load opens the font outlines and the demand cache that the
-// starter mapped. The problem is Not_Mapped when the starter gave no
-// outlines: each character past the glyph caches then draws the
-// replacement glyph. missing names the fonts of the chains that the
-// outlines lack or that the renderer refuses.
+// fallback_load opens the font outlines that the starter mapped. The
+// problem is Not_Mapped when the starter gave no outlines: each character
+// past the glyph caches then draws the replacement glyph. missing names
+// the fonts of the chains that the outlines lack or that the renderer
+// refuses.
 @(private)
 fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_outlines.Problem, missing: text_rendering.Outline_Fonts) {
 	outlines: font_outlines.Outlines
@@ -28,16 +27,28 @@ fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_out
 	if problem.kind != .None {
 		return problem, {}
 	}
-	demand_base: uintptr
-	if .Demand_Cache in fixed_addresses.ranges_mapped(&ctx.values) {
-		demand_base = uintptr(demand_cache.ADDRESS)
+	return {}, text_rendering.open(&outlines)
+}
+
+// script_coverage_tell writes, for each script of the fallback chains, how
+// many of its characters the chain of the interface and the chain of the
+// cells draw, and says when no font of the system has the others. One
+// process writes it once, after text_settings_open: the compositor, which
+// starts once at each boot. The lines start with the name of the caller.
+script_coverage_tell :: proc "contextless" (caller: string) {
+	for script in text_rendering.Script {
+		interface_drawn, total := text_rendering.coverage(.Interface, script)
+		cells_drawn, _ := text_rendering.coverage(.Cells, script)
+		if interface_drawn == total && cells_drawn == total {
+			system.log_in("processes", .Info, caller, ": the script ", text_rendering.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn))
+		} else {
+			system.log_in("processes", .Info, caller, ": the script ", text_rendering.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn), "; no font of the system has the others")
+		}
 	}
-	return {}, text_rendering.open(&outlines, demand_base)
 }
 
 // text_frame_begin starts a frame of the text of the process: the order of
-// use of its private glyph cache counts in frames, and the demand cache
-// gives one generation to the draws of the frame. It writes no line: the
+// use of its private glyph cache counts in frames. It writes no line: the
 // drawing module calls it, and a library module holds no table of the
 // addresses of texts, which the parts of a line of the log are
 // (src/md/api/library_modules.md).
@@ -54,6 +65,11 @@ text_frame_begin :: proc "contextless" () {
 
 // The pages of the glyph memory of one copy of text_rendering.
 TEXT_MEMORY_PAGES :: (size_of(text_rendering.Glyph_Memory) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+// The budgets of the terminal, the compositor and interface_font state two
+// glyph memories as integer literals, which the tool reads: a change of
+// the glyph memory fails here, so that their sums change with it.
+GLYPH_MEMORY_PAGES_IN_THE_BUDGETS :: 354
+#assert(TEXT_MEMORY_PAGES == GLYPH_MEMORY_PAGES_IN_THE_BUDGETS)
 
 // The reservation of the glyph memory of this copy: one try only, so a
 // budget that cannot pay costs one kernel call, not one at each frame.

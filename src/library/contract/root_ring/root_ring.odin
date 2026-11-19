@@ -44,7 +44,7 @@ Root_Command :: enum u32 {
 	//
 	// From the start policy (the start grant Start_Policy): a part of the
 	// system that the root service starts in its own way (input,
-	// compositor, glyphs) is allowed, a name that runs already is refused
+	// compositor) is allowed, a name that runs already is refused
 	// with `Exists` (unit `Processes`), and values[0] of the completion is a
 	// handle of the process with the right Read, whose stop ends a wait of
 	// the start policy.

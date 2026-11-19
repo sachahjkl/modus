@@ -170,7 +170,7 @@ The group of each module is decided; step 4 builds it:
 
 | Group | Count | Modules |
 |---|---|---|
-| `system` | 26 | `block`, `boot`, `compositor`, `console`, `date`, `debugger`, `debugger_window`, `entropy`, `frame`, `glyphs`, `host`, `input`, `inspect`, `log`, `manual`, `module_files`, `monitor`, `network`, `pages`, `remote`, `root`, `settings`, `storage`, `terminal`, `tpm`, `unlock` |
+| `system` | 25 | `block`, `boot`, `compositor`, `console`, `date`, `debugger`, `debugger_window`, `entropy`, `frame`, `host`, `input`, `inspect`, `log`, `manual`, `module_files`, `monitor`, `network`, `pages`, `remote`, `root`, `settings`, `storage`, `terminal`, `tpm`, `unlock` |
 | `libraries` | 6 | `calendar`, `cryptography`, `drawing`, `interface_module`, `math`, `text_shaping` |
 | `demonstrations` | 50 | `address_space`, `agenda`, `budget`, `clock`, `counters`, `crowd`, `cryptography_vectors`, `debugged`, `disk`, `errors`, `extended_state`, `fault`, `fault_ring`, `fetch`, `flow`, `frames`, `guest_demo`, `hall_of_fame`, `heron`, `imports`, `interface_elements`, `interface_font`, `interface_through_module`, `kernel_events`, `life`, `limits`, `locker`, `locks`, `net`, `node`, `notes`, `origin`, `paint`, `plasma`, `pointers`, `processors`, `quic_echo`, `randomness`, `return_fault`, `rights`, `rings`, `sample`, `scheduler`, `server`, `tables`, `tally`, `threads`, `twin`, `vector_glyphs`, `workers` |
 | `tests` | 20 | `arena`, `calendar_changed`, `calendar_fixed`, `debug_target`, `flood`, `hierarchy`, `hostile_exports`, `hostile_terminal`, `iommu`, `iommu_device`, `lonely`, `log_reader`, `probe`, `ranges`, `shortage`, `store_importer`, `store_library`, `test_callee`, `test_caller`, `visitor` |

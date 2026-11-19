@@ -467,8 +467,6 @@ start_policy_start :: proc "contextless" (sender: ^Started, name: string, values
 		status = input_start()
 	case "compositor":
 		status = compositor_start()
-	case FONT_SERVICE_NAME:
-		status = font_service_start()
 	case "shortage":
 		status = shortage_start()
 	case OPERATION_FUZZING_NAME:
