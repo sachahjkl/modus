@@ -232,7 +232,15 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 	started_place: ^Started
 	switch list {
 	case .None:
-		status := start(name, item.principal, item, nil, &started_place)
+		// A refusal that names its cause, of this start or of a start that
+		// it made first, has its record; another one has the record of the
+		// dispatch.
+		refusal: [7]u64
+		status := start(name, item.principal, item, nil, &started_place, &refusal)
+		if status != .Ok && refusal != ([7]u64{}) {
+			values^ = refusal
+			written^ = true
+		}
 		if status == .Ok && answer == .Process_Handle && started_place != nil {
 			values[0], _ = start_process_handle_give(item, started_place)
 		}
@@ -342,12 +350,6 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 		// A start of the start policy for a name that runs.
 		if status == .Bad_State && find_running(name) != nil {
 			return errors.ring_fail(kind, .Exists, .Processes, 1)
-		}
-		// The rings of the process do not fit the wait of the loop.
-		if file := system.image_find(image, name); status == .No_Slot && len(file) != 0 {
-			if record, refused := waited_queues_refusal(.Start, start_waited_queues(role_of(name).grants, file)); refused {
-				return record
-			}
 		}
 	case .Stop:
 		if status == .Bad_Handle && (name == "compositor" || name == "terminal") {

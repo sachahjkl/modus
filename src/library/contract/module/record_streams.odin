@@ -190,6 +190,15 @@ record_stream_places_valid :: proc "contextless" (file: []u8) -> bool {
 	if len(places) == 0 {
 		return true
 	}
+	// Two rows at one place: the loader would write the index of the
+	// second over the first, and one variable would name two streams. The
+	// places are aligned on their size, so two that meet are equal, and
+	// equal places are neighbours in the sorted run.
+	for index in 1 ..< len(places) {
+		if places[index - 1] == places[index] {
+			return false
+		}
+	}
 	for index in 1 ..< count(file, .Slots) {
 		slot, _ := record(file, .Slots, index, Slot)
 		if location_meets_a_place(places, slot.memory_offset) {

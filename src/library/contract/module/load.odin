@@ -22,7 +22,7 @@ Error :: enum u32 {
 	Bad_Import      = 10, // No check gives it today.
 	Bad_Export      = 11, // `entry_export` is not an index of the export table.
 	Bad_Own_Hash_Place = 12, // The own-hash place is not `HASH_SIZE` bytes inside one segment that the loader can write.
-	Bad_Record_Stream_Place = 13, // The place of a record output or a record input is not 0, nor `RECORD_STREAM_PLACE_SIZE` aligned bytes inside one segment that the loader can write and that is not `Read_Only_After_Load`; or it meets the own-hash place, a rebase location or an import slot.
+	Bad_Record_Stream_Place = 13, // The place of a record output or a record input is not 0, nor `RECORD_STREAM_PLACE_SIZE` aligned bytes inside one segment that the loader can write and that is not `Read_Only_After_Load`; or it meets the own-hash place, a rebase location, an import slot or the place of another row.
 	Too_Many_Record_Streams = 14, // The table `Record_Outputs` or `Record_Inputs` has more than `RECORD_STREAM_INDEX_MOST` rows after the entry 0.
 }
 

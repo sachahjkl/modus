@@ -25,7 +25,15 @@ Loader_Writes :: struct {
 	data_flags: Segment_Flags, // {}: Read and Write.
 	extra_rows: [2]int, // Rows added after the record outputs and after the record input, each with extra_place.
 	extra_place: u64,
+	// The added rows take distinct places in place of extra_place: from
+	// EXTRA_PLACES_FIRST, one place after the other, the outputs first.
+	extra_places_apart: bool,
 }
+
+// The first of the distinct places of the added rows, after the three
+// places of the file.
+@(private = "file")
+EXTRA_PLACES_FIRST :: u64(PAGE_SIZE + 256)
 
 @(private = "file")
 places_file :: proc(output_places: [2]u64, input_place: u64, writes: Loader_Writes = {}) -> []u8 {
@@ -45,13 +53,22 @@ places_file :: proc(output_places: [2]u64, input_place: u64, writes: Loader_Writ
 	segments := [3]Segment{{}, {memory_offset = 0, memory_size = PAGE_SIZE, flags = {.Read, .Execute}}, {memory_offset = PAGE_SIZE, memory_size = PAGE_SIZE, flags = data_flags}}
 	outputs := make([dynamic]Record_Output, context.temp_allocator)
 	append(&outputs, Record_Output{}, Record_Output{place = output_places[0]}, Record_Output{place = output_places[1]})
+	next_place := EXTRA_PLACES_FIRST
+	extra_place_of :: proc(writes: Loader_Writes, next_place: ^u64) -> u64 {
+		if !writes.extra_places_apart {
+			return writes.extra_place
+		}
+		place := next_place^
+		next_place^ += RECORD_STREAM_PLACE_SIZE
+		return place
+	}
 	for _ in 0 ..< writes.extra_rows[0] {
-		append(&outputs, Record_Output{place = writes.extra_place})
+		append(&outputs, Record_Output{place = extra_place_of(writes, &next_place)})
 	}
 	inputs := make([dynamic]Record_Input, context.temp_allocator)
 	append(&inputs, Record_Input{}, Record_Input{place = input_place})
 	for _ in 0 ..< writes.extra_rows[1] {
-		append(&inputs, Record_Input{place = writes.extra_place})
+		append(&inputs, Record_Input{place = extra_place_of(writes, &next_place)})
 	}
 	add(&file, &directory, .Segments, bytes_of(segments[:]), len(segments), size_of(Segment))
 	add(&file, &directory, .Record_Outputs, bytes_of(outputs[:]), u32(len(outputs)), size_of(Record_Output))
@@ -180,6 +197,35 @@ the_rows_of_a_record_stream_table_are_bounded_before_they_are_read :: proc(t: ^t
 		file := places_file(places, INPUT_PLACE, {extra_rows = extra})
 		testing.expectf(t, validate(file) == .None, "%v more rows are refused: %v", extra, validate(file))
 	}
+}
+
+// The tables at their bound, each row with its own place: a rebase on the
+// last place of the sorted run is refused, as one on the first; the same
+// file with no rebase is taken last.
+@(test)
+the_places_of_full_tables_are_each_checked :: proc(t: ^testing.T) {
+	places := [2]u64{FIRST_OUTPUT_PLACE, SECOND_OUTPUT_PLACE}
+	// Two outputs and one input of the file, then their rows to the bound.
+	extra := [2]int{RECORD_STREAM_INDEX_MOST - 2, RECORD_STREAM_INDEX_MOST - 1}
+	last := EXTRA_PLACES_FIRST + RECORD_STREAM_PLACE_SIZE * u64(extra[0] + extra[1] - 1)
+	for rebase in ([?]u64{last, FIRST_OUTPUT_PLACE}) {
+		rebases := [1]u64{rebase}
+		file := places_file(places, INPUT_PLACE, {extra_rows = extra, extra_places_apart = true, rebases = rebases[:]})
+		testing.expectf(t, validate(file) == .Bad_Record_Stream_Place, "a rebase on the place %x of full tables is taken", rebase)
+	}
+	file := places_file(places, INPUT_PLACE, {extra_rows = extra, extra_places_apart = true})
+	testing.expect_value(t, validate(file), Error.None)
+}
+
+// Two rows at one place are refused: two outputs, an output and an input,
+// and two added rows far in the sorted run. Rows of the place 0 share it
+// with no fault: the link dropped each variable.
+@(test)
+two_rows_at_one_place_are_refused :: proc(t: ^testing.T) {
+	testing.expect_value(t, validate(places_file({FIRST_OUTPUT_PLACE, FIRST_OUTPUT_PLACE}, INPUT_PLACE)), Error.Bad_Record_Stream_Place)
+	testing.expect_value(t, validate(places_file({FIRST_OUTPUT_PLACE, SECOND_OUTPUT_PLACE}, SECOND_OUTPUT_PLACE)), Error.Bad_Record_Stream_Place)
+	testing.expect_value(t, validate(places_file({FIRST_OUTPUT_PLACE, SECOND_OUTPUT_PLACE}, INPUT_PLACE, {extra_rows = {2, 0}, extra_place = EXTRA_PLACES_FIRST})), Error.Bad_Record_Stream_Place)
+	testing.expect_value(t, validate(places_file({0, 0}, 0, {extra_rows = {3, 3}})), Error.None)
 }
 
 // The places that validate takes, last: 0, which writes nothing, the first

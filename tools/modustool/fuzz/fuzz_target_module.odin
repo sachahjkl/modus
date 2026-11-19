@@ -458,9 +458,11 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	}
 	// The place of the variable of a row: 0, as the link dropped it, or an
 	// aligned word of the data segment, as the build writes it: the first
-	// free word from a chosen one. The data segment has 1024 words at
-	// least, and the other writes take 22 of them at most.
-	stream_place :: proc(choices: ^Fuzz_Choices, segments: []module.Segment, data_segment: int, taken: [][2]u64) -> u64 {
+	// free word from a chosen one. The place joins the taken runs, as
+	// validate refuses two rows at one place. The data segment has 1024
+	// words at least, and the other writes and the four rows take 26 of
+	// them at most.
+	stream_place :: proc(choices: ^Fuzz_Choices, segments: []module.Segment, data_segment: int, taken: ^[dynamic][2]u64) -> u64 {
 		if data_segment < 0 || fuzz_choice_flag(choices) {
 			return 0
 		}
@@ -470,13 +472,14 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 		for step in 0 ..< words {
 			place := data.memory_offset + module.RECORD_STREAM_PLACE_SIZE * u64((first + step) % words)
 			apart := true
-			for run in taken {
+			for run in taken^ {
 				if place < run[0] + run[1] && run[0] < place + module.RECORD_STREAM_PLACE_SIZE {
 					apart = false
 					break
 				}
 			}
 			if apart {
+				append(taken, [2]u64{place, module.RECORD_STREAM_PLACE_SIZE})
 				return place
 			}
 		}
@@ -490,7 +493,7 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	if input_count > 0 {
 		append(&stream_inputs, module.Record_Input{})
 		for index in 0 ..< input_count {
-			row := module.Record_Input{record = 1, place = stream_place(&choices, segments[:], data_segment, taken[:])}
+			row := module.Record_Input{record = 1, place = stream_place(&choices, segments[:], data_segment, &taken)}
 			row.name_offset, row.name_count = fuzz_module_stream_name_add(&strings_bytes, 'i', index)
 			row.about_offset, row.about_count = fuzz_module_name_add(&strings_bytes, &choices, 'h')
 			if fuzz_choice_flag(&choices) {
@@ -508,7 +511,7 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	if output_count > 0 {
 		append(&stream_outputs, module.Record_Output{})
 		for index in 0 ..< output_count {
-			row := module.Record_Output{record = 1, place = stream_place(&choices, segments[:], data_segment, taken[:])}
+			row := module.Record_Output{record = 1, place = stream_place(&choices, segments[:], data_segment, &taken)}
 			row.name_offset, row.name_count = fuzz_module_stream_name_add(&strings_bytes, 'o', index)
 			row.text_offset, row.text_count = fuzz_module_name_add(&strings_bytes, &choices, 'x')
 			if generic_input < input_count && fuzz_choice_flag(&choices) {

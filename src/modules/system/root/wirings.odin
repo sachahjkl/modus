@@ -86,10 +86,13 @@ Wiring_Kept :: struct {
 	writer_closed:   bool, // The writer said Closed: a later word is dropped.
 	reader_closed:   bool,
 	asked_counted:   bool, // The wiring is one of the count of its asker.
+	// nil once that side closed its end and then stopped: the place can
+	// hold another process, which the wiring must not name.
 	writer:          ^Started,
 	reader:          ^Started, // The asker, for a reader Asker.
 	dropped_told:    bool, // The line of a dropped word of this wiring is written: one line for each wiring.
-	padding:         [23]u8,
+	end_written:     bool, // The end page holds its one end word: no later word is written over it.
+	padding:         [22]u8,
 }
 #assert(size_of(Wiring_Kept) == 64)
 
@@ -937,9 +940,16 @@ wiring_end :: proc "contextless" (asker: ^Started, page: ^Wiring_Page, kept: ^Wi
 
 // end_words_put writes the end words of a wiring with one mapping of its
 // end page that ends at once, and wakes each side that waits on the end
-// word.
+// word. An end page gets one end word, ever (output.end_word_to_write): a
+// side that read Side_Closed never reads the stop words of a later end
+// beside it.
 @(private = "file")
-end_words_put :: proc "contextless" (kept: ^Wiring_Kept, end: output.End_Word, stop_cause: op.Stop_Cause = .None, stop_outcome: op.Stop_Outcome = .None) {
+end_words_put :: proc "contextless" (kept: ^Wiring_Kept, asked: output.End_Word, stop_cause: op.Stop_Cause = .None, stop_outcome: op.Stop_Outcome = .None) {
+	end := output.end_word_to_write(kept.end_written, asked)
+	if end == .None {
+		return
+	}
+	kept.end_written = true
 	address, status := system.memory_map(kept.end_memory)
 	if status != .Ok {
 		// The sides then learn the end from the close of the ring by the
@@ -959,18 +969,30 @@ end_words_put :: proc "contextless" (kept: ^Wiring_Kept, end: output.End_Word, s
 // recorded its stop. A process that this service lets go with no stop
 // (an abandoned start, a state that the kernel does not give as Stopped)
 // gives Revoked, with one line: a reader never reads a stop that did not
-// happen. Then it closes the wiring ring, the list page and the budget
-// handle of the process.
+// happen. A side that closed its end before its stop, while the other
+// side holds its end, leaves the wiring with no word (output.
+// stop_step_of): the other side read Side_Closed, which no later word
+// replaces, and the wiring ends at its Closed or its stop. Then it closes
+// the wiring ring, the list page and the budget handle of the process.
 wirings_at_stop :: proc "contextless" (item: ^Started, state: op.Process_State, stop_cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome) {
 	stopped := state == .Stopped && stop_cause != .None
 	told := false
 	// The end of the last record of a page unmaps the page: each end is
 	// found again from the start of the chains, never read in a page that
-	// an end freed.
+	// an end freed. A side that leaves no longer names the process, so it
+	// is not found again.
 	for {
 		asker, page, kept, end := wiring_of_a_stop(item)
 		if kept == nil {
 			break
+		}
+		if end == .Writer_Stopped && output.stop_step_of(kept.writer_closed, kept.reader_closed) == .Detach {
+			kept.writer = nil
+			continue
+		}
+		if end == .Reader_Stopped && output.stop_step_of(kept.reader_closed, kept.writer_closed) == .Detach {
+			kept.reader = nil
+			continue
 		}
 		if end != .Writer_Stopped {
 			wiring_end(asker, page, kept, end)
@@ -1105,7 +1127,7 @@ wiring_completions_read :: proc "contextless" (item: ^Started) {
 		}
 		if !kept.dropped_told {
 			kept.dropped_told = true
-			system.log(.Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " wrote a word of its wiring ring for the wiring ", u64(record.tag), " that is neither the first answer nor the one Closed of its end: the word is dropped, and so is each later one of that wiring")
+			system.log(.Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " wrote a word of its wiring ring for the wiring ", u64(record.tag), " that is neither the first answer nor the one Closed of its end: the word is dropped, and each later word of that wiring but its one Closed is dropped with no line")
 		}
 	}
 }

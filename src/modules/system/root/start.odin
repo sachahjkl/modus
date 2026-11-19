@@ -57,30 +57,32 @@ Start_Work :: struct {
 	wiring:         system.Start_Wiring,
 	// The wiring list of the Start, or nil (wirings.odin).
 	wiring_work:    ^Wiring_Work,
+	// Where a refusal that names its cause writes its error record, or nil:
+	// the completion of the command that asked for the start. A start that
+	// this one starts first writes there too.
+	refusal:        ^[7]u64,
 }
 
 // start starts a process of the boot image that shows a surface or has a
 // terminal, in the session of a principal (principals.odin). asker is the
 // process that asked for the start with Start, or nil; wiring_work its
 // wiring list, which a refusal of the start ends whole; place, when not
-// nil, receives the place of the process.
-start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, wiring_work: ^Wiring_Work = nil, place: ^^Started = nil) -> system.Status {
+// nil, receives the place of the process; refusal, when not nil, receives
+// the error record of a refusal that names its cause, which the state
+// after the start no longer shows.
+start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, wiring_work: ^Wiring_Work = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil) -> system.Status {
 	work := Start_Work {
 		name        = name,
 		principal   = principal,
 		wiring_work = wiring_work,
+		refusal     = refusal,
 	}
 	defer start_handles_close(&work)
 	if status := start_prepare(&work); status != .Ok {
+		// A device service that start_prepare started before its refusal
+		// stops: else its device stays held until the machine restarts.
+		start_abandon(&work)
 		return status
-	}
-	// The rings of the process are queues of the wait of the loop of this
-	// service: past the bound, the start is refused before any is made.
-	if refusal, refused := waited_queues_refusal(.Start, start_waited_queues(work.role.grants, work.file)); refused {
-		if wiring_work != nil {
-			wiring_work.refusal = refusal
-		}
-		return .No_Slot
 	}
 	if status := start_place_take(&work); status != .Ok {
 		start_abandon(&work)
@@ -185,6 +187,13 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		grant_slot_refused(name, slot)
 		return .Bad_State
 	}
+	// The rings of the process are queues of the wait of the loop of this
+	// service: past the bound, the start is refused before any service
+	// starts for it and before any ring is made (wait_words.odin).
+	if record, refused := waited_queues_refusal(.Start, start_waited_queues(grants, work.file)); refused {
+		start_refusal_keep(work, record)
+		return .No_Slot
+	}
 	// A process with an endpoint: the network service starts first.
 	if .Network in grants {
 		network_service() or_return
@@ -198,7 +207,9 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 			}
 		}
 		if !running {
-			start("storage") or_return
+			// A refusal of that start that names its cause is the cause of
+			// this one.
+			start("storage", refusal = work.refusal) or_return
 		}
 	}
 	// A client of a block service: the service of its disk starts first.
@@ -222,6 +233,18 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		work.driver, work.device_ring, status = driver_start(place, DRIVER_SOUND)
 	}
 	return status
+}
+
+// start_refusal_keep writes the error record of a refusal that names its
+// cause where the asker of the start reads it: the completion of its
+// command, and the record of its wiring list.
+start_refusal_keep :: proc "contextless" (work: ^Start_Work, record: [7]u64) {
+	if work.refusal != nil {
+		work.refusal^ = record
+	}
+	if work.wiring_work != nil {
+		work.wiring_work.refusal = record
+	}
 }
 
 // start_place_take takes a free place of the table of the processes, and

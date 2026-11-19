@@ -299,6 +299,11 @@ the_end_words_are_read_through_their_border :: proc(t: ^testing.T) {
 		{end = u32(End_Word.Revoked), stop_outcome = 1},
 		{end = u32(End_Word.None), stop_cause = 1},
 		{end = u32(End_Word.Asker_Stopped), reserved = {12 = 1}},
+		// The word of a side that closed: no stop of a process, and the
+		// word after it names no end.
+		{end = u32(End_Word.Side_Closed), stop_cause = 1},
+		{end = u32(End_Word.Side_Closed), stop_outcome = 1},
+		{end = 7},
 		// A writer that stopped always has a cause.
 		{end = WRITER_STOPPED},
 		// A cause or an outcome that names no member.
@@ -328,6 +333,8 @@ the_end_words_are_read_through_their_border :: proc(t: ^testing.T) {
 	testing.expect(t, ok && end == .Writer_Stopped && cause == .Itself && outcome == .Failed)
 	none, _, _, none_ok := end_of_words(end_words_read(new(End_Words, context.temp_allocator)))
 	testing.expect(t, none_ok && none == .None)
+	closed, closed_cause, closed_outcome, closed_ok := end_of_words({end = u32(End_Word.Side_Closed)})
+	testing.expect(t, closed_ok && closed == .Side_Closed && closed_cause == .None && closed_outcome == .None)
 }
 
 // A completion: a kind that names no member and an End_Taken with values
