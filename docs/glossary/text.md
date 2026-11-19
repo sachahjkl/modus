@@ -334,9 +334,9 @@ Do not use: effective font.
 
 The advance of a glyph is the distance from its origin to the origin of the next glyph, before any pair adjustment.
 
-In a monospace font the advance is one constant: 8 pixels at scale 1. In a proportional font each character has its own: in B612, `i` is 600 units and `M` 1800. The glyph cache keeps the advance of each character at each scale in 1/64 of a pixel. The advance is not the width of the ink: a glyph can have ink before its origin or past its advance, and the ink margin covers that difference.
+In a monospace font the advance is one constant: 8 pixels at scale 1. In a proportional font each character has its own: in B612, `i` is 600 units and `M` 1800. Text shaping reads it from the table `hmtx` of the font file at each measure, at the text size, in 1/64 of a pixel, from 0 to one line. The advance is not the width of the ink: a glyph can have ink before its origin or past its advance, and the ink margin covers that difference.
 
-The design: `docs/FONTS.md`, "12.4 The glyph cache with subpixel positions".
+The design: `docs/FONTS.md`, "14.7 The measure from the font file".
 
 Do not use: width (for this), pitch.
 
@@ -344,9 +344,9 @@ Do not use: width (for this), pitch.
 
 A pair adjustment is the change of the advance that a font gives for one pair of glyphs that follow each other.
 
-Some pairs look too far apart with their advances alone: `T` before `o` leaves a gap under the bar of the T, so the font states a negative adjustment for that pair. The tool reads the pairs from the table `kern` and writes them, sorted, in 1/64 of a pixel, into the proportional cache. Text shaping adds the rounded advance and the rounded adjustment. A monospace cache has no pairs.
+Some pairs look too far apart with their advances alone: `T` before `o` leaves a gap under the bar of the T, so the font states a negative adjustment for that pair. Text shaping reads the pair from the table `kern` of the font file when both glyphs come from one font, and adds the rounded advance and the rounded adjustment, within half a line. A face of cells has no pairs.
 
-The design: `docs/FONTS.md`, "12.1 What B612 has, read in its files".
+The design: `docs/FONTS.md`, "14.7 The measure from the font file".
 
 Do not use: kerning pair (for this).
 
@@ -384,7 +384,7 @@ Do not use: crossed zero, zero with a slash.
 
 Text shaping is the step that turns the characters of a text into placed glyphs, with the advances and the pair adjustments of one font.
 
-A proportional text needs it: the x of each glyph is the sum of the advances and adjustments before it. The package `src/library/support/text_rendering` does it for a direct call, and the module `text_shaping` exports the same work: `shape_text` gives the placed glyphs of one text, and `measure_texts` the width of many text ranges in one call. The module holds no font and no state: the caller passes the spacing. Text shaping here does advances and pairs only: no ligature, no other script, no line break.
+A proportional text needs it: the x of each glyph is the sum of the advances and adjustments before it. The package `src/library/support/text_rendering` does it for a direct call, and the library module `text_rendering` exports the same work over the font outlines of its caller: `shape_text` gives the placed glyphs of one text, `measure_texts` the width of many text ranges in one call, and `break_text` the lines of a text in a box. Text shaping here does advances and pairs only: no ligature, no other script.
 
 The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
@@ -394,7 +394,7 @@ Do not use: layout (for this), typesetting.
 
 A placed glyph is a record of 16 bytes that text shaping gives for one character: the glyph, its x from the origin of the run, and its advance.
 
-The fields of `text_shaping.Placed_Glyph` are `glyph` (the character index, a glyph of the fallback chain, or `REPLACEMENT_GLYPH`), `x` from the origin of the text and `advance` with the pair adjustment that follows it, both in 1/64 of a pixel, and `cluster`, the first byte of the character in the text. `graphics.text_proportional` draws a table of placed glyphs: it rounds each x to the nearest subpixel position. The x keeps the exact sum, so the rounding of one glyph never moves the next one.
+The fields of `text_rendering.Placed_Glyph` are `glyph` (the character index, a glyph of the fallback chain, or `REPLACEMENT_GLYPH`), `x` from the origin of the text and `advance` with the pair adjustment that follows it, both in 1/64 of a pixel, and `cluster`, the first byte of the character in the text. `graphics.text_proportional` draws a table of placed glyphs: it rounds each x to the nearest subpixel position. The x keeps the exact sum, so the rounding of one glyph never moves the next one.
 
 The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
@@ -422,11 +422,11 @@ Do not use: subpixel offset, bucket.
 
 ### Spacing
 
-The spacing is the two tables that text shaping reads for one font at one scale: the advances of the characters of a glyph cache and the pair adjustments, in 1/64 of a pixel.
+The spacing is what text shaping places a text with: a face at a text size over a set of opened fonts, or one advance for each character of a grid of cells.
 
-`text_shaping.spacing_of` takes them from a validated glyph cache: 192 advances by character index and the sorted pairs (`glyph_cache.Pair_Entry`). The caller then passes them to `shape_text` or `measure_texts` as tables. So the module of text shaping holds no font, and an isolated call receives the spacing in its call region like the text.
+`text_rendering.spacing_of(face, size)` gives the spacing of a face over the fonts that the process opened, and refuses the face `None`, a size out of its range, and a face whose first font is not open. The library module opens a set from the bytes of its caller for one call. A spacing holds no table of advances: each number comes from the font file at each measure. It is not the spacing tokens of a layout.
 
-The design: `docs/FONTS.md`, "12.3 The text shaping module".
+The design: `docs/FONTS.md`, "14.7 The measure from the font file".
 
 Do not use: metrics (for this), kerning data.
 
@@ -434,7 +434,7 @@ Do not use: metrics (for this), kerning data.
 
 A text range is a record that names one text in a table of bytes by its first byte and its count, with its width, which the measure writes.
 
-`text_shaping.Text_Range` has 16 bytes: `start`, `count` (at most `TEXT_LIMIT`) and `width` in 1/64 of a pixel. A window passes all its labels as one table of bytes and one table of ranges to `measure_texts`, which writes the width of each range: one call measures a whole frame (the direction Change of a table parameter). `interface.texts_measure` measures the lines of a list this way.
+`text_rendering.Text_Range` has 16 bytes: `start`, `count` (at most `TEXT_LIMIT`) and `width` in 1/64 of a pixel. A window passes all its labels as one table of bytes and one table of ranges to `measure_texts`, which writes the width of each range: one call measures a whole frame (the direction Change of a table parameter). `break_text` appends one text range for each line of a text.
 
 The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
@@ -534,7 +534,7 @@ Do not use: font face (for this), font slot, typeface.
 
 The text rendering module is the support package `text_rendering` and its library module, which shape, measure, break, keep and draw a text at any text size.
 
-Each process compiles the measure in; the drawing module compiles the draw and the private glyph cache in. Its rasterizer draws any size with a work row as wide as the glyph, in bands of rows. A caller that compiles nothing calls the library module `text_shaping`, which takes the spacing of a glyph cache; the module with the font outlines as bytes is a coming step. It is not a service: no process asks another for a glyph.
+Each process compiles the measure in; the drawing module compiles the draw and the private glyph cache in. Its rasterizer draws any size with a work row as wide as the glyph, in bands of rows. A caller that compiles nothing calls the library module `text_rendering` with the font outlines as bytes, a face and a text size. It is not a service: no process asks another for a glyph.
 
 The design: `src/md/features/text_rendering.md`.
 

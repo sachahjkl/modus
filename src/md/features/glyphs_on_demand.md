@@ -56,7 +56,7 @@ The cache holds no advance. The advance of a character past the glyph cache is a
 
 ### The fallback face
 
-A fallback face is the glyph cache that a glyph past it stands beside: B612 Regular (`Interface`), B612 Bold (`Interface_Bold`), Paper Mono with the grid fit (`Cells`) and without it (`Cells_Without_Grid_Fit`), and Paper Mono SemiBold (`Cells_Bold`). A process finds the face of a glyph cache by the hash of its font file and its flags (`fallback_glyphs.face_of_cache`). So each spacing of `text_shaping` and each draw of `graphics` finds its face with no new argument, and every window draws characters past the glyph cache: the labels, the titles and the menus of the interface package, the cells of the terminal and the window of each process.
+A fallback face is the glyph cache that a glyph past it stands beside: B612 Regular (`Interface`), B612 Bold (`Interface_Bold`), Paper Mono with the grid fit (`Cells`) and without it (`Cells_Without_Grid_Fit`), and Paper Mono SemiBold (`Cells_Bold`). A process finds the face of a glyph cache by the hash of its font file and its flags (`fallback_glyphs.face_of_cache`). So each draw of `graphics` finds its face with no new argument, a spacing names its face and its text size ([text_rendering.md](text_rendering.md)), and every window draws characters past the glyph cache: the labels, the titles and the menus of the interface package, the cells of the terminal and the window of each process.
 
 ### The fallback chain by script
 
@@ -140,7 +140,7 @@ The decisions that they made:
 - **A glyph drawn in each process.** The same glyph is drawn once in each process that shows it: 3 to 46 µs each time, and 300 to 6 000 bytes of words in each. It is the price of no shared state.
 - **The hash of the font file names the face.** A glyph cache and a record of the outlines with one hash are the same font file. A process uses a fallback face only beside the glyph cache of its first font.
 - **The pairs of a character past the glyph cache are 0.** The pair table of a glyph cache is keyed by character indexes.
-- **The module `text_shaping` has no fallback.** Its exports take the tables of the caller and hold no outlines: a character past the glyph cache is the replacement glyph there.
+- **The library module `text_rendering` has the fallback chains.** Its exports take the font outlines of the caller and open them for one call: a character past the glyph cache that a font of the chain has is placed there as in a process.
 
 ## The order of the steps
 

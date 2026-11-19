@@ -78,11 +78,27 @@ interface_cache_of :: proc "contextless" (caches: ^display.Interface_Font, font:
 	return &caches.regular
 }
 
+// interface_face_of gives the face of the interface font that draws a
+// weight at a scale: the bold weight has scale 1 only, as its cache.
+interface_face_of :: proc "contextless" (font: Font) -> text_rendering.Face {
+	if font.weight == .Bold && font_scale(font) == 1 {
+		return .Interface_Bold
+	}
+	return .Interface
+}
+
+// interface_spacing_of gives the spacing of the interface font of a weight
+// at a scale: its face at the text size of the scale, measured from its
+// font file. ok is false when this process has not opened that face.
+interface_spacing_of :: proc "contextless" (font: Font) -> (spacing: text_rendering.Spacing, ok: bool) {
+	return text_rendering.spacing_of(interface_face_of(font), text_rendering.size_of_scale(font_scale(font)))
+}
+
 // interface_width_subpixels gives the width of a text in the interface
 // font, in 1/64 of a pixel: the sum of the advances of its placed glyphs.
-// 0 for a cache that does not have the scale.
-interface_width_subpixels :: proc "contextless" (caches: ^display.Interface_Font, font: Font, text: string) -> i64 {
-	spacing, ok := text_rendering.spacing_of(interface_cache_of(caches, font), font_scale(font))
+// 0 when the process has not opened the face.
+interface_width_subpixels :: proc "contextless" (font: Font, text: string) -> i64 {
+	spacing, ok := interface_spacing_of(font)
 	if !ok {
 		return 0
 	}
@@ -102,7 +118,7 @@ text_width :: proc "contextless" (font: Font, text: string) -> int {
 text_measured_width :: proc "contextless" (table: ^Draw_Table, font: Font, text: string) -> int {
 	used := font_in_use(table, font, len(text))
 	if used.kind == .Interface {
-		return int((interface_width_subpixels(table.interface_font, used, text) + 63) / 64)
+		return int((interface_width_subpixels(used, text) + 63) / 64)
 	}
 	return text_width(used, text)
 }
@@ -118,7 +134,7 @@ texts_measure :: proc "contextless" (table: ^Draw_Table, font: Font, texts: []st
 		}
 		return
 	}
-	spacing, ok := text_rendering.spacing_of(interface_cache_of(table.interface_font, used), font_scale(used))
+	spacing, ok := interface_spacing_of(used)
 	for index in 0 ..< count {
 		if !ok || len(texts[index]) > INTERFACE_TEXT_LIMIT {
 			widths[index] = text_width({scale = used.scale}, texts[index])
@@ -180,7 +196,7 @@ text_wrap_line :: proc "contextless" (table: ^Draw_Table, font: Font, text: stri
 	cells := text_rendering.cell_spacing(graphics.CELL_WIDTH * font_scale(used))
 	spacing := cells
 	if used.kind == .Interface {
-		if interface_spacing, ok := text_rendering.spacing_of(interface_cache_of(table.interface_font, used), font_scale(used)); ok {
+		if interface_spacing, ok := interface_spacing_of(used); ok {
 			spacing = interface_spacing
 		}
 	}

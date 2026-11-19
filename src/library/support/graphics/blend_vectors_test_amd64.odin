@@ -816,7 +816,11 @@ proportional_text_gives_the_same_bytes_in_each_blend :: proc(t: ^testing.T) {
 		delete(item.words)
 	}
 	cache := &caches[2].cache // B612
-	spacing, spacing_ok := text_rendering.spacing_of(cache, 1)
+	// The places from the font file of B612.
+	defer text_rendering.state = {}
+	words := fallback_open_for_test(t)
+	defer delete(words)
+	spacing, spacing_ok := text_rendering.spacing_of(.Interface, text_rendering.TEXT_SIZE_OF_SCALE_ONE)
 	testing.expect(t, spacing_ok)
 	table: [4096]u8
 	square_root_table_fill(&table)

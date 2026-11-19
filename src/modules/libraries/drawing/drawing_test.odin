@@ -1,8 +1,10 @@
 #+build !freestanding
 package drawing
 
+import "base:runtime"
 import "modus:contract/draw_record"
 import "modus:contract/errors"
+import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "core:log"
 import "core:sync"
@@ -11,6 +13,7 @@ import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
+import "modus:support/text_rendering"
 import "modus:support/vector_font"
 
 // The text state of the graphics package and the text of the module are
@@ -520,8 +523,41 @@ Proof_Fonts :: struct {
 	memory:         [3][]u64,
 }
 
+// The font outlines of the proof, opened once in the state of the text
+// rendering of the test process, which the package and the exports share:
+// a text in the interface font is measured from its font file. The words
+// stay for the run, as the open fonts read them.
+@(private = "file")
+proof_outlines_lock: sync.Mutex
+@(private = "file")
+proof_outlines_words: []u64
+
+@(private = "file")
+proof_outlines_open :: proc(t: ^testing.T) {
+	sync.mutex_lock(&proof_outlines_lock)
+	defer sync.mutex_unlock(&proof_outlines_lock)
+	if proof_outlines_words != nil {
+		return
+	}
+	fonts := [4]font_outlines.Font_Input {
+		{"b612", #load("../../../../resources/fonts/b612.ttf")},
+		{"b612_bold", #load("../../../../resources/fonts/b612_bold.ttf")},
+		{"paper_mono", #load("../../../../resources/fonts/paper_mono.ttf")},
+		{"paper_mono_semibold", #load("../../../../resources/fonts/paper_mono_semibold.ttf")},
+	}
+	size := font_outlines.resource_size(fonts[:])
+	proof_outlines_words = make([]u64, (size + 7) / 8, runtime.heap_allocator())
+	bytes := ([^]u8)(raw_data(proof_outlines_words))[:size]
+	_, written := font_outlines.resource_write(fonts[:], bytes)
+	testing.expect(t, written)
+	outlines, problem := font_outlines.validate(bytes)
+	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
+	_ = text_rendering.open(&outlines)
+}
+
 @(private = "file")
 proof_fonts_build :: proc(t: ^testing.T) -> (fonts: Proof_Fonts) {
+	proof_outlines_open(t)
 	render := new(vector_font.Render_Memory)
 	defer free(render)
 	{

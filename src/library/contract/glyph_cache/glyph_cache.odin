@@ -136,8 +136,7 @@ Glyph_Entry :: struct #packed {
 
 // A pair adjustment: the advance of left changes by adjustment when right
 // follows it. The pairs of one size are sorted by left, then right. The
-// layout of the C language, with no gap: the module text_shaping takes a
-// table of these records as a parameter.
+// layout of the C language, with no gap, as each record of a file.
 Pair_Entry :: struct {
 	left:       u8, // The character index of a character.
 	right:      u8, // The character index of the character that follows.
