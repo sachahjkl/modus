@@ -164,7 +164,7 @@ The wiring gives the starter no new fact: a starter already reads the records of
 1. To the record output `log`, with `system.output_write` and no deadline: the writer waits while the ring of its reader is full. No record is lost, so a reader that does not read stops the writer. A thread with a deadline (a frame loop, the path of a key) waits too: the starter that wires `log` takes that cost for the child.
 2. To the kernel log, with `Log`, as before. A refusal of the budget of each second drops the line in the kernel log only; the record output already holds it.
 
-When the reader stops or closes its end, the record output gives `Ended`, the library removes the ring, and the process goes on with the kernel log only. The reader knows the serial of the last record that it read, so the end of the audit is known, not silent. When the writer stops, the reader gets the end word `Writer_Stopped` with its stop code.
+When the reader stops or closes its end, the record output gives `Ended`, the library removes the ring, and the process goes on with the kernel log only. The reader knows the serial of the last record that it read, so the end of the audit is known, not silent. When the writer stops, the reader gets the end word `Writer_Stopped` with its stop cause and its stop outcome ([../api/process_stop.md](../api/process_stop.md)).
 
 **How the end reaches the process: one handle slot of the context.** The context of a process has one handle slot for the end of `log`, beside the log handle (`docs/MODULE_CONTRACT.md`, "6. The context"). The root service writes there, before the first instruction, the handle of the ring with the rights Read and Write, only when the wiring list of the start wires `log`. The library maps the ring at the first write of the log. The end of `log` never goes through the wiring ring, so a process whose only wiring is `log` gets no wiring ring.
 
@@ -201,7 +201,7 @@ The glossary entry "Channel" (`docs/glossary/running_code.md`) is removed in the
 
 | Channel | Calls | Writers | Kind | What its readers use after the change |
 |---|---|---|---|---|
-| `processes` | 248 | the root service: starts, stops, revocations, the trust, the start policy; `interface` through its variable: the element places of each window | (a) a subject tag | The fact types of the root service (`root.Process_Stopped`, with its stop code as a field) and `interface.Element_Place` and `interface.Element_Gone`. The step `Record` and the test pointer read their fields. |
+| `processes` | 248 | the root service: starts, stops, revocations, the trust, the start policy; `interface` through its variable: the element places of each window | (a) a subject tag | The fact types of the root service (`root.Process_Stopped`, with its stop cause and its stop outcome as fields) and `interface.Element_Place` and `interface.Element_Gone`. The step `Record` and the test pointer read their fields. |
 | `surfaces` | 99 | the compositor: windows, the pointer, the clipboard, the measures of a frame; `interface` for the palette | (a) | The fact types of the compositor; its measures as fields that the tool reads. |
 | `devices` | 50 | the TPM service, the root service at the start of a device service | (a) | The fact types of `tpm` and of the root service. |
 | `storage` | 29 | the storage service | (c) redundant: the process `storage` | The process and the fact types of `storage`. |

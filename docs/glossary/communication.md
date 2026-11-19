@@ -606,7 +606,7 @@ Do not use: drop marker, overflow record.
 
 An end record is the last place of an output ring that the writer writes: the end of its stream, with an error record that is zero for a clean end.
 
-The reader reads each record before it, acknowledges it in the completion queue, and closes its end. A writer that stops with no end record gets an end word from the root service in place of it, with its stop code.
+The reader reads each record before it, acknowledges it in the completion queue, and closes its end. A writer that stops with no end record gets an end word from the root service in place of it, with its stop cause and its stop outcome.
 
 The design: `src/md/features/module_outputs.md`, "The end of a stream".
 
