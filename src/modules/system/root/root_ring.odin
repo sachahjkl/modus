@@ -285,7 +285,11 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 // process with the right Read only, through its root ring: the handle that
 // a Wire names, and whose stop ends a wait of the asker.
 start_process_handle_give :: proc "contextless" (asker: ^Started, process: ^Started) -> (u64, system.Status) {
-	given, status := system.give(asker.requests_memory, process.process, {.Read})
+	// Give, so that the asker can lend the handle back through its root
+	// ring, where Wire names the process as a Started end. A copy carries
+	// Read and Give at most, so it stops and maps nothing, and the
+	// revocation of this service reaches each copy.
+	given, status := system.give(asker.requests_memory, process.process, {.Read, .Give})
 	if status != .Ok {
 		return 0, status
 	}
