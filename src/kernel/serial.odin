@@ -1095,6 +1095,12 @@ log_fact_record :: proc "contextless" (process: u32, process_serial: u32, owner:
 	word_wake(physical_of(&log_head.written), max(u64))
 }
 
+// The buffer of the copy of a Log holds a fact, then the line of that fact,
+// when the log has no memory: its first bytes are a Log_Fact, which has
+// words of 8 bytes.
+#assert(offset_of(Processor, log_text) % 8 == 0)
+#assert(size_of(op.Log_Fact) + op.LOG_FACT_LINE_BYTES_MOST <= op.LOG_TEXT_BYTES_MOST)
+
 // log_fact_operation is `Log` of the form Fact: the bytes of one fact, in
 // one record, with no UTF-8 filter, because they are not text. The caller
 // checked the handle and the form. The line on the serial port is the raw
@@ -1128,12 +1134,18 @@ log_fact_operation :: proc "contextless" (process_index: u32, thread_index: u32,
 		serial_drain_before_the_tick()
 		return .Ok
 	}
-	// No memory of the log: the serial port only.
-	fact: op.Log_Fact
-	copy(([^]u8)(&fact)[:size_of(op.Log_Fact)], body)
-	fact.value_count = u16(len(body) - op.LOG_FACT_HEAD_BYTES)
-	line := (^[op.LOG_FACT_LINE_BYTES_MOST]u8)(&log_text[0])
-	line_count := op.log_fact_line(&fact, line)
+	// No memory of the log: the serial port only. The fact is the first
+	// bytes of the copy, with zeros after its length, its count and no
+	// reserved byte, as in a record; its line goes after it in the same
+	// buffer, so the kernel stack holds no copy.
+	for &byte_value in log_text[v[2]:size_of(op.Log_Fact)] {
+		byte_value = 0
+	}
+	fact := (^op.Log_Fact)(&log_text[0])
+	fact.value_count = u16(v[2] - op.LOG_FACT_HEAD_BYTES)
+	fact.reserved = {}
+	line := (^[op.LOG_FACT_LINE_BYTES_MOST]u8)(&log_text[size_of(op.Log_Fact)])
+	line_count := op.log_fact_line(fact, line)
 	log_bytes({'['})
 	log_bytes(name)
 	log_bytes({']', ' '})

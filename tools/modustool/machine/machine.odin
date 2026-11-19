@@ -2573,6 +2573,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: Log refused 11 wrong facts, each with its status and its error record: the form word, a run, the length below the head and past the whole fact, an address that the process cannot read, and the level; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = " records, and the budget the same log records and the same refused count: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: a log fact with the value 42, the mark 0x4c4f4746 and the number 7", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	{kind = .Wait, text = "root: log_reader stopped with code 0"},
@@ -2605,6 +2606,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: Log refused 11 wrong facts, each with its status and its error record: the form word, a run, the length below the head and past the whole fact, an address that the process cannot read, and the level; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = " records, and the budget the same log records and the same refused count: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: a log fact with the value 42, the mark 0x4c4f4746 and the number 7", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	{kind = .Wait, text = "root: log_reader stopped with code 0"},
@@ -3716,6 +3718,12 @@ Machine :: struct {
 	echo:        Console_Echo, // The lines typed into the console whose echo the tool waits for (console_echo.odin).
 	memory_file: string, // The file of the memory of the machine, or "" (Machine_Options).
 	fact_catalog: ^build.Fact_Catalog, // The module files whose log facts log_read renders; nil until the log holds a fact.
+	fact_rendered: [dynamic]u8, // The log with the sentence of each fact, up to fact_raw_length bytes of the file: each read renders only the lines after it.
+	fact_raw_length: int, // The bytes of the file of the log that fact_rendered covers.
+	fact_render_time: time.Duration, // The time of the renders: a measure.
+	fact_render_lines: int, // The lines of facts that log_read rendered.
+	fact_render_reads: int, // The reads of the log that rendered new lines.
+	fact_catalog_time: time.Duration, // The time to make the catalog of the module files.
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -3961,13 +3969,36 @@ log_read :: proc(machine: ^Machine) -> string {
 	// The line of a log fact is bytes: each step reads its sentence, which
 	// the tool writes from the module files of the build
 	// (src/md/features/log_facts.md, "The serial port"). A log with no fact
-	// is read as it is.
-	if strings.contains(text, build.FACT_LINE_MARK) {
-		if machine.fact_catalog == nil {
-			machine.fact_catalog = machine_fact_catalog()
-		}
-		text = build.fact_lines_render(machine.fact_catalog, text)
+	// is read as it is. The file only grows: the machine keeps the rendered
+	// log of the bytes that it read, and each read renders only the whole
+	// lines after them, so a read costs the copy of the log and no more.
+	if machine.fact_catalog == nil && !strings.contains(text, build.FACT_LINE_MARK) {
+		test_times_first_line_note(machine, len(text))
+		return text
 	}
+	if machine.fact_catalog == nil {
+		catalog_started := time.tick_now()
+		machine.fact_catalog = machine_fact_catalog()
+		machine.fact_catalog_time = time.tick_since(catalog_started)
+		machine.fact_rendered = make([dynamic]u8, runtime.heap_allocator())
+	}
+	if len(text) < machine.fact_raw_length {
+		// A new file of the same name: nothing kept holds for it.
+		clear(&machine.fact_rendered)
+		machine.fact_raw_length = 0
+	}
+	if len(text) > machine.fact_raw_length {
+		render_started := time.tick_now()
+		chunk, fact_lines := build.fact_lines_render(machine.fact_catalog, text[machine.fact_raw_length:])
+		append(&machine.fact_rendered, chunk)
+		machine.fact_raw_length = len(text)
+		machine.fact_render_time += time.tick_since(render_started)
+		machine.fact_render_lines += fact_lines
+		machine.fact_render_reads += 1
+	}
+	// A copy in the memory of the step: a reader keeps its text while a
+	// later read grows the kept one.
+	text = strings.clone(string(machine.fact_rendered[:]), context.temp_allocator)
 	test_times_first_line_note(machine, len(text))
 	return text
 }
@@ -4391,6 +4422,10 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	if line := common_failure_line(log_read(&machine), 0); line != "" {
 		fmt.eprintfln("modustool: test failed: the machine printed \"%s\", which fails every scenario", line)
 		passed = false
+	}
+	if machine.fact_catalog != nil {
+		fmt.printfln("modustool: measure: the tool wrote the sentences of %d lines of log facts of %s in %d us, over %d reads of the log, each read rendering only its new lines; the catalog of %d module files took %d us", machine.fact_render_lines, output, i64(machine.fact_render_time / time.Microsecond), machine.fact_render_reads, len(machine.fact_catalog.modules), i64(machine.fact_catalog_time / time.Microsecond))
+		delete(machine.fact_rendered)
 	}
 	os.close(monitor_write)
 	os.close(monitor_read)

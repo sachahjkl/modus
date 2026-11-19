@@ -335,7 +335,7 @@ A log fact is a log record that carries the values of one record type of its wri
 
 | Table | One record describes |
 |---|---|
-| Facts | One fact type that the module writes: its fact key, the index of its record description in the table `Records`, its fact template and the name of the package that declares the record type, both in the string table. The rows are sorted by key, and no key is 0 or in two rows |
+| Facts | One fact type that the module writes: its fact key, the index of its record description in the table `Records`, its fact template and the name of the package that declares the record type, both in the string table. The build writes the rows sorted by key, with no key 0 and no key in two rows. No reader checks the order or the uniqueness: a file that breaks them gives no row for some keys in a search, never a row of another key |
 | Own_Hash | The record 1 only: the own-hash place, 32 bytes of the writable data of the module where each loader writes the hash of the module file |
 
 ```byte-layout module.Fact module.Own_Hash_Place
@@ -355,7 +355,7 @@ offset  size  field          type
 ```
 
 - **The record of a fact type** is a record description of the table `Records`, as the record of an export is. A record that an export takes and a fact writes has one row.
-- **The checks of a reader**: `module.fact` refuses a row with the key 0, a record that `record_type` refuses or whose values pass `op.LOG_FACT_VALUE_CAPACITY` (144 bytes), a template of 0 bytes or of more than `FACT_TEMPLATE_BYTES_MOST` (256), and a text outside the string table. `module.fact_find` finds a row by its key in the sorted table. `module.fact_template_valid` checks the language of the template against the fields: a reader shows a fact whose template breaks a rule raw.
+- **The checks of a reader**: `module.fact` refuses a row with the key 0, a `reserved` word that is not 0, a record that `record_type` refuses or whose values pass `op.LOG_FACT_VALUE_CAPACITY` (144 bytes), a template of 0 bytes or of more than `FACT_TEMPLATE_BYTES_MOST` (256), and a text outside the string table. `module.fact_find` finds a row by its key in the sorted table. `module.fact_template_valid` checks the language of the template against the fields: a reader shows a fact whose template breaks a rule raw.
 - **The own-hash place.** A module file cannot hold its own hash. The support package `system` declares the place, a variable with the symbol `modus_own_hash` (`module.OWN_HASH_PLACE_SYMBOL`), and the build writes its memory offset in the table `Own_Hash`. `validate` refuses a place that is not 32 bytes inside one segment with Write and no Execute (`Bad_Own_Hash_Place`), so no file makes a loader write into its code. A module whose code does not read the place has no table: the link drops the variable.
 - **The version.** Version 3 of the format adds the two tables. A loader of version 2 would leave the place zero, so the version changed, and a loader refuses a file of version 2.
 

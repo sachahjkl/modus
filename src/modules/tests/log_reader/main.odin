@@ -83,6 +83,11 @@
 //   [log fact](term:log-fact) `log_reader.Fact_Probe`, which the tool writes
 //   on the host as `log_reader: a log fact with the value 42, the mark
 //   0x4c4f4746 and the number 7`;
+// - `log_reader: the three facts read back: the form Fact, no next record,
+//   the reserved bytes 0, the key of each writer, 0, 144 and 16 value
+//   bytes, and the hash of this module in the fact of system.log_fact: as
+//   it must`: it reads the bytes that the kernel wrote through
+//   `log.fact_records`;
 // - `log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and
 //   system.log_fact the fact Fact_Probe, each in one record: as it must`;
 // - `log_reader: ok`, then it stops with the code 0.
@@ -100,6 +105,7 @@
 // log only.
 package log_reader
 
+import "modus:contract/blake3"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -182,6 +188,21 @@ Record :: struct {
 }
 #assert(size_of(Record) == 256)
 
+// One row of log.fact_records(): the form of `Fact_Row` in
+// src/modules/system/log/exports.odin.
+Fact_Row :: struct {
+	number:      i64,
+	form:        i64,
+	continues:   i64,
+	key:         u64,
+	module_hash: [32]u8,
+	value_count: i64,
+	reserved:    u64,
+	values_head: u64,
+}
+#assert(size_of(Fact_Row) == 88)
+fact_rows: [ROWS]Fact_Row
+
 // One row of log.value_runs(): the form of `Value_Run` in
 // src/modules/system/log/exports.odin.
 Value_Run :: struct {
@@ -250,9 +271,17 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	value_runs_export := module.export_find(file, "value_runs")
 	process_records_export := module.export_find(file, "process_records")
 	process_value_runs_export := module.export_find(file, "process_value_runs")
-	if !row_size_holds(file, records_export, size_of(Record)) || !row_size_holds(file, value_runs_export, size_of(Value_Run)) || !row_size_holds(file, process_records_export, size_of(Record)) || !row_size_holds(file, process_value_runs_export, size_of(Value_Run)) {
+	fact_records_export := module.export_find(file, "fact_records")
+	if !row_size_holds(file, records_export, size_of(Record)) || !row_size_holds(file, value_runs_export, size_of(Value_Run)) || !row_size_holds(file, process_records_export, size_of(Record)) || !row_size_holds(file, process_value_runs_export, size_of(Value_Run)) || !row_size_holds(file, fact_records_export, size_of(Fact_Row)) {
 		return "a row of the log service has another size than in this module"
 	}
+	// The hash of the module of this process: the loader wrote it at the
+	// own-hash place, and system.log_fact copies it into each fact.
+	own_file := system.image_find(image, PROCESS_NAME)
+	if own_file == nil {
+		return "the boot image has no module log_reader"
+	}
+	own_module_hash := blake3.hash(own_file)
 	own, read_status := system.budget_read()
 	if read_status != .Ok {
 		return "the budget of this process does not read"
@@ -390,7 +419,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	if problem := log_operation_check(&connection, file, records_export); problem != "" {
 		return problem
 	}
-	return log_fact_check(&connection, file, records_export)
+	return log_fact_check(&connection, file, records_export, fact_records_export, own_module_hash)
 }
 
 // The arguments of the operation Log, from 1, as its error record names
@@ -445,9 +474,11 @@ Fact_Refusal :: struct {
 // mapped page; each with its status and its error record, and nothing
 // changed. Then the edges that the kernel takes: a fact of its head only,
 // and a whole fact, each one record. Last, system.log_fact writes the fact
-// Fact_Probe: one record, whose sentence the machine test waits for. It
-// gives the reason of the first check that fails, or "".
-log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, records_export: u32) -> string {
+// Fact_Probe: one record, whose sentence the machine test waits for. The
+// three records are read back with the bytes that the kernel wrote
+// (fact_rows_check). It gives the reason of the first check that fails, or
+// "".
+log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, records_export: u32, fact_records_export: u32, own_module_hash: [32]u8) -> string {
 	fact_body = {key = FACT_BODY_KEY}
 	for &byte_value, index in fact_body.values {
 		byte_value = u8(index + 1)
@@ -510,7 +541,15 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 	system.log(.Info, "log_reader: Log refused ", u64(len(refusals)), " wrong facts, each with its status and its error record: the form word, a run, the length below the head and past the whole fact, an address that the process cannot read, and the level; the own log ring kept the same ", u64(before), " records, and the budget the same log records and the same refused count: as it must")
 
 	// The edges that the kernel takes, then the fact of system.log_fact:
-	// each is one record of the own log ring.
+	// each is one record of the own log ring. The reserved bytes that the
+	// process gives are not 0: the kernel writes 0 there.
+	for &byte_value in fact_body.reserved {
+		byte_value = FACT_BODY_RESERVED_BYTE
+	}
+	counted_before, counted_read := own_record_count(connection, file, records_export)
+	if !counted_read {
+		return "log.records did not give the count of the own records"
+	}
 	edges := [2]u64{head, whole}
 	for length in edges {
 		if _, status := system.call(.Log, log, body, length, info, 0, fact); status != .Ok {
@@ -520,11 +559,69 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 	}
 	system.log_fact(.Info, Fact_Probe{value = FACT_VALUE, mark = FACT_MARK, number = FACT_NUMBER})
 	written, read_written := own_record_count(connection, file, records_export)
-	if !read_written || written != before + i64(len(edges)) + 1 {
-		system.log(.Error, "log_reader: WRONG: the two facts at the edges and the fact of system.log_fact took ", written - before, " records, not ", i64(len(edges)) + 1)
+	amounts_written, amounts_read_written := system.budget_read()
+	_, refused_written := system.budget_used()
+	if !read_written || written != counted_before + i64(len(edges)) + 1 {
+		system.log(.Error, "log_reader: WRONG: the two facts at the edges and the fact of system.log_fact took ", written - counted_before, " records, not ", i64(len(edges)) + 1)
 		return "a fact took another count of records than one"
 	}
+	// The amount of the budget is what it holds for each second, not what
+	// it spent: it stays, and no fact was refused.
+	if amounts_read_written != .Ok || amounts_written.log_records != amounts_before.log_records || refused_written != refused_before {
+		system.log(.Error, "log_reader: WRONG: the facts changed the log records of the budget or its refused count")
+		return "a fact changed the log records of the budget"
+	}
+	if problem := fact_rows_check(connection, file, fact_records_export, own_module_hash); problem != "" {
+		return problem
+	}
 	system.log(.Info, "log_reader: Log wrote a fact of ", head, " bytes and a fact of ", whole, " bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must")
+	return ""
+}
+
+// The byte that this process writes in the reserved bytes of each fact
+// that it gives to Log itself: the kernel writes 0 in their place.
+FACT_BODY_RESERVED_BYTE :: 0xA5
+
+// fact_rows_check reads back the three facts of this process through
+// log.fact_records, with the bytes that the kernel wrote: the fact of its
+// head only, the whole fact, and the fact of system.log_fact, in this
+// order, and no other fact. For each: the form Fact, no next record, the
+// reserved bytes 0 and the key of its writer; the count of the value bytes
+// from the length that Log received; the first value bytes; and for the
+// fact of system.log_fact, the hash of the module of this process, which
+// its loader wrote at its own-hash place. It gives the reason of the first
+// check that fails, or "".
+fact_rows_check :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, fact_records_export: u32, own_module_hash: [32]u8) -> string {
+	arguments := [1]isolated.Argument{{integer = 0}}
+	count, status := system.call_isolated(connection, file, fact_records_export, arguments[:], nil, false, bytes_of(fact_rows[:]))
+	if status != .Ok {
+		return "the call of log.fact_records did not come back"
+	}
+	if count != 3 {
+		system.log(.Error, "log_reader: WRONG: log.fact_records gave ", count, " facts of this process, not 3")
+		return "log.fact_records gave another count of facts than the three of this process"
+	}
+	head_values: u64
+	for index in 0 ..< 8 {
+		head_values |= u64(fact_body.values[index]) << (8 * u64(index))
+	}
+	expected := [3]Fact_Row {
+		{form = i64(op.Log_Record_Form.Fact), key = FACT_BODY_KEY, value_count = 0, values_head = 0},
+		{form = i64(op.Log_Record_Form.Fact), key = FACT_BODY_KEY, value_count = op.LOG_FACT_VALUE_CAPACITY, values_head = head_values},
+		{form = i64(op.Log_Record_Form.Fact), key = transmute(u64)typeid_of(Fact_Probe), module_hash = own_module_hash, value_count = size_of(Fact_Probe), values_head = FACT_VALUE},
+	}
+	zero_hash: [32]u8
+	if own_module_hash == zero_hash {
+		return "the hash of the module of this process is zero"
+	}
+	for &row, index in fact_rows[:3] {
+		wanted := expected[index]
+		if row.form != wanted.form || row.continues != 0 || row.reserved != 0 || row.key != wanted.key || row.value_count != wanted.value_count || row.values_head != wanted.values_head || row.module_hash != wanted.module_hash {
+			system.log(.Error, "log_reader: WRONG: the fact ", u64(index), " has the form ", row.form, ", more ", row.continues, ", the reserved bytes ", system.Hex(row.reserved), ", the key ", system.Hex(row.key), ", ", row.value_count, " value bytes and the first ", system.Hex(row.values_head))
+			return "a fact record does not hold what the kernel must write"
+		}
+	}
+	system.log(.Info, "log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, ", u64(op.LOG_FACT_VALUE_CAPACITY), " and ", u64(size_of(Fact_Probe)), " value bytes, and the hash of this module in the fact of system.log_fact: as it must")
 	return ""
 }
 // The records of a text of LOG_TEXT_BYTES_MOST bytes of ASCII: no character

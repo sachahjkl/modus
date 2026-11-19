@@ -4,6 +4,7 @@ import "base:runtime"
 import "modus:contract/blake3"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/text_encoding"
 import "core:fmt"
 import "core:strings"
 import "modustool:foundation"
@@ -175,6 +176,22 @@ fact_line_render :: proc(catalog: ^Fact_Catalog, text: string) -> (sentence: str
 		return "", false
 	}
 	values := line.values[:description.size]
+	// A Text value is bytes of the writer that nobody checked: the kernel
+	// filters no byte of a fact. Its text, up to its first zero byte, takes
+	// the rule of the filter of the kernel, so a fact cannot put a line end
+	// or an escape sequence in a line that the tool writes.
+	for number in 0 ..< description.field_count {
+		item, item_ok := module.field(file, description, number)
+		if !item_ok || item.type != u8(module.Type.Text) {
+			continue
+		}
+		text_bytes := values[item.offset:][:item.detail]
+		end := 0
+		for end < len(text_bytes) && text_bytes[end] != 0 {
+			end += 1
+		}
+		text_encoding.invalid_sequences_replace(text_bytes[:end])
+	}
 	template := module.string_at(file, fact.template_offset, fact.template_count)
 	builder := strings.builder_make(context.temp_allocator)
 	for at := 0; at < len(template); {
@@ -213,13 +230,14 @@ fact_line_render :: proc(catalog: ^Fact_Catalog, text: string) -> (sentence: str
 FACT_LINE_MARK :: "] #"
 
 // fact_lines_render gives the text of a log with the line of each fact
-// rendered: "[name] " then the sentence, and the end of the line as it is.
-// A line that fact_line_render does not render stays raw. The same lines
-// give the same text, so a place in the text of one read is the same place
-// in the next one.
-fact_lines_render :: proc(catalog: ^Fact_Catalog, text: string) -> string {
+// rendered: "[name] " then the sentence, and the end of the line as it is,
+// and the count of the lines that it rendered. A line that
+// fact_line_render does not render stays raw. The same lines give the same
+// text, so a place in the text of one read is the same place in the next
+// one, and the lines after a place render alone.
+fact_lines_render :: proc(catalog: ^Fact_Catalog, text: string) -> (rendered_text: string, fact_lines: int) {
 	if !strings.contains(text, FACT_LINE_MARK) {
-		return text
+		return text, 0
 	}
 	builder := strings.builder_make(context.temp_allocator)
 	rest := text
@@ -234,10 +252,11 @@ fact_lines_render :: proc(catalog: ^Fact_Catalog, text: string) -> string {
 				strings.write_string(&builder, body[:mark + 2])
 				strings.write_string(&builder, sentence)
 				strings.write_string(&builder, line[len(body):])
+				fact_lines += 1
 				continue
 			}
 		}
 		strings.write_string(&builder, line)
 	}
-	return strings.to_string(builder)
+	return strings.to_string(builder), fact_lines
 }

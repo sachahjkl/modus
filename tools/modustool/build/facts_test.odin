@@ -182,7 +182,7 @@ the_fact_keys_are_in_the_llvm_ir :: proc(t: ^testing.T) {
 // Integer "value" of 8 bytes and a hexadecimal "mark" of 4 bytes and a
 // "number" of 4 bytes.
 @(private = "file")
-fact_render_file :: proc(template: string) -> []u8 {
+fact_render_file :: proc(template: string, last_is_text := false) -> []u8 {
 	TABLES :: module.TABLE_COUNT
 	file := make([dynamic]u8, size_of(module.Header) + TABLES * size_of(module.Table_Entry), context.temp_allocator)
 	directory: [TABLES]module.Table_Entry
@@ -203,6 +203,11 @@ fact_render_file :: proc(template: string) -> []u8 {
 	fields[2].kind = u8(value_kinds.Field_Kind.Hexadecimal)
 	fields[3].name_offset, fields[3].name_count = put(&strings_table, "number")
 	fields[3].type, fields[3].unsigned, fields[3].offset, fields[3].detail = u8(module.Type.Integer), true, 12, 4
+	if last_is_text {
+		// The last field is a Text of 4 bytes, "note", in place of "number".
+		fields[3].name_offset, fields[3].name_count = put(&strings_table, "note")
+		fields[3].type, fields[3].unsigned = u8(module.Type.Text), false
+	}
 	facts: [2]module.Fact
 	facts[1] = {key = FACT_RENDER_KEY, record = 1}
 	facts[1].template_offset, facts[1].template_count = put(&strings_table, template)
@@ -290,6 +295,47 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	testing.expect(t, zero_rendered && zero_sentence == "probe: the value 0, the mark 0x00000000 and the number 0; {braces}")
 
 	log := strings.concatenate({"[root] root: a text\r\n[log_reader] ", line, "\r\n[x] #not a fact\r\n"}, context.temp_allocator)
-	testing.expect_value(t, fact_lines_render(&catalog, log), "[root] root: a text\r\n[log_reader] probe: the value 42, the mark 0x4c4f4746 and the number 7; {braces}\r\n[x] #not a fact\r\n")
-	testing.expect_value(t, fact_lines_render(&catalog, "[root] root: a text\r\n"), "[root] root: a text\r\n")
+	whole_log, whole_lines := fact_lines_render(&catalog, log)
+	testing.expect_value(t, whole_log, "[root] root: a text\r\n[log_reader] probe: the value 42, the mark 0x4c4f4746 and the number 7; {braces}\r\n[x] #not a fact\r\n")
+	testing.expect_value(t, whole_lines, 1)
+	// The lines after a place render alone, to the same text: a reader
+	// that keeps the rendered start renders only the new lines.
+	cut := len("[root] root: a text\r\n")
+	start, _ := fact_lines_render(&catalog, log[:cut])
+	rest, rest_lines := fact_lines_render(&catalog, log[cut:])
+	testing.expect_value(t, strings.concatenate({start, rest}, context.temp_allocator), whole_log)
+	testing.expect_value(t, rest_lines, 1)
+	plain, plain_lines := fact_lines_render(&catalog, "[root] root: a text\r\n")
+	testing.expect(t, plain == "[root] root: a text\r\n" && plain_lines == 0)
+}
+
+// A Text value of a fact is bytes of its writer, which the kernel does not
+// filter: the render writes "?" for each byte of an invalid sequence, a
+// line feed, a carriage return and an escape included, as the filter of the
+// kernel does for a text. The bytes after the first zero byte are not
+// text. Plain bytes stay as they are.
+@(test)
+a_text_value_of_a_fact_is_filtered :: proc(t: ^testing.T) {
+	file := fact_render_file("probe: {value} {mark} [{note}]", true)
+	hash: [module.HASH_SIZE]u8
+	hash[0] = 7
+	catalog := Fact_Catalog{allocator = context.temp_allocator}
+	testing.expect_value(t, fact_catalog_add(&catalog, hash, "", file), "")
+	Case :: struct {
+		note:     [4]u8,
+		sentence: string,
+	}
+	cases := [?]Case {
+		{{'\n', '\r', 0x1B, 'x'}, "probe: 1 0x00000000 [???x]"},
+		{{0xFF, 'a', 0, '\n'}, "probe: 1 0x00000000 [?a]"},
+		{{'o', 'k', 0, 0}, "probe: 1 0x00000000 [ok]"},
+	}
+	for item in cases {
+		values: [16]u8
+		values[0] = 1
+		note := item.note
+		copy(values[12:], note[:])
+		sentence, rendered := fact_line_render(&catalog, fact_render_line(hash, FACT_RENDER_KEY, values[:]))
+		testing.expectf(t, rendered && sentence == item.sentence, "the note %v gave %q, not %q", item.note, sentence, item.sentence)
+	}
 }

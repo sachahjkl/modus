@@ -1291,13 +1291,14 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Log:
-		if v[4] > op.LOG_CALL_RUN_LIMIT {
-			record_set(record, .Too_Long, .Records, 5, v[4], op.LOG_CALL_RUN_LIMIT, 0)
-			return true
-		}
-		// A fact has no value runs: its values are not text.
+		// A fact has no value runs: its values are not text. Its bound is 0,
+		// whatever the count, so this check comes first.
 		if record_form, record_form_known := enum_word.member_of_word(op.Log_Record_Form, v[5]); record_form_known && record_form == .Fact && v[4] != 0 {
 			record_set(record, .Too_Long, .Records, 5, v[4], 0, 0)
+			return true
+		}
+		if v[4] > op.LOG_CALL_RUN_LIMIT {
+			record_set(record, .Too_Long, .Records, 5, v[4], op.LOG_CALL_RUN_LIMIT, 0)
 			return true
 		}
 	case .Inspect:
