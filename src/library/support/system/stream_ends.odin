@@ -1,8 +1,8 @@
 package system
 
 // The library of the record outputs and the record inputs
-// (src/md/features/module_outputs.md, "Fan-out and flow control" and "The
-// end of a stream"): the ends that a process takes from its wiring ring,
+// (src/md/features/module_outputs.md, "Fan-out and flow control";
+// src/md/features/module_outputs.md, "The end of a stream"): the ends that a process takes from its wiring ring,
 // and the calls output_write, output_end, input_read and asker_read.
 //
 // The ends of a process are in one table of this package, of the size of

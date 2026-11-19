@@ -149,7 +149,9 @@ lent_handle_proved :: proc "contextless" (asker: ^Started, handle: u32, kind: op
 // the kernel gives for both handles.
 @(private = "file")
 process_of_lent_handle :: proc "contextless" (handle: system.Handle) -> ^Started {
-	lent, lent_status := system.call(.Process_State, u64(handle))
+	// The slot and the serial name one process, and never a later one in
+	// the same slot.
+	lent_slot, lent_serial, lent_status := system.process_place(handle)
 	if lent_status != .Ok {
 		return nil
 	}
@@ -157,8 +159,8 @@ process_of_lent_handle :: proc "contextless" (handle: system.Handle) -> ^Started
 		if item.process == 0 {
 			continue
 		}
-		known, known_status := system.call(.Process_State, u64(item.process))
-		if known_status == .Ok && known[3] == lent[3] && known[4] == lent[4] {
+		slot, serial, status := system.process_place(item.process)
+		if status == .Ok && slot == lent_slot && serial == lent_serial {
 			return &item
 		}
 	}
