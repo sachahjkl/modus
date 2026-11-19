@@ -152,7 +152,7 @@ resize_surface_take :: proc "contextless" (client: ^Client) {
 	damage_window(client)
 	// The line of a new surface, as surface_create writes it: a reader of
 	// the log finds the size and the place of the window in the last one.
-	system.log(.Info, "compositor: surface ", system.name_of(client.title[:]), " ", u64(client.surface.width), "x", u64(client.surface.height), " at ", u64(max(client.x, 0)), ",", u64(max(client.y, 0)))
+	system.log_fact(.Info, Surface_Made{window = window_field(client.title[:]), width = u64(client.surface.width), height = u64(client.surface.height), x = u64(max(client.x, 0)), y = u64(max(client.y, 0))})
 	system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " resized from ", u64(old_width), "x", u64(old_height), " to ", u64(client.surface.width), "x", u64(client.surface.height))
 }
 

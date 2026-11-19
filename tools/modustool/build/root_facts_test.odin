@@ -16,27 +16,35 @@ import "modustool:foundation"
 // Each sentence is compared with the parts of the old line written by
 // sentence.format, at the edges of each field.
 
-// A value of one field of a fact for these tests: an integer, a text of a
-// name, or a whole hash.
-@(private = "file")
-Root_Fact_Value :: union {
+// A value of one field of a fact for these tests: an integer (the bits of
+// a signed one), a text of a name, or a whole hash.
+@(private)
+Fact_Test_Value :: union {
 	u64,
 	string,
 	[module.HASH_SIZE]u8,
 }
 
-@(private = "file")
-Root_Fact_Field :: struct {
+@(private)
+Fact_Test_Field :: struct {
 	name:  string,
-	value: Root_Fact_Value,
+	value: Fact_Test_Value,
 }
 
 // root_facts_file gives a module file with the table Facts of the root
 // service, made from the extraction of its sources.
 @(private = "file")
 root_facts_file :: proc(t: ^testing.T) -> (file: []u8, ok: bool) {
-	paths, listed := foundation.files_with_suffix(foundation.SYSTEM_MODULE_SOURCES + "root", ".odin")
-	if !testing.expect(t, listed, "the sources of root cannot be listed") {
+	return facts_file_of_folder(t, foundation.SYSTEM_MODULE_SOURCES + "root")
+}
+
+// facts_file_of_folder gives a module file with the table Facts of the
+// fact types that the calls in the sources of one folder write, made from
+// the extraction of those sources: a host test does not depend on a build.
+@(private)
+facts_file_of_folder :: proc(t: ^testing.T, folder: string) -> (file: []u8, ok: bool) {
+	paths, listed := foundation.files_with_suffix(folder, ".odin")
+	if !testing.expectf(t, listed, "the sources of %s cannot be listed", folder) {
 		return nil, false
 	}
 	sources := make([dynamic]Fact_Source, context.temp_allocator)
@@ -51,11 +59,11 @@ root_facts_file :: proc(t: ^testing.T) -> (file: []u8, ok: bool) {
 		append(&sources, Fact_Source{path = path, source = string(source)})
 	}
 	facts, extracted := facts_of_sources(sources[:])
-	if !testing.expect(t, extracted && len(facts) > 0, "the extraction gives no fact type of root") {
+	if !testing.expectf(t, extracted && len(facts) > 0, "the extraction gives no fact type of %s", folder) {
 		return nil, false
 	}
 	description: Module_Description
-	if !testing.expect(t, facts_merge(&description, facts), "the fact types of root do not merge") {
+	if !testing.expectf(t, facts_merge(&description, facts), "the fact types of %s do not merge", folder) {
 		return nil, false
 	}
 	return facts_module_file(description), true
@@ -115,17 +123,41 @@ facts_module_file :: proc(description: Module_Description) -> []u8 {
 }
 
 // root_fact_render gives the sentence of the fact type root.<type_name>
-// with the values of its fields, by the one render of the contract. A
-// field that the test names and the record does not have, a value of
-// another form than its field, and a refused render fail the test.
+// with the values of its fields.
 @(private = "file")
-root_fact_render :: proc(t: ^testing.T, file: []u8, type_name: string, values: []Root_Fact_Field) -> string {
-	key := fact_key("root", type_name)
-	_, _, description, found := module.fact_find(file, key)
-	if !testing.expectf(t, found, "the root service has no fact type %s", type_name) {
+root_fact_render :: proc(t: ^testing.T, file: []u8, type_name: string, values: []Fact_Test_Field) -> string {
+	return fact_test_render(t, file, "root", type_name, values)
+}
+
+// fact_test_render gives the sentence of the fact type
+// <package_name>.<type_name> with the values of its fields, by the one
+// render of the contract. A field that the test names and the record does
+// not have, a value of another form than its field, and a refused render
+// fail the test.
+@(private)
+fact_test_render :: proc(t: ^testing.T, file: []u8, package_name, type_name: string, values: []Fact_Test_Field) -> string {
+	key, bytes, made := fact_test_record(t, file, package_name, type_name, values)
+	if !made {
 		return ""
 	}
-	bytes := make([]u8, description.size, context.temp_allocator)
+	buffer: [module.FACT_SENTENCE_BYTES_MOST]u8
+	count, _, refusal := module.fact_sentence_write(file, key, bytes, buffer[:], nil)
+	testing.expectf(t, refusal == .None, "the fact %s.%s is refused: %v", package_name, type_name, refusal)
+	return strings.clone(string(buffer[:count]), context.temp_allocator)
+}
+
+// fact_test_record gives the key of the fact type <package_name>.<type_name>
+// and the bytes of its record with the values of its fields, the other
+// bytes zero. made is false, and the test fails, for a fact type that the
+// file lacks and a field that its record lacks.
+@(private)
+fact_test_record :: proc(t: ^testing.T, file: []u8, package_name, type_name: string, values: []Fact_Test_Field) -> (key: u64, bytes: []u8, made: bool) {
+	key = fact_key(package_name, type_name)
+	_, _, description, found := module.fact_find(file, key)
+	if !testing.expectf(t, found, "the module file has no fact type %s.%s", package_name, type_name) {
+		return key, nil, false
+	}
+	bytes = make([]u8, description.size, context.temp_allocator)
 	for value in values {
 		item: module.Field
 		has_field := false
@@ -136,7 +168,7 @@ root_fact_render :: proc(t: ^testing.T, file: []u8, type_name: string, values: [
 			}
 		}
 		if !testing.expectf(t, has_field, "the fact type %s has no field %s", type_name, value.name) {
-			return ""
+			return key, nil, false
 		}
 		place := bytes[item.offset:][:module.field_size(item)]
 		switch written in value.value {
@@ -153,10 +185,7 @@ root_fact_render :: proc(t: ^testing.T, file: []u8, type_name: string, values: [
 			copy(place, hash[:])
 		}
 	}
-	buffer: [module.FACT_SENTENCE_BYTES_MOST]u8
-	count, _, refusal := module.fact_sentence_write(file, key, bytes, buffer[:], nil)
-	testing.expectf(t, refusal == .None, "the fact %s is refused: %v", type_name, refusal)
-	return strings.clone(string(buffer[:count]), context.temp_allocator)
+	return key, bytes, true
 }
 
 // root_old_line gives the line that the root service wrote before the

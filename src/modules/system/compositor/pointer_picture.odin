@@ -258,7 +258,7 @@ pointer_wake :: proc "contextless" () -> u64 {
 pointer_shape_request :: proc "contextless" (client: ^Client, record: ring.Record) {
 	shape, shape_ok := enum_word.member_of_word(pointer_pictures.Pointer_Shape, record.values[0])
 	if !shape_ok {
-		system.log(.Warning, "compositor: ", system.name_of(client.title[:]), " asks for the pointer shape ", record.values[0], ", which names no shape: it is refused")
+		system.log_fact(.Warning, Pointer_Shape_Refused{window = window_field(client.title[:]), shape = record.values[0]})
 		return
 	}
 	client.pointer_shape = shape

@@ -101,7 +101,7 @@ window_event_send :: proc "contextless" (client: ^Client, kind: display.Event_Ki
 		system.wake_reader(target)
 	}
 	if result.loss_began {
-		system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " does not read its events: ", u64(queue.count), " records wait for it, and a new record is lost")
+		system.log_fact(.Info, Window_Events_Lost{window = window_field(client.title[:]), waiting = u64(queue.count)})
 	}
 	if queue.refused[class] != refused_before {
 		switch class {
@@ -132,7 +132,7 @@ window_events_pass :: proc "contextless" () {
 			system.wake_reader(&client.ring.completions)
 		}
 		if lost, ended := key_path.window_queue_loss_ended(&queue); ended {
-			system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " reads its events again: ", lost[.Key], " key records, ", lost[.Pointer], " pointer records and ", lost[.Other], " other records were lost")
+			system.log_fact(.Info, Window_Events_Read_Again{window = window_field(client.title[:]), key_records = lost[.Key], pointer_records = lost[.Pointer], other_records = lost[.Other]})
 		}
 	}
 }
@@ -175,7 +175,7 @@ window_queue_close :: proc "contextless" (index: int) {
 	queue := &window_queues[index]
 	if queue.loss.open {
 		lost := key_path.window_queue_loss_close(queue)
-		system.log(.Info, "compositor: window ", system.name_of(clients[index].title[:]), " closed and did not read its events: ", lost[.Key], " key records, ", lost[.Pointer], " pointer records and ", lost[.Other], " other records were lost")
+		system.log_fact(.Info, Window_Closed_With_Lost_Events{window = window_field(clients[index].title[:]), key_records = lost[.Key], pointer_records = lost[.Pointer], other_records = lost[.Other]})
 	}
 	queue^ = {}
 }

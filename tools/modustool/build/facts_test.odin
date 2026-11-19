@@ -177,6 +177,44 @@ the_fact_keys_are_in_the_llvm_ir :: proc(t: ^testing.T) {
 	testing.expect_value(t, facts_ir_problem("", nil), "")
 }
 
+// The fact types that a compile reached: a fact type of a support package
+// whose key the IR lacks has no row, and the IR holds no failure for it; a
+// fact type of the package of the module whose key the IR lacks fails, also
+// with a slash after the folder of the module, and also when another fact
+// type is reached; an IR with every key keeps each fact type, in order.
+@(test)
+the_fact_types_of_a_module_are_those_that_its_code_reaches :: proc(t: ^testing.T) {
+	own := Fact_Description{key = fact_key("fact_probe", "Probe"), package_name = "fact_probe", type_name = "Probe", file = FACT_TEST_FOLDER + "/main.odin"}
+	support := Fact_Description{key = fact_key("fact_sample", "Sample"), package_name = "fact_sample", type_name = "Sample", file = FACT_TEST_SUPPORT_FOLDER + "/sample.odin"}
+	ir_of :: proc(keys: ..u64) -> string {
+		text := strings.builder_make(context.temp_allocator)
+		for key in keys {
+			fmt.sbprintfln(&text, "  store i64 %d, ptr %%fact.key, align 8", i64(key))
+		}
+		return strings.to_string(text)
+	}
+	// The own fact type is missing: a failure, with no list.
+	missing, missing_problem := facts_reached(ir_of(support.key), {own, support}, FACT_TEST_FOLDER)
+	testing.expect(t, missing_problem != "" && len(missing) == 0)
+	_, slash_problem := facts_reached(ir_of(support.key), {own, support}, FACT_TEST_FOLDER + "/")
+	testing.expect(t, slash_problem != "")
+	_, empty_problem := facts_reached("", {own}, FACT_TEST_FOLDER)
+	testing.expect(t, empty_problem != "")
+	// The fact type of a support package is missing: no row, no failure.
+	without_support, support_problem := facts_reached(ir_of(own.key), {own, support}, FACT_TEST_FOLDER)
+	testing.expect_value(t, support_problem, "")
+	testing.expect(t, len(without_support) == 1 && without_support[0].key == own.key)
+	none, none_problem := facts_reached("", {support}, FACT_TEST_FOLDER)
+	testing.expect(t, none_problem == "" && len(none) == 0)
+	// A module with no fact type at all.
+	nothing, nothing_problem := facts_reached("", nil, FACT_TEST_FOLDER)
+	testing.expect(t, nothing_problem == "" && len(nothing) == 0)
+	// Each key in the IR: each fact type, in its order.
+	both, both_problem := facts_reached(ir_of(support.key, own.key), {own, support}, FACT_TEST_FOLDER)
+	testing.expect_value(t, both_problem, "")
+	testing.expect(t, len(both) == 2 && both[0].key == own.key && both[1].key == support.key)
+}
+
 // A module file of one fact type, with its record, its template and its
 // package name, for the render: the record "Probe" with an unsigned
 // Integer "value" of 8 bytes and a hexadecimal "mark" of 4 bytes and a

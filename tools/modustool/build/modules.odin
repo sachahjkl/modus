@@ -329,11 +329,15 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 		// The key of each fact type that the module writes is an immediate
 		// of its code: the typeid that this compiler gives the type
 		// (src/md/features/log_facts.md, "The fact key: why the typeid").
-		facts := module_facts(build) or_return
-		if problem := facts_ir_problem(string(ir), facts); problem != "" {
+		// A fact type of a support package whose call the code does not
+		// reach has no immediate, and no row: the list names the others.
+		facts := module_facts_of_sources(build) or_return
+		reached, problem := facts_reached(string(ir), facts, build.source)
+		if problem != "" {
 			fmt.eprintfln("modustool: log facts of %s: %s", build.name, problem)
 			return false
 		}
+		module_reached_facts_write(build.name, reached) or_return
 	}
 	if build.kernel {
 		// The features of llc for the kernel hold for all of the IR only

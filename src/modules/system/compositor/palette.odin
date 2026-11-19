@@ -45,9 +45,8 @@ palette_interface_state: interface.Interface_State
 palette_input: interface.Input
 palette_scroll_dragged: bool // The thumb that is held now moved the view: its release writes one line of the log.
 // The named elements of the last frame of the panel, and the set that the
-// log has: "compositor: the palette: the element field 1 at x,y,w,h", in
-// pixels of the screen.
-PALETTE_ELEMENT_OWNER :: "the palette"
+// log has: the facts Palette_Element_Place, "compositor: the palette: the
+// element field 1 at x,y,w,h", in pixels of the screen.
 palette_element_places_drawn, palette_element_places_written: interface.Element_Places
 
 // The ranking thread. The loop of the compositor never makes a list: it
@@ -500,9 +499,9 @@ palette_go_to :: proc "contextless" () {
 // window of the manual.
 palette_window_to_front :: proc "contextless" (title: string) {
 	for position := order_count - 1; position >= 0; position -= 1 {
-		if system.name_of(clients[order[position]].title[:]) == title {
+		if index := order[position]; system.name_of(clients[index].title[:]) == title {
 			raise(position)
-			system.log(.Info, "compositor: window ", title, " in front")
+			system.log_fact(.Info, Window_In_Front{window = window_field(clients[index].title[:])})
 			return
 		}
 	}
@@ -1000,7 +999,7 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 			// that the row did not name.
 			if order[position] == number && system.name_of(clients[number].title[:]) == name_text {
 				raise(position)
-				system.log(.Info, "compositor: window ", system.name_of(clients[number].title[:]), " in front")
+				system.log_fact(.Info, Window_In_Front{window = window_field(clients[number].title[:])})
 				break
 			}
 		}
@@ -1227,7 +1226,7 @@ palette_refresh :: proc "contextless" () {
 	// The panel is no window: the compositor writes the places of its
 	// named elements itself, in pixels of the screen, so that a machine
 	// test presses a field or a button by its name.
-	interface.element_places_publish(&palette_element_places_written, &palette_element_places_drawn, "compositor: ", PALETTE_ELEMENT_OWNER)
+	palette_element_places_publish() // facts.odin
 	// The difference through the drawing module. It refuses only a table
 	// of more than 2^40 records or bytes; with no difference, the whole
 	// screen is drawn again.
@@ -1346,7 +1345,7 @@ palette_close :: proc "contextless" (cause: string) {
 	interface.draw_table_clear(&palette_before)
 	// A closed panel has no element: each one that the log has is gone.
 	palette_element_places_drawn = {}
-	interface.element_places_publish(&palette_element_places_written, &palette_element_places_drawn, "compositor: ", PALETTE_ELEMENT_OWNER)
+	palette_element_places_publish() // facts.odin
 	per_frame := palette_time / max(palette_frames, 1)
 	system.lock(&palette_ranking.lock)
 	longest := palette_ranking.longest

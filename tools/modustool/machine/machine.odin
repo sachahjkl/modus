@@ -2915,6 +2915,9 @@ scenario := [?]Step {
 	// serial port, the step Record the sentence with the place through
 	// log.records and log.fact_records.
 	{kind = .Fact, process = "root", fact = "root.Device_Service_Started", condition = "service = \"block\"", any_order = true},
+	// The surface of the window of disk is a log fact of the compositor:
+	// the step reads the field that names the window.
+	{kind = .Fact, process = "compositor", fact = "compositor.Surface_Made", condition = "window = \"disk\"", any_order = true},
 	{kind = .Record, process = "root", level = "Info", text = "root: started block for the device at the place 17 of the bus"},
 	{kind = .Record, process = "block", level = "Info", text = "block: ok, 8192 blocks of 4096 bytes, a queue of ", any_order = true},
 	{kind = .Wait, text = "disk: ok, the disk has 8192 blocks"},
@@ -2942,6 +2945,7 @@ scenario := [?]Step {
 	// The client stops: its block service stops, and the device stops
 	// using memory.
 	{kind = .Close, text = "disk"},
+	{kind = .Fact, process = "compositor", fact = "compositor.Window_Closed_After_Refused_Commands", condition = "window = \"disk\"", any_order = true},
 	{kind = .Wait, text = "compositor: window disk closed after 3 records whose word names no command"},
 	{kind = .Record, process = "root", level = "Info", text = "root: disk stopped: a holder"},
 	{kind = .Record, process = "root", level = "Info", text = "root: block stopped: a holder"},
@@ -3153,6 +3157,9 @@ scenario := [?]Step {
 	// of the row.
 	{kind = .Type, text = "rk"},
 	{kind = .Wait, text = "inspect: workers: "},
+	// An element line is a log fact of the window: the step reads the
+	// field that names the window, and the press reads its rectangle.
+	{kind = .Fact, process = "inspect", fact = "interface.Element_Place", condition = "window = \"inspect\"", any_order = true},
 	{kind = .Wait, text = "interface: inspect: the element network at "},
 	{kind = .Click_Element, text = "inspect", element = "network"},
 	{kind = .Wait, text = "inspect: network: "},
