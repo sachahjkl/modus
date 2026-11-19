@@ -284,6 +284,22 @@ a_list_with_a_refused_row_is_refused_with_its_number :: proc(t: ^testing.T) {
 	expect_list_refused(t, list_bytes(logs[:], handles[:]), .Start, .Wiring_Rows, 3)
 }
 
+// One handle number in two places of the lent handles is refused: next to
+// each other, and the last place repeating the first.
+@(test)
+a_repeated_lent_handle_is_refused :: proc(t: ^testing.T) {
+	rows := [1]Wiring{good_row()}
+	for handles in ([?][3]u32{{5, 5, 6}, {5, 6, 5}, {max(u32), 1, max(u32)}}) {
+		copied := handles
+		bytes := list_bytes(rows[:], copied[:])
+		list: Checked_Wiring_List
+		refusal, ok := wiring_list_check(bytes, .Start, &list)
+		testing.expectf(t, !ok, "the handles %v are taken", handles)
+		testing.expect(t, refusal.unit == i64(errors.Unit.Lent_Handles) && refusal.kind == i64(errors.Kind.Bad_Value))
+		testing.expect(t, list.row_count == 0 && list.handle_count == 0)
+	}
+}
+
 // The lists that the border takes, last: a Wire of one row, and a Start of
 // three rows with its handles and terms at the end of the list.
 @(test)

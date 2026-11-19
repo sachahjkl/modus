@@ -12,13 +12,48 @@ import "modus:contract/value_kinds"
 // record output 1, the pace Writer_Chooses.
 @(private = "file")
 writer_command :: proc() -> ring.Record {
-	return given_end_record({command = .Writer_End, tag = 7, ring = 21, index = 1, pace = .Writer_Chooses})
+	return given_end_record({command = .Writer_End, tag = 7, ring = 21, index = 1, pace = .Writer_Chooses, end_words = 24})
 }
 
 // A reader end of the record input 1, with no terms.
 @(private = "file")
 reader_command :: proc() -> ring.Record {
-	return given_end_record({command = .Reader_End, tag = 8, ring = 22, index = 1})
+	return given_end_record({command = .Reader_End, tag = 8, ring = 22, index = 1, description = 23, end_words = 25})
+}
+
+// The end of the asker: an index, terms or a pace beside it are refused,
+// as the asker declares no record input; the end that the border takes
+// comes back as it was, last.
+@(test)
+an_asker_end_names_no_record_input :: proc(t: ^testing.T) {
+	asker := given_end_record({command = .Asker_End, tag = 9, ring = 26, description = 27, end_words = 28})
+	for word in ([?]u64{1, module.RECORD_STREAM_INDEX_MOST, max(u64)}) {
+		record := asker
+		record.values[WIRING_VALUE_INDEX] = word
+		expect_end_refused(t, record, WIRING_VALUE_INDEX + 1, i64(min(word, 1 << 62)), 0)
+	}
+	terms := asker
+	terms.values[WIRING_VALUE_TERMS] = 1
+	expect_end_refused(t, terms, WIRING_VALUE_TERMS + 1, 1, 0)
+	pace := asker
+	pace.values[WIRING_VALUE_PACE] = 1
+	expect_end_refused(t, pace, WIRING_VALUE_PACE + 1, 1, 0)
+	taken, _, ok := given_end_of_record(asker)
+	testing.expect(t, ok)
+	testing.expect_value(t, taken, Given_End{command = .Asker_End, tag = 9, ring = 26, description = 27, end_words = 28})
+}
+
+// The end page: each end with none, or with a word past 32 bits, is
+// refused, as it would never read the end of its wiring.
+@(test)
+an_end_with_no_end_page_is_refused :: proc(t: ^testing.T) {
+	for command in ([?]ring.Record{writer_command(), reader_command()}) {
+		for word in ([?]u64{0, u64(max(u32)) + 1, max(u64)}) {
+			record := command
+			record.values[WIRING_VALUE_END_WORDS] = word
+			expect_end_refused(t, record, WIRING_VALUE_END_WORDS + 1, i64(min(word, 1 << 62)), i64(max(u32)))
+		}
+	}
 }
 
 // expect_end_refused gives a command to the border, and checks that it is
@@ -110,6 +145,23 @@ a_reader_end_with_a_pace_or_terms_past_32_bits_is_refused :: proc(t: ^testing.T)
 	}
 }
 
+// The description file: a reader end with none, or with a word past 32
+// bits, is refused, as it cannot check a record; a writer end with one is
+// refused, as it reads no record.
+@(test)
+a_description_file_belongs_to_a_reader_end_only :: proc(t: ^testing.T) {
+	for word in ([?]u64{0, u64(max(u32)) + 1, max(u64)}) {
+		record := reader_command()
+		record.values[WIRING_VALUE_DESCRIPTION] = word
+		expect_end_refused(t, record, WIRING_VALUE_DESCRIPTION + 1, i64(min(word, 1 << 62)), i64(max(u32)))
+	}
+	for word in ([?]u64{1, max(u64)}) {
+		record := writer_command()
+		record.values[WIRING_VALUE_DESCRIPTION] = word
+		expect_end_refused(t, record, WIRING_VALUE_DESCRIPTION + 1, i64(min(word, 1 << 62)), 0)
+	}
+}
+
 // Each reserved word: 1 and the largest word are refused, with the index
 // of the word.
 @(test)
@@ -133,12 +185,12 @@ a_reserved_word_that_is_not_zero_is_refused :: proc(t: ^testing.T) {
 the_border_takes_each_valid_end_back_as_it_was :: proc(t: ^testing.T) {
 	ends := make([dynamic]Given_End, context.temp_allocator)
 	for pace in Wiring_Pace {
-		append(&ends, Given_End{command = .Writer_End, tag = 1, ring = 1, index = 1, pace = pace})
+		append(&ends, Given_End{command = .Writer_End, tag = 1, ring = 1, index = 1, pace = pace, end_words = 1})
 	}
-	append(&ends, Given_End{command = .Writer_End, tag = max(u32), ring = op.Handle(max(u32)), index = module.RECORD_STREAM_INDEX_MOST, pace = .Always_Holds_Writer})
-	append(&ends, Given_End{command = .Reader_End, tag = 0, ring = 1, index = 1})
-	append(&ends, Given_End{command = .Reader_End, tag = 3, ring = op.Handle(max(u32)), index = module.RECORD_STREAM_INDEX_MOST, terms = op.Handle(max(u32))})
-	append(&ends, Given_End{command = .Reader_End, tag = 4, ring = 9, index = 2, terms = 1})
+	append(&ends, Given_End{command = .Writer_End, tag = max(u32), ring = op.Handle(max(u32)), index = module.RECORD_STREAM_INDEX_MOST, pace = .Always_Holds_Writer, end_words = op.Handle(max(u32))})
+	append(&ends, Given_End{command = .Reader_End, tag = 0, ring = 1, index = 1, description = 1, end_words = 1})
+	append(&ends, Given_End{command = .Reader_End, tag = 3, ring = op.Handle(max(u32)), index = module.RECORD_STREAM_INDEX_MOST, terms = op.Handle(max(u32)), description = op.Handle(max(u32)), end_words = op.Handle(max(u32))})
+	append(&ends, Given_End{command = .Reader_End, tag = 4, ring = 9, index = 2, terms = 1, description = 2, end_words = 3})
 	for end in ends {
 		record := given_end_record(end)
 		taken, refusal, ok := given_end_of_record(record)
@@ -211,8 +263,8 @@ the_capacity_of_a_wiring_ring_holds_the_ends_of_a_start :: proc(t: ^testing.T) {
 }
 
 // One field of a record of the type check, with its bytes in order: the
-// builder places each field after the one before it.
-@(private = "file")
+// builder places each field after the one before it. The tests of the
+// description file use it too.
 Test_Field :: struct {
 	name:          string,
 	type:          module.Type,
@@ -225,7 +277,6 @@ Test_Field :: struct {
 
 // typed_file gives a module file with one record, at the index 1, whose
 // fields follow each other from its first byte.
-@(private = "file")
 typed_file :: proc(name: string, fields: []Test_Field) -> []u8 {
 	strings_bytes := make([dynamic]u8, context.temp_allocator)
 	append(&strings_bytes, 0)

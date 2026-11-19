@@ -1,4 +1,4 @@
-// The module format, version 4 (docs/MODULE_CONTRACT.md, sections 1 and 2).
+// The module format, version 5 (docs/MODULE_CONTRACT.md, sections 1 and 2).
 //
 // A module is one file:
 //
@@ -39,7 +39,7 @@ import "modus:contract/enum_word"
 import "modus:contract/value_kinds"
 
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
-VERSION :: 4 // The version of the format that this code reads and writes. A file of another version is refused. 4: the tables of the record outputs and the record inputs.
+VERSION :: 5 // The version of the format that this code reads and writes. A file of another version is refused. 5: the place of the variable of each record output and record input.
 PAGE_SIZE :: 4096 // The alignment of each segment in the file and in memory: one page of the processor.
 HASH_SIZE :: 32 // The bytes of a BLAKE3 hash: the name of a module.
 
@@ -58,7 +58,7 @@ Machine :: enum u32 {
 // the file when one field is not one that it takes (`validate`).
 //
 // Example: the header of a module with an entry starts with the bytes "MODULE", the
-// version 4, the machine `X86_64`, and `entry_export` the index of its
+// version 5, the machine `X86_64`, and `entry_export` the index of its
 // export `main`.
 Header :: struct {
 	magic:           u64, // `MAGIC`.

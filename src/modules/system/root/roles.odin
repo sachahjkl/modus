@@ -361,6 +361,16 @@ process_roles := [?]Process_Role_Row {
 	{name = "interface_font"},
 	// An arena that grows until its own budget refuses a commit.
 	{name = "arena"},
+	// The asker of the test of the record outputs: Start, Wire, Connect and
+	// Revoke are commands of the root ring, which only the grant Root_Ring
+	// sends (src/md/features/module_outputs.md, "How a test waits on a
+	// record output"). It starts and wires only its own children, and
+	// revokes only its own grant wirings.
+	{name = "output_wiring", grants = {.Root_Ring}},
+	// The writer and the reader of that test: their ends come from the root
+	// service in their wiring rings, and they need no grant.
+	{name = "output_writer"},
+	{name = "output_reader"},
 }
 
 // The processes that this service starts itself, each in its own way and

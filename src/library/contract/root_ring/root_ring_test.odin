@@ -20,6 +20,29 @@ start_answer_of_word_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) 
 	}
 }
 
+// values[0] of a Wire and values[4] of a Start: None of a Wire, one past
+// the last member and the largest word name nothing; each member comes
+// back from its word, last.
+@(test)
+the_words_of_the_list_page_refuse_a_word_that_names_no_member :: proc(t: ^testing.T) {
+	for word in ([?]u64{u64(Wire_Step.None), u64(max(Wire_Step)) + 1, max(u64)}) {
+		_, ok := wire_step_of_word(word)
+		testing.expectf(t, !ok, "the step %d of a Wire is taken", word)
+	}
+	for word in ([?]u64{u64(max(Start_Wiring_List)) + 1, max(u64)}) {
+		_, ok := start_wiring_list_of_word(word)
+		testing.expectf(t, !ok, "the list word %d of a Start is taken", word)
+	}
+	for member in ([?]Wire_Step{.List_Page, .Apply}) {
+		read, ok := wire_step_of_word(u64(member))
+		testing.expect(t, ok && read == member)
+	}
+	for member in Start_Wiring_List {
+		read, ok := start_wiring_list_of_word(u64(member))
+		testing.expect(t, ok && read == member)
+	}
+}
+
 // The kind of a record becomes a command at command_of_word only. Each word
 // that names no command is refused first: 0, which is None and which no
 // sender sends, one past the largest member, a word far past it, the

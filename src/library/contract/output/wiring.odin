@@ -44,6 +44,7 @@ Wiring_Command :: enum u32 {
 	None       = 0, // Refused, as a word that names no command.
 	Writer_End = 1, // The process writes the output ring: values[WIRING_VALUE_INDEX] is its record output.
 	Reader_End = 2, // The process reads the output ring: values[WIRING_VALUE_INDEX] is its record input.
+	Asker_End  = 3, // The process reads the output ring as the asker of the wiring, with no record input: values[WIRING_VALUE_INDEX] is 0, and the tag is the number of the wiring that the completion of its command gave.
 }
 
 // The index of each word in the values of a command of the wiring ring.
@@ -53,7 +54,9 @@ WIRING_VALUE_RING :: 0 // The handle of the output ring, with Read and Write, gi
 WIRING_VALUE_INDEX :: 1 // The index of the record output or the record input in the tables of the module, from 1.
 WIRING_VALUE_PACE :: 2 // A writer end: the word of its Wiring_Pace. A reader end: 0.
 WIRING_VALUE_TERMS :: 3 // A reader end: the handle of a memory object with its wiring terms at offset 0, with Read only, given through the wiring ring; or 0. A writer end: 0.
-WIRING_VALUE_FIRST_RESERVED :: 4 // From this index to the last value: 0.
+WIRING_VALUE_DESCRIPTION :: 4 // A reader end: the handle of its description file (description_file_write), with Read only, given through the wiring ring; never 0. A writer end: 0.
+WIRING_VALUE_END_WORDS :: 5 // Each end: the handle of the end page of the wiring (End_Words), with Read only, given through the wiring ring; never 0.
+WIRING_VALUE_FIRST_RESERVED :: 6 // From this index to the last value: 0.
 
 // One end that the process took from the wiring ring. It lives in the
 // private memory of the process. The handles are numbers that the root
@@ -66,6 +69,8 @@ Given_End :: struct {
 	index:   u32, // The record output or the record input, from 1 to module.RECORD_STREAM_INDEX_MOST.
 	pace:    Wiring_Pace, // A writer end: its pace. A reader end: Writer_Chooses, which it does not read.
 	terms:   op.Handle, // A reader end: the memory of its wiring terms, or 0.
+	description: op.Handle, // A reader end: the memory of its description file. A writer end: 0.
+	end_words: op.Handle, // Each end: the end page of the wiring, which the root service alone writes.
 }
 
 // given_end_of_record is the border of a command of the wiring ring: the
@@ -74,6 +79,9 @@ Given_End :: struct {
 // - a kind that names no Wiring_Command, and None;
 // - a ring handle of 0, or past 32 bits;
 // - an index of 0, or past module.RECORD_STREAM_INDEX_MOST;
+// - an end page of 0, or past 32 bits;
+// - a description file beside a writer end, and none or one past 32 bits
+//   beside a reader end;
 // - for a writer end, a pace that names no Wiring_Pace, and a terms handle
 //   that is not 0;
 // - for a reader end, a pace word that is not 0, and a terms handle past
@@ -92,10 +100,20 @@ given_end_of_record :: proc "contextless" (record: ring.Record) -> (end: Given_E
 	if values[WIRING_VALUE_RING] == 0 || values[WIRING_VALUE_RING] > u64(max(u32)) {
 		return {}, word_refusal(WIRING_VALUE_RING + 1, values[WIRING_VALUE_RING], u64(max(u32))), false
 	}
-	if values[WIRING_VALUE_INDEX] == 0 || values[WIRING_VALUE_INDEX] > module.RECORD_STREAM_INDEX_MOST {
+	// The asker reads with no declared record input: its end names none.
+	if command == .Asker_End {
+		if values[WIRING_VALUE_INDEX] != 0 {
+			return {}, word_refusal(WIRING_VALUE_INDEX + 1, values[WIRING_VALUE_INDEX], 0), false
+		}
+	} else if values[WIRING_VALUE_INDEX] == 0 || values[WIRING_VALUE_INDEX] > module.RECORD_STREAM_INDEX_MOST {
 		return {}, word_refusal(WIRING_VALUE_INDEX + 1, values[WIRING_VALUE_INDEX], module.RECORD_STREAM_INDEX_MOST), false
 	}
-	end = {command = command, tag = record.tag, ring = op.Handle(values[WIRING_VALUE_RING]), index = u32(values[WIRING_VALUE_INDEX])}
+	// Each end reads the end of its wiring in the end page: an end with
+	// none would never learn it.
+	if values[WIRING_VALUE_END_WORDS] == 0 || values[WIRING_VALUE_END_WORDS] > u64(max(u32)) {
+		return {}, word_refusal(WIRING_VALUE_END_WORDS + 1, values[WIRING_VALUE_END_WORDS], u64(max(u32))), false
+	}
+	end = {command = command, tag = record.tag, ring = op.Handle(values[WIRING_VALUE_RING]), index = u32(values[WIRING_VALUE_INDEX]), end_words = op.Handle(values[WIRING_VALUE_END_WORDS])}
 	switch command {
 	case .Writer_End:
 		pace, pace_known := enum_word.member_of_word(Wiring_Pace, values[WIRING_VALUE_PACE])
@@ -105,15 +123,26 @@ given_end_of_record :: proc "contextless" (record: ring.Record) -> (end: Given_E
 		if values[WIRING_VALUE_TERMS] != 0 {
 			return {}, word_refusal(WIRING_VALUE_TERMS + 1, values[WIRING_VALUE_TERMS], 0), false
 		}
+		if values[WIRING_VALUE_DESCRIPTION] != 0 {
+			return {}, word_refusal(WIRING_VALUE_DESCRIPTION + 1, values[WIRING_VALUE_DESCRIPTION], 0), false
+		}
 		end.pace = pace
-	case .Reader_End:
+	case .Reader_End, .Asker_End:
 		if values[WIRING_VALUE_PACE] != 0 {
 			return {}, word_refusal(WIRING_VALUE_PACE + 1, values[WIRING_VALUE_PACE], 0), false
 		}
-		if values[WIRING_VALUE_TERMS] > u64(max(u32)) {
-			return {}, word_refusal(WIRING_VALUE_TERMS + 1, values[WIRING_VALUE_TERMS], u64(max(u32))), false
+		// The asker declares no record input, so it takes no terms.
+		terms_most := command == .Asker_End ? u64(0) : u64(max(u32))
+		if values[WIRING_VALUE_TERMS] > terms_most {
+			return {}, word_refusal(WIRING_VALUE_TERMS + 1, values[WIRING_VALUE_TERMS], terms_most), false
 		}
 		end.terms = op.Handle(values[WIRING_VALUE_TERMS])
+		// A reader checks each record against its description file: an
+		// end with none cannot be read.
+		if values[WIRING_VALUE_DESCRIPTION] == 0 || values[WIRING_VALUE_DESCRIPTION] > u64(max(u32)) {
+			return {}, word_refusal(WIRING_VALUE_DESCRIPTION + 1, values[WIRING_VALUE_DESCRIPTION], u64(max(u32))), false
+		}
+		end.description = op.Handle(values[WIRING_VALUE_DESCRIPTION])
 	case .None:
 		// The check of the kind above refused None: the case keeps the
 		// switch whole.
@@ -141,11 +170,13 @@ given_end_record :: proc "contextless" (end: Given_End) -> ring.Record {
 	record := ring.Record{kind = u32(end.command), tag = end.tag}
 	record.values[WIRING_VALUE_RING] = u64(end.ring)
 	record.values[WIRING_VALUE_INDEX] = u64(end.index)
+	record.values[WIRING_VALUE_END_WORDS] = u64(end.end_words)
 	switch end.command {
 	case .Writer_End:
 		record.values[WIRING_VALUE_PACE] = u64(end.pace)
-	case .Reader_End:
+	case .Reader_End, .Asker_End:
 		record.values[WIRING_VALUE_TERMS] = u64(end.terms)
+		record.values[WIRING_VALUE_DESCRIPTION] = u64(end.description)
 	case .None:
 	}
 	return record

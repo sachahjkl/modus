@@ -298,7 +298,10 @@ wiring_row_check :: proc "contextless" (row: Wiring, number: u32, form: Wiring_L
 // - a count of lent handles past WIRING_LIST_HANDLE_LIMIT;
 // - rows and handles past the copy;
 // - each row that wiring_row_check refuses, with its number;
-// - two rows that wire the record output `log` of the child.
+// - two rows that wire the record output `log` of the child;
+// - one handle number in two places of the lent handles: the error record
+//   has the unit Lent_Handles, the second place as its value and the first
+//   as its limit.
 //
 // The error record has the unit Wiring_Rows; found is 0 for the list as a
 // whole, else the row from 1. On a refusal, list holds no row.
@@ -349,6 +352,14 @@ wiring_list_check :: proc "contextless" (copy_of_list: []u8, form: Wiring_List_F
 	for index in 0 ..< head.handle_count {
 		word: u32
 		intrinsics.mem_copy_non_overlapping(&word, &copy_of_list[rows_end + int(index) * size_of(u32)], size_of(u32))
+		// One handle in two places would be proved once and closed twice;
+		// a list names each lent handle once.
+		for before in 0 ..< index {
+			if list.handles[before] == word {
+				list^ = {}
+				return errors.error_make(.Bad_Value, .Lent_Handles, 0, i64(index) + 1, i64(before) + 1), false
+			}
+		}
 		list.handles[index] = word
 	}
 	list.row_count = head.row_count

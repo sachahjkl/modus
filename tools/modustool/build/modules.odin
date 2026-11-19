@@ -570,6 +570,9 @@ load_on_host :: proc(name: string, imports: []Host_Module) -> (loaded: Host_Modu
 	if !module.own_hash_write(file, memory, blake3.hash(file)) {
 		return fail(name, "the own-hash place is not in writable data")
 	}
+	if !module.record_stream_indexes_write(file, memory) {
+		return fail(name, "the place of a record stream is not in writable data")
+	}
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)
 		protection: linux.Mem_Protection

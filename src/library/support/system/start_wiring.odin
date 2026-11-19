@@ -19,12 +19,14 @@ Start_Wiring :: struct {
 	// process_start gives them through the wiring ring, and the command
 	// names the handles of the child.
 	ends:          []output.Given_End,
+	// In: the starter keeps a handle of the budget of the child, because
+	// the child can ask for wirings, which its budget pays.
+	keep_budget:   bool,
 	// Out: the memory of the wiring ring, with Read and Write, in the
 	// starter; 0 when the child declares no record stream and has no end.
 	wiring_memory: Handle,
-	// Out: a handle of the budget of the child with Read and Spend: the
-	// starter pays the wirings that the child asks for from it, and closes
-	// it at the stop of the child.
+	// Out, with keep_budget: a handle of the budget of the child with Read
+	// and Spend. The starter closes it at the stop of the child.
 	budget:        Handle,
 }
 
@@ -69,6 +71,13 @@ start_wiring_give :: proc "contextless" (process: Handle, budget: Handle, record
 		given.ring, status = give(memory, end.ring, {.Read, .Write})
 		if status == .Ok && end.terms != 0 {
 			given.terms, status = give(memory, end.terms, {.Read})
+		}
+		if status == .Ok && end.description != 0 {
+			given.description, status = give(memory, end.description, {.Read})
+		}
+		// The end page with Read only: only the root service writes the end.
+		if status == .Ok {
+			given.end_words, status = give(memory, end.end_words, {.Read})
 		}
 		if status != .Ok {
 			close(memory)

@@ -167,7 +167,7 @@ byte_layout_output_ring_sources :: proc() -> []Byte_Layout_Source {
 	file :: BYTE_LAYOUT_OUTPUT_FILE
 	sources := [?]Byte_Layout_Source {
 		{key = "output.Compartment_Word", file = file, declaration = "Compartment_Word", info = type_info_of(output.Compartment_Word), what = "the start of each compartment of an output ring"},
-		{key = "output.End_Words", file = file, declaration = "End_Words", info = type_info_of(output.End_Words), what = "the end words in the head page of an output ring"},
+		{key = "output.End_Words", file = file, declaration = "End_Words", info = type_info_of(output.End_Words), what = "the end words in the end page of a wiring"},
 		{key = "output.Wiring_List_Head", file = BYTE_LAYOUT_WIRING_LIST_FILE, declaration = "Wiring_List_Head", info = type_info_of(output.Wiring_List_Head), what = "the head of a wiring list"},
 		{key = "output.Wiring", file = BYTE_LAYOUT_WIRING_LIST_FILE, declaration = "Wiring", info = type_info_of(output.Wiring), what = "one row of a wiring list"},
 	}

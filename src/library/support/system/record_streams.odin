@@ -2,6 +2,7 @@ package system
 
 import "base:intrinsics"
 import module "modus:contract/module"
+import "modus:contract/output"
 
 // The declarations of the record outputs and the record inputs of a module
 // (docs/MODULE_CONTRACT.md, "The record outputs and the record inputs").
@@ -36,16 +37,46 @@ import module "modus:contract/module"
 // ```
 Any_Record :: struct {}
 
+// The state of a record output in its variable. Each loader writes the
+// index of its row at the place of the variable, its first field
+// (module.record_stream_indexes_write): the library finds the ends of the
+// variable in the wiring ring by that index. 0: the module file names no
+// place, and no end reaches the variable.
+Output_State :: struct {
+	index:       u32, // The loader writes it.
+	next_serial: u32, // The serial of the next record of the record output, in each ring.
+	written:     u64, // The records that one ring or more took.
+	discarded:   u64, // The records that no ring took: the record output had no reader.
+	refused:     u64, // The writes refused with Full: no ring took them, and they have no serial.
+	refused_by_readers: u64, // The compartments that a reader refused (output.Completion_Kind.Bad_Record).
+	ended:       bool, // output_end ended the record output.
+	last_end:    output.End_Word, // The end word of the last ring that ended by an end word.
+	rings_ended: u64, // The rings that ended by an end word: a reader that stopped, its asker, a revocation.
+}
+#assert(offset_of(Output_State, index) == 0)
+
+// The state of a record input in its variable: the index first, as for a
+// record output.
+Input_State :: struct {
+	index: u32, // The loader writes it.
+	read:  u64, // The records that the readers took.
+}
+#assert(offset_of(Input_State, index) == 0)
+
 // A record output: a stream of records of the record type Record_Type that
 // the module writes, with no known end. With Any_Record, it takes the type
 // of the one generic record input of its module; with pairing Paired, one
 // ring for each wiring of that record input, of the type of that wiring.
-Record_Output :: struct($Record_Type: typeid, $pairing: module.Record_Output_Pairing = module.Record_Output_Pairing.Unpaired) where intrinsics.type_is_struct(Record_Type) {}
+Record_Output :: struct($Record_Type: typeid, $pairing: module.Record_Output_Pairing = module.Record_Output_Pairing.Unpaired) where intrinsics.type_is_struct(Record_Type) {
+	using state: Output_State,
+}
 
 // A record input with no wiring terms: a stream of records of the record
 // type Record_Type that the module reads. wirings says how many wirings it
 // takes: One, Many of one type, or Many_Types for a generic record input.
-Record_Input :: struct($Record_Type: typeid, $wirings: module.Wiring_Count = module.Wiring_Count.One) where intrinsics.type_is_struct(Record_Type) {}
+Record_Input :: struct($Record_Type: typeid, $wirings: module.Wiring_Count = module.Wiring_Count.One) where intrinsics.type_is_struct(Record_Type) {
+	using state: Input_State,
+}
 
 // A record input whose asker gives wiring terms of the record type
 // Terms_Type with each wiring, which the reader receives with its end. The
@@ -58,4 +89,6 @@ Record_Input :: struct($Record_Type: typeid, $wirings: module.Wiring_Count = mod
 // // The records that pass a condition.
 // source: system.Record_Input_With_Terms(system.Any_Record, Condition)
 // ```
-Record_Input_With_Terms :: struct($Record_Type: typeid, $Terms_Type: typeid, $wirings: module.Wiring_Count = module.Wiring_Count.One) where intrinsics.type_is_struct(Record_Type) && intrinsics.type_is_struct(Terms_Type) {}
+Record_Input_With_Terms :: struct($Record_Type: typeid, $Terms_Type: typeid, $wirings: module.Wiring_Count = module.Wiring_Count.One) where intrinsics.type_is_struct(Record_Type) && intrinsics.type_is_struct(Terms_Type) {
+	using state: Input_State,
+}

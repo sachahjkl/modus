@@ -447,7 +447,8 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		output_rows := make([dynamic]module.Record_Output, context.temp_allocator)
 		append(&output_rows, module.Record_Output{})
 		for item in description.record_outputs {
-			row := module.Record_Output{record = item.record_index, pairing = u8(item.pairing)}
+			place, _ := record_stream_place_of_elf(elf, sections[:], images[:], item.package_name, item.name) or_return
+			row := module.Record_Output{record = item.record_index, pairing = u8(item.pairing), place = place}
 			row.name_offset, row.name_count = strings_add(&string_bytes, item.name)
 			row.about_offset, row.about_count = strings_add(&string_bytes, item.about)
 			row.text_offset, row.text_count = strings_add(&string_bytes, item.text)
@@ -459,7 +460,8 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		input_rows := make([dynamic]module.Record_Input, context.temp_allocator)
 		append(&input_rows, module.Record_Input{})
 		for item in description.record_inputs {
-			row := module.Record_Input{record = item.record_index, terms = item.terms_index, wirings = u8(item.wirings)}
+			place, _ := record_stream_place_of_elf(elf, sections[:], images[:], item.package_name, item.name) or_return
+			row := module.Record_Input{record = item.record_index, terms = item.terms_index, wirings = u8(item.wirings), place = place}
 			row.name_offset, row.name_count = strings_add(&string_bytes, item.name)
 			row.about_offset, row.about_count = strings_add(&string_bytes, item.about)
 			row.text_offset, row.text_count = strings_add(&string_bytes, item.text)
@@ -564,6 +566,69 @@ own_hash_place_of_elf :: proc(elf: []u8, sections: []Elf_Section_Header, images:
 			}
 			if !writable {
 				fmt.eprintfln("modustool: convert: the symbol %s at %x is not in a segment that the loader can write", module.OWN_HASH_PLACE_SYMBOL, symbol.value)
+				return 0, false, false
+			}
+			memory_offset, found = symbol.value, true
+		}
+	}
+	return memory_offset, found, true
+}
+
+// The two forms of the symbol of a package variable that the compiler
+// writes in the linked file: the package and the name, with "." or "::"
+// between them. The tool takes either, and refuses a file with both.
+RECORD_STREAM_SYMBOL_SEPARATORS :: [2]string{".", "::"}
+
+// record_stream_place_of_elf gives the memory offset of the package
+// variable of one record stream: the object symbol `package.name` of the
+// symbol table of the linked file, of at least
+// module.RECORD_STREAM_PLACE_SIZE bytes, on a multiple of that size, in a
+// segment that the loader can write. found is false for no such symbol:
+// no code uses the variable, and the link dropped it; the row then has the
+// place 0. ok is false for a symbol that breaks a rule, which it prints.
+@(private = "file")
+record_stream_place_of_elf :: proc(elf: []u8, sections: []Elf_Section_Header, images: []Segment_Image, package_name: string, name: string) -> (memory_offset: u64, found: bool, ok: bool) {
+	wanted: [2]string
+	separators := RECORD_STREAM_SYMBOL_SEPARATORS
+	for separator, index in separators {
+		wanted[index] = strings.concatenate({package_name, separator, name}, context.temp_allocator)
+	}
+	for section in sections {
+		if section.type != ELF_SECTION_SYMBOLS || int(section.link) >= len(sections) {
+			continue
+		}
+		symbols, has_symbols := elf_section_bytes(elf, section)
+		names, has_names := elf_section_bytes(elf, sections[section.link])
+		if !has_symbols || !has_names {
+			continue
+		}
+		for at := 0; at + size_of(Elf_Symbol) <= len(symbols); at += size_of(Elf_Symbol) {
+			symbol: Elf_Symbol
+			mem.copy(&symbol, raw_data(symbols[at:]), size_of(symbol))
+			if symbol.section_index == 0 || symbol.section_index >= 0xFF00 || u64(symbol.name) >= u64(len(names)) {
+				continue
+			}
+			symbol_name := text_until_zero(names, u64(symbol.name))
+			if symbol_name != wanted[0] && symbol_name != wanted[1] {
+				continue
+			}
+			if found {
+				fmt.eprintfln("modustool: convert: the linked file has two symbols of the record stream %s: one variable has one place", wanted[0])
+				return 0, false, false
+			}
+			if symbol.size < module.RECORD_STREAM_PLACE_SIZE || symbol.value % module.RECORD_STREAM_PLACE_SIZE != 0 {
+				fmt.eprintfln("modustool: convert: the symbol %s has %d bytes at %x; the place of a record stream has %d bytes, aligned", symbol_name, symbol.size, symbol.value, module.RECORD_STREAM_PLACE_SIZE)
+				return 0, false, false
+			}
+			writable := false
+			for image in images {
+				segment := image.record
+				if .Write in segment.flags && .Execute not_in segment.flags && symbol.value >= segment.memory_offset && symbol.value - segment.memory_offset + module.RECORD_STREAM_PLACE_SIZE <= segment.memory_size {
+					writable = true
+				}
+			}
+			if !writable {
+				fmt.eprintfln("modustool: convert: the variable %s at %x is not in a segment that the loader can write", symbol_name, symbol.value)
 				return 0, false, false
 			}
 			memory_offset, found = symbol.value, true

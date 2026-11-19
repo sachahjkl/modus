@@ -90,6 +90,7 @@ Record_Stream_Description :: struct {
 	has_terms:    bool, // A record input with wiring terms.
 	terms:        Record_Description, // The record of its wiring terms.
 	terms_index:  u32, // The index of the terms in Module_Description.records, from 1; 0 for none.
+	package_name: string, // The package of the module: with the name, the symbol of the variable in the linked file (record_stream_place_of_elf).
 	file:         string, // Where the source declares it.
 	line:         int,
 }
@@ -294,7 +295,7 @@ record_stream_arguments :: proc(call: ^ast.Call_Expr, parameters: []string) -> (
 record_stream_describe :: proc(state: ^Describe_State, file: ^ast.File, declaration: ^ast.Value_Decl, call: ^ast.Call_Expr, form: Record_Stream_Form, name: string) -> (stream: Record_Stream_Description, ok: bool) {
 	path, line := file.fullpath, declaration.pos.line
 	direction := form == .Output ? Record_Stream_Direction.Output : Record_Stream_Direction.Input
-	stream = {direction = direction, name = name, file = path, line = line}
+	stream = {direction = direction, name = name, package_name = file.pkg_name, file = path, line = line}
 	stream.text = markdown_of(declaration.docs)
 	stream.about = about_of(documentation_text_of_markdown(stream.text), name)
 	// The parameters of each type, in their order.

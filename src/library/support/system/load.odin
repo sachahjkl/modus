@@ -700,6 +700,13 @@ code_ready :: proc "contextless" (file: []u8, hash: [32]u8, view: []u8, base: u6
 		error.stage, error.file_error = .Read, .Bad_Own_Hash_Place
 		return false
 	}
+	// The index of each record stream, which the library reads in its
+	// variable (src/md/features/module_outputs.md, "The declaration in the
+	// module").
+	if !module.record_stream_indexes_write(file, view, first, end) {
+		error.stage, error.file_error = .Read, .Bad_Record_Stream_Place
+		return false
+	}
 	return module.bind(file, view, imports, error, first, end)
 }
 
@@ -935,7 +942,7 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	if error != nil {
 		error^ = loaded
 	}
-	if status == .Ok && wiring != nil {
+	if status == .Ok && wiring != nil && wiring.keep_budget {
 		// The starter keeps a handle of the budget, to pay what the child
 		// asks for from it.
 		wiring.budget, status = give(0, budget, {.Read, .Spend})
@@ -1006,6 +1013,7 @@ file_error_names := [module.Error]string {
 	.Bad_Import      = "an import is not valid",
 	.Bad_Export      = "an export is not valid",
 	.Bad_Own_Hash_Place = "its own-hash place is not in writable data",
+	.Bad_Record_Stream_Place = "the place of a record output or a record input is not in writable data",
 }
 
 // load_error_text writes a load error for a reader: one line or more, each

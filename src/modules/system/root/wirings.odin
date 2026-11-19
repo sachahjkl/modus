@@ -1,28 +1,33 @@
 package root
 
-// The wirings of this service (src/md/features/module_outputs.md, "The
-// wiring and its rights"; src/md/features/module_outputs.md, "The wiring
-// list of a start"; src/md/features/module_outputs.md, "The budget"):
-// the command Wire, the wiring list of a Start, the wiring pages of each
-// asker, and the end of each wiring at a stop and at a revocation.
+// The wirings of this service: the command Wire, the wiring list of a
+// Start, the list page and the wiring pages of each asker, and the end of
+// each wiring at a stop and at a revocation
+// (src/md/features/module_outputs.md, "The wiring and its rights").
 //
 // The order of the work of a list is a rule, so that a list is whole or
 // refused:
 //
-// 1. The copy and the border: the memory of the list, proved to come
-//    through the root ring, is copied once, then output.wiring_list_check
-//    takes the copy.
+// 1. The copy and the border: this service maps its own handle of the
+//    list page of the asker, copies it, unmaps it, and output.
+//    wiring_list_check takes the copy. A revocation by the asker reaches
+//    only its own handle, never the mapping of this service.
 // 2. The lent handles: each one is proved to come through the root ring,
-//    then named by the process slot and the process serial of its process.
+//    named by the process slot and the process serial of its process, and
+//    closed. Each refusal closes each number that the proof accepted.
 // 3. The rows: each end, the rule of the asker, the indexes in the module
-//    files, the type check, the terms, the count One, the room of each
-//    wiring ring. No step before this one changes anything.
-// 4. The making: each ring, each terms page and each wiring record, from
-//    the budget of the asker. A refusal ends what this step made.
+//    files, the type check, the terms, the count One, the limits of the
+//    asker and of each process, the room of each wiring ring. No step
+//    before this one changes anything.
+// 4. The making: each ring, each end page, each terms page, each
+//    description file and each wiring record, from the budget of the asker.
+//    A refusal ends what this step made.
 // 5. The delivery: the ends of the child go into the start, and the other
-//    ends into the wiring rings of the running processes and the root ring
-//    of the asker. For a Start, the delivery to the running processes
-//    comes after the start of the child.
+//    ends into the wiring ring of each process, the asker too. For a
+//    Start, the delivery comes after the whole start of the child.
+//
+// What this service holds of a wiring that runs: one handle, of its end
+// page, and no mapping. It maps the end page only to write the end words.
 
 import "base:intrinsics"
 import "modus:contract/errors"
@@ -33,26 +38,38 @@ import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:support/system"
 
+// The wirings that one asker holds at one time, and the ends that one
+// process holds at one time. Each wiring costs this service one handle,
+// so the limits bound the table of its handles (src/md/features/
+// module_outputs.md, "The budget").
+WIRINGS_OF_AN_ASKER_MOST :: 8
+ENDS_OF_A_PROCESS_MOST :: 16
+// The wirings of the whole machine at one time: the handle table of this
+// service holds 128 handles, as each process, and the processes that it
+// starts take most of them.
+WIRINGS_OF_THE_MACHINE_MOST :: 24
+
 // One wiring, as this service keeps it in a wiring page of its asker. Free
-// when ring_memory is 0.
+// when end_memory is 0.
 Wiring_Kept :: struct {
-	ring_memory:     system.Handle, // The output ring, as this service holds it.
-	number:          u32, // The number of the wiring: the tag of its commands in the wiring rings.
+	end_memory:      system.Handle, // The end page, which this service alone writes.
+	number:          u32, // The number of the wiring: the tag of its ends. No two wirings that run have one number.
 	writer_index:    u32, // The record output of the writer.
 	reader_index:    u32, // The record input of the reader; 0 for the asker.
 	reader_is_asker: bool,
-	reserved:        [7]u8,
-	head:            ^ring.Head, // The head page of the ring, mapped in this service: the end words.
+	writer_counted:  bool, // The writer holds its end: one end of its count.
+	reader_counted:  bool,
+	reserved:        [5]u8,
 	writer:          ^Started,
 	reader:          ^Started, // The asker, for a reader Asker.
-	padding:         [16]u8,
+	padding:         [24]u8,
 }
 #assert(size_of(Wiring_Kept) == 64)
 
 WIRING_PAGE_RECORDS :: 63
 
 // One wiring page of an asker: a page of its budget, mapped in this
-// service alone. The pages of an asker are a chain.
+// service alone. With WIRINGS_OF_AN_ASKER_MOST, an asker has one page.
 Wiring_Page :: struct {
 	next:     ^Wiring_Page,
 	memory:   system.Handle,
@@ -61,46 +78,52 @@ Wiring_Page :: struct {
 	records:  [WIRING_PAGE_RECORDS]Wiring_Kept,
 }
 #assert(size_of(Wiring_Page) == system.PAGE_SIZE)
+#assert(WIRINGS_OF_AN_ASKER_MOST <= WIRING_PAGE_RECORDS)
 
-// The number of the next wiring. 0 names no wiring.
+// The number of the next wiring, and the wirings that run.
 wiring_number_next: u32 = 1
+wirings_running: int
 
-// The private copy of the memory of a list: the asker can change the lent
-// bytes at any time, so this service reads them once.
+// The private copy of a list page, and of a description file before it
+// goes into its page.
 wiring_list_copy: [output.WIRING_LIST_BYTES_MOST]u8
+description_copy: [output.DESCRIPTION_FILE_BYTES_MOST]u8
 
 // What the work of one row resolved and made.
 Wiring_Plan :: struct {
-	row:            output.Checked_Wiring,
-	writer:         ^Started,
-	reader:         ^Started, // The asker for a reader Asker.
-	writer_file:    []u8,
-	description:    u32, // The record description of the record output, in the file of the writer.
-	record_size:    u32,
-	terms_size:     u32, // The size of the description of the terms of the record input; 0: it takes none.
-	ring_memory:    system.Handle,
-	terms_memory:   system.Handle,
-	kept:           ^Wiring_Kept,
-	page:           ^Wiring_Page,
-	number:         u32,
-	asker_ring:     system.Handle, // A reader Asker: the ring, as the asker names it.
+	row:                output.Checked_Wiring,
+	writer:             ^Started,
+	reader:             ^Started, // The asker for a reader Asker.
+	writer_file:        []u8,
+	description:        u32, // The record description of the record output, in the file of the writer.
+	terms_size:         u32, // The size of the description of the terms of the record input; 0: it takes none.
+	ring_memory:        system.Handle,
+	end_memory:         system.Handle,
+	terms_memory:       system.Handle,
+	description_memory: system.Handle,
+	kept:               ^Wiring_Kept,
+	page:               ^Wiring_Page,
+	number:             u32,
 }
 
-// The work of one list: its rows, its lent processes, and what the start
-// of a child gives it.
+// The work of one list.
 Wiring_Work :: struct {
-	asker:      ^Started,
-	command:    root_ring.Root_Command, // Wire or Start: the operation of its error records.
-	form:       output.Wiring_List_Form,
-	list:       output.Checked_Wiring_List,
-	lent:       [output.WIRING_LIST_HANDLE_LIMIT]^Started, // The process of each lent handle.
-	plans:      [output.WIRING_LIST_ROW_LIMIT]Wiring_Plan,
-	child:      ^Started, // A Start: the place of the child, before it runs.
-	child_file: []u8,
-	child_ends: [output.WIRING_LIST_ROW_LIMIT]output.Given_End,
+	asker:           ^Started,
+	command:         root_ring.Root_Command, // Wire or Start: the operation of its error records.
+	form:            output.Wiring_List_Form,
+	list:            output.Checked_Wiring_List,
+	lent:            [output.WIRING_LIST_HANDLE_LIMIT]^Started, // The process of each lent handle.
+	plans:           [output.WIRING_LIST_ROW_LIMIT]Wiring_Plan,
+	child:           ^Started, // A Start: the place of the child, before it runs.
+	child_file:      []u8,
+	child_ends:      [output.WIRING_LIST_ROW_LIMIT]output.Given_End,
 	child_end_count: int,
-	refusal:    [7]u64, // The error record of a refusal, with the operation of the command.
+	refusal:         [7]u64, // The error record of a refusal, with the operation of the command.
 }
+
+// The work of the command that runs: one command at a time, in the loop
+// of this service. It is large, so it is not on the stack.
+wire_work: Wiring_Work
 
 // wiring_refuse keeps the error record of a refusal and gives its status.
 @(private = "file")
@@ -110,8 +133,8 @@ wiring_refuse :: proc "contextless" (work: ^Wiring_Work, status: system.Status, 
 }
 
 // lent_handle_proved says if a handle came through the root ring of the
-// asker. Only such a handle is read, and closed at the end of the command:
-// a number that the asker did not give names a handle of this service.
+// asker. Only such a handle is read and closed: a number that the asker
+// did not give names a handle of this service.
 @(private = "file")
 lent_handle_proved :: proc "contextless" (asker: ^Started, handle: u32, kind: op.Object_Kind) -> bool {
 	if handle == 0 {
@@ -142,48 +165,140 @@ process_of_lent_handle :: proc "contextless" (handle: system.Handle) -> ^Started
 	return nil
 }
 
-// wiring_list_take copies the memory of a list that the asker lent, proves
-// each lent handle and names its process, then closes the proved handles.
-// It refuses a memory that did not come through the root ring, a memory
-// past WIRING_LIST_PAGES_MOST, each refusal of output.wiring_list_check,
-// and a lent handle that did not come through the ring or that names no
-// process of the table.
-wiring_list_take :: proc "contextless" (work: ^Wiring_Work, memory_word: u64) -> system.Status {
-	asker := work.asker
-	list_argument: i64 = work.command == .Wire ? 1 : 2
-	if memory_word > u64(max(u32)) || !lent_handle_proved(asker, u32(memory_word), .Memory) {
-		return wiring_refuse(work, .Bad_Handle, .Handle_Absent, .Lent_Handles, list_argument, i64(min(memory_word, 1 << 62)))
+// list_page_copy copies the list page of the asker into wiring_list_copy,
+// from the handle of this service. false: the asker has no list page, or
+// this service cannot map it.
+@(private = "file")
+list_page_copy :: proc "contextless" (asker: ^Started) -> bool {
+	if asker.list_memory == 0 {
+		return false
 	}
-	memory := system.Handle(memory_word)
-	defer system.close(memory)
-	pages, size_status := system.memory_size(memory)
-	if size_status != .Ok || pages == 0 || pages > output.WIRING_LIST_PAGES_MOST {
-		return wiring_refuse(work, .Bad_Operation, .Too_Long, .Pages, list_argument, i64(min(pages, 1 << 62)), output.WIRING_LIST_PAGES_MOST)
+	address, status := system.memory_map(asker.list_memory, {})
+	if status != .Ok {
+		return false
 	}
-	address, map_status := system.memory_map(memory, {})
-	if map_status != .Ok {
-		return wiring_refuse(work, map_status, .Refused, .None, list_argument, 0, 0, i64(map_status))
-	}
-	size := int(pages) * system.PAGE_SIZE
-	intrinsics.mem_copy_non_overlapping(&wiring_list_copy[0], address, size)
+	intrinsics.mem_copy_non_overlapping(&wiring_list_copy[0], address, output.WIRING_LIST_BYTES_MOST)
 	system.memory_unmap(address)
-	refusal, ok := output.wiring_list_check(wiring_list_copy[:size], work.form, &work.list)
+	return true
+}
+
+// lent_handles_close closes each lent number of the list page that came
+// through the root ring of the asker, on a refusal before the lent handles
+// are read: the asker gave them to this service for the command, which
+// keeps none. A head whose counts do not fit names no number, and nothing
+// is closed then.
+lent_handles_close :: proc "contextless" (asker: ^Started) {
+	if !list_page_copy(asker) {
+		return
+	}
+	head: output.Wiring_List_Head
+	intrinsics.mem_copy_non_overlapping(&head, &wiring_list_copy[0], size_of(head))
+	if head.row_count > output.WIRING_LIST_ROW_LIMIT || head.handle_count > output.WIRING_LIST_HANDLE_LIMIT {
+		return
+	}
+	first := size_of(output.Wiring_List_Head) + int(head.row_count) * size_of(output.Wiring)
+	for place in 0 ..< int(head.handle_count) {
+		word: u32
+		intrinsics.mem_copy_non_overlapping(&word, &wiring_list_copy[first + place * size_of(u32)], size_of(u32))
+		// A number twice is closed once: the second proof fails.
+		if lent_handle_proved(asker, word, .Process) {
+			system.close(system.Handle(word))
+		}
+	}
+}
+
+// list_page_give runs Wire with List_Page: the list page of the asker,
+// made once from its budget, and a wiring ring for an asker that has none,
+// as the ends of the rows whose reader it is come there. values[0] is the
+// list page, values[1] the wiring ring, or 0 when the asker has its
+// wiring ring at the handle 16 of its context.
+list_page_give :: proc "contextless" (asker: ^Started, values: ^[7]u64) -> system.Status {
+	command := u32(root_ring.Root_Command.Wire)
+	if asker.budget == 0 {
+		values^ = errors.ring_fail(command, .Budget_Hidden, .Pages)
+		return .No_Budget
+	}
+	error: errors.Error_Record
+	made_page, made_ring: bool
+	if asker.list_memory == 0 {
+		memory, status := system.memory_create(output.WIRING_LIST_PAGES_MOST, asker.budget, error = &error)
+		if status != .Ok {
+			error.operation = i64(command)
+			values^ = errors.completion_values(error)
+			return status
+		}
+		asker.list_memory = memory
+		made_page = true
+	}
+	ring_given: system.Handle
+	if asker.wiring.head == nil {
+		memory, status := system.memory_create(ring.pages(output.WIRING_RING_CAPACITY), asker.budget, error = &error)
+		if status == .Ok {
+			asker.wiring, status = system.ring_open(memory)
+			if status != .Ok {
+				system.close(memory)
+			} else {
+				asker.wiring_memory = memory
+				made_ring = true
+				ring_given, status = system.give(asker.requests_memory, memory, {.Read, .Write})
+			}
+		}
+		if status != .Ok {
+			list_page_unmake(asker, made_page, made_ring)
+			error.operation = i64(command)
+			values^ = errors.completion_values(error)
+			return status
+		}
+	}
+	page_given, status := system.give(asker.requests_memory, asker.list_memory, {.Read, .Write})
+	if status != .Ok {
+		list_page_unmake(asker, made_page, made_ring)
+		values^ = errors.ring_fail(command, .Refused, .Wirings, 0, 0, 0, i64(status))
+		return status
+	}
+	values^ = {u64(page_given), u64(ring_given), 0, 0, 0, 0, 0}
+	return .Ok
+}
+
+// list_page_unmake ends what a refused List_Page made.
+@(private = "file")
+list_page_unmake :: proc "contextless" (asker: ^Started, made_page, made_ring: bool) {
+	if made_ring {
+		system.ring_close(&asker.wiring)
+		system.close(asker.wiring_memory)
+		asker.wiring_memory = 0
+	}
+	if made_page {
+		system.close(asker.list_memory)
+		asker.list_memory = 0
+	}
+}
+
+// wiring_list_take copies the list page of the asker, checks the copy,
+// proves each lent handle, names its process and closes it. Each refusal
+// closes each number that the proof accepted.
+wiring_list_take :: proc "contextless" (work: ^Wiring_Work) -> system.Status {
+	asker := work.asker
+	if !list_page_copy(asker) {
+		return wiring_refuse(work, .Bad_State, .Absent, .Wirings)
+	}
+	refusal, ok := output.wiring_list_check(wiring_list_copy[:], work.form, &work.list)
 	if !ok {
+		lent_handles_close(asker)
 		refusal.operation = i64(work.command)
 		work.refusal = errors.completion_values(refusal)
 		return .Bad_Operation
 	}
-	// Each lent handle is proved before any is closed: a refused one is
-	// never closed, as it can be a handle of this service.
 	for place in 0 ..< work.list.handle_count {
-		handle := work.list.handles[place]
-		if !lent_handle_proved(asker, handle, .Process) {
-			// The handles proved before this one came from the asker:
-			// this service does not keep them.
-			for before in 0 ..< place {
-				system.close(system.Handle(work.list.handles[before]))
+		if !lent_handle_proved(asker, work.list.handles[place], .Process) {
+			// Each number of the list is proved here, and those that pass
+			// are closed: the list names each number once.
+			for other in 0 ..< work.list.handle_count {
+				if other != place && lent_handle_proved(asker, work.list.handles[other], .Process) {
+					system.close(system.Handle(work.list.handles[other]))
+				}
 			}
-			return wiring_refuse(work, .Bad_Handle, .Handle_Absent, .Lent_Handles, list_argument, i64(place) + 1)
+			return wiring_refuse(work, .Bad_Handle, .Handle_Absent, .Lent_Handles, 0, i64(place) + 1)
 		}
 	}
 	status := system.Status.Ok
@@ -192,7 +307,7 @@ wiring_list_take :: proc "contextless" (work: ^Wiring_Work, memory_word: u64) ->
 		work.lent[place] = process_of_lent_handle(handle)
 		system.close(handle)
 		if work.lent[place] == nil && status == .Ok {
-			status = wiring_refuse(work, .Bad_Handle, .Handle_Absent, .Lent_Handles, list_argument, i64(place) + 1)
+			status = wiring_refuse(work, .Bad_Handle, .Handle_Absent, .Lent_Handles, 0, i64(place) + 1)
 		}
 	}
 	return status
@@ -299,8 +414,6 @@ wiring_row_resolve :: proc "contextless" (work: ^Wiring_Work, number: u32) -> sy
 	if difference != .Equal {
 		return wiring_refuse(work, .Bad_Operation, .Bad_Value, .Record_Types, 0, i64(difference), i64(part), found)
 	}
-	description, _ := module.record_stream_type(plan.writer_file, plan.description)
-	plan.record_size = description.size
 	if row.terms_count != plan.terms_size {
 		return wiring_refuse(work, .Bad_Operation, .Bad_Value, .Wiring_Terms, i64(output.Wiring_Field.Terms_Count), i64(row.terms_count), i64(plan.terms_size), found)
 	}
@@ -321,7 +434,7 @@ record_input_taken :: proc "contextless" (work: ^Wiring_Work, number: u32, reade
 	for &asker in started {
 		for page := asker.wiring_pages; page != nil; page = page.next {
 			for &kept in page.records {
-				if kept.ring_memory != 0 && kept.reader == reader && !kept.reader_is_asker && kept.reader_index == index {
+				if kept.end_memory != 0 && kept.reader == reader && !kept.reader_is_asker && kept.reader_index == index {
 					return true
 				}
 			}
@@ -330,32 +443,46 @@ record_input_taken :: proc "contextless" (work: ^Wiring_Work, number: u32, reade
 	return false
 }
 
-// wiring_room_check refuses a list whose ends do not fit the wiring ring
-// of a running process: this service never waits for a process that does
-// not read its wiring ring.
+// ends_needed gives the ends that a list gives one process.
 @(private = "file")
-wiring_room_check :: proc "contextless" (work: ^Wiring_Work) -> system.Status {
+ends_needed :: proc "contextless" (work: ^Wiring_Work, process: ^Started) -> (needed: u32) {
 	for number in 1 ..= work.list.row_count {
 		plan := &work.plans[number - 1]
-		// The asker receives its end on its root ring, not a wiring ring.
-		reader: ^Started
-		if plan.row.reader_end != .Asker {
-			reader = plan.reader
+		if plan.writer == process {
+			needed += 1
 		}
-		ends := [2]^Started{plan.writer, reader}
+		if plan.reader == process {
+			needed += 1
+		}
+	}
+	return needed
+}
+
+// wiring_limits_check refuses a list past the limits of the asker, of the
+// machine and of each process, and a list whose ends do not fit the
+// wiring ring of a running process: this service never waits for a
+// process that does not read its wiring ring.
+@(private = "file")
+wiring_limits_check :: proc "contextless" (work: ^Wiring_Work) -> system.Status {
+	rows := int(work.list.row_count)
+	if work.asker.wirings_asked + rows > WIRINGS_OF_AN_ASKER_MOST {
+		return wiring_refuse(work, .No_Slot, .Full, .Wirings, 0, i64(work.asker.wirings_asked + rows), WIRINGS_OF_AN_ASKER_MOST)
+	}
+	if wirings_running + rows > WIRINGS_OF_THE_MACHINE_MOST {
+		return wiring_refuse(work, .No_Slot, .Full, .Wirings, 0, i64(wirings_running + rows), WIRINGS_OF_THE_MACHINE_MOST)
+	}
+	for number in 1 ..= work.list.row_count {
+		plan := &work.plans[number - 1]
+		ends := [2]^Started{plan.writer, plan.reader}
 		for process in ends {
-			if process == nil || process == work.child {
-				continue
+			needed := ends_needed(work, process)
+			if process.ends_given + int(needed) > ENDS_OF_A_PROCESS_MOST {
+				return wiring_refuse(work, .No_Slot, .Full, .Wirings, 0, i64(process.ends_given + int(needed)), ENDS_OF_A_PROCESS_MOST, i64(number))
 			}
-			needed: u32
-			for other in 1 ..= work.list.row_count {
-				other_plan := &work.plans[other - 1]
-				if other_plan.writer == process {
-					needed += 1
-				}
-				if other_plan.row.reader_end != .Asker && other_plan.reader == process {
-					needed += 1
-				}
+			// The child takes its ends in the start, in a wiring ring of
+			// their count.
+			if process == work.child {
+				continue
 			}
 			if process.wiring.head == nil {
 				return wiring_refuse(work, .Bad_State, .Absent, .Wirings, 0, 0, 0, i64(number))
@@ -369,8 +496,8 @@ wiring_room_check :: proc "contextless" (work: ^Wiring_Work) -> system.Status {
 	return .Ok
 }
 
-// wiring_list_resolve is step 3 for each row, then the counts of the rows
-// whose reader is the asker, and the room of the wiring rings.
+// wiring_list_resolve is step 3 for each row, then the count of the rows
+// whose reader is the asker, and the limits.
 wiring_list_resolve :: proc "contextless" (work: ^Wiring_Work) -> system.Status {
 	asker_rows := 0
 	for number in 1 ..= work.list.row_count {
@@ -383,11 +510,38 @@ wiring_list_resolve :: proc "contextless" (work: ^Wiring_Work) -> system.Status 
 	if work.form == .Start && asker_rows > output.WIRING_ASKER_ROWS_OF_A_START {
 		return wiring_refuse(work, .Bad_Operation, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Reader_End), i64(asker_rows), output.WIRING_ASKER_ROWS_OF_A_START)
 	}
-	return wiring_room_check(work)
+	return wiring_limits_check(work)
+}
+
+// wiring_number_take gives the next number that no running wiring has: a
+// number that wraps never names two wirings.
+@(private = "file")
+wiring_number_take :: proc "contextless" () -> u32 {
+	for {
+		number := wiring_number_next
+		wiring_number_next = wiring_number_next == max(u32) ? 1 : wiring_number_next + 1
+		if number != 0 && !wiring_number_running(number) {
+			return number
+		}
+	}
+}
+
+@(private = "file")
+wiring_number_running :: proc "contextless" (number: u32) -> bool {
+	for &asker in started {
+		for page := asker.wiring_pages; page != nil; page = page.next {
+			for &kept in page.records {
+				if kept.end_memory != 0 && kept.number == number {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // wiring_record_take gives a free wiring record of the asker, and makes a
-// new wiring page from its budget when its pages are full.
+// wiring page from its budget when it has none with room.
 @(private = "file")
 wiring_record_take :: proc "contextless" (asker: ^Started, error: ^errors.Error_Record) -> (kept: ^Wiring_Kept, page: ^Wiring_Page, status: system.Status) {
 	for page = asker.wiring_pages; page != nil; page = page.next {
@@ -395,12 +549,16 @@ wiring_record_take :: proc "contextless" (asker: ^Started, error: ^errors.Error_
 			continue
 		}
 		for &record in page.records {
-			if record.ring_memory == 0 {
+			if record.end_memory == 0 {
 				return &record, page, .Ok
 			}
 		}
 	}
-	memory := system.memory_create(1, asker.budget, error = error) or_return
+	memory: system.Handle
+	memory, status = system.memory_create(1, asker.budget, error = error)
+	if status != .Ok {
+		return nil, nil, status
+	}
 	address, map_status := system.memory_map(memory)
 	if map_status != .Ok {
 		system.close(memory)
@@ -438,19 +596,39 @@ wiring_page_release :: proc "contextless" (asker: ^Started, page: ^Wiring_Page, 
 	system.close(memory)
 }
 
-// wiring_list_make is step 4: each ring, each terms page and each wiring
-// record, from the budget of the asker. A refusal ends what it made.
+// page_write makes a memory object of the bytes from the budget of the
+// asker, and writes them in it with one mapping of this service, which it
+// ends at once.
+@(private = "file")
+page_write :: proc "contextless" (asker: ^Started, bytes: []u8, error: ^errors.Error_Record) -> (memory: system.Handle, status: system.Status) {
+	pages := u64(max(len(bytes), 1) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	memory = system.memory_create(pages, asker.budget, error = error) or_return
+	address, map_status := system.memory_map(memory, {.Write}, error = error)
+	if map_status != .Ok {
+		system.close(memory)
+		return 0, map_status
+	}
+	if len(bytes) > 0 {
+		intrinsics.mem_copy_non_overlapping(address, raw_data(bytes), len(bytes))
+	}
+	system.memory_unmap(address)
+	return memory, .Ok
+}
+
+// wiring_list_make is step 4: each ring, each end page, each terms page,
+// each description file and each wiring record, from the budget of the
+// asker. A refusal ends what it made, and the error record is the one of
+// the kernel.
 wiring_list_make :: proc "contextless" (work: ^Wiring_Work) -> system.Status {
-	asker := work.asker
-	if asker.budget == 0 {
+	if work.asker.budget == 0 {
 		return wiring_refuse(work, .No_Budget, .Budget_Hidden, .Pages)
 	}
 	for number in 1 ..= work.list.row_count {
-		plan := &work.plans[number - 1]
 		error: errors.Error_Record
-		status := wiring_plan_make(work, plan, &error)
+		status := wiring_plan_make(work, &work.plans[number - 1], &error)
 		if status != .Ok {
 			error.operation = i64(work.command)
+			error.found = i64(number)
 			work.refusal = errors.completion_values(error)
 			wiring_list_unmake(work)
 			return status
@@ -459,67 +637,85 @@ wiring_list_make :: proc "contextless" (work: ^Wiring_Work) -> system.Status {
 	return .Ok
 }
 
+// wiring_plan_make makes what one row needs. It maps no memory past its
+// own steps: each object that it made is in the plan, so that
+// wiring_list_unmake ends it.
 @(private = "file")
 wiring_plan_make :: proc "contextless" (work: ^Wiring_Work, plan: ^Wiring_Plan, error: ^errors.Error_Record) -> system.Status {
 	asker := work.asker
-	compartment := output.compartment_size(plan.record_size)
-	pages := ring.compartment_pages(plan.row.capacity, compartment)
-	plan.ring_memory = system.memory_create(pages, asker.budget, error = error) or_return
-	head, map_status := system.memory_map(plan.ring_memory, {.Write}, 0, 0, 0, 1, error)
-	if map_status != .Ok {
-		return map_status
-	}
+	description, _ := module.record_stream_type(plan.writer_file, plan.description)
+	compartment := output.compartment_size(description.size)
+	plan.ring_memory = system.memory_create(ring.compartment_pages(plan.row.capacity, compartment), asker.budget, error = error) or_return
+	plan.end_memory = system.memory_create(output.END_WORDS_PAGES, asker.budget, error = error) or_return
 	if plan.row.terms_count != 0 {
-		plan.terms_memory = system.memory_create(1, asker.budget, error = error) or_return
-		terms, terms_status := system.memory_map(plan.terms_memory, {.Write}, error = error)
-		if terms_status != .Ok {
-			system.memory_unmap(head)
-			return terms_status
-		}
-		intrinsics.mem_copy_non_overlapping(terms, &wiring_list_copy[plan.row.terms_offset], int(plan.row.terms_count))
-		system.memory_unmap(terms)
+		plan.terms_memory = page_write(asker, wiring_list_copy[plan.row.terms_offset:][:plan.row.terms_count], error) or_return
 	}
+	size, described := output.description_file_write(description_copy[:], plan.writer_file, plan.description)
+	if !described {
+		error^ = errors.error_make(.Too_Long, .Bytes, 0, 0, output.DESCRIPTION_FILE_BYTES_MOST)
+		return .Bad_Operation
+	}
+	plan.description_memory = page_write(asker, description_copy[:size], error) or_return
 	kept, page, status := wiring_record_take(asker, error)
 	if status != .Ok {
-		system.memory_unmap(head)
 		return status
 	}
-	plan.number = wiring_number_next
-	wiring_number_next = wiring_number_next == max(u32) ? 1 : wiring_number_next + 1
+	plan.number = wiring_number_take()
 	kept^ = {
-		ring_memory     = plan.ring_memory,
+		end_memory      = plan.end_memory,
 		number          = plan.number,
 		writer_index    = plan.row.writer_index,
 		reader_index    = plan.row.reader_index,
 		reader_is_asker = plan.row.reader_end == .Asker,
-		head            = (^ring.Head)(head),
 		writer          = plan.writer,
 		reader          = plan.reader,
 	}
 	page.count += 1
+	wirings_running += 1
 	plan.kept, plan.page = kept, page
 	return .Ok
 }
 
+// wiring_handles_close closes the handles of a plan that this service
+// does not keep: the ring, the terms and the description file, which the
+// sides hold. The end page stays in the wiring record.
+@(private = "file")
+wiring_handles_close :: proc "contextless" (plan: ^Wiring_Plan) {
+	handles := [3]^system.Handle{&plan.ring_memory, &plan.terms_memory, &plan.description_memory}
+	for handle in handles {
+		if handle^ != 0 {
+			system.close(handle^)
+			handle^ = 0
+		}
+	}
+}
+
 // wiring_list_unmake ends what wiring_list_make made, before any end
-// reached a process: nothing to write in the end words.
+// reached a running process.
 wiring_list_unmake :: proc "contextless" (work: ^Wiring_Work) {
 	for number in 1 ..= work.list.row_count {
 		plan := &work.plans[number - 1]
 		if plan.kept != nil {
-			system.memory_unmap(plan.kept.head)
 			wiring_page_release(work.asker, plan.page, plan.kept)
+			wirings_running -= 1
 			plan.kept, plan.page = nil, nil
 		}
-		if plan.ring_memory != 0 {
-			system.close(plan.ring_memory)
-			plan.ring_memory = 0
+		if plan.end_memory != 0 {
+			system.close(plan.end_memory)
+			plan.end_memory = 0
 		}
-		if plan.terms_memory != 0 {
-			system.close(plan.terms_memory)
-			plan.terms_memory = 0
-		}
+		wiring_handles_close(plan)
 	}
+}
+
+// wiring_end_of_plan gives the end of one side of a plan.
+@(private = "file")
+wiring_end_of_plan :: proc "contextless" (plan: ^Wiring_Plan, writer: bool) -> output.Given_End {
+	if writer {
+		return {command = .Writer_End, tag = plan.number, ring = plan.ring_memory, index = plan.row.writer_index, pace = plan.row.pace, end_words = plan.end_memory}
+	}
+	command := plan.row.reader_end == .Asker ? output.Wiring_Command.Asker_End : output.Wiring_Command.Reader_End
+	return {command = command, tag = plan.number, ring = plan.ring_memory, index = plan.row.reader_index, terms = plan.terms_memory, description = plan.description_memory, end_words = plan.end_memory}
 }
 
 // wiring_child_ends gives the ends of the child, for system.process_start:
@@ -530,11 +726,11 @@ wiring_child_ends :: proc "contextless" (work: ^Wiring_Work) -> []output.Given_E
 	for number in 1 ..= work.list.row_count {
 		plan := &work.plans[number - 1]
 		if plan.writer == work.child {
-			work.child_ends[work.child_end_count] = {command = .Writer_End, tag = plan.number, ring = plan.ring_memory, index = plan.row.writer_index, pace = plan.row.pace}
+			work.child_ends[work.child_end_count] = wiring_end_of_plan(plan, true)
 			work.child_end_count += 1
 		}
 		if plan.row.reader_end == .Child {
-			work.child_ends[work.child_end_count] = {command = .Reader_End, tag = plan.number, ring = plan.ring_memory, index = plan.row.reader_index, terms = plan.terms_memory}
+			work.child_ends[work.child_end_count] = wiring_end_of_plan(plan, false)
 			work.child_end_count += 1
 		}
 	}
@@ -542,85 +738,112 @@ wiring_child_ends :: proc "contextless" (work: ^Wiring_Work) -> []output.Given_E
 }
 
 // wiring_end_give gives one end to a running process through its wiring
-// ring: the handles through the memory of the ring, then the command.
+// ring: the handles through the memory of the ring, then the command. On
+// a refused gift, each handle that it gave is revoked in that process: a
+// handle with no command names nothing that the process can use.
 @(private = "file")
 wiring_end_give :: proc "contextless" (process: ^Started, end: output.Given_End) -> system.Status {
 	given := end
-	status: system.Status
-	given.ring, status = system.give(process.wiring_memory, end.ring, {.Read, .Write})
-	if status == .Ok && end.terms != 0 {
-		given.terms, status = system.give(process.wiring_memory, end.terms, {.Read})
+	sources := [4]system.Handle{end.ring, end.end_words, end.terms, end.description}
+	rights := [4]system.Rights{{.Read, .Write}, {.Read}, {.Read}, {.Read}}
+	results := [4]^system.Handle{&given.ring, &given.end_words, &given.terms, &given.description}
+	status := system.Status.Ok
+	gifts := 0
+	for source, index in sources {
+		if source == 0 {
+			continue
+		}
+		results[index]^, status = system.give(process.wiring_memory, source, rights[index])
+		if status != .Ok {
+			break
+		}
+		gifts = index + 1
+	}
+	// wiring_limits_check found the room, and only this service writes the
+	// queue.
+	if status == .Ok && !system.send(&process.wiring.commands, output.given_end_record(given)) {
+		status = .No_Slot
 	}
 	if status != .Ok {
-		return status
+		for index in 0 ..< gifts {
+			if sources[index] != 0 {
+				system.handle_revoke(sources[index], process.process)
+			}
+		}
 	}
-	// wiring_room_check found the room, and only this service writes the
-	// queue.
-	if !system.send(&process.wiring.commands, output.given_end_record(given)) {
-		return .No_Slot
-	}
-	return .Ok
+	return status
 }
 
-// wiring_list_deliver is step 5 for the ends that are not the child's:
-// the wiring rings of the running processes, and the root ring of the
-// asker for a reader Asker. An end that does not reach its process ends
-// its wiring with the end word Refused, and a line: the other side then
-// reads the end at once.
+// wiring_list_deliver is step 5 for the ends that are not the child's.
+// An end that does not reach its process ends its wiring with the end
+// word Refused, and one line: the other side then reads the end at once.
 wiring_list_deliver :: proc "contextless" (work: ^Wiring_Work) {
 	asker := work.asker
 	for number in 1 ..= work.list.row_count {
 		plan := &work.plans[number - 1]
 		status := system.Status.Ok
 		if plan.writer != work.child {
-			status = wiring_end_give(plan.writer, {command = .Writer_End, tag = plan.number, ring = plan.ring_memory, index = plan.row.writer_index, pace = plan.row.pace})
+			status = wiring_end_give(plan.writer, wiring_end_of_plan(plan, true))
 		}
 		if status == .Ok {
-			switch plan.row.reader_end {
-			case .Asker:
-				plan.asker_ring, status = system.give(asker.requests_memory, plan.ring_memory, {.Read, .Write})
-			case .Started, .Connected:
-				status = wiring_end_give(plan.reader, {command = .Reader_End, tag = plan.number, ring = plan.ring_memory, index = plan.row.reader_index, terms = plan.terms_memory})
-			case .Child, .None:
+			plan.kept.writer_counted = true
+			plan.writer.ends_given += 1
+			if plan.row.reader_end != .Child {
+				status = wiring_end_give(plan.reader, wiring_end_of_plan(plan, false))
 			}
 		}
-		// The reader holds its own handle of the terms.
-		if plan.terms_memory != 0 {
-			system.close(plan.terms_memory)
-			plan.terms_memory = 0
+		if status == .Ok {
+			plan.kept.reader_counted = true
+			plan.reader.ends_given += 1
 		}
+		// The sides hold their own handles of the ring, the terms and the
+		// description file.
+		wiring_handles_close(plan)
 		if status != .Ok {
 			system.log(.Warning, "root: the wiring ", u64(plan.number), " of ", system.Module_Name{system.name_of(asker.name[:])}, " did not reach its process: status ", status, "; it ends")
 			wiring_end(asker, plan.page, plan.kept, .Refused)
 			plan.kept = nil
+			continue
 		}
+		asker.wirings_asked += 1
 	}
 	asker.granted += {.Wirings}
 }
 
-// wiring_end ends one wiring: the end words, a wake of both sides, the
-// unmap of the head page, the close of the handle of this service, and
-// the record. The memory of the ring ends with the last end that a side
-// holds.
-wiring_end :: proc "contextless" (asker: ^Started, page: ^Wiring_Page, kept: ^Wiring_Kept, end: output.End_Word) {
-	if kept.head != nil {
-		// The stop cause and the stop outcome of a writer that stopped come
-		// with the record of the stop of the process
-		// (src/md/api/process_stop.md); until then their words are 0.
-		output.end_words_write(kept.head, end)
-		system.word_wake(&kept.head.commands.write, system.WAKE_ALL)
-		system.word_wake(&kept.head.commands.read, system.WAKE_ALL)
-		system.memory_unmap(kept.head)
+// wiring_end ends one wiring: the end words, written with one mapping of
+// the end page that ends at once, a wake of each side that waits on the
+// end word, the close of the handle of this service, and the record.
+wiring_end :: proc "contextless" (asker: ^Started, page: ^Wiring_Page, kept: ^Wiring_Kept, end: output.End_Word, stop_cause: u32 = 0, stop_outcome: u32 = 0) {
+	address, status := system.memory_map(kept.end_memory)
+	if status == .Ok {
+		words := (^output.End_Words)(address)
+		output.end_words_write(words, end, stop_cause, stop_outcome)
+		system.word_wake(&words.end, system.WAKE_ALL)
+		system.memory_unmap(address)
+	} else {
+		// The sides then learn the end from the close of the ring by the
+		// other side only: one line says it.
+		system.log(.Warning, "root: cannot map the end page of the wiring ", u64(kept.number), ": status ", status, "; its end word is not written")
 	}
-	system.close(kept.ring_memory)
+	system.close(kept.end_memory)
+	if kept.writer_counted {
+		kept.writer.ends_given -= 1
+	}
+	if kept.reader_counted {
+		kept.reader.ends_given -= 1
+	}
+	if kept.writer_counted && kept.reader_counted {
+		asker.wirings_asked -= 1
+	}
+	wirings_running -= 1
 	wiring_page_release(asker, page, kept)
 }
 
 // wirings_at_stop ends each wiring that names a process that stops: as
-// its writer, Writer_Stopped; as its reader, Reader_Stopped; as its asker,
-// Asker_Stopped. Then it closes the wiring ring and the budget handle of
-// the process.
-wirings_at_stop :: proc "contextless" (item: ^Started) {
+// its writer, Writer_Stopped with its stop cause and its stop outcome; as
+// its reader, Reader_Stopped; as its asker, Asker_Stopped. Then it closes
+// the wiring ring, the list page and the budget handle of the process.
+wirings_at_stop :: proc "contextless" (item: ^Started, stop_cause: u32 = 0, stop_outcome: u32 = 0) {
 	// The end of the last record of a page unmaps the page: each end is
 	// found again from the start of the chains, never read in a page that
 	// an end freed.
@@ -629,30 +852,33 @@ wirings_at_stop :: proc "contextless" (item: ^Started) {
 		if kept == nil {
 			break
 		}
-		wiring_end(asker, page, kept, end)
+		if end == .Writer_Stopped {
+			wiring_end(asker, page, kept, end, stop_cause, stop_outcome)
+		} else {
+			wiring_end(asker, page, kept, end)
+		}
 	}
 	if item.wiring.head != nil {
 		system.ring_close(&item.wiring)
 	}
-	if item.wiring_memory != 0 {
-		system.close(item.wiring_memory)
-		item.wiring_memory = 0
+	handles := [3]^system.Handle{&item.wiring_memory, &item.list_memory, &item.budget}
+	for handle in handles {
+		if handle^ != 0 {
+			system.close(handle^)
+			handle^ = 0
+		}
 	}
-	if item.budget != 0 {
-		system.close(item.budget)
-		item.budget = 0
-	}
+	item.ends_given, item.wirings_asked = 0, 0
 }
 
 // wiring_of_a_stop gives the first wiring that names a process that stops,
-// and its end word: Writer_Stopped as its writer, Reader_Stopped as its
-// reader, Asker_Stopped as its asker. nil: none is left.
+// and its end word. nil: none is left.
 @(private = "file")
 wiring_of_a_stop :: proc "contextless" (item: ^Started) -> (asker: ^Started, page: ^Wiring_Page, kept: ^Wiring_Kept, end: output.End_Word) {
 	for &each in started {
 		for each_page := each.wiring_pages; each_page != nil; each_page = each_page.next {
 			for &record in each_page.records {
-				if record.ring_memory == 0 {
+				if record.end_memory == 0 {
 					continue
 				}
 				switch {
@@ -675,7 +901,7 @@ wirings_revoke :: proc "contextless" (asker: ^Started) -> (count: u64) {
 	for asker.wiring_pages != nil {
 		page := asker.wiring_pages
 		for &kept in page.records {
-			if kept.ring_memory == 0 {
+			if kept.end_memory == 0 {
 				continue
 			}
 			last := page.count == 1
@@ -689,10 +915,23 @@ wirings_revoke :: proc "contextless" (asker: ^Started) -> (count: u64) {
 	return count
 }
 
+// The bad completions of one wiring in one pass of the reads: one line for
+// each wiring, with the count.
+@(private = "file")
+Bad_Completions :: struct {
+	number: u32,
+	count:  u32,
+	status: system.Status,
+	known:  bool, // The completion named a status; else its border refused it.
+}
+
 // wiring_completions_read reads the completions of the wiring ring of a
 // process: a refused end, or a completion that its border refuses, ends
-// the wiring of its tag with the end word Refused.
+// the wiring of its tag with the end word Refused, and one line for each
+// such wiring tells the count.
 wiring_completions_read :: proc "contextless" (item: ^Started) {
+	bad: [ENDS_OF_A_PROCESS_MOST]Bad_Completions
+	bad_count := 0
 	for _ in 0 ..< system.records_of_turn(&item.wiring.completions) {
 		record := system.receive(&item.wiring.completions) or_break
 		status, tag, _, ok := output.wiring_completion_of_record(record)
@@ -700,24 +939,43 @@ wiring_completions_read :: proc "contextless" (item: ^Started) {
 			continue
 		}
 		if !ok {
-			system.log(.Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " wrote a completion of its wiring ring that names no status: its wiring ", u64(record.tag), " ends")
 			tag = record.tag
-		} else {
-			system.log(.Info, "root: ", system.Module_Name{system.name_of(item.name[:])}, " refused its end of the wiring ", u64(tag), " with ", status, ": the wiring ends")
+		}
+		place := -1
+		for index in 0 ..< bad_count {
+			if bad[index].number == tag {
+				place = index
+			}
+		}
+		if place < 0 && bad_count < len(bad) {
+			bad[bad_count] = {number = tag, status = status, known = ok}
+			place = bad_count
+			bad_count += 1
+		}
+		if place >= 0 {
+			bad[place].count += 1
 		}
 		wiring_end_by_number(item, tag)
+	}
+	for entry in bad[:bad_count] {
+		if entry.known {
+			system.log(.Info, "root: ", system.Module_Name{system.name_of(item.name[:])}, " refused its end of the wiring ", u64(entry.number), " with ", entry.status, ", in ", u64(entry.count), " completions: the wiring ends")
+		} else {
+			system.log(.Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " wrote ", u64(entry.count), " completions of its wiring ring for the wiring ", u64(entry.number), " that name no status: the wiring ends")
+		}
 	}
 }
 
 // wiring_end_by_number ends the wiring of a number whose writer or reader
 // is a process, with the end word Refused. A number of a wiring of another
-// process is not ended: a process ends only its own wirings so.
+// process is not ended: a process ends only its own wirings so, and no two
+// running wirings have one number.
 @(private = "file")
 wiring_end_by_number :: proc "contextless" (item: ^Started, number: u32) {
 	for &asker in started {
 		for page := asker.wiring_pages; page != nil; page = page.next {
 			for &kept in page.records {
-				if kept.ring_memory != 0 && kept.number == number && (kept.writer == item || kept.reader == item) {
+				if kept.end_memory != 0 && kept.number == number && (kept.writer == item || kept.reader == item) {
 					wiring_end(&asker, page, &kept, .Refused)
 					return
 				}
@@ -726,18 +984,34 @@ wiring_end_by_number :: proc "contextless" (item: ^Started, number: u32) {
 	}
 }
 
-// wire runs the command Wire: a list of one row, checked, resolved, made
-// and delivered. values is its completion, or its error record.
+// wire runs the command Wire. values is its completion, or its error
+// record.
 wire :: proc "contextless" (asker: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
-	work := &wire_work
-	work^ = {asker = asker, command = .Wire, form = .Wire}
+	command := root_ring.Root_Command.Wire
+	step, step_ok := root_ring.wire_step_of_word(record.values[0])
+	if !step_ok {
+		lent_handles_close(asker)
+		values^ = root_ring.word_refusal(command, 1, record.values[0], u64(max(root_ring.Wire_Step)))
+		return .Bad_Operation
+	}
 	for index in 1 ..< len(record.values) {
 		if record.values[index] != 0 {
-			values^ = root_ring.word_refusal(.Wire, i64(index) + 1, record.values[index], 0)
+			lent_handles_close(asker)
+			values^ = root_ring.word_refusal(command, i64(index) + 1, record.values[index], 0)
 			return .Bad_Operation
 		}
 	}
-	status := wiring_list_take(work, record.values[0])
+	switch step {
+	case .List_Page:
+		return list_page_give(asker, values)
+	case .Apply:
+	case .None:
+		// wire_step_of_word refused None; the case keeps the switch whole.
+		return .Bad_Operation
+	}
+	work := &wire_work
+	work^ = {asker = asker, command = command, form = .Wire}
+	status := wiring_list_take(work)
 	if status == .Ok {
 		status = wiring_list_resolve(work)
 	}
@@ -752,15 +1026,10 @@ wire :: proc "contextless" (asker: ^Started, record: ring.Record, values: ^[7]u6
 	plan := &work.plans[0]
 	if plan.kept == nil {
 		// The end did not reach its process: the line says it.
-		values^ = errors.ring_fail(u32(root_ring.Root_Command.Wire), .Refused, .Wirings, 0, 0, 0, i64(system.Status.Bad_State))
+		values^ = errors.ring_fail(u32(command), .Refused, .Wirings, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	hash := transmute([4]u64)plan.writer.hash
-	values^ = {u64(plan.asker_ring), u64(plan.number), u64(plan.description), hash[0], hash[1], hash[2], hash[3]}
+	values^ = {u64(plan.number), 0, 0, 0, 0, 0, 0}
 	system.log(.Info, "root: wired the record output ", u64(plan.row.writer_index), " of ", system.Module_Name{system.name_of(plan.writer.name[:])}, " to ", plan.row.reader_end == .Asker ? "its asker " : "", system.Module_Name{system.name_of(plan.reader.name[:])}, ", wiring ", u64(plan.number))
 	return .Ok
 }
-
-// The work of the command that runs: one command at a time, in the loop
-// of this service. It is large, so it is not on the stack.
-wire_work: Wiring_Work

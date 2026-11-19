@@ -1,6 +1,6 @@
 # Module contract
 
-`src/library/contract/module/format.odin` is version 4 of the format at the level of bytes.
+`src/library/contract/module/format.odin` is version 5 of the format at the level of bytes.
 
 This document gives the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `glossary/README.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -393,7 +393,7 @@ A record input with wiring terms has a type of its own because Odin gives no def
 | Record_Inputs | One record input: the same name, help and text; the index of its record, or 0 for a generic record input; the index of the record of its wiring terms, or 0 for none; and its count of wirings, the byte of a `module.Wiring_Count` |
 
 ```byte-layout module.Record_Output module.Record_Input
-module.Record_Output, 32 bytes: one record of the table Record_Outputs
+module.Record_Output, 40 bytes: one record of the table Record_Outputs
 offset  size  field         type
      0     4  name_offset   u32
      4     4  name_count    u32
@@ -404,8 +404,9 @@ offset  size  field         type
     24     4  record        u32
     28     1  pairing       u8
     29     3  reserved      [3]u8
+    32     8  place         u64
 
-module.Record_Input, 36 bytes: one record of the table Record_Inputs
+module.Record_Input, 48 bytes: one record of the table Record_Inputs
 offset  size  field         type
      0     4  name_offset   u32
      4     4  name_count    u32
@@ -416,13 +417,16 @@ offset  size  field         type
     24     4  record        u32
     28     4  terms         u32
     32     1  wirings       u8
-    33     3  reserved      [3]u8
+    33     7  reserved      [7]u8
+    40     8  place         u64
 ```
+
+- **The place of a row** is the memory offset of the package variable of the declaration, in a segment that the loader writes: each loader writes the index of the row there, a u32, the first field of `system.Record_Output` and `system.Record_Input` (`module.record_stream_indexes_write`), as it writes the hash at the own-hash place. The library reads the index in the variable, so a call names its stream by the address of the variable. The tool finds the variable by its symbol in the linked file; 0 says that the link kept no variable, as no code uses it. `validate` refuses a place that is not 0 and not 4 aligned bytes in a segment that the loader writes (`Bad_Record_Stream_Place`). The format is version 5 since the place.
 
 - **The record of a row** is a record description of the table `Records`, as the record of an export or of a log fact is: a record that an export takes and a record output writes has one row. A record of a record stream goes into memory that another process reads, so it has no Handle field, and each of its bytes is a byte of one field (`module.record_stream_type`).
 - **The checks of a reader**: `module.record_output` and `module.record_input` refuse a row index of 0 or past `module.RECORD_STREAM_INDEX_MOST` (65 535: a wiring names a row in 16 bits), a reserved byte that is not 0, a name that is not a name of the source or is outside the string table, a help or a text outside it, a record or terms that `record_stream_type` refuses, a pairing or a count that names no member, `Paired` on a typed record output, and `Many_Types` on a typed record input. `module.record_streams_check` checks a whole file: each row, the names of each table sorted with no name two times, no name in both tables, and a generic record output only beside one generic record input. The build writes the rows sorted by name, and checks each file that it writes with it.
 
-**The output ring** of a wiring carries the records of one record output to one reader (`glossary/communication.md`, "Output ring"). Its command queue holds one compartment for each record: the compartment word, then the record, rounded up to a multiple of 64 bytes (`output.compartment_size`). Its head page holds the end words that the root service writes when a side stops. The contract is `src/library/contract/output`, and the ring of compartments `ring.compartment_open`.
+**The output ring** of a wiring carries the records of one record output to one reader (`glossary/communication.md`, "Output ring"). Its command queue holds one compartment for each record: the compartment word, then the record, rounded up to a multiple of 64 bytes (`output.compartment_size`). The end words that the root service writes when a side stops are in the end page of the wiring, which each side maps with Read only. The contract is `src/library/contract/output`, and the ring of compartments `ring.compartment_open`.
 
 ```byte-layout output.Compartment_Word output.End_Words
 output.Compartment_Word, 8 bytes: the start of each compartment of an output ring
@@ -430,7 +434,7 @@ offset  size  field   type
      0     4  kind    u32
      4     4  serial  u32
 
-output.End_Words, 64 bytes: the end words in the head page of an output ring
+output.End_Words, 64 bytes: the end words in the end page of a wiring
 offset  size  field         type
      0     4  end           u32
      4     4  stop_cause    u32
@@ -440,21 +444,25 @@ offset  size  field         type
 
 **The wiring ring** gives a process each end of a wiring (`glossary/communication.md`, "Wiring ring"). A process whose module declares a record output or a record input receives it at the handle 16 of its context, `op.CONTEXT_WIRING_RING`: a ring of records of 64 bytes, 32 records or the next power of two of the ends of the wiring list of its start. The root service writes one command for each end, and the process answers each with one completion (`src/library/contract/output/wiring.odin`):
 
-| Word | `Writer_End` (1): the process writes the output ring | `Reader_End` (2): the process reads it |
-|---|---|---|
-| `kind` | 1 | 2 |
-| `tag` | The number of the wiring; the completion carries it back | The same |
-| `values[0]` | The handle of the output ring, with Read and Write | The same |
-| `values[1]` | The index of the record output, from 1 | The index of the record input, from 1 |
-| `values[2]` | The word of its `output.Wiring_Pace`: `Writer_Chooses` (0), `Never_Holds_Writer` (1), `Always_Holds_Writer` (2) | 0 |
-| `values[3]` | 0 | The memory of its wiring terms, with Read only, or 0 |
-| `values[4..6]` | 0 | 0 |
+| Word | `Writer_End` (1): the process writes the output ring | `Reader_End` (2): the process reads it into a record input | `Asker_End` (3): the process reads it as the asker |
+|---|---|---|---|
+| `kind` | 1 | 2 | 3 |
+| `tag` | The number of the wiring; the completion carries it back | The same | The same: the number that the completion of `Wire` or `Start` gave |
+| `values[0]` | The handle of the output ring, with Read and Write | The same | The same |
+| `values[1]` | The index of the record output, from 1 | The index of the record input, from 1 | 0 |
+| `values[2]` | The word of its `output.Wiring_Pace`: `Writer_Chooses` (0), `Never_Holds_Writer` (1), `Always_Holds_Writer` (2) | 0 | 0 |
+| `values[3]` | 0 | The memory of its wiring terms, with Read only, or 0 | 0 |
+| `values[4]` | 0 | Its description file, with Read only | The same |
+| `values[5]` | The end page of the wiring, with Read only | The same | The same |
+| `values[6]` | 0 | 0 | 0 |
 
 - **Each handle comes through the ring.** The root service gives the handles with `Handle_Give` and the memory of the wiring ring as the target, and the process proves each one with `Handle_State` before it maps it.
-- **The border** `output.given_end_of_record` refuses a kind that names no command, a ring handle of 0 or past 32 bits, an index of 0 or past `module.RECORD_STREAM_INDEX_MOST`, a pace that names no member, a pace word beside a reader end, terms beside a writer end, and a reserved word that is not 0. Its error record is `Bad_Value` with the index of the word + 1 as the argument, 0 for the kind.
+- **The border** `output.given_end_of_record` refuses a kind that names no command, a ring handle of 0 or past 32 bits, an index of 0 or past `module.RECORD_STREAM_INDEX_MOST` (an index that is not 0 for the asker), an end page of 0 or past 32 bits, a description file beside a writer end or none beside a reader, a pace that names no member, a pace word beside a reader, terms beside a writer or the asker, and a reserved word that is not 0. Its error record is `Bad_Value` with the index of the word + 1 as the argument, 0 for the kind.
+- **The description file** (`output.description_file_write`) is a module file with the one record of the wiring at the index 1: a process has no copy of its own module file, so the reader checks each compartment against it.
 - **The completion** has the status `Ok` when the process took the end, else the status of its refusal and its error record. The root service takes it through `output.wiring_completion_of_record`, which refuses a status that names no member and an `Ok` with values.
-- **No command ends an end.** The end words of the output ring say it.
-- **The wiring list** that `Wire` and `Start` lend: a head, the rows, the lent process handles of 32 bits, then the wiring terms. `output.wiring_list_check` takes a private copy of it, and `output.wiring_row_check` each row, with the error record of the unit `Wiring_Rows` that names the field and the row.
+- **No command ends an end.** The end page of the wiring says it, which the root service alone writes.
+- **The wiring list** that `Wire` and `Start` name: a head, the rows, the lent process handles of 32 bits, then the wiring terms, in the list page of the asker, which the root service owns and copies from its own handle. `output.wiring_list_check` takes the copy, and `output.wiring_row_check` each row, with the error record of the unit `Wiring_Rows` that names the field and the row.
+- **The library calls** (`src/library/support/system/stream_ends.odin`): `system.output_write(&requests, record, wait, deadline)` writes into the ring of each reader, whole or refused over the rings that hold the writer, and gives an `output.Stream_Status`; `system.output_end(&requests, error)` writes the end record; `system.input_read(&orders, &order, deadline)` gives the next record, joined record, gap record or end, with the end word of a writer that stopped; `system.asker_read(number, &record, deadline)` reads a wiring whose reader is the asker. A process holds at most `system.STREAM_END_CAPACITY` ends; one thread writes a record output, and one thread reads a record input.
 
 ```byte-layout output.Wiring_List_Head output.Wiring
 output.Wiring_List_Head, 64 bytes: the head of a wiring list

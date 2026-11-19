@@ -2629,6 +2629,29 @@ scenario := [?]Step {
 	{kind = .Wait, text = "arena: grew to ", fails_on = "arena: WRONG"},
 	{kind = .Wait, text = "arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must", fails_on = "arena: WRONG"},
 	{kind = .Wait, text = "root: arena stopped with code 0"},
+	// The record outputs (src/md/features/module_outputs.md, "How a test
+	// waits on a record output"): output_wiring starts output_writer and
+	// output_reader, wires them with Wire and with the wiring list of
+	// Start, and tries each refusal of the root service with its budget
+	// unchanged; the writers and the readers write what they read. The
+	// processes print in an order that the system does not fix.
+	{kind = .Type, text = "start(\"output_wiring\")"},
+	{kind = .Wait, text = "output_wiring: Wire before its list page, with a step that names nothing and with a reserved word: refused, each with its status and its error record, the budget unchanged; then the list page: as it must", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = "output_wiring: the refusals of a wiring, each with its status and its error record and the budget unchanged, and the Wire of the second reader: as it must", fails_on = "output_wiring: WRONG", any_order = true},
+	{kind = .Wait, text = "output_writer: probes: 8 probes to two readers, the second one after 5, a clean end, and Ended after it: as it must", fails_on = "output_writer: WRONG", any_order = true},
+	{kind = .Wait, text = "output_reader: probes: joined after 0 records, the probes 0 to 7 in order, and a clean end: as it must", fails_on = "output_reader: WRONG", any_order = true},
+	{kind = .Wait, text = "output_reader: probes: joined after 5 records, the probes 5 to 7 in order, and a clean end: as it must", fails_on = "output_reader: WRONG"},
+	{kind = .Wait, text = "output_wiring: the refusals of Start and of its list, each with its status and its error record and the budget unchanged: as it must", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = "output_writer: unended: one probe, then the stop with no end record: as it must", fails_on = "output_writer: WRONG", any_order = true},
+	{kind = .Wait, text = "output_reader: unended: the joined record of 0, one probe, then the end word Writer_Stopped with the stop cause ", fails_on = "output_reader: WRONG", any_order = true},
+	{kind = .Wait, text = "output_reader: watched: the joined record and one probe, then this reader stops: as it must", fails_on = "output_reader: WRONG", any_order = true},
+	{kind = .Wait, text = "output_writer: watched: the ring ended with the end word Reader_Stopped: as it must", fails_on = "output_writer: WRONG", any_order = true},
+	{kind = .Wait, text = "output_wiring: the writer that stopped and the reader that stopped: as it must", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = "output_writer: large: 8 rings, each ended with the end word Revoked: as it must", fails_on = "output_writer: WRONG"},
+	{kind = .Wait, text = "output_wiring: 8 wirings, one past them refused with its status and its error record and the budget unchanged, then the revocation of the grant wirings: as it must", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = "output_wiring: the wiring of this asker gave the joined record of 0 and the probe 0, after ", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = "output_wiring: ok"},
+	{kind = .Wait, text = "output_writer: asked: the ring ended with the end word Asker_Stopped: as it must", fails_on = "output_writer: WRONG"},
 	// The refusals of the root service give an error record: the console
 	// writes its sentence.
 	// No window drew in a picture on the screen: each surface has two

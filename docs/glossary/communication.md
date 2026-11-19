@@ -646,7 +646,7 @@ Do not use: subscription, binding, connection (a connection is a call ring and a
 
 The wiring ring is the ring between the root service and a process that declares a record output or a record input: one command record gives one end of an output ring, with its handle, its pace or its wiring terms.
 
-The process finds it at the handle 16 of its context, and answers each command with one completion. Each handle comes through the memory of the ring, so the process proves it. No command ends an end: the end words of the output ring say it. The writer reads the wiring ring at each write with one compare of its counters. A process that declares no record output and no record input has none.
+The process finds it at the handle 16 of its context, or an asker with its list page, and answers each command with one completion. Each handle comes through the memory of the ring, so the process proves it. No command ends an end: the end page of the wiring says it. The writer reads the wiring ring at each write with one compare of its counters. A process that declares no record output and no record input has none.
 
 The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
 
@@ -711,6 +711,36 @@ Each row names a writer and a reader: the child, a process that the starter star
 The design: `src/md/features/module_outputs.md`, "The wiring list of a start".
 
 Do not use: manifest, wiring plan, pipeline, redirection.
+
+### List page
+
+The list page is the memory object in which an asker writes a wiring list for `Wire` or `Start`, and which the root service owns.
+
+The root service makes it once from the budget of the asker, keeps its own handle, and gives the asker a handle with Write. It copies the list from its own handle, so a revocation by the asker reaches only the handle of the asker, never the copy of the root service.
+
+The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
+
+Do not use: lent list, argument memory.
+
+### End page
+
+The end page is the page of one wiring in which the root service alone writes the end words, and which each side maps with Read only.
+
+A side waits on its end word beside its queue, and reads it once its queue is empty. A side cannot forge the end of the other, as it could in the head page of the ring, which both sides write.
+
+The design: `src/md/features/module_outputs.md`, "The end of a stream".
+
+Do not use: end record (an end record is a compartment), status page.
+
+### Description file
+
+A description file is the small module file that the root service gives the reader of a wiring: the one record of the wiring, its fields and their names.
+
+A process has no copy of its own module file, so the reader checks each compartment against this file, which the root service writes from the module file of the writer after the type check. A generic reader takes the type that its wiring fixed from it.
+
+The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
+
+Do not use: schema, type message.
 
 ### Wiring page
 

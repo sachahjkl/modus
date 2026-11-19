@@ -300,23 +300,19 @@ the_end_words_are_read_through_their_border :: proc(t: ^testing.T) {
 		_, _, _, ok := end_of_words(words)
 		testing.expectf(t, !ok, "the end words %v are taken", words)
 	}
-	head := new(ring.Head, context.temp_allocator)
-	head.commands.write, head.commands.read, head.completions.write, head.completions.read = 3, 2, 1, 1
-	end_words_write(head, .Writer_Stopped, 4, 2)
-	bytes := ([^]u8)(head)[:size_of(ring.Head)]
-	for value, index in bytes {
-		if index >= END_WORDS_OFFSET && index < END_WORDS_OFFSET + 3 * size_of(u32) {
+	// The write changes the three words only, and the reserved words stay 0.
+	page := make([]u8, END_WORDS_PAGES * ring.PAGE_SIZE, context.temp_allocator)
+	words := (^End_Words)(raw_data(page))
+	end_words_write(words, .Writer_Stopped, 4, 2)
+	for value, index in page {
+		if index < 3 * size_of(u32) {
 			continue
 		}
-		if index < size_of(ring.Counters) || (index >= int(offset_of(ring.Head, completions)) && index < int(offset_of(ring.Head, completions)) + size_of(ring.Counters)) {
-			continue
-		}
-		testing.expectf(t, value == 0, "the byte %d of the head is %d", index, value)
+		testing.expectf(t, value == 0, "the byte %d of the end page is %d", index, value)
 	}
-	testing.expect(t, head.commands.write == 3 && head.commands.read == 2 && head.completions.write == 1 && head.completions.read == 1)
-	end, cause, outcome, ok := end_of_words(end_words_read(head))
+	end, cause, outcome, ok := end_of_words(end_words_read(words))
 	testing.expect(t, ok && end == .Writer_Stopped && cause == 4 && outcome == 2)
-	none, _, _, none_ok := end_of_words(end_words_read(new(ring.Head, context.temp_allocator)))
+	none, _, _, none_ok := end_of_words(end_words_read(new(End_Words, context.temp_allocator)))
 	testing.expect(t, none_ok && none == .None)
 }
 

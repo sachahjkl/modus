@@ -318,16 +318,26 @@ Started :: struct {
 	// process that this service did not start with start(): no wiring
 	// names it.
 	file:            []u8,
-	// A handle of the budget of the process with Read and Spend: the
-	// wirings that the process asks for are paid from it. Closed at the
-	// stop of the process (src/md/features/module_outputs.md, "The budget").
+	// A handle of the budget of the process with Read and Spend, for a
+	// process with a root ring, the one kind of asker: the wirings that
+	// the process asks for are paid from it. Closed at the stop of the
+	// process (src/md/features/module_outputs.md, "The budget").
 	budget:          system.Handle,
 	// The wiring ring of a process that declares a record output or a
-	// record input, mapped in this service, which writes its commands.
+	// record input, or of an asker that asked for its list page, mapped in
+	// this service, which writes its commands.
 	wiring:          ring.Ring,
 	wiring_memory:   system.Handle,
+	// The list page of an asker, as this service holds it: the asker
+	// writes its wiring lists there, and this service copies them from
+	// this handle, which a revocation by the asker does not reach.
+	list_memory:     system.Handle,
 	// The wiring pages of the wirings that the process asked for.
 	wiring_pages:    ^Wiring_Page,
+	// The wirings that the process asked for and that run, and the ends
+	// that it holds: each is bounded (wirings.odin).
+	wirings_asked:   int,
+	ends_given:      int,
 }
 
 // place_is_free says if a place of the table of the processes holds no

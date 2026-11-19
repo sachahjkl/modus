@@ -49,8 +49,9 @@ Record_Output :: struct {
 	record:       u32, // The index of the description of its record in the table Records; 0: a generic record output.
 	pairing:      u8, // The byte of a Record_Output_Pairing (record_output_pairing_of_word).
 	reserved:     [3]u8, // 0.
+	place:        u64, // The memory offset of its package variable, where each loader writes the index of the row (record_stream_indexes_write); 0: the link kept no variable, as no code uses it.
 }
-#assert(size_of(Record_Output) == 32)
+#assert(size_of(Record_Output) == 40)
 
 // One row of the table Record_Inputs: one record input that the module
 // declares. The rows are sorted by name, no two rows have one name, and no
@@ -69,9 +70,86 @@ Record_Input :: struct {
 	record:       u32, // The index of the description of its record in the table Records; 0: a generic record input.
 	terms:        u32, // The index of the description of its wiring terms in the table Records; 0: it takes no terms.
 	wirings:      u8, // The byte of a Wiring_Count (wiring_count_of_word).
-	reserved:     [3]u8, // 0.
+	reserved:     [7]u8, // 0.
+	place:        u64, // The memory offset of its package variable, as for a record output; 0: none.
 }
-#assert(size_of(Record_Input) == 36)
+#assert(size_of(Record_Input) == 48)
+
+// The bytes that a loader writes at the place of a declaration: the index
+// of its row, a u32 little-endian, the first field of the variable
+// (system.Record_Output, system.Record_Input). The library reads the index
+// there: the variable has its address, and no name, at run time.
+RECORD_STREAM_PLACE_SIZE :: 4
+
+// record_stream_place_of_row gives the place of a row of the table
+// Record_Outputs or Record_Inputs, read with no other check: validate and
+// the loader read the places of rows that the other readers may refuse.
+@(private = "file")
+record_stream_place_of_row :: proc "contextless" (file: []u8, kind: Table_Kind, index: u32) -> (place: u64, ok: bool) {
+	#partial switch kind {
+	case .Record_Outputs:
+		row := record(file, kind, index, Record_Output) or_return
+		return row.place, true
+	case .Record_Inputs:
+		row := record(file, kind, index, Record_Input) or_return
+		return row.place, true
+	}
+	return 0, false
+}
+
+// record_stream_place_valid says if a place is one that a loader writes:
+// 0, or RECORD_STREAM_PLACE_SIZE bytes on a multiple of that size inside
+// one segment that the loader can write. A place in code would let a file
+// make the loader write into its code.
+@(private = "file")
+record_stream_place_valid :: proc "contextless" (file: []u8, place: u64) -> bool {
+	return place == 0 || (place % RECORD_STREAM_PLACE_SIZE == 0 && writable_range(file, place, RECORD_STREAM_PLACE_SIZE))
+}
+
+// record_stream_places_valid checks the place of each row of the two
+// tables: validate calls it, so a loader of a valid file writes each index
+// in writable data. The rows past RECORD_STREAM_INDEX_MOST are not read: a
+// wiring names none, and record_streams_check refuses such a table.
+record_stream_places_valid :: proc "contextless" (file: []u8) -> bool {
+	for kind in ([2]Table_Kind{.Record_Outputs, .Record_Inputs}) {
+		rows := min(max(count(file, kind), 1) - 1, RECORD_STREAM_INDEX_MOST)
+		for index in 1 ..= rows {
+			place, ok := record_stream_place_of_row(file, kind, index)
+			if !ok || !record_stream_place_valid(file, place) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// record_stream_indexes_write writes the index of each row at its place,
+// in the memory of a module that a loader prepares, when the place is
+// between the offsets first and end: a loader that writes one segment at a
+// time calls it for each one, as for own_hash_write. A row with the place
+// 0 writes nothing. false: a place is not one that validate takes, or is
+// outside memory; the module must not run. Call validate first.
+record_stream_indexes_write :: proc "contextless" (file: []u8, memory: []u8, first: u64 = 0, end: u64 = max(u64)) -> bool {
+	for kind in ([2]Table_Kind{.Record_Outputs, .Record_Inputs}) {
+		rows := min(max(count(file, kind), 1) - 1, RECORD_STREAM_INDEX_MOST)
+		for index in 1 ..= rows {
+			place, ok := record_stream_place_of_row(file, kind, index)
+			if !ok || !record_stream_place_valid(file, place) {
+				return false
+			}
+			if place == 0 || place < first || place >= end {
+				continue
+			}
+			if !range_holds(0, u64(len(memory)), place, RECORD_STREAM_PLACE_SIZE) {
+				return false
+			}
+			for byte_index in 0 ..< RECORD_STREAM_PLACE_SIZE {
+				memory[place + u64(byte_index)] = u8(index >> (8 * uint(byte_index)))
+			}
+		}
+	}
+	return true
+}
 
 // record_output_pairing_of_word and wiring_count_of_word are the borders of
 // the bytes of a row: the member, or false for a byte that names none.
@@ -156,7 +234,7 @@ record_input :: proc "contextless" (file: []u8, index: u32) -> (value: Record_In
 		return {}, {}, {}, {}, false
 	}
 	value = record(file, .Record_Inputs, index, Record_Input) or_return
-	if (value.reserved != [3]u8{}) || !record_stream_texts_valid(file, value.name_offset, value.name_count, value.about_offset, value.about_count, value.text_offset, value.text_count) {
+	if (value.reserved != [7]u8{}) || !record_stream_texts_valid(file, value.name_offset, value.name_count, value.about_offset, value.about_count, value.text_offset, value.text_count) {
 		return {}, {}, {}, {}, false
 	}
 	wirings = wiring_count_of_word(value.wirings) or_return

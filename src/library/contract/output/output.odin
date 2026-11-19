@@ -15,7 +15,7 @@
 // into private memory, then takes it through one border,
 // `record_of_compartment`, which checks it against the record description and
 // against the compartments before it. The root service writes the end words in
-// the head page when a side stops (`end_words_write`), and the reader takes
+// the end page of the wiring when a side stops (`end_words_write`), and each side takes
 // them through `end_of_words`.
 //
 // Who uses it: the library of each process that declares a record output or
@@ -329,6 +329,17 @@ End_Word :: enum u32 {
 	Refused        = 5, // A side refused its end in its wiring ring: the wiring ends before its first record.
 }
 
+// The name of each end word, for a line and a sentence.
+@(rodata)
+end_word_names := [End_Word]string {
+	.None           = "None",
+	.Writer_Stopped = "Writer_Stopped",
+	.Reader_Stopped = "Reader_Stopped",
+	.Asker_Stopped  = "Asker_Stopped",
+	.Revoked        = "Revoked",
+	.Refused        = "Refused",
+}
+
 // What a call of the library on a record output or a record input gives
 // its caller (system.output_write, system.output_end, system.input_read).
 // These are not kernel statuses: no kernel operation gives them. Each one
@@ -343,37 +354,37 @@ Stream_Status :: enum u32 {
 	No_Record  = 6, // The deadline of a read passed, and no compartment came.
 }
 
-// The end words: one line of the cache in the head page, in the half of
-// the command queue, past its counters. Neither side writes them.
+// The end words of a wiring: the first bytes of the end page, a memory
+// object of END_WORDS_PAGES that the root service makes for each wiring,
+// writes alone, and gives each side with the right Read only. In the head
+// page of the ring, which both sides write, either side could forge the
+// end of the other.
 End_Words :: struct {
-	end:          u32, // The word of an End_Word. The root service writes it last.
+	end:          u32, // The word of an End_Word. The root service writes it last; a side waits on it with its queue.
 	stop_cause:   u32, // Writer_Stopped: the word of the stop cause of the writer. 0 for each other end.
 	stop_outcome: u32, // Writer_Stopped: the word of the stop outcome of the writer. 0 for each other end.
 	reserved:     [13]u32, // 0.
 }
 #assert(size_of(End_Words) == 64)
 
-// The compartment of the end words in the head page.
-END_WORDS_OFFSET :: 1024
-#assert(END_WORDS_OFFSET >= size_of(ring.Counters) && END_WORDS_OFFSET + size_of(End_Words) <= offset_of(ring.Head, completions))
+// The pages of the end page of a wiring.
+END_WORDS_PAGES :: 1
 
-// end_words_write writes the end words in the head page of a ring: the stop
-// cause and the stop outcome first, then the end word, so that a reader
+// end_words_write writes the end words in the end page of a wiring: the
+// stop cause and the stop outcome first, then the end word, so that a side
 // that sees the end word sees the two words with it. The root service
-// calls it, then wakes the side that remains.
-end_words_write :: proc "contextless" (head: ^ring.Head, end: End_Word, stop_cause: u32 = 0, stop_outcome: u32 = 0) {
-	words := (^End_Words)(uintptr(head) + END_WORDS_OFFSET)
+// calls it, then wakes each side that waits on the end word.
+end_words_write :: proc "contextless" (words: ^End_Words, end: End_Word, stop_cause: u32 = 0, stop_outcome: u32 = 0) {
 	intrinsics.atomic_store_explicit(&words.stop_cause, stop_cause, .Relaxed)
 	intrinsics.atomic_store_explicit(&words.stop_outcome, stop_outcome, .Relaxed)
 	intrinsics.atomic_store_explicit(&words.end, u32(end), .Release)
 }
 
-// end_words_read copies the end words of the head page: the end word
-// first, then the others. A reader takes the copy through end_of_words, and
-// reads it only when its queue is empty: each record that the writer
-// published before its stop comes first.
-end_words_read :: proc "contextless" (head: ^ring.Head) -> (copy_of_words: End_Words) {
-	words := (^End_Words)(uintptr(head) + END_WORDS_OFFSET)
+// end_words_read copies the end words of an end page: the end word first,
+// then the others. A reader takes the copy through end_of_words, and reads
+// it only when its queue is empty: each record that the writer published
+// before its stop comes first.
+end_words_read :: proc "contextless" (words: ^End_Words) -> (copy_of_words: End_Words) {
 	copy_of_words.end = intrinsics.atomic_load_explicit(&words.end, .Acquire)
 	copy_of_words.stop_cause = intrinsics.atomic_load_explicit(&words.stop_cause, .Relaxed)
 	copy_of_words.stop_outcome = intrinsics.atomic_load_explicit(&words.stop_outcome, .Relaxed)

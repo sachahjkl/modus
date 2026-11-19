@@ -18,6 +18,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **The count of the handles and the mappings of a process in its report.** The report of a process gives the handles and the mappings that it holds and the most that it held, so a developer measures the peak of the root service and sets the limits of the wirings from a measure. [Design](src/md/features/module_outputs.md)
 - **A cache of modules on the network, at cache.modus.froment.software.** A machine fetches the signed module files that a development shell or a package manager names, by their hash, from one cache of the project, and checks each one before its store keeps it. A developer then gets the tools of a project on modus in one step, with no build on the machine.
 - **The error record of a failed stop.** A process that stops with the outcome failed or refused gives an error record, as an export that fails does. A parent then reads why its child failed, in the words of its call, with no read of the log. [Design](src/md/api/process_stop.md)
 - **Utility modules, the collector and the audit.** `merge` and `filter` work on a stream of any record type, and the collector keeps the record outputs that a wiring gives it, one space with its own bound for each source and record output, which only the principal of the starter reads. A starter then audits each record that enters or leaves a server, and its log, in an append-only space that the server can neither read nor erase. [Design](src/md/features/module_outputs.md)
