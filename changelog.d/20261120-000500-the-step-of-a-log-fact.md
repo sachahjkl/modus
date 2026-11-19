@@ -1,3 +1,0 @@
-type: Added
-
-**A machine test waits for a log fact by its fields**: the step `Fact` names a fact type, a process and a condition on one field, as `condition = "value = 42"`, and passes at the first line of that fact whose values pass the condition, whatever its sentence. Before a machine starts, the tool checks each such step against the fact tables of the build and stops with one line for each fault: no process, a fact type that no module writes, a field that the fact type lacks, an operator that the field does not take, a value of another kind or out of the range of its field. The condition has the form of the condition of `where` in the console, and the same package reads it. The main test reads the fact of `log_reader` this way, and with `facts()` in the console.
