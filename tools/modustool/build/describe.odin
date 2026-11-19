@@ -501,6 +501,14 @@ text_size :: proc(type: ^ast.Expr) -> (size: u32, is_text, ok: bool) {
 @(private = "file")
 struct_record :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> (number: u32, is_record, ok: bool) {
 	key, record_name := struct_name(state, type)
+	return struct_record_named(state, key, record_name, result)
+}
+
+// struct_record_named gives the number of the description of the struct
+// that state names by key ("Name", or "package.Name"), with the name
+// record_name. 0 and is_record false: the key names no struct that the
+// tool knows. The extraction of a fact type reads its record so.
+struct_record_named :: proc(state: ^Describe_State, key, record_name: string, result: bool) -> (number: u32, is_record, ok: bool) {
 	found, has_struct := state.structs[key]
 	if key == "" || !has_struct {
 		return 0, false, false

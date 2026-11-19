@@ -35,6 +35,25 @@ the_operations_that_take_error_details :: proc(t: ^testing.T) {
 	}
 }
 
+// The form of `Log` is a choice whose 0 names the form Text: a text line
+// with a table of error details gives no detail about its form. One past
+// the last form, and the largest word, are refused.
+@(test)
+the_form_of_a_log_record_is_a_choice_of_zero_and_one :: proc(t: ^testing.T) {
+	FORM :: 5
+	for word in ([2]u64{u64(Log_Record_Form.Text), u64(Log_Record_Form.Fact)}) {
+		values := [7]u64{0, 0, 0, 0, 0, word, 0}
+		problem, _ := argument_value_problem(.Log, FORM, values)
+		testing.expectf(t, problem == .None, "the form %d of Log gives %v", word, problem)
+	}
+	for word in ([2]u64{u64(max(Log_Record_Form)) + 1, max(u64)}) {
+		values := [7]u64{0, 0, 0, 0, 0, word, 0}
+		problem, limit := argument_value_problem(.Log, FORM, values)
+		testing.expect_value(t, problem, errors.Kind.Bad_Value)
+		testing.expect_value(t, limit, u64(max(Log_Record_Form)))
+	}
+}
+
 // A count above the limit of its form, and one at the limit.
 @(test)
 a_count_above_its_limit :: proc(t: ^testing.T) {

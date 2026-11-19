@@ -110,6 +110,40 @@ A run that fails its check costs the record its colors, never its text: the text
 
 On the path of `log` in the kernel: one store of 6 bytes for each value, and at most 12 runs on the stack (72 bytes, `KERNEL_LOG_RUN_LIMIT` in `src/kernel/serial.odin`). In `log_record`, under the log lock: one pass over the runs for each record, at most 32 steps. No allocation. The serial port gets the same bytes as a record with no runs.
 
+### Log facts
+
+A log fact (`glossary/running_code.md`) is a record of the values of one record type of the source, with no text. The record type has the attribute `log_fact`, whose literal is its fact template; the call names a composite literal of it:
+
+```odin
+@(log_fact = "storage: the block {block} has a wrong check {check}, expected {expected}")
+Bad_Block :: struct {
+	block:    u64,
+	check:    value_kinds.Hexadecimal_32,
+	expected: value_kinds.Hexadecimal_32,
+}
+
+system.log_fact(.Warning, Bad_Block{block = number, check = found, expected = wanted})
+```
+
+`system.log_fact` copies the hash of its module from the own-hash place, the fact key (the typeid of the type), and the bytes of the value, and gives them to `Log` in one record of the form `Fact` (`docs/ARCHITECTURE.md`, "The forms of a log record"). It formats nothing. A fact counts one record of the log limit, and the limit drops and counts it as a line of `system.log`. The compiler refuses a record type with padding, and one of more than 144 bytes (`op.LOG_FACT_VALUE_CAPACITY`).
+
+The serial port gets the raw line of a fact: `[storage] #1a2b3c4d5e6f7081:fa0adf38a559f4d1 0c000000000000001a2300001a2b`, the first 8 bytes of the module hash, the fact key, then the value bytes up to their last byte that is not zero, in hexadecimal. The tool writes the sentence of each such line before a step of a machine test reads the log: it finds the module file of the build by the 8 bytes, the row by the key, and writes the template with each value by the kind of its field: `[storage] storage: the block 12 has a wrong check 0x0000231a, expected 0x00002b1a`. A line whose module, key or description the tool does not find stays raw. A Text value is bytes of the writer that the kernel did not filter: the tool writes "?" for each byte of an invalid sequence in it, a control character included, as the kernel does for a text. The file of the machine log keeps the raw lines. The machine keeps the rendered log, and each read renders only the lines after it; after the machine, one line gives the measure: "modustool: measure: the tool wrote the sentences of <count> lines of log facts of <log> in <time> us, over <count> reads of the log, ...". The readers of the system (`log.records`, the window, the console) show a fact as a record with no text, until they read the facts; `log.fact_records` gives its bytes ("The tables of the log service").
+
+### The log facts of the build
+
+The tool reads each call of `system.log_fact` in the sources that the compiler read for a module, and writes the table `Facts` of the module file with the template, the record description and the package of each fact type (`docs/MODULE_CONTRACT.md`, "The log facts and the own-hash place"). It has no type checker, so it refuses, with a message that names the source and the line:
+
+- a call whose value is not a composite literal of a named type, and a call with other than two arguments;
+- a named type with no attribute `log_fact`, and a type that its package does not declare at the package scope;
+- the attribute on a declaration that is not a record type, on a declaration inside a procedure or a `when`, or on a type private to its file: the key is the typeid of `<package>::<type>`, and those declarations have another canonical name;
+- a template that is not a literal of text, or that breaks a rule of its language: a field that it does not name, a name of no field, a field named two times, a brace that is not closed or that closes nothing (`{{` and `}}` write a brace), a format in the braces, more than 256 bytes, a byte that is not text;
+- a record with padding, a Handle field, or more than 144 bytes of values;
+- two fact types of one module with one key, a key of 0, and a record of a fact whose name the module describes another way;
+- a fact key that the LLVM IR of the module does not hold as an immediate of 64 bits, after the compile: the compiler then gives the typeid another value;
+- two module files of the build whose hashes start with the same 8 bytes: the line of a fact names its module by them.
+
+`modustool test descriptions` compares the table `Facts` of each module with its sources, and prints one line for each fact type: "the log fact log_reader.Fact_Probe of log_reader, key <key>, comes from its source". The host tests of `tools/modustool/build` (`facts_test.odin`) give each refused form and check the refusal.
+
 ### The serial port and the log limit
 
 The operation `Log` writes the records of the log only. The serial writer (`glossary/running_code.md`) prints them on the serial port after it: at each tick, a processor prints the lines of the records that the serial port does not have yet, in their order, for at most 100 µs, and only while the device takes bytes. Its time is charged to no budget. A processor that waits for a lock more than 1 s prints them too. So a `Log` never waits for the lines of other processes, and a hang of one processor does not silence the others. Before the first tick, each writer of a record prints it at once; before the machine stops, the kernel prints each record that is left; a report of a fault of the kernel prints them before its own lines. When the log wrote over records before the drain printed them, the serial port gets "kernel: <count> records of the log did not reach the serial port", and each scenario of the tool fails at once on that line, and once more on the whole log after the machine ends. A processor with nothing to run drains too, before its idle wait, at the rate of the port, with a window for interrupts after each byte: on a machine with an idle processor the serial port lags the log only by the rate of the port. A machine whose processors are all busy drains at the ticks only, and lags: a test that acts on the moment of a line under load must wait for a state instead. The first drains that wrote 64 KiB together write their measured rate once: "kernel: the drain of the serial port wrote <size> in <time> of port writes: <rate> bytes each second while it writes; <count> bytes in the idle loop, at that rate, and <count> at the ticks, at most <rate> each second for one busy processor". After the flush before the machine stops, the serial port gets the largest lag of a line in the run, from the time of its record to the write of its end on the port: "kernel: the largest lag of a line of the log on the serial port: <time> us". No test asserts either. In a flood, the processes write faster than the device keeps: the serial port then loses lines, and says how many.
@@ -124,7 +158,7 @@ The top line counts the records that the window did not read, in two counts. "Go
 
 ### The tables of the log service
 
-`log.records(after)` gives one row for each record: its fields, the count of its value runs (`runs`), and its text. `log.value_runs(after)` gives the value runs: the number of the record, the start and the length in bytes of its text, and the name of the kind (`size`, `time`...). Join them on `number`. The first row of `records` also says in `lost` how many records after `after` the kernel wrote over before the call read them: a reader that is slow knows what it missed.
+`log.records(after)` gives one row for each record: its fields, the count of its value runs (`runs`), and its text. `log.value_runs(after)` gives the value runs: the number of the record, the start and the length in bytes of its text, and the name of the kind (`size`, `time`...). Join them on `number`. `log.fact_records(after)` gives one row for each log fact, with the bytes that its writer gave and the kernel wrote: the number of the record, its record form and its byte `more`, the fact key, the module hash, the count of the value bytes, the reserved bytes and the first 8 value bytes. A row of `records` has no room for them: join the two on `number`. The service renders no sentence. The first row of `records` also says in `lost` how many records after `after` the kernel wrote over before the call read them: a reader that is slow knows what it missed.
 
 ### Who reads which records
 

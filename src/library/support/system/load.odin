@@ -508,8 +508,8 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 	status: Status
 	if space.prepared == nil {
 		own: Prepared
-		if own, status = module_prepare(item.file, .All, item.base, space.budget, imports, error); status == .Ok {
-			status = segments_map(item.file, &own, &own, space.process, item.base, space.budget, imports, error)
+		if own, status = module_prepare(item.file, item.hash, .All, item.base, space.budget, imports, error); status == .Ok {
+			status = segments_map(item.file, item.hash, &own, &own, space.process, item.base, space.budget, imports, error)
 			close(own.memory)
 		}
 	} else {
@@ -520,7 +520,7 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 		code, fixed: ^Prepared
 		if code, status = prepared_find(space.prepared, item.file, item.hash, .Code, 0, {}, nil, error); status == .Ok {
 			if fixed, status = prepared_find(space.prepared, item.file, item.hash, .Fixed, item.base, binding_of(space, item), imports, error); status == .Ok {
-				status = segments_map(item.file, code, fixed, space.process, item.base, space.budget, imports, error)
+				status = segments_map(item.file, item.hash, code, fixed, space.process, item.base, space.budget, imports, error)
 			}
 		}
 		unlock(&space.prepared.lock)
@@ -650,10 +650,11 @@ part_range :: proc "contextless" (file: []u8, part: Module_Part) -> (first, end:
 
 // module_prepare makes a memory object with one part of the module as it
 // runs at base: the segments of the part copied from the file; for the
-// parts Fixed and All, rebased and bound to the imports. Its first page is
-// the page of the module at offset `first`. The budget pays for it.
+// parts Fixed and All, rebased and bound to the imports, with the hash of
+// the module at its own-hash place. Its first page is the page of the
+// module at offset `first`. The budget pays for it.
 @(private)
-module_prepare :: proc "contextless" (file: []u8, part: Module_Part, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (prepared: Prepared, status: Status) {
+module_prepare :: proc "contextless" (file: []u8, hash: [32]u8, part: Module_Part, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (prepared: Prepared, status: Status) {
 	first, end := part_range(file, part)
 	if end == 0 {
 		return {part = part}, .Ok
@@ -675,7 +676,7 @@ module_prepare :: proc "contextless" (file: []u8, part: Module_Part, base: u64, 
 	}
 	// The part Code has no rebase and no slot: the file checks it (rebase
 	// and bind refuse a location in a segment with no Write).
-	ok := part == .Code || code_ready(file, view, base, imports, error, first, end)
+	ok := part == .Code || code_ready(file, hash, view, base, imports, error, first, end)
 	memory_unmap(address)
 	if !ok {
 		close(memory)
@@ -685,12 +686,18 @@ module_prepare :: proc "contextless" (file: []u8, part: Module_Part, base: u64, 
 }
 
 // code_ready rebases and binds the locations of a module from offset first
-// to offset end. A failure fills the stage of error: Read for a rebase,
-// Check or Bind for a slot.
+// to offset end, and writes the hash of the module at its own-hash place
+// when the place is there: a log fact of the module names its module by it
+// (src/md/features/log_facts.md, "The record"). A failure fills the stage
+// of error: Read for a rebase and for the place, Check or Bind for a slot.
 @(private)
-code_ready :: proc "contextless" (file: []u8, view: []u8, base: u64, imports: []module.Bound_Import, error: ^module.Load_Error, first, end: u64) -> bool {
+code_ready :: proc "contextless" (file: []u8, hash: [32]u8, view: []u8, base: u64, imports: []module.Bound_Import, error: ^module.Load_Error, first, end: u64) -> bool {
 	if rebased := module.rebase_range(file, view, uintptr(base), first, end); rebased != .None {
 		error.stage, error.file_error = .Read, rebased
+		return false
+	}
+	if !module.own_hash_write(file, view, hash, first, end) {
+		error.stage, error.file_error = .Read, .Bad_Own_Hash_Place
 		return false
 	}
 	return module.bind(file, view, imports, error, first, end)
@@ -729,7 +736,7 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 		error.stage = .Room
 		return nil, .No_Slot
 	}
-	written := module_prepare(file, part, base, 0, imports, error) or_return
+	written := module_prepare(file, hash, part, base, 0, imports, error) or_return
 	if written.memory == 0 {
 		free^ = {} // No segment: nothing to keep, and the place stays free.
 		return free, .Ok
@@ -750,13 +757,13 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 // rebased and bound, when code is not the part All. A process does not
 // write a prepared module.
 @(private)
-segments_map :: proc "contextless" (file: []u8, code, fixed: ^Prepared, process: Handle, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> Status {
+segments_map :: proc "contextless" (file: []u8, hash: [32]u8, code, fixed: ^Prepared, process: Handle, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> Status {
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)
 		flags := segment_flags(segment)
 		from := code
 		if code.part != .All && .Write in flags {
-			own := segment_copy(file, segment, base, budget, imports, error) or_return
+			own := segment_copy(file, hash, segment, base, budget, imports, error) or_return
 			_, status := memory_map(own, flags, process, base + segment.memory_offset)
 			close(own)
 			if status != .Ok {
@@ -776,7 +783,7 @@ segments_map :: proc "contextless" (file: []u8, code, fixed: ^Prepared, process:
 // the bytes of the file, rebased and bound. The pages that the copy does
 // not write stay pages on first use.
 @(private)
-segment_copy :: proc "contextless" (file: []u8, segment: module.Segment, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (memory: Handle, status: Status) {
+segment_copy :: proc "contextless" (file: []u8, hash: [32]u8, segment: module.Segment, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (memory: Handle, status: Status) {
 	memory = memory_create(segment.memory_size / PAGE_SIZE, budget) or_return
 	address: rawptr
 	if address, status = memory_map(memory); status != .Ok {
@@ -790,7 +797,7 @@ segment_copy :: proc "contextless" (file: []u8, segment: module.Segment, base: u
 	if segment.file_size != 0 {
 		intrinsics.mem_copy_non_overlapping(&view[segment.memory_offset], &file[segment.file_offset], int(segment.file_size))
 	}
-	ok := code_ready(file, view, base, imports, error, segment.memory_offset, end)
+	ok := code_ready(file, hash, view, base, imports, error, segment.memory_offset, end)
 	memory_unmap(address)
 	if !ok {
 		close(memory)
@@ -977,6 +984,7 @@ file_error_names := [module.Error]string {
 	.Bad_Slot        = "a slot is not valid",
 	.Bad_Import      = "an import is not valid",
 	.Bad_Export      = "an export is not valid",
+	.Bad_Own_Hash_Place = "its own-hash place is not in writable data",
 }
 
 // load_error_text writes a load error for a reader: one line or more, each

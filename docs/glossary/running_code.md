@@ -364,7 +364,7 @@ Do not use: negative test, lkdtm.
 
 ### Log record
 
-A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a process (its name, its process slot and its process serial), the own number of the record among the records of its process, a thread, a level, a text and the value runs of the text.
+A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a process (its name, its process slot and its process serial), the own number of the record among the records of its process, a thread, a level, its record form, and then a text with its value runs or one log fact.
 
 A process writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the process and the thread, so no process writes in the name of another. A reader chooses records by process and by level. A long text continues in the next record. The log service serves the records as a table, `log.records(after)`, to each caller in its log scope. It is not a line of the serial port, which the serial writer prints from the record.
 
@@ -431,6 +431,26 @@ The tool writes it from the record types with the attribute `log_fact` that the 
 The design: `src/md/features/log_facts.md`.
 
 Do not use: event table, message catalog, log schema.
+
+### Record form
+
+A record form is what the bytes of a log record after the name of its process hold: a text with its value runs (`Text`), or one log fact (`Fact`).
+
+It is one byte of the head of the record, `op.Log_Record_Form`, which the kernel writes from the last argument of `Log`. A reader takes the byte through one border, which refuses a byte that names no form: it then shows the head of the record only. A zero record is a text record. A new form is a new member of the enum, so the record has no version number.
+
+The design: `src/md/features/log_facts.md`, "The record".
+
+Do not use: log format, record variant.
+
+### Own-hash place
+
+The own-hash place is 32 bytes in the writable data of a module where each loader writes the hash of the module file before the first instruction.
+
+A module file cannot hold its own hash, and the kernel does not know which module of a process calls `Log`. So the module file names the place in its table `Own_Hash`, and `system.log_fact` copies those bytes into each log fact. The loader of the support package `system` writes it for each module that it loads, the kernel for the root service. A place of zero names no module. The hash is a claim of the writer, as the fact key is.
+
+The design: `src/md/features/log_facts.md`, "The record".
+
+Do not use: self hash, module identity place.
 
 ### Integer unit
 
