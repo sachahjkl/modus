@@ -470,7 +470,7 @@ field_kind_valid :: proc "contextless" (item: Field) -> bool {
 	kind, kind_ok := field_kind(item)
 	which, which_ok := field_contract_enum(item)
 	type, type_ok := field_type(item)
-	if !kind_ok || !which_ok || !type_ok || item.reserved != [2]u8{} {
+	if !kind_ok || !which_ok || !type_ok || item.reserved[0] != 0 || item.reserved[1] != 0 {
 		return false
 	}
 	if (kind == .Status) != (which != .None) {

@@ -278,18 +278,26 @@ each_field_kind_has_its_value_kind :: proc(t: ^testing.T) {
 // takes the type of its enum. A name of another type is no kind.
 @(test)
 each_field_kind_type_has_its_size :: proc(t: ^testing.T) {
-	sizes := map[string]u32 {
-		"Hexadecimal_8"     = size_of(Hexadecimal_8),
-		"Hexadecimal_16"    = size_of(Hexadecimal_16),
-		"Hexadecimal_32"    = size_of(Hexadecimal_32),
-		"Hexadecimal_64"    = size_of(Hexadecimal_64),
-		"Module_Name_Field" = size_of(Module_Name_Field),
-		"Hash_Field"        = size_of(Hash_Field),
+	Named_Size :: struct {
+		name: string,
+		size: u32,
 	}
-	defer delete(sizes)
+	sizes := [?]Named_Size {
+		{"Hexadecimal_8", size_of(Hexadecimal_8)},
+		{"Hexadecimal_16", size_of(Hexadecimal_16)},
+		{"Hexadecimal_32", size_of(Hexadecimal_32)},
+		{"Hexadecimal_64", size_of(Hexadecimal_64)},
+		{"Module_Name_Field", size_of(Module_Name_Field)},
+		{"Hash_Field", size_of(Hash_Field)},
+	}
 	testing.expect_value(t, len(FIELD_KIND_TYPES), len(sizes))
 	for item, index in FIELD_KIND_TYPES {
-		size, named := sizes[item.name]
+		size, named := u32(0), false
+		for row in sizes {
+			if row.name == item.name {
+				size, named = row.size, true
+			}
+		}
 		testing.expectf(t, named && size == item.size, "the type %s has %d bytes in the table", item.name, item.size)
 		testing.expectf(t, item.kind != .Plain && item.kind != .Status, "the type %s has the kind %v", item.name, item.kind)
 		found, ok := field_kind_of_type_name(item.name)

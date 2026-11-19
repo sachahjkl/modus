@@ -18,6 +18,24 @@ Fact_Key_Other :: struct {
 	value: u64,
 }
 
+// SipHash-2-4 gives the vectors of its paper (Aumasson and Bernstein,
+// appendix A): the key 00..0F, and the messages of 15 bytes 00..0E and of
+// no byte. The edges of the last word: 7, 8 and 9 bytes differ from each
+// other.
+@(test)
+siphash_gives_the_vectors_of_its_paper :: proc(t: ^testing.T) {
+	k0 := u64(0x0706_0504_0302_0100)
+	k1 := u64(0x0f0e_0d0c_0b0a_0908)
+	message: [16]u8
+	for &byte_value, index in message {
+		byte_value = u8(index)
+	}
+	testing.expect_value(t, siphash_2_4(message[:15], k0, k1), u64(0xa129_ca61_49be_45e5))
+	testing.expect_value(t, siphash_2_4(message[:0], k0, k1), u64(0x726f_db47_dd0e_0e31))
+	seven, eight, nine := siphash_2_4(message[:7], k0, k1), siphash_2_4(message[:8], k0, k1), siphash_2_4(message[:9], k0, k1)
+	testing.expect(t, seven != eight && eight != nine && seven != nine)
+}
+
 // The name of the package of this file, as the compiler writes it in the
 // canonical name of its types.
 @(private = "file")
