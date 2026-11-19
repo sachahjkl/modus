@@ -376,7 +376,7 @@ Do not use: span (for this), token, highlight range.
 
 A log fact is a log record that carries the values of one record type of its writer, with no text: the hash of the writer's module, a fact key, and the value bytes.
 
-Its fact type is the record type with its fact template, named for a reader by the package and the record (`storage.Bad_Block`). The module file describes the record and gives its fact template, so a reader writes the sentence and filters by field (`block = 12`), and a machine test waits for a fact and its fields. A log fact is diagnostics for a person, a test or an operator: the kernel log can lose it, and only a wired record output `log` keeps each one. It is not the record output of the work of a module, which another program reads with no loss. Example: `system.log_fact(.Warning, Bad_Block{block = 12, ...})`.
+Its fact type is the record type with its fact template, named by the package and the record (`storage.Bad_Block`). The module file describes both, so a reader writes the sentence and filters by field (`block = 12`), and a machine test waits for a fact and its fields. A log fact is diagnostics: the kernel log can lose it, and only a wired record output `log` keeps each one. It is not a record output of the work of a module. Example: `system.log_fact(.Warning, Bad_Block{block = 12, ...})`.
 
 The design: `src/md/features/log_facts.md`.
 

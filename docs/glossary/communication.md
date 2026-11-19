@@ -418,7 +418,7 @@ Do not use: remote call, RPC, IPC call.
 
 A record description is the part of the description of a module that gives the name, the size and the fields of one record type that the module names: in an export, a log fact, a record output or a record input.
 
-The tool writes each record type once in the table `Records`, whichever declaration names it, and the description does not say which. A field is an Integer (1, 2, 4 or 8 bytes), a Handle (4 bytes, with the rights that the export needs), or a Text of a fixed size; each declaration refuses the kinds that it cannot carry. A record has 256 bytes at most and holds values only, never an address. Two equal record descriptions name the same record, in one module or in two: the check of a replacement, the wiring of a record output and the console compare them field by field.
+The tool writes each record type once in the table `Records`, whichever declaration names it. A field is an Integer, a Handle or a Text of a fixed size; each declaration refuses the kinds that it cannot carry. A record has 256 bytes at most and holds values only, never an address. Two equal record descriptions name the same record: a replacement, a wiring and the console compare them field by field.
 
 The design: `docs/MODULE_CONTRACT.md`, "Records and handles, as implemented"; for log facts, `src/md/features/log_facts.md`; for record outputs and record inputs, `src/md/features/module_outputs.md`.
 
@@ -551,3 +551,183 @@ The fact that the command gives is a fact of the service, and the console holds 
 The design: `docs/CONSOLE.md`, "The built-in commands and the services".
 
 Do not use: alias, shortcut, wrapper command.
+
+### Record output
+
+A record output is a stream of records of one record type that a module declares and writes while it works, with no known end.
+
+The module file names each record output in its table `Record_Outputs`, with its record description. A wiring joins it to the record input of another process through one output ring for each reader; a declaration with no wiring costs nothing. Each process also has the record output `log`, which only its starter wires. A record output loses no record: a full ring makes its writer wait, or refuses the record and says so. It replaces standard output, and it is never the lossy log of the kernel. Example: `server.requests`.
+
+The design: `src/md/features/module_outputs.md`.
+
+Do not use: output (alone, except after "record output" in the same passage), channel, standard output, stdout, pipe, port, topic, sink.
+
+### Record input
+
+A record input is a stream of records of one record type that a module declares and reads.
+
+The module file names each record input in its table `Record_Inputs`, with the index of its record description and of the record of its wiring terms, and its count of wirings. The reader checks each record against its record description, as hostile data. A reader with no declared record input, such as the console, and a generic record input receive the record description of the record output with their end. A record input is not the Input of the group Access (`docs/glossary/access.md`, "Input"), which is the keys and the pointer, and not the input service.
+
+The design: `src/md/features/module_outputs.md`.
+
+Do not use: input (alone, except after "record input" in the same passage), channel, standard input, stdin, port, source (for this).
+
+### Output ring
+
+An output ring is the ring that carries the records of one record output to one reader: places of the size of the record in its command queue, and completions of 64 bytes.
+
+The root service makes it from the budget of the asker of the wiring, and gives one end to the writer and one to the reader. Each side computes the size of a place and the capacity from the record description and the size of the memory, never from the shared bytes. Its first place is a joined record. The completion queue carries the refusals of the reader and the acknowledgement of the end, not one answer for each record.
+
+The design: `src/md/features/module_outputs.md`, "The ring and its records".
+
+Do not use: pipe, stream buffer, channel.
+
+### Place word
+
+A place word is the first 8 bytes of each place of an output ring: the kind of the place (a record, a gap record, an end record or a joined record) and the serial of the record.
+
+The serial counts the records of the record output from 0, so a copy of one record has one serial in each ring. The reader takes the kind through one border, which refuses a word that names no kind, and refuses a serial that does not follow: the serials of a ring jump only by the count of a joined record or a gap record. All-zero bytes are a record with the serial 0.
+
+The design: `src/md/features/module_outputs.md`, "The ring and its records".
+
+Do not use: frame header, envelope.
+
+### Gap record
+
+A gap record is the place of an output ring that says how many records the writer refused there because the ring was full.
+
+A writer that does not wait gets `Full` and counts each refused record, and a ring of the pace `Never_Holds_Writer` refuses for its reader alone. When the ring has room again, the library writes one gap record with the count before the next record. So the reader knows where records are missing and how many, and the console draws it as one dim row.
+
+The design: `src/md/features/module_outputs.md`, "Fan-out and flow control".
+
+Do not use: drop marker, overflow record.
+
+### End record
+
+An end record is the last place of an output ring that the writer writes: the end of its stream, with an error record that is zero for a clean end.
+
+The reader reads each record before it, acknowledges it in the completion queue, and closes its end. A writer that stops with no end record gets an end word from the root service in place of it, with its stop code.
+
+The design: `src/md/features/module_outputs.md`, "The end of a stream".
+
+Do not use: EOF, close message, terminator.
+
+### Wiring
+
+A wiring is the act that joins one record output of one process to one record input of another process, and the record of that act in the root service.
+
+The command `Wire` of the root ring makes it, or a wiring list of `Start`. Each end is a process whose start the asker asked for, a service of a connection of the asker, or the asker. The root service checks that the two record descriptions are equal, makes the output ring from the budget of the asker, and records a grant that the asker or the principal ends. A wiring made while the writer runs starts at a joined record. No process reaches a record output by a name.
+
+The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
+
+Do not use: subscription, binding, connection (a connection is a call ring and a call region), pipe.
+
+### Wiring ring
+
+The wiring ring is the ring between the root service and a process that declares a record output or a record input: one command record gives or ends one end of an output ring, with its handle, its pace, its wiring terms and, for a generic record input, its record description.
+
+The writer reads it at each write with one compare of its counters, so a reader that comes while the process runs gets the next record. A process that declares no record output and no record input has none: the end of its record output `log` comes in its context.
+
+The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
+
+Do not use: control channel, subscription queue.
+
+### Record stream
+
+A record stream is the records of one record output as one reader reads them, in order, up to the end record.
+
+The console holds the reader end of a wiring as a value of the kind Stream (`Stream(Access_Record)`), filters it with `where(status >= 500)`, whose field names it checks against the record description, and draws each row as it comes until the end record or Escape. A variable keeps no record stream: it lives with its line.
+
+The design: `src/md/features/module_outputs.md`, "The console form".
+
+Do not use: pipe, feed, live table, stream (alone, for this).
+
+### Body region
+
+A body region is the memory object of the writer of a record output that holds the bytes that a record of that record output names past its 256 bytes.
+
+The root service gives it to each reader with the right Read only. A field of the kind Body in the record names a place in it, an offset and a count; the reader checks the place against the size of the region and copies the bytes once. The writer reuses the bytes only after each reader read the record.
+
+The design: `src/md/features/module_outputs.md`, "The ring and its records".
+
+Do not use: payload buffer, shared buffer, blob.
+
+### Joined record
+
+A joined record is the first place of each output ring: it says how many records of the record output the writer wrote before this reader joined.
+
+The writer writes it when it takes the new end, before its next record. A joined record of 0 says that the reader has the whole stream: each wiring of the wiring list of a start gets one, because the root service applies the list before the first instruction of the child. A wiring that comes while the writer runs gets the records from that point only. The console draws it as the first row of a stream, "joined after 5 000 records".
+
+The design: `src/md/features/module_outputs.md`, "The joined record".
+
+Do not use: start marker, subscription point, replay.
+
+### Generic record input
+
+A generic record input is a record input that declares no record type, `system.Record_Input(system.Any_Record)`, and whose type its wiring fixes from the record output of the writer.
+
+The root service reads the record description from the module file of the writer and gives it to the reader with its end. With the count `Many`, the first wiring fixes one type for each later one; with `Many_Types`, each wiring keeps its own type. A module that moves records and reads no field, such as `merge` or the collector, works on any stream so. It does not take any bytes: each record is checked against the fixed type.
+
+The design: `src/md/features/module_outputs.md`, "Generic record inputs and the utility modules".
+
+Do not use: untyped input, dynamic input, any-type stream.
+
+### Generic record output
+
+A generic record output is a record output that declares no record type and takes the type of the one generic record input of its module.
+
+With the mark `Paired`, it has one ring for each wiring of that record input, of the type of that wiring: the record output `forward` of the collector. A wiring of it before its type is fixed is refused. The tool refuses a generic record output in a module with no generic record input or with two.
+
+The design: `src/md/features/module_outputs.md`, "Generic record inputs and the utility modules".
+
+Do not use: untyped output, passthrough type.
+
+### Wiring list
+
+A wiring list is the table of wiring records that a starter gives with `Start`, which the root service applies whole before the first instruction of the child.
+
+Each row joins a record output, a record input or the `log` of the child to a process that the starter started, to a service of a connection, or to the starter. A record output that no row names has no reader. The list is whole or refused: on a refusal, no process starts and the budget of the starter does not change. In the console it is a `Table(Wiring)`, and `+` joins two lists. Example: `start(server, audit(server))`.
+
+The design: `src/md/features/module_outputs.md`, "The wiring list of a start".
+
+Do not use: manifest, wiring plan, pipeline, redirection.
+
+### Wiring terms
+
+The wiring terms are the record that the asker of a wiring gives for the record input, and that the reader receives with its end.
+
+A record input declares their record type in its row of the table `Record_Inputs`. The root service checks their size against that description and copies them once; the reader checks their fields. Examples: the condition of `filter` (a field, an operator and a value), the kind, the bound and the forward of a collector space. A free text is never a term.
+
+The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
+
+Do not use: options, arguments (for this), parameters of a stream.
+
+### Collector
+
+The collector is a module that reads the record outputs that a wiring gives it, and keeps their records in its private store, one collector space for each pair of a source and a record output.
+
+A starter names it in the wiring list of a start, or a start policy in its rows; the root service never wires it by itself. One collector serves one principal, so the records stay in a store of that principal, and it serves its spaces only to a caller that acts for that principal, never to a source. With its record output `forward`, it keeps each record of a record input, then forwards it. It never reads the log: it is one more reader of record outputs.
+
+The design: `src/md/features/module_outputs.md`, "The collector".
+
+Do not use: log (for this), journal, syslog, sink, recorder.
+
+### Collector space
+
+A collector space is the records of one record output of one source process that the collector keeps, with their own bound in blocks of its store.
+
+The asker gives its kind and its bound as the wiring terms. A space of the kind `Keep` removes its oldest records when it is full and counts them, so a noisy record output fills only its own space. A space of the kind `Audit` is an audit space. A new version of a source whose record description changed gets a new space.
+
+The design: `src/md/features/module_outputs.md`, "The collector".
+
+Do not use: log file, bucket, partition.
+
+### Audit space
+
+An audit space is a collector space that keeps each record and removes none: append-only, in the store of the collector of the principal of the starter.
+
+A full audit space holds its writer, which waits, in place of a loss. Each segment starts with the BLAKE3 hash of the segment before it, so a removal or a change shows when `collector.verify` walks the chain. The source of the space can neither read it nor erase it, and cannot end its wiring; only the principal ends the space whole. It proves each record that its source wrote or received through the collector, not that its source wrote a record for each act.
+
+The design: `src/md/features/module_outputs.md`, "The audit".
+
+Do not use: audit log, journal (for this), trail.
