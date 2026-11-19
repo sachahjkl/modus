@@ -588,9 +588,10 @@ limit_case :: proc "contextless" () {
 }
 
 // side_case: output_side refuses the end of its start, then writes words
-// that the root service drops, then reads no command. This process wires
-// it until its wiring ring is full: the root service refuses the next end
-// with Busy. The wirings of this process are revoked when they reach its
+// that the root service drops, answers the end of a Wire, writes one probe
+// and closes that end, then reads no command. This process reads the
+// probe and the end word Side_Closed, then wires it until its wiring ring
+// is full: the root service refuses the next end with Busy. The wirings of this process are revoked when they reach its
 // limit, and their ends leave its own wiring ring, which stays read.
 @(private = "file")
 side_case :: proc "contextless" () {
@@ -602,27 +603,12 @@ side_case :: proc "contextless" () {
 	}
 	side := system.Handle(answer[0])
 	refused_number := u32(answer[1])
-	// The root service reads the answers of a process in a pass of its
-	// loop, which a command of this process starts: each command of the
-	// root ring is one more pass, until the end word comes.
-	deadline := hang_deadline()
-	for {
-		probe: Probe
-		item, read_status := system.asker_read(refused_number, &probe, system.time())
-		if read_status == .Ended {
-			if item.end_word != .Refused {
-				wrong("the end that output_side refused ended with the end word", u64(item.end_word))
-			}
-			break
-		}
-		if read_status != .No_Record {
-			wrong("the end that output_side refused gave the status", u64(read_status))
-		}
-		if system.time() >= deadline {
-			wrong("the end that output_side refused did not end within the hang bound", 0)
-		}
-		asker_name := system.name_pack("output_wiring")
-		root_call(.Grants, {asker_name[0], asker_name[1], asker_name[2], asker_name[3], 0, 0, 0})
+	// The root service waits on the answers of each process: the refusal
+	// starts its pass, and the end word comes with no command of this one.
+	probe: Probe
+	refused_end, refused_status := system.asker_read(refused_number, &probe, hang_deadline())
+	if refused_status != .Ended || refused_end.end_word != .Refused {
+		wrong("the end that output_side refused did not end with Refused; the status", u64(refused_status))
 	}
 
 	numbers: [output.WIRINGS_OF_AN_ASKER_MOST]u32
@@ -632,13 +618,28 @@ side_case :: proc "contextless" () {
 		return wire(row(.Started, 1, SIDE_ECHO, .Asker, 0, 0), handles[:])
 	}
 	// The end of this Wire is the one that output_side answers with Taken,
-	// Closed and Closed again; it takes no other command.
+	// Taken again, one probe and Closed; it takes no other command.
 	status, answer = wire_side(side)
 	if status != .Ok || answer[0] == 0 {
 		wrong("the Wire of output_side gave the status", u64(status))
 	}
-	numbers[held] = u32(answer[0])
-	held += 1
+	closed_number := u32(answer[0])
+	// The Closed of the writer keeps the wiring for this reader: the
+	// joined record and the probe come, then the end word Side_Closed.
+	joined, joined_status := system.asker_read(closed_number, &probe, hang_deadline())
+	written, written_status := system.asker_read(closed_number, &probe, hang_deadline())
+	if joined_status != .Ok || joined.kind != .Joined || joined.serial != 0 || written_status != .Ok || written.kind != .Record || probe.serial != 0 {
+		wrong("the wiring that output_side closed did not give the joined record of 0 and the probe 0; the status", u64(written_status))
+	}
+	side_closed, side_closed_status := system.asker_read(closed_number, &probe, hang_deadline())
+	if side_closed_status != .Ended || side_closed.end_word != .Side_Closed {
+		wrong("the wiring that output_side closed did not end with Side_Closed; the end word", u64(side_closed.end_word))
+	}
+	// This reader said Closed in turn, and the wiring ends with it. The
+	// root service reads the answers of this process after its command in
+	// one pass: after this call, the wiring no longer counts for its asker.
+	asker_name := system.name_pack("output_wiring")
+	root_call(.Grants, {asker_name[0], asker_name[1], asker_name[2], asker_name[3], 0, 0, 0})
 	for _ in 0 ..< SIDE_RING_CAPACITY {
 		if held == len(numbers) {
 			grant_wirings_revoke(held)
@@ -670,7 +671,7 @@ side_case :: proc "contextless" () {
 	processes := [1]system.Handle{side}
 	stopped_wait(processes[:])
 	system.close(side)
-	system.log(.Info, "output_wiring: the end that a side refused ended with Refused, and ", u64(SIDE_RING_CAPACITY), " ends filled the wiring ring that it does not read, then one more refused with Busy, its status and its error record and the budget unchanged: as it must")
+	system.log(.Info, "output_wiring: the end that a side refused ended with Refused, the wiring that a side closed gave its probe then Side_Closed, and ", u64(SIDE_RING_CAPACITY), " ends filled the wiring ring that it does not read, then one more refused with Busy, its status and its error record and the budget unchanged: as it must")
 }
 
 // asker_case: a wiring to this process as its asker, read with

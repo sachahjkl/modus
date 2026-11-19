@@ -1014,6 +1014,7 @@ file_error_names := [module.Error]string {
 	.Bad_Export      = "an export is not valid",
 	.Bad_Own_Hash_Place = "its own-hash place is not in writable data",
 	.Bad_Record_Stream_Place = "the place of a record output or a record input is not in writable data",
+	.Too_Many_Record_Streams = "it declares more record outputs or more record inputs than a module can",
 }
 
 // load_error_text writes a load error for a reader: one line or more, each

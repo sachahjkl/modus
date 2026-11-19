@@ -266,6 +266,10 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	if slot == nil {
 		return .No_Slot
 	}
+	// Its root ring is one more queue of the wait of the loop.
+	if _, refused := waited_queues_refusal(.Start_Policy_Choice, 1); refused {
+		return .No_Slot
+	}
 	slot^ = {}
 	copy(slot.name[:len(slot.name) - 1], name)
 	slot.principal = principals.MACHINE

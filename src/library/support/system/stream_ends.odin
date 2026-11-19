@@ -190,6 +190,29 @@ stream_end_finish :: proc "contextless" (end: ^Stream_End) {
 	closed_words_send()
 }
 
+// stream_end_close_by_word closes an end that ended by its end word. For
+// Side_Closed, the other side closed and the wiring still runs: this side
+// says Closed too, and the root service then ends the wiring. For each
+// other word, the root service ended the wiring before.
+@(private = "file")
+stream_end_close_by_word :: proc "contextless" (end: ^Stream_End, word: output.End_Word) {
+	if word == .Side_Closed {
+		stream_end_finish(end)
+	} else {
+		stream_end_close(end)
+	}
+}
+
+// closed_words_wait adds the room of the completion queue of the wiring
+// ring to a wait while words Closed wait for it: the next call sends them
+// as soon as the root service reads its completions.
+@(private = "file")
+closed_words_wait :: proc "contextless" (waiting: ^Wait) {
+	if closed_tag_count > 0 && wiring_ring.head != nil {
+		wait_room(waiting, &wiring_ring.completions)
+	}
+}
+
 // closed_words_send writes the words Closed that wait, while the
 // completion queue of the wiring ring has room.
 @(private = "file")
@@ -414,7 +437,7 @@ output_ends_of :: proc "contextless" (state: ^Output_State, record_size: u32) ->
 		if word, _, _ := stream_end_ended(&end); word != .None {
 			state.last_end = word
 			state.rings_ended += 1
-			stream_end_close(&end)
+			stream_end_close_by_word(&end, word)
 			continue
 		}
 		refused := false
@@ -528,6 +551,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		if broken {
 			continue room_loop
 		}
+		closed_words_wait(&waiting)
 		switch output.write_step_of(held_by_choice, held_always, wait) {
 		case .Write:
 			break room_loop
@@ -591,7 +615,7 @@ output_end :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)
 		if end.command != .Writer_End || end.index != state.index || !end.opened {
 			continue
 		}
-		ended_by_word := false
+		ended_by := output.End_Word.None
 		for {
 			// The read is loaded before the push: a reader that reads after
 			// a refused push changes it, and the wait ends at once.
@@ -610,18 +634,20 @@ output_end :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)
 			counters := end.queue.commands.counters
 			wait_word(&waiting, &counters.read, end.read_seen, &counters.writer_waits, &counters.reader_waits, &counters.write)
 			wait_word(&waiting, &end.end_words.end, u32(output.End_Word.None))
+			closed_words_wait(&waiting)
 			if wait_end(&waiting, deadline) >= deadline {
 				status = .Full
 				break
 			}
+			closed_words_send()
 			if word, _, _ := stream_end_ended(&end); word != .None {
 				state.last_end = word
-				ended_by_word = true
+				ended_by = word
 				break
 			}
 		}
-		if ended_by_word {
-			stream_end_close(&end)
+		if ended_by != .None {
+			stream_end_close_by_word(&end, ended_by)
 		} else {
 			stream_end_finish(&end)
 		}
@@ -724,6 +750,7 @@ stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, t
 		if wiring_ring.head != nil {
 			wait_records(&waiting, &wiring_ring.commands)
 		}
+		closed_words_wait(&waiting)
 		if wait_end(&waiting, deadline) >= deadline {
 			return {}, .No_Record
 		}
@@ -762,7 +789,7 @@ stream_end_read :: proc "contextless" (end: ^Stream_End, into: []u8) -> (item: I
 		if word == .None || intrinsics.atomic_load_explicit(&commands.write, .Acquire) != write {
 			return {}, .Ok, false
 		}
-		stream_end_close(end)
+		stream_end_close_by_word(end, word)
 		return {kind = .End, end_word = word, stop_cause = cause, stop_outcome = outcome}, .Ended, true
 	}
 	counters_wake_writer(end.queue.commands.counters)

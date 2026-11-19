@@ -328,6 +328,9 @@ Started :: struct {
 	// this service, which writes its commands.
 	wiring:          ring.Ring,
 	wiring_memory:   system.Handle,
+	// The words of its wiring ring that named no wiring of the process:
+	// one line at the first, and the count at its stop.
+	unknown_wiring_words: u64,
 	// The list page of an asker, as this service holds it: the asker
 	// writes its wiring lists there, and this service copies them from
 	// this handle, which a revocation by the asker does not reach.
@@ -1075,6 +1078,8 @@ root_loop_pass :: proc "contextless" () {
 	// (appearance_edge.odin): one more deadline, and the change count of
 	// the date page.
 	appearance_step(&wait)
+	// The count of wait_words.odin keeps each list in the wait.
+	root_wait_full_tell(&wait)
 	// A load from the disk and a call for the disk grant table have a
 	// deadline: the wait ends there, with or without an answer of the
 	// storage service. The next read of the fresh bytes has one too, a

@@ -2654,14 +2654,15 @@ scenario := [?]Step {
 	{kind = .Wait, text = "output_wiring: 8 wirings, one past them refused with Wire and with a Start, each with its status and its error record and the budget unchanged, then the revocation of the grant wirings: as it must", fails_on = "output_wiring: WRONG"},
 	// A side that writes its own words in its wiring ring: the root
 	// service ends the wiring whose end it refused, drops a word for a
-	// number of no wiring and a word past the answer and the close of an
-	// end, one line each, and refuses an end for a wiring ring that the
-	// side never reads with Busy.
+	// number of no wiring and a second answer of an end, one line each,
+	// gives Side_Closed to the reader of an end that the side closed, and
+	// refuses an end for a wiring ring that the side never reads with
+	// Busy.
 	{kind = .Wait, text = "root: output_side refused its end of the wiring ", fails_on = "output_wiring: WRONG", any_order = true},
-	{kind = .Wait, text = " words of its wiring ring that name no wiring of it: they are dropped", fails_on = "output_wiring: WRONG", any_order = true},
-	{kind = .Wait, text = "output_side: refused the end of its start, wrote Closed for a number of no wiring, then Taken, Closed and Closed again for the end of a Wire; it reads no more commands: as it must", fails_on = "output_side: WRONG", any_order = true},
+	{kind = .Wait, text = "root: output_side wrote a word of its wiring ring that names no wiring of it: it is dropped, and each later one is counted until its stop", fails_on = "output_wiring: WRONG", any_order = true},
+	{kind = .Wait, text = "output_side: refused the end of its start, wrote Closed for a number of no wiring, then Taken, Taken again, one probe and Closed for the end of a Wire; it reads no more commands: as it must", fails_on = "output_side: WRONG", any_order = true},
 	{kind = .Wait, text = "root: output_side wrote a word of its wiring ring for the wiring ", fails_on = "output_wiring: WRONG", any_order = true},
-	{kind = .Wait, text = "output_wiring: the end that a side refused ended with Refused, and 32 ends filled the wiring ring that it does not read, then one more refused with Busy, its status and its error record and the budget unchanged: as it must", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = "output_wiring: the end that a side refused ended with Refused, the wiring that a side closed gave its probe then Side_Closed, and 32 ends filled the wiring ring that it does not read, then one more refused with Busy, its status and its error record and the budget unchanged: as it must", fails_on = "output_wiring: WRONG"},
 	{kind = .Wait, text = "output_wiring: the wiring of this asker gave the joined record of 0 and the probe 0, after ", fails_on = "output_wiring: WRONG"},
 	{kind = .Wait, text = "output_wiring: ok"},
 	{kind = .Wait, text = "output_writer: asked: the ring ended with the end word Asker_Stopped: as it must", fails_on = "output_writer: WRONG"},

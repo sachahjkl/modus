@@ -317,16 +317,21 @@ compartment_word_write :: proc "contextless" (compartment: []u8, kind: Compartme
 	return true
 }
 
-// Why a stream ended, in the end words of the head page. Only the root
-// service writes them, and only after the side that they name stopped, so
-// each queue keeps one writer. The values cross the border of the ring.
+// Why a stream ended, in the end words of the end page. Only the root
+// service writes them, and only after the side that they name stopped or
+// closed its end, so each queue keeps one writer. The values cross the
+// border of the ring.
 End_Word :: enum u32 {
 	None           = 0, // The stream did not end by a stop.
 	Writer_Stopped = 1, // The writer stopped with no end record: the stop cause and the stop outcome follow.
-	Reader_Stopped = 2, // The reader stopped, or closed its end.
+	Reader_Stopped = 2, // The reader stopped.
 	Asker_Stopped  = 3, // The asker of the wiring stopped: its budget paid the ring.
 	Revoked        = 4, // The asker or the principal revoked the wiring.
 	Refused        = 5, // A side refused its end in its wiring ring: the wiring ends before its first record.
+	// The other side closed its end (output.Wiring_Answer.Closed); the side that reads the word did not.
+	// A writer that ended its stream, or that gave up past its deadline; a reader after the end record or
+	// after a compartment that it refused. It carries no stop: the process of that side runs.
+	Side_Closed    = 6,
 }
 
 // The name of each end word, for a line and a sentence.
@@ -338,6 +343,7 @@ end_word_names := [End_Word]string {
 	.Asker_Stopped  = "Asker_Stopped",
 	.Revoked        = "Revoked",
 	.Refused        = "Refused",
+	.Side_Closed    = "Side_Closed",
 }
 
 // What a call of the library on a record output or a record input gives

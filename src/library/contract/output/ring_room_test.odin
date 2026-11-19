@@ -63,12 +63,12 @@ a_hostile_writer_is_refused_before_a_read :: proc(t: ^testing.T) {
 	for write in ([?]u32{CAPACITY + 1, max(u32)}) {
 		fault, refusal := reader_ring_fault_of(write, 0, CAPACITY, 0, 0, CAPACITY)
 		testing.expect_value(t, fault, Reader_Ring_Fault.Count_Past_Capacity)
-		testing.expect(t, refusal.kind == i64(errors.Kind.Bad_Value) && refusal.value == i64(write) && refusal.limit == CAPACITY)
+		testing.expect_value(t, refusal, errors.error_make(.Bad_Value, .Records, 0, i64(write), CAPACITY))
 	}
 	for completions in ([?]u32{CAPACITY, CAPACITY + 1, max(u32)}) {
 		fault, refusal := reader_ring_fault_of(1, 0, CAPACITY, completions, 0, CAPACITY)
 		testing.expect_value(t, fault, Reader_Ring_Fault.Completions_Full)
-		testing.expect(t, refusal.kind == i64(errors.Kind.Full) && refusal.limit == CAPACITY)
+		testing.expect_value(t, refusal, errors.error_make(.Full, .Records, 0, i64(completions), CAPACITY))
 	}
 	fault, refusal := reader_ring_fault_of(CAPACITY, 0, CAPACITY, CAPACITY - 1, 0, CAPACITY)
 	testing.expect_value(t, fault, Reader_Ring_Fault.None)

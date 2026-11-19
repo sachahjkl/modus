@@ -80,6 +80,33 @@ answer :: proc "contextless" (record: ring.Record) {
 	}
 }
 
+// probe_write writes, past the library, the joined record of 0 and the
+// probe 0 into the output ring of a writer end, and wakes its reader.
+@(private = "file")
+probe_write :: proc "contextless" (command: ring.Record) {
+	memory := system.Handle(command.values[output.WIRING_VALUE_RING])
+	pages, size_status := system.memory_size(memory)
+	address, map_status := system.memory_map(memory)
+	if size_status != .Ok || map_status != .Ok {
+		wrong("the output ring does not map; the status", u64(map_status))
+	}
+	size := output.compartment_size(size_of(Probe))
+	opened, ok := ring.compartment_open(address, pages, size)
+	if !ok {
+		wrong("the output ring is no ring of compartments of the probe; its pages", pages)
+	}
+	buffer: [output.COMPARTMENT_SIZE_MOST]u8
+	compartment := buffer[:size]
+	probe := Probe{serial = 0, mark = 0x5052_4F42_0000_0000}
+	if !output.joined_compartment(compartment, 0) || !ring.compartment_push(&opened.commands, compartment) {
+		wrong("the joined record does not fit the output ring", 0)
+	}
+	if !output.record_compartment(compartment, 0, ([^]u8)(&probe)[:size_of(Probe)]) || !ring.compartment_push(&opened.commands, compartment) {
+		wrong("the probe does not fit the output ring", 0)
+	}
+	system.word_wake(&opened.commands.counters.write, system.WAKE_ALL)
+}
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	opened, status := system.ring_open(ctx.handles[op.CONTEXT_WIRING_RING])
@@ -92,9 +119,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	answer(output.wiring_closed_completion(NUMBER_OF_NO_WIRING))
 	second := command_wait()
 	answer(output.wiring_completion(second.tag, .Ok))
+	// The second answer comes before Closed, so the wiring runs when the
+	// root service reads it, whatever the order of its passes: it drops it.
+	answer(output.wiring_completion(second.tag, .Ok))
+	// One probe before Closed: the asker reads it, then the end word
+	// Side_Closed, which says that the root service took the Closed of
+	// this side and kept the wiring for the asker.
+	probe_write(second)
 	answer(output.wiring_closed_completion(second.tag))
-	answer(output.wiring_closed_completion(second.tag))
-	system.log(.Info, "output_side: refused the end of its start, wrote Closed for a number of no wiring, then Taken, Closed and Closed again for the end of a Wire; it reads no more commands: as it must")
+	system.log(.Info, "output_side: refused the end of its start, wrote Closed for a number of no wiring, then Taken, Taken again, one probe and Closed for the end of a Wire; it reads no more commands: as it must")
 	deadline := hang_deadline()
 	for system.time() < deadline {
 		wait := system.wait_begin()

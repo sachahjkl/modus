@@ -343,6 +343,12 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 		if status == .Bad_State && find_running(name) != nil {
 			return errors.ring_fail(kind, .Exists, .Processes, 1)
 		}
+		// The rings of the process do not fit the wait of the loop.
+		if file := system.image_find(image, name); status == .No_Slot && len(file) != 0 {
+			if record, refused := waited_queues_refusal(.Start, start_waited_queues(role_of(name).grants, file)); refused {
+				return record
+			}
+		}
 	case .Stop:
 		if status == .Bad_Handle && (name == "compositor" || name == "terminal") {
 			return errors.ring_fail(kind, .Reserved, .None, 1)

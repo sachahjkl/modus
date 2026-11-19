@@ -23,6 +23,8 @@ Loader_Writes :: struct {
 	slots:      []Slot, // From index 1: the entry 0 is added.
 	hash_place: u64, // 0: no table Own_Hash.
 	data_flags: Segment_Flags, // {}: Read and Write.
+	extra_rows: [2]int, // Rows added after the record outputs and after the record input, each with extra_place.
+	extra_place: u64,
 }
 
 @(private = "file")
@@ -41,11 +43,19 @@ places_file :: proc(output_places: [2]u64, input_place: u64, writes: Loader_Writ
 	}
 	data_flags := writes.data_flags == {} ? Segment_Flags{.Read, .Write} : writes.data_flags
 	segments := [3]Segment{{}, {memory_offset = 0, memory_size = PAGE_SIZE, flags = {.Read, .Execute}}, {memory_offset = PAGE_SIZE, memory_size = PAGE_SIZE, flags = data_flags}}
-	outputs := [3]Record_Output{{}, {place = output_places[0]}, {place = output_places[1]}}
-	inputs := [2]Record_Input{{}, {place = input_place}}
+	outputs := make([dynamic]Record_Output, context.temp_allocator)
+	append(&outputs, Record_Output{}, Record_Output{place = output_places[0]}, Record_Output{place = output_places[1]})
+	for _ in 0 ..< writes.extra_rows[0] {
+		append(&outputs, Record_Output{place = writes.extra_place})
+	}
+	inputs := make([dynamic]Record_Input, context.temp_allocator)
+	append(&inputs, Record_Input{}, Record_Input{place = input_place})
+	for _ in 0 ..< writes.extra_rows[1] {
+		append(&inputs, Record_Input{place = writes.extra_place})
+	}
 	add(&file, &directory, .Segments, bytes_of(segments[:]), len(segments), size_of(Segment))
-	add(&file, &directory, .Record_Outputs, bytes_of(outputs[:]), len(outputs), size_of(Record_Output))
-	add(&file, &directory, .Record_Inputs, bytes_of(inputs[:]), len(inputs), size_of(Record_Input))
+	add(&file, &directory, .Record_Outputs, bytes_of(outputs[:]), u32(len(outputs)), size_of(Record_Output))
+	add(&file, &directory, .Record_Inputs, bytes_of(inputs[:]), u32(len(inputs)), size_of(Record_Input))
 	if len(writes.rebases) != 0 {
 		add(&file, &directory, .Rebases, bytes_of(writes.rebases), u32(len(writes.rebases)), REBASE_WORD_SIZE)
 	}
@@ -113,6 +123,13 @@ a_record_stream_place_that_another_write_meets_is_refused :: proc(t: ^testing.T)
 		// The offset word puts the cursor 8 bytes after it; bit 4 names
 		// the fourth word from the cursor: the place of the record input.
 		{rebases = {INPUT_PLACE - 4 * REBASE_WORD_SIZE, 1 << 4 | 1}},
+		// A second bitmap word moves the cursor by the 63 words of the
+		// first: its bit 1 names the word at the cursor, the place of the
+		// record input.
+		{rebases = {INPUT_PLACE - REBASE_WORD_SIZE - REBASE_WORD_SIZE * REBASE_BITMAP_LOCATIONS, 1, 1 << 1 | 1}},
+		// Bit 63, the last of a bitmap, names the 63rd word from the
+		// cursor: the place of the second record output.
+		{rebases = {SECOND_OUTPUT_PLACE - REBASE_WORD_SIZE - REBASE_WORD_SIZE * (REBASE_BITMAP_LOCATIONS - 1), 1 << 63 | 1}},
 		{slots = {{memory_offset = FIRST_OUTPUT_PLACE - REBASE_WORD_SIZE + 1, import_index = 1, export_index = 1}}},
 		{data_flags = {.Read, .Write, .Read_Only_After_Load}},
 	}
@@ -126,11 +143,42 @@ a_record_stream_place_that_another_write_meets_is_refused :: proc(t: ^testing.T)
 		{rebases = {SECOND_OUTPUT_PLACE - REBASE_WORD_SIZE}},
 		{rebases = {SECOND_OUTPUT_PLACE + RECORD_STREAM_PLACE_SIZE}},
 		{rebases = {INPUT_PLACE - 4 * REBASE_WORD_SIZE, 1 << 3 | 1 << 5 | 1}},
+		// The neighbours of the two walks above: the word before the place.
+		{rebases = {INPUT_PLACE - 2 * REBASE_WORD_SIZE - REBASE_WORD_SIZE * REBASE_BITMAP_LOCATIONS, 1, 1 << 1 | 1}},
+		{rebases = {SECOND_OUTPUT_PLACE - REBASE_WORD_SIZE - REBASE_WORD_SIZE * (REBASE_BITMAP_LOCATIONS - 1), 1 << 62 | 1}},
 		{slots = {{memory_offset = FIRST_OUTPUT_PLACE + RECORD_STREAM_PLACE_SIZE, import_index = 1, export_index = 1}}},
 	}
 	for writes in taken {
 		file := places_file(places, INPUT_PLACE, writes)
 		testing.expectf(t, validate(file) == .None, "the places beside %v are refused: %v", writes, validate(file))
+	}
+}
+
+// The rows of each table past RECORD_STREAM_INDEX_MOST are refused before
+// any row is read: one past it, in each table, with rows whose place in
+// the code would be refused if validate read them; the largest count that
+// the directory holds. The bound itself, with valid rows, comes last.
+@(test)
+the_rows_of_a_record_stream_table_are_bounded_before_they_are_read :: proc(t: ^testing.T) {
+	places := [2]u64{FIRST_OUTPUT_PLACE, SECOND_OUTPUT_PLACE}
+	// The file has two record outputs and one record input of its own.
+	past := [2][2]int{{RECORD_STREAM_INDEX_MOST - 1, 0}, {0, RECORD_STREAM_INDEX_MOST}}
+	for extra in past {
+		file := places_file(places, INPUT_PLACE, {extra_rows = extra, extra_place = 4})
+		testing.expectf(t, validate(file) == .Too_Many_Record_Streams, "%v more rows are taken: %v", extra, validate(file))
+	}
+	// A count that the directory states and the file does not hold is a
+	// table outside the file: refused before the bound.
+	largest := places_file(places, INPUT_PLACE)
+	directory := (^[TABLE_COUNT]Table_Entry)(&largest[size_of(Header)])
+	directory[Table_Kind.Record_Outputs].count = max(u32)
+	testing.expect_value(t, validate(largest), Error.Bad_Table)
+	testing.expect(t, !record_stream_counts_valid(largest))
+
+	at_bound := [2][2]int{{RECORD_STREAM_INDEX_MOST - 2, 0}, {0, RECORD_STREAM_INDEX_MOST - 1}}
+	for extra in at_bound {
+		file := places_file(places, INPUT_PLACE, {extra_rows = extra})
+		testing.expectf(t, validate(file) == .None, "%v more rows are refused: %v", extra, validate(file))
 	}
 }
 

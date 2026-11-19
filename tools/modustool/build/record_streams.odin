@@ -37,8 +37,8 @@ import "modustool:foundation"
 //     fixes;
 //   - a generic record output in a module with no generic record input, or
 //     with two: it takes the type of the one generic record input;
-//   - more than module.RECORD_STREAM_INDEX_MOST of either: a wiring names a
-//     row in 16 bits.
+//   - more than module.RECORD_STREAM_INDEX_MOST of either: each loader
+//     checks the place of each one against each other write of its load.
 
 // The names of the declarations in the support package system
 // (src/library/support/system/record_streams.odin).
@@ -453,10 +453,10 @@ record_streams_merge :: proc(description: ^Module_Description, outputs, inputs: 
 // and a generic record output with no generic record input or with two.
 record_streams_problem :: proc(outputs, inputs: []Record_Stream_Description) -> (problem: string, at: Record_Stream_Description) {
 	if len(outputs) > module.RECORD_STREAM_INDEX_MOST {
-		return fmt.tprintf("the module declares %d record outputs; a wiring names a row in 16 bits, so at most %d", len(outputs), module.RECORD_STREAM_INDEX_MOST), outputs[module.RECORD_STREAM_INDEX_MOST]
+		return fmt.tprintf("the module declares %d record outputs; a module declares at most %d, as each loader checks the place of each one against each other write of its load", len(outputs), module.RECORD_STREAM_INDEX_MOST), outputs[module.RECORD_STREAM_INDEX_MOST]
 	}
 	if len(inputs) > module.RECORD_STREAM_INDEX_MOST {
-		return fmt.tprintf("the module declares %d record inputs; a wiring names a row in 16 bits, so at most %d", len(inputs), module.RECORD_STREAM_INDEX_MOST), inputs[module.RECORD_STREAM_INDEX_MOST]
+		return fmt.tprintf("the module declares %d record inputs; a module declares at most %d, as each loader checks the place of each one against each other write of its load", len(inputs), module.RECORD_STREAM_INDEX_MOST), inputs[module.RECORD_STREAM_INDEX_MOST]
 	}
 	// One name for one stream of the module, among both: the console
 	// names each as `module.name`. A map keeps the work in proportion to

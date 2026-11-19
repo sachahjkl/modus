@@ -14,9 +14,14 @@ package module
 // each reader below checks what it reads.
 
 // The largest index of a row of the table Record_Outputs or of the table
-// Record_Inputs: a wiring names a row in 16 bits. It is the bound of the
-// field, not a bound of cost: a declaration costs nothing until a wiring.
-RECORD_STREAM_INDEX_MOST :: 65_535
+// Record_Inputs: the rows of each table at most. No module of the design
+// declares more than a few streams: the collector, the largest, has one
+// generic record input and one record output. The bound is one of cost:
+// validate, which runs in the kernel for the root service, checks each
+// place against each other write of a loader, and a file of a few MiB
+// with no bound would cost it about 10^12 reads of a row. validate refuses
+// a table past it before it reads a row (Too_Many_Record_Streams).
+RECORD_STREAM_INDEX_MOST :: 64
 
 // Whether a generic record output has one ring for each wiring of the
 // generic record input of its module, of the type of that wiring. A
@@ -134,32 +139,65 @@ ranges_meet :: proc "contextless" (first, first_size, second, second_size: u64) 
 	return first - second < second_size
 }
 
-// record_stream_places_valid checks the place of each row of the two
-// tables: validate calls it, so a loader of a valid file writes each index
-// in writable data, and no other write of a loader, a rebase or an import
-// slot, falls on an index. The rows past RECORD_STREAM_INDEX_MOST are not
-// read: a wiring names none, and record_streams_check refuses such a
-// table.
-record_stream_places_valid :: proc "contextless" (file: []u8) -> bool {
-	lowest, highest := max(u64), u64(0)
+// record_stream_counts_valid says if each of the two tables has at most
+// RECORD_STREAM_INDEX_MOST rows after the entry 0. It reads the directory
+// only, no row: validate calls it before the check of the places, whose
+// work it bounds.
+record_stream_counts_valid :: proc "contextless" (file: []u8) -> bool {
 	for kind in ([2]Table_Kind{.Record_Outputs, .Record_Inputs}) {
-		rows := min(max(count(file, kind), 1) - 1, RECORD_STREAM_INDEX_MOST)
-		for index in 1 ..= rows {
+		if max(count(file, kind), 1) - 1 > RECORD_STREAM_INDEX_MOST {
+			return false
+		}
+	}
+	return true
+}
+
+// The places of the rows that are not 0, sorted, in the private memory of
+// one check: two tables of RECORD_STREAM_INDEX_MOST rows at most.
+@(private = "file")
+Sorted_Places :: struct {
+	places: [2 * RECORD_STREAM_INDEX_MOST]u64,
+	count:  int,
+}
+
+// record_stream_places_valid checks the place of each row of the two
+// tables: validate calls it after record_stream_counts_valid, so a loader
+// of a valid file writes each index in writable data, and no other write
+// of a loader, a rebase or an import slot, falls on an index. The places
+// are sorted once, so each location costs one search among them: the work
+// is the rows times the segments, then the locations times the logarithm
+// of the rows. A table past the bound reads no row here either.
+record_stream_places_valid :: proc "contextless" (file: []u8) -> bool {
+	if !record_stream_counts_valid(file) {
+		return false
+	}
+	sorted: Sorted_Places
+	for kind in ([2]Table_Kind{.Record_Outputs, .Record_Inputs}) {
+		for index in 1 ..< count(file, kind) {
 			place, ok := record_stream_place_of_row(file, kind, index)
 			if !ok || !record_stream_place_valid(file, place) {
 				return false
 			}
-			if place != 0 {
-				lowest, highest = min(lowest, place), max(highest, place)
+			if place == 0 {
+				continue
 			}
+			// An insertion into the sorted run: at most 128 places.
+			at := sorted.count
+			for at > 0 && sorted.places[at - 1] > place {
+				sorted.places[at] = sorted.places[at - 1]
+				at -= 1
+			}
+			sorted.places[at] = place
+			sorted.count += 1
 		}
 	}
-	if highest == 0 {
+	places := sorted.places[:sorted.count]
+	if len(places) == 0 {
 		return true
 	}
 	for index in 1 ..< count(file, .Slots) {
 		slot, _ := record(file, .Slots, index, Slot)
-		if location_meets_a_place(file, slot.memory_offset, lowest, highest) {
+		if location_meets_a_place(places, slot.memory_offset) {
 			return false
 		}
 	}
@@ -168,14 +206,14 @@ record_stream_places_valid :: proc "contextless" (file: []u8) -> bool {
 	for index in 0 ..< count(file, .Rebases) {
 		word, _ := record(file, .Rebases, index, u64)
 		if word & 1 == 0 {
-			if location_meets_a_place(file, word, lowest, highest) {
+			if location_meets_a_place(places, word) {
 				return false
 			}
 			cursor = word + REBASE_WORD_SIZE
 			continue
 		}
 		for bit in u64(1) ..= REBASE_BITMAP_LOCATIONS {
-			if word >> bit & 1 != 0 && location_meets_a_place(file, cursor + REBASE_WORD_SIZE * (bit - 1), lowest, highest) {
+			if word >> bit & 1 != 0 && location_meets_a_place(places, cursor + REBASE_WORD_SIZE * (bit - 1)) {
 				return false
 			}
 		}
@@ -185,26 +223,25 @@ record_stream_places_valid :: proc "contextless" (file: []u8) -> bool {
 }
 
 // location_meets_a_place says if the 8 bytes of a location that a loader
-// writes share a byte with the place of a row. Most locations lie outside
-// the span from the lowest place to the highest one: they cost one
-// comparison, and only a location inside it reads the rows.
+// writes share a byte with one of the sorted places. A place meets the
+// location only when it ends after the location starts and starts before
+// the location ends. The search finds the first place that ends after the
+// location starts: each place before it ends before the location, and
+// each place after it starts no earlier, so it is the one place to try.
 @(private = "file")
-location_meets_a_place :: proc "contextless" (file: []u8, location: u64, lowest, highest: u64) -> bool {
-	// validate took each place inside a segment, so highest + its size
-	// does not wrap.
-	if !ranges_meet(location, REBASE_WORD_SIZE, lowest, highest - lowest + RECORD_STREAM_PLACE_SIZE) {
-		return false
-	}
-	for kind in ([2]Table_Kind{.Record_Outputs, .Record_Inputs}) {
-		rows := min(max(count(file, kind), 1) - 1, RECORD_STREAM_INDEX_MOST)
-		for index in 1 ..= rows {
-			place, _ := record_stream_place_of_row(file, kind, index)
-			if place != 0 && ranges_meet(location, REBASE_WORD_SIZE, place, RECORD_STREAM_PLACE_SIZE) {
-				return true
-			}
+location_meets_a_place :: proc "contextless" (places: []u64, location: u64) -> bool {
+	// validate took each place inside a segment, so a place + its size does
+	// not wrap.
+	low, high := 0, len(places)
+	for low < high {
+		middle := low + (high - low) / 2
+		if places[middle] + RECORD_STREAM_PLACE_SIZE <= location {
+			low = middle + 1
+		} else {
+			high = middle
 		}
 	}
-	return false
+	return low < len(places) && ranges_meet(location, REBASE_WORD_SIZE, places[low], RECORD_STREAM_PLACE_SIZE)
 }
 
 // record_stream_indexes_write writes the index of each row at its place,

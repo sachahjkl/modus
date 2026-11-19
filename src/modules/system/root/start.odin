@@ -74,6 +74,14 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 	if status := start_prepare(&work); status != .Ok {
 		return status
 	}
+	// The rings of the process are queues of the wait of the loop of this
+	// service: past the bound, the start is refused before any is made.
+	if refusal, refused := waited_queues_refusal(.Start, start_waited_queues(work.role.grants, work.file)); refused {
+		if wiring_work != nil {
+			wiring_work.refusal = refusal
+		}
+		return .No_Slot
+	}
 	if status := start_place_take(&work); status != .Ok {
 		start_abandon(&work)
 		return status
