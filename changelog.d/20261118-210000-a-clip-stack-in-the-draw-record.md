@@ -1,3 +1,0 @@
-type: Changed
-
-**A clip stack in the draw record.** Version 17 of the draw record has the kinds `Clip_Push` and `Clip_Pop` in place of the `Clip` that replaced the cut: a clip inside a clip keeps the outer one, at most 16 clips are open, and a clip is a rectangle of whole pixels. The drawing module refuses a table whose pushes and pops do not match with an error record before it draws, and a table that changes during the call still draws no pixel outside a clip that it pushed. The two lists of the interface package push the clip of their area, so a list never draws past it. The exports of the drawing module are `damage_of_draw_table_17` and `execute_draw_table_in_rectangles_17`.
