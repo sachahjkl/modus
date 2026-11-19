@@ -152,14 +152,6 @@ record_stream_counts_valid :: proc "contextless" (file: []u8) -> bool {
 	return true
 }
 
-// The places of the rows that are not 0, sorted, in the private memory of
-// one check: two tables of RECORD_STREAM_INDEX_MOST rows at most.
-@(private = "file")
-Sorted_Places :: struct {
-	places: [2 * RECORD_STREAM_INDEX_MOST]u64,
-	count:  int,
-}
-
 // record_stream_places_valid checks the place of each row of the two
 // tables: validate calls it after record_stream_counts_valid, so a loader
 // of a valid file writes each index in writable data, and no other write
@@ -171,7 +163,10 @@ record_stream_places_valid :: proc "contextless" (file: []u8) -> bool {
 	if !record_stream_counts_valid(file) {
 		return false
 	}
-	sorted: Sorted_Places
+	// The places of the rows that are not 0, sorted, on the stack of this
+	// check: two tables of RECORD_STREAM_INDEX_MOST rows at most.
+	sorted_places: [2 * RECORD_STREAM_INDEX_MOST]u64
+	sorted_count := 0
 	for kind in ([2]Table_Kind{.Record_Outputs, .Record_Inputs}) {
 		for index in 1 ..< count(file, kind) {
 			place, ok := record_stream_place_of_row(file, kind, index)
@@ -182,16 +177,16 @@ record_stream_places_valid :: proc "contextless" (file: []u8) -> bool {
 				continue
 			}
 			// An insertion into the sorted run: at most 128 places.
-			at := sorted.count
-			for at > 0 && sorted.places[at - 1] > place {
-				sorted.places[at] = sorted.places[at - 1]
+			at := sorted_count
+			for at > 0 && sorted_places[at - 1] > place {
+				sorted_places[at] = sorted_places[at - 1]
 				at -= 1
 			}
-			sorted.places[at] = place
-			sorted.count += 1
+			sorted_places[at] = place
+			sorted_count += 1
 		}
 	}
-	places := sorted.places[:sorted.count]
+	places := sorted_places[:sorted_count]
 	if len(places) == 0 {
 		return true
 	}
