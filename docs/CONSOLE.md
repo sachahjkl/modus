@@ -8,13 +8,13 @@ This guide describes the line that is typed at the console: the language that th
 
 **For whom.** A reader who uses the console, and a reader who changes `src/modules/system/console`, `src/library/support/line_editor` or `src/library/support/terminal`.
 
-**Read before.** `PROPERTIES.md`, "19. A command is a function: no text between processes". The terms edit line, line editor, hint line, free row, completion list, chosen row, fuzzy match, line history, history search, terminal, result drawer and short name of an export are in `glossary/communication.md`; log record and value run are in `glossary/running_code.md`.
+**Read before.** `PROPERTIES.md`, "19. A command is a function: no text between processes". The terms edit line, line editor, hint line, free row, completion list, chosen row, fuzzy match, line history, history search, terminal, result drawer, short name of an export and pipe operator are in `glossary/communication.md`; log record and value run are in `glossary/running_code.md`.
 
 **The map of this guide.**
 
 | Section | What it says |
 |---|---|
-| "The language of the console" | What a line can say: values and their kinds, calls, variables, records, tables as values, how a line composes, and its errors |
+| "The language of the console" | What a line can say: values and their kinds, calls, variables, records, tables as values, how a line composes, the pipe operator, and its errors |
 | "Results and their drawers" | The one result of a line, the drawer of each kind of result, and the result of each built-in command |
 | "The log records of a line" | Which log records show under a line while it runs, and how the console reads them |
 | "The built-in commands and the services" | Which built-in commands are exports of a service, and which stay in the console |
@@ -46,16 +46,19 @@ The code is `src/modules/system/console/language.odin` (the parser and the value
 ### The form of a line
 
 ```
-line       = name "=" expression | expression
+line       = name "=" pipeline | pipeline
+pipeline   = expression { "|>" stage }
+stage      = name | name "(" arguments ")"
 expression = term { ("+" | "-") term }
 term       = factor { ("*" | "/" | "%") factor }
-factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" expression ")"
+factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" pipeline ")"
+arguments  = pipeline { "," pipeline }
 ```
 
 - **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each.
 - **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/private/console/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. A text has no escape, so it cannot hold a quote.
-- **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them. A division by zero is an error. So is the one division whose result does not fit: the least integer by `-1`.
+- **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them. A division by zero is an error. So is the one division whose result does not fit: the least integer by `-1`. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
 
 Examples:
 
@@ -177,6 +180,31 @@ The first line lists the processes that run a module, keeps the rows of one modu
 > columns(where(loaded(), "call", "direct"), "module imported_by in_place_of")
 ```
 
+### The pipe operator
+
+`a |> f(b, c)` is `f(a, b, c)`: the value on the left of `|>` is the first argument of the call on its right. `a |> f` is `f(a)`, and `a |> f()` too. So a line reads in the order in which its calls run:
+
+```
+> processes() |> where("name", "server")
+> processes() |> where("name", "server") |> columns("name slot")
+> rows(help() |> first(3)) |> text
+```
+
+They are `where(processes(), "name", "server")`, `columns(where(processes(), "name", "server"), "name slot")` and `text(rows(first(help(), 3)))`.
+
+- **The lowest priority.** The whole expression on the left is the value: `1 + 2 |> text` is `text(1 + 2)`. A `,` and the parentheses around it end it: `where(x |> f, "a", 1)` is `where(f(x), "a", 1)`, and `(x |> f) + 1` is `(f(x)) + 1`.
+- **From the left.** `x |> h |> g(1) |> f` is `f(g(h(x), 1))`.
+- **A variable** keeps the value of the whole line: `t = processes() |> rows` is `t = rows(processes())`.
+- **On the right**: the name of a command, alone or with its arguments. The call takes one argument more than the arguments in its parentheses, at most 12 in all.
+
+**Sugar only.** The operator adds no meaning and no kind. Before any call, the console writes the line with calls in calls (`pipe_nested_form`, `src/library/private/console/console_language/pipe.odin`), and its parser reads that line, which has no `|>`. So a line with `|>` checks and runs as the same line with calls in calls, with the same errors.
+
+**What is refused before any call.** A line with a fault of the operator runs nothing: the console finds the fault in the text and in the command table, before the first call. These faults are the form of the operator; a name on the right that no command has; a command on the right that takes no argument, or 12 arguments already, or another count; and a first parameter that does not take the value on the left, when the console knows that value before the run. It knows the value of a literal, of a variable, and the result of an export, whose description gives its record. A built-in command makes the description of its table when it runs: the check of the call then refuses the value, after the left part ran, with the sentence of the same line with calls in calls.
+
+`|` alone is no operator of the language: a line with it fails before any call, and says so.
+
+**Why `|>`, and not `|`.** `|>` has no other meaning in the language, so a reader and the parser never take it for another operator, and `|` stays free for a union of sets. The arrow reads as "goes to". Elixir, Gleam and R give the same sign this meaning: the value on the left is the first argument of the call on the right. F#, where the sign comes from, gives the value to a function of one argument, so `x |> f a` there is `f a x`, with the value last.
+
 ### Errors
 
 A line that fails has one result: its error. The first error ends the line: the rest of the line does not run. A command never prints its error: it makes the line fail, and the console draws the error after the line ("Results and their drawers", "The drawer of an error"). The first line of a drawn error starts with `error: ` and holds one sentence.
@@ -194,6 +222,12 @@ A line that fails has one result: its error. The first error ends the line: the 
 | A result that does not fit in an integer | `error: "+" of 9223372036854775807 and 1 does not fit in an Integer: an Integer has 64 bits with a sign` |
 | A number that does not fit in an integer | `error: the number 9223372036854775808 does not fit in an Integer: the largest is 9223372036854775807` |
 | A text with no end quote | `error: the text has no end quote` |
+| `\|>` with no value on its left: at the start of the line, after `(`, `,` or `=` | `error: \|> has no value on its left: write a value, then \|> and a call` |
+| The line ends after `\|>` | `error: the line ends after \|>: a call or the name of a command comes after it` |
+| After `\|>`: an integer, a text, `(`, another `\|>`, or more after the call | `error: \|> takes a call or the name of a command on its right, not "12"` |
+| A command after `\|>` that takes no argument | `error: help takes no argument, and \|> gives it the value on its left` |
+| A command after `\|>` with 12 arguments in its parentheses | `error: f has 12 arguments already, and \|> gives it one more: a call takes at most 12` |
+| A `\|` alone | `error: "\|" is no operator: the pipe operator is "\|>"` |
 | A field that the records do not have | `error: where: the records ... have no field x; their fields are ...` |
 | A value of the wrong kind for a field | `error: where: the field code is Integer, the value is Text` |
 | An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8), then the values of the record |
@@ -467,12 +501,13 @@ The console completes the name at the caret from what it knows at that moment: i
 | Where the caret is | The names | From |
 |---|---|---|
 | A name with no dot | Each command (with its full name: `monitor.count`), each connected service, each variable | The command table: the commands of the console, and the exports of the modules and services, from their descriptions |
+| A name, with or without a dot, just after `\|>` | The commands that take an argument and whose first parameter takes the value on the left; all the commands that take an argument when the console does not know that value before the run | The command table, and what the console knows of the value on the left ("The pipe operator") |
 | After the name of a service and a dot (`storage.`) | The exports of that service | The commands whose name starts with that name and a dot. If none does, the whole name is matched against all the names |
 | Inside the quotes of the first argument of `load`, `isolate`, `start`, `replace` | The modules of the boot image | The image that the root service granted |
 | Inside the quotes of `connect`, `stop`, `grants`, `revoke` | The processes that run | `Inspect` on the machine, with the grant that the console holds. The root service has no command that lists its services: the console asks for none, and gets no new grant. With no grant to inspect, the list names the services whose exports are commands of the console |
 | Inside the quotes of `unload` | The modules that `load` and `isolate` added | The table of the console |
 
-Not completed: the second argument of a call (the grant names of `revoke`), the fields of a record variable (`r.x`), the common start of several names (the list replaces it).
+Not completed: the second argument of a call (the grant names of `revoke`), the fields of a record variable (`r.x`), the common start of several names (the list replaces it). After `|>`, the hint line marks the parameter by the count of the arguments in the parentheses: one place before the parameter that takes the argument at the caret.
 
 When the call at the caret is open, the line under the edit line shows its signature, dim, from the description, and marks the parameter at the caret: `write(name: Text, data: Text) -> Integer`.
 
@@ -584,7 +619,7 @@ The edit line, the line that the console writes back when Enter is pressed, and 
 | Parameter | The name of a parameter, before its `:` | none | | | |
 | Variable | A variable, also before `=` and before `.field` | none | | | |
 | Number, Text, Text_Unfinished | A number; a text in quotes; a text with no end quote yet | Literal | `0x38C0B0` | 8.47 | 7.22 |
-| Operator, Arrow | `+ - * / % = ( ) , : . { }`, and `->` | Punctuation | `0xB0B8C1` | 9.51 | 8.10 |
+| Operator, Arrow | `+ - * / % = ( ) , : . { }`, `\|>`, and `->` | Punctuation | `0xB0B8C1` | 9.51 | 8.10 |
 | Words | The words of a row that are not code: "export of", "command", "3 lines ago" | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 | Unknown | A name that is no command, module or variable; a byte that the language does not take | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 
@@ -596,7 +631,7 @@ A part with no class has the color of the text around it: the tone of the line, 
 - A name that the console does not know is Unknown only when a byte follows it. A name that ends at the caret or at the end of the line is still being typed: it has no run, and the color of the line. So a name does not change to the quiet mark and back at each key.
 - A text with no end quote is Text_Unfinished. It has the color of a text, not the color of an error: it is still being typed. The error comes when the line runs ("the text has no end quote").
 - `name = ...` at the start of a line names a variable: the name is a Variable before it exists.
-- An Unknown part is quiet (the dim class), never red: the line is not run yet.
+- An Unknown part is quiet (the dim class), never red: the line is not run yet. A `|` alone is Unknown; `|>` is an Operator.
 
 **The rows of the list.** The name has the kind of what it is: a command or an export is a Function, with its module and its dot when its name has one (`monitor.count`); a record is a Type; a service is a Module; a module or a process in quotes is a Text; a line of the history is read as a line of code. What the name is, at the right, is read as a signature: the words before the parentheses are Words, the word after "of" is the Module; in the parentheses a name before `:` is a Parameter; after `:` or `->` each name is a Type, also in the parentheses of the type (`Table(Count_Name, Read)`). The alignment of the rows does not change: the runs give colors, never places.
 

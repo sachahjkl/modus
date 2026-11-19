@@ -7,10 +7,19 @@ import "modus:support/system"
 
 // The language of the console.
 //
-//   line       = name "=" expression | expression
+//   line       = name "=" pipeline | pipeline
+//   pipeline   = expression { "|>" stage }
+//   stage      = name | name "(" arguments ")"
 //   expression = term { ("+" | "-") term }
 //   term       = factor { ("*" | "/" | "%") factor }
-//   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" expression ")"
+//   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" pipeline ")"
+//   arguments  = pipeline { "," pipeline }
+//
+// The pipe operator has the lowest priority: `a |> f(b)` is `f(a, b)`, and
+// `a |> f` is `f(a)`. The parser below reads no "|>": before any call,
+// pipe_nested_line writes the line with calls in calls
+// (src/library/private/console/console_language/pipe.odin), so a line with
+// "|>" checks and runs as that line.
 //
 // A value is an Integer, a Text, a Record, a Handle, a Table or Bytes. An
 // operation on two Integers whose result does not fit in 64 bits with a
@@ -208,6 +217,13 @@ source: string
 position: int
 failed: bool
 
+// The nested form of the line that runs, and the stages of its "|>". A
+// Text value of the line is a part of its source, so the nested form lives
+// until the next line.
+NESTED_LINE_SIZE :: 1024 // A nested form is never longer than its line: a line of the history has 256 bytes at most.
+nested_line: [NESTED_LINE_SIZE]u8
+line_stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
+
 scratch_text :: proc "contextless" (parts: ..system.Part) -> string {
 	text := system.format(scratch[scratch_count:], ..parts)
 	scratch_count += len(text)
@@ -249,15 +265,22 @@ run_line :: proc "contextless" (text: string) {
 	failure_reset()
 	line_records_start()
 
-	// An assignment starts with a name and "=".
-	name := read_name()
-	assigned := len(name) > 0 && accept('=')
-	if !assigned {
-		position = 0
-	}
-	value := expression()
-	if !failed && peek() != 0 {
-		fail("unexpected \"", source[position:], "\"")
+	// A fault of "|>" fails the line here, before any call runs.
+	source = pipe_nested_line(text)
+	name: string
+	assigned := false
+	value: Value
+	if !failed {
+		// An assignment starts with a name and "=".
+		name = read_name()
+		assigned = len(name) > 0 && accept('=')
+		if !assigned {
+			position = 0
+		}
+		value = expression()
+		if !failed && peek() != 0 {
+			fail("unexpected \"", source[position:], "\"")
+		}
 	}
 	line_records_show()
 	if !failed && assigned {
@@ -483,15 +506,45 @@ factor :: proc "contextless" () -> Value {
 	return fail("unexpected \"", source[position:], "\"")
 }
 
-// call reads the arguments of a command, checks their types against the
-// parameters, and calls the function.
-call :: proc "contextless" (name: string) -> Value {
-	found: ^Command
+// command_find gives the command that a call of a name runs: of two
+// commands with one name, the one added last. nil: no command has it.
+command_find :: proc "contextless" (name: string) -> (found: ^Command) {
 	for &command in commands[:command_count] {
 		if command.name == name {
 			found = &command
 		}
 	}
+	return found
+}
+
+// argument_accepted says if the parameter index of a command takes a value:
+// the check of a call before it runs, and of the value on the left of a
+// "|>" when the console knows it before the run.
+argument_accepted :: proc "contextless" (found: ^Command, index: int, argument: Value) -> bool {
+	kind := found.parameters[index]
+	// A parameter None of a command of the console takes any value.
+	if kind == .None && found.run != nil {
+		return true
+	}
+	// A table parameter takes a Table value of an equal record; Bytes
+	// take a Text. The direction says what the export does with it.
+	wanted := kind == .Bytes ? Kind.Text : kind
+	if argument.kind != wanted {
+		return false
+	}
+	// A Record agrees when the two descriptions are equal: a record of one
+	// module is a record of another module with the same fields. A command
+	// of the console (run) takes a Table of any record.
+	if kind == .Record || kind == .Table && found.run == nil {
+		return module.records_equal(found.file, found.function.parameter_details[index], argument.file, argument.detail)
+	}
+	return true
+}
+
+// call reads the arguments of a command, checks their types against the
+// parameters, and calls the function.
+call :: proc "contextless" (name: string) -> Value {
+	found := command_find(name)
 	if found == nil {
 		return fail("no command has the name ", name, "; try help()")
 	}
@@ -521,18 +574,7 @@ call :: proc "contextless" (name: string) -> Value {
 	}
 	for kind, index in found.parameters[:count] {
 		argument := &arguments[index]
-		detail := found.function.parameter_details[index]
-		// A Record agrees when the two descriptions are equal: a record of
-		// one module is a record of another module with the same fields.
-		// A parameter None of a command of the console takes any value.
-		if kind == .None && found.run != nil {
-			continue
-		}
-		// A table parameter takes a Table value of an equal record; Bytes
-		// take a Text. The direction says what the export does with it.
-		wanted := kind == .Bytes ? Kind.Text : kind
-		// A command of the console (run) takes a Table of any record.
-		if argument.kind != wanted || (kind == .Record || kind == .Table && found.run == nil) && !module.records_equal(found.file, detail, argument.file, argument.detail) {
+		if !argument_accepted(found, index, argument^) {
 			return fail(name, ": argument ", i64(index + 1), " is ", parameter_text(found, index), ", not ", type_text(argument.file, argument.kind, argument.detail))
 		}
 		if kind == .Record {
@@ -556,4 +598,161 @@ call :: proc "contextless" (name: string) -> Value {
 		return call_export(found, arguments[:count])
 	}
 	return found.run(arguments[:count])
+}
+
+// ---- The pipe operator.
+
+// What the console knows, before the run, of the value on the left of a
+// "|>".
+Left_Knowledge :: enum u8 {
+	None  = 0, // Nothing: the value comes when the line runs.
+	Kind  = 1, // Its kind, not the record of a Table or of a Record.
+	Whole = 2, // Its kind and its record: what argument_accepted reads.
+}
+
+// pipe_nested_line gives the line with calls in calls in the place of each
+// "|>", which the parser then reads. Before any call runs, it fails the
+// line on each fault that the text and the command table show: the form
+// of the operator, a name that no command has, a count of arguments, and a
+// first parameter that refuses a value whose kind the console knows. The
+// call then checks again what it checks for each line.
+pipe_nested_line :: proc "contextless" (text: string) -> string {
+	form := console_language.pipe_nested_form(text, console_language.expression_start(text), nested_line[:], line_stages[:])
+	if form.refusal != .None {
+		pipe_refusal_fail(text, form)
+		return text
+	}
+	stages := line_stages[:form.stage_count]
+	// The names first, from the last stage: the nested form looks up its
+	// outer call before it reads the arguments of that call.
+	for index := len(stages) - 1; index >= 0; index -= 1 {
+		name := text[stages[index].name_start:stages[index].name_end]
+		if command_find(name) == nil {
+			fail("no command has the name ", name, "; try help()")
+			return text
+		}
+	}
+	for stage, index in stages {
+		name := text[stage.name_start:stage.name_end]
+		found := command_find(name)
+		if found.parameter_count == 0 {
+			fail(name, " takes no argument, and |> gives it the value on its left")
+			return text
+		}
+		if stage.argument_count >= ARGUMENT_CAPACITY {
+			fail(name, " has ", i64(stage.argument_count), " arguments already, and |> gives it one more: a call takes at most ", i64(ARGUMENT_CAPACITY))
+			return text
+		}
+		if stage.argument_count + 1 != found.parameter_count {
+			fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(stage.argument_count + 1))
+			return text
+		}
+		// The sentence of the same line with calls in calls.
+		left, knowledge := pipe_left_value(text, stages, index)
+		if knowledge == .Whole && !argument_accepted(found, 0, left) {
+			fail(name, ": argument ", i64(1), " is ", parameter_text(found, 0), ", not ", type_text(left.file, left.kind, left.detail))
+			return text
+		}
+	}
+	return form.nested
+}
+
+// pipe_refusal_fail fails the line with the sentence of a fault of the
+// form of "|>".
+pipe_refusal_fail :: proc "contextless" (text: string, form: console_language.Pipe_Form) {
+	found_start := clamp(form.found_start, 0, len(text))
+	found := text[found_start:clamp(form.found_end, found_start, len(text))]
+	switch form.refusal {
+	case .None:
+	case .No_Left_Value:
+		fail("|> has no value on its left: write a value, then |> and a call")
+	case .Line_End:
+		fail("the line ends after |>: a call or the name of a command comes after it")
+	case .Not_A_Call:
+		fail("|> takes a call or the name of a command on its right, not \"", found, "\"")
+	case .Lone_Bar:
+		fail("\"|\" is no operator: the pipe operator is \"|>\"")
+	case .Unmatched_Close:
+		fail("unexpected \"", found, "\"")
+	case .Too_Many_Stages:
+		fail("a line holds at most ", i64(console_language.PIPE_STAGE_CAPACITY), " |>")
+	case .Too_Long:
+		fail("the line with calls in calls has more than ", i64(NESTED_LINE_SIZE), " bytes")
+	}
+}
+
+// pipe_left_value gives what the console knows, before the run, of the
+// value on the left of the stage index.
+pipe_left_value :: proc "contextless" (text: string, stages: []console_language.Pipe_Stage, index: int) -> (value: Value, knowledge: Left_Knowledge) {
+	stage := stages[index]
+	switch stage.left {
+	case .Other:
+	case .Integer:
+		value, knowledge = Value{kind = .Integer}, .Whole
+	case .Text:
+		value, knowledge = Value{kind = .Text}, .Whole
+	case .Name:
+		// A name alone is a variable; any other name fails when it runs.
+		name := text[stage.left_start:stage.left_end]
+		for &variable in variables {
+			if variable.name_count > 0 && string(variable.name[:variable.name_count]) == name {
+				value, knowledge = variable.value, .Whole
+			}
+		}
+	case .Call:
+		value, knowledge = result_knowledge(command_find(text[stage.left_start:stage.left_end]))
+	case .Stage:
+		if stage.stage_before >= 0 && stage.stage_before < index {
+			before := stages[stage.stage_before]
+			value, knowledge = result_knowledge(command_find(text[before.name_start:before.name_end]))
+		}
+	}
+	return value, knowledge
+}
+
+// result_knowledge gives what the console knows of the result of a
+// command before it runs: its kind, and the record of an export, which its
+// description states. A command of the console makes the description of
+// its record when it runs.
+result_knowledge :: proc "contextless" (found: ^Command) -> (value: Value, knowledge: Left_Knowledge) {
+	if found == nil {
+		return {}, .None
+	}
+	value.kind = found.result
+	switch found.result {
+	case .None, .Integer, .Text:
+		knowledge = .Whole
+	case .Record, .Table:
+		knowledge = .Kind
+		if found.run == nil {
+			value.file, value.detail = found.file, found.function.result_detail
+			knowledge = .Whole
+		}
+	case .Handle, .Bytes:
+		// The rights of a Handle come with the value.
+		knowledge = .Kind
+	}
+	return value, knowledge
+}
+
+// pipe_stage_takes says if a command can be the call on the right of a
+// "|>": it takes an argument, and its first parameter takes what the
+// console knows of the value on the left.
+pipe_stage_takes :: proc "contextless" (item: ^Command, left: Value, knowledge: Left_Knowledge) -> bool {
+	if item.parameter_count == 0 {
+		return false
+	}
+	switch knowledge {
+	case .None:
+		return true
+	case .Kind:
+		kind := item.parameters[0]
+		if kind == .None && item.run != nil {
+			return true
+		}
+		return (kind == .Bytes ? Kind.Text : kind) == left.kind
+	case .Whole:
+		return argument_accepted(item, 0, left)
+	}
+	return false
 }
