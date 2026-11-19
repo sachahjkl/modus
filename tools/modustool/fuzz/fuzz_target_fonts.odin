@@ -264,13 +264,13 @@ fuzz_font_outlines_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		return fuzz_broken(.Contract, "validate gives a problem out of its enumeration: %d", u8(problem.kind))
 	}
 	if problem.kind != .None {
-		if outlines.header != {} || len(outlines.records) != 0 {
+		if outlines.header != {} || outlines.count != 0 {
 			return fuzz_broken(.Contract, "validate refuses with %v and gives records", problem.kind)
 		}
 		return FUZZ_PASSED
 	}
-	fonts := make([]font_outlines.Font_Input, len(outlines.records), context.temp_allocator)
-	for &record, index in outlines.records {
+	fonts := make([]font_outlines.Font_Input, outlines.count, context.temp_allocator)
+	for &record, index in outlines.records[:outlines.count] {
 		fonts[index] = {name = font_outlines.name_of(&record), bytes = font_outlines.font_bytes(&outlines, index)}
 	}
 	out := fuzz_aligned_input(make([]u8, font_outlines.resource_size(fonts), context.temp_allocator))
@@ -278,10 +278,10 @@ fuzz_font_outlines_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		return fuzz_broken(.Round_Trip, "resource_write refuses the fonts of a resource that validate accepted")
 	}
 	again, again_problem := font_outlines.validate(out)
-	if again_problem.kind != .None || len(again.records) != len(fonts) {
+	if again_problem.kind != .None || again.count != len(fonts) {
 		return fuzz_broken(.Round_Trip, "validate refuses what resource_write wrote: %v", again_problem.kind)
 	}
-	for &record, index in again.records {
+	for &record, index in again.records[:again.count] {
 		font := font_outlines.font_bytes(&again, index)
 		if font_outlines.name_of(&record) != fonts[index].name || !slice.equal(font, fonts[index].bytes) || record.hash != blake3.hash(font) {
 			return fuzz_broken(.Round_Trip, "the font %d written again differs", index)
