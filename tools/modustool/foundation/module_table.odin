@@ -156,7 +156,7 @@ module_builds := [?]Module_Build {
 	// It compares the package compiled in with the two modules, so it has
 	// no setting: its window layer is its own code.
 	{name = "interface_through_module", source = DEMONSTRATION_MODULE_SOURCES + "interface_through_module", entry = true, imports = {"interface_module", DRAWING_MODULE}, image = true},
-	{name = "text_shaping", source = LIBRARY_MODULE_SOURCES + "text_shaping", image = true},
+	{name = "text_rendering", source = LIBRARY_MODULE_SOURCES + "text_rendering", image = true},
 	{name = "vector_glyphs", source = DEMONSTRATION_MODULE_SOURCES + "vector_glyphs", entry = true, image = true},
 	{name = "interface_font", source = DEMONSTRATION_MODULE_SOURCES + "interface_font", entry = true, image = true},
 	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", entry = true, image = true},

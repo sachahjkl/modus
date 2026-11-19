@@ -338,14 +338,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	regular_cache, bold_cache = font.regular, font.bold
+	// The places from the font files, at the text sizes of the scales 1
+	// and 3; display.interface_font_open gave the caches only with both
+	// faces open.
 	spacing_ok: [3]bool
-	regular_spacing, spacing_ok[0] = text_rendering.spacing_of(&regular_cache, 1)
-	regular_spacing_large, spacing_ok[1] = text_rendering.spacing_of(&regular_cache, 3)
-	bold_spacing, spacing_ok[2] = text_rendering.spacing_of(&bold_cache, 1)
+	regular_spacing, spacing_ok[0] = text_rendering.spacing_of(.Interface, text_rendering.size_of_scale(1))
+	regular_spacing_large, spacing_ok[1] = text_rendering.spacing_of(.Interface, text_rendering.size_of_scale(3))
+	bold_spacing, spacing_ok[2] = text_rendering.spacing_of(.Interface_Bold, text_rendering.size_of_scale(1))
 	if !spacing_ok[0] || !spacing_ok[1] || !spacing_ok[2] {
 		system.stop(1)
 	}
-	no_pair_spacing_large = {advances = regular_spacing_large.advances}
+	no_pair_spacing_large = regular_spacing_large
+	no_pair_spacing_large.without_pairs = true
 	greek_lines_make()
 	measure()
 	system.log(.Info, "interface_font: one line of ", u64(len(PARAGRAPH[1])), " characters in B612 at scale 1 (the least of 50 batches): shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; the caches of ", regular_cache.header.file_size, " and ", bold_cache.header.file_size, " bytes, from the boot image")

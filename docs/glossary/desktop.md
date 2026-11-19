@@ -154,7 +154,7 @@ Do not use: task bar, panel, dock.
 
 The bar layout is the widths of the texts of the bar, measured in the font that draws them, from which come the place of each button and of each line of a menu.
 
-The names of the bar are in the interface font, which has proportional widths. With places from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` at its start and when the font changes, and writes it on the log. The modus tool measures the same layout from the same glyph cache, so it presses the right places. The bar layout is not a set of constants: it depends on the font in use.
+The names of the bar are in the interface font, which has proportional widths. With places from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` at its start and when the font changes, and writes it on the log. The modus tool measures the same layout from the same font file, so it presses the right places. The bar layout is not a set of constants: it depends on the font in use.
 
 The design: `docs/FONTS.md`, "12.8 The parts, each one working".
 

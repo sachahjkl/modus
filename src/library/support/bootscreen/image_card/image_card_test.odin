@@ -95,7 +95,7 @@ image_of_today := [?]Test_File {
 	{"tables", 163840, .Entry},
 	{"interface_module", 57344, .No_Entry},
 	{"interface_through_module", 49152, .Entry},
-	{"text_shaping", 12288, .No_Entry},
+	{"text_rendering", 12288, .No_Entry},
 	{"vector_glyphs", 221184, .Entry},
 	{"interface_font", 86016, .Entry},
 	{"pointers", 96136, .Entry},

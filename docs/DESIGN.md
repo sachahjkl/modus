@@ -75,6 +75,7 @@ One color is one concept, as one term is one concept.
 | Dim text | `colors.dim` | `0x7C8A99` | `0x4A525B` |
 | Strong text: the text that an input types, the outline of the focus | `colors.text_strong` | `0xFFFFFF` | `0x000000` |
 | Warning: a state that asks for attention and is not a failure (a warning of the log, a full ring) | `colors.warning` | `0xF0C050` | `0x886D2D` |
+| Near its limit: a measure near its limit, the very high intensity step of a gauge | `colors.near_limit` | `0xF2843C` | `0xA85C29` |
 | Link | `colors.link` | `0x6CB4F0` | `0x3B6283` |
 
 - The state of a thing has three colors: the color of the boot program while it starts, the color of a process when it runs, the color "failed" when it failed. A state that asks for attention is a warning; a thing that is stopped and cannot be used is "not usable".
@@ -95,6 +96,21 @@ One color is one concept, as one term is one concept.
 
 - A process takes each color from the tokens, by its meaning: no window holds a color value of its own. A picture that a process computes keeps its pixels: its legend takes the token.
 - A color never stands alone for a fact: a text or a place says the same fact.
+
+### The intensity of a gauge
+
+A gauge is a bar on the track whose length is a share: the memory in use, the processor share of a process. A gauge takes the color of its intensity step (`glossary/text.md`), from `graphics.intensity_of` and `graphics.intensity_color`:
+
+| Step | From | Color |
+|---|---|---|
+| Normal | 0 % | The concept that the gauge measures: `memory`, `process` |
+| High | 60 % (`INTENSITY_HIGH_PERCENT`) | `warning` |
+| Very high | 85 % (`INTENSITY_VERY_HIGH_PERCENT`) | `near_limit` |
+
+- A share at a threshold is in the higher step. A share past 100 % is very high.
+- Three steps, never a continuous hue: each color keeps one meaning, and the number beside the gauge says the value.
+- Each color of each step keeps 3 to 1 as a graphic on the track and on the background, in both appearances; host tests compute each pair (`src/library/support/graphics/intensity_test.odin`).
+- The design: `src/md/features/monitor_window.md`.
 
 ### The appearances
 
@@ -756,4 +772,4 @@ With the boot image of the last build (77 modules and 9 resources), the card nam
 - `clock`, the window of `remote`, the palette of the compositor, `interface_elements`, `vector_glyphs`, `settings` and `hall_of_fame` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `src/library/support/graphics`.
 - Each other process takes each of its colors from `src/library/support/graphics`, by its meaning (`src/md/features/appearance.md`, "The colors of the processes"): an expected answer and a failure, the kernel entries in the kernel blue, the pages in the color of memory, the levels of the log, the states of `rings` and `threads`, the members of a series. The terminal has its tones in both appearances.
 - The appearances (section 4, "The appearances"): the desktop, the palette, each window of a process, the terminal with its tones, the console and its results follow the light appearance. The paper of `paint` is light in both. The boot display, the process `boot` that shows it, and the stage of `heron` are dark in both.
-- The windows below the level of the boot display, `remote` and `scheduler`, from the farthest: `paint` (a light paper), `manual` (headings in the dim color, no cards), `monitor` (one list, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.
+- The windows below the level of the boot display, `remote` and `scheduler`, from the farthest: `paint` (a light paper), `manual` (headings in the dim color, no cards), `monitor` (one list and three sample graphs, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.

@@ -319,6 +319,26 @@ The design: `docs/TOOLS.md`, "The process `inspect`".
 
 Do not use: snapshot (for this), poll, frame (for this).
 
+### Sample history
+
+A sample history is the values of one measure in the last samples of a developer tool, kept in the process that shows them.
+
+The monitor keeps one for each of its graphs: 120 values, the last minute at one sample each 500 ms, in a fixed array whose newest value replaces the oldest one. At each push it computes the top of the scale and the points of the curve, and keeps them, so a frame computes nothing over the samples. It is not the line history of the console, and not a measure history of the releases.
+
+The design: `src/md/features/monitor_window.md`, "The sample history".
+
+Do not use: history (alone), time series, ring (for this).
+
+### Sample graph
+
+A sample graph is the curve of one sample history over the grid of points, with the name of its measure and its scale at its left.
+
+The newest sample is at the right edge, and each older one a step to the left: a step is a sample, not a time. The vertical scale is fixed (all the memory, 100 %) or the largest value of the sample history rounded up to 1, 2 or 5 times a power of ten. The monitor draws three: the memory in use, the processor time and the kernel entries in one second. It is not a measure chart of the site.
+
+The design: `src/md/features/monitor_window.md`, "The sample graphs".
+
+Do not use: chart (for this), sparkline, plot.
+
 ### Folded gap
 
 A folded gap is the part of the band of an address space between two mappings that has no mapping: the band draws it with a fixed width and lines at an angle.

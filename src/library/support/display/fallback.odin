@@ -19,8 +19,8 @@ import "modus:support/text_rendering"
 // problem is Not_Mapped when the starter gave no outlines: each character
 // past the glyph caches then draws the replacement glyph. missing names
 // the fonts of the chains that the outlines lack or that the renderer
-// refuses.
-@(private)
+// refuses. A library module that measures in the interface font with no
+// window of its own (interface_module) opens them with it too.
 fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_outlines.Problem, missing: text_rendering.Outline_Fonts) {
 	outlines: font_outlines.Outlines
 	outlines, problem = font_outlines.open(&ctx.values)

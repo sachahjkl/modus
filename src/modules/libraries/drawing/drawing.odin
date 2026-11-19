@@ -173,7 +173,9 @@ process_text_load :: proc "contextless" () {
 				given = false
 			}
 		}
-		if given {
+		// The places of a text come from the font files that this copy
+		// opened in text_settings_load.
+		if given && display.interface_faces_opened(&caches[0], &caches[1]) {
 			process_text.interface_font = {regular = caches[0], bold = caches[1]}
 			process_text.interface_font_given = true
 		}

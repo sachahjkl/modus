@@ -53,11 +53,14 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	placed: [16]text_rendering.Placed_Glyph
 	count: int
 	fallback: [16]text_rendering.Placed_Glyph
-	// With no outlines: the replacement glyph at the place of each
-	// fallback glyph.
-	text_rendering.state = {}
-	spacing, _ := text_rendering.spacing_of(&cache, 1)
+	// The places from the font file; then, with no outlines, the
+	// replacement glyph at the place of each fallback glyph.
+	measure_words := fallback_open_for_test(t)
+	defer delete(measure_words)
+	spacing, spacing_ok := text_rendering.spacing_of(.Interface, text_rendering.TEXT_SIZE_OF_SCALE_ONE)
+	testing.expect(t, spacing_ok)
 	count, _, _ = text_rendering.shape(&spacing, transmute([]u8)string(TEXT), placed[:])
+	text_rendering.state = {}
 	fallback = placed
 	replaced := placed
 	index := 0
@@ -124,9 +127,12 @@ a_proportional_cache_is_not_a_font_of_cells :: proc(t: ^testing.T) {
 the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
 	defer sync.mutex_unlock(&fallback_test_lock)
+	defer text_rendering.state = {}
 	cache, memory := b612_cache_of(t)
 	defer delete(memory)
-	spacing, spacing_ok := text_rendering.spacing_of(&cache, 1)
+	words := fallback_open_for_test(t)
+	defer delete(words)
+	spacing, spacing_ok := text_rendering.spacing_of(.Interface, text_rendering.TEXT_SIZE_OF_SCALE_ONE)
 	testing.expect(t, spacing_ok)
 	square_root: [4096]u8
 	square_root_table_fill(&square_root)

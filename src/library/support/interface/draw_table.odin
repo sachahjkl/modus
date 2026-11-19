@@ -911,7 +911,7 @@ draw_text_right :: proc "contextless" (table: ^Draw_Table, right, y: int, text: 
 		// The origin goes to the nearest third of a pixel, which can be up to
 		// 10.7 / 64 of a pixel to the right: 11 / 64 less makes it the third
 		// at or before the exact place, so the text never passes right.
-		interface_text_append(table, i64(right) * 64 - interface_width_subpixels(table.interface_font, used, text) - 11, y, text, color, used, element)
+		interface_text_append(table, i64(right) * 64 - interface_width_subpixels(used, text) - 11, y, text, color, used, element)
 		return
 	}
 	draw_text(table, right - text_width(used, text), y, text, color, used, element)
@@ -928,7 +928,7 @@ draw_text_right :: proc "contextless" (table: ^Draw_Table, right, y: int, text: 
 // alpha of the color.
 @(private)
 interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: int, text: string, color: graphics.Color, font: Font, element: u32, alpha: u8 = draw_record.OPAQUE_ALPHA) -> int {
-	width := interface_width_subpixels(table.interface_font, font, text)
+	width := interface_width_subpixels(font, text)
 	pixel, third := glyph_cache.position_of(place, 3)
 	origin := pixel * 64 + i64(third) * 64 / 3
 	end := int((origin + width + 63) / 64)
