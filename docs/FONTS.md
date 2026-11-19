@@ -16,7 +16,7 @@ The terms are in `glossary/text.md`: font, glyph, outline, coverage, subpixel ba
 
 Nothing in its code. A process calls `graphics.text`, `graphics.character`, `graphics.unsigned` or the elements of `src/library/support/interface`, `src/library/support/display` opens the font outlines and gives the setting of the principal and the faces of the cells to `src/library/support/graphics` when the process opens its window, and again at each change. Each window of the machine test draws with the vector font with no line of its own changed. Each `display.present` ends a frame of the text of the process: a process that draws by hand gets its glyph memory there, after its first glyph.
 
-Two places draw large text directly: `write_large` in `server`, and `text_draw` in `src/library/support/interface`. Each one calls `graphics.text_scaled`, one line. The boot display (`src/library/support/bootscreen`) draws every text in Spleen at the size of its scale, and reads no font file (`src/md/features/boot_display_scale.md`). The `large` of `scheduler` writes a text record with a scale through `interface.draw_text`, so the package draws it; `terminal` has no large text of its own. They do not read the bitmap of Spleen directly: a process that uses the interface of the text needs no change for the vector font.
+Two places draw large text directly: `write_large` in `server`, which calls `graphics.text_scaled` at a whole scale of the body, and `text_draw` in `src/library/support/interface`, which calls `graphics.text_sized` at the text size of a record. The boot display (`src/library/support/bootscreen`) draws every text in Spleen at the size of its scale, and reads no font file (`src/md/features/boot_display_scale.md`). The `large` of `scheduler` writes a text record with a text size through `interface.draw_text`, so the package draws it; `terminal` has no large text of its own. They do not read the bitmap of Spleen directly: a process that uses the interface of the text needs no change for the vector font.
 
 ## 2. The grid
 
@@ -564,11 +564,13 @@ A font for the Greek letters that B612 lacks, Cyrillic and Latin Extended-A; a T
 
 ## 14. Text at any size
 
-The package `src/library/support/text_rendering` draws each glyph of a face at any text size, into the private glyph cache of the copy that draws: every glyph of the system, the 192 characters too. The callers give the sizes of the three scales of the grid. The intent of this design is `src/md/features/text_rendering.md`.
+The package `src/library/support/text_rendering` draws each glyph of a face at any text size, into the private glyph cache of the copy that draws: every glyph of the system, the 192 characters too. A draw record carries the text size of its text and of its text grid (`docs/INTERFACE.md`, "5. Text"); the elements of the desktop still give the sizes 16, 32 and 48. The intent of this design is `src/md/features/text_rendering.md`.
 
 ### 14.1 The text size
 
-The text size is the height of the line of a face, in 1/64 of a pixel: a line of 16 pixels is the size 1 024, and the scales 1, 2 and 3 are the sizes 1 024, 2 048 and 3 072 (`size_of_scale`). A size from 256 (a line of 4 pixels) to 16 384 (a line of 256 pixels) is valid. `size_check` refuses 0 (`Zero`), a size below 256 (`Too_Small`) and a size past 16 384 (`Too_Large`); it never clamps. A refused size gives no advance and no glyph.
+The text size is the height of the line of a face, in 1/64 of a pixel: a line of 16 pixels is the size 1 024, and the scales 1, 2 and 3 are the sizes 1 024, 2 048 and 3 072 (`size_of_scale`). A size from 256 (a line of 4 pixels) to 16 384 (a line of 256 pixels) is valid. `size_check` refuses 0 (`Zero`), a size below 256 (`Too_Small`) and a size past 16 384 (`Too_Large`); it never clamps. A refused size gives no advance and no glyph. The border of the draw record refuses the same sizes in a text and in a text grid (`draw_record.TEXT_SIZE_MINIMUM`, `draw_record.TEXT_SIZE_LIMIT`), and a constant check ties the two bounds.
+
+A cell of a face of cells at a size is half the size wide, rounded to a whole pixel with a half up (`cell_columns`), and a line of the cells is two cells high: 7 by 14 at a size of 14, 8 by 16 at 16, 12 by 24 at 24. `graphics.text_sized` draws a text of the cells at any size, in the regular or the bold weight; with Spleen it draws each glyph at the largest whole scale whose line is not above the line of the cell, 1 under it, in the middle of the cell. The replacement glyph is the box of the body grown with the cell (`graphics.character_replacement_sized`), so at a whole scale it is the box of before.
 
 ### 14.2 The frame of a face
 

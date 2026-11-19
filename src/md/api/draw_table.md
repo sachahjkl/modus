@@ -77,11 +77,11 @@ with d the pixel, c the color and a the cover. It is the blend of the text of to
 | 1 | `Rectangle` | `color` u32 at 24; `cell_x`, `cell_y` 2 x i32 at 28; `cell_width`, `cell_height`, `step_x`, `step_y` 4 x u16 at 36 |
 | 12 | `Gradient` | `start_x`, `start_y`, `end_x`, `end_y` 4 x i32 at 24; `start_color`, `end_color` 2 x u32 at 40 (built; a new value, so that no word of a kind that left names it) |
 | 13 | `Path` | `first` u32 at 24, `count` u32 at 28, `fill_color` u32 at 32, `stroke_color` u32 at 36, `stroke_width` u32 at 40 (built; a new value, as for the gradient: the word 3 was the horizontal gradient of version 14, and the word 10 of the line of version 15 names no kind) |
-| 4 | `Text` | `first` u32 at 24, `count` u32 at 28, `color` u32 at 32, `origin_x`, `origin_y` 2 x i32 at 36, `font` u8 at 44, `scale` u8 at 45, `weight` u8 at 46 |
+| 4 | `Text` | `first` u32 at 24, `count` u32 at 28, `color` u32 at 32, `origin_x` i32 at 36, `font` u8 at 40, `weight` u8 at 41, `size` u16 at 42 |
 | 8 | `Picture` | `memory` u8 at 24, `format` u8 at 25, `first` u32 at 28, `stride` u32 at 32, `width`, `height` 2 x u32 at 36, `generation` u32 at 44 |
 | 14 | `Clip_Push` | None: the box is the clip (built; a new value, as for the gradient: the word 5 was the `Clip` of version 16, which replaced the cut) |
 | 15 | `Clip_Pop` | None, and a box of zeros |
-| 9 | `Text_Grid` | `first` u32 at 24, `count` u32 at 28, `columns` u32 at 32; kept until the measure below decides |
+| 9 | `Text_Grid` | `first` u32 at 24, `count` u32 at 28, `columns` u32 at 32, `size` u16 at 36; kept until the measure below decides |
 
 **Rectangle.** The box in one color. With `step_x` and `step_y` above 0, the rectangle repeats: a cell of `cell_width` by `cell_height` at (`cell_x` + n × `step_x`, `cell_y` + m × `step_y`) of the surface for each integers n and m, cut to the box. A step of 0 on both axes is one rectangle, the whole box, and then each field of the pattern is 0. The border refuses a cell or a step below 1 pixel, a step below the cell, one step of 0 with the other above 0, and a place past `COORDINATE_LIMIT`. So a rectangle reaches each pixel at most one time, and its pixel writes are at most the pixels of its box. A repeated rectangle is a pattern: points, stripes, the lines of a grid.
 
@@ -110,11 +110,9 @@ The pattern is placed on the surface by one of its cells, not on the box: two bo
 - **The box** is on whole pixels, as for each kind but a rectangle and a gradient, and cuts the path. The points lie inside a pixel; a box inside a pixel would need the coverage of the box times the coverage of the shape, for no need. The writer makes the box the box of the points, the control points too, since a curve stays inside the box of its three points, grown by half the stroke and rounded out.
 - **The cost is bounded.** This is the one statement of the bound; the other places name it. At most 1 024 points. A curve gives at most 16 segments for its 2 points, a `Line` and a `Close` 1 segment each, a `Move` none: at most 8 segments for each point, 8 192 in all. The stroke of a segment is 4 edges for its band and 3 for its join with the segment before; the segment of a `Close` is 10, its band and a join at each of its two ends. So a curve gives the most edges for each point, 16 × 7 / 2 = 56, and a stroke has at most 56 × 1 024 = 57 344 edges (`PATH_EDGE_LIMIT`); the fill has at most 8 192 edges and one more for each subpath, fewer. The work of a draw is the bands of its cut times those edges, and each edge adds to the rows of a band and to the columns that it crosses there. A stroke is at most 64 pixels wide (`STROKE_WIDTH_LIMIT`), so it grows the box by at most 32 pixels on each side.
 
-**Text.** One text form for every font. The UTF-8 bytes of the run are in the byte table: `count` bytes from `first`, at most `TEXT_BYTES_LIMIT` (256). `font` is a `Font_Kind`: `Cells_8x16` 0, `Interface` 1. The origin is the top left corner of the line box, in 1/64 pixel: the font of the cells puts it on the nearest whole pixel, the interface font on the nearest third of a pixel, as the glyph cache asks. `scale` is 1 to 3, `weight` a `Font_Weight`. The box holds the ink, with the ink margin of the font: the field `second_color` of version 10 that held the margin is gone, because the box says it.
+**Text.** One text form for every font. The UTF-8 bytes of the run are in the byte table: `count` bytes from `first`, at most `INTERFACE_TEXT_LIMIT` (256) in the interface font. `font` is a `Font_Kind`: `Cells_8x16` 0, `Interface` 1. `origin_x` is the left of the advance box, in 1/64 pixel, and the top of the box is the top of the line: the font of the cells puts the origin on a whole pixel, the interface font on a third of a pixel, the three positions of a glyph. `weight` is a `Font_Weight`, at each size. `size` is the text size, the height of the line in 1/64 pixel, from `TEXT_SIZE_MINIMUM` (256: 4 pixels) to `TEXT_SIZE_LIMIT` (16 384: 256 pixels); the border refuses another size, 0 too, and never clamps it. The box holds the ink, with the ink margin of the font at the size: the field `second_color` of version 10 that held the margin is gone, because the box says it. The origin is at most the larger of 16 pixels and one line inside the left of the box. The design of the size is in [../features/text_rendering.md](../features/text_rendering.md), "The draw record".
 
 `Text` and `Interface_Text` of version 10 were one concept with two places for the origin. A text in the font of the cells is a text run whose font is the font of the cells.
-
-Designed, not built: version 17 replaces `scale` with a text size in 1/64 pixel, `size` u16 at 46, with `weight` at 45, and gives `Text_Grid` a size too ([../features/text_rendering.md](../features/text_rendering.md), "The draw record").
 
 **Picture.** The pixels of a picture of the caller, by values in its picture memory, as in version 10 ([picture.md](picture.md)): `memory` is the number of the picture memory, `first` its first pixel, `stride` the pixels from one line to the next, `generation` a new number when its pixels change. `format` is a `Picture_Format`: `Opaque` 0, which reads `0x00RRGGBB` and copies it, and `Straight_Alpha` 1, which reads `0xAARRGGBB` and blends by the rule. The box is the place of the picture and its size: whole pixels, and exactly `width` by `height` pixels; another box is refused. A picture is drawn at its size: no scale and no repetition.
 
@@ -130,7 +128,7 @@ Designed, not built: version 17 replaces `scale` with a text size in 1/64 pixel,
 - **The lists push the clip of their area.** `list_with_choice` and `list_of_rows` write a push of their area before their rows and its pop after their scroll bar: a list whose area is shorter than one line drew that line past its area, and now draws none of it outside. A list inside a clipped card keeps the clip of the card. Two records more for each list.
 - **The input is not cut.** A clip cuts what the records draw, not where the pointer acts: each element takes the pointer in its own area, as before.
 
-**Text_Grid.** The grid of cells of the terminal, as in version 10 ([text_grid.md](text_grid.md)): the cells in the byte table, 16 bytes each, with their colors as draw colors. It stays its own kind only if a measure shows the need (below).
+**Text_Grid.** The grid of cells of the terminal, as in version 10 ([text_grid.md](text_grid.md)): the cells in the byte table, 16 bytes each, with their colors as draw colors. `size` is its text size, with the bounds of a text: a cell is half the size wide, a half up, and two widths high. It stays its own kind only if a measure shows the need (below).
 
 ### The byte table
 
@@ -148,7 +146,7 @@ The field keeps its name `text` and its exports their parameter `now_text`. A re
 
 ### The limits of the format: cost, never look
 
-The format puts no limit of look on what a process draws. Each bound of a kind (`PATH_POINT_LIMIT`, `STROKE_WIDTH_LIMIT`, `TEXT_BYTES_LIMIT`, `CLIP_DEPTH_LIMIT`, `COORDINATE_LIMIT`) is there to bound the cost of a hostile record, and for no other reason. The look of the desktop of the system is sober by choice: rectangles, sharp shadows, transparency only where it informs, short animations that inform ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "2. Forms"). That look is a rule of the elements of the interface package and of the compositor. It is never a reason to refuse a primitive.
+The format puts no limit of look on what a process draws. Each bound of a kind (`PATH_POINT_LIMIT`, `STROKE_WIDTH_LIMIT`, `INTERFACE_TEXT_LIMIT`, `TEXT_SIZE_LIMIT`, `CLIP_DEPTH_LIMIT`, `COORDINATE_LIMIT`) is there to bound the cost of a hostile record, and for no other reason. The look of the desktop of the system is sober by choice: rectangles, sharp shadows, transparency only where it informs, short animations that inform ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "2. Forms"). That look is a rule of the elements of the interface package and of the compositor. It is never a reason to refuse a primitive.
 
 - A process can draw any form: round, at an angle, curved. A round form is a path.
 - A shadow is a rectangle or a path with alpha. A sharp shadow needs no new kind.
@@ -255,7 +253,13 @@ The text, the pictures and the opaque rectangles on whole pixels cost what they 
 
 ## What is built and what is left
 
-Built: version 17 of the record. A clip is pushed and popped.
+Built: version 18 of the record. A text and a text grid carry a text size in 1/64 pixel in place of one of three scales.
+
+- **The fields.** `size` u16 at 42 of a `Text`, after `font` at 40 and `weight` at 41; `size` u16 at 36 of a `Text_Grid`. The border (`draw_record.text_size_valid`) refuses a size under `TEXT_SIZE_MINIMUM` or past `TEXT_SIZE_LIMIT`, 0 too, with `Field_Past_Bound`; the bound of the origin of a text is the larger of 16 pixels and one line. The exports are `damage_of_draw_table_18` and `execute_draw_table_in_rectangles_18`.
+- **The writers.** `interface.Font` holds a text size, 0 for the body; a writer refuses a size that the border refuses and sets `refused`. The fonts of the text size tokens, `FONT_CAPTION` to `FONT_LARGEST`, give the elements their sizes ([../features/text_rendering.md](../features/text_rendering.md), "The text size tokens").
+- **The tests.** Host tests give the border the sizes 0, 1, 255, 16 385 and the largest u16 in a text of each font and in a grid, check the refusal and that no primitive comes back, the origin one pixel past one line at the largest size, and take the sizes 256 and 16 384; the writer refuses the same sizes with no record and no byte of text; a text of each text size token and each weight draws the pixels of its reference, whole and in four damage rectangles.
+
+Before it, version 17 of the record. A clip is pushed and popped.
 
 - **The kinds.** `Clip_Push` (14) and `Clip_Pop` (15), with no field; the word 5 of the `Clip` of version 16 names no kind. The border of the order of a table is `draw_record.clip_order_check`, and the steps of the order (`clip_order_push`, `clip_order_pop`, `clip_order_end`) are the one rule that the drawing module, the execution and the tests use. The exports are `damage_of_draw_table_17` and `execute_draw_table_in_rectangles_17`; the second refuses a table out of order.
 - **The writers.** `draw_clip_push` and `draw_clip_pop` replace `draw_clip`. The two lists push the clip of their area. No other element of the system clipped: each cut its texts by whole characters (`text_fit`), and a text must not be cut inside a glyph.

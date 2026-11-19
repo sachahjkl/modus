@@ -81,10 +81,17 @@ Text_Grid_Cell :: struct {
 // A grid of text cells: rows lines of columns cells, a line each stride
 // cells. The cells of a caller that draw_text_grid copies into the text
 // table; and the cells that grid_of finds there, with a stride of the
-// columns.
+// columns. A cell is cell_width_of the font of the size wide and
+// line_height of it high.
 Text_Grid :: struct {
 	cells:                  []Text_Grid_Cell, // At least `rows * stride` cells.
 	columns, rows, stride: int, // The cells of a line, the lines, and the cells from one line to the next.
+	size:                   u16, // The text size in 1/64 pixel, as the size of a Font: 0 is the size of the body.
+}
+
+// grid_font gives the font of the cells of a grid at its text size.
+grid_font :: proc "contextless" (grid: Text_Grid) -> Font {
+	return {size = grid.size}
 }
 
 // The draw records of one frame and the bytes of their texts, in the memory
@@ -516,9 +523,12 @@ GRID_CELL_LIMIT :: 1 << 24
 // module reads the cells in the text table (src/md/api/text_grid.md). A
 // grid whose cells are fewer than its rows, of more than GRID_CELL_LIMIT
 // cells, or in a table whose text does not start at a multiple of 4, is
-// refused. A grid that does not fit the text table makes the table full.
+// refused, and so is a grid of a text size that no record holds
+// (font_size_valid). A grid that does not fit the text table makes the
+// table full.
 draw_text_grid :: proc "contextless" (table: ^Draw_Table, x, y: int, grid: Text_Grid, element: u32 = 0) {
-	if !grid_valid(grid) || grid.columns > GRID_CELL_LIMIT || grid.rows > GRID_CELL_LIMIT / max(grid.columns, 1) || uintptr(raw_data(table.text)) % align_of(Text_Grid_Cell) != 0 {
+	font := grid_font(grid)
+	if !grid_valid(grid) || !font_size_valid(font) || grid.columns > GRID_CELL_LIMIT || grid.rows > GRID_CELL_LIMIT / max(grid.columns, 1) || uintptr(raw_data(table.text)) % align_of(Text_Grid_Cell) != 0 {
 		table.refused = true
 		return
 	}
@@ -539,7 +549,8 @@ draw_text_grid :: proc "contextless" (table: ^Draw_Table, x, y: int, grid: Text_
 		}
 	}
 	table.text_count = start + size
-	record_append(table, placed_record(draw_record.Draw_Text_Grid{first = u32(start), count = u32(size), columns = u32(grid.columns)}, element, x, y, grid.columns * graphics.CELL_WIDTH, grid.rows * graphics.CELL_HEIGHT))
+	fields := draw_record.Draw_Text_Grid{first = u32(start), count = u32(size), columns = u32(grid.columns), size = u16(font_text_size(font))}
+	record_append(table, placed_record(fields, element, x, y, grid.columns * cell_width_of(font), grid.rows * line_height(font)))
 }
 
 // grid_of gives the cells that a Text_Grid record names in the text table
@@ -568,20 +579,20 @@ grid_cells :: proc "contextless" (table: ^Draw_Table, fields: draw_record.Draw_T
 		return {}, false
 	}
 	if count == 0 {
-		return {columns = int(columns), stride = int(columns)}, true
+		return {columns = int(columns), stride = int(columns), size = fields.size}, true
 	}
 	if (uintptr(raw_data(table.text)) + uintptr(start)) % align_of(Text_Grid_Cell) != 0 {
 		return {}, false
 	}
 	cells := ([^]Text_Grid_Cell)(&table.text[start])[:count / size_of(Text_Grid_Cell)]
-	return {cells = cells, columns = int(columns), rows = int(count / row_bytes), stride = int(columns)}, true
+	return {cells = cells, columns = int(columns), rows = int(count / row_bytes), stride = int(columns), size = fields.size}, true
 }
 
 // text_of_record gives the text of a Text record, in either font, with its
-// scale, or false for another record, a record that the border refuses, or
-// a range outside the text table. A tool and a test find a text of a frame
-// with it.
-text_of_record :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -> (text: string, scale: int, ok: bool) {
+// text size in 1/64 pixel, or false for another record, a record that the
+// border refuses, or a range outside the text table. A tool and a test find
+// a text of a frame with it.
+text_of_record :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -> (text: string, size: int, ok: bool) {
 	primitive, problem := draw_record.read(record)
 	if problem != .None {
 		return "", 0, false
@@ -589,14 +600,14 @@ text_of_record :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -
 	first, count: u32
 	switch fields in primitive {
 	case draw_record.Draw_Text:
-		first, count, scale = fields.first, fields.count, int(fields.scale)
+		first, count, size = fields.first, fields.count, int(fields.size)
 	case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Clip_Pop, draw_record.Draw_Rectangle, draw_record.Draw_Gradient, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Path:
 		return "", 0, false
 	}
 	if u64(first) + u64(count) > u64(table.text_count) || u64(first) + u64(count) > u64(len(table.text)) {
 		return "", 0, false
 	}
-	return string(table.text[first:][:count]), scale, true
+	return string(table.text[first:][:count]), size, true
 }
 
 // draw_line appends a straight line from one pixel to another, with a
@@ -879,6 +890,12 @@ draw_text_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y: int, text:
 	color := draw_record.channels_of(draw_color)
 	alpha := draw_record.alpha_of(draw_color)
 	used := font_in_use(table, font, len(text))
+	// A size that no record holds is refused, never written at another
+	// size: the text is missing, and the caller sees `refused`.
+	if !font_size_valid(used) {
+		table.refused = true
+		return x
+	}
 	if used.kind == .Interface {
 		return interface_text_append(table, i64(x) * 64, y, text, color, used, element, alpha)
 	}
@@ -896,9 +913,8 @@ draw_text_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y: int, text:
 	start := table.text_count
 	copy(table.text[start:], text)
 	table.text_count += len(text)
-	scale := font_scale(used)
-	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.with_alpha(color, alpha), origin_x = draw_record.units_of_pixels(x), font = .Cells_8x16, scale = u8(scale), weight = used.weight}
-	record_append(table, placed_record(fields, element, x, y, width, graphics.CELL_HEIGHT * scale))
+	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.with_alpha(color, alpha), origin_x = draw_record.units_of_pixels(x), font = .Cells_8x16, weight = used.weight, size = u16(font_text_size(used))}
+	record_append(table, placed_record(fields, element, x, y, width, line_height(used)))
 	return x + width
 }
 
@@ -907,6 +923,10 @@ draw_text_with_alpha :: proc "contextless" (table: ^Draw_Table, x, y: int, text:
 // right or at most a third of a pixel before it.
 draw_text_right :: proc "contextless" (table: ^Draw_Table, right, y: int, text: string, color: graphics.Color, font: Font = {}, element: u32 = 0) {
 	used := font_in_use(table, font, len(text))
+	if !font_size_valid(used) {
+		table.refused = true
+		return
+	}
 	if used.kind == .Interface {
 		// The origin goes to the nearest third of a pixel, which can be up to
 		// 10.7 / 64 of a pixel to the right: 11 / 64 less makes it the third
@@ -921,8 +941,9 @@ draw_text_right :: proc "contextless" (table: ^Draw_Table, right, y: int, text: 
 // is at place, in 1/64 of a pixel, rounded to the nearest third of a pixel
 // (the positions of the glyph cache), and gives the x of the end of its
 // measured box, rounded up. The box of the record is the measured box grown
-// by the ink margin of the font on each side (graphics.PROPORTIONAL_INK_MARGIN
-// times the scale), so the damage of the record holds each pixel of its ink.
+// by the ink margin of the font at its size on each side (ink_margin_of),
+// so the damage of the record holds each pixel of its ink. The caller
+// checked the size (font_size_valid).
 // A text whose box would start past COORDINATE_LIMIT has no record: no
 // surface reaches it, and its origin would leave its box. alpha is the
 // alpha of the color.
@@ -935,8 +956,7 @@ interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: 
 	if len(text) == 0 {
 		return end
 	}
-	scale := font_scale(font)
-	margin := graphics.PROPORTIONAL_INK_MARGIN * scale
+	margin := ink_margin_of(font)
 	left := int(pixel) - margin
 	if left < -COORDINATE_LIMIT || left > COORDINATE_LIMIT - 1 || records_hidden(table) {
 		return end
@@ -948,10 +968,10 @@ interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: 
 	start := table.text_count
 	copy(table.text[start:], text)
 	table.text_count += len(text)
-	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.with_alpha(color, alpha), origin_x = i32(origin), font = .Interface, scale = u8(scale), weight = font.weight}
+	fields := draw_record.Draw_Text{first = u32(start), count = u32(len(text)), color = draw_record.with_alpha(color, alpha), origin_x = i32(origin), font = .Interface, weight = font.weight, size = u16(font_text_size(font))}
 	// The top and the bottom by the rule of each writer: the edges of a
 	// place and a size, each cut to the limit, so no sum passes the int.
-	top, bottom := cut_edges(y, graphics.CELL_HEIGHT * scale)
+	top, bottom := cut_edges(y, line_height(font))
 	record_append(table, record_of_pixels(fields, element, left, top, cut_place(end + margin), bottom))
 	return end
 }

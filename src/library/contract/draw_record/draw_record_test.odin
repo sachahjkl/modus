@@ -13,13 +13,13 @@ sample_primitives :: proc() -> [12]Draw_Primitive {
 		Draw_Rectangle{color = 0xFF18212D, repetition = SAMPLE_PATTERN},
 		Draw_Gradient{start_x = units_of_pixels(10), start_y = units_of_pixels(20) + 32, end_x = units_of_pixels(10), end_y = units_of_pixels(43) + 32, start_color = 0xFF101010, end_color = 0xFF202020},
 		Draw_Gradient{start_x = units_of_pixels(10) + 5, start_y = units_of_pixels(25), end_x = units_of_pixels(90) + 7, end_y = units_of_pixels(40) + 1, start_color = 0xFF303030, end_color = 0x80404040},
-		Draw_Text{origin_x = units_of_pixels(10), first = 3, count = 5, color = 0xFFABCDEF, scale = 2, weight = .Bold},
+		Draw_Text{origin_x = units_of_pixels(10), first = 3, count = 5, color = 0xFFABCDEF, size = 2 * SAMPLE_SIZE, weight = .Bold},
 		Draw_Clip_Push{},
 		Draw_Clip_Pop{},
 		Draw_Picture{memory = 1, first = 7, stride = 40, generation = 9},
-		Draw_Text_Grid{first = 8, count = 32, columns = 2},
+		Draw_Text_Grid{first = 8, count = 32, columns = 2, size = SAMPLE_SIZE},
 		Draw_Path{first = 12, count = 3 * PATH_POINT_SIZE, fill_color = 0x80708090, stroke_color = 0xFF102030, stroke_width = 3 * UNITS_PER_PIXEL / 2},
-		Draw_Text{font = .Interface, first = 0, count = 4, color = 0xFFFFFFFF, origin_x = units_of_pixels(12) + UNITS_PER_PIXEL / 3, scale = 1, weight = .Regular},
+		Draw_Text{font = .Interface, first = 0, count = 4, color = 0xFFFFFFFF, origin_x = units_of_pixels(12) + UNITS_PER_PIXEL / 3, size = SAMPLE_SIZE, weight = .Regular},
 	}
 }
 
@@ -36,6 +36,9 @@ SAMPLE_PATTERN :: Repetition {
 
 // An opaque color of the cases that test another field.
 SAMPLE_COLOR :: Draw_Color(OPAQUE_ALPHA << ALPHA_SHIFT | 1)
+
+// The text size of the cases that test another field: a line of 16 pixels.
+SAMPLE_SIZE :: 16 * UNITS_PER_PIXEL
 
 // The record of a sample in its box; a pop of a clip has the box of zeros,
 // the one box that the border reads for it.
@@ -275,7 +278,7 @@ read_refuses_the_word_of_the_interface_text :: proc(t: ^testing.T) {
 	record.kind = INTERFACE_TEXT_WORD
 	primitive, problem := read(record)
 	testing.expectf(t, problem == .Unknown_Kind && primitive == nil, "the word 11: %v", problem)
-	text := sample_record(Draw_Text{count = 4, color = 0xFFFFFFFF, origin_x = units_of_pixels(12) + UNITS_PER_PIXEL / 3, font = .Interface, scale = 1})
+	text := sample_record(Draw_Text{count = 4, color = 0xFFFFFFFF, origin_x = units_of_pixels(12) + UNITS_PER_PIXEL / 3, font = .Interface, size = SAMPLE_SIZE})
 	_, problem = read(text)
 	testing.expect_value(t, problem, Problem.None)
 	text.kind = INTERFACE_TEXT_WORD
@@ -289,7 +292,7 @@ read_refuses_the_word_of_the_interface_text :: proc(t: ^testing.T) {
 read_refuses_a_font_that_names_no_member :: proc(t: ^testing.T) {
 	refused := 0
 	for word in 0 ..= u64(max(u8)) {
-		record := sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), scale = 1})
+		record := sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), size = SAMPLE_SIZE})
 		fields := transmute(Text_Fields)record.fields
 		fields.font = u8(word)
 		record.fields = transmute([FIELDS_SIZE]u8)fields
@@ -311,19 +314,19 @@ read_refuses_a_font_that_names_no_member :: proc(t: ^testing.T) {
 read_takes_the_bounds_of_each_font :: proc(t: ^testing.T) {
 	left := units_of_pixels(10)
 	third := i32(UNITS_PER_PIXEL / 3)
-	_, problem := read(sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, origin_x = left + third, font = .Cells_8x16, scale = 1}))
+	_, problem := read(sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, origin_x = left + third, font = .Cells_8x16, size = SAMPLE_SIZE}))
 	testing.expectf(t, problem == .Field_Past_Bound, "a text in the font of the cells on a third: %v", problem)
-	_, problem = read(sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, origin_x = left + third, font = .Interface, scale = 1}))
+	_, problem = read(sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, origin_x = left + third, font = .Interface, size = SAMPLE_SIZE}))
 	testing.expect_value(t, problem, Problem.None)
-	_, problem = read(sample_record(Draw_Text{count = INTERFACE_TEXT_LIMIT + 1, color = SAMPLE_COLOR, origin_x = left, font = .Interface, scale = 1}))
+	_, problem = read(sample_record(Draw_Text{count = INTERFACE_TEXT_LIMIT + 1, color = SAMPLE_COLOR, origin_x = left, font = .Interface, size = SAMPLE_SIZE}))
 	testing.expect_value(t, problem, Problem.Field_Past_Bound)
-	_, problem = read(sample_record(Draw_Text{count = INTERFACE_TEXT_LIMIT + 1, color = SAMPLE_COLOR, origin_x = left, font = .Cells_8x16, scale = 1}))
+	_, problem = read(sample_record(Draw_Text{count = INTERFACE_TEXT_LIMIT + 1, color = SAMPLE_COLOR, origin_x = left, font = .Cells_8x16, size = SAMPLE_SIZE}))
 	testing.expect_value(t, problem, Problem.None)
-	_, problem = read(sample_record(Draw_Text{count = max(u32), color = SAMPLE_COLOR, origin_x = left + units_of_pixels(INK_MARGIN_LIMIT), font = .Cells_8x16, scale = 1}))
+	_, problem = read(sample_record(Draw_Text{count = max(u32), color = SAMPLE_COLOR, origin_x = left + units_of_pixels(INK_MARGIN_LIMIT), font = .Cells_8x16, size = SAMPLE_SIZE}))
 	testing.expect_value(t, problem, Problem.None)
-	_, problem = read(sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, origin_x = left - UNITS_PER_PIXEL, font = .Cells_8x16, scale = 1}))
+	_, problem = read(sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, origin_x = left - UNITS_PER_PIXEL, font = .Cells_8x16, size = SAMPLE_SIZE}))
 	testing.expect_value(t, problem, Problem.Field_Past_Bound)
-	_, problem = read(sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, origin_x = left + units_of_pixels(INK_MARGIN_LIMIT + 1), font = .Cells_8x16, scale = 1}))
+	_, problem = read(sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, origin_x = left + units_of_pixels(INK_MARGIN_LIMIT + 1), font = .Cells_8x16, size = SAMPLE_SIZE}))
 	testing.expect_value(t, problem, Problem.Field_Past_Bound)
 }
 
@@ -565,34 +568,39 @@ read_takes_a_box_inside_a_pixel_for_a_rectangle_and_a_gradient :: proc(t: ^testi
 	}
 }
 
-// The scale and the weight of a text, one past each bound and at the
-// largest value of the byte.
+// The text sizes that the border refuses: 0, 1, one unit under
+// TEXT_SIZE_MINIMUM, one unit past TEXT_SIZE_LIMIT and the largest u16.
+@(private = "file")
+REFUSED_TEXT_SIZES :: [5]u16{0, 1, TEXT_SIZE_MINIMUM - 1, TEXT_SIZE_LIMIT + 1, max(u16)}
+
+// The size and the weight of a text, one past each bound and at the
+// largest value of the field. A refused record gives no primitive.
 @(test)
 read_refuses_a_text_past_its_bounds :: proc(t: ^testing.T) {
-	scales := [?]u8{0, TEXT_SCALE_LIMIT + 1, max(u8)}
+	sizes := REFUSED_TEXT_SIZES
 	weights := [?]u8{u8(max(Font_Weight)) + 1, max(u8)}
-	for scale in scales {
-		record := sample_record(Draw_Text{origin_x = units_of_pixels(10), first = 0, count = 1, color = SAMPLE_COLOR, scale = 1})
+	for size in sizes {
+		record := sample_record(Draw_Text{origin_x = units_of_pixels(10), first = 0, count = 1, color = SAMPLE_COLOR, size = SAMPLE_SIZE})
 		fields := transmute(Text_Fields)record.fields
-		fields.scale = scale
+		fields.size = size
 		record.fields = transmute([FIELDS_SIZE]u8)fields
-		_, problem := read(record)
-		testing.expectf(t, problem == .Field_Past_Bound, "a text of scale %d: %v", scale, problem)
-		record = sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), scale = 1})
+		primitive, problem := read(record)
+		testing.expectf(t, problem == .Field_Past_Bound && primitive == nil, "a text of size %d: %v", size, problem)
+		record = sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), size = SAMPLE_SIZE})
 		interface_fields := transmute(Text_Fields)record.fields
-		interface_fields.scale = scale
+		interface_fields.size = size
 		record.fields = transmute([FIELDS_SIZE]u8)interface_fields
-		_, problem = read(record)
-		testing.expectf(t, problem == .Field_Past_Bound, "an interface text of scale %d: %v", scale, problem)
+		primitive, problem = read(record)
+		testing.expectf(t, problem == .Field_Past_Bound && primitive == nil, "an interface text of size %d: %v", size, problem)
 	}
 	for weight in weights {
-		record := sample_record(Draw_Text{origin_x = units_of_pixels(10), first = 0, count = 1, color = SAMPLE_COLOR, scale = 1})
+		record := sample_record(Draw_Text{origin_x = units_of_pixels(10), first = 0, count = 1, color = SAMPLE_COLOR, size = SAMPLE_SIZE})
 		fields := transmute(Text_Fields)record.fields
 		fields.weight = weight
 		record.fields = transmute([FIELDS_SIZE]u8)fields
 		_, problem := read(record)
 		testing.expectf(t, problem == .Field_Past_Bound, "a text of weight %d: %v", weight, problem)
-		record = sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), scale = 1})
+		record = sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), size = SAMPLE_SIZE})
 		interface_fields := transmute(Text_Fields)record.fields
 		interface_fields.weight = weight
 		record.fields = transmute([FIELDS_SIZE]u8)interface_fields
@@ -607,7 +615,7 @@ read_refuses_a_text_past_its_bounds :: proc(t: ^testing.T) {
 read_refuses_an_interface_text_past_its_bounds :: proc(t: ^testing.T) {
 	counts := [?]u32{INTERFACE_TEXT_LIMIT + 1, max(u32)}
 	for count in counts {
-		record := sample_record(Draw_Text{font = .Interface, count = count, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), scale = 1})
+		record := sample_record(Draw_Text{font = .Interface, count = count, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), size = SAMPLE_SIZE})
 		_, problem := read(record)
 		testing.expectf(t, problem == .Field_Past_Bound, "an interface text of %d bytes: %v", count, problem)
 	}
@@ -622,9 +630,39 @@ read_refuses_an_interface_text_past_its_bounds :: proc(t: ^testing.T) {
 		min(i32),
 	}
 	for origin in origins {
-		record := sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = origin, scale = 1})
+		record := sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = origin, size = SAMPLE_SIZE})
 		_, problem := read(record)
 		testing.expectf(t, problem == .Field_Past_Bound, "an interface text whose origin is %d units, for a box at %d: %v", origin, left, problem)
+	}
+	// Past a line of INK_MARGIN_LIMIT pixels the bound of the origin is one
+	// line: one pixel past it is refused at the largest size and at a size
+	// one pixel past the margin.
+	sizes := [2]u16{TEXT_SIZE_LIMIT, (INK_MARGIN_LIMIT + 1) * UNITS_PER_PIXEL}
+	for size in sizes {
+		past := left + i32(size) + UNITS_PER_PIXEL
+		_, problem := read(sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = past, size = size}))
+		testing.expectf(t, problem == .Field_Past_Bound, "an interface text of size %d one pixel past its line: %v", size, problem)
+		inside := left + i32(size) + UNITS_PER_PIXEL * 2 / 3
+		_, problem = read(sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = inside, size = size}))
+		testing.expectf(t, problem == .None, "an interface text of size %d at the bound of its line: %v", size, problem)
+	}
+}
+
+// The size of a grid: each size that a text refuses, a grid refuses, and
+// the bounds are read.
+@(test)
+read_refuses_a_grid_past_its_size :: proc(t: ^testing.T) {
+	sizes := REFUSED_TEXT_SIZES
+	for size in sizes {
+		primitive, problem := read(sample_record(Draw_Text_Grid{first = 8, count = 32, columns = 2, size = size}))
+		testing.expectf(t, problem == .Field_Past_Bound && primitive == nil, "a grid of size %d: %v", size, problem)
+	}
+	bounds := [2]u16{TEXT_SIZE_MINIMUM, TEXT_SIZE_LIMIT}
+	for size in bounds {
+		grid := Draw_Text_Grid{first = 8, count = 32, columns = 2, size = size}
+		primitive, problem := read(sample_record(grid))
+		read_grid, is_grid := primitive.(Draw_Text_Grid)
+		testing.expectf(t, problem == .None && is_grid && read_grid == grid, "a grid of size %d: %v", size, problem)
 	}
 }
 
@@ -700,10 +738,11 @@ read_refuses_the_word_of_the_line :: proc(t: ^testing.T) {
 @(test)
 read_takes_each_bound :: proc(t: ^testing.T) {
 	accepted := [?]Draw_Primitive {
-		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = SAMPLE_COLOR, scale = 1},
-		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = SAMPLE_COLOR, scale = TEXT_SCALE_LIMIT, weight = max(Font_Weight)},
-		Draw_Text{font = .Interface, count = INTERFACE_TEXT_LIMIT, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), scale = TEXT_SCALE_LIMIT},
-		Draw_Text{font = .Interface, count = 0, color = SAMPLE_COLOR, origin_x = units_of_pixels(10 + INK_MARGIN_LIMIT) + UNITS_PER_PIXEL * 2 / 3, scale = 1, weight = .Bold},
+		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = SAMPLE_COLOR, size = SAMPLE_SIZE},
+		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = SAMPLE_COLOR, size = TEXT_SIZE_MINIMUM},
+		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = SAMPLE_COLOR, size = TEXT_SIZE_LIMIT, weight = max(Font_Weight)},
+		Draw_Text{font = .Interface, count = INTERFACE_TEXT_LIMIT, color = SAMPLE_COLOR, origin_x = units_of_pixels(10), size = TEXT_SIZE_LIMIT},
+		Draw_Text{font = .Interface, count = 0, color = SAMPLE_COLOR, origin_x = units_of_pixels(10 + INK_MARGIN_LIMIT) + UNITS_PER_PIXEL * 2 / 3, size = SAMPLE_SIZE, weight = .Bold},
 		Draw_Path{count = PATH_POINT_LIMIT * PATH_POINT_SIZE, stroke_color = SAMPLE_COLOR, stroke_width = STROKE_WIDTH_UNIT_LIMIT},
 	}
 	for primitive in accepted {
@@ -812,8 +851,8 @@ records_of_one_color :: proc(color: Draw_Color) -> [7]Draw_Primitive {
 		Draw_Rectangle{color = color, repetition = SAMPLE_PATTERN},
 		gradient_of_colors(color, 0),
 		gradient_of_colors(0, color),
-		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = color, scale = 1},
-		Draw_Text{font = .Interface, count = 1, color = color, origin_x = units_of_pixels(12), scale = 1},
+		Draw_Text{origin_x = units_of_pixels(10), count = 1, color = color, size = SAMPLE_SIZE},
+		Draw_Text{font = .Interface, count = 1, color = color, origin_x = units_of_pixels(12), size = SAMPLE_SIZE},
 		Draw_Path{count = 2 * PATH_POINT_SIZE, fill_color = color},
 	}
 }
@@ -939,8 +978,9 @@ the_widest_box_has_a_width_in_an_i32 :: proc(t: ^testing.T) {
 	testing.expect_value(t, i64(width), 2 * i64(COORDINATE_UNIT_LIMIT))
 	testing.expect_value(t, i64(height), 2 * i64(COORDINATE_UNIT_LIMIT))
 	testing.expect(t, width > 0 && height > 0, "the width of the widest box wraps")
-	// The ink margin past the right edge of the widest box still fits.
-	testing.expect(t, i64(record.right) + i64(INK_MARGIN_LIMIT + 1) * UNITS_PER_PIXEL < i64(max(i32)))
+	// The largest ink margin, one line of the largest size, past the right
+	// edge of the widest box still fits.
+	testing.expect(t, i64(record.right) + i64(max(INK_MARGIN_LIMIT * UNITS_PER_PIXEL, TEXT_SIZE_LIMIT)) + UNITS_PER_PIXEL < i64(max(i32)))
 }
 
 // The origin of a text in the interface font: at the largest margin, a
@@ -950,15 +990,15 @@ the_widest_box_has_a_width_in_an_i32 :: proc(t: ^testing.T) {
 the_origin_of_an_interface_text_at_its_edges :: proc(t: ^testing.T) {
 	left := units_of_pixels(10)
 	largest := left + units_of_pixels(INK_MARGIN_LIMIT) + UNITS_PER_PIXEL * 2 / 3
-	_, problem := read(sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = largest, scale = 1}))
+	_, problem := read(sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = largest, size = SAMPLE_SIZE}))
 	testing.expect_value(t, problem, Problem.None)
-	_, problem = read(sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = largest + 1, scale = 1}))
+	_, problem = read(sample_record(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = largest + 1, size = SAMPLE_SIZE}))
 	testing.expect_value(t, problem, Problem.Field_Past_Bound)
 	// A box at -10 pixels and the origin two pixels and a third right of it.
-	negative := record_of(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = units_of_pixels(-8) + UNITS_PER_PIXEL / 3, scale = 1}, 0, units_of_pixels(-10), units_of_pixels(-20), units_of_pixels(-2), units_of_pixels(-4))
+	negative := record_of(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = units_of_pixels(-8) + UNITS_PER_PIXEL / 3, size = SAMPLE_SIZE}, 0, units_of_pixels(-10), units_of_pixels(-20), units_of_pixels(-2), units_of_pixels(-4))
 	_, problem = read(negative)
 	testing.expect_value(t, problem, Problem.None)
-	off_third := record_of(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = units_of_pixels(-8) + 1, scale = 1}, 0, units_of_pixels(-10), units_of_pixels(-20), units_of_pixels(-2), units_of_pixels(-4))
+	off_third := record_of(Draw_Text{font = .Interface, count = 1, color = SAMPLE_COLOR, origin_x = units_of_pixels(-8) + 1, size = SAMPLE_SIZE}, 0, units_of_pixels(-10), units_of_pixels(-20), units_of_pixels(-2), units_of_pixels(-4))
 	_, problem = read(off_third)
 	testing.expect_value(t, problem, Problem.Field_Past_Bound)
 }
@@ -980,8 +1020,8 @@ read_states_the_order_of_its_checks :: proc(t: ^testing.T) {
 	reserved_and_past.reserved[1] = 1
 	past_and_inverted := record_of(Draw_Rectangle{color = SAMPLE_COLOR}, 0, COORDINATE_UNIT_LIMIT + UNITS_PER_PIXEL, 0, 0, units_of_pixels(1))
 	inverted_and_inside := record_of(Draw_Rectangle{color = SAMPLE_COLOR}, 0, units_of_pixels(4) + 1, 0, 0, units_of_pixels(1))
-	inside_and_field := record_of(Draw_Text{count = 1, color = SAMPLE_COLOR, scale = 0}, 0, 1, 0, units_of_pixels(4), units_of_pixels(4))
-	field_reserved_and_bound := sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, scale = 0})
+	inside_and_field := record_of(Draw_Text{count = 1, color = SAMPLE_COLOR, size = 0}, 0, 1, 0, units_of_pixels(4), units_of_pixels(4))
+	field_reserved_and_bound := sample_record(Draw_Text{count = 1, color = SAMPLE_COLOR, size = 0})
 	field_reserved_and_bound.fields[FIELDS_SIZE - 1] = 1
 	cases := [?]Case {
 		{unknown_and_reserved, .Unknown_Kind},

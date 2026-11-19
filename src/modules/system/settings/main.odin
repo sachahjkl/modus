@@ -476,8 +476,8 @@ zone_row :: proc "contextless" (frame: ^interface.Frame, x, y: int, choice: sett
 }
 
 // draw builds the window: a row of buttons for each setting and for the
-// time zone, then the text of the system at its three sizes, then the hash
-// of the font of the cells.
+// time zone, then the text of the system at the text size tokens, then the
+// hash of the font of the cells.
 draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	// A refused page shows the defaults: a press writes a whole page again.
 	choice, _ := settings.read(page)
@@ -489,9 +489,9 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	interface.text_put(&count, "change ")
 	interface.text_put_number(&count, u64(choice.change_count / 2))
 	// A row: a button of 24 pixels and a gap of 8. The card of the text
-	// under the rows needs 152 pixels of content, so that its line of facts
-	// is under its large number: 7 rows of 32, the settings and the time
-	// zone, leave it 168 in the window.
+	// under the rows needs 150 pixels of content, so that its line of facts
+	// is under the caption of its large number: 7 rows of 32, the settings
+	// and the time zone, leave it 168 in the window.
 	ROW :: 32
 	rows_height := (len(settings.Setting) + 1) * ROW
 	content := interface.card(&frame, {8, 8, WIDTH - 16, 40 + rows_height + 32}, "SETTINGS", has_store ? "kept in the store of settings" : "NOT kept: no store", graphics.colors.kernel, interface.text_of(&count))
@@ -537,9 +537,12 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	for line, index in lines {
 		interface.draw_text(frame.table, sample.x, sample.y + index * 16, line, graphics.colors.text)
 	}
-	interface.draw_text(frame.table, sample.x, sample.y + 56, "EEVDF fair", graphics.colors.process, interface.FONT_MEDIUM)
-	after := interface.large_number(&frame, sample.x, sample.y + 88, "12 345", graphics.colors.text)
-	interface.draw_text(frame.table, after + 16, sample.y + 112, "wakes in one second", graphics.colors.dim)
+	// The heading, then the large number with its caption under it: each
+	// text size token that the desktop uses, one under the other.
+	heading_top := sample.y + 3 * graphics.LINE_HEIGHT + graphics.GAP
+	number_top := heading_top + interface.draw_heading(&frame, sample.x, heading_top, sample.width, "EEVDF fair", graphics.colors.process) + graphics.GAP
+	interface.large_number(&frame, sample.x, number_top, "12 345", graphics.colors.text)
+	interface.draw_caption(&frame, sample.x, number_top + interface.line_height(interface.FONT_LARGE), sample.width, "wakes in one second")
 	// The hash of the font file of the cells, which the record of the font
 	// outlines names and this process opened.
 	facts: interface.Text_Builder

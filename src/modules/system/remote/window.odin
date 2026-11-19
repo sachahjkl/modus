@@ -50,10 +50,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 
 	// The calls of the host, with the large number of the card.
 	inside := interface.card(&frame, {8, 8, WIDTH - 16, 192}, "CALLS FROM THE HOST", "one QUIC stream: remote.Request -> isolated call -> remote.Answer", graphics.colors.process)
-	interface.large_number(&frame, inside.x, inside.y, system.format(buffer[:], counts.calls), graphics.colors.process)
-	interface.draw_text(table, inside.x, inside.y + 56, "calls that ran", graphics.colors.dim)
 	COLUMN :: 232
 	VALUE :: 456
+	// The label of the number is a caption under it. A digit of the large
+	// size is 16 pixels: a count of 14 digits stops before the column of
+	// the facts.
+	interface.large_number(&frame, inside.x, inside.y, system.format(buffer[:], counts.calls), graphics.colors.process)
+	interface.draw_caption(&frame, inside.x, inside.y + interface.line_height(interface.FONT_LARGE), COLUMN - graphics.GAP, "calls that ran")
 	Fact :: struct {
 		name:  string,
 		value: u64,

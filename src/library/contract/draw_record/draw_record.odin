@@ -48,7 +48,7 @@ import "modus:contract/enum_word"
 // of a bound that changes what a record draws, or of a rule of the
 // execution is a new version, and the names of the exports of the drawing
 // module carry it.
-VERSION :: 17
+VERSION :: 18
 
 RECORD_SIZE :: 48 // The bytes of one record.
 HEADER_SIZE :: 24 // The bytes of the header: the kind, the reserved bytes, the element and the box.
@@ -95,15 +95,23 @@ CURVE_TOLERANCE_UNITS :: 8
 // 255: with it, each product and their sum fit an i64.
 GRADIENT_SPAN_LIMIT :: 1 << 15
 
-TEXT_SCALE_LIMIT :: 3 // The largest scale of a text: 1, 2 or 3 times the size of the font.
+// The text size of a Text and of a Text_Grid is the height of its line, in
+// 1/64 pixel: a line of 16 pixels is 1 024. The border refuses a size out
+// of this range, and never clamps it. Under 4 pixels a glyph has no form
+// that a reader can read; the largest size is a bound of cost: the worst
+// record is 256 glyphs of that size over one place. A larger text is a path.
+TEXT_SIZE_MINIMUM :: 4 * UNITS_PER_PIXEL
+TEXT_SIZE_LIMIT :: 256 * UNITS_PER_PIXEL
+#assert(TEXT_SIZE_LIMIT <= int(max(u16)))
 
 // The most bytes of one text in the interface font: the execution places
 // its glyphs on its stack. A longer text is drawn in the font of the cells.
 INTERFACE_TEXT_LIMIT :: 256
 
-// The largest ink margin of a text in the interface font, in pixels: the
-// distance from the left edge of its box to its origin. The margin of the
-// font at scale 3 is far smaller.
+// The largest ink margin of a text in the interface font, in pixels, at a
+// line of 16 pixels or less: the distance from the left edge of its box to
+// its origin. The margin grows with the size, so at a larger size the bound
+// is one line (origin_valid).
 INK_MARGIN_LIMIT :: 16
 
 // The most clips that are open at one time. A reader keeps one rectangle
@@ -163,11 +171,11 @@ Path_Problem :: enum u8 {
 	Point_Past_Coordinate_Limit = 8, // A point is past COORDINATE_LIMIT.
 }
 
-// The weight of a text. Bold draws at scale 1 only (the titles of the
-// cards); at another scale, and with Spleen 8x16, it is the regular weight.
+// The weight of a text, at each size. With Spleen 8x16 it is the regular
+// weight.
 Font_Weight :: enum u8 {
 	Regular = 0, // The normal weight.
-	Bold    = 1, // The bold weight: at scale 1 only.
+	Bold    = 1, // The bold weight.
 }
 
 // A color of a record: 0xAARRGGBB, with straight alpha in the high byte.
@@ -201,7 +209,7 @@ Problem :: enum u8 {
 	Box_Inverted              = 3, // The right edge of the box is left of its left edge, or its bottom above its top.
 	Box_Past_Coordinate_Limit = 4, // An edge of the box is past COORDINATE_LIMIT.
 	Box_Not_On_Whole_Pixels   = 5, // An edge of the box is not a whole pixel, in a kind whose box is on whole pixels: each kind but a rectangle with no pattern and a gradient.
-	Field_Past_Bound          = 6, // A field of the kind is out of its range: a color that is not canonical, a format, a scale, a weight, the two points of a gradient, a count, an origin, the first byte of a path, the width of a stroke.
+	Field_Past_Bound          = 6, // A field of the kind is out of its range: a color that is not canonical, a format, a text size, a weight, the two points of a gradient, a count, an origin, the first byte of a path, the width of a stroke.
 }
 
 // One draw record, 48 bytes, little-endian. A record holds values only:
@@ -273,11 +281,11 @@ Text_Fields :: struct {
 	first:    u32, // The first byte of the text in the text table.
 	count:    u32, // The bytes of the text; in the interface font, at most INTERFACE_TEXT_LIMIT.
 	color:    u32, // A Draw_Color, canonical: a color with alpha 0 is 0. The alpha scales the coverage of each glyph.
-	origin_x: i32, // The origin of the text, in 1/64 pixel, at most INK_MARGIN_LIMIT pixels right of the left edge of the box: on a whole pixel in the font of the cells, on a third of a pixel in the interface font.
+	origin_x: i32, // The origin of the text, in 1/64 pixel, right of the left edge of the box by at most the larger of INK_MARGIN_LIMIT pixels and one line: on a whole pixel in the font of the cells, on a third of a pixel in the interface font.
 	font:     u8, // The word of a Font_Kind.
-	scale:    u8, // 1 to TEXT_SCALE_LIMIT.
 	weight:   u8, // The word of a Font_Weight.
-	reserved: [5]u8, // 0.
+	size:     u16, // The text size in 1/64 pixel: TEXT_SIZE_MINIMUM to TEXT_SIZE_LIMIT.
+	reserved: [4]u8, // 0.
 }
 
 // The fields of a Picture. Its size is the size of the box.
@@ -292,11 +300,14 @@ Picture_Fields :: struct {
 }
 
 // The fields of a Text_Grid. The cells are in the text table, 16 bytes each.
+// A cell is half the text size wide, rounded to a whole pixel with a half
+// up, and two widths high, so a cell is whole pixels at each size.
 Text_Grid_Fields :: struct {
 	first:    u32, // The first byte of the cells in the text table, a multiple of 4.
 	count:    u32, // The bytes of the cells: rows times columns times 16.
 	columns:  u32, // The cells of one row.
-	reserved: [12]u8, // 0.
+	size:     u16, // The text size in 1/64 pixel: TEXT_SIZE_MINIMUM to TEXT_SIZE_LIMIT.
+	reserved: [10]u8, // 0.
 }
 
 // The fields of a Path. Its points are in the text table: count bytes from
@@ -355,8 +366,8 @@ Draw_Text :: struct {
 	color:               Draw_Color,
 	origin_x:            i32, // In 1/64 pixel.
 	font:                Font_Kind,
-	scale:               u8,
 	weight:              Font_Weight,
+	size:                u16, // The text size in 1/64 pixel.
 }
 // A push of a clip: its box is the clip. A pop of a clip: its box is 0.
 // Both have no field.
@@ -369,6 +380,7 @@ Draw_Picture :: struct {
 }
 Draw_Text_Grid :: struct {
 	first, count, columns: u32,
+	size:                  u16, // The text size in 1/64 pixel.
 }
 Draw_Path :: struct {
 	first, count:             u32, // The range of the points in the text table, in bytes.
@@ -561,7 +573,7 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 		}
 		font, font_ok := font_kind_of_word(fields.font)
 		weight, weight_ok := font_weight_of_word(fields.weight)
-		if !font_ok || !weight_ok || fields.scale < 1 || fields.scale > TEXT_SCALE_LIMIT || !color_canonical(Draw_Color(fields.color)) || !origin_valid(fields.origin_x, record.left) {
+		if !font_ok || !weight_ok || !text_size_valid(fields.size) || !color_canonical(Draw_Color(fields.color)) || !origin_valid(fields.origin_x, record.left, fields.size) {
 			return nil, .Field_Past_Bound
 		}
 		// The font of the cells draws from a whole pixel and has no bound of
@@ -577,7 +589,7 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 				return nil, .Field_Past_Bound
 			}
 		}
-		return Draw_Text{first = fields.first, count = fields.count, color = Draw_Color(fields.color), origin_x = fields.origin_x, font = font, scale = fields.scale, weight = weight}, .None
+		return Draw_Text{first = fields.first, count = fields.count, color = Draw_Color(fields.color), origin_x = fields.origin_x, font = font, weight = weight, size = fields.size}, .None
 	case .Picture:
 		fields := transmute(Picture_Fields)record.fields
 		if !all_zero(fields.memory_reserved) || !all_zero(fields.reserved) {
@@ -593,7 +605,10 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
 		}
-		return Draw_Text_Grid{first = fields.first, count = fields.count, columns = fields.columns}, .None
+		if !text_size_valid(fields.size) {
+			return nil, .Field_Past_Bound
+		}
+		return Draw_Text_Grid{first = fields.first, count = fields.count, columns = fields.columns, size = fields.size}, .None
 	case .Path:
 		fields := transmute(Path_Fields)record.fields
 		if !all_zero(fields.reserved) {
@@ -632,13 +647,13 @@ record_of :: proc "contextless" (primitive: Draw_Primitive, element: u32, left, 
 		record.fields = transmute([FIELDS_SIZE]u8)Gradient_Fields{start_x = value.start_x, start_y = value.start_y, end_x = value.end_x, end_y = value.end_y, start_color = u32(value.start_color), end_color = u32(value.end_color)}
 	case Draw_Text:
 		record.kind = u8(Draw_Kind.Text)
-		record.fields = transmute([FIELDS_SIZE]u8)Text_Fields{first = value.first, count = value.count, color = u32(value.color), origin_x = value.origin_x, font = u8(value.font), scale = value.scale, weight = u8(value.weight)}
+		record.fields = transmute([FIELDS_SIZE]u8)Text_Fields{first = value.first, count = value.count, color = u32(value.color), origin_x = value.origin_x, font = u8(value.font), weight = u8(value.weight), size = value.size}
 	case Draw_Picture:
 		record.kind = u8(Draw_Kind.Picture)
 		record.fields = transmute([FIELDS_SIZE]u8)Picture_Fields{memory = value.memory, format = u8(value.format), first = value.first, stride = value.stride, generation = value.generation}
 	case Draw_Text_Grid:
 		record.kind = u8(Draw_Kind.Text_Grid)
-		record.fields = transmute([FIELDS_SIZE]u8)Text_Grid_Fields{first = value.first, count = value.count, columns = value.columns}
+		record.fields = transmute([FIELDS_SIZE]u8)Text_Grid_Fields{first = value.first, count = value.count, columns = value.columns, size = value.size}
 	case Draw_Path:
 		record.kind = u8(Draw_Kind.Path)
 		record.fields = transmute([FIELDS_SIZE]u8)Path_Fields{first = value.first, count = value.count, fill_color = u32(value.fill_color), stroke_color = u32(value.stroke_color), stroke_width = value.stroke_width}
@@ -951,13 +966,23 @@ divide_rounded :: proc "contextless" (numerator, denominator: i64) -> i64 {
 // as `third * 64 / 3` writes them.
 ORIGIN_THIRDS :: [3]i32{0, UNITS_PER_PIXEL / 3, UNITS_PER_PIXEL * 2 / 3}
 
+// text_size_valid says if a text size is from TEXT_SIZE_MINIMUM to
+// TEXT_SIZE_LIMIT. The size 0 is refused too: a record has one form for
+// each size, so no size has a default word.
+text_size_valid :: proc "contextless" (size: u16) -> bool {
+	return int(size) >= TEXT_SIZE_MINIMUM && int(size) <= TEXT_SIZE_LIMIT
+}
+
 // origin_valid says if the origin of a text is on a third of a pixel, and
-// at most INK_MARGIN_LIMIT pixels and two thirds right of the left edge of
-// its box. A whole pixel is a third too; the font of the cells asks for one. In 64 bits: the edge and the origin
-// can be at the two ends of an i32.
-origin_valid :: proc "contextless" (origin_x, left: i32) -> bool {
+// at most the larger of INK_MARGIN_LIMIT pixels and one line of its size,
+// and two thirds of a pixel, right of the left edge of its box: the ink
+// margin grows with the size. A whole pixel is a third too; the font of
+// the cells asks for one. In 64 bits: the edge and the origin can be at
+// the two ends of an i32.
+origin_valid :: proc "contextless" (origin_x, left: i32, size: u16) -> bool {
 	margin := i64(origin_x) - i64(left)
-	if margin < 0 || margin >= i64(INK_MARGIN_LIMIT + 1) * UNITS_PER_PIXEL {
+	bound := max(i64(INK_MARGIN_LIMIT) * UNITS_PER_PIXEL, i64(size) & ~i64(UNITS_PER_PIXEL - 1))
+	if margin < 0 || margin >= bound + UNITS_PER_PIXEL {
 		return false
 	}
 	part := origin_x & (UNITS_PER_PIXEL - 1)

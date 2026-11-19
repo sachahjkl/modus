@@ -504,7 +504,7 @@ Do not use: label box, text area, text field (a text input is the element that t
 
 A text size is the height of the line of a face, in 1/64 pixel, which a process gives to measure and draw a text.
 
-A line of 16 pixels is the size 1 024, so the three scales of a text record are 1 024, 2 048 and 3 072. The text rendering module takes any size from 256 to 16 384, a line of 4 to 256 pixels, and refuses another. The frame of a face turns it into units of the font. A label and its value at one text size share one line. It is not an em, not a size in points and not a scale factor.
+A line of 16 pixels is the size 1 024. A text record and a text grid carry it, and the text rendering module and the border of the record take any size from 256 to 16 384, a line of 4 to 256 pixels, and refuse another, 0 too. The frame of a face turns it into units of the font. A label and its value at one text size share one line. It is not an em, not a size in points and not a scale factor.
 
 The design: `src/md/features/text_rendering.md`, "The text size".
 
@@ -544,8 +544,28 @@ Do not use: font engine, text service, font server.
 
 A text size token is a named text size of the design rules, in logical pixels: `text_caption` 14, `text_body` 16, `text_heading` 24, `text_large` 32 and `text_largest` 48.
 
-It is the design of the coming steps. The desktop and the elements of the interface package draw their texts at these sizes only, so the texts of two windows line up; a process can draw any text size. 14 is the smallest size at which both fonts keep an x-height of 6 whole rows. Example: the caption of a card is `text_caption`, its one number `text_large`.
+A token times 64 is the text size of a record. The desktop and the elements of the interface package draw their texts at these sizes only, so the texts of two windows line up; a process can draw any text size. 14 is the smallest size at which both fonts keep an x-height of 6 whole rows. Example: the caption of a card is `text_caption`, its one number `text_large`, the page heading of `manual` `text_heading`.
 
 The design: `src/md/features/text_rendering.md`, "The text size tokens".
 
 Do not use: type scale, font size token.
+
+### Caption
+
+A caption is a short text at the text size token `text_caption`, in the dim color, that says what a text or an element beside it is.
+
+The caption of a card names its record, on the baseline of the title. A label under a value is a caption under its line (`interface.draw_caption`), with no gap. The help line of the chosen row of the palette, and the hash prefix after a nickname, are captions too. A caption keeps the contrast of a text, 4.5 to 1, on each surface of a card. It is not the title of a window: that is the title bar.
+
+The design: `src/md/features/text_rendering.md`, "The text size tokens".
+
+Do not use: small print, fine print.
+
+### Page heading
+
+A page heading is the title of a page of a window, at the text size token `text_heading`, over the content of the page.
+
+`manual` gives each page a page heading: the name of a module, the title of a link page, "All the modules". It is not a row of the page: it stays when the rows move, and it takes whole rows of the column, so each row keeps one height. A page heading wider than its box goes on more lines (`interface.draw_heading`); it is never cut. It is not a heading of a guide, which is a line of Markdown.
+
+The design: `src/md/features/text_rendering.md`, "The text size tokens".
+
+Do not use: page title, masthead.
