@@ -34,14 +34,6 @@ import "modus:support/system"
 // page and their page tables.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
 
-// The stop codes before Machine_Usable: the root service then starts the
-// rescue start policy.
-Stop_Code :: enum u32 {
-	Root_Ring_Refused = 1, // The ring to the root service does not open.
-	Console_Refused   = 2, // The root service did not start the console.
-	Usable_Refused    = 3, // The root service refused Machine_Usable.
-}
-
 // The order of this start policy: the input service and the compositor
 // when the machine has a screen, then the console, which makes the machine
 // usable.
@@ -50,14 +42,16 @@ ORDER :: [3]string{"input", "compositor", "console"}
 requests: ring.Ring
 next_tag: u32 = 1
 
+// Each stop before Machine_Usable writes its line first and stops with
+// Failed: the root service then starts the rescue start policy.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	system.log("disk_start_policy: ok, a start policy from the disk: its order is in its code")
+	system.log(.Info, "disk_start_policy: ok, a start policy from the disk: its order is in its code")
 	ring_status: system.Status
 	requests, ring_status = system.ring_open(ctx.handles[system.GRANT_ROOT])
 	if ring_status != .Ok {
-		system.log("disk_start_policy: the root ring does not open: status ", ring_status)
-		system.stop(u32(Stop_Code.Root_Ring_Refused))
+		system.log(.Info, "disk_start_policy: the root ring does not open: status ", ring_status)
+		system.stop(.Failed)
 	}
 	// Its one grant: the root ring and the log, and no window, no store and
 	// no right of the machine.
@@ -68,20 +62,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if other == 0 && ctx.values[start_list.VALUE_LIST_SIZE] == 0 {
-		system.log("disk_start_policy: the context holds the log, the budget and the root ring, no other handle and no start list: as it must")
+		system.log(.Info, "disk_start_policy: the context holds the log, the budget and the root ring, no other handle and no start list: as it must")
 	} else {
-		system.log("disk_start_policy: the context holds ", u64(other), " other handles and a list of ", ctx.values[start_list.VALUE_LIST_SIZE], " bytes: WRONG")
+		system.log(.Info, "disk_start_policy: the context holds ", u64(other), " other handles and a list of ", ctx.values[start_list.VALUE_LIST_SIZE], " bytes: WRONG")
 	}
 	parts, _, _, page_read := start_list.parts_page_read(rawptr(uintptr(start_list.MACHINE_PARTS_PAGE_ADDRESS)))
 	if !page_read {
-		system.log("disk_start_policy: the machine parts page is refused: it starts the console only")
+		system.log(.Info, "disk_start_policy: the machine parts page is refused: it starts the console only")
 	}
 	// A start policy never starts a start policy: the root service starts
 	// it alone.
 	if status, _ := command_call(.Start, "start_policy"); status != .Ok {
-		system.log("disk_start_policy: a start of the start policy of the boot image is refused with the status ", status, ": as it must")
+		system.log(.Info, "disk_start_policy: a start of the start policy of the boot image is refused with the status ", status, ": as it must")
 	} else {
-		system.log("disk_start_policy: a start of the start policy of the boot image is taken: WRONG")
+		system.log(.Info, "disk_start_policy: a start of the start policy of the boot image is taken: WRONG")
 	}
 	// Its root ring sends Start, Stop and Machine_Usable only: each command
 	// of the console is refused with No_Right, before it runs.
@@ -89,34 +83,34 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	taken := 0
 	for command in refused {
 		if status, _ := command_call(command, "storage"); status != .No_Right {
-			system.log("disk_start_policy: the command ", root_ring.root_command_names[command], " gives the status ", status, ", not No_Right: WRONG")
+			system.log(.Info, "disk_start_policy: the command ", root_ring.root_command_names[command], " gives the status ", status, ", not No_Right: WRONG")
 			taken += 1
 		}
 	}
 	if taken == 0 {
-		system.log("disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with No_Right: as it must")
+		system.log(.Info, "disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with No_Right: as it must")
 	}
 	order := ORDER
 	for name in order {
 		if name != "console" && .Screen not_in parts {
-			system.log("disk_start_policy: ", name, " is not started: the machine has no screen")
+			system.log(.Info, "disk_start_policy: ", name, " is not started: the machine has no screen")
 			continue
 		}
 		status, _ := command_call(.Start, name)
 		if status != .Ok {
-			system.log("disk_start_policy: cannot start ", name, ": status ", status)
+			system.log(.Info, "disk_start_policy: cannot start ", name, ": status ", status)
 			if name == "console" {
-				system.stop(u32(Stop_Code.Console_Refused))
+				system.stop(.Failed)
 			}
 			continue
 		}
-		system.log("disk_start_policy: started ", name)
+		system.log(.Info, "disk_start_policy: started ", name)
 	}
 	if status, _ := command_call(.Machine_Usable, ""); status != .Ok {
-		system.log("disk_start_policy: the root service refused Machine_Usable: status ", status)
-		system.stop(u32(Stop_Code.Usable_Refused))
+		system.log(.Info, "disk_start_policy: the root service refused Machine_Usable: status ", status)
+		system.stop(.Failed)
 	}
-	system.log("disk_start_policy: the console runs: the machine is usable")
+	system.log(.Info, "disk_start_policy: the console runs: the machine is usable")
 	for {
 		system.sleep(max(u64))
 	}

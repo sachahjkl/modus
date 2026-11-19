@@ -20,10 +20,10 @@ import "modus:support/system"
 import terminal "modus:support/terminal"
 
 // The mappings of a start: the storage file, the date page, the fresh
-// bytes page, the settings page, five glyph caches, the file of a service,
-// the debug image, the disk process page and the font outlines: 13 places
-// for the union, and the largest role uses 12.
-START_MAPPING_LIMIT :: 13
+// bytes page, the settings page, the file of a service, the debug image,
+// the disk process page and the font outlines: 8 places for the union, and
+// the largest role uses 7.
+START_MAPPING_LIMIT :: 8
 
 // The work of one start: what the steps of start() build, and the handles
 // of this service that the start closes at its end, whatever its result.
@@ -146,7 +146,7 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		place := pci.Place{device = pci.SOUND_DEVICE}
 		for &item in started {
 			if item.process != 0 && item.is_driver && item.device == place {
-				system.log_in("devices", .Warning, "root: cannot start ", system.Module_Name{name}, ": the sound device plays for another process; one process plays at a time")
+				system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": the sound device plays for another process; one process plays at a time")
 				return .Bad_State
 			}
 		}
@@ -194,7 +194,7 @@ start_abandon :: proc "contextless" (work: ^Start_Work) {
 		work.view^ = {}
 	}
 	if work.driver != nil {
-		system.call(.Process_Stop, u64(work.driver.process), 0)
+		system.process_stop(work.driver.process)
 	}
 }
 
@@ -431,8 +431,8 @@ start_handles_of_the_role_give :: proc "contextless" (work: ^Start_Work) {
 
 // start_pages_give maps the pages that each process reads, and those of its
 // role: the date page and its fresh bytes page, the debug image, the disk
-// process page, and for a process with a surface the settings page, the
-// glyph caches and the font outlines, read-only.
+// process page, and for a process with a surface the settings page and the
+// font outlines, read-only.
 start_pages_give :: proc "contextless" (work: ^Start_Work) {
 	grants := work.role.grants
 	date_page_give(work.mappings[:], &work.mapping_count, &work.values)
@@ -504,7 +504,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 			if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Started), values = {0 = u64(work.slot.client), 1 = started_at}}) {
 				// A measure, not a part of the start: the window runs, and
 				// has no line of its start.
-				system.log_in("processes", .Warning, "root: the control ring of the compositor is full: the start of the window of ", name, " is not measured")
+				system.log(.Warning, "root: the control ring of the compositor is full: the start of the window of ", name, " is not measured")
 			}
 		}
 		return .Ok
@@ -516,9 +516,9 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		buffer: [512]u8
 		writer := system.Writer{buffer = buffer[:]}
 		system.load_error_text(&writer, &load_error)
-		system.log_in("processes", .Warning, "root: cannot start ", system.Module_Name{name}, ": ", system.written(&writer))
+		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": ", system.written(&writer))
 	} else {
-		system.log_in("processes", .Warning, "root: cannot start ", system.Module_Name{name}, ": status ", status)
+		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": status ", status)
 	}
 	return status
 }
@@ -547,7 +547,7 @@ start_finish :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	if work.view != nil {
 		if status := terminal_start(work.view, slot, work.shared[0], work.shared[1]); status != .Ok {
-			system.call(.Process_Stop, u64(slot.process), 0)
+			system.process_stop(slot.process)
 			return status
 		}
 		started_log(work.name, work.principal, ", with a terminal")

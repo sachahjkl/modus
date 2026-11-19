@@ -37,9 +37,9 @@ Error_Details_Place :: struct {
 #assert(size_of(Error_Details_Place) == 24)
 
 // command_takes_error_details says if a command of an operation can name a
-// table of error details: its last value is not one of its parameters
-// (`Log` uses it), and it is not `Guest_Run`, which the kernel runs before
-// the dispatch of the other operations.
+// table of error details: its last value is not one of its parameters, and
+// it is not `Guest_Run`, which the kernel runs before the dispatch of the
+// other operations.
 command_takes_error_details :: proc "contextless" (operation: Operation) -> bool {
 	return operation != .None && operation != .Guest_Run && OPERATIONS[operation].parameters[ERROR_DETAILS_VALUE].form == .None
 }
@@ -148,9 +148,9 @@ count_limit_holds :: proc "contextless" (operation: Operation, index: int, value
 }
 
 // choice_zero_names_something says if 0 is a value that the operation takes
-// for a choice: the level Info of `Log`, and the action `Set` of
-// `Fault_Handler_Set`. Each other choice names nothing with 0.
+// for a choice: the level Info and the form Text of `Log`, and the action
+// `Set` of `Fault_Handler_Set`. Each other choice names nothing with 0.
 @(private = "file")
 choice_zero_names_something :: proc "contextless" (operation: Operation, index: int) -> bool {
-	return operation == .Log && index == 3 || operation == .Fault_Handler_Set && index == 1
+	return operation == .Log && (index == 3 || index == 5) || operation == .Fault_Handler_Set && index == 1
 }

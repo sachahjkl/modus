@@ -1,5 +1,7 @@
 package operation
 
+import "modus:contract/enum_word"
+
 // The two rules of a reader of the ring of the log (Log_Head, Log_Record).
 //
 // The kernel writes record W in the slot W % LOG_RECORD_CAPACITY, over the
@@ -80,23 +82,82 @@ own_log_place :: proc "contextless" (number: u64) -> (page: u64, offset: u64) {
 	return place / RECORDS_OF_A_PAGE, place % RECORDS_OF_A_PAGE * size_of(Log_Record)
 }
 
-// The bytes of the head of a line of the serial port: "[", the name, ":",
-// the channel, "] ".
-LOG_LINE_HEAD_CAPACITY :: 1 + LOG_NAME_BYTES + 1 + LOG_CHANNEL_CAPACITY + 2
+// The bytes of the head of a line of the serial port: "[", the name, "] ".
+LOG_LINE_HEAD_CAPACITY :: 1 + LOG_NAME_BYTES + 2
 // The bytes of the name of a process in a record (`Log_Record.name`).
 LOG_NAME_BYTES :: 32
-#assert(offset_of(Log_Record, channel) - offset_of(Log_Record, name) == LOG_NAME_BYTES)
+#assert(offset_of(Log_Record, runs) - offset_of(Log_Record, name) == LOG_NAME_BYTES)
+// The most bytes of the line of a fact after its head (log_fact_line): "#",
+// 16 digits of the module hash, ":", 16 digits of the fact key, a space and
+// two digits for each value byte.
+LOG_FACT_LINE_BYTES_MOST :: 1 + 16 + 1 + 16 + 1 + 2 * LOG_FACT_VALUE_CAPACITY
 // The most bytes that one record puts on the serial port: the head, its
-// text and the end of the line.
-LOG_SERIAL_LINE_BYTES_MOST :: LOG_LINE_HEAD_CAPACITY + LOG_TEXT_CAPACITY + 2
+// text or the line of its fact, and the end of the line.
+LOG_SERIAL_LINE_BYTES_MOST :: LOG_LINE_HEAD_CAPACITY + max(LOG_TEXT_CAPACITY, LOG_FACT_LINE_BYTES_MOST) + 2
+
+// log_record_form reads the form of a record through the border: false for
+// a byte that names no form. A record comes from the memory of the log, and
+// a reader trusts its bytes no more than the bytes of a file.
+log_record_form :: proc "contextless" (record: ^Log_Record) -> (form: Log_Record_Form, ok: bool) {
+	return enum_word.member_of_word(Log_Record_Form, u64(record.form))
+}
+
+// log_record_fact gives the fact of a record of the form Fact: the bytes
+// after the name of the process. The caller read the form first.
+log_record_fact :: proc "contextless" (record: ^Log_Record) -> ^Log_Fact {
+	return (^Log_Fact)(&record.runs)
+}
+
+// log_fact_line writes into `line` the line of a fact on the serial port,
+// after its head, and gives its bytes: "#", the first 8 bytes of the module
+// hash and ":" the fact key, in hexadecimal, then a space and the value
+// bytes in hexadecimal up to their last byte that is not zero; no space
+// when every value byte is zero. It writes no text of the writer, so a
+// fact cannot forge or hide a line (src/md/features/log_facts.md, "The
+// serial port"). A count past the capacity takes the capacity.
+//
+// Example: the hash 1a2b3c4d5e6f7081..., the key 0xfa0adf38a559f4d1 and the
+// values 0c 00 23 00 give "#1a2b3c4d5e6f7081:fa0adf38a559f4d1 0c0023".
+log_fact_line :: proc "contextless" (fact: ^Log_Fact, line: ^[LOG_FACT_LINE_BYTES_MOST]u8) -> int {
+	count := 0
+	put_byte :: proc "contextless" (line: ^[LOG_FACT_LINE_BYTES_MOST]u8, count: ^int, value: u8) {
+		digit :: proc "contextless" (nibble: u8) -> u8 {
+			return nibble < 10 ? '0' + nibble : 'a' + nibble - 10
+		}
+		line[count^] = digit(value >> 4)
+		line[count^ + 1] = digit(value & 0xF)
+		count^ += 2
+	}
+	line[count] = '#'
+	count += 1
+	for value in fact.module_hash[:8] {
+		put_byte(line, &count, value)
+	}
+	line[count] = ':'
+	count += 1
+	for shift := 56; shift >= 0; shift -= 8 {
+		put_byte(line, &count, u8(fact.key >> uint(shift)))
+	}
+	used := min(int(fact.value_count), LOG_FACT_VALUE_CAPACITY)
+	for used > 0 && fact.values[used - 1] == 0 {
+		used -= 1
+	}
+	if used > 0 {
+		line[count] = ' '
+		count += 1
+		for value in fact.values[:used] {
+			put_byte(line, &count, value)
+		}
+	}
+	return count
+}
 
 // log_line_head writes into `head` the head of the line of a record on the
-// serial port, and gives its bytes: `[name:channel] ` for a record of a
-// process that starts a line, `[name] ` when the process gave no channel,
-// and nothing for a record of the kernel or a record that continues the
-// line of the record before it (`line_open`). The kernel writes the serial
-// port from the whole log with it, so the line of a long text that the log
-// splits into records is one line again
+// serial port, and gives its bytes: `[name] ` for a record of a process
+// that starts a line, and nothing for a record of the kernel or a record
+// that continues the line of the record before it (`line_open`). The
+// kernel writes the serial port from the whole log with it, so the line of
+// a long text that the log splits into records is one line again
 // (src/md/features/log_side_channels.md).
 log_line_head :: proc "contextless" (record: ^Log_Record, line_open: bool, head: ^[LOG_LINE_HEAD_CAPACITY]u8) -> int {
 	if line_open || record.process == 0 {
@@ -111,17 +172,6 @@ log_line_head :: proc "contextless" (record: ^Log_Record, line_open: bool, head:
 		}
 		head[count] = byte_value
 		count += 1
-	}
-	if record.channel[0] != 0 {
-		head[count] = ':'
-		count += 1
-		for byte_value in record.channel {
-			if byte_value == 0 {
-				break
-			}
-			head[count] = byte_value
-			count += 1
-		}
 	}
 	head[count] = ']'
 	head[count + 1] = ' '

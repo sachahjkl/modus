@@ -130,7 +130,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "terminal_keys.png", group = .Console, guide = "docs/CONSOLE.md", caption = "A key is a record from the terminal to its process: flood stops its lines at the key Space, and shows it in its edit line."},
 	{file = "terminal_held.png", group = .Console, guide = "docs/CONSOLE.md", caption = "The view of a terminal is held while the process continues to write."},
 	{file = "terminal_stopped.png", group = .Console, guide = "docs/CONSOLE.md", caption = "The process stopped: its terminal stays, with the lines that the process wrote."},
-	{file = "log.png", group = .Console, guide = "docs/TOOLS.md", caption = "The log: records with a time, a process, a channel and a level, and each value of a text in the color of its kind."},
+	{file = "log.png", group = .Console, guide = "docs/TOOLS.md", caption = "The log: records with a time, a process and a level, and each value of a text in the color of its kind."},
 
 	// The mark and the graphics.
 	{file = "heron.png", group = .Mark, home = true, guide = "docs/DESIGN.md", caption = "The process heron: the heron of the mark held at a frame of its dash, in whole square cells, with the lines of the cells."},

@@ -32,7 +32,7 @@ Do not use: lazy allocation, demand paging, demand-zero page.
 
 An uncommitted object is a memory object made with the flag `Uncommitted`: its budget pays only its frame list, and each page is paid when it is committed.
 
-An uncommitted object reserves a range of addresses with no memory behind it: its mapping is the reservation. A process commits the pages that it needs with `Memory_Commit`, and gives them back with a decommit. An access to a page that is not committed is a fault: with no fault handler it stops the process with `STOP_CODE_NOT_COMMITTED`; with one, the handler can commit the page and answer Resume. A process builds arenas, stacks that grow and sparse tables this way.
+An uncommitted object reserves a range of addresses with no memory behind it: its mapping is the reservation. A process commits the pages that it needs with `Memory_Commit`, and gives them back with a decommit. An access to a page that is not committed is a fault: with no fault handler it stops the process with the stop cause `Not_Committed`; with one, the handler can commit the page and answer Resume. A process builds arenas, stacks that grow and sparse tables this way.
 
 The design: `docs/ARCHITECTURE.md`, "The virtual memory of a process".
 

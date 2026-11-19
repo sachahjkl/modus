@@ -94,7 +94,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 	pressed := interface.button(frame, interface.column_take(&column, 24), interface.identity("press"), "press this button")
 	if pressed.activated {
 		presses += 1
-		system.log("interface_elements: the button was pressed ", presses, " times")
+		system.log(.Info, "interface_elements: the button was pressed ", presses, " times")
 	}
 	interface.label_value_line(frame, interface.column_take(&column, 16), "presses", interface.number_text(&builder, presses))
 	interface.cell_text(frame, interface.column_take(&column, 16), "a list with a choice", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
@@ -104,12 +104,12 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 	interface.element_name(frame, list_area, "list")
 	listed := interface.list_with_choice(frame, list_area, interface.identity("list"), names[:], &choice, {chosen_hint = "enter: start"})
 	if listed.changed {
-		system.log("interface_elements: the list chooses ", names[choice])
+		system.log(.Info, "interface_elements: the list chooses ", names[choice])
 	}
 	interface.cell_text(frame, interface.column_take(&column, 16), "a text input", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
 	typed_result := interface.text_input(frame, interface.column_take(&column, 24), interface.identity("text"), typed[:], &typed_count, "type a text")
 	if typed_result.changed {
-		system.log("interface_elements: the text is \"", string(typed[:typed_count]), "\"")
+		system.log(.Info, "interface_elements: the text is \"", string(typed[:typed_count]), "\"")
 	}
 	interface.cell_text(frame, interface.column_take(&column, 16), "bars: a value against a maximum, parts of one total", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
 	interface.bar(frame, interface.column_take(&column, 8), number % 100, 100, graphics.colors.process)
@@ -162,7 +162,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 	overlay := interface.button(frame, interface.column_take(&column, 24), interface.identity("damage"), show_damage ? "hide the damage" : "show the damage", show_damage)
 	if overlay.activated {
 		show_damage = !show_damage
-		system.log("interface_elements: the damage is ", show_damage ? "shown" : "hidden")
+		system.log(.Info, "interface_elements: the damage is ", show_damage ? "shown" : "hidden")
 	}
 	interface.cell_text(frame, interface.column_take(&column, 16), "a frame draws only its damage", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
 	// The damage of the last frame, as outlines of 2 pixels over the window.
@@ -222,7 +222,7 @@ measure :: proc "contextless" (name: string, number_before, number_now: u64, mov
 	moved = false
 	bounds := interface.damage_bounds(&damage)
 	area := u64(max(bounds.right - bounds.left, 0) * max(bounds.bottom - bounds.top, 0))
-	system.log("interface_elements: ", name, ": ", u64(now.record_count), " records, ", rectangles, " damage rectangles, ", area * 100 / (WIDTH * HEIGHT), " % of the window, the difference in ", difference / ROUNDS / 100 / 10, ".", difference / ROUNDS / 100 % 10, " us")
+	system.log(.Info, "interface_elements: ", name, ": ", u64(now.record_count), " records, ", rectangles, " damage rectangles, ", area * 100 / (WIDTH * HEIGHT), " % of the window, the difference in ", difference / ROUNDS / 100 / 10, ".", difference / ROUNDS / 100 % 10, " us")
 }
 
 // measure_fonts gives the time of one whole frame of the window, built and
@@ -253,21 +253,21 @@ measure_fonts :: proc "contextless" (window: ^display.Window) {
 		}
 	}
 	if interface_font == nil {
-		system.log("interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, " us; no interface font")
+		system.log(.Info, "interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, " us; no interface font")
 		return
 	}
-	system.log("interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, " us, the interface font ", least[1] / 1000, " us")
+	system.log(.Info, "interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, " us, the interface font ", least[1] / 1000, " us")
 }
 
 // entry opens the window, runs the four measures of the damage by
 // difference and the measure of one whole frame, writes them on the log,
 // then draws a frame at each event of the window until the process is
-// stopped. With no window, it stops with the code 1.
+// stopped. With no window, it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_elements")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	measure("nothing changed", 7, 7, false)
 	measure("one number changed", 7, 8, false)
@@ -281,7 +281,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	whole := window_memory.drawing.draw_time
 	frame_draw(&window)
 	frame_draw(&window)
-	system.log("interface_elements: ok, the whole frame drawn in ", whole / 1000, " us; the next frame drawn in its ", u64(window_memory.drawing.damage.count), " damage rectangles in ", window_memory.drawing.draw_time / 1000, " us")
+	system.log(.Info, "interface_elements: ok, the whole frame drawn in ", whole / 1000, " us; the next frame drawn in its ", u64(window_memory.drawing.damage.count), " damage rectangles in ", window_memory.drawing.draw_time / 1000, " us")
 	deadline := system.time()
 	for {
 		deadline += TICK

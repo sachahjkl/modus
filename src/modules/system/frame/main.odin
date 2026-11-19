@@ -47,7 +47,7 @@
 // **What a reader sees.** No window: the line `frame: ok, the hardware
 // address <address>, the link is up, queues of ...` on the log, then one
 // line for each read region that it takes. A failure
-// at the start writes a line at the level error on the channel `frame` and
+// at the start writes a line at the level error and
 // stops the service.
 //
 // **What it does not prove.** It drives virtio under QEMU only, and sends
@@ -141,8 +141,8 @@ bytes_received: u64
 interrupts: u64
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log_in("frame", .Error, "frame: ", text)
-	system.stop(1)
+	system.log(.Error, "frame: ", text)
+	system.stop(.Failed)
 }
 
 // start resets the device, agrees on the features, and gives it the queues.
@@ -291,7 +291,7 @@ read_region_add :: proc "contextless" (command: ring.Record) -> (status: frame.S
 		return .No_Region, .Done, errors.ring_fail(ADD, .Refused, .None, 1, i64(handle), 0, i64(size_status))
 	}
 	region^ = {memory = handle, physical = physical, size = pages * system.PAGE_SIZE}
-	system.log("frame: a read region of ", pages, " pages at the place ", place, ", held with the right Read only: the device reads the data of the frames to send there")
+	system.log(.Info, "frame: a read region of ", pages, " pages at the place ", place, ", held with the right Read only: the device reads the data of the frames to send there")
 	return .Ok, .Done, {}
 }
 
@@ -475,7 +475,7 @@ harvest :: proc "contextless" () -> (count: int) {
 // each new command of the client, and waits for the interrupt of the
 // device or a new command. With no ring, no configuration, or a device
 // that refuses its setup, it writes the reason at the level error and
-// stops with the code 1.
+// stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]
@@ -495,7 +495,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	start(ctx.handles[pci.GRANT_QUEUES])
 	text: [24]u8
-	system.log("frame: ok, the hardware address ", hardware_text(text[:]), ", the link is ", link_up() ? "up" : "down", ", queues of ", u64(receive_queue.size), " and ", u64(send_queue.size), ", ", u64(receive_slot_count), " places for frames that arrive")
+	system.log(.Info, "frame: ok, the hardware address ", hardware_text(text[:]), ", the link is ", link_up() ? "up" : "down", ", queues of ", u64(receive_queue.size), " and ", u64(send_queue.size), ", ", u64(receive_slot_count), " places for frames that arrive")
 
 	waiting: ring.Record
 	has_waiting := false // A Send that waits for a place in the queue of the device.

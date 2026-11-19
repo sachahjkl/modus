@@ -153,8 +153,8 @@ Each step leaves a working system.
 
 ## State
 
-Built: the resource `font_outlines` and its fixed range; the package `fallback_glyphs`, now `text_rendering`, with the private glyph cache (its form of today: [text_rendering.md](text_rendering.md), "The cache"), the fallback faces, the chains by script and the frame of the first font; the shaper and the draws of `graphics` with it, in each process and in the drawing module; the root service, which maps the outlines with the glyph caches; the compositor, which names what each chain lacks; the terminal and the process `interface_font` with their machine test lines; the host tests of the cache and of the measure. Layer 1 and the font service are removed.
+Built: the resource `font_outlines` and its fixed range; the package `fallback_glyphs`, now `text_rendering`, with the private glyph cache (its form of today: [text_rendering.md](text_rendering.md), "The cache"), the fallback faces, the chains by script and the frame of the first font; the shaper and the draws of `graphics` with it, in each process and in the drawing module; the root service, which maps the outlines with the settings page; the compositor, which names what each chain lacks; the terminal and the process `interface_font` with their machine test lines; the host tests of the cache and of the measure. Layer 1 and the font service are removed.
 
 Left (`ROADMAP.md`): a font for the missing Greek letters, Cyrillic and Latin Extended-A; a CJK font; the shaping of complex scripts.
 
-Designed, not built: the text rendering module draws each glyph at any size into the private glyph cache, which then holds every glyph; the glyph caches of the boot image leave ([text_rendering.md](text_rendering.md), "The glyph caches of the boot image and the demand cache: removed").
+Built after it: the text rendering module draws each glyph at any size into the private glyph cache, which holds every glyph; the glyph caches of the boot image left ([text_rendering.md](text_rendering.md), "The glyph caches of the boot image and the demand cache: removed").

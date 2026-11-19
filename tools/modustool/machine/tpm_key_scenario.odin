@@ -115,7 +115,7 @@ tpm_key_end := [?]Step {
 @(private = "file")
 tpm_key_new_disk_and_font := [?]Step {
 	{kind = .Wait, text = "unlock: no named principal: the machine runs as principal 0, with no unlock", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 	{kind = .Launch, text = "settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
 	{kind = .Wait, text = "settings: ok, "},
@@ -145,7 +145,7 @@ scenario_tpm_key_seal := [?]Step {
 	{kind = .Wait, text = RECOVERY_KEY_ENTER_LINE, fails_on = "root: the disk grant table of principal 0 is written"},
 	{kind = .Wait, text = "unlock: the record of the machine key sealed by the TPM is in the store of unlock: its recovery key is written down"},
 	{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store module_files: 0 rows, with the tag of the machine key", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	{kind = .Wait, text = "root: unlock stopped: itself, done"},
 	// A second key is refused: it would replace the key of the table.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "machine_seal()"},
@@ -158,7 +158,7 @@ scenario_tpm_key_same_system := [?]Step {
 	{kind = .Wait, text = "unlock: the TPM releases the machine key: the system is the system of the seal; the root service receives the key of the disk grant table only", any_order = true},
 	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store module_files: 0 rows, with the tag of the machine key", any_order = true},
 	{kind = .Wait, text = "unlock: no named principal: the machine runs as principal 0, with no unlock", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 }
 
 // The TPM refuses, a wrong recovery key opens nothing, and the recovery key
@@ -183,7 +183,7 @@ scenario_tpm_key_recovery := [?]Step {
 scenario_tpm_key_reseal := [?]Step {
 	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11: a public area of ", any_order = true},
 	{kind = .Wait, text = "unlock: the machine key is sealed again to PCR 7 and PCR 11 of the system that runs: its next start needs no recovery key"},
-	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	{kind = .Wait, text = "root: unlock stopped: itself, done"},
 }
 
 // One byte of the creation ticket of the record changed: the TPM refuses
@@ -201,7 +201,7 @@ scenario_tpm_key_changed_ticket := [?]Step {
 @(private = "file")
 scenario_tpm_key_secure_boot_off := [?]Step {
 	{kind = .Wait, text = "unlock: the firmware did not verify the boot program (Secure Boot is off): the machine key is not sealed again, as its seal would trust a boot program that nothing verified; the recovery key opens it at the next start too", fails_on = "unlock: the machine key is sealed again"},
-	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	{kind = .Wait, text = "root: unlock stopped: itself, done"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "machine_seal()"},
 	{kind = .Wait, text = "root: refused a machine key sealed by the TPM: the firmware did not verify the boot program (Secure Boot is off), so a seal would trust a boot program that nothing verified"},
@@ -298,7 +298,7 @@ scenario_tpm_principal_create := [?]Step {
 	{kind = .Wait, text = "root: principal 1 \"alice\" is recorded, its public key ", any_order = true},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is created: its keys are sealed by the TPM with its passphrase, with a copy under a recovery key", any_order = true},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	{kind = .Wait, text = "root: unlock stopped: itself, done"},
 }
 
 // The start of a machine with the file of alice: unlock asks for her
@@ -326,7 +326,7 @@ scenario_tpm_principal_same_system := [?]Step {
 	{kind = .Wait, text = TPM_SHUTDOWN_LINE, any_order = true},
 	{kind = .Wait, text = "unlock: the TPM releases the keys of principal 1 \"alice\" to its passphrase: the system is the system of the seal", any_order = true},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 }
 
 // The recovery key of machine 7 opens the keys, and a new passphrase seals
@@ -345,7 +345,7 @@ tpm_principal_recovery_and_new_passphrase := [?]Step {
 	// The file of before the new seal is a version: unlock erases it.
 	{kind = .Wait, text = PRINCIPAL_FILE_ERASED_LINE, any_order = true},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 }
 
 // The line of unlock after the erase of the one version of the file of
@@ -385,7 +385,7 @@ scenario_tpm_principal_change := [?]Step {
 	{kind = .Wait, text = TPM_LOCKOUT_FOUND_LINE, any_order = true, fails_on = TPM_LOCKOUT_SET_LINE},
 	{kind = .Wait, text = "unlock: the TPM releases the keys of principal 1 \"alice\" to its passphrase: the system is the system of the seal", any_order = true},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 	// A console of the session acts for alice: the console of the machine
 	// cannot ask for a change.
 	{kind = .Launch, text = "console"},
@@ -418,7 +418,7 @@ scenario_tpm_principal_change := [?]Step {
 	// until Enter.
 	{kind = .Wait, text = "root: the change in the window of unlock ends: the passphrase is changed"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	{kind = .Wait, text = "root: unlock stopped: itself, done"},
 	// A new recovery key: the current passphrase, then the key, shown one
 	// time. The tool keeps the key of machine 7 as the text before.
 	{kind = .Front, text = "console"},
@@ -436,7 +436,7 @@ scenario_tpm_principal_change := [?]Step {
 	{kind = .Wait, text = PRINCIPAL_FILE_ERASED_LINE, any_order = true},
 	{kind = .Wait, text = "root: the change in the window of unlock ends: the new recovery key is kept; the old one opens no new file", any_order = true},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	{kind = .Wait, text = "root: unlock stopped: itself, done"},
 	// A console of the session asks for the machine passphrase: the TPM
 	// seals the machine key with it, and the window shows the recovery key.
 	// The lock comes before Enter.
@@ -463,7 +463,7 @@ scenario_tpm_principal_change := [?]Step {
 	{kind = .Type, text = "lock()"},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: "},
 	{kind = .Wait, text = "root: the lock stops the window of unlock, which ran for the machine passphrase that is set; unlock asks for the passphrase when it stopped", fails_on = "unlock: the machine passphrase is set"},
-	{kind = .Wait, text = "root: unlock stopped with code "},
+	{kind = .Wait, text = "root: unlock stopped: "},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is locked: its passphrase opens its session", any_order = true, fails_on = "unlock: the machine has a passphrase"},
 	{kind = .Wait, text = "compositor: surface unlock", any_order = true},
 	{kind = .Front, text = "unlock"},
@@ -472,7 +472,7 @@ scenario_tpm_principal_change := [?]Step {
 	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = "unlock: the TPM releases the keys of principal 1 \"alice\" to its passphrase: the system is the system of the seal", any_order = true},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 }
 
 // Machine 11, on the system of machines 7 and 8, whose keys the TPM sealed
@@ -510,7 +510,7 @@ scenario_tpm_principal_old_recovery_key := [?]Step {
 	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
 	{kind = .Wait, text = "unlock: the keys of principal 1 \"alice\" are sealed again to PCR 7 and PCR 11 of the system that runs and to the new passphrase: its next unlock needs no recovery key", any_order = true},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 }
 
 @(private = "file")
@@ -579,7 +579,7 @@ scenario_tpm_machine_passphrase_set := [?]Step {
 	{kind = .Wait, text = RECOVERY_KEY_ENTER_LINE, fails_on = "root: the disk grant table of principal 0 is written"},
 	{kind = .Wait, text = "unlock: the machine passphrase is set: the TPM seals the machine key with it, with a copy under a recovery key, in the store of unlock"},
 	{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store module_files: 0 rows, with the tag of the machine key", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	{kind = .Wait, text = "root: unlock stopped: itself, done"},
 }
 
 // The start of a machine with the record of the machine passphrase sealed
@@ -607,7 +607,7 @@ scenario_tpm_machine_passphrase_same_system := [?]Step {
 	{kind = .Wait, text = TPM_SHUTDOWN_LINE, any_order = true},
 	{kind = .Wait, text = "unlock: the TPM releases the machine key to the machine passphrase: the system is the system of the seal; the root service receives the key of the disk grant table only", any_order = true},
 	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store module_files: 0 rows, with the tag of the machine key", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 }
 
 // Another system: the right machine passphrase opens nothing, and the
@@ -630,7 +630,7 @@ scenario_tpm_machine_passphrase_other_system := [?]Step {
 	{kind = .Wait, text = "unlock: the machine key is sealed again to PCR 7 and PCR 11 of the system that runs and to the new machine passphrase: its next start needs no recovery key", any_order = true},
 	// The record of machine 13 is a version now: unlock erases it.
 	{kind = .Wait, text = "unlock: the versions of the object \"machine\" are erased: 1 ended, ", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 }
 
 // Machine 16, the other system after the new seal of machine 15: Ctrl+R
@@ -655,7 +655,7 @@ scenario_tpm_machine_passphrase_after_the_new_seal := [?]Step {
 	{kind = .Wait, text = TPM_SHUTDOWN_LINE, any_order = true},
 	{kind = .Wait, text = "unlock: the TPM releases the machine key to the machine passphrase: the system is the system of the seal; the root service receives the key of the disk grant table only", any_order = true},
 	{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store module_files: 0 rows, with the tag of the machine key", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 }
 
 // tpm_key_machine_run runs one machine of the part: the start, the steps,

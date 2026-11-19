@@ -131,9 +131,13 @@ the_runs_of_a_result :: proc(t: ^testing.T) {
 	kinds := Result_Writer{buffer = area[:], fits = true}
 	result_run(&kinds, .Size, "120 pages")
 	result_run(&kinds, .Time, "45 ms")
+	result_run(&kinds, .Module, "storage")
+	result_run(&kinds, .Version, "1a2b")
 	result_line_end(&kinds)
 	testing.expect(t, result_valid(area[:kinds.count]))
 	area[0] = u8(RUN_PART_LAST) + 1
+	testing.expect(t, !result_valid(area[:kinds.count]))
+	area[0] = max(u8) - 1
 	testing.expect(t, !result_valid(area[:kinds.count]))
 	// A line wider than the panel.
 	wide := Result_Writer{buffer = area[:], fits = true}

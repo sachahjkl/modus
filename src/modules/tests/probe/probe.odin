@@ -17,7 +17,7 @@
 // isolate("probe")        probe: 8 commands in a sandboxed process
 // count() + count() * 10  21
 // stop_machine(1)         2: the sandbox holds no handle
-// peek(0)                 error: the process probe stopped: page fault
+// peek(0)                 error: the process probe stopped: a fault, page fault
 // count()                 1: a new process
 // spin()                  Escape stops the call
 // ```
@@ -117,6 +117,6 @@ log_long :: proc "c" (count: i64) -> i64 {
 	for index in 0 ..< body {
 		long_text[index] = u8('0' + index % 10)
 	}
-	system.log(string(long_text[:body]), END)
+	system.log(.Info, string(long_text[:body]), END)
 	return i64(size)
 }

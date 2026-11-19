@@ -71,7 +71,7 @@ capture_is_open :: proc "contextless" () -> bool {
 @(private = "file")
 capture_refuse :: proc "contextless" (client: ^Client, why: string) {
 	if capture.refused == 0 {
-		system.log_in("surfaces", .Warning, "compositor: refused a command of the capture face of ", system.name_of(client.title[:]), ": ", why, "; the next refusals are counted only")
+		system.log(.Warning, "compositor: refused a command of the capture face of ", system.name_of(client.title[:]), ": ", why, "; the next refusals are counted only")
 	}
 	capture.refused += 1
 }
@@ -130,7 +130,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		}
 		capture.remote_keys += 1
 		if capture.remote_keys == 1 {
-			system.log_in("surfaces", .Info, "compositor: the first key of a viewer of the remote display goes along the path of the keys")
+			system.log(.Info, "compositor: the first key of a viewer of the remote display goes along the path of the keys")
 		}
 		character := display.key_character_of(character_word)
 		// The path of a key of the input service: the palette, the
@@ -198,7 +198,7 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 		interface.damage_add(&capture.changed, whole)
 		// The mark of the bar, and a frame that writes the first picture.
 		damage_add(0, 0, screen.width, BAR_HEIGHT)
-		system.log_in("surfaces", .Info, "compositor: the capture face of ", system.name_of(client.title[:]), " is open: a copy of ", u64(screen.width), "x", u64(screen.height), " after each frame, and the mark of a viewer in the bar")
+		system.log(.Info, "compositor: the capture face of ", system.name_of(client.title[:]), " is open: a copy of ", u64(screen.width), "x", u64(screen.height), " after each frame, and the mark of a viewer in the bar")
 		return
 	}
 	system.close(memory)
@@ -216,7 +216,7 @@ capture_end :: proc "contextless" (why: string) {
 	if capture.memory != 0 {
 		system.close(capture.memory)
 	}
-	system.log_in("surfaces", .Info, "compositor: the capture face ended (", why, ") after ", capture.records, " pictures, ", capture.remote_keys, " keys and ", capture.remote_pointers, " pointer records of viewers, ", capture.refused, " refused commands")
+	system.log(.Info, "compositor: the capture face ended (", why, ") after ", capture.records, " pictures, ", capture.remote_keys, " keys and ", capture.remote_pointers, " pointer records of viewers, ", capture.refused, " refused commands")
 	capture = {client = -1, held = -1, last_written = 1}
 	damage_add(0, 0, screen.width, BAR_HEIGHT)
 }

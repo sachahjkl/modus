@@ -49,7 +49,7 @@ space: system.Module_Space // The module and its imports, in this process.
 // **The load.** The loader checks the hash of each file, applies the
 // replacements, and maps the segments in this process. A failure writes
 // the [load error](term:load-error) in the call region, sends the
-// completion `Load_Failed`, and stops with the code 1. A success sends the
+// completion `Load_Failed`, and stops with `Failed`. A success sends the
 // completion `Ok`.
 //
 // **The loop.** It takes up to one ring of commands at a time; each one is
@@ -58,7 +58,9 @@ space: system.Module_Space // The module and its imports, in this process.
 // next command.
 //
 // **The stop**: with no call ring or no call region, it writes `host: no
-// call ring or no call region` and stops with the code 1. A fault of the
+// call ring or no call region` and stops with `Refused` when its context
+// names no such handle or a handle that it cannot use, else with `Failed`
+// (system.stop_outcome_of_grant). A fault of the
 // module stops it with the stop report of the fault.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -66,14 +68,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region_memory := ctx.handles[isolated.GRANT_REGION]
 	queue, ring_status := system.ring_open(ring_memory)
 	bytes, region_status := system.memory_map(region_memory)
-	if ring_status != .Ok || region_status != .Ok {
-		system.log("host: no call ring or no call region")
-		system.stop(1)
+	if ring_status != .Ok {
+		system.log(.Info, "host: no call ring or no call region")
+		system.stop(system.stop_outcome_of_grant(ring_memory, ring_status))
+	}
+	if region_status != .Ok {
+		system.log(.Info, "host: no call ring or no call region")
+		system.stop(system.stop_outcome_of_grant(region_memory, region_status))
 	}
 	region_pages, size_status := system.memory_size(region_memory)
 	if size_status != .Ok {
-		system.log("host: the call region has no size")
-		system.stop(1)
+		system.log(.Info, "host: the call region has no size")
+		system.stop(.Failed)
 	}
 	region = ([^]u8)(bytes)[:region_pages * system.PAGE_SIZE]
 
@@ -100,12 +106,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		buffer: [512]u8
 		writer := system.Writer{buffer = buffer[:]}
 		system.load_error_text(&writer, error)
-		system.log("host: cannot load the module: ", system.written(&writer))
+		system.log(.Info, "host: cannot load the module: ", system.written(&writer))
 		system.send(&queue.completions, ring.Record{kind = u32(isolated.Status.Load_Failed)})
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	base := space.modules[index].base
-	system.log("host: ready, ", u64(module.count(file, .Exports) - 1), " exports")
+	system.log(.Info, "host: ready, ", u64(module.count(file, .Exports) - 1), " exports")
 	system.send(&queue.completions, ring.Record{kind = u32(isolated.Status.Ok)})
 
 	for {

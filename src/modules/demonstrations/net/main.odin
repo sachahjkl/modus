@@ -164,7 +164,7 @@ note :: proc "contextless" (text: string, right: bool, parts: ..system.Part) {
 	item.right = right
 	item.count = len(system.format(item.answer[:], ..parts))
 	case_count += 1
-	system.log("net: ", text, ": ", string(item.answer[:item.count]), right ? "" : " (WRONG)")
+	system.log(.Info, "net: ", text, ": ", string(item.answer[:item.count]), right ? "" : " (WRONG)")
 }
 
 microseconds :: proc "contextless" (cycles: u64) -> u64 {
@@ -412,7 +412,7 @@ cases_run :: proc "contextless" () {
 				own_right += 1
 				own_from = u64(row.last.value)
 			}
-			system.log("net: refused for this endpoint: ", row.count, " x ", system.written(&writer))
+			system.log(.Info, "net: refused for this endpoint: ", row.count, " x ", system.written(&writer))
 		case .Machine:
 			machine_rows += 1
 			machine_total += row.count
@@ -421,7 +421,7 @@ cases_run :: proc "contextless" () {
 					machine_found += 1
 				}
 			}
-			system.log("net: refused for the machine: ", row.count, " x ", system.written(&writer))
+			system.log(.Info, "net: refused for the machine: ", row.count, " x ", system.written(&writer))
 		case:
 			machine_rows += 1000 // A scope that the contract does not have.
 		}
@@ -462,9 +462,9 @@ command_words_check :: proc "contextless" () {
 		after, has_after := call(.Info)
 		right := has_refused && refused.kind == u32(datagram.Status.Bad_Command) && error.kind == i64(errors.Kind.Unsupported) && error.unit == i64(errors.Unit.None) && error.operation == i64(word) && error.argument == 0 && error.value == i64(word) && has_after && after.kind == u32(datagram.Status.Ok) && after.values[1] == u64(local_port)
 		if right {
-			system.log("net: the command word ", u64(word), " of the datagram ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must")
+			system.log(.Info, "net: the command word ", u64(word), " of the datagram ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must")
 		} else {
-			system.log("net: the command word ", u64(word), " of the datagram ring: WRONG: ", has_refused ? "the status " : "no answer, the status ", u64(refused.kind), ", the error kind ", u64(max(error.kind, 0)), ", the operation ", u64(max(error.operation, 0)), "; the next Info: the status ", u64(after.kind))
+			system.log(.Info, "net: the command word ", u64(word), " of the datagram ring: WRONG: ", has_refused ? "the status " : "no answer, the status ", u64(refused.kind), ", the error kind ", u64(max(error.kind, 0)), ", the operation ", u64(max(error.operation, 0)), "; the next Info: the status ", u64(after.kind))
 		}
 	}
 }
@@ -495,7 +495,7 @@ measure_round_trips :: proc "contextless" () {
 	}
 	round_least = microseconds(times[0])
 	round_middle = microseconds(times[ROUND_TRIPS / 2])
-	system.log("net: the round trip of one datagram of ", u64(DATA_BYTES), " bytes: ", round_least, " us at least, ", round_middle, " us in the middle, over ", u64(ROUND_TRIPS))
+	system.log(.Info, "net: the round trip of one datagram of ", u64(DATA_BYTES), " bytes: ", round_least, " us at least, ", round_middle, " us in the middle, over ", u64(ROUND_TRIPS))
 }
 
 // measure_refusals measures a request that the network service refuses
@@ -511,7 +511,7 @@ measure_refusals :: proc "contextless" () {
 		}
 	}
 	nanoseconds := microseconds(system.cycles() - start) * 1000 / REFUSALS
-	system.log("net: a refused request of the datagram ring (Send of 2000 bytes, Too_Large), from the command to its completion: ", nanoseconds, " ns, ", u64(refused), " of ", u64(REFUSALS), " refused")
+	system.log(.Info, "net: a refused request of the datagram ring (Send of 2000 bytes, Too_Large), from the command to its completion: ", nanoseconds, " ns, ", u64(refused), " of ", u64(REFUSALS), " refused")
 }
 
 // measure_checksum measures what this process writes for each datagram
@@ -524,7 +524,7 @@ measure_checksum :: proc "contextless" () {
 		datagram_write(SEND_FIRST, datagram.DATA_LIMIT)
 	}
 	nanoseconds := microseconds(system.cycles() - start) * 1000 / ROUNDS
-	system.log("net: the header and the checksum of a datagram of ", u64(datagram.DATA_LIMIT), " bytes: ", nanoseconds, " ns, in this process (no offload)")
+	system.log(.Info, "net: the header and the checksum of a datagram of ", u64(datagram.DATA_LIMIT), " bytes: ", nanoseconds, " ns, in this process (no offload)")
 }
 
 // measure_burst keeps BURST_IN_FLIGHT datagrams in flight for one second:
@@ -567,8 +567,8 @@ measure_burst :: proc "contextless" () {
 	entries_network = (after.values[2] - before.values[2]) * 100 / max(received, 1)
 	entries_frame = (after.values[3] - before.values[3]) * 100 / max(received, 1)
 	a, b, c: [16]u8
-	system.log("net: a burst with ", u64(BURST_IN_FLIGHT), " datagrams in flight: ", burst_rate, " datagrams in one second, sent and answered, ", burst_lost, " lost")
-	system.log("net: kernel entries for each datagram: ", hundredths(a[:], entries_process), " of this process, ", hundredths(b[:], entries_network), " of the network service, ", hundredths(c[:], entries_frame), " of the frame service")
+	system.log(.Info, "net: a burst with ", u64(BURST_IN_FLIGHT), " datagrams in flight: ", burst_rate, " datagrams in one second, sent and answered, ", burst_lost, " lost")
+	system.log(.Info, "net: kernel entries for each datagram: ", hundredths(a[:], entries_process), " of this process, ", hundredths(b[:], entries_network), " of the network service, ", hundredths(c[:], entries_frame), " of the frame service")
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
@@ -623,10 +623,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 // The entry of net: it runs the cases of its endpoint once, then the
 // measures, then sends one datagram after each key.
 //
-// The entry opens its window (with none, it stops with the code 1), reads
+// The entry opens its window (with none, it stops with `Failed`), reads
 // the frequency of the cycle counter, and opens its endpoint and its
 // datagram region. With no endpoint it writes "net: no endpoint: the
-// process has no grant of the network" and stops with the code 1. Then it
+// process has no grant of the network" and stops with `Refused`. Then it
 // runs the cases, writes "net: ok, N cases" or "net: WRONG: ...", runs the
 // three measures, and writes "net: the measures are done". The process
 // then waits for keys for ever: each key runs `after_key`.
@@ -634,7 +634,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "net")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	boot: op.Boot_Report
 	system.call(.Inspect, u64(ctx.handles[system.GRANT_MACHINE]), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(&boot)), size_of(boot))
@@ -642,16 +642,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_memory := ctx.handles[datagram.GRANT_RING]
 	status: system.Status
 	if datagrams, status = system.ring_open(ring_memory); status != .Ok {
-		system.log("net: no endpoint: the process has no grant of the network")
-		system.stop(1)
+		system.log(.Info, "net: no endpoint: the process has no grant of the network")
+		system.stop(.Refused)
 	}
 	// The datagram region: the root service made it, with the ring.
 	region_memory := ctx.handles[datagram.GRANT_REGION]
 	address, map_status := system.memory_map(region_memory, {.Write})
 	region_pages, size_status := system.memory_size(region_memory)
 	if map_status != .Ok || size_status != .Ok || region_pages < REGION_PAGES {
-		system.log("net: no datagram region")
-		system.stop(1)
+		system.log(.Info, "net: no datagram region")
+		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)
 	draw(&window)
@@ -665,16 +665,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if wrong == 0 {
-		system.log("net: ok, ", u64(case_count), " cases")
+		system.log(.Info, "net: ok, ", u64(case_count), " cases")
 	} else {
-		system.log("net: WRONG: ", u64(wrong), " of ", u64(case_count), " cases")
+		system.log(.Info, "net: WRONG: ", u64(wrong), " of ", u64(case_count), " cases")
 	}
 	measure_checksum()
 	measure_round_trips()
 	measure_refusals()
 	measure_burst()
 	measured = true
-	system.log("net: the measures are done")
+	system.log(.Info, "net: the measures are done")
 	for {
 		draw(&window)
 		display.wait(&window)
@@ -718,6 +718,6 @@ after_key :: proc "contextless" () {
 		item.right = false
 	}
 	case_count = CASE_CAPACITY
-	system.log("net: a datagram to 10.0.2.2 port 7 after a key: ", string(item.answer[:item.count]))
+	system.log(.Info, "net: a datagram to 10.0.2.2 port 7 after a key: ", string(item.answer[:item.count]))
 }
 #assert(REGION_PAGES == datagram.REGION_PAGES)

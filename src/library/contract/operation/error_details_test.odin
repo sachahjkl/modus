@@ -18,11 +18,12 @@ the_table_place_of_error_details :: proc(t: ^testing.T) {
 }
 
 // The operations that take a table: each one whose last value is free, but
-// Guest_Run. Log uses its last value for the value runs.
+// Guest_Run. Log takes its runs in its fifth value, so its last value is
+// free: a refused Log writes its error details too.
 @(test)
 the_operations_that_take_error_details :: proc(t: ^testing.T) {
 	testing.expect(t, !command_takes_error_details(.None))
-	testing.expect(t, !command_takes_error_details(.Log))
+	testing.expect(t, command_takes_error_details(.Log))
 	testing.expect(t, !command_takes_error_details(.Guest_Run))
 	testing.expect(t, command_takes_error_details(.Memory_Create))
 	testing.expect(t, command_takes_error_details(.Memory_Map))
@@ -31,6 +32,25 @@ the_operations_that_take_error_details :: proc(t: ^testing.T) {
 		if command_takes_error_details(operation) {
 			testing.expectf(t, OPERATIONS[operation].parameters[ERROR_DETAILS_VALUE].form == .None, "%v takes a table and uses its last value", operation)
 		}
+	}
+}
+
+// The form of `Log` is a choice whose 0 names the form Text: a text line
+// with a table of error details gives no detail about its form. One past
+// the last form, and the largest word, are refused.
+@(test)
+the_form_of_a_log_record_is_a_choice_of_zero_and_one :: proc(t: ^testing.T) {
+	FORM :: 5
+	for word in ([2]u64{u64(Log_Record_Form.Text), u64(Log_Record_Form.Fact)}) {
+		values := [7]u64{0, 0, 0, 0, 0, word, 0}
+		problem, _ := argument_value_problem(.Log, FORM, values)
+		testing.expectf(t, problem == .None, "the form %d of Log gives %v", word, problem)
+	}
+	for word in ([2]u64{u64(max(Log_Record_Form)) + 1, max(u64)}) {
+		values := [7]u64{0, 0, 0, 0, 0, word, 0}
+		problem, limit := argument_value_problem(.Log, FORM, values)
+		testing.expect_value(t, problem, errors.Kind.Bad_Value)
+		testing.expect_value(t, limit, u64(max(Log_Record_Form)))
 	}
 }
 

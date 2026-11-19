@@ -247,7 +247,7 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 			}
 			return result, .Ok
 		}
-		if state, _ := process_state(connection.process); state == .Stopped || state == .None {
+		if state, _, _ := process_state(connection.process); state == .Stopped || state == .None {
 			return 0, .Stopped
 		}
 		wait_records(&wait, &connection.calls.completions)
@@ -320,7 +320,7 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	limit := time() + 5000
 	for {
 		wait := wait_begin()
-		state, _ := process_state(connection.process)
+		state, _, _ := process_state(connection.process)
 		for _ in 0 ..< ring.CAPACITY {
 			completion, has := receive(&connection.calls.completions)
 			if !has {

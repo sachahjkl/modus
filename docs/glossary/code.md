@@ -214,9 +214,9 @@ Do not use: exception, errno, error message.
 
 ### Stop report
 
-A stop report is the record that the kernel keeps of a process that stopped on a fault (`op.Stop_Report`): the stop code, the instruction, the address, the module record of the module that ran, and the stack trace.
+A stop report is the record that the kernel keeps of a process that stopped on a fault (`op.Stop_Report`): the stop cause, the vector, the instruction, the address, the module record of the module that ran, and the stack trace.
 
-A stop report replaces a core dump. It is small and typed, and the kernel writes it at the fault, from the frame of the thread, its frame pointers and the module records of the process. The holder of the process handle with the right Read reads it with `Process_State`. The stop code says why the process stopped: a fault and its vector, a refused return, or a fault ring that ended with a waiting thread. Example: the console prints "error: the instruction is at offset ... of calendar_fixed ...".
+A stop report replaces a core dump. It is small and typed, and the kernel writes it at the fault, from the frame of the thread, its frame pointers and the module records of the process. The holder of the process handle with the right Read reads it with `Process_State`. The kernel writes one for the stop causes `Fault`, `Not_Committed` and `Cannot_Return`; another stop leaves it zero. Example: the console prints "error: the instruction is at offset ... of calendar_fixed ...".
 
 The design: `docs/MODULE_CONTRACT.md`, "A fault: the stack trace".
 
@@ -234,7 +234,7 @@ Do not use: crash log, saved stop report.
 
 ### Refused return
 
-A refused return is a return of the kernel to a thread that the processor refuses at `iretq`: the kernel stops the process of the thread, as its own fault, with the stop code `STOP_CODE_RETURN`.
+A refused return is a return of the kernel to a thread that the processor refuses at `iretq`: the kernel stops the process of the thread, as its own fault, with the stop cause `Cannot_Return`.
 
 The kernel returns to a process only with `iretq`, and checks the frame before each return: an instruction address at or above `USER_END`, or a stack address that is not canonical, cannot pass. A fault of the `iretq` itself is a fault of the thread, not of the kernel: the stop report has the refused address, and the machine goes on. A refused return can come from a frame that a process wrote with thread control, which checks the frame first.
 

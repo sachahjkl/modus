@@ -232,7 +232,7 @@ A line that fails has one result: its error. The first error ends the line: the 
 | A value of the wrong kind for a field | `error: where: the field code is Integer, the value is Text` |
 | An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8), then the values of the record |
 | The root service refuses | `error: root.Stop: the argument name names a process of the system: ...`: the sentence of the error record of the root ring, then its values |
-| A call in an isolated process that faults | `error: the process agenda stopped: invalid instruction`, then the instruction and the frames of its stop report, each after `error: ` |
+| A call in an isolated process that faults | `error: the process agenda stopped: a fault, invalid instruction`, then the instruction and the frames of its stop report, each after `error: ` |
 
 An overflow has an error record of the kind `Over_Limit`: `value` is the left value, `found` the right value, and `limit` the largest integer.
 
@@ -275,20 +275,25 @@ console     4        3               412         38       1830211
 
 ![A table of the console: each field in the color of its value kind](screenshots/console_value_kinds.png)
 
-**The colors.** A value has the color of its value kind, from the one table that the window of the log and the site read (`src/library/support/graphics/value_colors.odin`; `docs/DESIGN.md`, "The colors of values"). The console sends the kind (`Style.value_kind`), and the terminal chooses its color in the appearance in force. The colors in the table below are those of the dark appearance. The kind of a field comes from the description of its record (`MODULE_CONTRACT.md`, "The unit of an Integer field"):
+**The colors.** A value has the color of its value kind, from the one table that the window of the log and the site read (`src/library/support/graphics/value_colors.odin`; `docs/DESIGN.md`, "The colors of values"). The console sends the kind (`Style.value_kind`), and the terminal chooses its color in the appearance in force. The colors in the table below are those of the dark appearance. The kind of a field comes from the description of its record (`MODULE_CONTRACT.md`, "The unit of an Integer field" and "The kind of a field"):
 
 | Value | Value kind | Color |
 |---|---|---|
 | An Integer field with no unit, an Integer | Number | Memory |
 | An Integer field with a unit of size | Size | Memory, and its unit |
 | An Integer field with a unit of time | Time | Boot program, and its unit |
+| A hexadecimal Integer field: `0x1a2b` | Number | Memory |
+| A status field: the name of its member, `Warning` | Status | Failed |
+| A status field whose word names no member: the number | Number | Memory |
 | A handle | Handle | Kernel |
 | A Text field | none | The color of the text |
+| A module name field | Module | Process |
+| A hash field: two hexadecimal digits for each byte | Version | Boot program |
 | The name of a record, the kind of an object | Type | Firmware |
 | An error kind | Status | Failed |
 | The operation of an error | Operation | Kernel |
 
-The name of a field, the head of a column with its unit, and a line about the result (the count of rows) are dim. A text value is plain: the description states no kind for a text, and no text is classified by its look. A color is never the only sign: a size and a number have one color, and the unit tells them apart. The design: `src/md/features/console_value_colors.md`.
+The name of a field, the head of a column with its unit, and a line about the result (the count of rows) are dim. A plain text value is plain: no text is classified by its look, and only the description of a field says that it holds a module name. A color is never the only sign: a size and a number have one color, and the unit tells them apart; a hexadecimal number starts with `0x`; a status is a name where a number is digits. A status, a module name and a hash are at the left of their column, as a text. `where`, `sort` and `join` take an Integer or a Text field; a hash field is neither, and they refuse it with its type. `variable.field` of a hash field gives its bytes. A record with a hash field has no command that makes it. The design: `src/md/features/console_value_colors.md`.
 
 **No value is cut.** The terminal draws no byte past its last column. The console starts a new row when a line reaches the last column of its window (`WINDOW_COLUMNS`, 96), so a long value goes on in the next row, under the start of its column when that column starts in the left half of the window. The log has the line whole. A text that a command writes in a field of a fixed size, and that is longer than the field, ends with the cut mark and the count of the missing bytes (`glossary/running_code.md`, "Cut mark"): the help of a command in `help()`; `describe(name)` gives it whole.
 
@@ -395,7 +400,7 @@ While a line calls an export, the console shows under the line the log records t
 ```
 
 - **Which records.** The records that a process called by the line wrote, from the first call of the line on: a service, a sandboxed process of `isolate`, and the console itself for a module that `load` put in it. A line follows 4 processes at most. A process that `start` starts is not followed: the line ends before the process writes.
-- **By channel.** The records of one process and one channel follow one head line: the name of the process, in the color of a module, and the channel. A record of another channel starts a new group.
+- **By process.** The records of one process follow one head line: the name of the process, in the color of a module. A record of another process starts a new group.
 - **The value runs.** Each value run of a record is in the color of its value kind, as in the window of the log (`docs/TOOLS.md`, "The log"). A record of the level error is in the color of a failure.
 - **While the line runs.** During an isolated call or a call of a service, the console reads the new records each 100 ms (`STATUS_INTERVAL`), and once more when the line ends, before it draws the result. During a direct call the console waits in the module: the records show when the call returns.
 - **To the terminal only.** These lines do not go to the log: the records are in the log already.

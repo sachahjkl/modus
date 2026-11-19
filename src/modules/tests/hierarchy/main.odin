@@ -81,10 +81,10 @@ outcome :: proc "contextless" (good: bool, what: string, parts: ..system.Part) {
 		system.write_part(&writer, part)
 	}
 	if good {
-		system.log("hierarchy: ", what, system.written(&writer), ": as it must")
+		system.log(.Info, "hierarchy: ", what, system.written(&writer), ": as it must")
 	} else {
 		wrong_cases += 1
-		system.log_in("hierarchy", .Error, "hierarchy: WRONG: ", what, system.written(&writer))
+		system.log(.Error, "hierarchy: WRONG: ", what, system.written(&writer))
 	}
 }
 
@@ -200,7 +200,7 @@ first_run :: proc "contextless" () {
 		commits += 1
 		storage.close_tree(&client, top_place)
 		if (top + 1) % 10 == 0 {
-			system.log("hierarchy: ", i64((top + 1) * PARTS * OBJECTS_IN_PART), " objects made in ", commits, " commits, in ", system.time() - start, " ms")
+			system.log(.Info, "hierarchy: ", i64((top + 1) * PARTS * OBJECTS_IN_PART), " objects made in ", commits, " commits, in ", system.time() - start, " ms")
 		}
 	}
 	counts, _ := storage.usage(&client)
@@ -486,28 +486,31 @@ second_run :: proc "contextless" (counts: storage.Usage) {
 // store it runs the first run: it makes the trees, then checks each case.
 // On a store that the first run filled it runs the second run: it checks
 // the counts and the contents. Each case writes its line on the log. The
-// process then stops with the code 0 when each case held, else 2. With no
-// store or no usage, it writes `hierarchy: WRONG: no store` (or `no usage`)
-// at the level error, and stops with the code 1.
+// process then stops with `Done` when each case held, else with `Failed`.
+// With no store or no usage, it writes `hierarchy: WRONG: no store` (or `no
+// usage`) at the level error, and stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ok: bool
 	if client, ok = storage.open(ctx); !ok {
-		system.log_in("hierarchy", .Error, "hierarchy: WRONG: no store")
-		system.stop(1)
+		system.log(.Error, "hierarchy: WRONG: no store")
+		system.stop(.Failed)
 	}
 	counts, status := storage.usage(&client)
 	if status != .Ok {
-		system.log_in("hierarchy", .Error, "hierarchy: WRONG: no usage")
-		system.stop(1)
+		system.log(.Error, "hierarchy: WRONG: no usage")
+		system.stop(.Failed)
 	}
 	if counts.objects == 0 {
-		system.log("hierarchy: a new store: the first run")
+		system.log(.Info, "hierarchy: a new store: the first run")
 		first_run()
 	} else {
-		system.log("hierarchy: a store with ", counts.objects, " objects: the run after the remount")
+		system.log(.Info, "hierarchy: a store with ", counts.objects, " objects: the run after the remount")
 		second_run(counts)
 	}
-	system.log("hierarchy: done, ", u64(wrong_cases), " wrong")
-	system.stop(wrong_cases == 0 ? 0 : 2)
+	system.log(.Info, "hierarchy: done, ", u64(wrong_cases), " wrong")
+	if wrong_cases != 0 {
+		system.stop(.Failed)
+	}
+	system.stop(.Done)
 }

@@ -42,7 +42,7 @@
 // **Its lines in the log**: `compositor: two screen pages: each frame
 // reaches the screen whole, by a page flip` (or `one screen page` on a
 // display with no page flip), `compositor: ok <width>x<height>` at the start,
-// `compositor: first frame`, then, on the channel `surfaces`, one line for
+// `compositor: first frame`, then one line for
 // each new surface, each move and each window brought to the front, the
 // time of a full frame, and the events of the palette.
 //
@@ -62,7 +62,7 @@
 // to 3 are the width, the height, the pixels of a line and the pixel format
 // of the screen. The root service also maps its own file (for its exports),
 // two [pointer themes](term:pointer-theme), the
-// [settings page](term:settings-page), the glyph caches and the
+// [settings page](term:settings-page), the font outlines and the
 // [date page](term:date-page). Its row of `process_roles` has the grants
 // Serve and System_Part: the root service gives these handles by name.
 //
@@ -132,9 +132,8 @@ import "base:intrinsics"
 //   32 x 19 = 608 pages;
 // - the glyph memory of its two copies of the text rendering, its own
 //   (its bar, its menus, its titles) and the one of the drawing module:
-//   each draws a glyph past the glyph caches, as a box-drawing character
-//   or a Greek letter of a title, into its own private glyph cache, and
-//   reserves its memory at the first such glyph: 2 x 354 pages
+//   each draws every glyph of its text into its own private glyph cache,
+//   and reserves its memory at its first glyph: 2 x 354 pages
 //   (display.TEXT_MEMORY_PAGES) = 708 pages.
 // 4050 + 10 + 9 + 3 + 2 + 2255 + 608 + 708 = 7645. A screen whose frame
 // and background the budget cannot pay is named on one line, and the
@@ -421,10 +420,10 @@ bar_measure :: proc "contextless" () {
 	}
 	bar_layout, menu_open = saved_layout, saved_menu
 	if measured < 2 {
-		system.log("compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us; no interface font")
+		system.log(.Info, "compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us; no interface font")
 		return
 	}
-	system.log("compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us, the interface font ", least[1] / 1000, ".", least[1] / 100 % 10, " us")
+	system.log(.Info, "compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us, the interface font ", least[1] / 1000, ".", least[1] / 100 % 10, " us")
 }
 
 // bar_layout_update measures the bar in the font that draws it now, and
@@ -445,9 +444,9 @@ bar_layout_update :: proc "contextless" () {
 	damage_add(0, 0, screen.width, BAR_HEIGHT)
 	damage_menu_of(bar_layout)
 	if in_interface_font {
-		system.log("compositor: the bar is in the interface font: start ", u64(layout.label_width), " pixels, windows ", u64(layout.windows_label_width), ", the widest name ", u64(layout.longest_name_width))
+		system.log(.Info, "compositor: the bar is in the interface font: start ", u64(layout.label_width), " pixels, windows ", u64(layout.windows_label_width), ", the widest name ", u64(layout.longest_name_width))
 	} else {
-		system.log("compositor: the bar is in the font of the cells")
+		system.log(.Info, "compositor: the bar is in the font of the cells")
 	}
 }
 
@@ -480,12 +479,12 @@ windows_log :: proc "contextless" () {
 		}
 		count += copy(buffer[count:], system.name_of(client.title[:]))
 	}
-	system.log_in("surfaces", .Info, "compositor: windows: ", string(buffer[:count]))
+	system.log(.Info, "compositor: windows: ", string(buffer[:count]))
 	// The line of a disk process shows the hash prefix that the root
 	// service gave, faded beside its nickname.
 	for &client in clients {
 		if client.surface.pixels != nil && client.from_disk {
-			system.log_in("surfaces", .Info, "compositor: the menu of the windows shows the disk process ", system.name_of(client.title[:]), " with the hash prefix ", string(client.hash_prefix[:]), ", from the root service")
+			system.log(.Info, "compositor: the menu of the windows shows the disk process ", system.name_of(client.title[:]), " with the hash prefix ", string(client.hash_prefix[:]), ", from the root service")
 		}
 	}
 }
@@ -532,8 +531,8 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 		address, status = system.memory_map(memory)
 	}
 	if status != .Ok {
-		system.log("compositor: no memory")
-		system.stop(1)
+		system.log(.Info, "compositor: no memory")
+		system.stop(.Failed)
 	}
 	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}
 }
@@ -559,10 +558,10 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 		}
 	}
 	if screen_page_count == bochs_display.PAGE_COUNT {
-		system.log("compositor: two screen pages: each frame reaches the screen whole, by a page flip")
+		system.log(.Info, "compositor: two screen pages: each frame reaches the screen whole, by a page flip")
 	} else {
 		display_registers = nil
-		system.log("compositor: one screen page: each frame is written into the screen page that the display shows")
+		system.log(.Info, "compositor: one screen page: each frame is written into the screen page that the display shows")
 	}
 }
 
@@ -600,12 +599,12 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 // 6. A frame, at most one each 16 ms, when the screen has damage.
 //
 // **The stop.** With no framebuffer (modus:support/screen_presence), the
-// compositor writes `compositor: no framebuffer` and stops with the code 1;
+// compositor writes `compositor: no framebuffer` and stops with `Failed`;
 // with no input ring or no control ring, it writes `compositor: no input
-// ring or no control ring` and stops with the code 1. When its budget
+// ring or no control ring` and stops with `Failed`. When its budget
 // cannot pay the frame and the background of the screen, it writes
 // `compositor: a screen of <width>x<height> needs <n> pages, the budget
-// holds <m>` and stops with the code 1. Without the
+// holds <m>` and stops with `Failed`. Without the
 // memory of its frame, it writes `compositor: no memory` and stops. Else it
 // never returns.
 @(export, link_name = "entry")
@@ -620,12 +619,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The same test as the root service makes before it starts this
 	// process: the two never disagree on a screen.
 	if !screen_presence.screen_present(status, ctx.values[VALUE_WIDTH], ctx.values[VALUE_HEIGHT]) {
-		system.log("compositor: no framebuffer")
-		system.stop(1)
+		system.log(.Info, "compositor: no framebuffer")
+		system.stop(.Failed)
 	}
 	if input_status != .Ok || control_status != .Ok {
-		system.log("compositor: no input ring or no control ring")
-		system.stop(1)
+		system.log(.Info, "compositor: no input ring or no control ring")
+		system.stop(.Failed)
 	}
 	screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
 	screen_pages_open(ctx)
@@ -639,8 +638,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	needed_pages: u64 = 2 * canvas_pages
 	budget_left, budget_status := system.budget_read()
 	if budget_status != .Ok || budget_left.pages < needed_pages {
-		system.log("compositor: a screen of ", u64(width), "x", u64(height), " needs ", needed_pages, " pages, the budget holds ", budget_left.pages)
-		system.stop(1)
+		system.log(.Info, "compositor: a screen of ", u64(width), "x", u64(height), " needs ", needed_pages, " pages, the budget holds ", budget_left.pages)
+		system.stop(.Failed)
 	}
 	frame = canvas_create(width, height)
 	background = canvas_create(width, height)
@@ -655,14 +654,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	pointer_theme_open(ctx) // pointer_picture.odin
 	damage_add(0, 0, width, height)
 	full_measure = true
-	system.log("compositor: ok ", u64(width), "x", u64(height))
+	system.log(.Info, "compositor: ok ", u64(width), "x", u64(height))
 	quality_profile_log() // quality_measures.odin
 	service_start(ctx) // exports.odin
-	// The text of the desktop: the settings of the principal and the glyph cache
-	// (modus:contract/settings); a change of the settings wakes this loop.
+	// The text of the desktop: the settings of the principal and the font
+	// outlines (modus:contract/settings); a change of the settings wakes
+	// this loop.
 	display.text_settings_open(ctx)
 	display.interface_font_load(ctx)
-	// What the fallback chains draw past the glyph caches, script by
+	// What the fallback chains draw past the Latin-1 Supplement, script by
 	// script, once at each boot: the log names what no font has.
 	display.script_coverage_tell("compositor")
 	palette_start() // palette.odin
@@ -730,7 +730,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			quality_record_read()
 			kind, kind_ok := display.control_of_ring_word(record.kind)
 			if !kind_ok {
-				system.log("compositor: the root service sent the control word ", u64(record.kind), ", which names no control command")
+				system.log(.Info, "compositor: the root service sent the control word ", u64(record.kind), ", which names no control command")
 				continue
 			}
 			switch kind {
@@ -747,7 +747,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .None, .Start, .Stop:
 				// The border refused None above. Start and Stop go from the
 				// compositor to the root service, never to the compositor.
-				system.log("compositor: the root service sent the control command ", u64(record.kind), ", which the compositor does not take")
+				system.log(.Info, "compositor: the root service sent the control command ", u64(record.kind), ", which the compositor does not take")
 			}
 		}
 		window_events_pass() // The records that wait go before the new ones.
@@ -755,7 +755,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			quality_record_read()
 			kind, kind_ok := display.input_of_ring_word(record.kind)
 			if !kind_ok {
-				system.log("compositor: the input service sent the word ", u64(record.kind), ", which names no input")
+				system.log(.Info, "compositor: the input service sent the word ", u64(record.kind), ", which names no input")
 				continue
 			}
 			switch kind {
@@ -802,7 +802,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				command, command_ok := display.command_of_ring_word(record.kind)
 				if !command_ok {
 					if client.commands_refused == 0 {
-						system.log("compositor: a window sent the word ", u64(record.kind), ", which names no command; the next ones are counted, and the count comes when the window closes")
+						system.log(.Info, "compositor: a window sent the word ", u64(record.kind), ", which names no command; the next ones are counted, and the count comes when the window closes")
 					}
 					client.commands_refused += 1
 					continue
@@ -848,7 +848,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						// that menu waits for this line, not for the line of
 						// the surface, which comes before any picture.
 						if client.presents == 0 {
-							system.log_in("surfaces", .Info, "compositor: window ", system.name_of(client.title[:]), " is shown")
+							system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " is shown")
 						}
 						// The first picture of a new surface: each pixel
 						// of it changed too.
@@ -915,7 +915,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			next_frame = now + FRAME_INTERVAL
 			frames += 1
 			if frames == 1 {
-				system.log("compositor: first frame")
+				system.log(.Info, "compositor: first frame")
 			}
 		}
 	}
@@ -925,7 +925,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // whole screen again, and tells each window: its process draws again
 // (src/library/support/display gives it the new font before the event).
 settings_changed :: proc "contextless" (choice: settings.Choice) {
-	display.text_settings_apply()
+	_ = display.text_settings_apply()
 	// A new appearance: the background and the mark of the bar are pixels
 	// that the compositor keeps, so it draws them again; each record of the
 	// screen reads the tokens at its next frame.
@@ -960,7 +960,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	zone_buffer: [settings.ZONE_TEXT_SIZE]u8
 	system.write_part(&writer, "; the time zone ")
 	system.write_part(&writer, settings.zone_text(zone_buffer[:], choice.zone_offset_minutes))
-	system.log("compositor: the settings changed: ", system.written(&writer), "; ", u64(told), " windows draw again")
+	system.log(.Info, "compositor: the settings changed: ", system.written(&writer), "; ", u64(told), " windows draw again")
 }
 
 // send gives an event to a window. A full ring loses no key: the event
@@ -1026,7 +1026,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 			system.memory_unmap(client.resize_pictures)
 		}
 		if client.commands_refused != 0 {
-			system.log("compositor: window ", system.name_of(client.title[:]), " closed after ", client.commands_refused, " records whose word names no command")
+			system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " closed after ", client.commands_refused, " records whose word names no command")
 		}
 		clipboard_client_remove(index) // clipboard.odin
 		if capture.client == index {
@@ -1089,7 +1089,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	order[order_count] = index
 	order_count += 1
 	damage_window(client)
-	system.log_in("surfaces", .Info, "compositor: surface ", system.name_of(client.title[:]), " ", width, "x", height, " at ", u64(client.x), ",", u64(client.y))
+	system.log(.Info, "compositor: surface ", system.name_of(client.title[:]), " ", width, "x", height, " at ", u64(client.x), ",", u64(client.y))
 	palette_entries_refresh() // A window appeared.
 }
 
@@ -1139,7 +1139,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	// alone. A test that moves the pointer with no other way to read it
 	// learns from this line where the press landed.
 	if pressed {
-		system.log_in("surfaces", .Info, "compositor: a press of the left button at ", u64(pointer_x), ",", u64(pointer_y))
+		system.log(.Info, "compositor: a press of the left button at ", u64(pointer_x), ",", u64(pointer_y))
 	}
 
 	if palette_is_open() {
@@ -1157,8 +1157,8 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		} else {
 			// The input put the window down: the log has its new place.
 			client := &clients[dragging]
-			system.log_in("surfaces", .Info, "compositor: window ", system.name_of(client.title[:]), " moved to ", u64(max(client.x, 0)), ",", u64(client.y))
-			system.log_in("surfaces", .Info, "compositor: the move of ", system.name_of(client.title[:]), ": ", move_frames, " frames, ", move_time / max(move_frames, 1) / 1000, " us per frame, ", move_longest / 1000, " us the longest")
+			system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " moved to ", u64(max(client.x, 0)), ",", u64(client.y))
+			system.log(.Info, "compositor: the move of ", system.name_of(client.title[:]), ": ", move_frames, " frames, ", move_time / max(move_frames, 1) / 1000, " us per frame, ", move_longest / 1000, " us the longest")
 			move_frames, move_time, move_longest = 0, 0, 0
 			dragging = -1
 			damage_add(0, 0, screen.width, screen.height)
@@ -1195,7 +1195,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 						break
 					}
 				}
-				system.log_in("surfaces", .Info, "compositor: window ", system.name_of(clients[index].title[:]), " in front")
+				system.log(.Info, "compositor: window ", system.name_of(clients[index].title[:]), " in front")
 			}
 			menu_open = .None
 			menu_line = -1
@@ -1204,7 +1204,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		under := bar.button_at(bar_layout, pointer_x, pointer_y)
 		if under == .Start && was_open != .Start {
 			menu_open = .Start
-			system.log_in("surfaces", .Info, "compositor: the start menu is open")
+			system.log(.Info, "compositor: the start menu is open")
 			damage_menu()
 		}
 		if under == .Windows && was_open != .Windows {
@@ -1318,7 +1318,7 @@ draw :: proc "contextless" (now: u64) {
 	pointer_frame_end()
 	if full_measure {
 		full_measure = false
-		system.log_in("surfaces", .Info, "compositor: a full frame of ", u64(screen.width), "x", u64(screen.height), " with ", u64(order_count), " windows in ", spent / 1000, " us")
+		system.log(.Info, "compositor: a full frame of ", u64(screen.width), "x", u64(screen.height), " with ", u64(order_count), " windows in ", spent / 1000, " us")
 	}
 }
 
@@ -1385,7 +1385,7 @@ screen_put :: proc "contextless" (areas: []Rectangle) {
 		// The device kept another offset: it shows no page that this
 		// service knows. The page 0 then takes each frame, as with no
 		// device, from this whole frame on.
-		system.log("compositor: the display refused the page flip to the screen page ", u64(hidden), ": each later frame is written into the screen page 0, which the display shows")
+		system.log(.Info, "compositor: the display refused the page flip to the screen page ", u64(hidden), ": each later frame is written into the screen page 0, which the display shows")
 		bochs_display.page_show(display_registers, 0, screen.height)
 		screen_page_count, screen_page_shown = 1, 0
 		screen_copy(screen_pages[0], {0, 0, screen.width, screen.height})
@@ -1485,7 +1485,7 @@ title_measure :: proc "contextless" () {
 		}
 		times[form] = (system.nanoseconds() - start) / ROUNDS
 	}
-	system.log_in("surfaces", .Info, "compositor: a title bar of ", u64(width), " pixels: one color ", times[0] / 1000, ".", times[0] / 100 % 10, " us, a mix for each pixel ", times[1] / 1000, ".", times[1] / 100 % 10, " us, one row of colors then copies ", times[2] / 1000, ".", times[2] / 100 % 10, " us")
+	system.log(.Info, "compositor: a title bar of ", u64(width), " pixels: one color ", times[0] / 1000, ".", times[0] / 100 % 10, " us, a mix for each pixel ", times[1] / 1000, ".", times[1] / 100 % 10, " us, one row of colors then copies ", times[2] / 1000, ".", times[2] / 100 % 10, " us")
 }
 
 // close_button_under_pointer gives the client whose close button is under
@@ -1563,10 +1563,10 @@ memory_measure :: proc "contextless" () {
 		for value in tenths[form] {
 			count += len(system.format(line[count:], " ", value / 10, ".", value % 10))
 		}
-		system.log_in("surfaces", .Info, string(line[:count]))
+		system.log(.Info, string(line[:count]))
 	}
 	_, ebx, _, edx := intrinsics.x86_cpuid(7, 0)
-	system.log_in("surfaces", .Info, "compositor: the processor: ERMS ", ebx >> 9 & 1 != 0 ? "yes" : "no", ", FSRM ", edx >> 4 & 1 != 0 ? "yes" : "no")
+	system.log(.Info, "compositor: the processor: ERMS ", ebx >> 9 & 1 != 0 ? "yes" : "no", ", FSRM ", edx >> 4 & 1 != 0 ? "yes" : "no")
 }
 
 // loop_copy copies count bytes 16 at a time, with no call of memcpy: the
@@ -1676,7 +1676,7 @@ screen_draw_part :: proc "contextless" (table: ^interface.Draw_Table, first, cou
 		return
 	}
 	screen_refusal_logged = true
-	system.log_in("surfaces", .Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_17 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
+	system.log(.Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_17 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
 }
 
 // screen_draw draws the parts of the screen table into the frame, from the
@@ -1800,7 +1800,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		if zone != bar_zone_logged {
 			bar_zone_logged = zone
 			zone_buffer: [settings.ZONE_TEXT_SIZE]u8
-			system.log("compositor: the bar shows the local time ", shown, " with the time zone ", settings.zone_text(zone_buffer[:], i32(zone / 60)), ", at ", milliseconds / 1000, " s since 1970")
+			system.log(.Info, "compositor: the bar shows the local time ", shown, " with the time zone ", settings.zone_text(zone_buffer[:], i32(zone / 60)), ", at ", milliseconds / 1000, " s since 1970")
 		}
 	} else {
 		x += CLOCK_WIDTH - 8 * 8
@@ -1859,7 +1859,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	}
 	screen_part_end(bar_first, bar_mark_pixels[:], {}, false)
 	if table.full {
-		system.log_in("surfaces", .Warning, "compositor: the draw table of the screen is full: records are missing")
+		system.log(.Warning, "compositor: the draw table of the screen is full: records are missing")
 	}
 }
 

@@ -137,9 +137,9 @@ describe_reads_records_and_handles :: proc(t: ^testing.T) {
 	testing.expect_value(t, span.size, 24)
 	testing.expect_value(t, len(span.fields), 3)
 	if len(span.fields) == 3 {
-		testing.expect_value(t, span.fields[0], Field_Description{"memory", 0, .Handle, transmute(u32)op.Rights{.Read}, false, {}})
-		testing.expect_value(t, span.fields[1], Field_Description{"first", 8, .Integer, 0, false, {}})
-		testing.expect_value(t, span.fields[2], Field_Description{"count", 16, .Integer, 0, false, {}})
+		testing.expect_value(t, span.fields[0], Field_Description{"memory", 0, .Handle, transmute(u32)op.Rights{.Read}, false, {}, .Plain, .None})
+		testing.expect_value(t, span.fields[1], Field_Description{"first", 8, .Integer, 0, false, {}, .Plain, .None})
+		testing.expect_value(t, span.fields[2], Field_Description{"count", 16, .Integer, 0, false, {}, .Plain, .None})
 	}
 	swap, sum := list[0], list[1]
 	testing.expect_value(t, swap.result, module.Type.Record)
@@ -187,9 +187,9 @@ describe_reads_tables :: proc(t: ^testing.T) {
 	testing.expect_value(t, row.size, 40)
 	testing.expect_value(t, len(row.fields), 3)
 	if len(row.fields) == 3 {
-		testing.expect_value(t, row.fields[0], Field_Description{"name", 0, .Text, 20, false, {}})
-		testing.expect_value(t, row.fields[1], Field_Description{"count", 24, .Integer, 0, false, {}})
-		testing.expect_value(t, row.fields[2], Field_Description{"tag", 32, .Text, 3, false, {}})
+		testing.expect_value(t, row.fields[0], Field_Description{"name", 0, .Text, 20, false, {}, .Plain, .None})
+		testing.expect_value(t, row.fields[1], Field_Description{"count", 24, .Integer, 0, false, {}, .Plain, .None})
+		testing.expect_value(t, row.fields[2], Field_Description{"tag", 32, .Text, 3, false, {}, .Plain, .None})
 	}
 	testing.expect_value(t, list[0].result, module.Type.Table)
 	testing.expect_value(t, list[0].result_detail, 1)
@@ -230,15 +230,99 @@ describe_reads_the_unit_of_a_field :: proc(t: ^testing.T) {
 	usage := records[0]
 	testing.expect_value(t, usage.size, 40)
 	expected := [?]Field_Description {
-		{"name", 0, .Text, 16, false, {}},
-		{"used", 16, .Integer, 0, false, value_kinds.size_in(.Pages)},
-		{"wait", 24, .Integer, 0, false, value_kinds.time_in(.Milliseconds)},
-		{"count", 32, .Integer, 0, false, {}},
+		{"name", 0, .Text, 16, false, {}, .Plain, .None},
+		{"used", 16, .Integer, 0, false, value_kinds.size_in(.Pages), .Plain, .None},
+		{"wait", 24, .Integer, 0, false, value_kinds.time_in(.Milliseconds), .Plain, .None},
+		{"count", 32, .Integer, 0, false, {}, .Plain, .None},
 	}
 	testing.expect_value(t, len(usage.fields), len(expected))
 	for item, index in expected[:min(len(expected), len(usage.fields))] {
 		testing.expect_value(t, usage.fields[index], item)
 	}
+}
+
+@(private = "file")
+TABLE_WITH_KINDS_SOURCE :: `// A table whose fields state their kinds.
+package sample
+
+import contract "modus:contract/operation"
+import "modus:contract/value_kinds"
+
+Check :: struct {
+	module_hash: value_kinds.Hash_Field,
+	name:        value_kinds.Module_Name_Field,
+	address:     value_kinds.Hexadecimal_64,
+	check:       value_kinds.Hexadecimal_32,
+	status:      contract.Status,
+	level:       contract.Log_Level,
+	small:       value_kinds.Hexadecimal_8,
+	wide:        value_kinds.Hexadecimal_16,
+}
+
+// checks gives the rows of a sample, in the memory of the caller.
+@(export)
+checks :: proc "c" (result: ^[]Check) -> i64 {return 0}
+`
+
+// A field of a type of the contract that states a field kind gets its
+// kind, its type and its size: a hash is Bytes, a module name a Text, a
+// hexadecimal type an unsigned Integer of its size, and a field of a
+// contract enum, through an import under any name, an unsigned Integer of
+// the size of the enum with the kind Status and its enum. Each field that
+// the module file then holds passes the check of the contract.
+@(test)
+describe_reads_the_kind_of_a_field :: proc(t: ^testing.T) {
+	list := make([dynamic]Export_Description, context.temp_allocator)
+	records: []Record_Description
+	testing.expect(t, describe_source("sample.odin", TABLE_WITH_KINDS_SOURCE, &list, nil, &records))
+	if len(list) != 1 || len(records) != 1 {
+		testing.expectf(t, false, "%d exports and %d records", len(list), len(records))
+		return
+	}
+	check := records[0]
+	testing.expect_value(t, check.size, 88)
+	expected := [?]Field_Description {
+		{"module_hash", 0, .Bytes, value_kinds.HASH_FIELD_BYTES, false, {}, .Hash, .None},
+		{"name", 32, .Text, value_kinds.MODULE_NAME_FIELD_BYTES, false, {}, .Module_Name, .None},
+		{"address", 64, .Integer, 0, true, {}, .Hexadecimal, .None},
+		{"check", 72, .Integer, 4, true, {}, .Hexadecimal, .None},
+		{"status", 76, .Integer, u32(size_of(op.Status)), true, {}, .Status, .Status},
+		{"level", 80, .Integer, u32(size_of(op.Log_Level)), true, {}, .Status, .Log_Level},
+		{"small", 81, .Integer, 1, true, {}, .Hexadecimal, .None},
+		{"wide", 82, .Integer, 2, true, {}, .Hexadecimal, .None},
+	}
+	testing.expect_value(t, len(check.fields), len(expected))
+	for item, index in expected[:min(len(expected), len(check.fields))] {
+		testing.expect_value(t, check.fields[index], item)
+		stored := module.Field{offset = item.offset, type = u8(item.type), detail = item.detail, unsigned = item.unsigned, kind = u8(item.kind), contract_enum = u8(item.contract_enum)}
+		testing.expectf(t, module.field_kind_valid(stored), "the field %s is refused by the contract", item.name)
+	}
+}
+
+// The text of a field of each kind, as the machine tests and the measures
+// read it: a hexadecimal Integer after 0x with the bits of its size, a
+// status by its name and a word of no member by its number, a hash in
+// hexadecimal with its zero bytes. A kind byte that names no kind is "?".
+@(test)
+field_value_writes_each_kind :: proc(t: ^testing.T) {
+	row: [16]u8
+	row[0] = 0xFE
+	row[1] = 0xFF
+	row[4] = u8(op.Log_Level.Warning)
+	row[5] = u8(max(op.Log_Level)) + 1
+	row[8], row[9], row[10] = 0x0A, 0x00, 0xFF
+	hexadecimal := module.Field{type = u8(module.Type.Integer), offset = 0, detail = 2, kind = u8(value_kinds.Field_Kind.Hexadecimal)}
+	testing.expect_value(t, field_value(row[:], hexadecimal), "0xfffe")
+	level := module.Field{type = u8(module.Type.Integer), offset = 4, detail = 1, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Log_Level)}
+	testing.expect_value(t, field_value(row[:], level), "Warning")
+	unknown := level
+	unknown.offset = 5
+	testing.expect_value(t, field_value(row[:], unknown), "4")
+	hash := module.Field{type = u8(module.Type.Bytes), offset = 8, detail = 3, kind = u8(value_kinds.Field_Kind.Hash)}
+	testing.expect_value(t, field_value(row[:], hash), "0a00ff")
+	broken := hexadecimal
+	broken.kind = u8(max(value_kinds.Field_Kind)) + 1
+	testing.expect_value(t, field_value(row[:], broken), "?")
 }
 
 @(private = "file")
@@ -282,14 +366,14 @@ describe_reads_table_parameters :: proc(t: ^testing.T) {
 	draw := records[0]
 	testing.expect_value(t, draw.size, 32)
 	expected := [?]Field_Description {
-		{"kind", 0, .Integer, 1, true, {}},
-		{"scale", 1, .Integer, 1, true, {}},
-		{"x", 4, .Integer, 4, false, {}},
-		{"y", 8, .Integer, 4, false, {}},
-		{"color", 12, .Integer, 4, true, {}},
-		{"text_start", 16, .Integer, 4, true, {}},
-		{"text_count", 20, .Integer, 4, true, {}},
-		{"element", 24, .Integer, 0, true, {}},
+		{"kind", 0, .Integer, 1, true, {}, .Plain, .None},
+		{"scale", 1, .Integer, 1, true, {}, .Plain, .None},
+		{"x", 4, .Integer, 4, false, {}, .Plain, .None},
+		{"y", 8, .Integer, 4, false, {}, .Plain, .None},
+		{"color", 12, .Integer, 4, true, {}, .Plain, .None},
+		{"text_start", 16, .Integer, 4, true, {}, .Plain, .None},
+		{"text_count", 20, .Integer, 4, true, {}, .Plain, .None},
+		{"element", 24, .Integer, 0, true, {}, .Plain, .None},
 	}
 	testing.expect_value(t, len(draw.fields), len(expected))
 	for item, index in expected[:min(len(expected), len(draw.fields))] {
@@ -345,6 +429,10 @@ describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
 		{"a table parameter with two types", "package p\nR :: struct {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (rows: ^Table_To_Append(R, R)) -> i64 {return 0}\n"},
 		{"an integer field of an enum with no backing type", "package p\nK :: enum {A}\nR :: struct {k: K}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
 		{"a Text field of 300 bytes", "package p\nR :: struct {a: [300]u8}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a field kind of a type that value_kinds does not have", "package p\nimport \"modus:contract/value_kinds\"\nR :: struct {a: value_kinds.Hexadecimal_128}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a field kind of a package that is not value_kinds", "package p\nimport value_kinds \"modus:support/system\"\nR :: struct {a: value_kinds.Hash_Field}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a status of a package that is not the contract", "package p\nimport op \"modus:support/system\"\nR :: struct {a: op.Log_Level}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a field kind as a parameter", "package p\nimport \"modus:contract/value_kinds\"\n// f gives x.\n@(export)\nf :: proc \"c\" (x: value_kinds.Hexadecimal_64) -> i64 {return 0}\n"},
 	}
 	for item in cases {
 		list := make([dynamic]Export_Description, context.temp_allocator)

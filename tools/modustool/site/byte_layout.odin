@@ -29,6 +29,7 @@ BYTE_LAYOUT_ROW_BYTES :: 8
 // layouts; the names of the layouts follow it on the same line.
 BYTE_LAYOUT_FENCE_LANGUAGE :: "byte-layout"
 BYTE_LAYOUT_FORMAT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/format.odin"
+BYTE_LAYOUT_FACTS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/facts.odin"
 BYTE_LAYOUT_DRAW_RECORD_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/draw_record/draw_record.odin"
 // The folder whose Markdown files the check and the command read: the
 // guides that the site shows.
@@ -105,6 +106,8 @@ byte_layout_table_sources :: proc() -> [module.Table_Kind]Byte_Layout_Source {
 		.Records       = {key = "module.Record", file = file, declaration = "Record", info = type_info_of(module.Record), what = "one record of the table Records"},
 		.Fields        = {key = "module.Field", file = file, declaration = "Field", info = type_info_of(module.Field), what = "one record of the table Fields"},
 		.Budget        = {key = "module.Budget_Request", file = file, declaration = "Budget_Request", info = type_info_of(module.Budget_Request), what = "the record 1 of the table Budget"},
+		.Facts         = {key = "module.Fact", file = BYTE_LAYOUT_FACTS_FILE, declaration = "Fact", info = type_info_of(module.Fact), what = "one record of the table Facts"},
+		.Own_Hash      = {key = "module.Own_Hash_Place", file = BYTE_LAYOUT_FACTS_FILE, declaration = "Own_Hash_Place", info = type_info_of(module.Own_Hash_Place), what = "the record 1 of the table Own_Hash"},
 	}
 }
 

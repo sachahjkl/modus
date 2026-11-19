@@ -1,15 +1,15 @@
 // A system tool: the log of the machine, as records.
 //
-// Each record has a time, a process, a thread, a level, a channel and a
-// text. The kernel writes the records in one memory object; this process
-// maps it with the right Read, and waits on its counter. The top part
-// counts the records of each channel. The bottom part shows the last
-// records: the color of the mark is the level, and the color of the name
-// is the process. Each value of a text is in the color of its value kind,
-// as the record keeps it (modus:contract/value_kinds); the head of the column of
-// the text is the legend of the kinds. A text that starts with its process,
-// or its channel, and ": " shows without that start: the columns at its
-// left already say it. The record keeps its text whole.
+// Each record has a time, a process, a thread, a level and a text. The
+// kernel writes the records in one memory object; this process maps it with
+// the right Read, and waits on its counter. The top part counts the records
+// of each process. The bottom part shows the last records: the color of the
+// mark is the level, and the color of the name is the process. Each value
+// of a text is in the color of its value kind, as the record keeps it
+// (modus:contract/value_kinds); the head of the column of the text is the
+// legend of the kinds. A text that starts with its process and ": " shows
+// without that start: the column at its left already says it. The record
+// keeps its text whole.
 //
 // The process needs the grant to read the records of the log. It is also a
 // service: records() and value_runs() give the records and their value runs
@@ -19,26 +19,25 @@
 // the kernel and every process write to it, and the serial port prints the
 // same texts. This process shows the log as [log records](term:log-record)
 // with typed fields, not as lines of text: a reader sees at once which
-// process wrote a record, at which [level](term:level), on which
-// [channel](term:channel), and which parts of the text are values (a
-// number, a size, a time, a module, a version, a status: the
-// [value runs](term:value-run)). It shows that a log is data, not text to
-// parse again.
+// process wrote a record, at which [level](term:level), and which parts of
+// the text are values (a number, a size, a time, a module, a version, a
+// status: the [value runs](term:value-run)). It shows that a log is data,
+// not text to parse again.
 //
 // **What a reader sees.** Start it from the start menu, or with
 // `start("log")` in the console. The window has:
 //
 // - a top line: the count of records read, the count gone before its
 //   start, the count lost since, and the count of each level;
-// - the channels, each with its count of records (at most 12; the others
-//   count together);
-// - the newest records, in 30 lines: the time in seconds, the process, the
-//   channel and the text, with the legend of the value kinds over the
-//   column of the text. A text is whole, on the lines that it needs.
+// - the processes, each with its count of records, as many as two lines
+//   hold; the others count together in the last card;
+// - the newest records, in 30 lines: the time in seconds, the process and
+//   the text, with the legend of the value kinds over the column of the
+//   text. A text is whole, on the lines that it needs.
 //
 // At its start it writes two records: `log: the memory of the log: <count>
 // records in <size>` and `log: ok, <count> records, <count> gone before its
-// start, <count> lost since, <count> channels`.
+// start, <count> lost since, <count> processes`.
 //
 // **Lost records.** The kernel keeps the last 2047 records in a ring of
 // memory, and writes over the oldest one when the ring is full. The records
@@ -65,6 +64,7 @@
 // ```
 package log
 
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -72,13 +72,17 @@ import "modus:support/interface"
 import "modus:support/system"
 
 ROWS :: 30
-CHANNELS :: 12
+// The processes that the window counts one by one: two for each process
+// slot, so the processes that stopped count beside the ones that run. The
+// records of a process past them count with the others.
+COUNTED_PROCESSES :: 2 * op.PROCESS_SLOTS_OF_THE_MACHINE
 MARGIN :: 12
 LINE :: 16
 COLUMN_PROCESS :: 11 * 8 // After "00000.000" and two spaces.
-COLUMN_CHANNEL :: COLUMN_PROCESS + 13 * 8
-COLUMN_TEXT :: COLUMN_CHANNEL + 11 * 8
-TEXT_CHARACTERS :: 80
+COLUMN_TEXT :: COLUMN_PROCESS + 13 * 8
+// The top line of the counts sets the width of the window; the text takes
+// the rest of it.
+TEXT_CHARACTERS :: 91
 WIDTH :: 2 * MARGIN + COLUMN_TEXT + TEXT_CHARACTERS * 8
 TOP_LINES :: 4
 HEIGHT :: 2 * MARGIN + (TOP_LINES + ROWS) * LINE
@@ -100,18 +104,23 @@ level_color :: proc "contextless" (level: system.Log_Level) -> graphics.Color {
 	return graphics.colors.text
 }
 
-Channel :: struct {
-	name:  [16]u8,
-	count: u64,
+// The count of the records of one process. The process slot and the process
+// serial name the process, as the log scope names it: two processes with
+// one name are two counts.
+Process_Count :: struct {
+	slot:   u8,
+	serial: u32,
+	name:   [32]u8,
+	count:  u64,
 }
 
 rows: [ROWS]system.Log_Record // The last records: rows[n % ROWS] is record n of this reader.
 row_count: u64
 gone_before_start: u64 // The records that the kernel wrote over before this reader kept its first record.
 lost: u64 // The records after the first kept record that this reader did not read.
-channels: [CHANNELS]Channel
-channel_count: int
-other_channels: u64 // Records of the channels that have no place in `channels`.
+process_counts: [COUNTED_PROCESSES]Process_Count
+process_count: int // The places of `process_counts` in use.
+other_processes: u64 // Records of the processes that have no place in `process_counts`.
 level_counts: [system.Log_Level]u64
 
 // The kinds that the legend shows: the kinds that the logs of the system
@@ -123,18 +132,13 @@ legend_kinds := [?]value_kinds.Value_Kind{.Number, .Size, .Time, .Module, .Versi
 legend_names := [?]string{"number", "size", "time", "module", "version", "status"}
 
 // repeated_start gives the count of bytes at the start of a text that say
-// its process, then its channel, each followed by ": ": "kernel: boot: " in
-// a record of the kernel in the channel boot.
+// its process, followed by ": ": "kernel: " in a record of the kernel.
 repeated_start :: proc "contextless" (record: ^system.Log_Record, text: string) -> int {
-	skip := 0
-	fields := [2]string{system.name_of(record.name[:]), system.name_of(record.channel[:])}
-	for field in fields {
-		rest := text[skip:]
-		if field != "" && len(rest) >= len(field) + 2 && rest[:len(field)] == field && rest[len(field):][:2] == ": " {
-			skip += len(field) + 2
-		}
+	name := system.name_of(record.name[:])
+	if name != "" && len(text) >= len(name) + 2 && text[:len(name)] == name && text[len(name):][:2] == ": " {
+		return len(name) + 2
 	}
-	return skip
+	return 0
 }
 
 // One text of the log, as the window shows it. The kernel keeps a text
@@ -146,8 +150,7 @@ JOIN_PARTS :: 4 // The records of one text that the window joins: a text of syst
 RECORD_TEXT_SIZE :: size_of(system.Log_Record) - offset_of(system.Log_Record, text)
 JOIN_CAPACITY :: JOIN_PARTS * RECORD_TEXT_SIZE
 JOIN_RUN_CAPACITY :: 64 // The value runs of one joined text that keep their color; a run past them is plain.
-NAME_ROOM :: COLUMN_CHANNEL - COLUMN_PROCESS - 8 // The box of the name of the process.
-CHANNEL_ROOM :: COLUMN_TEXT - COLUMN_CHANNEL - 8 // The box of the channel.
+NAME_ROOM :: COLUMN_TEXT - COLUMN_PROCESS - 8 // The box of the name of the process.
 TEXT_ROOM :: TEXT_CHARACTERS * 8 // The box of the text.
 
 // A value run of a joined text: its bytes in the joined text.
@@ -161,7 +164,7 @@ Joined :: struct {
 	count:     int,
 	runs:      [JOIN_RUN_CAPACITY]Joined_Run,
 	run_count: int,
-	from:      int, // The bytes at the start that repeat the process and the channel: not shown.
+	from:      int, // The bytes at the start that repeat the process: not shown.
 }
 
 joined_text: Joined // The text that the window measures or draws now: not on the stack, it has 2 KiB.
@@ -200,13 +203,12 @@ join :: proc "contextless" (joined: ^Joined, group: Group) {
 }
 
 // group_lines gives the lines of a group: the most of the lines of its
-// text, of the name of its process and of its channel, each in its box.
+// text and of the name of its process, each in its box.
 group_lines :: proc "contextless" (joined: ^Joined, group: Group) -> int {
 	record := record_shown(group.first)
 	text_lines := interface.text_wrapped_line_count(nil, {}, string(joined.bytes[joined.from:joined.count]), TEXT_ROOM)
 	name_lines := interface.text_wrapped_line_count(nil, {}, system.name_of(record.name[:]), NAME_ROOM)
-	channel_lines := interface.text_wrapped_line_count(nil, {}, system.name_of(record.channel[:]), CHANNEL_ROOM)
-	return max(text_lines, name_lines, channel_lines, 1)
+	return max(text_lines, name_lines, 1)
 }
 
 // lines_draw draws a text in a box, on the lines that it needs.
@@ -246,29 +248,47 @@ joined_text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, join
 }
 
 // take keeps one new record: it is the newest of the last 30 rows, and it
-// counts for its level and for its channel. A channel that finds no free
-// place of the 12 counts in `other_channels`.
+// counts for its level and for its process. A process that finds no free
+// place counts in `other_processes`.
 take :: proc "contextless" (record: ^system.Log_Record) {
 	rows[row_count % ROWS] = record^
 	row_count += 1
 	level_counts[record.level] += 1
-	for &channel in channels[:channel_count] {
-		if channel.name == record.channel {
-			channel.count += 1
+	for &counted in process_counts[:process_count] {
+		if counted.slot == record.process && counted.serial == record.process_serial {
+			counted.count += 1
 			return
 		}
 	}
-	if channel_count == CHANNELS {
-		other_channels += 1
+	if process_count == COUNTED_PROCESSES {
+		other_processes += 1
 		return
 	}
-	channels[channel_count] = {name = record.channel, count = 1}
-	channel_count += 1
+	process_counts[process_count] = {slot = record.process, serial = record.process_serial, name = record.name, count = 1}
+	process_count += 1
 }
 
-// draw draws the whole window: the counts, the channels, the legend of the
+// card_width gives the width of the card of a count: its name, a space, the
+// digits of the count, and the gap to the next card.
+card_width :: proc "contextless" (name: string, count: u64) -> int {
+	digits := 1
+	for rest := count / 10; rest != 0; rest /= 10 {
+		digits += 1
+	}
+	return graphics.text_width(name) + 8 + digits * graphics.text_width("0") + 12
+}
+
+// card_draw draws the card of a count at its place: a band, its name, and
+// the count.
+card_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, width: int, name: string, count: u64) {
+	graphics.fill(canvas, x - 4, y, width - 8, LINE, graphics.colors.card_top)
+	after := graphics.text(canvas, x, y, name, graphics.colors.text)
+	graphics.unsigned(canvas, after + 8, y, count, graphics.colors.text)
+}
+
+// draw draws the whole window: the counts, the processes, the legend of the
 // value kinds, and the last records. A text drops the start that repeats
-// its process and its channel (`repeated_start`).
+// its process (`repeated_start`).
 draw :: proc "contextless" (canvas: graphics.Canvas) {
 	graphics.clear(canvas, graphics.colors.background)
 	// The log is a ring of the kernel: its title in the color of the kernel.
@@ -295,29 +315,54 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		x = graphics.unsigned(canvas, x, MARGIN, count, graphics.colors.text) + 16
 	}
 
-	// The channels, with the count of records of each one.
-	x = graphics.text(canvas, MARGIN, MARGIN + LINE, "channels ", graphics.colors.dim)
+	// The processes, with the count of records of each one, on the lines
+	// between the top line and the heads of the columns. A card that does
+	// not fit there counts with the others, in the last card, so no card
+	// covers the heads of the columns.
+	CARD_LINES :: TOP_LINES - 2
+	cards_left := MARGIN + graphics.text_width("processes ")
+	graphics.text(canvas, MARGIN, MARGIN + LINE, "processes ", graphics.colors.dim)
+	others_width := card_width("others", max(u64))
+	x = cards_left
 	y := MARGIN + LINE
-	for &channel in channels[:channel_count] {
-		name := system.name_of(channel.name[:])
-		if name == "" {
-			name = "(none)"
+	last_line_y := MARGIN + CARD_LINES * LINE
+	others := other_processes
+	for &counted, index in process_counts[:process_count] {
+		name := system.name_of(counted.name[:])
+		width := card_width(name, counted.count)
+		card_x, card_y := x, y
+		if card_x + width > WIDTH - MARGIN {
+			card_x = cards_left
+			card_y += LINE
 		}
-		width := (len(name) + 1) * 8 + graphics.text_width("00000") + 12
-		if x + width > WIDTH - MARGIN {
-			x = MARGIN + 9 * 8
+		// The last line keeps the room of the card of the others while a
+		// card of the others can come after this one.
+		room := WIDTH - MARGIN
+		if card_y == last_line_y && (index < process_count - 1 || other_processes > 0) {
+			room -= others_width
+		}
+		if card_y > last_line_y || card_x + width > room {
+			for &rest in process_counts[index:process_count] {
+				others += rest.count
+			}
+			break
+		}
+		card_draw(canvas, card_x, card_y, width, name, counted.count)
+		x, y = card_x + width, card_y
+	}
+	if others > 0 {
+		// The room is kept on the last line: the card fits there, or on
+		// the line of the cards when that line is before the last one.
+		if x + others_width > WIDTH - MARGIN {
+			x = cards_left
 			y += LINE
 		}
-		graphics.fill(canvas, x - 4, y, width - 8, LINE, graphics.colors.card_top)
-		after := graphics.text(canvas, x, y, name, graphics.colors.text)
-		graphics.unsigned(canvas, after + 8, y, channel.count, graphics.colors.text)
-		x += width
+		card_draw(canvas, x, y, card_width("others", others), "others", others)
 	}
 
 	top := MARGIN + TOP_LINES * LINE
 	graphics.text(canvas, MARGIN, top - LINE, "time (s)", graphics.colors.dim)
 	graphics.text(canvas, MARGIN + COLUMN_PROCESS, top - LINE, "process", graphics.colors.dim)
-	graphics.text(canvas, MARGIN + COLUMN_CHANNEL, top - LINE, "channel", graphics.colors.dim)
 	x = graphics.text(canvas, MARGIN + COLUMN_TEXT, top - LINE, "text   ", graphics.colors.dim)
 	for kind, index in legend_kinds {
 		x = graphics.text(canvas, x, top - LINE, legend_names[index], graphics.value_kind_color(kind, graphics.appearance)) + 16
@@ -361,7 +406,6 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		x = graphics.text(canvas, x, y, ".", graphics.colors.dim)
 		graphics.unsigned(canvas, x, y, milliseconds % 1000, graphics.colors.dim, 3)
 		lines_draw(canvas, MARGIN + COLUMN_PROCESS, y, NAME_ROOM, system.name_of(record.name[:]), record.process == 0 ? graphics.colors.text : graphics.colors.series[record.process % graphics.SERIES_COLOR_COUNT])
-		lines_draw(canvas, MARGIN + COLUMN_CHANNEL, y, CHANNEL_ROOM, system.name_of(record.channel[:]), graphics.colors.dim)
 		join(joined, group)
 		joined_text_draw(canvas, MARGIN + COLUMN_TEXT, y, joined, record.level == .Error ? graphics.colors.failed : graphics.colors.text)
 		y += height
@@ -377,29 +421,29 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 //
 // **The loop.** One wait covers the window, the counter of the log and the
 // service ring. After each wake it takes every new record (`take`): the
-// counts of each level and of each channel, and the last 30 records. It
+// counts of each level and of each process, and the last 30 records. It
 // adds the records that the kernel wrote over before the read to the count
 // gone before its start while it kept no record, and to the count lost
 // since after that. It draws the window again only when a record came. At
-// the first turn it writes two records of its own on the channel `log`: the
-// records that the ring keeps and the size of the memory of the log, then
-// `log: ok, <count> records, <count> gone before its start, <count> lost
-// since, <count> channels`. Then it runs the calls of its exports.
+// the first turn it writes two records of its own: the records that the
+// ring keeps and the size of the memory of the log, then `log: ok, <count>
+// records, <count> gone before its start, <count> lost since, <count>
+// processes`. Then it runs the calls of its exports.
 //
-// **The stop**: with no window, it stops with the code 1. With no grant of
+// **The stop**: with no window, it stops with `Failed`. With no grant of
 // the log records, it writes `log: cannot read the records of the log:
-// status <status>` at the level error, and stops with the code 1. Else it
+// status <status>` at the level error, and stops with `Failed`. Else it
 // never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "log")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	reader, status := system.log_open(ctx.handles[system.GRANT_LOG_RECORDS])
 	if status != .Ok {
-		system.log_in("log", .Error, "log: cannot read the records of the log: status ", u64(status))
-		system.stop(1)
+		system.log(.Error, "log: cannot read the records of the log: status ", u64(status))
+		system.stop(.Failed)
 	}
 	// The service reads the same memory object: exports.odin. Its handle
 	// also reads the own log ring of a caller (Log_Read).
@@ -447,8 +491,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// The memory object of the log is its head and its records,
 			// each of the size of one record.
 			memory_bytes := (reader.head.capacity + 1) * size_of(system.Log_Record)
-			system.log_in("log", .Info, "log: the memory of the log: ", reader.head.capacity, " records in ", system.Size{memory_bytes / 1024, .Kibibytes})
-			system.log_in("log", .Info, "log: ok, ", row_count, " records, ", gone_before_start, " gone before its start, ", lost, " lost since, ", u64(channel_count), " channels")
+			system.log(.Info, "log: the memory of the log: ", reader.head.capacity, " records in ", system.Size{memory_bytes / 1024, .Kibibytes})
+			system.log(.Info, "log: ok, ", row_count, " records, ", gone_before_start, " gone before its start, ", lost, " lost since, ", u64(process_count), " processes")
 			continue
 		}
 		// The list comes after the reads and after the question to the

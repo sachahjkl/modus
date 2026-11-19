@@ -127,8 +127,8 @@ service: system.Service
 process_generator: random.Generator // The random generator of this process, from the seed of its starter.
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log("module_files: ", text)
-	system.stop(1)
+	system.log(.Info, "module_files: ", text)
+	system.stop(.Failed)
 }
 
 place_bytes :: proc "contextless" (place: u32) -> []u8 {
@@ -253,7 +253,7 @@ remote_ended :: proc "contextless" (index: int) -> bool {
 // network_failure writes the line of a failure of the fetch, and gives the
 // result of the export.
 network_failure :: proc "contextless" (error: ^errors.Error_Record, result: i64, kind: errors.Kind, unit: errors.Unit, path: string, why: string, found: i64 = 0) -> i64 {
-	system.log("module_files: GET ", path, ": ", why, ": nothing is stored")
+	system.log(.Info, "module_files: GET ", path, ": ", why, ": nothing is stored")
 	return errors.fail(error, result, kind, unit, 2, 0, 0, found)
 }
 
@@ -358,7 +358,7 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 	} else {
 		system.write_bytes(&writer, transmute([]u8)string("the storage service gave no answer that its export allows"))
 	}
-	system.log("module_files: the store module_files refused ", system.format(subject_buffer[:], ..subject), ": ", system.written(&writer))
+	system.log(.Info, "module_files: the store module_files refused ", system.format(subject_buffer[:], ..subject), ": ", system.written(&writer))
 	return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
 }
 
@@ -459,7 +459,7 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	}
 	digits: [disk_process.HASH_DIGITS]u8
 	disk_process.hash_write(&digits, hash)
-	system.log("module_files: stored ", system.Module_Name{name}, " from ", request_path, ": ", u64(size), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
+	system.log(.Info, "module_files: stored ", system.Module_Name{name}, " from ", request_path, ": ", u64(size), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
 	copy(result^, digits[:])
 	return disk_process.HASH_DIGITS
 }
@@ -520,7 +520,7 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 			return store_failure(error, &store_error, status, "the listing of its root tree")
 		}
 		if len(page) == 0 {
-			system.log("module_files: listed ", u64(total), " module files of the store module_files, each hash computed on its bytes")
+			system.log(.Info, "module_files: listed ", u64(total), " module files of the store module_files, each hash computed on its bytes")
 			return i64(total)
 		}
 		for item in page {
@@ -544,9 +544,9 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 			hash, hashed := bytes_hash(entry_name, int(min(item.size, i64(disk_process.FILE_BYTES_LIMIT) + 1)))
 			if hashed {
 				disk_process.hash_write(&digits, hash)
-				system.log("module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
+				system.log(.Info, "module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
 			} else {
-				system.log("module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, has no hash: its bytes did not come, or pass the 4194304 bytes of a module file")
+				system.log(.Info, "module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, has no hash: its bytes did not come, or pass the 4194304 bytes of a module file")
 			}
 			if total < len(result^) {
 				row := &result[total]
@@ -559,7 +559,7 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 			total += 1
 		}
 	}
-	system.log("module_files: the listing of the store module_files did not end after ", u64(LIST_PAGE_LIMIT), " pages")
+	system.log(.Info, "module_files: the listing of the store module_files did not end after ", u64(LIST_PAGE_LIMIT), " pages")
 	return errors.fail(error, ERROR_STORE, .Refused, .Store)
 }
 
@@ -567,7 +567,7 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 // then serves the calls of the console and the timers of TCP until the
 // machine stops.
 //
-// 1. takes its random generator; with no seed it stops with the code 1;
+// 1. takes its random generator; with no seed it stops with `Failed`;
 // 2. opens its service ring and its store, and makes the memory of one
 //    file; a missing part stops it with a line of the log;
 // 3. asks the network service for its grant; a grant that is not a client
@@ -653,7 +653,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address_buffer: [16]u8
 	address_writer := system.Writer{buffer = address_buffer[:]}
 	network.address_write(&address_writer, remote_address)
-	system.log("module_files: serves the store module_files of principal ", store_principal, ": a file from the web server ", system.written(&address_writer), " port ", u64(remote_port), ", and the list of the files with the hash of their bytes")
+	system.log(.Info, "module_files: serves the store module_files of principal ", store_principal, ": a file from the web server ", system.written(&address_writer), " port ", u64(remote_port), ", and the list of the files with the hash of their bytes")
 	for {
 		wait := system.wait_begin()
 		deadline, _ := network_step()

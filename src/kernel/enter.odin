@@ -268,23 +268,25 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Log:
 		_ = handle_find(process, v[0], .Log, {.Write}) or_return
-		if v[6] > op.LOG_CALL_RUN_LIMIT {
+		form, form_known := enum_word.member_of_word(op.Log_Record_Form, v[5])
+		if !form_known {
 			return .Bad_Operation
 		}
-		run_bytes := v[6] * size_of(value_kinds.Value_Run_In_Call)
+		switch form {
+		case .Fact:
+			return log_fact_operation(process_index, index, process, v)
+		case .Text:
+		}
+		if v[4] > op.LOG_CALL_RUN_LIMIT {
+			return .Bad_Operation
+		}
+		run_bytes := v[4] * size_of(value_kinds.Value_Run_In_Call)
 		if v[2] > op.LOG_TEXT_BYTES_MOST || !user_range(process, v[1], v[2] + run_bytes, false) {
 			return .Bad_Address
 		}
 		level, level_known := enum_word.member_of_word(op.Log_Level, v[3])
 		if !level_known {
 			return .Bad_Operation
-		}
-		// The channel: the characters before the first one that is not a
-		// character of a text.
-		channel := transmute([op.LOG_CHANNEL_CAPACITY]u8)[2]u64{v[4], v[5]}
-		channel_count := 0
-		for channel_count < len(channel) && channel[channel_count] > ' ' && channel[channel_count] < 127 {
-			channel_count += 1
 		}
 		name := transmute([]u8)process_name(process)
 		log_text := &processor_self().log_text
@@ -297,7 +299,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		text_encoding.invalid_sequences_replace(log_text[:v[2]])
 		// A Log spends the records that its text takes, counted in the copy
 		// as log_record cuts it: the amount bounds the lines of the serial
-		// port, and a text of LOG_TEXT_BYTES_MOST bytes is 27 records.
+		// port, and a text of LOG_TEXT_BYTES_MOST bytes is 25 records.
 		if !budget_log(process.budget, log_records_of_text(log_text[:v[2]])) {
 			process.log_lines_refused += 1
 			return .No_Budget
@@ -305,7 +307,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		process.log_lines_refused = 0
 		// The value runs: checked once, in the copy of this processor. Runs
 		// that do not fit the text leave the record plain; the text is whole.
-		log_runs := processor_self().log_runs[:v[6]]
+		log_runs := processor_self().log_runs[:v[4]]
 		user_copy(raw_data(log_runs), rawptr(uintptr(v[1] + v[2])), run_bytes)
 		if !value_kinds.value_runs_check(log_runs, int(v[2])) {
 			log_runs = nil
@@ -316,7 +318,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// other processes wrote (src/md/features/log_side_channels.md).
 		taken := log_take()
 		if taken && log_head != nil {
-			log_record(process_index, intrinsics.atomic_load(&process.serial), process, index, name, channel[:channel_count], level, log_text[:v[2]], log_runs)
+			log_record(process_index, intrinsics.atomic_load(&process.serial), process, index, name, level, log_text[:v[2]], log_runs)
 			log_free(taken)
 			serial_drain_before_the_tick()
 			return .Ok
@@ -324,10 +326,6 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// No memory of the log: the serial port only.
 		log_bytes({'['})
 		log_bytes(name)
-		if channel_count != 0 {
-			log_bytes({':'})
-			log_bytes(channel[:channel_count])
-		}
 		log_bytes({']', ' '})
 		log_bytes(log_text[:v[2]])
 		log_bytes({'\r', '\n'})
@@ -476,7 +474,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		created := process_create(budget.object, name[:v[2]]) or_return
 		handle := handle_insert(process, {kind = .Process, rights = RIGHTS_PROCESS, object = created})
 		if handle == 0 {
-			process_stop(created, 0)
+			// No handle ever named it, so no reader sees this cause.
+			process_stop(created, .Handles_Closed, .None)
 			return .No_Slot
 		}
 		results[0] = u64(handle)
@@ -554,7 +553,20 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		require_control() or_return
 		to, taken := target_lock(process, v[0]) or_return
 		process_unlock(index_of_process(to), taken)
-		process_stop(index_of_process(to), u32(v[1]))
+		// The cause comes from the target, not from the argument 0: a handle
+		// that names the caller still makes a stop of the caller.
+		cause := op.Stop_Cause.Holder
+		if to == process {
+			cause = .Itself
+		}
+		// The one border of the outcome word: only the process itself says
+		// what its work gave, so a holder cannot forge a clean end. A refusal
+		// changes nothing, and the target runs on.
+		outcome, _, outcome_known := op.stop_outcome_of_operation_word(v[1], cause == .Itself)
+		if !outcome_known {
+			return .Bad_Operation
+		}
+		process_stop(index_of_process(to), cause, outcome)
 		return .Ok
 
 	case .Process_State:
@@ -563,13 +575,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		taken := process_lock(slot.object)
 		defer process_unlock(slot.object, taken)
 		results[0] = u64(process_state(slot.object))
-		results[1] = u64(processes[slot.object].code)
-		results[2] = processes[slot.object].entries
+		results[1] = u64(processes[slot.object].cause)
+		results[2] = u64(processes[slot.object].outcome)
+		results[3] = processes[slot.object].entries
 		// The place of the process in the reports of Inspect: a starter that
 		// states facts of its child by its slot needs no search of the
 		// reports, which another process with the same name can confuse.
-		results[3] = u64(slot.object)
-		results[4] = u64(intrinsics.atomic_load(&processes[slot.object].serial))
+		results[4] = u64(slot.object)
+		results[5] = u64(intrinsics.atomic_load(&processes[slot.object].serial))
 		if v[1] != 0 {
 			if !user_range(process, v[1], size_of(op.Stop_Report), true) {
 				return .Bad_Address
@@ -918,24 +931,30 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				about := &processes[v[2]]
 				about_taken := process_lock(u32(v[2]))
 				defer process_unlock(u32(v[2]), about_taken)
-				report = {
-					state        = process_state(u32(v[2])),
-					thread_count = u64(about.thread_count),
-					code         = about.code,
-					name         = about.name,
-					mapped_pages = about.mapped_pages,
-					present_pages = about.state == .None || about.table == 0 ? 0 : present_pages(about),
-					process_serial = u64(about.serial),
-					run_time     = about.run_time,
-					start_time   = about.start_time,
-					entries      = about.entries,
-				}
-				if about.state != .None {
-					report.budget = budgets[about.budget].amounts
-				}
-				for slot in about.handles {
-					if slot.kind != .None {
-						report.handle_count += 1
+				// A free slot keeps the facts of its last process: the report
+				// gives only its state and its serial, as the stop report of a
+				// free slot gives nothing (stop_report_for_inspect).
+				if about.state == .None {
+					report = {state = .None, process_serial = u64(about.serial)}
+				} else {
+					report = {
+						state        = process_state(u32(v[2])),
+						thread_count = u64(about.thread_count),
+						stop_cause   = u32(about.cause),
+						stop_outcome = u32(about.outcome),
+						name         = about.name,
+						mapped_pages = about.mapped_pages,
+						present_pages = about.table == 0 ? 0 : present_pages(about),
+						process_serial = u64(about.serial),
+						run_time     = about.run_time,
+						start_time   = about.start_time,
+						entries      = about.entries,
+						budget       = budgets[about.budget].amounts,
+					}
+					for slot in about.handles {
+						if slot.kind != .None {
+							report.handle_count += 1
+						}
 					}
 				}
 			}
@@ -1230,7 +1249,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		fault_frame := waiter.frame
 		fault_frame.rip = waiter.fault_instruction
 		fault_frame.rbp = waiter.fault_frame_pointer
-		process_stop(process_index, process_fault_report(process_index, &fault_frame, waiter.fault_address))
+		process_stop(process_index, process_fault_report(process_index, &fault_frame, waiter.fault_address), .None)
 		return .Ok
 
 	case .Events_Set:

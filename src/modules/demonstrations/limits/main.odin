@@ -22,8 +22,7 @@
 // against its limit. The log gets a line of the times used, then
 // `limits: ok, 4 budgets within their processor time, <count> log records
 // written and <count> refused with <limit> for each second`, or
-// `limits: wrong: ...`. The burst writes its records on the channel
-// `burst`, at the level debug.
+// `limits: wrong: ...`. The burst writes its records at the level debug.
 //
 // **Its grants**: none. Its budget from the root service holds 2048 pages,
 // 1 process and 5 threads, with a limit of processor time and of log
@@ -46,8 +45,11 @@ import "modus:support/system"
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module, its threads and its window.
 // Its small limits of processor time and of log records are an exception
-// of the root service: a request holds no limit in time.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1406, processes = 1, threads = 5, window_width = WIDTH, window_height = HEIGHT}
+// of the root service: a request holds no limit in time. 1406 pages, and
+// the glyph memory of the copy of the text rendering of the drawing
+// module, which draws its text: 354 pages (display.TEXT_MEMORY_PAGES).
+// 1406 + 354 = 1760.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1760, processes = 1, threads = 5, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -105,12 +107,12 @@ within :: proc "contextless" (row: Row) -> bool {
 // processor time, starts one thread that computes with no end on each, and
 // one on its own budget. Each second it reads the processor time of each
 // budget, draws the bars, and writes the summary on the log once. It never
-// returns; with no window, it stops with the code 1.
+// returns; with no window, it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "limits")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	own, _ := system.budget_read()
 	rows[ROW_COUNT - 1].limit = own.processor
@@ -119,11 +121,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The log: 100 records at once.
 	accepted, refused: u64
 	text := "limits: one record of the 100"
-	channel: [op.LOG_CHANNEL_CAPACITY]u8
-	copy(channel[:], "burst")
-	packed := transmute([2]u64)channel
 	for _ in 0 ..< BURST {
-		_, status := system.call(.Log, u64(ctx.handles[op.CONTEXT_LOG]), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Debug), packed[0], packed[1])
+		_, status := system.call(.Log, u64(ctx.handles[op.CONTEXT_LOG]), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Debug), 0)
 		if status == .Ok {
 			accepted += 1
 		} else if status == .No_Budget {
@@ -183,11 +182,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			for row in rows {
 				right &&= within(row)
 			}
-			system.log("limits: processor time of one second, used of limit: ", rows[0].used, " of ", rows[0].limit, ", ", rows[1].used, " of ", rows[1].limit, ", ", rows[2].used, " of ", rows[2].limit, ", the process ", rows[3].used, " of ", rows[3].limit)
+			system.log(.Info, "limits: processor time of one second, used of limit: ", rows[0].used, " of ", rows[0].limit, ", ", rows[1].used, " of ", rows[1].limit, ", ", rows[2].used, " of ", rows[2].limit, ", the process ", rows[3].used, " of ", rows[3].limit)
 			if right {
-				system.log("limits: ok, 4 budgets within their processor time, ", accepted, " log records written and ", refused, " refused with ", log_limit, " for each second")
+				system.log(.Info, "limits: ok, 4 budgets within their processor time, ", accepted, " log records written and ", refused, " refused with ", log_limit, " for each second")
 			} else {
-				system.log("limits: wrong: threads ", u64(started), " log ", u64(log_right), " rule ", u64(rule_right))
+				system.log(.Info, "limits: wrong: threads ", u64(started), " log ", u64(log_right), " rule ", u64(rule_right))
 			}
 		}
 

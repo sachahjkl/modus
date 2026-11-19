@@ -74,7 +74,7 @@ Window_Drawing :: struct {
 // new appearance. The first frame of a window writes nothing.
 appearance_presented_note :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) {
 	if drawing.appearance_presented_known && drawing.appearance_presented != graphics.appearance {
-		system.log_in("processes", .Info, "interface: ", string(window.title[:window.title_count]), ": a frame in the ", graphics.appearance == .Light ? "light" : "dark", " appearance")
+		system.log(.Info, "interface: ", string(window.title[:window.title_count]), ": a frame in the ", graphics.appearance == .Light ? "light" : "dark", " appearance")
 	}
 	drawing.appearance_presented, drawing.appearance_presented_known = graphics.appearance, true
 }
@@ -87,9 +87,9 @@ element_places_write :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Fr
 	title := string(window.title[:window.title_count])
 	if frame.element_places.dropped > 0 && !drawing.element_places_dropped_logged {
 		drawing.element_places_dropped_logged = true
-		system.log_in("processes", .Warning, "interface: ", title, ": a frame names ", u64(frame.element_places.dropped), " elements that the window does not keep: empty, longer than ", u64(ELEMENT_NAME_CAPACITY), " bytes, or past ", u64(ELEMENT_PLACE_CAPACITY), "; they have no element line. A window writes this line one time")
+		system.log(.Warning, "interface: ", title, ": a frame names ", u64(frame.element_places.dropped), " elements that the window does not keep: empty, longer than ", u64(ELEMENT_NAME_CAPACITY), " bytes, or past ", u64(ELEMENT_PLACE_CAPACITY), "; they have no element line. A window writes this line one time")
 	}
-	element_places_publish(&drawing.element_places_written, &frame.element_places, "processes", "interface: ", title)
+	element_places_publish(&drawing.element_places_written, &frame.element_places, "interface: ", title)
 }
 
 // act_names_differ says if the act names of a frame differ from the set
@@ -114,7 +114,7 @@ act_names_differ :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame)
 act_names_offer :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) {
 	if frame.act_names_dropped > 0 && !drawing.act_names_dropped_logged {
 		drawing.act_names_dropped_logged = true
-		system.log_in("processes", .Warning, "interface: ", string(window.title[:window.title_count]), ": a frame names ", u64(frame.act_names_dropped), " act names that the window does not keep: empty, longer than ", u64(display.ACT_NAME_CAPACITY), " bytes, or past ", u64(display.ACT_NAME_SET_CAPACITY), "; the palette cannot go to them. A window writes this line one time")
+		system.log(.Warning, "interface: ", string(window.title[:window.title_count]), ": a frame names ", u64(frame.act_names_dropped), " act names that the window does not keep: empty, longer than ", u64(display.ACT_NAME_CAPACITY), " bytes, or past ", u64(display.ACT_NAME_SET_CAPACITY), "; the palette cannot go to them. A window writes this line one time")
 	}
 	if !act_names_differ(drawing, frame) {
 		return
@@ -138,9 +138,9 @@ act_names_offer :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, 
 act_go_to :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, hash: u64) {
 	title := string(window.title[:window.title_count])
 	if name, found := focus_by_act_name(&drawing.state, hash); found {
-		system.log_in("processes", .Info, "interface: ", title, ": the focus is on the element of ", name)
+		system.log(.Info, "interface: ", title, ": the focus is on the element of ", name)
 	} else {
-		system.log_in("processes", .Info, "interface: ", title, ": the palette came for an act name that no element of the last frame names")
+		system.log(.Info, "interface: ", title, ": the palette came for an act name that no element of the last frame names")
 	}
 }
 
@@ -314,7 +314,7 @@ when DRAWING_THROUGH_MODULE {
 			// Its words end with the bound of the clips open, written from
 			// the contract below.
 			if unit, unit_ok := errors.unit_of_word(record.unit); unit_ok && unit == .Records {
-				system.log_in("processes", .Warning, "interface: the drawing module refused ", export_name, ": the clips of the table are out of order: a pop with no push open, a push with no pop, or a push past ", u64(draw_record.CLIP_DEPTH_LIMIT), " open (the error kind ", u64(max(record.kind, 0)), ", the argument ", u64(max(record.argument, 0)), ", the record ", u64(max(record.found, 0)), "). A refused draw leaves the window as it was. A window writes this line one time")
+				system.log(.Warning, "interface: the drawing module refused ", export_name, ": the clips of the table are out of order: a pop with no push open, a push with no pop, or a push past ", u64(draw_record.CLIP_DEPTH_LIMIT), " open (the error kind ", u64(max(record.kind, 0)), ", the argument ", u64(max(record.argument, 0)), ", the record ", u64(max(record.found, 0)), "). A refused draw leaves the window as it was. A window writes this line one time")
 				return
 			}
 		case .Too_Small:
@@ -324,7 +324,7 @@ when DRAWING_THROUGH_MODULE {
 		case .Unsupported:
 			cause = "the frame has pictures in more than one picture memory, and one call of the module draws one"
 		}
-		system.log_in("processes", .Warning, "interface: the drawing module refused ", export_name, ": ", cause, " (the error kind ", u64(max(record.kind, 0)), ", the argument ", u64(max(record.argument, 0)), "). A refused difference draws each frame whole; a refused draw leaves the window as it was. A window writes this line one time")
+		system.log(.Warning, "interface: the drawing module refused ", export_name, ": ", cause, " (the error kind ", u64(max(record.kind, 0)), ", the argument ", u64(max(record.argument, 0)), "). A refused difference draws each frame whole; a refused draw leaves the window as it was. A window writes this line one time")
 	}
 } else {
 	// frame_difference finds the damage from the table before to the table
@@ -460,11 +460,18 @@ draw_whole_window_next :: proc "contextless" (drawing: ^Window_Drawing) {
 // window_frame_begin starts a frame of the window.
 window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window = nil) -> Frame {
 	drawing.build_start = system.nanoseconds()
-	// The appearance in force, read at each frame: a change holds from this
-	// frame, also before the event Settings_Changed comes. Each picture
-	// then draws whole, so that no picture keeps a part of the other
-	// appearance (src/md/features/appearance.md).
-	if display.appearance_apply() {
+	// The choice of the settings page, read at each frame: the appearance
+	// in force, the font, the order of the stripes and the grid fit. A
+	// change holds from this frame, also before the event Settings_Changed
+	// comes, and also when it never comes: the compositor tells only a
+	// window with a surface, so a window that read the page before the boot
+	// pass of `settings` and made its surface after it gets none. The
+	// measure of a text decides its font here (font_in_use), so a stale
+	// font would measure an interface text in B612 over the setting
+	// `spleen`. Each picture then draws whole, so that no picture keeps a
+	// part of the other font or appearance
+	// (src/md/features/appearance.md).
+	if display.text_settings_apply() {
 		draw_whole_window_next(drawing)
 	}
 	if window != nil {

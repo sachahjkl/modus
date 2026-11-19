@@ -55,6 +55,8 @@ table_names := [module.Table_Kind]string {
 	.Records       = "Records",
 	.Fields        = "Fields",
 	.Budget        = "Budget",
+	.Facts         = "Facts",
+	.Own_Hash      = "Own_Hash",
 }
 
 // An error value with its detail. kind None: no problem.
@@ -328,6 +330,14 @@ record_check :: proc "contextless" (file: []u8, index: u32) -> Problem {
 		// or a unit on a field that is not an Integer, is a fault of the file.
 		if !module.field_integer_unit_valid(item) {
 			return {kind = .Record, table = .Fields, index = field, offset = field_at + u64(offset_of(module.Field, integer_unit)), value = u64(item.integer_unit.kind) | u64(item.integer_unit.unit) << 8}
+		}
+		// A reader writes the value by its kind, so a kind that names no
+		// member, a kind on a field that it does not fit, an enum that is
+		// not one of the contract and a reserved byte that is not 0 are
+		// faults of the file. The value is the four bytes of the kind,
+		// the enum and the reserved bytes, in the order of the file.
+		if !module.field_kind_valid(item) {
+			return {kind = .Record, table = .Fields, index = field, offset = field_at + u64(offset_of(module.Field, kind)), value = u64(item.kind) | u64(item.contract_enum) << 8 | u64(item.reserved[0]) << 16 | u64(item.reserved[1]) << 24}
 		}
 	}
 	return {}

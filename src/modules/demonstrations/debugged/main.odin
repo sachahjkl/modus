@@ -77,8 +77,6 @@ GRANT_TARGET :: 7 // A second debugger: the process that it debugs, with Debug.
 CASE_COUNT :: 24
 
 CHILD_ROUNDS :: 3
-CHILD_RESULT :: 42 // The code with which a child that ends by itself stops.
-DEBUGGER_ENDED :: 7 // The code of a second debugger that ends by itself, when the child waits for it.
 
 // The value that a child writes in `child_known_value`: the debugger reads
 // it in the memory of the child, and its own copy stays 0.
@@ -106,7 +104,7 @@ Role :: enum u64 {
 
 // What a child does after it wrote its known value.
 Child_Mode :: enum u64 {
-	Rounds      = 0, // It waits for the parent, runs CHILD_ROUNDS rounds of its loop, and stops with CHILD_RESULT.
+	Rounds      = 0, // It waits for the parent, runs CHILD_ROUNDS rounds of its loop, and stops itself with `Done`.
 	Forever     = 1, // Its loop has no end.
 	With_Worker = 2, // Its loop has no end; a second thread runs the same procedure, and the main thread holds and releases it when the parent asks.
 	Kernel_Copy = 3, // It gives a watched buffer to the kernel, loads its stack selector from a watched word before a syscall, then reads the buffer itself.
@@ -207,16 +205,28 @@ wait_for_growth :: proc "contextless" (word: ^u32, before: u32, amount: u32 = 1)
 	return false
 }
 
-// wait_for_stop waits until a process stopped, and gives its code. The
-// bound only ends a hang.
-wait_for_stop :: proc "contextless" (process: system.Handle) -> (code: u32, stopped: bool) {
-	for deadline := hang_bound(); system.time() < deadline; {
-		if state, stop_code := system.process_state(process); state == .Stopped {
-			return stop_code, true
-		}
-		system.sleep(system.time() + 10)
+// wait_for_stop waits until a process stopped, and says if it stopped
+// itself with Done: its clean end. A trap flag that stayed in a thread
+// would stop it with the cause Fault instead. The line of detail gives the
+// stop. The bound only ends a hang.
+wait_for_stop :: proc "contextless" (process: system.Handle, what: string) -> (clean: bool) {
+	cause, outcome, stopped := system.process_stop_wait(process, hang_bound())
+	if !stopped {
+		system.log(.Info, "debugged: detail: ", what, " did not stop")
+		return false
 	}
-	return 0, false
+	buffer: [64]u8
+	stop_text := system.Writer{buffer = buffer[:]}
+	system.stop_write(&stop_text, cause, outcome)
+	system.log(.Info, "debugged: detail: ", what, " stopped: ", system.written(&stop_text))
+	return outcome == .Done
+}
+
+// step_failed ends a child or a second debugger at a step that failed: the
+// line names the step, and the stop says only that it failed.
+step_failed :: proc "contextless" (role: string, step: string) -> ! {
+	system.log(.Info, "debugged: ", role, ": ", step, " failed")
+	system.stop(.Failed)
 }
 
 // child_worker is the second thread of a child of the mode With_Worker: it
@@ -237,13 +247,13 @@ child_worker :: proc "c" (parameter: rawptr) -> ! {
 child_run :: proc "contextless" (ctx: ^system.Context) -> ! {
 	address, status := system.memory_map(ctx.handles[GRANT_SHARED], {.Write})
 	if status != .Ok {
-		system.stop(20)
+		step_failed("a child", "the map of the shared page")
 	}
 	shared := (^Shared)(address)
 	mode, mode_ok := enum_word.member_of_word(Child_Mode, ctx.values[VALUE_MODE])
 	if !mode_ok {
-		system.log("debugged: the context names the child mode ", ctx.values[VALUE_MODE], ", which names no mode")
-		system.stop(22)
+		system.log(.Info, "debugged: the context names the child mode ", ctx.values[VALUE_MODE], ", which names no mode")
+		system.stop(.Refused)
 	}
 	intrinsics.volatile_store(&child_known_value, KNOWN_VALUE)
 	intrinsics.volatile_store(&child_stack_selector, op.THREAD_STACK_SELECTOR)
@@ -262,7 +272,7 @@ child_run :: proc "contextless" (ctx: ^system.Context) -> ! {
 		started: system.Status
 		worker, started = system.thread_start(child_worker, shared)
 		if started != .Ok || !wait_until_at_least(&shared.worker_ready, 1) {
-			system.stop(21)
+			step_failed("a child", "the start of its second thread")
 		}
 	}
 	intrinsics.atomic_store(&shared.ready, 1)
@@ -301,7 +311,7 @@ child_run :: proc "contextless" (ctx: ^system.Context) -> ! {
 		// buffer by its address, and no instruction of this process reads
 		// it here.
 		wait_until_at_least(&shared.go, 1)
-		_, logged := system.call(.Log, u64(ctx.handles[op.CONTEXT_LOG]), shared.text, u64(len(COPIED_LINE)), u64(op.Log_Level.Info), 0, 0, 0)
+		_, logged := system.call(.Log, u64(ctx.handles[op.CONTEXT_LOG]), shared.text, u64(len(COPIED_LINE)), u64(op.Log_Level.Info), 0)
 		intrinsics.atomic_store(&shared.status, u32(logged))
 		intrinsics.atomic_store(&shared.stage, 1)
 		// 2. A read of the watched word by a load of the stack selector,
@@ -314,51 +324,53 @@ child_run :: proc "contextless" (ctx: ^system.Context) -> ! {
 		intrinsics.volatile_store(&child_calls, intrinsics.volatile_load(&child_watched_text[0]))
 		intrinsics.atomic_store(&shared.stage, 3)
 	}
-	system.stop(CHILD_RESULT)
+	system.stop(.Done)
 }
 
 // second_debugger attaches to the process of its context and stops its
-// first thread at an execute breakpoint, then does what its mode says. A
-// code that is not DEBUGGER_ENDED names the step that failed.
+// first thread at an execute breakpoint, then does what its mode says. It
+// stops itself with `Done` at its end; a step that failed writes the
+// line that names it and stops with `Failed`.
 second_debugger :: proc "contextless" (ctx: ^system.Context) -> ! {
+	ROLE :: "a second debugger"
 	address, status := system.memory_map(ctx.handles[GRANT_SHARED], {.Write})
 	if status != .Ok {
-		system.stop(20)
+		step_failed(ROLE, "the map of the shared page")
 	}
 	shared := (^Shared)(address)
 	mode, mode_ok := enum_word.member_of_word(Debugger_Mode, ctx.values[VALUE_MODE])
 	if !mode_ok {
-		system.log("debugged: the context names the debugger mode ", ctx.values[VALUE_MODE], ", which names no mode")
-		system.stop(23)
+		system.log(.Info, "debugged: the context names the debugger mode ", ctx.values[VALUE_MODE], ", which names no mode")
+		system.stop(.Refused)
 	}
 	target := ctx.handles[GRANT_TARGET]
 	if system.debug_attach(target) != .Ok {
-		system.stop(10)
+		step_failed(ROLE, "the attach")
 	}
 	if _, held := system.thread_control_stop(target, 0); held != .Ok {
-		system.stop(11)
+		step_failed(ROLE, "the stop of the first thread of the child")
 	}
 	breakpoints: op.Thread_Breakpoints
 	breakpoints.breakpoints[0] = {address = ctx.values[VALUE_ADDRESS], kind = .Execute}
 	if system.thread_breakpoints_write(target, 0, breakpoints) != .Ok {
-		system.stop(12)
+		step_failed(ROLE, "the write of the execute breakpoint")
 	}
 	if _, resumed := system.thread_control_resume(target, 0); resumed != .Ok {
-		system.stop(13)
+		step_failed(ROLE, "the resume of the first thread of the child")
 	}
 	intrinsics.atomic_store(&shared.ready, 1)
 	record, came := system.fault_record_next(hang_bound())
 	if !came {
-		system.stop(14)
+		step_failed(ROLE, "the wait for the record of the breakpoint")
 	}
 	if record.kind != u64(op.Fault_Kind.Debug) || record.error_code & 1 == 0 {
-		system.stop(15)
+		step_failed(ROLE, "the check of the record of the breakpoint")
 	}
 	switch mode {
 	case .Ends:
 		// A stop of the debugger on top of the wait: the end takes it back too.
 		if _, held := system.thread_control_stop(target, record.thread); held != .Ok {
-			system.stop(16)
+			step_failed(ROLE, "the stop of the waiting thread")
 		}
 	case .Steps_Then_Ends:
 		// One instruction, and no second write of the registers: the trap
@@ -366,14 +378,14 @@ second_debugger :: proc "contextless" (ctx: ^system.Context) -> ! {
 		registers, read := system.thread_registers_read(target, record.thread)
 		registers.rflags |= FLAG_TRAP
 		if read != .Ok || system.thread_registers_write(target, record.thread, registers) != .Ok {
-			system.stop(17)
+			step_failed(ROLE, "the write of the trap flag")
 		}
 		if system.debug_fault_answer(target, record) != .Ok {
-			system.stop(18)
+			step_failed(ROLE, "the answer to the record of the breakpoint")
 		}
 		step, step_came := system.fault_record_next(hang_bound())
 		if !step_came || step.kind != u64(op.Fault_Kind.Debug) || step.error_code & op.DEBUG_STATUS_STEP == 0 {
-			system.stop(19)
+			step_failed(ROLE, "the wait for the record of the single step")
 		}
 	case .Closes_Its_Handle:
 		system.close(target)
@@ -387,7 +399,7 @@ second_debugger :: proc "contextless" (ctx: ^system.Context) -> ! {
 			system.sleep(system.time() + 1000)
 		}
 	}
-	system.stop(DEBUGGER_ENDED)
+	system.stop(.Done)
 }
 
 // parked is a thread of the parent that only waits: the parent names it by
@@ -444,13 +456,13 @@ child_with_page :: proc "contextless" (role: Role, mode: u64, wait_ready: bool, 
 	made: bool
 	child.memory, child.shared, made = shared_page_create()
 	if !made {
-		system.log("debugged: no shared page")
+		system.log(.Info, "debugged: no shared page")
 		return {}, false
 	}
 	started: bool
 	child.process, started = child_start(role, mode, child.memory, target, address)
 	if !started || wait_ready && !wait_until_at_least(&child.shared.ready, 1) {
-		system.log("debugged: a child did not start")
+		system.log(.Info, "debugged: a child did not start")
 		system.close(child.memory)
 		return {}, false
 	}
@@ -460,7 +472,7 @@ child_with_page :: proc "contextless" (role: Role, mode: u64, wait_ready: bool, 
 // child_end stops a child that has no end of its own, and closes what the
 // parent holds for it.
 child_end :: proc "contextless" (child: Started_Child) {
-	system.call(.Process_Stop, u64(child.process), 0)
+	system.process_stop(child.process)
 	system.close(child.process)
 	system.close(child.memory)
 }
@@ -479,9 +491,9 @@ cases_of_one_child :: proc "contextless" () {
 
 	// 1. The attach.
 	attached := system.debug_attach(child)
-	system.log("debugged: attach: the debugger is the debug handler of the child", verdict(attached == .Ok))
+	system.log(.Info, "debugged: attach: the debugger is the debug handler of the child", verdict(attached == .Ok))
 	if attached != .Ok {
-		system.log("debugged: detail: the attach gave the status ", u64(attached))
+		system.log(.Info, "debugged: detail: the attach gave the status ", u64(attached))
 		return
 	}
 
@@ -489,21 +501,21 @@ cases_of_one_child :: proc "contextless" () {
 	breakpoints: op.Thread_Breakpoints
 	breakpoints.breakpoints[0] = {address = target, kind = .Execute}
 	not_held := system.thread_breakpoints_write(child, 0, breakpoints)
-	system.log("debugged: a write of breakpoints on a thread that is not held: refused with Bad_State", verdict(not_held == .Bad_State))
+	system.log(.Info, "debugged: a write of breakpoints on a thread that is not held: refused with Bad_State", verdict(not_held == .Bad_State))
 
 	// 3. A copy of the handle with no Debug.
 	without_debug, copied := system.give(0, child, {.Read, .Control})
 	attach_refused := system.debug_attach(without_debug)
 	_, stop_refused := system.thread_control_stop(without_debug, 0)
 	system.close(without_debug)
-	system.log("debugged: a handle with no Debug: attach and Stop refused with No_Right", verdict(copied == .Ok && attach_refused == .No_Right && stop_refused == .No_Right))
+	system.log(.Info, "debugged: a handle with no Debug: attach and Stop refused with No_Right", verdict(copied == .Ok && attach_refused == .No_Right && stop_refused == .No_Right))
 
 	// The first breakpoint: the thread is held, gets it, and goes on.
 	_, held := system.thread_control_stop(child, 0)
 	written := system.thread_breakpoints_write(child, 0, breakpoints)
 	_, resumed := system.thread_control_resume(child, 0)
 	if held != .Ok || written != .Ok || resumed != .Ok {
-		system.log("debugged: the first breakpoint was not set: the statuses ", u64(held), " ", u64(written), " ", u64(resumed))
+		system.log(.Info, "debugged: the first breakpoint was not set: the statuses ", u64(held), " ", u64(written), " ", u64(resumed))
 		return
 	}
 	intrinsics.atomic_store(&shared.go, 1)
@@ -511,9 +523,9 @@ cases_of_one_child :: proc "contextless" () {
 	// 5. The thread reaches the procedure.
 	record, came := system.fault_record_next(hang_bound())
 	reached := came && record.kind == u64(op.Fault_Kind.Debug) && record.error_code == 1 && record.instruction == target && record.thread == 0
-	system.log("debugged: detail: the record of the execute breakpoint: kind ", u64(record.kind), ", status ", system.Hex(record.error_code), ", instruction ", system.Hex(record.instruction), ", the procedure ", system.Hex(target))
+	system.log(.Info, "debugged: detail: the record of the execute breakpoint: kind ", u64(record.kind), ", status ", system.Hex(record.error_code), ", instruction ", system.Hex(record.instruction), ", the procedure ", system.Hex(target))
 	if !came {
-		system.log("debugged: an execute breakpoint at a procedure of the child: no record came: WRONG")
+		system.log(.Info, "debugged: an execute breakpoint at a procedure of the child: no record came: WRONG")
 		return
 	}
 
@@ -524,23 +536,23 @@ cases_of_one_child :: proc "contextless" () {
 	error = {}
 	kernel_refused := system.thread_breakpoints_write(child, 0, hostile, &error)
 	kept, _ := system.thread_breakpoints_read(child, 0)
-	system.log("debugged: a breakpoint at an address of the kernel: refused with the breakpoint address in the error record", verdict(kernel_refused == .Bad_Operation && error.found == i64(op.Thread_Write_Refusal.Breakpoint_Address) && u64(error.value) == KERNEL_ADDRESS && kept.breakpoints[0].address == target && kept.breakpoints[0].kind == .Execute))
-	system.log("debugged: an execute breakpoint at a procedure of the child: the fault record names breakpoint 0 and the address", verdict(reached))
+	system.log(.Info, "debugged: a breakpoint at an address of the kernel: refused with the breakpoint address in the error record", verdict(kernel_refused == .Bad_Operation && error.found == i64(op.Thread_Write_Refusal.Breakpoint_Address) && u64(error.value) == KERNEL_ADDRESS && kept.breakpoints[0].address == target && kept.breakpoints[0].kind == .Execute))
+	system.log(.Info, "debugged: an execute breakpoint at a procedure of the child: the fault record names breakpoint 0 and the address", verdict(reached))
 
 	// 6. The registers at the stop.
 	registers, read := system.thread_registers_read(child, 0)
-	system.log("debugged: the registers at the stop: the instruction address is the breakpoint", verdict(read == .Ok && registers.rip == target))
+	system.log(.Info, "debugged: the registers at the stop: the instruction address is the breakpoint", verdict(read == .Ok && registers.rip == target))
 
 	// 7. to 9. The memory of the child.
 	value: u64
 	bytes := ([^]u8)(&value)[:8]
 	count, memory_read := system.thread_memory_read(child, 0, known, bytes)
-	system.log("debugged: detail: the value of the child ", system.Hex(value), ", the copy of the debugger ", system.Hex(intrinsics.volatile_load(&child_known_value)))
-	system.log("debugged: Read_Memory of a value of the child: the bytes of the child, not of the debugger", verdict(memory_read == .Ok && count == 8 && value == KNOWN_VALUE && intrinsics.volatile_load(&child_known_value) == 0))
+	system.log(.Info, "debugged: detail: the value of the child ", system.Hex(value), ", the copy of the debugger ", system.Hex(intrinsics.volatile_load(&child_known_value)))
+	system.log(.Info, "debugged: Read_Memory of a value of the child: the bytes of the child, not of the debugger", verdict(memory_read == .Ok && count == 8 && value == KNOWN_VALUE && intrinsics.volatile_load(&child_known_value) == 0))
 	_, kernel_read := system.thread_memory_read(child, 0, KERNEL_ADDRESS, bytes)
-	system.log("debugged: Read_Memory at an address of the kernel: refused with Bad_Address", verdict(kernel_read == .Bad_Address))
+	system.log(.Info, "debugged: Read_Memory at an address of the kernel: refused with Bad_Address", verdict(kernel_read == .Bad_Address))
 	_, unmapped_read := system.thread_memory_read(child, 0, UNMAPPED_ADDRESS, bytes)
-	system.log("debugged: Read_Memory of a page that the child does not map: refused with Bad_Address", verdict(unmapped_read == .Bad_Address))
+	system.log(.Info, "debugged: Read_Memory of a page that the child does not map: refused with Bad_Address", verdict(unmapped_read == .Bad_Address))
 
 	// 10. A thread handle with Inspect only sees the thread, and reads no
 	// byte of its process.
@@ -548,7 +560,7 @@ cases_of_one_child :: proc "contextless" () {
 	inspect_only, narrowed := system.give(0, own.handle, {.Inspect})
 	_, with_write := system.thread_memory_read(own.handle, 0, u64(uintptr(&child_known_value)), bytes)
 	_, with_inspect := system.thread_memory_read(inspect_only, 0, u64(uintptr(&child_known_value)), bytes)
-	system.log("debugged: Read_Memory through a thread handle with Inspect only: refused with No_Right", verdict(own_started == .Ok && narrowed == .Ok && with_write == .Ok && with_inspect == .No_Right))
+	system.log(.Info, "debugged: Read_Memory through a thread handle with Inspect only: refused with No_Right", verdict(own_started == .Ok && narrowed == .Ok && with_write == .Ok && with_inspect == .No_Right))
 
 	// 11. A process writes no breakpoint on its own threads: not by the
 	// number of a thread, and not by a thread handle with each right.
@@ -556,7 +568,7 @@ cases_of_one_child :: proc "contextless" () {
 	by_number := system.thread_breakpoints_write(0, 1, breakpoints)
 	by_handle := system.thread_breakpoints_write(own.handle, 0, breakpoints)
 	system.thread_control_resume(own.handle, 0)
-	system.log("debugged: a write of breakpoints on a thread of the caller, with no Debug handle: refused with Bad_Handle", verdict(own_held == .Ok && by_number == .Bad_Handle && by_handle == .Bad_Handle))
+	system.log(.Info, "debugged: a write of breakpoints on a thread of the caller, with no Debug handle: refused with Bad_Handle", verdict(own_held == .Ok && by_number == .Bad_Handle && by_handle == .Bad_Handle))
 
 	// 12. One instruction: the trap flag, then the answer.
 	first: [1]u8
@@ -572,8 +584,8 @@ cases_of_one_child :: proc "contextless" () {
 		// The instruction is one byte, and it moves the stack by 8.
 		moved = after.rip == registers.rip + 1 && after.rsp == registers.rsp - 8
 	}
-	system.log("debugged: detail: the step: status ", system.Hex(step.error_code), ", the instruction address from ", system.Hex(registers.rip), " to ", system.Hex(after.rip), ", the first byte ", system.Hex(u64(first[0])))
-	system.log("debugged: a single step: one instruction ran, and the record names the step", verdict(step_written == .Ok && step_answered == .Ok && step_came && step.kind == u64(op.Fault_Kind.Debug) && step.error_code & op.DEBUG_STATUS_STEP != 0 && moved))
+	system.log(.Info, "debugged: detail: the step: status ", system.Hex(step.error_code), ", the instruction address from ", system.Hex(registers.rip), " to ", system.Hex(after.rip), ", the first byte ", system.Hex(u64(first[0])))
+	system.log(.Info, "debugged: a single step: one instruction ran, and the record names the step", verdict(step_written == .Ok && step_answered == .Ok && step_came && step.kind == u64(op.Fault_Kind.Debug) && step.error_code & op.DEBUG_STATUS_STEP != 0 && moved))
 	if !step_came {
 		return
 	}
@@ -588,8 +600,8 @@ cases_of_one_child :: proc "contextless" () {
 	system.debug_fault_answer(child, step)
 	write, write_came := system.fault_record_next(hang_bound())
 	system.thread_memory_read(child, 0, watched, bytes)
-	system.log("debugged: detail: the record of the data breakpoint: kind ", u64(write.kind), ", status ", system.Hex(write.error_code), ", the word of the child ", value)
-	system.log("debugged: a data breakpoint on a word that the child writes: the fault record names breakpoint 1", verdict(data_written == .Ok && write_came && write.kind == u64(op.Fault_Kind.Debug) && write.error_code == 2 && value == 1))
+	system.log(.Info, "debugged: detail: the record of the data breakpoint: kind ", u64(write.kind), ", status ", system.Hex(write.error_code), ", the word of the child ", value)
+	system.log(.Info, "debugged: a data breakpoint on a word that the child writes: the fault record names breakpoint 1", verdict(data_written == .Ok && write_came && write.kind == u64(op.Fault_Kind.Debug) && write.error_code == 2 && value == 1))
 	if !write_came {
 		return
 	}
@@ -599,9 +611,9 @@ cases_of_one_child :: proc "contextless" () {
 	removed := system.thread_breakpoints_write(child, 0, none)
 	now, _ := system.thread_breakpoints_read(child, 0)
 	system.debug_fault_answer(child, write)
-	code, stopped := wait_for_stop(child)
-	system.log("debugged: detail: the child stopped with the code ", u64(code), ", rounds ", u64(intrinsics.atomic_load(&shared.rounds)))
-	system.log("debugged: the breakpoints removed: the child resumed and ended with its own code", verdict(removed == .Ok && now == none && stopped && code == CHILD_RESULT && intrinsics.atomic_load(&shared.rounds) == CHILD_ROUNDS))
+	clean := wait_for_stop(child, "the child")
+	system.log(.Info, "debugged: detail: the child ran ", u64(intrinsics.atomic_load(&shared.rounds)), " rounds")
+	system.log(.Info, "debugged: the breakpoints removed: the child resumed and stopped itself at its end", verdict(removed == .Ok && now == none && clean && intrinsics.atomic_load(&shared.rounds) == CHILD_ROUNDS))
 }
 
 // second_debugger_case runs one second debugger on a child whose thread
@@ -616,23 +628,21 @@ second_debugger_case :: proc "contextless" (child: Started_Child, mode: Debugger
 	defer child_end(debugger)
 	right := false
 	if mode == .Ends {
-		code, stopped := wait_for_stop(debugger.process)
-		system.log("debugged: detail: the second debugger stopped with the code ", u64(code))
-		right = stopped && code == DEBUGGER_ENDED
+		right = wait_for_stop(debugger.process, "the second debugger")
 	} else {
 		// The thread of the child waits at its breakpoint, and the debugger lives.
 		right = wait_until_at_least(&debugger.shared.stage, 1)
 		if revoke {
 			ended, revoked := system.handle_revoke(child.process, debugger.process)
-			system.log("debugged: detail: the revocation ended ", ended, " holdings")
+			system.log(.Info, "debugged: detail: the revocation ended ", ended, " holdings")
 			right = right && revoked == .Ok && ended >= 1
 		}
-		state, _ := system.process_state(debugger.process)
+		state, _, _ := system.process_state(debugger.process)
 		right = right && state != .Stopped
 	}
 	before := intrinsics.atomic_load(&child.shared.rounds)
 	runs := wait_for_growth(&child.shared.rounds, before)
-	state, _ := system.process_state(child.process)
+	state, _, _ := system.process_state(child.process)
 	return right && runs && state != .Stopped
 }
 
@@ -652,20 +662,20 @@ cases_of_the_end :: proc "contextless" () {
 	before := intrinsics.atomic_load(&child.shared.rounds)
 	detached := system.debug_detach(child.process)
 	runs := wait_for_growth(&child.shared.rounds, before)
-	system.log("debugged: a detach while a thread is held: the child runs again", verdict(attached == .Ok && held == .Ok && detached == .Ok && runs))
+	system.log(.Info, "debugged: a detach while a thread is held: the child runs again", verdict(attached == .Ok && held == .Ok && detached == .Ok && runs))
 
 	// 16. to 18. Another process debugs the child, and its debugging ends
 	// in three ways while the thread of the child waits at its breakpoint.
-	system.log("debugged: the debugger ended while the child was held at a breakpoint: the child runs again", verdict(second_debugger_case(child, .Ends, false)))
-	system.log("debugged: the debugger closed its handle while the child was held at a breakpoint: the child runs again", verdict(second_debugger_case(child, .Closes_Its_Handle, false)))
-	system.log("debugged: the handle of the debugger was revoked while the child was held at a breakpoint: the child runs again", verdict(second_debugger_case(child, .Waits_To_Be_Revoked, true)))
+	system.log(.Info, "debugged: the debugger ended while the child was held at a breakpoint: the child runs again", verdict(second_debugger_case(child, .Ends, false)))
+	system.log(.Info, "debugged: the debugger closed its handle while the child was held at a breakpoint: the child runs again", verdict(second_debugger_case(child, .Closes_Its_Handle, false)))
+	system.log(.Info, "debugged: the handle of the debugger was revoked while the child was held at a breakpoint: the child runs again", verdict(second_debugger_case(child, .Waits_To_Be_Revoked, true)))
 }
 
 // case_of_the_step_then_the_end runs the case 19: a second debugger runs
 // one instruction of the child and ends at the record of the step, with
 // its trap flag still in the thread. The child must run its rounds and
-// end with its own code: a trap flag that stayed would stop it with the
-// code of a debug exception.
+// stop itself: a trap flag that stayed would stop it with the cause Fault
+// of a debug exception.
 case_of_the_step_then_the_end :: proc "contextless" () {
 	child, made := child_with_page(.Child, u64(Child_Mode.Rounds), true)
 	if !made {
@@ -679,10 +689,9 @@ case_of_the_step_then_the_end :: proc "contextless" () {
 	defer child_end(debugger)
 	// The breakpoint of the debugger is set: the child starts its loop.
 	intrinsics.atomic_store(&child.shared.go, 1)
-	debugger_code, debugger_stopped := wait_for_stop(debugger.process)
-	code, stopped := wait_for_stop(child.process)
-	system.log("debugged: detail: the debugger that steps stopped with the code ", u64(debugger_code), ", the child with the code ", u64(code))
-	system.log("debugged: a single step, then the end of the debugger: the child ran to its own end", verdict(debugger_stopped && debugger_code == DEBUGGER_ENDED && stopped && code == CHILD_RESULT && intrinsics.atomic_load(&child.shared.rounds) == CHILD_ROUNDS))
+	debugger_clean := wait_for_stop(debugger.process, "the debugger that steps")
+	clean := wait_for_stop(child.process, "the child")
+	system.log(.Info, "debugged: a single step, then the end of the debugger: the child ran to its own end", verdict(debugger_clean && clean && intrinsics.atomic_load(&child.shared.rounds) == CHILD_ROUNDS))
 }
 
 // cases_of_two_threads runs the cases 20 and 21 on a child with two
@@ -707,7 +716,7 @@ cases_of_two_threads :: proc "contextless" () {
 	record, came := system.fault_record_next(hang_bound())
 	before := intrinsics.atomic_load(&shared.worker_rounds)
 	other_runs := wait_for_growth(&shared.worker_rounds, before, 2)
-	system.log("debugged: a breakpoint of one thread: that thread stops, and another thread of the child runs through the same procedure", verdict(attached == .Ok && held == .Ok && written == .Ok && resumed == .Ok && came && record.thread == 0 && record.error_code == 1 && other_runs))
+	system.log(.Info, "debugged: a breakpoint of one thread: that thread stops, and another thread of the child runs through the same procedure", verdict(attached == .Ok && held == .Ok && written == .Ok && resumed == .Ok && came && record.thread == 0 && record.error_code == 1 && other_runs))
 	if !came {
 		return
 	}
@@ -726,8 +735,8 @@ cases_of_two_threads :: proc "contextless" () {
 	own_resume := wait_until_at_least(&shared.answered, 2)
 	resume_status := intrinsics.atomic_load(&shared.status) // The word that the child wrote: it is compared, never read as a status.
 	resume_count := intrinsics.atomic_load(&shared.count)
-	system.log("debugged: detail: the stop of the debugger gave the count ", count, "; the Resume of the child gave the status ", u64(resume_status), " and the count ", u64(resume_count))
-	system.log("debugged: a stop of the child on its own thread, then a stop and a detach of the debugger: the thread is still held by the stop of the child", verdict(own_stop && debugger_stop == .Ok && count == 2 && detached == .Ok && own_resume && resume_status == u32(system.Status.Ok) && resume_count == 0))
+	system.log(.Info, "debugged: detail: the stop of the debugger gave the count ", count, "; the Resume of the child gave the status ", u64(resume_status), " and the count ", u64(resume_count))
+	system.log(.Info, "debugged: a stop of the child on its own thread, then a stop and a detach of the debugger: the thread is still held by the stop of the child", verdict(own_stop && debugger_stop == .Ok && count == 2 && detached == .Ok && own_resume && resume_status == u32(system.Status.Ok) && resume_count == 0))
 }
 
 // cases_of_the_kernel_copy runs the cases 22 and 23: data breakpoints of
@@ -748,7 +757,7 @@ cases_of_the_kernel_copy :: proc "contextless" () {
 	written := system.thread_breakpoints_write(child, 0, breakpoints)
 	_, resumed := system.thread_control_resume(child, 0)
 	if attached != .Ok || held != .Ok || written != .Ok || resumed != .Ok {
-		system.log("debugged: the data breakpoints were not set: the statuses ", u64(attached), " ", u64(held), " ", u64(written), " ", u64(resumed))
+		system.log(.Info, "debugged: the data breakpoints were not set: the statuses ", u64(attached), " ", u64(held), " ", u64(written), " ", u64(resumed))
 		return
 	}
 
@@ -786,11 +795,11 @@ cases_of_the_kernel_copy :: proc "contextless" () {
 	if read_came {
 		system.debug_fault_answer(child, read)
 	}
-	code, stopped := wait_for_stop(child)
-	system.log("debugged: detail: Log gave the status ", u64(logged), "; the record of the read of the child: status ", system.Hex(read.error_code), "; the child stopped with the code ", u64(code))
-	system.log("debugged: a data breakpoint on a buffer that the kernel copies: the operation succeeded, no record came for the copy, and the read of the child came", verdict(copied && logged == u32(system.Status.Ok) && no_record && read_came && read.kind == u64(op.Fault_Kind.Debug) && read.error_code & 1 != 0 && stopped && code == CHILD_RESULT))
-	system.log("debugged: detail: the trap of the load of the stack selector ", came_to_the_debugger ? string("came to the debugger before the syscall") : string("was held until the kernel entry, and the kernel dropped it"))
-	system.log("debugged: a data breakpoint that a load of the stack selector holds before a syscall: the kernel entry returned", verdict(entered && stopped && code == CHILD_RESULT))
+	clean := wait_for_stop(child, "the child")
+	system.log(.Info, "debugged: detail: Log gave the status ", u64(logged), "; the record of the read of the child: status ", system.Hex(read.error_code))
+	system.log(.Info, "debugged: a data breakpoint on a buffer that the kernel copies: the operation succeeded, no record came for the copy, and the read of the child came", verdict(copied && logged == u32(system.Status.Ok) && no_record && read_came && read.kind == u64(op.Fault_Kind.Debug) && read.error_code & 1 != 0 && clean))
+	system.log(.Info, "debugged: detail: the trap of the load of the stack selector ", came_to_the_debugger ? string("came to the debugger before the syscall") : string("was held until the kernel entry, and the kernel dropped it"))
+	system.log(.Info, "debugged: a data breakpoint that a load of the stack selector holds before a syscall: the kernel entry returned", verdict(entered && clean))
 }
 
 // case_of_the_full_ring runs the case 24. The debugger answers each
@@ -831,8 +840,8 @@ case_of_the_full_ring :: proc "contextless" () {
 	intrinsics.atomic_store(&own.fault_read, op.FAULT_RECORD_CAPACITY)
 	comes_again := wait_until_at_least(&own.fault_written, op.FAULT_RECORD_CAPACITY + 1)
 	detached := system.debug_detach(child)
-	system.log("debugged: detail: the faults that found the ring full: ", u64(intrinsics.atomic_load(&own.fault_full)))
-	system.log("debugged: a full ring of the debugger: the breakpoint is lost for the debugger, the child goes on, and a record comes again when the ring has room", verdict(goes_on && lost && no_record && comes_again && detached == .Ok))
+	system.log(.Info, "debugged: detail: the faults that found the ring full: ", u64(intrinsics.atomic_load(&own.fault_full)))
+	system.log(.Info, "debugged: a full ring of the debugger: the breakpoint is lost for the debugger, the child goes on, and a record comes again when the ring has room", verdict(goes_on && lost && no_record && comes_again && detached == .Ok))
 }
 
 // The entry of debugged. The context value `VALUE_ROLE` chooses the role:
@@ -841,15 +850,17 @@ case_of_the_full_ring :: proc "contextless" () {
 // - `Second_Debugger`: a debugger whose debugging ends while its process
 //   waits at a breakpoint (`second_debugger`).
 // - `Parent` (0, as the root service starts it): it takes its random
-//   generator and maps the boot image (a failure stops it with the code
-//   1), runs the cases, writes the result on the log, and then waits for
-//   ever.
+//   generator and maps the boot image (no seed stops it with `Refused`, no
+//   image with `Failed`), runs the cases, writes the result on the log, and
+//   then waits for ever.
+//
+// A role or a mode word that names no member stops it with `Refused`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	role, role_ok := enum_word.member_of_word(Role, ctx.values[VALUE_ROLE])
 	if !role_ok {
-		system.log("debugged: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
-		system.stop(1)
+		system.log(.Info, "debugged: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
+		system.stop(.Refused)
 	}
 	switch role {
 	case .Child:
@@ -859,13 +870,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case .Parent:
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("debugged: no random seed in the context")
-		system.stop(1)
+		system.log(.Info, "debugged: no random seed in the context")
+		system.stop(.Refused)
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		system.log("debugged: no boot image")
-		system.stop(1)
+		system.log(.Info, "debugged: no boot image")
+		system.stop(.Failed)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	log_handle = ctx.handles[op.CONTEXT_LOG]
@@ -876,9 +887,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	cases_of_the_kernel_copy()
 	case_of_the_full_ring()
 	if right_count == CASE_COUNT {
-		system.log("debugged: ok, ", u64(CASE_COUNT), " cases: a debugger holds, reads and steps one process, and its end gives the process back")
+		system.log(.Info, "debugged: ok, ", u64(CASE_COUNT), " cases: a debugger holds, reads and steps one process, and its end gives the process back")
 	} else {
-		system.log("debugged: failed: ", u64(CASE_COUNT - right_count), " cases of ", u64(CASE_COUNT))
+		system.log(.Info, "debugged: failed: ", u64(CASE_COUNT - right_count), " cases of ", u64(CASE_COUNT))
 	}
 	for {
 		system.sleep(system.time() + 1000)

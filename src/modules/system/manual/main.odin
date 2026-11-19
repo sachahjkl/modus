@@ -131,10 +131,10 @@ navigation_leave :: proc "contextless" () {
 page_back :: proc "contextless" () {
 	place, ok := manual_navigation.history_back(&history)
 	if !ok {
-		system.log("manual: back: no page before")
+		system.log(.Info, "manual: back: no page before")
 		return
 	}
-	system.log("manual: back to the page before")
+	system.log(.Info, "manual: back to the page before")
 	switch place.kind {
 	case .Module:
 		select(int(place.index))
@@ -657,7 +657,7 @@ list_build :: proc "contextless" () {
 	}
 	list_row[list_count] = line
 	if list_count < len(entries) {
-		system.log("manual: the list shows ", u64(list_count), " of the ", u64(len(entries)), " modules of the boot image")
+		system.log(.Info, "manual: the list shows ", u64(list_count), " of the ", u64(len(entries)), " modules of the boot image")
 	}
 }
 
@@ -727,14 +727,14 @@ show :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 // count of exports of the module of a module page.
 page_log :: proc "contextless" () -> int {
 	if page_kind == .Link_Page {
-		system.log("manual: the page ", manual_pages.target_of(link_pages, link_page_index), ": ", manual_pages.title_of(link_pages, link_page_index), ", ", u64(rows()), " rows")
+		system.log(.Info, "manual: the page ", manual_pages.target_of(link_pages, link_page_index), ": ", manual_pages.title_of(link_pages, link_page_index), ", ", u64(rows()), " rows")
 		return 0
 	}
 	entries := system.image_entries(image)
 	file := file_of(&entries[selected])
 	head, _ := module.header(file)
 	exports := described_exports(file)
-	system.log("manual: ", system.name_of(entries[selected].name[:]), head.entry_export != 0 ? ": a module with an entry, " : ": no entry, ", u64(exports), " exports, ", u64(rows()), " rows")
+	system.log(.Info, "manual: ", system.name_of(entries[selected].name[:]), head.entry_export != 0 ? ": a module with an entry, " : ": no entry, ", u64(exports), " exports, ", u64(rows()), " rows")
 	return exports
 }
 
@@ -796,7 +796,7 @@ signature :: proc "c" (name: ^string, export: i64, result: ^[]u8, error: ^errors
 // When the loader starts it, the entry:
 //
 // 1. opens the service ring, so that callers can reach the exports;
-// 2. opens a window of two pictures; with no window, it stops with the code 1;
+// 2. opens a window of two pictures; with no window, it stops with `Failed`;
 // 3. maps the boot image and the replacement table, read-only;
 // 4. measures the information functions once (`information_start`), and writes the line
 //    "manual: information: ... modules break a rule" on the log;
@@ -810,7 +810,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "manual")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -830,7 +830,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		documented += int(line != "")
 	}
 	select(max(find("manual"), 0))
-	system.log("manual: ok, ", u64(len(entries)), " modules, ", u64(documented), " have their documentation")
+	system.log(.Info, "manual: ok, ", u64(len(entries)), " modules, ", u64(documented), " have their documentation")
 	markdown_check()
 	changed := true
 	pressed := false

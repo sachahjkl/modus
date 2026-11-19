@@ -111,9 +111,9 @@ Draw_Table :: struct {
 	// compositor gives each part of its screen its own list of one.
 	picture_memories: [][]graphics.Color,
 	// The interface font that measures and draws the Text records of the
-	// table in that font: the caches that the process validated (display). nil:
-	// the process has none, and a text in the interface font is a text in
-	// the font of the cells.
+	// table in that font: the faces that the process opened from its font
+	// outlines (display). nil: the process has none, and a text in the
+	// interface font is a text in the font of the cells.
 	interface_font: ^display.Interface_Font,
 	// The clips of the frame that are pushed and not popped yet: each
 	// record that the table takes keeps room for their pops.

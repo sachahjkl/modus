@@ -48,6 +48,7 @@ import "modus:contract/fixed_addresses"
 import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
+import "modus:contract/ring"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -55,10 +56,12 @@ import "modus:support/random"
 import "modus:support/system"
 
 // 64 MiB of large pages, two ranges of 1 GiB with their page tables, and
-// a child. With the counted parts, the pages are above the largest budget
-// of a process: the root service has an exception for it
-// (src/modules/system/root/budgets.odin).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 40530, processes = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
+// a child: 40530 pages. And the glyph memory of the copy of the text
+// rendering of the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 40530 + 354 = 40884. With the counted
+// parts, the pages are above the largest budget of a process: the root
+// service has an exception for it (src/modules/system/root/budgets.odin).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 40884, processes = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 960
 HEIGHT :: 640
@@ -390,7 +393,7 @@ guard_page :: proc "contextless" (ctx: ^system.Context) {
 	}
 	defer system.close(process)
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		state, _ := system.process_state(process)
+		state, _, _ := system.process_state(process)
 		if state == .Stopped {
 			break
 		}
@@ -486,8 +489,8 @@ refuse :: proc "contextless" () {
 // The edge cases of the virtual memory: each one is a case where the
 // kernel did something wrong once, and that must stay right. Each one logs
 // a line and sets its result.
-EDGE_CASES :: 14
-edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the sums of the frames", "an unmap ends the protection of parts: the object is mapped again", "large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "a decommit wakes a thread that waits on a word of the page", "a word in the second 4 KiB of a large page is its own word", "an object with parts of their own protection is not mapped again", "a small uncommitted object costs a page", "a part cannot get more than its mapping", "a page that is not committed stops with its own code", "a revocation of a large uncommitted mapping wakes its waiter", "an uncommitted object of 1 GiB ends with few pages walked", "a thread whose first instruction is not an address of a process is refused", "a map with a flag that the kernel does not know is refused"}
+EDGE_CASES :: 17
+edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the sums of the frames", "an unmap ends the protection of parts: the object is mapped again", "large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "a decommit wakes a thread that waits on a word of the page", "a word in the second 4 KiB of a large page is its own word", "an object with parts of their own protection is not mapped again", "a small uncommitted object costs a page", "a part cannot get more than its mapping", "a page that is not committed stops with its own stop cause", "a revocation of a large uncommitted mapping wakes its waiter", "an uncommitted object of 1 GiB ends with few pages walked", "a thread whose first instruction is not an address of a process is refused", "a map with a flag that the kernel does not know is refused", "the end of the last thread stops the process with its own stop cause and no stop outcome", "a process gets no Control over itself, and its stop through its own handle is refused", "a holder's stop with an outcome and a stop of itself with no outcome are refused, and nothing stops"}
 edge_case_results: [EDGE_CASES]bool
 
 Waiter :: struct #align (64) {
@@ -609,8 +612,14 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		system.close(memory)
 	}
 	// A child touches a page of an uncommitted object that is not committed:
-	// it stops with the code of a page that is not committed.
-	edge_case_results[9] = child_stop_code(ctx, 3) == op.STOP_CODE_NOT_COMMITTED
+	// it stops with the stop cause of a page that is not committed.
+	not_committed_cause, _ := child_stop_cause(ctx, 3)
+	edge_case_results[9] = not_committed_cause == .Not_Committed
+	// A child whose one thread ends: the kernel stops it with the cause of
+	// the end of its last thread, never as a stop of itself.
+	last_thread_cause, last_thread_outcome := child_stop_cause(ctx, 5)
+	edge_case_results[14] = last_thread_cause == .Last_Thread_Ended && last_thread_outcome == .None
+	edge_case_results[15], edge_case_results[16] = own_handle_stop(ctx)
 	// An Uncommitted object of 1 page, then a report: the test build
 	// checks the sums of the frames at each report (a page that such an
 	// object pays and that no count names stops the machine), and the free
@@ -686,7 +695,7 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		system.close(memory)
 	}
 	for name, index in edge_case_names {
-		system.log("address_space: edge case: ", name, ": ", edge_case_results[index] ? "right" : "WRONG")
+		system.log(.Info, "address_space: edge case: ", name, ": ", edge_case_results[index] ? "right" : "WRONG")
 		if !edge_case_results[index] {
 			fail("an edge case")
 		}
@@ -761,8 +770,7 @@ revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
 	// The revocation must find the child in its wait: its one thread is
 	// not Ready.
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		states, _ := system.call(.Process_State, u64(process))
-		if op.Process_State(states[0]) == .Waiting {
+		if state, _, _ := system.process_state(process); state == .Waiting {
 			break
 		}
 		system.sleep(system.time() + 1)
@@ -774,8 +782,8 @@ revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
 		system.word_wait(&board.woken, 0, system.time() + 100)
 	}
 	woke := intrinsics.atomic_load(&board.woken) != 0
-	system.log("address_space: a revocation of a mapping of 1 GiB with a thread that waits on a word of it: ", revoke_time / 1000, " us; the waiter ", woke ? "woke" : "did not wake")
-	system.call(.Process_Stop, u64(process), 0)
+	system.log(.Info, "address_space: a revocation of a mapping of 1 GiB with a thread that waits on a word of it: ", revoke_time / 1000, " us; the waiter ", woke ? "woke" : "did not wake")
+	system.process_stop(process)
 	return woke
 }
 
@@ -807,15 +815,17 @@ large_object_ends_quickly :: proc "contextless" () -> bool {
 	after, _ := system.budget_read()
 	// The 513 page tables of the mapping return with the unmap.
 	kept := before.pages - after.pages
-	system.log("address_space: an Uncommitted object of 1 GiB with 4 frames: unmap and close in ", ended / 1000, " us; pages kept: ", kept)
+	system.log(.Info, "address_space: an Uncommitted object of 1 GiB with 4 frames: unmap and close in ", ended / 1000, " us; pages kept: ", kept)
 	return kept == 0
 }
 
-// child_stop_code starts the child with a role and gives its stop code.
-child_stop_code :: proc "contextless" (ctx: ^system.Context, role: u64) -> u32 {
+// child_stop_cause starts the child with a role and gives its stop cause
+// and its stop outcome: None when it did not start or did not stop within
+// the hang bound.
+child_stop_cause :: proc "contextless" (ctx: ^system.Context, role: u64) -> (cause: op.Stop_Cause, outcome: op.Stop_Outcome) {
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		return 0
+		return .None, .None
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	grants: [op.CONTEXT_HANDLES]system.Grant
@@ -823,17 +833,143 @@ child_stop_code :: proc "contextless" (ctx: ^system.Context, role: u64) -> u32 {
 	values[VALUE_ROLE] = role
 	process, start := system.process_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
 	if start != .Ok {
-		return 0
+		return .None, .None
 	}
 	defer system.close(process)
-	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		if state, _ := system.process_state(process); state == .Stopped {
-			break
-		}
-		system.sleep(system.time() + 10)
+	cause, outcome, _ = system.process_stop_wait(process, system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
+	return cause, outcome
+}
+
+// The child of the role 5: its one thread ends with Thread_Stop, and the
+// process stops with no stop of its own.
+child_last_thread :: proc "contextless" () -> ! {
+	system.thread_stop()
+}
+
+// The page that the parent shares with the child of the role 6.
+Own_Handle_Board :: struct {
+	handle: u64, // The number in the child of its own process handle, which the parent gave.
+	given:  u32, // 1: handle is written.
+	status: u32, // The status of the Process_Stop of the child through that handle, plus 1 (0: none).
+}
+
+// The child of the role 6 tries to stop itself through a handle of its own
+// process, as a holder does. A process never holds Control over itself: the
+// give takes Control away, so the kernel refuses the stop with No_Right,
+// before it reads the outcome word. The child then writes the status and
+// stops itself with `Done`. Any other status, or a stop that went through,
+// is a fault that the parent sees.
+child_stop_by_own_handle :: proc "contextless" (ctx: ^system.Context) -> ! {
+	address, mapped := system.memory_map(ctx.handles[GRANT_REVOCATION_BOARD])
+	if mapped != .Ok {
+		system.log(.Info, "address_space: the child of its own handle could not map its board: ", op.STATUS_NAMES[mapped])
+		system.stop(.Failed)
 	}
-	_, code := system.process_state(process)
-	return code
+	board := (^Own_Handle_Board)(address)
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; intrinsics.atomic_load(&board.given) == 0 && system.time() < deadline; {
+		system.word_wait(&board.given, 0, system.time() + 100)
+	}
+	if intrinsics.atomic_load(&board.given) == 0 {
+		system.log(.Info, "address_space: the child of its own handle got no handle")
+		system.stop(.Failed)
+	}
+	status := system.process_stop(system.Handle(intrinsics.volatile_load(&board.handle)))
+	intrinsics.atomic_store(&board.status, u32(status) + 1)
+	system.stop(.Done)
+}
+
+// own_handle_stop starts the child of the role 6, gives it its own process
+// handle with Read and Control, and checks that the give took Control away:
+// the stop of the child through that handle is refused with No_Right, and
+// the child then stops itself with the stop cause Itself and the outcome
+// Done. Before the give, while the child waits for its handle, it gives the
+// kernel the words of Process_Stop that it must refuse (stop_word_refusals).
+own_handle_stop :: proc "contextless" (ctx: ^system.Context) -> (own_handle_right: bool, stop_words_right: bool) {
+	board_memory, created := system.memory_create(1)
+	if created != .Ok {
+		return false, false
+	}
+	defer system.close(board_memory)
+	board_address, _ := system.memory_map(board_memory)
+	defer system.memory_unmap(board_address)
+	board := (^Own_Handle_Board)(board_address)
+	image_address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
+	if status != .Ok {
+		return false, false
+	}
+	image := ([^]u8)(image_address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	grants[GRANT_REVOCATION_BOARD] = {board_memory, {.Read, .Write}}
+	values: [op.CONTEXT_VALUES]u64
+	values[VALUE_ROLE] = 6
+	process, start := system.process_start(system.image_find(image, "address_space"), "address_space own handle", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
+	if start != .Ok {
+		return false, false
+	}
+	defer system.close(process)
+	stop_words_right = stop_word_refusals(process)
+	own_handle, given := system.give(process, process, {.Read, .Control})
+	intrinsics.volatile_store(&board.handle, u64(own_handle))
+	intrinsics.atomic_store(&board.given, 1)
+	system.word_wake(&board.given)
+	cause, outcome, _ := system.process_stop_wait(process, system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
+	refused := intrinsics.atomic_load(&board.status) == u32(system.Status.No_Right) + 1
+	buffer: [64]u8
+	stop_text := system.Writer{buffer = buffer[:]}
+	system.stop_write(&stop_text, cause, outcome)
+	system.log(.Info, "address_space: a child stopped through its own process handle: the give gave ", op.STATUS_NAMES[given], ", the stop through the handle ", refused ? string("was refused with No_Right") : string("was not refused with No_Right"), ", and the child stopped: ", system.written(&stop_text))
+	return given == .Ok && refused && outcome == .Done, stop_words_right
+}
+
+// stop_word_refusals gives the kernel the words of Process_Stop that it must
+// refuse, in command records, as a writer of the kernel ring that skips the
+// library does: a stop of a child that runs with an outcome, which only the
+// child can say, and a stop of this process with no outcome or with a word
+// past the last outcome. Each one must give Bad_Operation with the record
+// Bad_Value of the argument 2, its word and the limit of its target (0 for
+// a holder, the last outcome for the caller), and change nothing: the
+// child still runs, and this process goes on to its next line. The edges
+// come first; the last case is the largest word.
+stop_word_refusals :: proc "contextless" (child: system.Handle) -> bool {
+	Refused_Stop :: struct {
+		target: u64, // 0: this process.
+		word:   u64,
+		limit:  i64,
+	}
+	refused := [?]Refused_Stop {
+		{u64(child), u64(op.Stop_Outcome.Done), 0},
+		{u64(child), u64(op.Stop_Outcome.Stopped_On_Request), 0},
+		{u64(child), u64(max(op.Stop_Outcome)) + 1, 0},
+		// No low bit: a kernel that read 32 bits of the word would take it
+		// for 0 and stop the child.
+		{u64(child), u64(1) << 32, 0},
+		{u64(child), max(u64), 0},
+		{0, u64(op.Stop_Outcome.None), i64(max(op.Stop_Outcome))},
+		{0, u64(max(op.Stop_Outcome)) + 1, i64(max(op.Stop_Outcome))},
+		{0, u64(max(u32)) + 1 + u64(op.Stop_Outcome.Done), i64(max(op.Stop_Outcome))},
+		{0, max(u64), i64(max(op.Stop_Outcome))},
+	}
+	wrong := 0
+	for item in refused {
+		commands := [1]ring.Record{{kind = u32(op.Operation.Process_Stop), values = {0 = item.target, 1 = item.word}}}
+		completions: [1]ring.Record
+		if _, status := system.commands_call(commands[:], completions[:]); status != .Ok {
+			system.log(.Info, "address_space: WRONG: the library refused the command of Process_Stop with the word ", item.word, ": ", op.STATUS_NAMES[status])
+			wrong += 1
+			continue
+		}
+		record := transmute(errors.Error_Record)completions[0].values
+		if completions[0].kind != u32(system.Status.Bad_Operation) || record.kind != i64(errors.Kind.Bad_Value) || record.argument != 2 || record.value != i64(item.word) || record.limit != item.limit {
+			system.log(.Info, "address_space: WRONG: Process_Stop of ", item.target == 0 ? string("this process") : string("a child"), " with the word ", item.word, " gave the status word ", u64(completions[0].kind), ", the error kind ", record.kind, ", the argument ", record.argument, " and the limit ", record.limit)
+			wrong += 1
+		}
+	}
+	state, _, _ := system.process_state(child)
+	if state == .Stopped {
+		system.log(.Info, "address_space: WRONG: a refused Process_Stop stopped the child")
+		wrong += 1
+	}
+	return wrong == 0
 }
 
 // The child of the role 3: it touches a page that is not committed.
@@ -841,7 +977,8 @@ child_not_committed :: proc "contextless" () -> ! {
 	memory, _ := system.memory_create(16, flags = {.Uncommitted})
 	address, _ := system.memory_map(memory)
 	intrinsics.volatile_store(&([^]u8)(address)[5 * system.PAGE_SIZE], 1)
-	system.stop(0)
+	// The write must stop the child: past it, the case failed.
+	system.stop(.Failed)
 }
 
 // The delegation of a commit (docs/ARCHITECTURE.md, "Who pays a commit"): this
@@ -961,7 +1098,7 @@ delegation_note :: proc "contextless" (step: int, right: bool, result: ^Delegati
 		system.kernel_error_text(&writer, &result.record)
 	}
 	delegation_line_counts[step] = len(system.written(&writer))
-	system.log("address_space: delegation: ", delegation_names[step], ": ", right ? "as expected: " : "WRONG: ", string(delegation_lines[step][:delegation_line_counts[step]]))
+	system.log(.Info, "address_space: delegation: ", delegation_names[step], ": ", right ? "as expected: " : "WRONG: ", string(delegation_lines[step][:delegation_line_counts[step]]))
 	if !right {
 		fail("a case of the delegation")
 	}
@@ -1035,7 +1172,7 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	delegation_note(8, old == .Bad_Handle && now == .Ok && committed == 1, nil, now == .Ok ? "a commit with the budget of A: 1 page; with the old handle: refused" : "the commit with the budget of A was refused")
 	system.close(object)
 	system.close(spend_budget)
-	system.call(.Process_Stop, u64(process), 0)
+	system.process_stop(process)
 	system.memory_unmap(board_address)
 	system.close(board_memory)
 }
@@ -1110,7 +1247,7 @@ neighbour_touch :: proc "c" (parameter: rawptr) -> ! {
 
 page_tables_line :: proc "contextless" (right_case: bool, parts: ..system.Part) {
 	buffer: [320]u8
-	system.log("address_space: page tables: ", system.format(buffer[:], ..parts), right_case ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "address_space: page tables: ", system.format(buffer[:], ..parts), right_case ? string(": as it must") : string(": WRONG"))
 	if !right_case {
 		fail("a page table did not return to the budget")
 	}
@@ -1244,7 +1381,7 @@ page_tables_return :: proc "contextless" () {
 		system.close(near)
 		system.close(far)
 		system.close(watched)
-		system.log("address_space: page tables: the other thread wrote and read its page ", touches_after - touches_before, " times during the rounds")
+		system.log(.Info, "address_space: page tables: the other thread wrote and read its page ", touches_after - touches_before, " times during the rounds")
 		page_tables_line(thread_status == .Ok && rounds_right == NEIGHBOUR_ROUNDS && rounds_wrong == 0 && touches_before != 0 && touches_after > touches_before && value_right && after.pages == before.pages, u64(NEIGHBOUR_ROUNDS), " rounds of a map and an unmap beside a page that another thread writes and reads: ", rounds_right, " rounds right, the page of the other thread ", value_right ? string("stayed right") : string("changed"), ", ", before.pages - after.pages, " pages kept")
 	}
 }
@@ -1370,10 +1507,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if ctx.values[VALUE_ROLE] == 2 {
 		child_delegate(ctx)
 	}
+	if ctx.values[VALUE_ROLE] == 5 {
+		child_last_thread()
+	}
+	if ctx.values[VALUE_ROLE] == 6 {
+		child_stop_by_own_handle(ctx)
+	}
 	random.generator_from_context(&process_generator, ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "address_space")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	frame_draw(&window)
 	machine = ctx.handles[system.GRANT_MACHINE]
@@ -1381,23 +1524,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	start_budget, _ := system.budget_read()
 
 	arena()
-	system.log("address_space: arena: 1 GiB of addresses in one mapping, ", arena_list_pages, " pages paid for its frame list, mapped in ", arena_map_microseconds, " us; pages committed and used in one second with 1, 16, 256 ranges for each kernel entry: ", arena_pages_per_second[0], ", ", arena_pages_per_second[1], ", ", arena_pages_per_second[2], "; kernel entries for 1000 pages: ", arena_entries_per_thousand_pages[0], ", ", arena_entries_per_thousand_pages[1], ", ", arena_entries_per_thousand_pages[2])
+	system.log(.Info, "address_space: arena: 1 GiB of addresses in one mapping, ", arena_list_pages, " pages paid for its frame list, mapped in ", arena_map_microseconds, " us; pages committed and used in one second with 1, 16, 256 ranges for each kernel entry: ", arena_pages_per_second[0], ", ", arena_pages_per_second[1], ", ", arena_pages_per_second[2], "; kernel entries for 1000 pages: ", arena_entries_per_thousand_pages[0], ", ", arena_entries_per_thousand_pages[1], ", ", arena_entries_per_thousand_pages[2])
 	sparse()
-	system.log("address_space: sparse table: ", sparse_committed, " pages committed of ", u64(GIGABYTE_PAGES), ", ", sparse_present, " with a frame; decommit: ", decommit_returned, " pages back in the budget at once, in ", decommit_microseconds, " us; a page committed again is zero: ", u64(recommit_zero))
+	system.log(.Info, "address_space: sparse table: ", sparse_committed, " pages committed of ", u64(GIGABYTE_PAGES), ", ", sparse_present, " with a frame; decommit: ", decommit_returned, " pages back in the budget at once, in ", decommit_microseconds, " us; a page committed again is zero: ", u64(recommit_zero))
 	protection()
-	system.log("address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls, least and most of 5 batches: ", shootdown_least[0], " to ", shootdown_most[0], " ns with 1 processor running the process, ", shootdown_least[1], " to ", shootdown_most[1], " ns with 2, ", shootdown_least[2], " to ", shootdown_most[2], " ns with 4")
+	system.log(.Info, "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls, least and most of 5 batches: ", shootdown_least[0], " to ", shootdown_most[0], " ns with 1 processor running the process, ", shootdown_least[1], " to ", shootdown_most[1], " ns with 2, ", shootdown_least[2], " to ", shootdown_most[2], " ns with 4")
 	guard_page(ctx)
-	system.log("address_space: guard page: the child stopped with vector ", guard_vector, " at ", system.Hex(guard_address), ", in its guard page: ", u64(guard_right))
+	system.log(.Info, "address_space: guard page: the child stopped with vector ", guard_vector, " at ", system.Hex(guard_address), ", in its guard page: ", u64(guard_right))
 	large_pages()
-	system.log("address_space: large pages: one random read over 64 MiB: ", large_nanoseconds / 10, ".", large_nanoseconds % 10, " ns through large pages of 2 MiB, ", small_nanoseconds / 10, ".", small_nanoseconds % 10, " ns through pages of 4 KiB of the same object; the report says Large: ", u64(large_flags_right))
+	system.log(.Info, "address_space: large pages: one random read over 64 MiB: ", large_nanoseconds / 10, ".", large_nanoseconds % 10, " ns through large pages of 2 MiB, ", small_nanoseconds / 10, ".", small_nanoseconds % 10, " ns through pages of 4 KiB of the same object; the report says Large: ", u64(large_flags_right))
 	refuse()
 	edge_cases(ctx)
 	delegation(ctx)
 	addresses_reused()
-	system.log("address_space: addresses: one object mapped and unmapped 100000 times: the budget holds ", reuse_pages_last, " pages after, ", reuse_pages_first, " after the first time")
+	system.log(.Info, "address_space: addresses: one object mapped and unmapped 100000 times: the budget holds ", reuse_pages_last, " pages after, ", reuse_pages_first, " after the first time")
 	page_tables_return()
 	for &item in refusals {
-		system.log("address_space: refused: ", item.name, ": ", string(item.sentence[:item.count]))
+		system.log(.Info, "address_space: refused: ", item.name, ": ", string(item.sentence[:item.count]))
 	}
 	// Each page returned, except what this process still maps: the boot
 	// image, which each case that starts a child maps, and its page tables.
@@ -1408,9 +1551,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	done = true
 	if right {
-		system.log("address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record")
+		system.log(.Info, "address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record")
 	} else {
-		system.log("address_space: wrong: ", problem)
+		system.log(.Info, "address_space: wrong: ", problem)
 	}
 	frame_draw(&window)
 	deadline := system.time()

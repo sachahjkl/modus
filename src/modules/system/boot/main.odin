@@ -46,12 +46,12 @@ data: bootscreen.Data
 // the kernel (`collect.data`), draws the display into the window, and
 // presents it. The first turn writes `boot: ok, ...` on the log. The
 // events of the window are read and dropped: the window takes no input.
-// With no window, the process stops with the code 1.
+// With no window, the process stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, bootscreen.WIDTH, bootscreen.HEIGHT, "boot")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine := ctx.handles[system.GRANT_MACHINE]
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
@@ -72,7 +72,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if !logged {
 			logged = true
-			system.log("boot: ok, ", data.boot.stage_count, " stages, ", data.boot.range_count, " memory ranges, ", u64(data.process_total), " processes")
+			system.log(.Info, "boot: ok, ", data.boot.stage_count, " stages, ", data.boot.range_count, " memory ranges, ", u64(data.process_total), " processes")
 		}
 		for _ in display.next_event(&window) {}
 		system.sleep(system.time() + INTERVAL)

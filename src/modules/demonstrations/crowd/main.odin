@@ -46,8 +46,11 @@ import "modus:support/system"
 import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module, its threads and its window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1390, processes = 1, threads = 5, window_width = WIDTH, window_height = HEIGHT}
+// by its name, once the tool counts its module, its threads and its
+// window: 1390 pages. And the glyph memory of the copy of the text
+// rendering of the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 1390 + 354 = 1744.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1744, processes = 1, threads = 5, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -299,10 +302,10 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 	measure.done = true
 	if measured {
 		measure.rate = read * 1000 / max(end - begin, 1)
-		system.log("crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", written, " written, ", read, " read, ", measure.wrong, " wrong")
+		system.log(.Info, "crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", written, " written, ", read, " read, ", measure.wrong, " wrong")
 		return read != 0 && written == read && measure.together == u64(count)
 	}
-	system.log("crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", written, " written, ", read, " read, ", measure.wrong, " wrong, ", measure.entries, " kernel entries for one million records")
+	system.log(.Info, "crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", written, " written, ", read, " read, ", measure.wrong, " wrong, ", measure.entries, " kernel entries for one million records")
 	return written == u64(measure.writers) * RECORDS_CHECKED && written == read && measure.together == u64(count)
 }
 
@@ -358,13 +361,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 // entry finds its own slot with the machine handle, runs each queue
 // (`run`), and writes the summary line: it is wrong when a record is lost,
 // read two times, or out of the order of its writer. The process then keeps
-// its window open until it is stopped; with no window, it stops with the
-// code 1.
+// its window open until it is stopped; with no window, it stops with
+// `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "crowd")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
@@ -388,9 +391,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		draw(&window)
 	}
 	if wrong || total_wrong != 0 {
-		system.log("crowd: wrong: ", total_wrong, " records lost, in disorder or read two times")
+		system.log(.Info, "crowd: wrong: ", total_wrong, " records lost, in disorder or read two times")
 	} else {
-		system.log("crowd: ok, ", u64(len(measures)), " runs, each record written is read one time, each event started all the threads")
+		system.log(.Info, "crowd: ok, ", u64(len(measures)), " runs, each record written is read one time, each event started all the threads")
 	}
 	for {
 		draw(&window)

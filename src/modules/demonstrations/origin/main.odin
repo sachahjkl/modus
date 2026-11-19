@@ -42,8 +42,11 @@ import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-// Itself and one process that only receives.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1372, processes = 2, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// Itself and one process that only receives: 1372 pages. And the glyph
+// memory of the copy of the text rendering of the drawing module, which
+// draws its text: 354 pages (display.TEXT_MEMORY_PAGES). 1372 + 354 =
+// 1726.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1726, processes = 2, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -90,7 +93,7 @@ live :: proc "contextless" (handle: system.Handle) -> bool {
 // measures a lent handle, then shows the result until the principal closes
 // the window.
 //
-// With no window it stops with the code 1. It creates one memory object and
+// With no window it stops with `Failed`. It creates one memory object and
 // one process "held" from its own budget, runs the cases (each one compares
 // the answer of the kernel with the expected answer), writes the result on
 // the log, and measures 20000 cycles of "lend and take back" and 20000 of
@@ -99,7 +102,7 @@ live :: proc "contextless" (handle: system.Handle) -> bool {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "origin")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	// One memory object, mapped here, and one other process that never
 	// runs: it only receives.
@@ -149,11 +152,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for item in cases[:case_count] {
 		if !item.right {
 			wrong += 1
-			system.log("origin: wrong answer: ", item.text)
+			system.log(.Info, "origin: wrong answer: ", item.text)
 		}
 	}
 	if wrong == 0 {
-		system.log("origin: ok, ", u64(case_count), " cases")
+		system.log(.Info, "origin: ok, ", u64(case_count), " cases")
 	}
 
 	// The measure. One cycle of a lent handle is four kernel entries: a
@@ -172,7 +175,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.close(copy)
 	}
 	copy_time = (system.time() - start) * 1_000_000 / CYCLES
-	system.log("origin: lend a handle and take it back: ", lend_time, " ns with 4 kernel entries; copy and close: ", copy_time, " ns with 2")
+	system.log(.Info, "origin: lend a handle and take it back: ", lend_time, " ns with 4 kernel entries; copy and close: ", copy_time, " ns with 2")
 
 	for {
 		frame := interface.window_frame_start(&window_memory, &window)

@@ -51,7 +51,7 @@
 // to the log, from its first steps on: `kernel: <count> processors`,
 // `kernel: free memory <size>`, the size and the address of the
 // framebuffer, `kernel: ok`, then one line for each [stage](term:stage) of
-// the start with its time, on the channel `boot`. The console line
+// the start with its time. The console line
 // `processes()` lists the processes that the kernel runs.
 //
 // The locks of the kernel and their order are in docs/ARCHITECTURE.md,
@@ -141,7 +141,7 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	// the first one, from 0.
 	stage_before_end := u64(0)
 	for stage in Stage {
-		log_in("boot", .Info, "kernel: boot: ", STAGE_NAMES[stage], ": ", Duration{microseconds(stage_cycles[stage] - stage_before_end), .Microseconds})
+		log_with_level(.Info, "kernel: boot: ", STAGE_NAMES[stage], ": ", Duration{microseconds(stage_cycles[stage] - stage_before_end), .Microseconds})
 		stage_before_end = stage_cycles[stage]
 	}
 	// The stack of the boot program has no guard pages: the processor
@@ -239,7 +239,9 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	process_module(process, {base = op.PROCESS_BASE, size = head.memory_size, hash = hash}, by_the_process = false)
 	memory := info.physical_slice(regions[code].physical, head.memory_size, u8)
 	module.copy_segments(file, memory)
-	if module.rebase(file, memory, op.PROCESS_BASE) != .None || module.count(file, .Imports) > 1 {
+	// The root service has no loader for imports: the kernel writes its
+	// own-hash place, as a loader writes the place of each module.
+	if module.rebase(file, memory, op.PROCESS_BASE) != .None || module.count(file, .Imports) > 1 || !module.own_hash_write(file, memory, hash) {
 		fail("the module cannot be loaded")
 	}
 	for segment_index in 1 ..< module.count(file, .Segments) {

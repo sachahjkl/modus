@@ -17,8 +17,7 @@
 //   `process_schedule_read`, `process_schedule_write`), the fault ring and the kernel events.
 // - `wait.odin`: the waits on words and the queues with waits (`send`,
 //   `receive`, `wait_begin`, `wait_end`).
-// - `text.odin`, `log.odin`: the log of a process (`log`, `log_in`,
-//   `format`).
+// - `text.odin`, `log.odin`: the log of a process (`log`, `format`).
 // - `load.odin`: the loader of modules and the start of processes
 //   (`process_start`, `Module_Space`).
 // - `calls.odin`, `service.odin`, `tables.odin`: the calls of exports, direct
@@ -302,27 +301,32 @@ sleep :: proc "contextless" (deadline: u64) -> u64 {
 	return enter(max(deadline, 1))
 }
 
-// stop ends this process with a stop code: each of its threads ends, and
-// its memory and its handles end. A holder of its process handle reads the
-// code with `Process_State`. It does not return.
+// stop ends this process with its stop outcome: each of its threads ends,
+// and its memory and its handles end. A holder of its process handle reads
+// the stop cause `Itself` and the outcome with `Process_State`. The outcome
+// says what the work gave, never a result: a result goes through memory
+// that the starter shares. It has no default, so each stop names its
+// outcome. It does not return.
 //
 // It stops the process whatever its kernel ring holds: it drops each
 // completion that waits, as the process ends and wants no answer, and
 // enters the kernel so that each held command runs, at most one round for
 // each place of the ring. Then it sends its stop. A ring that still cannot
 // take the stop ends the process with a fault that no handler can take,
-// and the stop code is then the one of a page fault
+// and the stop cause is then `Fault`, never `Itself`
 // (src/md/api/kernel_ring_completion_room.md, "The stop of a process").
 //
-// Example: `system.stop(1)` after a check of a test that failed.
-stop :: proc "contextless" (code: u32 = 0) -> ! {
+// Example: `system.stop(.Done)` at the end of the work; `system.stop(.Failed)`
+// after a check of a test that failed, with its line on the log before;
+// `system.stop(.Refused)` for a context or an argument that it refuses.
+stop :: proc "contextless" (outcome: op.Stop_Outcome) -> ! {
 	kernel := kernel_ring()
 	for round := 0; ; round += 1 {
 		switch stop_step(&kernel, round) {
 		case .Enter_For_Held_Commands:
 			enter(0)
 		case .Send_Stop:
-			if _, status := call(.Process_Stop, 0, u64(code)); status == .Ok {
+			if _, status := call(.Process_Stop, 0, u64(outcome)); status == .Ok {
 				// The kernel ends this thread when it leaves its processor.
 				for {}
 			}
@@ -369,8 +373,8 @@ stop_step :: proc "contextless" (kernel: ^ring.Ring, round: int) -> Stop_Step {
 
 // stop_by_fault ends the process with a write to the time page, which a
 // process can only read. The kernel serves no fault at that address to a
-// fault handler or a debugger, so it stops the process, with the stop code
-// of a page fault and its report.
+// fault handler or a debugger, so it stops the process, with the stop cause
+// Fault and the report of a page fault.
 @(private = "file")
 stop_by_fault :: proc "contextless" () -> ! {
 	intrinsics.volatile_store((^u64)(uintptr(op.TIME_ADDRESS)), 0)
@@ -546,7 +550,7 @@ fault_handler_set :: proc "contextless" (thread: Handle = 0, kinds: op.Fault_Kin
 
 // fault_handler_end ends the delivery: a fault stops the process again.
 // If a thread waits for an answer, its record is lost with the ring: the
-// process stops with STOP_CODE_FAULT_UNANSWERED. Answer first.
+// process stops with the stop cause Fault_Unanswered. Answer first.
 fault_handler_end :: proc "contextless" () -> Status {
 	_, status := call(.Fault_Handler_Set, 0, u64(op.Fault_Handler_Action.End))
 	return status
@@ -805,12 +809,12 @@ handle_state :: proc "contextless" (handle: Handle, memory: Handle = 0) -> (kind
 }
 
 // kernel_word_refused writes the line of a word of a result of the kernel
-// that names no member of its enum, and stops the process with the code 1.
+// that names no member of its enum, and stops the process with `Failed`.
 // The kernel and this library come from one build: such a word is a fault
 // of the build, and no member stands in for it.
 kernel_word_refused :: proc "contextless" (what: string, word: u64) -> ! {
-	log_in("processes", .Error, "system: the kernel gave the word ", word, " for ", what, ", which names no member")
-	stop(1)
+	log(.Error, "system: the kernel gave the word ", word, " for ", what, ", which names no member")
+	stop(.Failed)
 }
 
 // handle_revoke ends each handle and each mapping that came from a handle:
@@ -1233,7 +1237,7 @@ event_next :: proc "contextless" (head: ^op.Event_Ring, ring_records: []op.Event
 
 // thread_stop ends the thread that calls it. Its stack stays until another
 // thread calls `thread_end` or `thread_wait`. The end of the last thread
-// ends the process with the stop code 0.
+// ends the process with the stop cause Last_Thread_Ended.
 thread_stop :: proc "contextless" () -> ! {
 	call(.Thread_Stop, 0)
 	for {}

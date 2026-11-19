@@ -111,7 +111,7 @@ scenario_tcp := [?]Step {
 	{kind = .Wait, text = "[console] server   store    held"},
 	{kind = .Wait, text = "[console] server   network  held"},
 	{kind = .Close, text = "server"},
-	{kind = .Wait, text = "root: server stopped with code 0"},
+	{kind = .Wait, text = "root: server stopped: a holder"},
 	{kind = .Wait, text = "network: the endpoint of server ended: "},
 	// The passes of the network service over the bytes of the segments of
 	// `server`: a measure, then the structural count: one copy each way, and

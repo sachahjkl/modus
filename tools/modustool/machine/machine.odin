@@ -1,6 +1,8 @@
 package machine
 
+import "base:runtime"
 import "modus:contract/font_outlines"
+import op "modus:contract/operation"
 import "modus:contract/reference_screen"
 import "modus:contract/store"
 import tree "modus:private/storage/storage_tree"
@@ -134,7 +136,7 @@ Step_Kind :: enum {
 	Quit, // End QEMU: the machine does not stop by itself.
 	Monitor, // Send the line text to the QEMU monitor, as it is (for example "nmi": a non-maskable interrupt to each processor).
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool takes the name that the system wrote in a frame, or names a frame "module + offset" from the debug object of its module, and the names start with `names`.
-	Record, // A log record with the process `process`, the channel `channel`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place. A later step names the number of the record that it found with {record} (RECORD_MARK) in its text.
+	Record, // A log record with the process `process`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place. A later step names the number of the record that it found with {record} (RECORD_MARK) in its text.
 	Agree, // The process `text`: the mapped pages and the threads that inspect.mappings() and inspect.threads() give are the ones that monitor.processes() gives (two tools, two reports of the kernel).
 	// The disk that the tool serves will lose its power at a write of a
 	// root: after `commits` writes of a root and a seeded 1 to 40 more,
@@ -202,7 +204,6 @@ Step :: struct {
 	lose:       int, // For Call: the peer drops this many datagrams of `remote` to the host; QUIC sends them again, and monitor.served() shows that the call ran one time.
 	wrong_hash: bool, // For Call: the request names another hash of the module.
 	process:    string, // For Record: the process that wrote the record.
-	channel:    string, // For Record: its channel ("" for none).
 	level:      string, // For Record: info, debug, warning or error.
 	pointer:    bool, // For Call: when the call has its result, the tool confirms each place of the pointer from now on (pointer_confirm).
 	repeat:     int, // For Call: the calls of the measure of the round trip.
@@ -336,7 +337,7 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "root: started storage", any_order = true},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
-	{kind = .Wait, text = "root: settings stopped with code 0"},
+	{kind = .Wait, text = "root: settings stopped: itself, done"},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "root: started notes"},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
@@ -377,6 +378,10 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; in ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; "},
+	// The console read the page before the boot pass, and may have made its
+	// surface after the compositor told the windows: it reads the setting
+	// itself, and draws its interface text in Spleen cells.
+	{kind = .Wait, text = "terminal: console draws its interface text in the font of the cells", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
@@ -567,7 +572,7 @@ scenario_network := [?]Step {
 	{kind = .Key, text = "spc"},
 	{kind = .Wait, text = "net: a datagram to 10.0.2.2 port 7 after a key: refused, the endpoint has no grant now: datagram.Send: the argument address, 10.0.2.2 port 7, is refused: the grant names no remote"},
 	{kind = .Close, text = "net"},
-	{kind = .Wait, text = "root: net stopped with code 0"},
+	{kind = .Wait, text = "root: net stopped: a holder"},
 	{kind = .Wait, text = "network: the endpoint of net ended: "},
 	// The passes of the network service over the bytes of the datagrams of
 	// `net`: a measure, then the structural count: one copy on receive, on
@@ -680,7 +685,7 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "compositor.pointer()", outcome = .Failed, pointer = true, expected = "error: compositor.pointer: the caller has no grant for this: to act for the principal (-1)"},
 	// The window of inspect covers the windows under it: it closes now.
 	{kind = .Close, text = "inspect"},
-	{kind = .Wait, text = "root: inspect stopped with code 0"},
+	{kind = .Wait, text = "root: inspect stopped: a holder"},
 	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the principal (-3)"},
 	{kind = .Call, text = "storage.stores()", outcome = .Failed, expected = "error: storage.stores: the caller has no grant for this: to act for the principal (-10)"},
 	{kind = .Call, text = "manual.modules()", expected = " rows of Module"},
@@ -986,6 +991,12 @@ self_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	return true
 }
 
+// The line of `errors` that is longer than the text of one log record by
+// construction (`JOINED_LINE` in src/modules/demonstrations/errors/main.odin):
+// the step Record finds it only when it joins two rows of log.records.
+ERRORS_JOINED_LINE :: "errors: a line longer than one log record: its words only make it longer than the text of one record, so that the cut between two records falls inside it, and a reader of the log joins two rows to read it whole: as it must"
+#assert(len(ERRORS_JOINED_LINE) > op.LOG_TEXT_CAPACITY)
+
 // The positions below come from src/modules/system/compositor/main.odin: the buttons
 // in the bar, and the place of window n at (60 + 36 n, 52 + 30 n).
 scenario := [?]Step {
@@ -1046,7 +1057,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "root: connected console to the store of its line history in the service storage, 4 blocks", any_order = true},
 	{kind = .Wait, text = "console: no line history kept: the history starts empty", any_order = true},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; in ", any_order = true},
-	{kind = .Wait, text = "root: settings stopped with code 0"},
+	{kind = .Wait, text = "root: settings stopped: itself, done"},
 
 	// The console: a language with typed commands.
 	{kind = .Type, text = "1 + 2 * 3"},
@@ -1180,7 +1191,9 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette asks to confirm: close plasma"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "compositor: the palette closes the window plasma"},
+	// The compositor and the root service write their lines in either
+	// order: the wait of the compositor does not move the mark.
+	{kind = .Wait, text = "compositor: the palette closes the window plasma", any_order = true},
 	{kind = .Wait, text = "root: plasma stopped"},
 
 	// The commands of the console in the palette: the console is the
@@ -1582,7 +1595,7 @@ scenario := [?]Step {
 	// new process, with new data.
 	{kind = .Type, text = "peek(0)"},
 	{kind = .Wait, text = "kernel: process probe stopped: page fault"},
-	{kind = .Wait, text = "[console] error: the process probe stopped: page fault"},
+	{kind = .Wait, text = "[console] error: the process probe stopped: a fault, page fault"},
 	{kind = .Type, text = "count()"},
 	{kind = .Wait, text = "[probe] host: ready"},
 	{kind = .Wait, text = "[console] 1"},
@@ -1694,7 +1707,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "hold(b)"},
 	{kind = .Wait, text = "[console] 3"},
 	{kind = .Type, text = "look()"},
-	{kind = .Wait, text = "[console] error: the process hostile_exports stopped: page fault"},
+	{kind = .Wait, text = "[console] error: the process hostile_exports stopped: a fault, page fault"},
 	// The root service ends one grant of a process that runs. The window of
 	// monitor goes below the console for the picture, then back.
 	{kind = .Move, text = "monitor", to_x = 568, to_y = 552},
@@ -2065,6 +2078,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
 	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
 	{kind = .Wait, text = "address_space: edge case: a map with a flag that the kernel does not know is refused: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: the end of the last thread stops the process with its own stop cause and no stop outcome: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: a process gets no Control over itself, and its stop through its own handle is refused: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: a holder's stop with an outcome and a stop of itself with no outcome are refused, and nothing stops: right", any_order = true},
 	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
 	// Each page table that a mapping made returns to the budget with its
 	// unmap, at three levels, for a reservation, for a large page, and
@@ -2427,7 +2443,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "month_days(13, 2000)"},
 	{kind = .Wait, text = "kernel: process agenda stopped: invalid instruction"},
 	{kind = .Wait, text = ", which replaces "},
-	{kind = .Wait, text = "[console] error: the process agenda stopped: invalid instruction"},
+	{kind = .Wait, text = "[console] error: the process agenda stopped: a fault, invalid instruction"},
 	// The debug image names the procedure of the instruction, in the module
 	// that ran: calendar_fixed, not calendar.
 	{kind = .Wait, text = "[console] error: the instruction is at "},
@@ -2488,36 +2504,35 @@ scenario := [?]Step {
 	{kind = .Type, text = "stop(\"tally\")"},
 	{kind = .Wait, text = "root: tally stopped"},
 
-	// The log: records in channels. The kernel sets the process of each
+	// The log: records of processes. The kernel sets the process of each
 	// record; a process with the grant reads the records.
 	{kind = .Launch, text = "log"},
 	// The window loses no record once it reads the log: the records gone
 	// before its start depend on the length of the boot, and are only a
 	// measure (src/md/features/log_window_losses.md).
-	{kind = .Wait, text = "[log:log] log: ok, ", any_order = true},
+	{kind = .Wait, text = "[log] log: ok, ", any_order = true},
 	{kind = .Wait, text = " gone before its start, 0 lost since, "},
 	{kind = .Shot, text = "log"},
 	// The window covers the console: move it down.
 	{kind = .Move, text = "log", to_x = 96, to_y = WINDOW_TITLE_ONLY_Y},
 	// The log records as a table with typed fields, through the remote
-	// service: from here on some checks read the process, the channel and
-	// the level of a record (step Record), not only a line of text.
+	// service: from here on some checks read the process and the level of
+	// a record (step Record), not only a line of text.
 	{kind = .Call, text = "log.records(0)", expected = " rows of Record"},
 	// Each record keeps the kind of each value of its text: the process log
 	// writes the size of the memory of the log as a size. The value runs
 	// are read from the number of that record: the records of the boot can
 	// be gone from the ring by now.
-	{kind = .Record, process = "log", channel = "log", level = "info", text = "log: the memory of the log: "},
+	{kind = .Record, process = "log", level = "info", text = "log: the memory of the log: "},
 	{kind = .Call, text = "log.value_runs({record})", expected = "  size"},
 	{kind = .Front, text = "console"},
-	// The kernel writes a record of its own on a channel, and the log
-	// keeps it: a process that fails gives a record of the kernel on the
-	// channel fault. A record of now, not of the boot, so that no count of
-	// the records before it matters.
+	// The kernel writes a record of its own, and the log keeps it: a
+	// process that fails gives a warning of the kernel. A record of now,
+	// not of the boot, so that no count of the records before it matters.
 	{kind = .Type, text = "start(\"fault\")"},
 	{kind = .Wait, text = "stopped: page fault"},
 	{kind = .Wait, text = "root: fault stopped"},
-	{kind = .Record, process = "kernel", channel = "fault", level = "warning", text = "kernel: process fault stopped: page fault"},
+	{kind = .Record, process = "kernel", level = "warning", text = "kernel: process fault stopped: page fault"},
 	// The log scope: log_reader has a connection to the log service that
 	// does not act for the principal. It reads the log from the own number
 	// 0 and receives its own records only: the records of its process slot
@@ -2539,7 +2554,10 @@ scenario := [?]Step {
 	// own log ring of each process keeps it, the ring of a stopped child
 	// too, while log_reader holds its handle. The storm child takes its log
 	// records of each second from the budget of log_reader, which counts
-	// only its own, and each child gives them back at its stop.
+	// only its own, and each child gives them back at its stop. Last, it
+	// calls the kernel operation Log itself: each wrong call is refused
+	// with its status and its error record and writes no record, and a
+	// text at each edge of its length is written.
 	{kind = .Type, text = "start(\"log_reader\")"},
 	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
@@ -2557,15 +2575,27 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: the storm child took 900 of the 1000 log records of each second of this process, which kept 100, and each child gave its records back at its stop: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: a memory object in place of a process handle: the log service refused it with Handle_Kind: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: Log refused 12 wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, an address that the process cannot read, and a text or its runs past the end of what it can read; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = " records, and the budget the same log records and the same refused count: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a text of 0 bytes, of 1 byte and of 4096 bytes in 1, 1 and 25 records, a text at the level Error, a text with 32 runs that keeps 8, and one byte on the last byte of a page: as it must", fails_on = "log_reader: WRONG"},
+	// Log of the form Fact: each wrong fact is refused with its status and
+	// its error record and writes no record. Then the log fact of
+	// log_reader, whose serial line is bytes: the tool writes its sentence
+	// from its fields with the template of the module file (fact_render.odin).
+	{kind = .Wait, text = "[log_reader] log_reader: Log refused 11 wrong facts, each with its status and its error record: the form word, a run, the length below the head and past the whole fact, an address that the process cannot read, and the level; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = " records, and the budget the same log records and the same refused count: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: a log fact with the value 42, the mark 0x4c4f4746 and the number 7", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
-	{kind = .Wait, text = "root: log_reader stopped with code 0"},
+	{kind = .Wait, text = "root: log_reader stopped: itself, done"},
 	// The remote service acts for the principal and still reads the whole
 	// log in order: the last record of the storm child, then the line of
 	// log_reader after it, then the stop that the root service writes. The
 	// earlier records of the run are gone from the whole log.
 	{kind = .Record, process = "log_reader storm", level = "info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
 	{kind = .Record, process = "log_reader", level = "info", text = "log_reader: ok"},
-	{kind = .Record, process = "root", channel = "processes", level = "info", text = "root: log_reader stopped with code 0"},
+	{kind = .Record, process = "root", level = "info", text = "root: log_reader stopped: itself, done"},
 	{kind = .Type, text = "start(\"log_reader\")"},
 	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
@@ -2582,11 +2612,19 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: the storm child took 900 of the 1000 log records of each second of this process, which kept 100, and each child gave its records back at its stop: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: a memory object in place of a process handle: the log service refused it with Handle_Kind: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: Log refused 12 wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, an address that the process cannot read, and a text or its runs past the end of what it can read; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = " records, and the budget the same log records and the same refused count: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a text of 0 bytes, of 1 byte and of 4096 bytes in 1, 1 and 25 records, a text at the level Error, a text with 32 runs that keeps 8, and one byte on the last byte of a page: as it must", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: Log refused 11 wrong facts, each with its status and its error record: the form word, a run, the length below the head and past the whole fact, an address that the process cannot read, and the level; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = " records, and the budget the same log records and the same refused count: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: a log fact with the value 42, the mark 0x4c4f4746 and the number 7", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
-	{kind = .Wait, text = "root: log_reader stopped with code 0"},
+	{kind = .Wait, text = "root: log_reader stopped: itself, done"},
 	{kind = .Record, process = "log_reader storm", level = "info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
 	{kind = .Record, process = "log_reader", level = "info", text = "log_reader: ok"},
-	{kind = .Record, process = "root", channel = "processes", level = "info", text = "root: log_reader stopped with code 0"},
+	{kind = .Record, process = "root", level = "info", text = "root: log_reader stopped: itself, done"},
 	// An arena grows one page at a time until its budget refuses the
 	// commit: the refusal is a value that the process reads, the arena
 	// keeps its state, a reset takes the same pages again with no commit,
@@ -2595,7 +2633,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "start(\"arena\")"},
 	{kind = .Wait, text = "arena: grew to ", fails_on = "arena: WRONG"},
 	{kind = .Wait, text = "arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must", fails_on = "arena: WRONG"},
-	{kind = .Wait, text = "root: arena stopped with code 0"},
+	{kind = .Wait, text = "root: arena stopped: itself, done"},
 	// The refusals of the root service give an error record: the console
 	// writes its sentence.
 	// No window drew in a picture on the screen: each surface has two
@@ -2785,7 +2823,7 @@ scenario := [?]Step {
 	// The process stops: its terminal stays, with what the process wrote.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"flood\")"},
-	{kind = .Wait, text = "terminal: flood stopped with code 0 after "},
+	{kind = .Wait, text = "terminal: flood stopped: a holder, after "},
 	{kind = .Click, x = 940, y = 400}, // A part of the window that the console does not cover.
 	{kind = .Shot, text = "terminal_stopped"},
 	// The scenario closes the window: the terminal stops.
@@ -2807,7 +2845,7 @@ scenario := [?]Step {
 	// block service, and the block ring to its client. The device reads and
 	// writes the memory of the client.
 	{kind = .Launch, text = "disk"},
-	{kind = .Record, process = "root", channel = "devices", level = "info", text = "root: started block for the device at the place 17 of the bus"},
+	{kind = .Record, process = "root", level = "info", text = "root: started block for the device at the place 17 of the bus"},
 	{kind = .Record, process = "block", level = "info", text = "block: ok, 8192 blocks of 4096 bytes, a queue of ", any_order = true},
 	{kind = .Wait, text = "disk: ok, the disk has 8192 blocks"},
 	{kind = .Wait, text = "disk: read, 1 block in each request, 1 in flight: "},
@@ -2835,15 +2873,15 @@ scenario := [?]Step {
 	// using memory.
 	{kind = .Close, text = "disk"},
 	{kind = .Wait, text = "compositor: window disk closed after 3 records whose word names no command"},
-	{kind = .Record, process = "root", channel = "processes", level = "info", text = "root: disk stopped with code 0"},
-	{kind = .Record, process = "root", channel = "processes", level = "info", text = "root: block stopped with code 0"},
+	{kind = .Record, process = "root", level = "info", text = "root: disk stopped: a holder"},
+	{kind = .Record, process = "root", level = "info", text = "root: block stopped: a holder"},
 	// The storage service runs since the boot (the boot pass of settings
 	// needs it), with the block service of the data disk. The console has a
 	// private store of 3 blocks, by its name; it acts for the principal, so it
 	// also sees all the stores.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
-	{kind = .Record, process = "root", channel = "calls", level = "info", text = "root: connected console to the service storage"},
+	{kind = .Record, process = "root", level = "info", text = "root: connected console to the service storage"},
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"kept on the disk\")"},
 	// The generation of this commit is the base: the console committed its
 	// line history after each line before this one.
@@ -2881,7 +2919,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] console  store               held"},
 	{kind = .Wait, text = "[console] console  acts_for_principal  held"},
 	{kind = .Type, text = "revoke(\"console\", \"store\")"},
-	{kind = .Record, process = "root", channel = "processes", level = "info", text = "root: revoked the grant store of console, connections changed: 1"},
+	{kind = .Record, process = "root", level = "info", text = "root: revoked the grant store of console, connections changed: 1"},
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
 	{kind = .Type, text = "storage.stores()"},
@@ -2976,7 +3014,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "errors: a table of 1 place: 1 more error detail did not fit in the table of error details"},
 	{kind = .Wait, text = "errors: a table smaller than its error details holds the first and counts each one: as it must"},
 	{kind = .Wait, text = "errors: an accepted kernel command leaves its table of error details empty: as it must"},
-	{kind = .Wait, text = "errors: Log refuses a table of error details: as it must"},
+	{kind = .Wait, text = "errors: Log with a level that names no member and one run past the bound gives the two in its table of error details: as it must", fails_on = "errors: WRONG: Log with two wrong arguments"},
+	{kind = .Wait, text = "errors: an accepted Log with a table of error details leaves the table empty: as it must", fails_on = "errors: WRONG: an accepted Log"},
 	// A full completion queue of the kernel ring loses no answer
 	// (src/md/api/kernel_ring_completion_room.md).
 	{kind = .Wait, text = "errors: a command past a full completion queue stays unrun in the kernel ring, and the entry does not wait: as it must"},
@@ -2984,14 +3023,16 @@ scenario := [?]Step {
 	{kind = .Wait, text = "errors: a wait of the library on a kernel ring that holds records ends at once and pushes nothing: as it must"},
 	{kind = .Wait, text = "errors: each answer of a full completion queue arrives once and in order, and the held command runs once after them: as it must"},
 	{kind = .Wait, text = "errors: under contention: "},
-	// A text longer than one row of log.records (one log record, 152
-	// bytes): its end is in the next row, and the tool joins the rows.
-	{kind = .Record, process = "errors", level = "info", text = " records name no cause (Refused)", any_order = true},
+	// A text longer than one row of log.records (one log record,
+	// op.LOG_TEXT_CAPACITY bytes) by construction: no one row holds it, so
+	// the step finds it only when it joins the rows.
+	{kind = .Record, process = "errors", level = "info", text = ERRORS_JOINED_LINE, any_order = true},
 	{kind = .Wait, text = " handles; 0 records contradict their status, "},
 	{kind = .Wait, text = "errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", any_order = true},
 	// The child of errors stops on a kernel ring that holds records
 	// (src/md/api/kernel_ring_completion_room.md, "The stop of a process").
-	{kind = .Wait, text = "errors: a stop on a kernel ring that holds records ends the process with its own stop code: as it must"},
+	{kind = .Wait, text = "errors: a stop on a kernel ring that holds records ends the process as a stop of itself, not a fault: as it must"},
+	{kind = .Wait, text = "errors: the report of the slot of the child after its last handle closed gives its state None and its serial, and no fact of the child: as it must", fails_on = "errors: WRONG: the report of the free slot "},
 	{kind = .Wait, text = " refused Memory_Create: "},
 	{kind = .Wait, text = "errors: a kernel command and its table of error details: accepted with no table "},
 	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},
@@ -3012,7 +3053,7 @@ scenario := [?]Step {
 	// again, so that the test compares two tools on two reports.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"monitor\")"},
-	{kind = .Record, process = "root", channel = "processes", level = "info", text = "root: monitor stopped with code"},
+	{kind = .Record, process = "root", level = "info", text = "root: monitor stopped: a holder"},
 	{kind = .Type, text = "start(\"monitor\")"},
 	{kind = .Record, process = "monitor", level = "info", text = "monitor: ok"},
 	{kind = .Launch, text = "inspect"},
@@ -3071,7 +3112,7 @@ scenario := [?]Step {
 	{kind = .Call, text = "sample.sum_values([(0, 0, 10, 10, 10)])", outcome = .Refused, expected = "no grant"},
 	{kind = .Close, text = "inspect"},
 	{kind = .Close, text = "errors"},
-	{kind = .Record, process = "root", channel = "processes", level = "info", text = "root: errors stopped with code 0"},
+	{kind = .Record, process = "root", level = "info", text = "root: errors stopped: a holder"},
 	// The interface package: each element live, the draw table of the last
 	// frame, the damage by difference. The keyboard is a first path: Tab
 	// moves the focus, Enter presses, the arrows move the choice.
@@ -3221,12 +3262,17 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; ", any_order = true},
+	// The interface text of the console follows the setting: Spleen cells.
+	// The terminal reads the setting at each turn of its loop, so its line
+	// can come before the line of settings: this wait does not move the mark.
+	{kind = .Wait, text = "terminal: console draws its interface text in the font of the cells", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "font_spleen"},
 	{kind = .Call, text = "settings.get(\"font\")", expected = "spleen"},
 	{kind = .Call, text = "settings.set(\"font\", \"vector\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; ", any_order = true},
+	{kind = .Wait, text = "terminal: console draws its interface text in the interface font", any_order = true},
 	{kind = .Call, text = "settings.set(\"grid_fit\", \"off\")", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us, appearance auto; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us"},
@@ -3585,6 +3631,9 @@ scenario_measure_address_space := [?]Step {
 	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
 	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
 	{kind = .Wait, text = "address_space: edge case: a map with a flag that the kernel does not know is refused: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: the end of the last thread stops the process with its own stop cause and no stop outcome: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: a process gets no Control over itself, and its stop through its own handle is refused: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: a holder's stop with an outcome and a stop of itself with no outcome are refused, and nothing stops: right", any_order = true},
 	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
 	// Each page table that a mapping made returns to the budget with its
 	// unmap, at three levels, for a reservation, for a large page, and
@@ -3689,6 +3738,13 @@ Machine :: struct {
 	times:       Machine_Step_Times, // The times of the step that runs (test_times.odin).
 	echo:        Console_Echo, // The lines typed into the console whose echo the tool waits for (console_echo.odin).
 	memory_file: string, // The file of the memory of the machine, or "" (Machine_Options).
+	fact_catalog: ^build.Fact_Catalog, // The module files whose log facts log_read renders; nil until the log holds a fact.
+	fact_rendered: [dynamic]u8, // The log with the sentence of each fact, up to fact_raw_length bytes of the file: each read renders only the lines after it.
+	fact_raw_length: int, // The bytes of the file of the log that fact_rendered covers.
+	fact_render_time: time.Duration, // The time of the renders: a measure.
+	fact_render_lines: int, // The lines of facts that log_read rendered.
+	fact_render_reads: int, // The reads of the log that rendered new lines.
+	fact_catalog_time: time.Duration, // The time to make the catalog of the module files.
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -3935,8 +3991,54 @@ log_read :: proc(machine: ^Machine) -> string {
 		return ""
 	}
 	text := string(log[:strings.last_index_byte(string(log), '\n') + 1])
+	// The line of a log fact is bytes: each step reads its sentence, which
+	// the tool writes from the module files of the build
+	// (src/md/features/log_facts.md, "The serial port"). A log with no fact
+	// is read as it is. The file only grows: the machine keeps the rendered
+	// log of the bytes that it read, and each read renders only the whole
+	// lines after them, so a read costs the copy of the log and no more.
+	if machine.fact_catalog == nil && !strings.contains(text, build.FACT_LINE_MARK) {
+		test_times_first_line_note(machine, len(text))
+		return text
+	}
+	if machine.fact_catalog == nil {
+		catalog_started := time.tick_now()
+		machine.fact_catalog = machine_fact_catalog()
+		machine.fact_catalog_time = time.tick_since(catalog_started)
+		machine.fact_rendered = make([dynamic]u8, runtime.heap_allocator())
+	}
+	if len(text) < machine.fact_raw_length {
+		// A new file of the same name: nothing kept holds for it.
+		clear(&machine.fact_rendered)
+		machine.fact_raw_length = 0
+	}
+	if len(text) > machine.fact_raw_length {
+		render_started := time.tick_now()
+		chunk, fact_lines := build.fact_lines_render(machine.fact_catalog, text[machine.fact_raw_length:])
+		append(&machine.fact_rendered, chunk)
+		machine.fact_raw_length = len(text)
+		machine.fact_render_time += time.tick_since(render_started)
+		machine.fact_render_lines += fact_lines
+		machine.fact_render_reads += 1
+	}
+	// A copy in the memory of the step: a reader keeps its text while a
+	// later read grows the kept one.
+	text = strings.clone(string(machine.fact_rendered[:]), context.temp_allocator)
 	test_times_first_line_note(machine, len(text))
 	return text
+}
+
+// machine_fact_catalog gives the catalog of the module files of the build,
+// in memory that lives as long as the machine: the temporary memory of a
+// step is freed after it.
+machine_fact_catalog :: proc() -> ^build.Fact_Catalog {
+	catalog := new(build.Fact_Catalog, runtime.heap_allocator())
+	read, problem := build.fact_catalog_of_build(runtime.heap_allocator())
+	if problem != "" {
+		fmt.eprintfln("modustool: the lines of the log facts stay raw: %s", problem)
+	}
+	catalog^ = read
+	return catalog
 }
 
 // windows_line gives the line of the last window with a title in the menu
@@ -4345,6 +4447,10 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	if line := common_failure_line(log_read(&machine), 0); line != "" {
 		fmt.eprintfln("modustool: test failed: the machine printed \"%s\", which fails every scenario", line)
 		passed = false
+	}
+	if machine.fact_catalog != nil {
+		fmt.printfln("modustool: measure: the tool wrote the sentences of %d lines of log facts of %s in %d us, over %d reads of the log, each read rendering only its new lines; the catalog of %d module files took %d us", machine.fact_render_lines, output, i64(machine.fact_render_time / time.Microsecond), machine.fact_render_reads, len(machine.fact_catalog.modules), i64(machine.fact_catalog_time / time.Microsecond))
+		delete(machine.fact_rendered)
 	}
 	os.close(monitor_write)
 	os.close(monitor_read)
@@ -4836,7 +4942,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				last_rows, last_total, last_ok = rows, table.total, ok
 				last_table = table
 				// A text goes on in the next row when its row says so
-				// (log.records: a row is one log record, of 152 bytes of
+				// (log.records: a row is one log record, of 168 bytes of
 				// text): the rows of one text are joined before the
 				// comparison.
 				for row := 0; row < rows; {
@@ -4853,13 +4959,13 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					}
 					number, _ := strconv.parse_i64(table_value(&table, row, "number"))
 					last_number, _ := strconv.parse_i64(table_value(&table, last, "number"))
-					if table_value(&table, row, "process") == step.process && table_value(&table, row, "channel") == step.channel && table_value(&table, row, "level") == step.level && strings.contains(strings.to_string(joined), step.text) {
+					if table_value(&table, row, "process") == step.process && table_value(&table, row, "level") == step.level && strings.contains(strings.to_string(joined), step.text) {
 						found = true
 						machine.record_found, machine.record_found_any = number, true
 						if !step.any_order {
 							machine.record_next = last_number + 1
 						}
-						foundation.test_passed_print("the log record %d of %s, channel \"%s\", level %s, has \"%s\" (%d calls of log.records, %d rows)", number, step.process, step.channel, step.level, step.text, reads, last - row + 1)
+						foundation.test_passed_print("the log record %d of %s, level %s, has \"%s\" (%d calls of log.records, %d rows)", number, step.process, step.level, step.text, reads, last - row + 1)
 						break
 					}
 					from = last_number + 1
@@ -4870,7 +4976,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 			}
 			if !found {
-				fmt.eprintfln("modustool: test failed: step %d: no log record of %s, channel \"%s\", level %s, has \"%s\" (%d calls of log.records, the last one from %d: %v, %d rows of %d)", index + 1, step.process, step.channel, step.level, step.text, reads, from, last_ok, last_rows, last_total)
+				fmt.eprintfln("modustool: test failed: step %d: no log record of %s, level %s, has \"%s\" (%d calls of log.records, the last one from %d: %v, %d rows of %d)", index + 1, step.process, step.level, step.text, reads, from, last_ok, last_rows, last_total)
 				compact := strings.builder_make(context.temp_allocator)
 				for row in 0 ..< last_rows {
 					fmt.sbprintf(&compact, "%s:%s ", table_value(&last_table, row, "number"), table_value(&last_table, row, "continues"))

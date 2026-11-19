@@ -249,7 +249,7 @@ kernel_stack_rules := Kernel_Stack_Rules {
 	report_callees = {
 		"kernel::fault_report_begin",
 		"kernel::log",
-		"kernel::log_in",
+		"kernel::log_with_level",
 		"kernel::fault_reason",
 		"kernel::machine_stop_with_code",
 		"runtime::bounds_check_error_contextless",

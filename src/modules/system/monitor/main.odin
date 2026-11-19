@@ -187,14 +187,14 @@ disk_process_log :: proc "contextless" (slot: u64, process_serial: u64, nickname
 	prefix: [process_page.HASH_PREFIX_DIGITS]u8
 	process_page.hash_prefix_write(&prefix, row.hash[0])
 	hash := transmute([process_page.HASH_SIZE]u8)row.hash
-	system.log("monitor: the disk process ", nickname, ", hash prefix ", string(prefix[:]), ", the file ", system.Hash{hash[:]}, ", from the root service")
+	system.log(.Info, "monitor: the disk process ", nickname, ", hash prefix ", string(prefix[:]), ", the file ", system.Hash{hash[:]}, ", from the root service")
 }
 
 // The entry of the monitor: it opens its window and its service, then draws
 // a picture of the machine every 500 ms and runs the calls between two
 // pictures.
 //
-// With no window it stops with the code 1. Each turn of the loop:
+// With no window it stops with `Failed`. Each turn of the loop:
 //
 // 1. asks the kernel for the system report, then the report of each
 //    process slot that is in use;
@@ -209,7 +209,7 @@ disk_process_log :: proc "contextless" (slot: u64, process_serial: u64, nickname
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "monitor")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	for graph in Graph {
 		// The boxes are constants inside the window: the start refuses none.
@@ -229,7 +229,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if status != .Ok {
 			interface.draw_text(table, 10, 10, "no grant to inspect the machine", graphics.colors.text)
 			if !lost {
-				system.log("monitor: no grant to inspect the machine")
+				system.log(.Info, "monitor: no grant to inspect the machine")
 				lost = true
 			}
 		} else {
@@ -364,7 +364,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		pictures += 1
 		if !logged {
-			system.log("monitor: ok")
+			system.log(.Info, "monitor: ok")
 			logged = true
 		}
 		for _ in display.next_event(&window) {}

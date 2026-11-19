@@ -2,6 +2,7 @@ package sentence
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 
 // The text of a description: what a process shows to a reader about the
 // types of an export (module.Function).
@@ -152,17 +153,54 @@ write_parameter_type_word :: proc "contextless" (writer: ^Writer, file: []u8, wo
 
 // write_field_type writes the type of a field of a record: as write_type,
 // and the size of an Integer that does not have 8 bytes: "Integer(4)",
-// "Unsigned(1)", "Unsigned" for an unsigned Integer of 8 bytes. A byte of
-// the type that names no type is "?".
+// "Unsigned(1)", "Unsigned" for an unsigned Integer of 8 bytes. A field
+// with a field kind writes its kind in place of its type:
+// "Hexadecimal(4)", "Status(Log_Level)", "Module_Name(32)", "Hash(32)". A
+// byte of the type or of the kind that names nothing is "?".
 write_field_type :: proc "contextless" (writer: ^Writer, file: []u8, item: module.Field) {
+	kind, kind_ok := module.field_kind(item)
+	if !kind_ok {
+		write_part(writer, "?")
+		return
+	}
+	switch kind {
+	case .Plain:
+	case .Hexadecimal:
+		write_part(writer, "Hexadecimal")
+		write_field_size(writer, item.detail)
+		return
+	case .Status:
+		which, which_ok := module.field_contract_enum(item)
+		write_part(writer, "Status(")
+		write_part(writer, which_ok ? value_kinds.CONTRACT_ENUM_TYPES[which].name : "?")
+		write_part(writer, ")")
+		return
+	case .Module_Name:
+		write_part(writer, "Module_Name(")
+		write_part(writer, u64(item.detail))
+		write_part(writer, ")")
+		return
+	case .Hash:
+		write_part(writer, "Hash(")
+		write_part(writer, u64(item.detail))
+		write_part(writer, ")")
+		return
+	}
 	if item.type != u8(module.Type.Integer) {
 		write_type_word(writer, file, item.type, item.detail)
 		return
 	}
 	write_part(writer, item.unsigned ? "Unsigned" : "Integer")
-	if item.detail != 0 && item.detail != 8 {
+	write_field_size(writer, item.detail)
+}
+
+// write_field_size writes the size of an Integer field that does not have
+// 8 bytes, in parentheses: "(4)". The detail 0 and 8 are 8 bytes.
+@(private = "file")
+write_field_size :: proc "contextless" (writer: ^Writer, detail: u32) {
+	if detail != 0 && detail != 8 {
 		write_part(writer, "(")
-		write_part(writer, u64(item.detail))
+		write_part(writer, u64(detail))
 		write_part(writer, ")")
 	}
 }

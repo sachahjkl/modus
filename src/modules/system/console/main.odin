@@ -63,7 +63,7 @@
 //
 // **The log records of a line.** While a line calls an export, the console
 // shows under the line the log records that the called process writes, by
-// channel, with each value in the color of its value kind. It reads them
+// process, with each value in the color of its value kind. It reads them
 // as any caller does: from the service `log`
 // (docs/CONSOLE.md, "The log records of a line").
 //
@@ -209,33 +209,33 @@ process_generator: random.Generator
 // a key, for a change of the second thread, or for 100 ms while a line
 // runs, so that the time of the line on the screen moves.
 //
-// **The stop.** With no random seed, no terminal or no second thread, the
-// console writes the reason on the log (`console: no terminal`) and stops
-// with the code 1. Else it never returns: `stop("console")` or
+// **The stop.** With no random seed or no terminal, the console writes the
+// reason on the log (`console: no terminal`) and stops with `Refused`; with
+// no second thread, with `Failed`. Else it never returns: `stop("console")` or
 // `shutdown()` ends it.
 @(export, link_name = "entry")
 entry :: proc "c" (start_context: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, start_context) {
-		system.log("console: no random seed in the context")
-		system.stop(1)
+		system.log(.Info, "console: no random seed in the context")
+		system.stop(.Refused)
 	}
 	ctx = start_context
 	ok: bool
 	if output, ok = terminal.open(ctx); !ok {
-		system.log("console: no terminal")
-		system.stop(1)
+		system.log(.Info, "console: no terminal")
+		system.stop(.Refused)
 	}
 	commands_start()
 	palette_provider_start() // palette_provider.odin
 	if _, status := system.thread_start(run_lines, nil); status != .Ok {
-		system.log("console: cannot start a thread")
-		system.stop(1)
+		system.log(.Info, "console: cannot start a thread")
+		system.stop(.Failed)
 	}
 	print("kernel console. A command is a typed function: try help()\n")
 	edit_show()
-	system.log(CONSOLE_MARK)
+	system.log(.Info, CONSOLE_MARK)
 	// The line history of the run before. The second thread runs no line
 	// yet: the history has one user. The keys that come meanwhile wait in
 	// the terminal ring.
@@ -270,7 +270,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 			// it is a key of the next line, as the keys before it.
 			switch line_editor.running_key_action(pressed.code == display.KEY_ESCAPE, stoppable, pending_count, PENDING_CAPACITY) {
 			case .Stop_Call:
-				system.log("console: Escape stops the line after ", system.time() - work.since, " ms; keys that wait: ", u64(pending_count))
+				system.log(.Info, "console: Escape stops the line after ", system.time() - work.since, " ms; keys that wait: ", u64(pending_count))
 				intrinsics.atomic_store(&work.cancel, 1)
 				system.word_wake(&work.cancel)
 			case .Wait:
@@ -282,14 +282,14 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 				// The console must read each key to find an Escape that
 				// stops the call, and it has no place for this one.
 				if key_path.loss_count(&keys_loss) {
-					system.log("console: ", u64(PENDING_CAPACITY), " keys wait for the end of the line, and the console reads on to find an Escape: a new key is lost")
+					system.log(.Info, "console: ", u64(PENDING_CAPACITY), " keys wait for the end of the line, and the console reads on to find an Escape: a new key is lost")
 				}
 			}
 		}
 		if running && intrinsics.atomic_load_explicit(&work.finished, .Relaxed) == work.started {
 			running = false
 			if lost, ended := key_path.loss_end(&keys_loss); ended {
-				system.log("console: the line ended: ", lost, " keys were lost while it ran")
+				system.log(.Info, "console: the line ended: ", lost, " keys were lost while it ran")
 			}
 			// The keys that waited, until one of them starts a line.
 			taken := 0
@@ -413,7 +413,7 @@ line_enter :: proc "contextless" () {
 		system.lock(&history_lock)
 		line_editor.history_add(&history, text)
 		system.unlock(&history_lock)
-		system.log(PROMPT, text)
+		system.log(.Info, PROMPT, text)
 		work.count = copy(work.text[:], text)
 		work.since = system.time()
 		intrinsics.atomic_store(&work.cancel, 0)
@@ -523,10 +523,10 @@ edit_show :: proc "contextless" () {
 		if !running && pasted_characters > 0 {
 			pasted_characters = 0
 			paste_shown = true
-			system.log("console: the line shows \"", line_editor.line_text(&line), "\" after a paste")
+			system.log(.Info, "console: the line shows \"", line_editor.line_text(&line), "\" after a paste")
 		} else if !running && paste_shown && len(line_editor.line_text(&line)) == 0 {
 			paste_shown = false
-			system.log("console: the line is empty again after a paste")
+			system.log(.Info, "console: the line is empty again after a paste")
 		}
 	}
 	completion_show()

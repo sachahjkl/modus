@@ -26,7 +26,7 @@ appearance_open :: proc "contextless" () {
 	}
 	address, status := system.memory_map(date_memory, flags = {})
 	if status != .Ok {
-		system.log_in("processes", .Warning, "root: the date page is not mapped in this service (status ", status, "): the setting appearance auto is dark")
+		system.log(.Warning, "root: the date page is not mapped in this service (status ", status, "): the setting appearance auto is dark")
 		return
 	}
 	appearance_date_page = (^date.Page)(address)
@@ -81,7 +81,7 @@ appearance_step :: proc "contextless" (wait: ^system.Wait) {
 			return
 		}
 		buffer: [192]u8
-		system.log("root: ", appearance.sentence_write(buffer[:], setting, moment))
+		system.log(.Info, "root: ", appearance.sentence_write(buffer[:], setting, moment))
 		settings.appearance_in_force_write(settings_page, in_force)
 		system.word_wake(&settings_page.change_count, 64)
 		if intrinsics.atomic_load_explicit(&settings_page.change_count, .Acquire) == choice.change_count {

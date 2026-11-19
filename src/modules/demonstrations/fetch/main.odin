@@ -103,7 +103,7 @@ note :: proc "contextless" (text: string, right: bool, parts: ..system.Part) {
 	item.right = right
 	item.count = len(system.format(item.answer[:], ..parts))
 	case_count += 1
-	system.log("fetch: ", text, ": ", string(item.answer[:item.count]), right ? "" : " (WRONG)")
+	system.log(.Info, "fetch: ", text, ": ", string(item.answer[:item.count]), right ? "" : " (WRONG)")
 }
 
 place_bytes :: proc "contextless" (place: u32) -> []u8 {
@@ -122,8 +122,8 @@ command_push_or_hold :: proc "contextless" (record: ring.Record) {
 		return
 	}
 	if held_count == len(held) {
-		system.log("fetch: the held commands passed their proven bound")
-		system.stop(1)
+		system.log(.Info, "fetch: the held commands passed their proven bound")
+		system.stop(.Failed)
 	}
 	held[held_count] = record
 	held_count += 1
@@ -371,7 +371,7 @@ cases_run :: proc "contextless" () {
 		body = body[:len(body) - 1]
 	}
 	note("GET /hello", ok && response.head.status == 200, "status ", u64(response.head.status), ", \"", body, "\" in ", took, " us")
-	system.log("fetch: GET /hello: the request went to the network service after ", (first_segment_sent_at - exchange_started_at) / 1000, " us, the first segment came after ", (first_segment_received_at - exchange_started_at) / 1000, " us, the first segment with data after ", (first_data_received_at - exchange_started_at) / 1000, " us")
+	system.log(.Info, "fetch: GET /hello: the request went to the network service after ", (first_segment_sent_at - exchange_started_at) / 1000, " us, the first segment came after ", (first_segment_received_at - exchange_started_at) / 1000, " us, the first segment with data after ", (first_data_received_at - exchange_started_at) / 1000, " us")
 
 	// 6. The large page: 1 MiB from the remote.
 	start = system.nanoseconds()
@@ -408,7 +408,7 @@ cases_run :: proc "contextless" () {
 	}
 	state := connections[0].state
 	note("the close from this side", (state == .Time_Wait || state == .Fin_Wait_2) && connections[0].fin_acknowledged, "the remote acknowledged the FIN, ", state == .Time_Wait ? "and sent its own: TIME-WAIT for 10 s" : state == .Fin_Wait_2 ? "and keeps its half open: FIN-WAIT-2" : "WRONG: no ACK of the FIN")
-	system.log("fetch: the connection: ", connections[0].segments_sent, " segments sent, ", connections[0].segments_received, " received, ", connections[0].retransmissions, " retransmissions, srtt ", connections[0].smoothed_rtt, " us, ", table.bad_checksums, " segments dropped for a wrong checksum")
+	system.log(.Info, "fetch: the connection: ", connections[0].segments_sent, " segments sent, ", connections[0].segments_received, " received, ", connections[0].retransmissions, " retransmissions, srtt ", connections[0].smoothed_rtt, " us, ", table.bad_checksums, " segments dropped for a wrong checksum")
 }
 
 rate :: proc "contextless" (bytes: u64, nanoseconds: u64) -> u64 {
@@ -447,28 +447,28 @@ process_generator: random.Generator
 // generator of the process, opens the segment endpoint and the datagram
 // region that the grant gives, and runs the cases (`cases_run`). After the
 // summary line it ends the connection and writes `fetch: the connection
-// ended, its record is free`. With no random seed, no endpoint, no
-// datagram region, or no memory for the connections, it writes the reason
-// on the log and stops with the code 1.
+// ended, its record is free`. With no random seed or no endpoint, it
+// writes the reason on the log and stops with `Refused`; with no datagram
+// region or no memory for the connections, with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("fetch: no random seed in the context")
-		system.stop(1)
+		system.log(.Info, "fetch: no random seed in the context")
+		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "fetch")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
-		system.log("fetch: no endpoint: the process has no grant of the network")
-		system.stop(1)
+		system.log(.Info, "fetch: no endpoint: the process has no grant of the network")
+		system.stop(.Refused)
 	}
 	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
 	if map_status != .Ok {
-		system.log("fetch: no datagram region")
-		system.stop(1)
+		system.log(.Info, "fetch: no datagram region")
+		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
 	// The buffers of the connections: memory of this process, which gives
@@ -477,8 +477,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	memory, memory_status := system.memory_create(BUFFER_PAGES)
 	buffers, buffers_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || buffers_status != .Ok {
-		system.log("fetch: no memory for the buffers of the connections")
-		system.stop(1)
+		system.log(.Info, "fetch: no memory for the buffers of the connections")
+		system.stop(.Failed)
 	}
 	// The secret of the initial sequence numbers: 32 bytes of the generator
 	// of this process (docs/RANDOMNESS.md).
@@ -486,7 +486,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	random.fill(&process_generator, secret[:])
 	tcp.table_init(&table, connections[:], ([^]u8)(buffers)[:BUFFER_PAGES * system.PAGE_SIZE], SEND_SIZE, RECEIVE_SIZE, 0, secret)
 	secret = {}
-	system.log("fetch: the secret of the initial sequence numbers from the generator of the process")
+	system.log(.Info, "fetch: the secret of the initial sequence numbers from the generator of the process")
 	for place in 0 ..< RECEIVE_PLACES {
 		post(u32(place))
 	}
@@ -504,9 +504,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if wrong == 0 && case_count == 8 {
-		system.log("fetch: ok, ", u64(case_count), " cases")
+		system.log(.Info, "fetch: ok, ", u64(case_count), " cases")
 	} else {
-		system.log("fetch: WRONG: ", u64(wrong), " of ", u64(case_count), " cases")
+		system.log(.Info, "fetch: WRONG: ", u64(wrong), " of ", u64(case_count), " cases")
 	}
 	draw(&window)
 	// A half-closed connection ends with a RST: the library has no timer of
@@ -517,7 +517,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for connections[0].state != .Closed || connections[0].reset_pending {
 		pump()
 	}
-	system.log("fetch: the connection ended, its record is free")
+	system.log(.Info, "fetch: the connection ended, its record is free")
 	for {
 		display.wait(&window)
 		for event in display.next_event(&window) {
