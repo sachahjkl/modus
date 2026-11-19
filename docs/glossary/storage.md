@@ -445,3 +445,13 @@ Pending changes group many small writes into one commit, which is one version. A
 The design: `docs/STORAGE.md`, "Ranges".
 
 Do not use: dirty page, write buffer, uncommitted write, transaction (for this).
+
+### Tree hash
+
+The tree hash is the BLAKE3 hash of the list of the entries of a tree, each its name, its kind and its hash, sorted by name.
+
+A tree that does not change after its commit has one tree hash, so it is named by its hash, as an object is. The output of a recipe, the source of a project and a declaration are trees with a tree hash; `here()` gives the tree hash of the current version of a store. It is not the check of a node. It is designed, not built: today a tree that changes has no hash.
+
+The design: `src/md/features/recipes.md`, "Trees".
+
+Do not use: Merkle root, tree checksum, commit hash.
