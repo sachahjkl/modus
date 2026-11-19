@@ -1,6 +1,6 @@
 # Module contract
 
-`src/library/contract/module/format.odin` is version 2 of the format at the level of bytes.
+`src/library/contract/module/format.odin` is version 3 of the format at the level of bytes.
 
 This document gives the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `glossary/README.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -66,7 +66,7 @@ A module is one file that holds its code and everything needed to use it: what i
 +--------------------+
 | flat tables        |  segments, imports, slots, exports, rebases,
 |                    |  functions, strings, documentation, records, fields,
-|                    |  budget
+|                    |  budget, facts, own hash
 +--------------------+
 | segment data       |  code, read-only data, data; each segment on a page
 +--------------------+
@@ -78,7 +78,7 @@ The code is `src/library/contract/module/format.odin`; all numbers are little-en
 - **Feature bits**: A loader that does not know a set bit refuses the module with a clear error. ELF has no such field, and old loaders crash on new files. [Load §1]
 - **Table directory**: Each entry gives the record size of its table. A table can gain fields at the end of its record. A reader that knows a shorter record ignores the rest. A reader that knows a longer record reads the missing fields as zero. [Types §4, §5]
 - **Index 0** of each table is the empty entry (ZII).
-- **Hash**: The identity of a module is the hash of the whole file. The file contains no reference to its own hash. Imports are hashes, so an import cycle cannot exist in the files. [Load §4] A replacement can make one (section "Replacement of an import"): the loader refuses it.
+- **Hash**: The identity of a module is the hash of the whole file. The file contains no reference to its own hash: a loader writes the hash at its own-hash place (section "The log facts and the own-hash place"). Imports are hashes, so an import cycle cannot exist in the files. [Load §4] A replacement can make one (section "Replacement of an import"): the loader refuses it.
 
 The byte layout of the header, of an entry of the table directory and of one record of each table follows: its offset, its size, its name and its type for each field. On the site each one is a diagram in rows of 8 bytes, with the type and the comment of a field under the pointer. The offsets and the sizes come from the compiler, and the types from `src/library/contract/module/format.odin`: the tool writes these lists, and checks them (`SITE.md`, "The byte layouts"). The table Strings has no record: it is bytes.
 
@@ -329,6 +329,38 @@ When the budget of the root service holds each part, the budget of the process w
 
 The design and the refused forms: `src/md/features/module_budget_request.md`.
 
+### The log facts and the own-hash place
+
+A log fact is a log record that carries the values of one record type of its writer, with no text (`TOOLS.md`, "The log"). Its sentence is in the module file, and the log fact names the module by its hash. Two tables hold what a reader of the log needs.
+
+| Table | One record describes |
+|---|---|
+| Facts | One fact type that the module writes: its fact key, the index of its record description in the table `Records`, its fact template and the name of the package that declares the record type, both in the string table. The rows are sorted by key, and no key is 0 or in two rows |
+| Own_Hash | The record 1 only: the own-hash place, 32 bytes of the writable data of the module where each loader writes the hash of the module file |
+
+```byte-layout module.Fact module.Own_Hash_Place
+module.Fact, 32 bytes: one record of the table Facts
+offset  size  field            type
+     0     8  key              u64
+     8     4  record           u32
+    12     4  template_offset  u32
+    16     4  template_count   u32
+    20     4  package_offset   u32
+    24     4  package_count    u32
+    28     4  reserved         u32
+
+module.Own_Hash_Place, 8 bytes: the record 1 of the table Own_Hash
+offset  size  field          type
+     0     8  memory_offset  u64
+```
+
+- **The record of a fact type** is a record description of the table `Records`, as the record of an export is. A record that an export takes and a fact writes has one row.
+- **The checks of a reader**: `module.fact` refuses a row with the key 0, a record that `record_type` refuses or whose values pass `op.LOG_FACT_VALUE_CAPACITY` (144 bytes), a template of 0 bytes or of more than `FACT_TEMPLATE_BYTES_MOST` (256), and a text outside the string table. `module.fact_find` finds a row by its key in the sorted table. `module.fact_template_valid` checks the language of the template against the fields: a reader shows a fact whose template breaks a rule raw.
+- **The own-hash place.** A module file cannot hold its own hash. The support package `system` declares the place, a variable with the symbol `modus_own_hash` (`module.OWN_HASH_PLACE_SYMBOL`), and the build writes its memory offset in the table `Own_Hash`. `validate` refuses a place that is not 32 bytes inside one segment with Write and no Execute (`Bad_Own_Hash_Place`), so no file makes a loader write into its code. A module whose code does not read the place has no table: the link drops the variable.
+- **The version.** Version 3 of the format adds the two tables. A loader of version 2 would leave the place zero, so the version changed, and a loader refuses a file of version 2.
+
+What the build checks, and how a source declares a fact type: `TOOLS.md`, "The log facts of the build". The design: `src/md/features/log_facts.md`.
+
 ## 2. Loading
 
 The loader turns a module file into code that runs in a process. It is a library in user space (`src/library/support/system`, `load.odin`), not a part of the kernel: it asks the kernel only to create a process and to map memory. It finds each import by its hash among the files that it was granted, and it never searches a path.
@@ -338,7 +370,7 @@ The loader does five steps:
 1. Place the module and each of its imports in the address range of the process: the module of a process at `PROCESS_BASE`, each import after it. The design is a random base; today the base is fixed ("Addresses", below).
 2. Get each imported module from the load source by its hash, and check the hash and the tables of the file. Load it if it is not in the module space of the process yet.
 3. Rebase: add the base address to each location of the rebase table.
-4. Bind: for each slot, write the address of the export `(import, export index)`.
+4. Bind: for each slot, write the address of the export `(import, export index)`, and write the hash of the module file at its own-hash place (`module.own_hash_write`), when the file has one. The kernel writes it for the root service, which it loads itself.
 5. Map the segments with their protection: a segment with the flag Read only after the load loses Write after steps 3 and 4. The starter then starts the process at the entry export (`Header.entry_export`) with `Process_Start`.
 
 Status of the loader in user space (`src/library/support/system/load.odin`):
@@ -1284,12 +1316,12 @@ The tool writes `build/<name>.module` and `build/<name>.debug` in the folder of 
 
 | Step | Process | What it gives |
 |---|---|---|
-| 1. Compile | `odin build` with `-target:freestanding_amd64_sysv -build-mode:llvm-ir -reloc-mode:pic -no-entry-point -default-to-nil-allocator -o:speed -vet -debug-info:same-code -collection:modus=src/library -custom-attribute:log_fact`, and for the kernel `-collection:kernel=src/kernel` too | One LLVM IR file, `<name>.ll` |
+| 1. Compile | `odin build` with `-target:freestanding_amd64_sysv -build-mode:llvm-ir -reloc-mode:pic -no-entry-point -default-to-nil-allocator -o:speed -vet -debug-info:same-code -collection:modus=src/library -custom-attribute:log_fact`, and for the kernel `-collection:kernel=src/kernel` too | One LLVM IR file, `<name>.ll`, which holds the fact key of each fact type that the module writes as an immediate, or the step fails (`TOOLS.md`, "The log facts of the build") |
 | 2. Make the object | `llc -O3 -misched-topdown --frame-pointer=all -relocation-model=pic --function-sections --data-sections` | One ELF object, `objects/<name>.o` |
 | 3. Assemble | `nasm -f elf64` | One object for `src/runtime/memory.asm`, one for each `.asm` file of the source folder, and for a module of the boot image one for each `.asm` file of `src/library/support/system` |
 | 4. Describe | The tool (`describe_package`) | The exports and their descriptions, and the stated budget (the constant `MODULE_BUDGET`), from the source; a version script that makes only the exports visible |
 | 5. Link | `ld.lld -shared -nostdlib -Bsymbolic --gc-sections --build-id=none -z now -z relro` | One ELF file, `linked.elf` |
-| 6. Convert | The tool (`import_declarations_check`, then `convert`) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module, `build/modules/<name>.module`, with the hashes of its imports in its import table, and the table `Budget` when the source states a budget: the stated budget and the counted parts, from the memory size of the module and the files of its imports. A segment that is read-only after the load and that no loader writes becomes a constant segment (section 2, "Shared code"). A library module that still has a segment that is read-only after the load is refused (section "A library as a module") |
+| 6. Convert | The tool (`import_declarations_check`, then `convert`) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module, `build/modules/<name>.module`, with the hashes of its imports in its import table, and the table `Budget` when the source states a budget: the stated budget and the counted parts, from the memory size of the module and the files of its imports; the table `Facts` of the log facts that the sources write, and the table `Own_Hash` with the place of the symbol `modus_own_hash` of the linked file (section "The log facts and the own-hash place"). A segment that is read-only after the load and that no loader writes becomes a constant segment (section 2, "Shared code"). A library module that still has a segment that is read-only after the load is refused (section "A library as a module") |
 | 7. Write the debug object | The tool | `build/modules/<name>.debug` (section "Debug information") |
 
 Why each choice:

@@ -1,0 +1,3 @@
+type: Added
+
+**A process writes a log fact**: `system.log_fact(.Info, Probe{...})` writes the values of a record type whose attribute `log_fact` holds its sentence, in one record of the log with no text; the module file holds the sentence and the record in its new table `Facts` (format version 3), the serial port gets the raw bytes of the fact, and the tool writes its sentence for the machine tests. The build refuses a fact type with padding, a handle, more than 144 bytes, a sentence that leaves a field out, or a key that the code does not hold, and `Log` refuses each wrong fact with its error record.

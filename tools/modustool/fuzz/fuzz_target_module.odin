@@ -2,6 +2,7 @@ package fuzz
 
 import "base:intrinsics"
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modustool:foundation"
 
 // The fuzz targets of the module file (src/md/infrastructure/fuzzing.md,
@@ -58,7 +59,29 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 				_, _ = module.record(file, kind, index, module.Field)
 			case .Budget:
 				_, _ = module.record(file, kind, index, module.Budget_Request)
+			case .Facts:
+				_, _ = module.record(file, kind, index, module.Fact)
+			case .Own_Hash:
+				_, _ = module.record(file, kind, index, module.Own_Hash_Place)
 			}
+		}
+	}
+	// The reader of the facts: a fact that it accepts names a record that
+	// record_type accepts, with values that fit in one log record.
+	facts := min(module.count(file, .Facts), FUZZ_MODULE_INDEX_LIMIT)
+	for index in 0 ..= facts {
+		fact, record, valid := module.fact(file, index)
+		if !valid {
+			continue
+		}
+		if fact.key == 0 || record.size > op.LOG_FACT_VALUE_CAPACITY {
+			return fuzz_broken(.Contract, "fact accepts a fact with the key 0 or with values past the capacity: fact %d", index)
+		}
+		if _, found, _, found_ok := module.fact_find(file, fact.key); found_ok && found.key != fact.key {
+			return fuzz_broken(.Contract, "fact_find gives a fact of another key: fact %d", index)
+		}
+		if fault := module.fact_template_valid(file, fact, record); fault > max(module.Fact_Template_Fault) {
+			return fuzz_broken(.Contract, "fact_template_valid gives a value out of its enumeration: %d", u8(fault))
 		}
 	}
 	exports := min(module.count(file, .Exports), FUZZ_MODULE_INDEX_LIMIT)
@@ -129,6 +152,11 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 		}
 		load_error: module.Load_Error
 		_ = module.bind(file, memory, bound, &load_error)
+		// validate accepted the own-hash place: the write stays inside the
+		// memory of the module.
+		if !module.own_hash_write(file, memory, {}) {
+			return fuzz_broken(.Two_Readers, "validate accepts an own-hash place that own_hash_write refuses")
+		}
 	}
 	return FUZZ_PASSED
 }
@@ -163,6 +191,10 @@ fuzz_module_record_type :: proc(kind: module.Table_Kind) -> (type: typeid, size:
 		return module.Field, size_of(module.Field)
 	case .Budget:
 		return module.Budget_Request, size_of(module.Budget_Request)
+	case .Facts:
+		return module.Fact, size_of(module.Fact)
+	case .Own_Hash:
+		return module.Own_Hash_Place, size_of(module.Own_Hash_Place)
 	}
 	return nil, 0
 }

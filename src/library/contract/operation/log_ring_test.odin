@@ -168,3 +168,64 @@ the_head_of_a_line_of_the_serial_port :: proc(t: ^testing.T) {
 	testing.expect_value(t, head[1 + LOG_NAME_BYTES], u8(']'))
 	testing.expect_value(t, head[LOG_LINE_HEAD_CAPACITY - 1], u8(' '))
 }
+
+// The form of a record is read through its border: a byte that names no
+// form is refused, the edges first (one past the last member, the largest
+// byte), then the two members. The fact of a record is its bytes after the
+// name of the process, and fills the record.
+@(test)
+the_form_of_a_record_is_read_through_its_border :: proc(t: ^testing.T) {
+	record: Log_Record
+	for word in ([2]u8{u8(max(Log_Record_Form)) + 1, max(u8)}) {
+		record.form = word
+		_, ok := log_record_form(&record)
+		testing.expectf(t, !ok, "the form byte %d is taken", word)
+	}
+	record.form = 0
+	text_form, text_ok := log_record_form(&record)
+	record.form = u8(Log_Record_Form.Fact)
+	fact_form, fact_ok := log_record_form(&record)
+	testing.expect(t, text_ok && text_form == .Text && fact_ok && fact_form == .Fact)
+	testing.expect_value(t, uintptr(log_record_fact(&record)) - uintptr(&record), uintptr(offset_of(Log_Record, runs)))
+	testing.expect_value(t, int(offset_of(Log_Record, runs)) + size_of(Log_Fact), size_of(Log_Record))
+	// The longest line of a fact fits after the longest head.
+	testing.expect(t, LOG_SERIAL_LINE_BYTES_MOST >= LOG_LINE_HEAD_CAPACITY + LOG_FACT_LINE_BYTES_MOST + 2)
+}
+
+// The line of a fact on the serial port: "#", the first 8 bytes of the
+// module hash, ":", the fact key, then the value bytes up to their last
+// byte that is not zero. The edges: no value byte and only zero values (no
+// space), a count past the capacity and the largest count (the capacity),
+// bytes past the count (not written), and every value byte not zero (the
+// longest line).
+@(test)
+the_line_of_a_fact :: proc(t: ^testing.T) {
+	line: [LOG_FACT_LINE_BYTES_MOST]u8
+	fact := Log_Fact{key = 0xfa0a_df38_a559_f4d1}
+	hash_start := [8]u8{0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81}
+	copy(fact.module_hash[:], hash_start[:])
+	fact.module_hash[8] = 0xFF // Past the 8 bytes: not in the line.
+	count := log_fact_line(&fact, &line)
+	testing.expect_value(t, string(line[:count]), "#1a2b3c4d5e6f7081:fa0adf38a559f4d1")
+	fact.value_count = 4
+	count = log_fact_line(&fact, &line)
+	testing.expect_value(t, string(line[:count]), "#1a2b3c4d5e6f7081:fa0adf38a559f4d1")
+
+	fact.values[0], fact.values[2] = 0x0c, 0x23
+	fact.values[5] = 0x99 // Past the count: not in the line.
+	count = log_fact_line(&fact, &line)
+	testing.expect_value(t, string(line[:count]), "#1a2b3c4d5e6f7081:fa0adf38a559f4d1 0c0023")
+
+	for &value in fact.values {
+		value = 0xAB
+	}
+	for value_count in ([3]u16{LOG_FACT_VALUE_CAPACITY, LOG_FACT_VALUE_CAPACITY + 1, max(u16)}) {
+		fact.value_count = value_count
+		count = log_fact_line(&fact, &line)
+		testing.expectf(t, count == LOG_FACT_LINE_BYTES_MOST, "a count of %d gives a line of %d bytes", value_count, count)
+	}
+	testing.expect_value(t, line[LOG_FACT_LINE_BYTES_MOST - 1], u8('b'))
+	zero := Log_Fact{value_count = LOG_FACT_VALUE_CAPACITY}
+	count = log_fact_line(&zero, &line)
+	testing.expect_value(t, string(line[:count]), "#0000000000000000:0000000000000000")
+}

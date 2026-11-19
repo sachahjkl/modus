@@ -76,6 +76,15 @@
 // - `log_reader: Log wrote a text of 0 bytes, of 1 byte and of 4096 bytes
 //   in 1, 1 and 25 records, a text at the level Error, a text with 32 runs
 //   that keeps 8, and one byte on the last byte of a page: as it must`;
+// - `log_reader: Log refused 11 wrong facts, each with its status and its
+//   error record: ...: as it must`: the calls of `Log` of the form Fact that
+//   the kernel refuses (log_fact_check);
+// - the raw lines of two facts that it gives to `Log` itself, then its
+//   [log fact](term:log-fact) `log_reader.Fact_Probe`, which the tool writes
+//   on the host as `log_reader: a log fact with the value 42, the mark
+//   0x4c4f4746 and the number 7`;
+// - `log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and
+//   system.log_fact the fact Fact_Probe, each in one record: as it must`;
 // - `log_reader: ok`, then it stops with the code 0.
 //
 // Each child writes `log_reader child: the record that the starter reads
@@ -378,15 +387,146 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	if problem := lent_service_handle_refused(&connection, file, process_records_export); problem != "" {
 		return problem
 	}
-	return log_operation_check(&connection, file, records_export)
+	if problem := log_operation_check(&connection, file, records_export); problem != "" {
+		return problem
+	}
+	return log_fact_check(&connection, file, records_export)
 }
 
 // The arguments of the operation Log, from 1, as its error record names
-// them: (log, address, length, level, runs).
+// them: (log, address, length, level, runs, form).
 LOG_ARGUMENT_ADDRESS :: 2
 LOG_ARGUMENT_LENGTH :: 3
 LOG_ARGUMENT_LEVEL :: 4
 LOG_ARGUMENT_RUNS :: 5
+LOG_ARGUMENT_FORM :: 6
+
+// The log fact of this process. The machine test waits for its sentence,
+// which the tool writes on the host from the fields of the record, with
+// the template of the fact table of this module
+// (src/md/features/log_facts.md, "The serial port").
+@(log_fact = "log_reader: a log fact with the value {value}, the mark {mark} and the number {number}")
+Fact_Probe :: struct {
+	value:  u64,
+	mark:   value_kinds.Hexadecimal_32,
+	number: u32,
+}
+FACT_VALUE :: 42
+FACT_MARK :: 0x4C4F_4746 // "LOGF" in ASCII: a hexadecimal field shows it as 0x4c4f4746.
+FACT_NUMBER :: 7
+
+// The body of a fact that this process gives to Log itself, past the
+// support library: the module hash of zero (no module), a key that no fact
+// type has, and values. Not on the stack, which is small.
+fact_body: op.Log_Fact
+FACT_BODY_KEY :: u64(0x0123_4567_89AB_CDEF)
+
+// One call of Log of the form Fact that the kernel must refuse: the
+// length, the level, the runs and the form word, and its refusal.
+Fact_Refusal :: struct {
+	name:     string,
+	address:  u64,
+	length:   u64,
+	level:    u64,
+	runs:     u64,
+	form:     u64,
+	status:   system.Status,
+	kind:     errors.Kind,
+	argument: i64,
+	value:    u64,
+}
+
+// log_fact_check calls Log of the form Fact. First each call that the
+// kernel must refuse: a form word that names no member (one past the last
+// member, a word whose low byte names a member, the largest word), a fact
+// with a run, a length below the head of a fact (0 and one byte less than
+// the head), past the whole fact (one byte more and the largest length),
+// an address that the process cannot read, and a fact past the end of a
+// mapped page; each with its status and its error record, and nothing
+// changed. Then the edges that the kernel takes: a fact of its head only,
+// and a whole fact, each one record. Last, system.log_fact writes the fact
+// Fact_Probe: one record, whose sentence the machine test waits for. It
+// gives the reason of the first check that fails, or "".
+log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, records_export: u32) -> string {
+	fact_body = {key = FACT_BODY_KEY}
+	for &byte_value, index in fact_body.values {
+		byte_value = u8(index + 1)
+	}
+	// One page with no mapping after it: a fact from its last byte passes
+	// the end of what the process can read.
+	page_memory, created := system.memory_create(1)
+	if created != .Ok {
+		return "the page of the test of a fact was not made"
+	}
+	defer system.close(page_memory)
+	page_address, mapped := system.memory_map(page_memory)
+	if mapped != .Ok {
+		return "the page of the test of a fact was not mapped"
+	}
+	defer system.memory_unmap(page_address)
+	last_byte_of_page := u64(uintptr(page_address)) + op.PAGE_SIZE - 1
+
+	log := u64(system.context_record().handles[op.CONTEXT_LOG])
+	body := u64(uintptr(&fact_body))
+	head := u64(op.LOG_FACT_HEAD_BYTES)
+	whole := u64(size_of(op.Log_Fact))
+	info := u64(op.Log_Level.Info)
+	fact := u64(op.Log_Record_Form.Fact)
+	refusals := [?]Fact_Refusal {
+		{"the form one past the last member", body, head, info, 0, u64(max(op.Log_Record_Form)) + 1, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_FORM, u64(max(op.Log_Record_Form)) + 1},
+		{"a form word whose low byte names a member", body, head, info, 0, 1 << 8 | fact, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_FORM, 1 << 8 | fact},
+		{"the largest form word", body, head, info, 0, max(u64), .Bad_Operation, .Bad_Value, LOG_ARGUMENT_FORM, max(u64)},
+		{"a fact with one run", body, head, info, 1, fact, .Bad_Operation, .Too_Long, LOG_ARGUMENT_RUNS, 1},
+		{"a fact of 0 bytes", body, 0, info, 0, fact, .Bad_Address, .Too_Small, LOG_ARGUMENT_LENGTH, 0},
+		{"a fact one byte shorter than its head", body, head - 1, info, 0, fact, .Bad_Address, .Too_Small, LOG_ARGUMENT_LENGTH, head - 1},
+		{"a fact one byte longer than a whole fact", body, whole + 1, info, 0, fact, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, whole + 1},
+		{"a fact of the largest length", body, max(u64), info, 0, fact, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, max(u64)},
+		{"a fact at the address 0", 0, head, info, 0, fact, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, 0},
+		{"a fact past the end of a mapped page", last_byte_of_page, head, info, 0, fact, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, last_byte_of_page},
+		{"a fact at the level one past the last member", body, head, u64(max(op.Log_Level)) + 1, 0, fact, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_LEVEL, u64(max(op.Log_Level)) + 1},
+	}
+	before, read := own_record_count(connection, file, records_export)
+	amounts_before, amounts_read := system.budget_read()
+	_, refused_before := system.budget_used()
+	if !read || amounts_read != .Ok {
+		return "the own records or the budget of this process do not read"
+	}
+	for refusal in refusals {
+		record: errors.Error_Record
+		_, status := system.call_with_error(&record, .Log, log, refusal.address, refusal.length, refusal.level, refusal.runs, refusal.form)
+		kind, kind_named := errors.kind_of_word(record.kind)
+		if status != refusal.status || !kind_named || kind != refusal.kind || record.argument != refusal.argument || record.value != i64(refusal.value) {
+			system.log(.Error, "log_reader: WRONG: Log of a fact with ", refusal.name, " gave ", op.STATUS_NAMES[status], ", the error kind ", record.kind, " for the argument ", record.argument, " with the value ", record.value)
+			return "the operation Log did not refuse a wrong fact with its status and its error record"
+		}
+	}
+	after, read_after := own_record_count(connection, file, records_export)
+	amounts_after, amounts_read_after := system.budget_read()
+	_, refused_after := system.budget_used()
+	if !read_after || after != before || amounts_read_after != .Ok || amounts_after.log_records != amounts_before.log_records || refused_after != refused_before {
+		system.log(.Error, "log_reader: WRONG: the refused facts changed the own log ring (", before, " then ", after, " records) or the budget")
+		return "a refused fact of Log wrote a record or changed the budget"
+	}
+	system.log(.Info, "log_reader: Log refused ", u64(len(refusals)), " wrong facts, each with its status and its error record: the form word, a run, the length below the head and past the whole fact, an address that the process cannot read, and the level; the own log ring kept the same ", u64(before), " records, and the budget the same log records and the same refused count: as it must")
+
+	// The edges that the kernel takes, then the fact of system.log_fact:
+	// each is one record of the own log ring.
+	edges := [2]u64{head, whole}
+	for length in edges {
+		if _, status := system.call(.Log, log, body, length, info, 0, fact); status != .Ok {
+			system.log(.Error, "log_reader: WRONG: Log of a fact of ", length, " bytes gave ", op.STATUS_NAMES[status])
+			return "the operation Log refused a fact at an edge that it takes"
+		}
+	}
+	system.log_fact(.Info, Fact_Probe{value = FACT_VALUE, mark = FACT_MARK, number = FACT_NUMBER})
+	written, read_written := own_record_count(connection, file, records_export)
+	if !read_written || written != before + i64(len(edges)) + 1 {
+		system.log(.Error, "log_reader: WRONG: the two facts at the edges and the fact of system.log_fact took ", written - before, " records, not ", i64(len(edges)) + 1)
+		return "a fact took another count of records than one"
+	}
+	system.log(.Info, "log_reader: Log wrote a fact of ", head, " bytes and a fact of ", whole, " bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must")
+	return ""
+}
 // The records of a text of LOG_TEXT_BYTES_MOST bytes of ASCII: no character
 // moves the cut of a record.
 BOUND_TEXT_RECORDS :: (op.LOG_TEXT_BYTES_MOST + op.LOG_TEXT_CAPACITY - 1) / op.LOG_TEXT_CAPACITY

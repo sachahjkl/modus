@@ -254,23 +254,28 @@ Object_Kind :: enum u8 {
 // (`system.memory_create`) or with `system.call`.
 Operation :: enum u32 {
 	None           = 0,
-	Log            = 1, // (log, address, length, level: Log_Level, runs).
-	// Writes one text on the log of the kernel: records of the log, which a reader with the memory of the log
-	// reads, and one line `[name] text` on the serial port. The kernel sets the time, the process and
-	// the thread of each record, so a process cannot write a record of another process. The operation writes
-	// the records only; the tick of the first processor writes their line on the serial port after it, so a
-	// `Log` never waits for the lines of other processes.
+	Log            = 1, // (log, address, length, level: Log_Level, runs, form: Log_Record_Form).
+	// Writes one text or one log fact on the log of the kernel: records of the log, which a reader with the
+	// memory of the log reads, and one line `[name] text` on the serial port. The kernel sets the time, the
+	// process and the thread of each record, so a process cannot write a record of another process. The
+	// operation writes the records only; the tick of the first processor writes their line on the serial port
+	// after it, so a `Log` never waits for the lines of other processes.
 	//
 	// **Arguments**
 	//
 	// - `log`: the log handle, with **Write**. Each process has it in its context at `CONTEXT_LOG`.
-	// - `address`, `length`: the text, at most `LOG_TEXT_BYTES_MOST` bytes, in memory that the process can read. A text longer
-	//   than `LOG_TEXT_CAPACITY` continues in the next records (`Log_Record`, `more`).
+	// - `address`, `length`: the bytes of the record, in memory that the process can read. For the form `Text`,
+	//   the text, at most `LOG_TEXT_BYTES_MOST` bytes. A text longer than `LOG_TEXT_CAPACITY` continues in the
+	//   next records (`Log_Record`, `more`). For the form `Fact`, a `Log_Fact` up to the end of its values:
+	//   from `LOG_FACT_HEAD_BYTES` to `size_of(Log_Fact)` bytes. The kernel writes `value_count` from the
+	//   length, and reads no other field of it.
 	// - `level`: a `Log_Level`, from `Info` (0) to `Error` (3).
 	// - `runs`: the count of the value runs of the text, at most `LOG_CALL_RUN_LIMIT`; 0 is a plain text. The
 	//   runs (`value_kinds.Value_Run_In_Call`) follow the `length` bytes of the text at `address`. A run says
 	//   which bytes of the text are one value, and its kind: a reader of the log shows each value in the color
-	//   of its kind. The text is written whole in every case: if a run is wrong, the record is plain.
+	//   of its kind. The text is written whole in every case: if a run is wrong, the record is plain. A fact
+	//   has no runs: 0.
+	// - `form`: a `Log_Record_Form`. 0 is `Text`, so a writer of text gives five arguments.
 	//
 	// **Results**: none.
 	//
@@ -278,10 +283,13 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Handle`, `No_Right`: `log` is not a log handle with **Write**.
 	// - `Bad_Address`: `length` is above `LOG_TEXT_BYTES_MOST`, or the process cannot read the text and its runs.
-	// - `Bad_Operation`: `level` is above `Error`, or `runs` is above `LOG_CALL_RUN_LIMIT`.
+	//   For a fact: `length` is below `LOG_FACT_HEAD_BYTES` or above `size_of(Log_Fact)`, or the process cannot
+	//   read the bytes.
+	// - `Bad_Operation`: `level` is above `Error`, `runs` is above `LOG_CALL_RUN_LIMIT`, `form` names no
+	//   `Log_Record_Form`, or a fact has runs.
 	// - `No_Budget`: the budget of the process accepted all the records of its amount in this second
 	//   (`Budget_Amounts`, `log_records`). No other budget counts the record, so the refusal says nothing of
-	//   what other processes wrote.
+	//   what other processes wrote. A fact counts one record.
 	Memory_Create  = 2, // (budget, pages, flags: Memory_Flags) -> memory handle.
 	// Makes a memory object of `pages` pages of 4096 bytes, and gives a handle to it with each right of
 	// memory: **Give**, **Read**, **Write** and **Execute**. The memory is zero. The budget pays now, so an
@@ -3355,17 +3363,54 @@ Log_Record :: struct {
 	more:           u8, // 1: the text continues in the next record.
 	process_serial: u32, // The process serial: it changes for each new process in the slot. 0: the kernel.
 	own_number:     u32, // The number of the record among the records of its process, from 0 at its start; it starts again from 0 after 2^32 records. 0 for the kernel.
-	text_count:     u16, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`.
-	run_count:      u8, // The value runs of the text: runs[:run_count].
-	reserved:       u8, // 0.
+	text_count:     u16, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`. 0 for a fact.
+	run_count:      u8, // The value runs of the text: runs[:run_count]. 0 for a fact.
+	form:           u8, // The byte of a `Log_Record_Form` (`log_record_form`): what the bytes after the name hold. 0: a text.
 	name:           [PROCESS_NAME_BYTES_MOST + 1]u8, // The name of the process, or "kernel".
-	runs:           [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count].
-	text:           [LOG_TEXT_CAPACITY]u8, // The text, UTF-8, `text_count` bytes.
+	runs:           [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count]. A fact: the first bytes of its `Log_Fact`.
+	text:           [LOG_TEXT_CAPACITY]u8, // The text, UTF-8, `text_count` bytes. A fact: the rest of its `Log_Fact`.
 }
 
 #assert(size_of(Log_Record) == 256)
 #assert(offset_of(Log_Record, name) == 32)
 #assert(offset_of(Log_Record, runs) == 64)
+
+// The form of a log record: what its bytes after the name of the process
+// hold. A reader takes the byte `Log_Record.form` through `log_record_form`,
+// and shows a record of a byte that names no member with its head only
+// (src/md/features/log_facts.md, "The record").
+Log_Record_Form :: enum u8 {
+	Text = 0, // The value runs and the text. A zero record is a text record.
+	Fact = 1, // A log fact: one `Log_Fact`, in one record (`more` is 0).
+}
+
+// The bytes of the values of one log fact: the fields of its record type,
+// with no padding. A fact is one record, so its values fit in it beside the
+// module hash and the fact key.
+LOG_FACT_VALUE_CAPACITY :: 144
+
+// The bytes of a log record after the name of the process, for the form
+// Fact: the module hash, the fact key, the count of the value bytes, and
+// the values. The writer gives it to `Log`, up to the end of its values;
+// the kernel writes `value_count` from the length and copies the bytes with
+// no check of their content (src/md/features/log_facts.md, "The record").
+//
+// Example: the fact `storage.Bad_Block{block = 12, ...}` of the module whose
+// hash starts with 1a 2b is the hash, the key 18017458693634389201, a count
+// of 16, and the 16 bytes of the record.
+Log_Fact :: struct {
+	module_hash: [32]u8, // The hash of the module that holds the description of the fact: its own-hash place. Zero: no module.
+	key:         u64, // The fact key: the typeid of the record type. Never 0 from `system.log_fact`.
+	value_count: u16, // The bytes of `values` in use, at most `LOG_FACT_VALUE_CAPACITY`: the kernel writes it.
+	reserved:    [6]u8, // 0: the kernel writes it.
+	values:      [LOG_FACT_VALUE_CAPACITY]u8, // The bytes of the record of the fact type, in the order of its fields.
+}
+// The bytes of a fact before its values: the least `length` of a fact.
+LOG_FACT_HEAD_BYTES :: 48
+#assert(offset_of(Log_Fact, values) == LOG_FACT_HEAD_BYTES)
+// A fact fills the bytes of a record after the name of the process, which
+// end at the offset 64.
+#assert(size_of(Log_Fact) + 64 == size_of(Log_Record))
 // A value run names its start and its length in the text of its record
 // with one byte each (value_kinds.Value_Run).
 #assert(LOG_TEXT_CAPACITY <= 256)
