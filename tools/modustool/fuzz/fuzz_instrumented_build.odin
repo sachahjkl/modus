@@ -223,7 +223,7 @@ fuzz_instrumented_build :: proc(packages: []string) -> bool {
 	}
 	// The child is a build of the sources of its parent, at a place of its
 	// own: it never compiles itself (tool_build.odin).
-	compile := []string{"odin", "build", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, build.TOOL_NEVER_BUILDS_ITSELF_FLAG, "-print-linker-flags", "-keep-temp-files", "-out:" + FUZZ_INSTRUMENTED_BINARY}
+	compile := []string{"odin", "build", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.LOG_FACT_ATTRIBUTE_FLAG, build.TOOL_NEVER_BUILDS_ITSELF_FLAG, "-print-linker-flags", "-keep-temp-files", "-out:" + FUZZ_INSTRUMENTED_BINARY}
 	state, standard_output, standard_error, error := os.process_exec({command = compile}, context.temp_allocator)
 	if error != nil || !state.success {
 		fmt.eprintfln("modustool: the compile of the instrumented child failed: %v\n%s", error, string(standard_error))

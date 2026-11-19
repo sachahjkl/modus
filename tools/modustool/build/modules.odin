@@ -195,6 +195,9 @@ module_compile_command :: proc(build: foundation.Module_Build) -> []string {
 		// imports refuses it before this command runs
 		// (library_imports_check.odin).
 		foundation.SOURCE_LIBRARY_FLAG,
+		// The attribute of a fact type, which the compiler ignores
+		// (src/md/features/log_facts.md).
+		foundation.LOG_FACT_ATTRIBUTE_FLAG,
 		foundation.join("-out:", llvm_ir_folder),
 	)
 	// The line program of DWARF, for the line table of the debug object.

@@ -286,12 +286,14 @@ Run_Part :: enum u8 {
 	Operation = 8, // The operation of an error.
 	Size      = 9, // A field that counts a size, and its unit.
 	Time      = 10, // A field that counts a time, and its unit.
+	Module    = 11, // A field that holds the name of a module.
+	Version   = 12, // A field that holds a hash, in hexadecimal.
 	End_Line  = 255, // The line ends.
 }
 
 // The last part of a run that holds text: a byte past it, but End_Line, is
 // refused.
-RUN_PART_LAST :: Run_Part.Time
+RUN_PART_LAST :: Run_Part.Version
 
 // name_hash gives the 64-bit FNV-1a hash of a name: a choice carries it, so
 // that the provider never runs an entry that the panel did not show.

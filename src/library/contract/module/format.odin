@@ -195,9 +195,11 @@ Type :: enum u8 {
 	// table. A count larger than the capacity means "the table did not
 	// fit". It is the case of an Append table from a count of 0 whose new
 	// count is the integer result.
-	Bytes   = 6, // A parameter only: bytes with no description, with a Direction.
+	Bytes   = 6, // Bytes with no description. A parameter: with a Direction.
 	// The address of a Table_Place in memory of the caller, where the
 	// count and the capacity are in bytes. The detail is 0.
+	// A field of a record: detail bytes in the record, of the field kind
+	// Hash only (Field.kind): a reader has no form for other bytes.
 }
 
 // type_of_word is the border of the byte of a Type in a module file
@@ -329,31 +331,54 @@ Record :: struct {
 #assert(size_of(Record) == 24)
 
 // One field of a record. A field is an Integer (1, 2, 4 or 8 bytes), a
-// Handle (4 bytes) or a Text (detail bytes). An Integer is little-endian,
-// at an offset that is a multiple of its size. A Text field holds its
-// bytes in the record: UTF-8, and zero bytes after the text; the text ends
-// at the first zero byte or at the end of the field. It holds no address,
-// so a record still means the same in each process. The fields are in the
-// order of their offsets, and no two fields share a byte.
+// Handle (4 bytes), a Text (detail bytes) or Bytes (detail bytes, a hash).
+// An Integer is little-endian, at an offset that is a multiple of its
+// size. A Text field holds its bytes in the record: UTF-8, and zero bytes
+// after the text; the text ends at the first zero byte or at the end of
+// the field. It holds no address, so a record still means the same in
+// each process. The fields are in the order of their offsets, and no two
+// fields share a byte.
 //
 // An Integer field can state what it counts, as an Integer parameter does:
 // a size or a time, in one unit (docs/MODULE_CONTRACT.md, "The unit of an
 // Integer field"). A reader shows the value in the color of that kind, with
 // its unit.
 //
+// A field can state its field kind: how a reader writes its value
+// (docs/MODULE_CONTRACT.md, "The kind of a field"). field_kind_valid says
+// which kind each type takes.
+//
 // Example: the field `time` of the record `Process` of the monitor is an
-// Integer of 8 bytes with the integer unit `{.Time, Milliseconds}`.
+// Integer of 8 bytes with the integer unit `{.Time, Milliseconds}`; a field
+// `level: operation.Log_Level` is an unsigned Integer of 1 byte with the
+// kind Status and the contract enum Log_Level.
 Field :: struct {
-	name_offset:  u32, // In the string table.
-	name_count:   u32, // The bytes of the name.
-	offset:       u32, // From the start of the record, in bytes.
-	type:         u8, // The byte of a Type (field_type): Integer, Handle or Text.
-	unsigned:     bool, // An Integer: true for an unsigned integer, false for a signed one.
-	integer_unit: value_kinds.Integer_Unit, // An Integer: what it counts, {} for a plain number. {} for a Handle and a Text.
-	detail:       u32, // An Integer: its size in bytes, 0 for 8. A Handle: the rights that the callee needs. A Text: its size in bytes.
-	reserved:     u32, // 0.
+	name_offset:   u32, // In the string table.
+	name_count:    u32, // The bytes of the name.
+	offset:        u32, // From the start of the record, in bytes.
+	type:          u8, // The byte of a Type (field_type): Integer, Handle, Text or Bytes.
+	unsigned:      bool, // An Integer: true for an unsigned integer, false for a signed one.
+	integer_unit:  value_kinds.Integer_Unit, // An Integer: what it counts, {} for a plain number. {} for a Handle, a Text and Bytes, and beside a field kind.
+	detail:        u32, // An Integer: its size in bytes, 0 for 8. A Handle: the rights that the callee needs. A Text or Bytes: its size in bytes.
+	kind:          u8, // The byte of a value_kinds.Field_Kind (field_kind): how a reader writes the value. 0 is Plain.
+	contract_enum: u8, // A Status: the byte of a value_kinds.Contract_Enum (field_contract_enum). 0 (None) for each other field.
+	reserved:      [2]u8, // 0.
 }
 #assert(size_of(Field) == 24)
+// A hash field holds at most a hash of a module.
+#assert(value_kinds.HASH_FIELD_BYTES == HASH_SIZE)
+
+// field_kind reads the field kind of a field through the border: false for
+// a byte that names no kind.
+field_kind :: proc "contextless" (item: Field) -> (kind: value_kinds.Field_Kind, ok: bool) {
+	return value_kinds.field_kind_of_word(item.kind)
+}
+
+// field_contract_enum reads the contract enum of a field through the
+// border: false for a byte that names no enum.
+field_contract_enum :: proc "contextless" (item: Field) -> (which: value_kinds.Contract_Enum, ok: bool) {
+	return value_kinds.contract_enum_of_word(item.contract_enum)
+}
 
 // The documentation of the module, for a reader. Record 1 of the
 // documentation table is the documentation of the module. No loader reads it.

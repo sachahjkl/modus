@@ -246,6 +246,7 @@ boot_program_compile_command :: proc(volume: Boot_Volume) -> []string {
 		"-export-dependencies:json",
 		foundation.join("-export-dependencies-file:", boot_volume_dependency_file(volume)),
 		foundation.SOURCE_LIBRARY_FLAG,
+		foundation.LOG_FACT_ATTRIBUTE_FLAG,
 		foundation.join("-define:BOOT_IMAGE=", to_root, signed_image_path(volume.path)),
 		foundation.join("-define:SYSTEM_KEY=", to_root, boot_volume_system_key_path(volume)),
 		fmt.tprintf("-define:SELF_TEST=%d", volume.self_test),

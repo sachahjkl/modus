@@ -184,7 +184,10 @@ field_value :: proc "contextless" (value: Value, name: string) -> (result: Value
 			return {kind = .Handle, integer = i64((^u32)(&value.record[item.offset])^)}, true
 		case .Text:
 			return {kind = .Text, text = module.field_text(value.record, item)}, true
-		case .None, .Record, .Table, .Bytes:
+		case .Bytes:
+			// A hash: the console draws its bytes.
+			return {kind = .Bytes, record = module.field_bytes(value.record, item)}, true
+		case .None, .Record, .Table:
 			// A field of a record holds no such value: the field gives none.
 			return {}, false
 		}
