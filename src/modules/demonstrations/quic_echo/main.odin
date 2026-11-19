@@ -62,8 +62,11 @@ import "modus:support/system"
 
 // 16 QUIC connections of about 85 KiB each, 4 streams of about 130 KiB for
 // each, and an echo buffer of 16 KiB for each stream: about 2770 pages, in
-// one mapping of the process (docs/QUIC.md, section 6).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3667, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// one mapping of the process (docs/QUIC.md, section 6): 3667 pages. And
+// the glyph memory of the copy of the text rendering of the drawing
+// module, which draws its text: 354 pages (display.TEXT_MEMORY_PAGES).
+// 3667 + 354 = 4021.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4021, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---

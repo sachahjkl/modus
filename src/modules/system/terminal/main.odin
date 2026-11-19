@@ -60,8 +60,8 @@
 // - "terminal: console stopped with code C after L lines and R records";
 // - "terminal: console shows the character N in its cells, drawn by this
 //   process from the font F of its fallback chain", once for each font F,
-//   for the first or the last character of the view past the glyph cache
-//   that a font of the chain of the cells has
+//   for the first or the last character of the view past the 192
+//   characters of Spleen that a font of the chain of the cells has
 //   (src/md/features/glyphs_on_demand.md); and "terminal: console shows
 //   the character N in its cells as the replacement glyph: no font of its
 //   fallback chain has it", once, for the first or the last such
@@ -96,9 +96,9 @@ import "base:intrinsics"
 // 8035 pages. And the glyph memory of its two copies of the text
 // rendering, the one of the drawing module, which draws its cells, and its
 // own, which draws a cell again to tell where its glyph comes from
-// (display.cell_fallback_of): each reserves its memory at its first glyph
-// past the glyph caches, 2 x 354 pages (display.TEXT_MEMORY_PAGES) = 708
-// pages. 8035 + 708 = 8743.
+// (display.cell_fallback_of): each reserves its memory at its first glyph,
+// 2 x 354 pages (display.TEXT_MEMORY_PAGES) = 708 pages. 8035 + 708 =
+// 8743.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8743, processes = 1, threads = 2}
 
 COLUMNS_LIMIT :: terminal.COLUMNS_LIMIT
@@ -1656,7 +1656,7 @@ missing_cell_told: bool // The line of the first cell that no font of the chain 
 fallback_cells_all_told: bool // Each line that fallback_cells_tell can write is on the log: it looks at no cell again.
 
 // fallback_cells_tell says, after a frame, where the first and the last
-// cells past the glyph cache of the view come from: once for each font of
+// cells past the 192 characters of Spleen of the view come from: once for each font of
 // the fallback chain, and once for no font. The process draws the glyph
 // of the cell as the drawing module drew it, from the same outlines, and
 // checks that it has ink and stays in its cell. Once each line is on the

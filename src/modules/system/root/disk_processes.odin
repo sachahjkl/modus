@@ -549,7 +549,7 @@ disk_load_start :: proc "contextless" () {
 // disk_process_run starts a disk process from the bytes of its file, which
 // this service checked. The process receives what each process receives
 // and nothing of a role: the log with the right Write, a window, the date
-// page, the settings page and the glyph caches, read-only. It has no row
+// page, the settings page and the font outlines, read-only. It has no row
 // in the tables by name of this service, and the budget of a process that
 // no table names. Its grants are the grants of its nickname in the disk
 // grant table of its principal: with the grant store, a connection to the

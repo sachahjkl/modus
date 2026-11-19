@@ -1399,7 +1399,7 @@ A volume that a command does not need is not built and not checked. It stays wit
 
 **The volume file.** A volume is 64 MiB, and its files fill its start. The tool writes the bytes up to the last byte that is not zero, then gives the file its whole size: the file system stores no block for the end, and a read of it gives zero bytes. QEMU reads the volume as a raw disk and sees the same bytes; the hash of the build record is the hash of the content, with the zero bytes.
 
-**What runs at each build.** The debug image, the pointer themes, the glyph caches, the link pages of the manual (`MODULE_CONTRACT.md`, "The links of a page of the manual") and the four boot images are built at each build: each one reads outputs of the modules or files of the repository, and its time is in the measure.
+**What runs at each build.** The debug image, the pointer themes, the font outlines, the link pages of the manual (`MODULE_CONTRACT.md`, "The links of a page of the manual") and the four boot images are built at each build: each one reads outputs of the modules or files of the repository, and its time is in the measure.
 
 **How to force a whole build.** `modustool build whole` ignores every record, builds each module and each boot volume, and writes new records. The commands that prove the build always build whole, with no option: `check` and `repeat`, and the two procedures of the second build set it themselves, so no caller can compare two builds of which one kept its outputs. `nix flake check` builds in an empty folder, with no record.
 

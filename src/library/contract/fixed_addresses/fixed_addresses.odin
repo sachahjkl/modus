@@ -3,8 +3,8 @@
 // describes what is mapped there) takes its address from here.
 //
 // One process can receive several of these mappings at one time: the root
-// service gives each process with a surface the settings page, the glyph
-// caches and the date page, and the same process can also have the files
+// service gives each process with a surface the settings page, the font
+// outlines and the date page, and the same process can also have the files
 // of its modules, a storage file or the pointer themes. So no two ranges
 // overlap.
 //
@@ -37,7 +37,7 @@ import op "modus:contract/operation"
 // The band of the fixed ranges: one slot of 1 TiB for each range.
 BAND_START :: 0x0000_3000_0000_0000
 SLOT :: 0x0000_0100_0000_0000 // 1 TiB: the addresses of one range.
-SLOT_COUNT :: 17 // The slots of the band: the values 0 to 16 of Fixed_Range, the slot 13 with no member.
+SLOT_COUNT :: 17 // The slots of the band: the values 0 to 16 of Fixed_Range, the slots 3, 4, 5, 9, 10 and 13 with no member.
 BAND_END :: BAND_START + SLOT_COUNT * SLOT
 // The first address of a mapping that a process places by its own choice.
 OWN_CHOICE_START :: BAND_END
@@ -52,7 +52,7 @@ RANGE_SPAN :: SLOT
 // member, is not a fixed range, and the check of the tool refuses it.
 //
 // A starter maps a range in its child before the child runs. For the
-// settings page, the glyph caches, the font outlines, the date page, the
+// settings page, the font outlines, the date page, the
 // debug image, the disk process page and the fresh bytes page, it also
 // sets the bit of the range in the value 20 of the context of the child
 // (`range_mapped_add`). The child reads nothing at a range whose bit is
@@ -63,8 +63,9 @@ RANGE_SPAN :: SLOT
 // The value of each member is its slot and its bit in the value 20 of the
 // context, which crosses the border between a starter and its child, so
 // each value is written. A range that leaves keeps its number free: the
-// slot 13 names no member, and the border refuses its bit, so a module of
-// an earlier build never takes another range for it.
+// slots 3, 4, 5, 9, 10 and 13 name no member (the first five held the
+// glyph caches of the boot image), and the border refuses their bits, so a
+// module of an earlier build never takes another range for one.
 Fixed_Range :: enum u8 {
 	Module_Files = 0, // The files of a module and of its imports, in the process that runs the module (modus:contract/isolated).
 	// A call host finds there, read-only, the module that it runs, its
@@ -82,18 +83,6 @@ Fixed_Range :: enum u8 {
 	// process with a surface or a terminal reads: the value of each setting
 	// of the machine. The root service maps it. A process reads a change at
 	// its next read of the page, with no message.
-	Glyph_Cache = 3, // The glyph caches of the text of the system (modus:contract/settings).
-	// The glyphs of the default font of the text, fitted to the grid of
-	// the pixels, drawn once at build time. The root service maps it,
-	// read-only, beside the settings page; each process draws text from it
-	// and draws no glyph itself.
-	Glyph_Cache_Without_Grid_Fit = 4,
-	// The glyphs of the default font with no fit to the grid of the
-	// pixels, for the setting that chooses them. Mapped as the cache
-	// above.
-	Glyph_Cache_Bold = 5,
-	// The glyphs of the emphasis weight of the default font. Mapped as the
-	// cache above.
 	Date_Page = 6, // The date page (modus:contract/date).
 	// One page, read-only, that the process `date` writes from the
 	// real-time clock: each process reads the date of the day there with
@@ -109,11 +98,6 @@ Fixed_Range :: enum u8 {
 	// the time of one call: the parameter n at `TABLE_ADDRESS` plus n
 	// times 16 GiB. The same addresses at each call cost no new page
 	// tables, where an address that the kernel chooses would.
-	Interface_Glyph_Cache = 9, // The glyph cache of the interface font, regular weight (modus:contract/settings).
-	// The glyphs of the proportional font of the windows. Mapped as the
-	// glyph caches above.
-	Interface_Glyph_Cache_Bold = 10, // The glyph cache of the interface font, bold weight.
-	// Mapped as the glyph caches above.
 	Debug_Image = 11, // The debug image, read-only: the debug objects of the modules, by the hash of each module (modus:contract/debug_object).
 	// The root service maps it in a process that prints stop reports, as
 	// the console, and gives its size at the value 21 of the context. The
@@ -125,9 +109,8 @@ Fixed_Range :: enum u8 {
 	// Inspect of the machine, as the monitor.
 	Font_Outlines = 14, // The font outlines, read-only (modus:contract/font_outlines).
 	// The font files of the system, one resource of the boot image: each
-	// process draws from them the glyphs past the glyph caches into its
-	// private glyph cache. The root service maps it beside the glyph
-	// caches.
+	// process draws from them each glyph of its text into its private
+	// glyph cache. The root service maps it beside the settings page.
 	Fresh_Bytes_Page = 15, // The fresh bytes page of the process, read-only (modus:contract/fresh_bytes).
 	// The root service writes there, now and then, 32 bytes of its stream
 	// for this process alone, after a read of the entropy device; the
@@ -148,7 +131,7 @@ Fixed_Ranges :: bit_set[Fixed_Range;u64]
 
 // fixed_ranges_of_word is the border of the value of the fixed ranges: the
 // set of a word, or false for a word with a bit that names no member (the
-// bit 13 of a range that left, a bit past the last member). It reads and
+// bits 3, 4, 5, 9, 10 and 13 of the ranges that left, a bit past the last member). It reads and
 // changes no state, so a host test gives it each refused word.
 fixed_ranges_of_word :: proc "contextless" (word: u64) -> (ranges: Fixed_Ranges, ok: bool) {
 	members: u64
@@ -184,9 +167,6 @@ range_mapped_add :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, range: 
 MODULE_FILES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Files)
 POINTER_THEMES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Pointer_Themes)
 SETTINGS_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Settings_Page)
-GLYPH_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Glyph_Cache)
-GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Glyph_Cache_Without_Grid_Fit)
-GLYPH_CACHE_BOLD_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Glyph_Cache_Bold)
 DATE_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Date_Page)
 STORAGE_FILE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Storage_File)
 MODULE_TABLES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Tables)

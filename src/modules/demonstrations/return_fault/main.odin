@@ -54,8 +54,10 @@ import "modus:support/interface"
 import "modus:support/random"
 import "modus:support/system"
 
-// One child at a time, with one thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1353, processes = 2, threads = 2, window_width = WIDTH, window_height = HEIGHT}
+// One child at a time, with one thread: 1353 pages. And the glyph memory
+// of the copy of the text rendering of the drawing module, which draws its
+// text: 354 pages (display.TEXT_MEMORY_PAGES). 1353 + 354 = 1707.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1707, processes = 2, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 896

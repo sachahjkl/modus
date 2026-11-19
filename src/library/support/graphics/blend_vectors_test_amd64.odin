@@ -800,10 +800,11 @@ text_speed_of_each_blend :: proc(t: ^testing.T) {
 	}
 }
 
-// The text of a proportional font, drawn with text_proportional_with (the
-// table blend, with the form of the target as its fallback), gives the
-// bytes of the same placed glyphs drawn with the SSE2 form alone and with
-// the scalar form alone, each glyph at the position that position_of
+// The text of a proportional face, drawn with text_proportional_with from
+// the private glyph cache (the table blend, with the form of the target as
+// its fallback), gives the bytes of the same placed glyphs of the glyph
+// cache that the build of B612 draws, drawn with the SSE2 form alone and
+// with the scalar form alone, each glyph at the position that position_of
 // gives. The texts have pairs and glyphs that overlap; three places, a
 // fraction of a pixel apart; each order of the stripes; the four
 // backgrounds.
@@ -857,7 +858,7 @@ proportional_text_gives_the_same_bytes_in_each_blend :: proc(t: ^testing.T) {
 						glyph_in_form(.Scalar, cache, &table, order, canvases[0], int(pixel), 8, value, DARK_TEXT, 1, position)
 						glyph_in_form(.Sse2, cache, &table, order, canvases[1], int(pixel), 8, value, DARK_TEXT, 1, position)
 					}
-					text_proportional_with(cache, &table, tables, order, canvases[2], place, 8, placed[:count], 1, DARK_TEXT)
+					text_proportional_with(.Interface, &table, tables, order, canvases[2], place, 8, placed[:count], 1, DARK_TEXT)
 					for pixel, index in drawn[0] {
 						if drawn[2][index] != pixel {
 							differences[0] += 1

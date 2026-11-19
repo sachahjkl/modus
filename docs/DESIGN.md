@@ -247,7 +247,7 @@ The spaces between the elements come from a few named lengths, the spacing token
 
 Drawing must stay cheap and the same on every machine: integers, rectangles, and no image file to decode.
 
-- Drawing is `fill` of rectangles with integer arithmetic. No floating point and no image file. The one drawn data is the glyph cache of the vector font: the modus tool makes it at build time from the outlines, in integers, and a text draw blends its words (`docs/FONTS.md`).
+- Drawing is `fill` of rectangles with integer arithmetic. No floating point and no image file. The glyphs of the vector font are drawn by each process from the font outlines, in integers, into its private glyph cache, and a text draw blends their words (`docs/FONTS.md`).
 - A photograph is not a form of the design. The one place of photographs is the hall of fame: each portrait is pixels that the command `modustool portraits` made from a picture of `resources/hall_of_fame`, shown as one Picture record, with its credit under it. The process decodes no file.
 - A display does not wait so that a reader can see it. A display that fails stays.
 - Each display has a measured draw time.

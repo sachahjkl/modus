@@ -111,7 +111,7 @@ The model of section 1 is the direction; the service of today builds a part of i
 | The versions of an object, their thinning | The history of a store | Kept for each object; the history of a store is not built |
 | The system description (a signed list of hashes) | The tree of the system, signed by the principal that signs the system | Not built |
 | The boot image | The transport of the first objects | Built in part: the first module of a disk process is an object of the store `module_files`, which the root service starts when its bytes have the hash that the principal named (`MODULE_CONTRACT.md`, "A module from a disk"). The image is still the source of each other module and of each import |
-| The resources of the boot image (pointer themes, glyph caches) that the root service gives | Objects of the tree of the system, granted by handle | Not built |
+| The resources of the boot image (pointer themes, font outlines) that the root service gives | Objects of the tree of the system, granted by handle | Not built |
 | The hash of a module (P11) | The name of an object | The same BLAKE3 hash. A module file of a disk process is in the store `module_files`; its reader computes the hash on the bytes, because the hash of an object with a hole is not the BLAKE3 hash of its bytes (section 4.6) |
 | A grant of the root service: the store of a connection and its limit | A handle on the store of a process, with its budget of blocks | Built: the connection is the handle |
 

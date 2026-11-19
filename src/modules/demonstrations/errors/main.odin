@@ -95,8 +95,11 @@ import "modus:contract/root_ring"
 import "modus:support/system"
 import "base:intrinsics"
 
-// It starts fault and its child, and 3 threads under contention.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1476, processes = 3, threads = 4, window_width = WIDTH, window_height = HEIGHT}
+// It starts fault and its child, and 3 threads under contention: 1476
+// pages. And the glyph memory of the copy of the text rendering of the
+// drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 1476 + 354 = 1830.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1830, processes = 3, threads = 4, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(1024, 16384)

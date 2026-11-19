@@ -656,7 +656,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	principals_start()
 	// The random seed of the system: before the first process starts.
 	random_seed_make()
-	// The settings page and the glyph cache, before the first boot display.
+	// The settings page and the font outlines, before the first window.
 	text_settings_create()
 	date_page_create()
 	appearance_open() // appearance_edge.odin
@@ -910,9 +910,9 @@ compositor_start :: proc "contextless" () -> system.Status {
 	// The compositor is also a service (src/modules/system/compositor/exports.odin):
 	// a service ring and its own file, as start() gives to a service. Its
 	// values 0 to 3 are the screen, so the file is at values 4 and 5.
-	// The file, two pointer themes, the settings page, five glyph caches,
-	// the font outlines, the date page, the fresh bytes page.
-	mappings: [13]system.Mapping
+	// The file, two pointer themes, the settings page, the font outlines,
+	// the date page, the fresh bytes page, and one place more.
+	mappings: [8]system.Mapping
 	mapping_count := 0
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == "compositor" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
@@ -1613,8 +1613,8 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	columns, rows, measure := role_terminal(&writer.role)
 	handles := terminal.Terminal_Handles{display = display_memory, ring = ring_memory, text = text_memory, writer = writer.process, log = log_grant(role)}
 	terminal.context_of(&context_grants, &values, handles, system.name_pack(system.name_of(writer.name[:])), columns, rows, measure)
-	// The settings page, five glyph caches and the font outlines.
-	mappings: [7]system.Mapping
+	// The settings page and the font outlines.
+	mappings: [2]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
 	if context_refused("terminal", &context_grants, &values) {

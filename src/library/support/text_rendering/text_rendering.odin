@@ -38,7 +38,7 @@ import "modus:support/vector_font"
 // a line of 16 pixels is the size 1 024. The places and the advances of a
 // text are in the same unit.
 SUBPIXEL :: glyph_cache.SUBPIXEL
-// The size of a line of 16 pixels: the line of the glyph caches at scale 1.
+// The size of a line of 16 pixels: the line of the grid of cells at scale 1.
 TEXT_SIZE_OF_SCALE_ONE :: 16 * SUBPIXEL
 // The smallest size: a line of 4 pixels. Below it a glyph has no form that
 // a reader can read.
@@ -72,7 +72,7 @@ size_check :: proc "contextless" (size: int) -> Size_Problem {
 	return .None
 }
 
-// size_of_scale gives the text size of a scale of the glyph caches: 1 024,
+// size_of_scale gives the text size of a scale of the grid of cells: 1 024,
 // 2 048 and 3 072 for the scales 1, 2 and 3.
 size_of_scale :: #force_inline proc "contextless" (scale: int) -> int {
 	return scale * TEXT_SIZE_OF_SCALE_ONE
@@ -85,8 +85,8 @@ line_rows :: #force_inline proc "contextless" (size: int) -> int {
 }
 
 // cell_columns gives the width of a cell of a face of cells at a size, in
-// whole pixels: half the line, a half up. At the sizes of the glyph caches
-// it is the cell of the grid: 8, 16 and 24 pixels.
+// whole pixels: half the line, a half up. At the sizes of the scales 1, 2
+// and 3 it is the cell of the grid: 8, 16 and 24 pixels.
 cell_columns :: #force_inline proc "contextless" (size: int) -> int {
 	return (size + SUBPIXEL) / (2 * SUBPIXEL)
 }
@@ -136,9 +136,8 @@ Chain_Kind :: enum u8 {
 
 // A face: a first font, its frame, its weight and the grid fit. A glyph of
 // another font of its chain is drawn in the frame of the first font. None:
-// a glyph cache that is not of a font of the outlines, or a process with
-// no outlines; its characters past the glyph cache draw the replacement
-// glyph.
+// no face, as in a process with no outlines; each of its characters draws
+// the replacement glyph.
 Face :: enum u8 {
 	None                   = 0,
 	Interface              = 1, // B612 Regular: proportional.
@@ -169,24 +168,22 @@ POSITION_LIMIT :: glyph_cache.POSITION_LIMIT
 #assert(POSITION_LIMIT == 3)
 
 // The form of a face: its first font, its chain, its frame and the grid
-// fit; the form of its glyph cache of the boot image.
+// fit.
 Face_Form :: struct {
 	primary:      Outline_Font, // The first font of each of its chains.
 	chain:        Chain_Kind,
 	proportional: bool, // Each character has its own advance, and its frame is the cap height; else its frame is the advance, half the line.
 	grid_fit:     bool, // The baseline, the x-height and the cap height on whole pixels.
-	scale_count:  int, // The glyph cache of the boot image of this face has the scales 1 ..= scale_count.
-	positions:    [glyph_cache.SIZE_LIMIT]int, // The positions of each scale of that glyph cache; 0 past scale_count.
 }
 
 @(rodata)
 face_forms := [Face]Face_Form {
 	.None = {},
-	.Interface = {primary = .B612, chain = .Interface, proportional = true, grid_fit = true, scale_count = 3, positions = {3, 1, 1}},
-	.Interface_Bold = {primary = .B612_Bold, chain = .Interface_Bold, proportional = true, grid_fit = true, scale_count = 1, positions = {3, 0, 0}},
-	.Cells = {primary = .Paper_Mono, chain = .Cells, grid_fit = true, scale_count = 3, positions = {1, 1, 1}},
-	.Cells_Without_Grid_Fit = {primary = .Paper_Mono, chain = .Cells, grid_fit = false, scale_count = 3, positions = {1, 1, 1}},
-	.Cells_Bold = {primary = .Paper_Mono_Semibold, chain = .Cells_Bold, grid_fit = true, scale_count = 1, positions = {1, 0, 0}},
+	.Interface = {primary = .B612, chain = .Interface, proportional = true, grid_fit = true},
+	.Interface_Bold = {primary = .B612_Bold, chain = .Interface_Bold, proportional = true, grid_fit = true},
+	.Cells = {primary = .Paper_Mono, chain = .Cells, grid_fit = true},
+	.Cells_Without_Grid_Fit = {primary = .Paper_Mono, chain = .Cells, grid_fit = false},
+	.Cells_Bold = {primary = .Paper_Mono_Semibold, chain = .Cells_Bold, grid_fit = true},
 }
 
 // positions_of gives the positions across a pixel of a face at any size:
@@ -282,8 +279,7 @@ Font_Set :: struct {
 }
 
 // State: the state of this copy of the package. All zero: nothing is
-// opened, and each character past the glyph cache draws the replacement
-// glyph.
+// opened, and no face draws: each caller draws in Spleen.
 State :: struct {
 	using font_set: Font_Set,
 	frame:          u64, // The number of the frame: frame_begin adds one.
@@ -346,28 +342,12 @@ fonts_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outli
 	return missing
 }
 
-// face_of_cache gives the face of a glyph cache: the face whose first font
-// has the hash of the font file of the cache, whose form the cache has at
-// each scale. None when no face matches.
-face_of_cache :: proc "contextless" (cache: ^glyph_cache.Cache) -> Face {
-	if !state.opened || cache == nil || cache.header == nil {
-		return .None
-	}
-	proportional := cache.header.flags & glyph_cache.FLAG_PROPORTIONAL != 0
-	grid_fit := cache.header.flags & glyph_cache.FLAG_GRID_FIT != 0
-	search: for form, face in face_forms {
-		font := &state.fonts[form.primary]
-		if face == .None || !font.opened || font.hash != cache.header.font_hash || form.proportional != proportional || form.grid_fit != grid_fit || len(cache.sizes) != form.scale_count {
-			continue
-		}
-		for size, index in cache.sizes {
-			if int(size.position_count) != form.positions[index] {
-				continue search
-			}
-		}
-		return face
-	}
-	return .None
+// face_opened says if this copy can draw a face: the outlines are open and
+// hold the first font of the face, whose frame places each glyph of the
+// face. false for the face None. A face that is not opened draws nothing,
+// so its caller draws in Spleen or in the font of the cells.
+face_opened :: proc "contextless" (face: Face) -> bool {
+	return face != .None && state.opened && state.fonts[face_forms[face].primary].opened
 }
 
 // frame_begin starts a frame of the process: the order of use of the

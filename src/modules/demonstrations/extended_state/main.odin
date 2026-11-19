@@ -48,8 +48,11 @@ import sets "modus:support/instruction_sets"
 import "modus:support/interface"
 import "modus:support/system"
 
-// The main thread and up to 31 threads that hold their registers.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 928, processes = 1, threads = 32, window_width = WIDTH, window_height = HEIGHT}
+// The main thread and up to 31 threads that hold their registers: 928
+// pages. And the glyph memory of the copy of the text rendering of the
+// drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 928 + 354 = 1282.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1282, processes = 1, threads = 32, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 1000 // The window and its borders fit the window bound of 1024 columns.

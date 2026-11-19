@@ -52,8 +52,10 @@ import "modus:contract/ring"
 import "modus:support/random"
 import "modus:support/system"
 
-// Six nodes.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4114, processes = 7, threads = 7, window_width = WIDTH, window_height = HEIGHT}
+// Six nodes: 4114 pages. And the glyph memory of the copy of the text
+// rendering of the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 4114 + 354 = 4468.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4468, processes = 7, threads = 7, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 720
 HEIGHT :: 540
