@@ -30,7 +30,13 @@ WIRING_LIST_BYTES_MOST :: WIRING_LIST_PAGES_MOST * ring.PAGE_SIZE
 // The most rows and lent handles of one list: one command, not a bound of
 // the wirings of the machine. A Wire after a start adds more.
 WIRING_LIST_ROW_LIMIT :: 32
-WIRING_LIST_HANDLE_LIMIT :: 32
+// The wirings that one asker holds at one time: the root service refuses
+// one more. Each wiring costs the root service one handle.
+WIRINGS_OF_AN_ASKER_MOST :: 8
+// A list names at most the two ends of each wiring that its asker can
+// hold: each lent handle is a handle in the table of the root service
+// until the command ends.
+WIRING_LIST_HANDLE_LIMIT :: 2 * WIRINGS_OF_AN_ASKER_MOST
 #assert(size_of(Wiring_List_Head) + WIRING_LIST_ROW_LIMIT * size_of(Wiring) + WIRING_LIST_HANDLE_LIMIT * size_of(u32) <= WIRING_LIST_BYTES_MOST)
 
 // The compartments of an output ring that a row names with the capacity 0,

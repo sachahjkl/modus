@@ -2639,8 +2639,8 @@ scenario := [?]Step {
 	// unchanged; the writers and the readers write what they read. The
 	// processes print in an order that the system does not fix.
 	{kind = .Type, text = "start(\"output_wiring\")"},
-	{kind = .Wait, text = "output_wiring: Wire before its list page, with a step that names nothing and with a reserved word: refused, each with its status and its error record, the budget unchanged; then the list page: as it must", fails_on = "output_wiring: WRONG"},
-	{kind = .Wait, text = "output_wiring: the refusals of a wiring, each with its status and its error record and the budget unchanged, and the Wire of the second reader: as it must", fails_on = "output_wiring: WRONG", any_order = true},
+	{kind = .Wait, text = "output_wiring: Wire before its list page, with a step that names nothing and with a reserved word, and the list page past the budget: refused, each with its status and its error record, the budget unchanged; then the list page, its handle revoked, unmapped and closed, and a new handle of it: as it must", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = "output_wiring: the refusals of a wiring, each with its status and its error record and the budget unchanged, 140 lent memory handles among them, and the Wire of the second reader: as it must", fails_on = "output_wiring: WRONG", any_order = true},
 	{kind = .Wait, text = "output_writer: probes: 8 probes to two readers, the second one after 5, a clean end, and Ended after it: as it must", fails_on = "output_writer: WRONG", any_order = true},
 	{kind = .Wait, text = "output_reader: probes: joined after 0 records, the probes 0 to 7 in order, and a clean end: as it must", fails_on = "output_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "output_reader: probes: joined after 5 records, the probes 5 to 7 in order, and a clean end: as it must", fails_on = "output_reader: WRONG"},
@@ -2651,7 +2651,17 @@ scenario := [?]Step {
 	{kind = .Wait, text = "output_writer: watched: the ring ended with the end word Reader_Stopped: as it must", fails_on = "output_writer: WRONG", any_order = true},
 	{kind = .Wait, text = "output_wiring: the writer that stopped and the reader that stopped: as it must", fails_on = "output_wiring: WRONG"},
 	{kind = .Wait, text = "output_writer: large: 8 rings, each ended with the end word Revoked: as it must", fails_on = "output_writer: WRONG"},
-	{kind = .Wait, text = "output_wiring: 8 wirings, one past them refused with its status and its error record and the budget unchanged, then the revocation of the grant wirings: as it must", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = "output_wiring: 8 wirings, one past them refused with Wire and with a Start, each with its status and its error record and the budget unchanged, then the revocation of the grant wirings: as it must", fails_on = "output_wiring: WRONG"},
+	// A side that writes its own words in its wiring ring: the root
+	// service ends the wiring whose end it refused, drops a word for a
+	// number of no wiring and a word past the answer and the close of an
+	// end, one line each, and refuses an end for a wiring ring that the
+	// side never reads with Busy.
+	{kind = .Wait, text = "root: output_side refused its end of the wiring ", fails_on = "output_wiring: WRONG", any_order = true},
+	{kind = .Wait, text = " words of its wiring ring that name no wiring of it: they are dropped", fails_on = "output_wiring: WRONG", any_order = true},
+	{kind = .Wait, text = "output_side: refused the end of its start, wrote Closed for a number of no wiring, then Taken, Closed and Closed again for the end of a Wire; it reads no more commands: as it must", fails_on = "output_side: WRONG", any_order = true},
+	{kind = .Wait, text = "root: output_side wrote a word of its wiring ring for the wiring ", fails_on = "output_wiring: WRONG", any_order = true},
+	{kind = .Wait, text = "output_wiring: the end that a side refused ended with Refused, and 32 ends filled the wiring ring that it does not read, then one more refused with Busy, its status and its error record and the budget unchanged: as it must", fails_on = "output_wiring: WRONG"},
 	{kind = .Wait, text = "output_wiring: the wiring of this asker gave the joined record of 0 and the probe 0, after ", fails_on = "output_wiring: WRONG"},
 	{kind = .Wait, text = "output_wiring: ok"},
 	{kind = .Wait, text = "output_writer: asked: the ring ended with the end word Asker_Stopped: as it must", fails_on = "output_writer: WRONG"},

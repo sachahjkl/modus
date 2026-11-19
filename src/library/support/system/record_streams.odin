@@ -48,10 +48,11 @@ Output_State :: struct {
 	written:     u64, // The records that one ring or more took.
 	discarded:   u64, // The records that no ring took: the record output had no reader.
 	refused:     u64, // The writes refused with Full: no ring took them, and they have no serial.
-	refused_by_readers: u64, // The compartments that a reader refused (output.Completion_Kind.Bad_Record).
+	refused_by_readers: u64, // The compartments that a reader refused (output.Completion_Kind.Bad_Record): the writer closes each such ring.
 	ended:       bool, // output_end ended the record output.
 	last_end:    output.End_Word, // The end word of the last ring that ended by an end word.
 	rings_ended: u64, // The rings that ended by an end word: a reader that stopped, its asker, a revocation.
+	rings_broken: u64, // The rings that the writer closed for a count of the reader past its own write: no honest reader writes one.
 }
 #assert(offset_of(Output_State, index) == 0)
 

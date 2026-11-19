@@ -646,7 +646,7 @@ Do not use: subscription, binding, connection (a connection is a call ring and a
 
 The wiring ring is the ring between the root service and a process that declares a record output or a record input: one command record gives one end of an output ring, with its handle, its pace or its wiring terms.
 
-The process finds it at the handle 16 of its context, or an asker with its list page, and answers each command with one completion. Each handle comes through the memory of the ring, so the process proves it. No command ends an end: the end page of the wiring says it. The writer reads the wiring ring at each write with one compare of its counters. A process that declares no record output and no record input has none.
+The process finds it at the handle 16 of its context, or an asker with its list page, and answers each command with one completion, then writes `Closed` when it closes that end. Each handle comes through the memory of the ring, so the process proves it. No command ends an end: the end page of the wiring says it. The writer reads the wiring ring at each write with one compare of its counters. A process that declares no record output and no record input has none.
 
 The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
 

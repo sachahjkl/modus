@@ -201,34 +201,53 @@ the_border_takes_each_valid_end_back_as_it_was :: proc(t: ^testing.T) {
 }
 
 // The completion of the wiring ring: a status word that names no member is
-// refused, and an Ok with any value that is not 0.
+// refused; an Ok whose answer word names no Wiring_Answer (one past the
+// last, the largest word); an Ok with any other value that is not 0, the
+// answer Closed among them.
 @(test)
 a_completion_with_an_unknown_status_or_an_ok_with_values_is_refused :: proc(t: ^testing.T) {
 	words := [?]u32{u32(max(op.Status)) + 1, max(u32)}
 	for word in words {
-		_, _, _, ok := wiring_completion_of_record({kind = word, tag = 1})
+		_, _, _, _, ok := wiring_completion_of_record({kind = word, tag = 1})
 		testing.expectf(t, !ok, "the status word %d is taken", word)
 	}
-	for index in 0 ..< 7 {
+	for answer in ([?]u64{u64(max(Wiring_Answer)) + 1, max(u64)}) {
 		record := wiring_completion(5, .Ok)
-		record.values[index] = 1
-		_, _, _, ok := wiring_completion_of_record(record)
-		testing.expectf(t, !ok, "an Ok with the value %d is taken", index)
+		record.values[WIRING_ANSWER_VALUE] = answer
+		_, _, _, _, ok := wiring_completion_of_record(record)
+		testing.expectf(t, !ok, "the answer word %d is taken", answer)
+	}
+	for base in ([?]ring.Record{wiring_completion(5, .Ok), wiring_closed_completion(5)}) {
+		for index in WIRING_ANSWER_VALUE + 1 ..< 7 {
+			record := base
+			record.values[index] = 1
+			_, _, _, _, ok := wiring_completion_of_record(record)
+			testing.expectf(t, !ok, "an Ok with the value %d is taken", index)
+		}
 	}
 }
 
-// The completions that the border takes, last: Ok with no value, and a
-// refusal with its error record and the tag of its command.
+// The completions that the border takes, last: Ok with the answer Taken,
+// the word Closed, and a refusal with its error record and the tag of its
+// command.
 @(test)
 a_completion_comes_back_with_its_status_its_tag_and_its_record :: proc(t: ^testing.T) {
-	status, tag, refusal, ok := wiring_completion_of_record(wiring_completion(max(u32), .Ok))
+	status, tag, answer, refusal, ok := wiring_completion_of_record(wiring_completion(max(u32), .Ok))
 	testing.expect(t, ok)
 	testing.expect_value(t, status, op.Status.Ok)
 	testing.expect_value(t, tag, max(u32))
+	testing.expect_value(t, answer, Wiring_Answer.Taken)
+	testing.expect_value(t, refusal, errors.Error_Record{})
+
+	status, tag, answer, refusal, ok = wiring_completion_of_record(wiring_closed_completion(7))
+	testing.expect(t, ok)
+	testing.expect_value(t, status, op.Status.Ok)
+	testing.expect_value(t, tag, 7)
+	testing.expect_value(t, answer, Wiring_Answer.Closed)
 	testing.expect_value(t, refusal, errors.Error_Record{})
 
 	refused := errors.error_make(.Bad_Value, .None, WIRING_VALUE_INDEX + 1, 9, 2)
-	status, tag, refusal, ok = wiring_completion_of_record(wiring_completion(6, .Bad_Operation, refused))
+	status, tag, answer, refusal, ok = wiring_completion_of_record(wiring_completion(6, .Bad_Operation, refused))
 	testing.expect(t, ok)
 	testing.expect_value(t, status, op.Status.Bad_Operation)
 	testing.expect_value(t, tag, 6)

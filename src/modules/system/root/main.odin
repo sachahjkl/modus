@@ -1921,9 +1921,15 @@ release :: proc "contextless" (item: ^Started) {
 	}
 	// Each wiring that names the process ends, with the end word of its
 	// part, before its handle closes: the other side reads the end, with
-	// the stop that the kernel recorded for a writer.
-	_, stop_cause, stop_outcome := system.process_state(item.process)
-	wirings_at_stop(item, stop_cause, stop_outcome)
+	// the stop that the kernel recorded for a writer. A start that this
+	// service abandons has no process, and so no stop to read.
+	process_state: op.Process_State
+	stop_cause: op.Stop_Cause
+	stop_outcome: op.Stop_Outcome
+	if item.process != 0 {
+		process_state, stop_cause, stop_outcome = system.process_state(item.process)
+	}
+	wirings_at_stop(item, process_state, stop_cause, stop_outcome)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {
 			debug_end(&other)

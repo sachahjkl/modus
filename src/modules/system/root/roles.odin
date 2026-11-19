@@ -371,6 +371,9 @@ process_roles := [?]Process_Role_Row {
 	// service in their wiring rings, and they need no grant.
 	{name = "output_writer"},
 	{name = "output_reader"},
+	// A side that writes its own words in its wiring ring, past the
+	// library: it needs no grant either.
+	{name = "output_side"},
 	// The two rows of the test of the restarts of a start policy, which only
 	// the image of the test of the rescue holds: each stops itself at once,
 	// and needs no grant.
