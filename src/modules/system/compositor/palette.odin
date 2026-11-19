@@ -45,7 +45,7 @@ palette_interface_state: interface.Interface_State
 palette_input: interface.Input
 palette_scroll_dragged: bool // The thumb that is held now moved the view: its release writes one line of the log.
 // The named elements of the last frame of the panel, and the set that the
-// log has: the facts Palette_Element_Place, "compositor: the palette: the
+// log has: the facts Palette_Element_Placed, "compositor: the palette: the
 // element field 1 at x,y,w,h", in pixels of the screen.
 palette_element_places_drawn, palette_element_places_written: interface.Element_Places
 

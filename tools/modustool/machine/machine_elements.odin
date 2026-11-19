@@ -11,11 +11,11 @@ import "modustool:foundation"
 
 // The press of a machine test on an element by its name
 // (src/md/infrastructure/test_pointer.md; docs/TOOLS.md, "The scenario
-// steps"). A window writes the log fact interface.Element_Place for each
+// steps"). A window writes the log fact interface.Element_Placed for each
 // named element whose place changes, in pixels of its surface: "interface:
 // debugger_window: the element watch at x,y,width,height". The palette is
 // a panel of the compositor, not a window: the compositor writes
-// compositor.Palette_Element_Place for its fields and its buttons, in
+// compositor.Palette_Element_Placed for its fields and its buttons, in
 // pixels of the screen. A step names the element; the tool reads its place
 // from the fields of the last such fact (build.element_line_read), never
 // from its sentence, and so follows a change of the layout.

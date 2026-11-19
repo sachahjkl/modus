@@ -84,7 +84,7 @@ fact_catalog_types :: proc(catalog: ^Fact_Catalog) -> []Fact_Catalog_Type {
 	return types[:]
 }
 
-// fact_types_of_name gives the fact type of a name ("interface.Element_Place")
+// fact_types_of_name gives the fact type of a name ("interface.Element_Placed")
 // in each module of the catalog that writes it, in the temporary memory: a
 // fact type of a support package is in each module that compiles it in and
 // reaches its call.

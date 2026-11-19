@@ -3,10 +3,10 @@ package build
 // The element lines of a log, read from the fields of their facts
 // (src/md/infrastructure/test_pointer.md; src/md/features/log_facts.md,
 // "The facts of the compositor and of the windows"). A window writes the
-// fact interface.Element_Place for each named element whose place changes,
+// fact interface.Element_Placed for each named element whose place changes,
 // in pixels of its surface, and interface.Element_Gone when its frame no
 // longer has the name. The palette is a panel of the compositor, not a
-// window: the compositor writes compositor.Palette_Element_Place and
+// window: the compositor writes compositor.Palette_Element_Placed and
 // compositor.Palette_Element_Gone, in pixels of the screen. A step of a
 // machine test reads the place of an element from the fields of the last
 // such fact, never from its sentence.
@@ -17,9 +17,9 @@ PALETTE_ELEMENTS :: "the palette"
 
 // The fact types of the element lines: the place and the end of an element
 // of a window, and of an element of the palette.
-ELEMENT_PLACE_FACT :: "interface.Element_Place"
+ELEMENT_PLACE_FACT :: "interface.Element_Placed"
 ELEMENT_GONE_FACT :: "interface.Element_Gone"
-PALETTE_ELEMENT_PLACE_FACT :: "compositor.Palette_Element_Place"
+PALETTE_ELEMENT_PLACE_FACT :: "compositor.Palette_Element_Placed"
 PALETTE_ELEMENT_GONE_FACT :: "compositor.Palette_Element_Gone"
 // The process that writes the facts of the palette.
 PALETTE_ELEMENT_PROCESS :: "compositor"

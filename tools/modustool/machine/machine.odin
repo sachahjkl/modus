@@ -3159,7 +3159,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "inspect: workers: "},
 	// An element line is a log fact of the window: the step reads the
 	// field that names the window, and the press reads its rectangle.
-	{kind = .Fact, process = "inspect", fact = "interface.Element_Place", condition = "window = \"inspect\"", any_order = true},
+	{kind = .Fact, process = "inspect", fact = "interface.Element_Placed", condition = "window = \"inspect\"", any_order = true},
 	{kind = .Wait, text = "interface: inspect: the element network at "},
 	{kind = .Click_Element, text = "inspect", element = "network"},
 	{kind = .Wait, text = "inspect: network: "},

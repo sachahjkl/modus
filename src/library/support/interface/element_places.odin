@@ -106,7 +106,7 @@ element_place_changed :: proc "contextless" (written: ^Element_Places, place: ^E
 // Text field as a literal.
 ELEMENT_FACT_TEXT_BYTES :: 40
 #assert(ELEMENT_FACT_TEXT_BYTES > ELEMENT_NAME_CAPACITY && ELEMENT_FACT_TEXT_BYTES % 8 == 0)
-#assert(offset_of(Element_Place, window) == 4 * size_of(i64) && offset_of(Element_Place, element) == 4 * size_of(i64) + ELEMENT_FACT_TEXT_BYTES)
+#assert(offset_of(Element_Placed, window) == 4 * size_of(i64) && offset_of(Element_Placed, element) == 4 * size_of(i64) + ELEMENT_FACT_TEXT_BYTES)
 #assert(size_of(Element_Gone) == 2 * ELEMENT_FACT_TEXT_BYTES)
 
 // A window placed a named element, or moved it: its rectangle in pixels
@@ -116,7 +116,7 @@ ELEMENT_FACT_TEXT_BYTES :: 40
 // element is the last field: the serial line of a fact stops at its last
 // byte that is not zero, so the zeros after a short name cost no byte.
 @(log_fact = "interface: {window}: the element {element} at {x},{y},{width},{height}")
-Element_Place :: struct {
+Element_Placed :: struct {
 	x:       i64,
 	y:       i64,
 	width:   i64,
@@ -135,7 +135,7 @@ Element_Gone :: struct {
 // element_places_publish writes on the log what changed from the set that
 // was written (written) to the set of the frame that is drawn now (now),
 // then keeps now as the set that was written. A name that is new or has
-// another rectangle writes the fact Element_Place; a name that the frame no
+// another rectangle writes the fact Element_Placed; a name that the frame no
 // longer has writes Element_Gone. A set with no change writes nothing, so
 // a window that does not move its elements adds no record to the log. The
 // palette is no window: the compositor writes its own facts with the same
@@ -147,8 +147,7 @@ element_places_publish :: proc "contextless" (written, now: ^Element_Places, win
 		if !element_place_changed(written, &place) {
 			continue
 		}
-		area := place.area
-		system.log_fact(.Info, Element_Place{window = window, element = value_kinds.text_field(element_place_name(&place), ELEMENT_FACT_TEXT_BYTES), x = i64(area.x), y = i64(area.y), width = i64(area.width), height = i64(area.height)})
+		system.log_fact(.Info, Element_Placed{window = window, element = value_kinds.text_field(element_place_name(&place), ELEMENT_FACT_TEXT_BYTES), x = i64(place.area.x), y = i64(place.area.y), width = i64(place.area.width), height = i64(place.area.height)})
 	}
 	for &place in written.places[:written.count] {
 		name := element_place_name(&place)

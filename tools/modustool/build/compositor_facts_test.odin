@@ -43,7 +43,7 @@ facts_expect_line :: proc(t: ^testing.T, written, old: string, loc := #caller_lo
 // The bits of a signed value in a field of these tests.
 @(private = "file")
 signed_bits :: proc(value: i64) -> u64 {
-	return transmute(u64)value
+	return u64(value)
 }
 
 // Each fact type of the compositor writes the line of before, byte for
@@ -84,7 +84,7 @@ the_facts_of_the_compositor_write_the_lines_of_before :: proc(t: ^testing.T) {
 	}
 	facts_expect_line(t, render(t, file, "Pointer_Shape_Refused", {{"window", window}, {"shape", most}}), line_of_before("compositor: ", window, " asks for the pointer shape ", most, ", which names no shape: it is refused"))
 	element := strings.repeat("e", ELEMENT_NAME_BYTES_MOST, context.temp_allocator)
-	facts_expect_line(t, render(t, file, "Palette_Element_Place", {{"element", element}, {"x", signed_bits(min(i64))}, {"y", signed_bits(max(i64))}, {"width", signed_bits(0)}, {"height", signed_bits(-1)}}), line_of_before("compositor: the palette: the element ", element, " at ", min(i64), ",", max(i64), ",", i64(0), ",", i64(-1)))
+	facts_expect_line(t, render(t, file, "Palette_Element_Placed", {{"element", element}, {"x", signed_bits(min(i64))}, {"y", signed_bits(max(i64))}, {"width", signed_bits(0)}, {"height", signed_bits(-1)}}), line_of_before("compositor: the palette: the element ", element, " at ", min(i64), ",", max(i64), ",", i64(0), ",", i64(-1)))
 	facts_expect_line(t, render(t, file, "Palette_Element_Gone", {{"element", element}}), line_of_before("compositor: the palette: the element ", element, " is gone"))
 }
 
@@ -100,8 +100,8 @@ the_element_lines_of_a_window_write_the_lines_of_before :: proc(t: ^testing.T) {
 	}
 	window := strings.repeat("t", WINDOW_TITLE_BYTES_MOST, context.temp_allocator)
 	element := strings.repeat("n", ELEMENT_NAME_BYTES_MOST, context.temp_allocator)
-	facts_expect_line(t, fact_test_render(t, file, "interface", "Element_Place", {{"window", window}, {"element", element}, {"x", signed_bits(min(i64))}, {"y", signed_bits(max(i64))}, {"width", signed_bits(0)}, {"height", signed_bits(-1)}}), line_of_before("interface: ", window, ": the element ", element, " at ", min(i64), ",", max(i64), ",", i64(0), ",", i64(-1)))
-	facts_expect_line(t, fact_test_render(t, file, "interface", "Element_Place", {{"window", "debugger_window"}, {"element", "scroll bar arrow up"}, {"x", signed_bits(4)}, {"y", signed_bits(28)}, {"width", signed_bits(16)}, {"height", signed_bits(16)}}), line_of_before("interface: ", "debugger_window", ": the element ", "scroll bar arrow up", " at ", i64(4), ",", i64(28), ",", i64(16), ",", i64(16)))
+	facts_expect_line(t, fact_test_render(t, file, "interface", "Element_Placed", {{"window", window}, {"element", element}, {"x", signed_bits(min(i64))}, {"y", signed_bits(max(i64))}, {"width", signed_bits(0)}, {"height", signed_bits(-1)}}), line_of_before("interface: ", window, ": the element ", element, " at ", min(i64), ",", max(i64), ",", i64(0), ",", i64(-1)))
+	facts_expect_line(t, fact_test_render(t, file, "interface", "Element_Placed", {{"window", "debugger_window"}, {"element", "scroll bar arrow up"}, {"x", signed_bits(4)}, {"y", signed_bits(28)}, {"width", signed_bits(16)}, {"height", signed_bits(16)}}), line_of_before("interface: ", "debugger_window", ": the element ", "scroll bar arrow up", " at ", i64(4), ",", i64(28), ",", i64(16), ",", i64(16)))
 	facts_expect_line(t, fact_test_render(t, file, "interface", "Element_Gone", {{"window", window}, {"element", element}}), line_of_before("interface: ", window, ": the element ", element, " is gone"))
 }
 
@@ -180,7 +180,7 @@ the_tool_reads_an_element_line_from_the_fields_of_its_fact :: proc(t: ^testing.T
 	testing.expect(t, len(palette_types.placed) == 1 && len(palette_types.gone) == 1 && palette_types.palette)
 
 	placed :: proc(t: ^testing.T, file: []u8, window, element: string, x, y, width, height: i64) -> Fact_Line_Place {
-		return element_test_line(t, file, "interface", "Element_Place", "debugger_window", {{"window", window}, {"element", element}, {"x", signed_bits(x)}, {"y", signed_bits(y)}, {"width", signed_bits(width)}, {"height", signed_bits(height)}})
+		return element_test_line(t, file, "interface", "Element_Placed", "debugger_window", {{"window", window}, {"element", element}, {"x", signed_bits(x)}, {"y", signed_bits(y)}, {"width", signed_bits(width)}, {"height", signed_bits(height)}})
 	}
 	gone :: proc(t: ^testing.T, file: []u8, window, element: string) -> Fact_Line_Place {
 		return element_test_line(t, file, "interface", "Element_Gone", "debugger_window", {{"window", window}, {"element", element}})
@@ -223,7 +223,7 @@ the_tool_reads_an_element_line_from_the_fields_of_its_fact :: proc(t: ^testing.T
 
 	// The palette: its facts come from the compositor only, and a line of
 	// a window titled as the owner of the palette is not one of them.
-	palette_line := element_test_line(t, compositor_file, "compositor", "Palette_Element_Place", "compositor", {{"element", "round_robin"}, {"x", signed_bits(5)}, {"y", signed_bits(6)}, {"width", signed_bits(7)}, {"height", signed_bits(8)}})
+	palette_line := element_test_line(t, compositor_file, "compositor", "Palette_Element_Placed", "compositor", {{"element", "round_robin"}, {"x", signed_bits(5)}, {"y", signed_bits(6)}, {"width", signed_bits(7)}, {"height", signed_bits(8)}})
 	forged := palette_line
 	forged.process = "console"
 	titled := placed(t, interface_file, PALETTE_ELEMENTS, "round_robin", 1, 1, 1, 1)
@@ -249,7 +249,7 @@ an_element_line_holds_the_longest_title_and_name :: proc(t: ^testing.T) {
 	if !ok {
 		return
 	}
-	_, _, description, found := module.fact_find(file, fact_key("interface", "Element_Place"))
+	_, _, description, found := module.fact_find(file, fact_key("interface", "Element_Placed"))
 	if !testing.expect(t, found && description.size == 2 * ELEMENT_TEXT_BYTES + 4 * 8) {
 		return
 	}
@@ -263,7 +263,7 @@ an_element_line_holds_the_longest_title_and_name :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, has_element && element_offset == description.size - ELEMENT_TEXT_BYTES)
 	// A short name: the values end with its last byte.
-	_, bytes, made := fact_test_record(t, file, "interface", "Element_Place", {{"window", "inspect"}, {"element", "network"}, {"x", signed_bits(1)}})
+	_, bytes, made := fact_test_record(t, file, "interface", "Element_Placed", {{"window", "inspect"}, {"element", "network"}, {"x", signed_bits(1)}})
 	if made {
 		last := -1
 		for index in 0 ..< len(bytes) {

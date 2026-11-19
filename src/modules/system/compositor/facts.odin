@@ -121,10 +121,10 @@ Pointer_Shape_Refused :: struct {
 
 // The palette placed a named element, or moved it: its rectangle in
 // pixels of the screen. The palette is a panel of the compositor, not a
-// window, so the compositor writes these facts, as interface.Element_Place
+// window, so the compositor writes these facts, as interface.Element_Placed
 // for a window.
 @(log_fact = "compositor: the palette: the element {element} at {x},{y},{width},{height}")
-Palette_Element_Place :: struct {
+Palette_Element_Placed :: struct {
 	x:       i64,
 	y:       i64,
 	width:   i64,
@@ -140,7 +140,7 @@ Palette_Element_Gone :: struct {
 
 // The tool reads the length of a Text field as a literal: the field of an
 // element name has the bytes of the field of a window.
-#assert(size_of(Palette_Element_Place) == 4 * size_of(i64) + interface.ELEMENT_FACT_TEXT_BYTES && size_of(Palette_Element_Gone) == interface.ELEMENT_FACT_TEXT_BYTES)
+#assert(size_of(Palette_Element_Placed) == 4 * size_of(i64) + interface.ELEMENT_FACT_TEXT_BYTES && size_of(Palette_Element_Gone) == interface.ELEMENT_FACT_TEXT_BYTES)
 
 // palette_element_places_publish writes the facts of the elements of the
 // palette that changed since the set that was written, as
@@ -152,8 +152,7 @@ palette_element_places_publish :: proc "contextless" () {
 		if !interface.element_place_changed(written, &place) {
 			continue
 		}
-		area := place.area
-		system.log_fact(.Info, Palette_Element_Place{element = value_kinds.text_field(interface.element_place_name(&place), interface.ELEMENT_FACT_TEXT_BYTES), x = i64(area.x), y = i64(area.y), width = i64(area.width), height = i64(area.height)})
+		system.log_fact(.Info, Palette_Element_Placed{element = value_kinds.text_field(interface.element_place_name(&place), interface.ELEMENT_FACT_TEXT_BYTES), x = i64(place.area.x), y = i64(place.area.y), width = i64(place.area.width), height = i64(place.area.height)})
 	}
 	for &place in written.places[:written.count] {
 		name := interface.element_place_name(&place)

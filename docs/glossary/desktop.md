@@ -590,7 +590,7 @@ Do not use: key badge, key chip, kbd.
 
 An element line is the log fact that says where an element with an element name is, or that it is gone: `interface: debugger_window: the element watch at x,y,width,height`.
 
-A window writes `interface.Element_Place` after a drawn frame in which the rectangle of the name is new or changed, and `interface.Element_Gone` when its frame no longer has the name. A frame with no change writes none. The compositor writes the element lines of the palette, `compositor.Palette_Element_Place`, in pixels of the screen. The modus tool reads the fields of the last element line of an element before a press. An element line is not a contract between two processes: no process reads it.
+A window writes `interface.Element_Placed` after a drawn frame in which the rectangle of the name is new or changed, and `interface.Element_Gone` when its frame no longer has the name. A frame with no change writes none. The compositor writes the element lines of the palette, `compositor.Palette_Element_Placed`, in pixels of the screen. The modus tool reads the fields of the last element line of an element before a press. An element line is not a contract between two processes: no process reads it.
 
 The design: `src/md/infrastructure/test_pointer.md`.
 
