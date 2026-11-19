@@ -95,8 +95,10 @@ scenario_remote_display := [?]Step {
 	{kind = .Front, text = "unlock"},
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
+	// The root service puts the session in front, so the key of principal 0
+	// loses the screen, before it starts the processes of the session.
+	{kind = .Wait, text = " of principal 0 loses the view and the input while the session of principal 1 is in front"},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it"},
-	{kind = .Wait, text = " of principal 0 loses the view and the input while the session of principal 1 is in front", any_order = true},
 	{kind = .Remote_Display_Case, text = "revoked"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
