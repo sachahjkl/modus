@@ -121,8 +121,14 @@ character_of_face :: proc "contextless" (face: text_rendering.Face, canvas: Canv
 // whole pixel x and the top of its line at y, and gives true; false when
 // the face has no glyph for it. A glyph that is too large to be kept is
 // drawn band by band, each band blended as it is drawn.
+//
+// It is never inlined. Inlined into text_scaled, its band loop raised the
+// pressure on the registers so far that the register allocator of LLVM 18
+// spilled in another way when debug instructions stood in the function: the
+// module differed with and without debug information
+// (src/md/infrastructure/debug_information_and_code.md).
 @(private)
-face_glyph_draw :: proc "contextless" (face: text_rendering.Face, character: rune, size, position: int, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32) -> bool {
+face_glyph_draw :: #force_no_inline proc "contextless" (face: text_rendering.Face, character: rune, size, position: int, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32) -> bool {
 	entry, words, source := text_rendering.glyph(face, character, size, position)
 	switch source {
 	case .Missing:
