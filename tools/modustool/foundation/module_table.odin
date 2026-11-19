@@ -138,6 +138,9 @@ module_builds := [?]Module_Build {
 	{name = "hierarchy", source = TEST_MODULE_SOURCES + "hierarchy", entry = true, image = true},
 	{name = "ranges", source = TEST_MODULE_SOURCES + "ranges", entry = true, image = true},
 	{name = "host", source = SYSTEM_MODULE_SOURCES + "host", entry = true, image = true},
+	// The assembler: the console calls it in a call host
+	// (src/md/features/assembler.md).
+	{name = "assemble", source = SYSTEM_MODULE_SOURCES + "assemble", image = true},
 	{name = "probe", source = TEST_MODULE_SOURCES + "probe", image = true},
 	{name = "math", source = LIBRARY_MODULE_SOURCES + "math", image = true},
 	{name = "cryptography", source = LIBRARY_MODULE_SOURCES + "cryptography", image = true},

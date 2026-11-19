@@ -95,7 +95,7 @@ A call is `name(argument, ...)`, with at most 12 arguments: the arguments of an 
 **Where a command comes from.** A name can be called when the command table of the console has it. A command comes from one of three places:
 
 - **The console itself**: the built-in commands. They exist before any module is loaded.
-- **A module of the boot image**, after `load("sample")` or `isolate("sample")`: each export becomes a command with the name of the export, and each record of the description of the module becomes a command that makes a record from its fields.
+- **A module of the boot image**, after `load("sample")` or `isolate("sample")`: each export becomes a command with the name of the export, and each record of the description of the module becomes a command that makes a record from its fields. A module from memory, after `isolate_memory(name, memory, size)`, adds its commands the same way.
 - **A service that runs**, after `connect("monitor")`: each export becomes a command named `service.export`, as `monitor.count`.
 
 When two commands have one name, the command added last runs.
@@ -395,6 +395,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `locks()` | Table of `Lock` | One row for each kind of kernel lock: `lock`, `waits`, `takes` |
 | `modules()` | Table of `Module` | One row for each module of the boot image: `name`, `size` in bytes, `hash_head` |
 | `load(name)`, `isolate(name)`, `connect(name)` | Record `Loaded` | `module`, `commands`, `call` (`direct`, `isolated` or `service`), `hash_head` |
+| `isolate_memory(name, memory, size)` | Record `Loaded` | A module from memory: the console copies `size` bytes of the memory object, checks them as a module file, and isolates them, with the call `isolated` (`MODULE_CONTRACT.md`, "The assembler") |
 | `unload(name)` | Record `Unloaded` | `module`, `commands`, `memory`: what became of the memory of the module |
 | `loaded()` | Table of `Loaded_Module` | The modules and the services whose exports are commands, and the imports of the modules: `module`, `call`, `imported_by`, `in_place_of`, `hash_head` |
 | `start(name)`, `stop(name)` | none | |
@@ -479,7 +480,7 @@ A fact that a service holds is an export of that service, and the console calls 
 | `modules()` | The boot image that the root service granted to the console. `manual.modules()` gives the same modules with more fields, when the process `manual` runs |
 | `replacements()` | The replacement table that the root service granted to the console, read-only. `manual.replacements()` gives it too, when `manual` runs |
 | `process_modules()`, `memory()`, `locks()` | The reports of the kernel, with the grant of the console to inspect the machine. `manual.running()` gives the modules of the processes, and `monitor.counts()` the counts, when those processes run |
-| `load`, `isolate`, `unload`, `loaded`, `buffer`, `byte`, `bytes`, `release` | The console itself: its command table, its modules, its handles |
+| `load`, `isolate`, `isolate_memory`, `unload`, `loaded`, `buffer`, `byte`, `bytes`, `release` | The console itself: its command table, its modules, its handles |
 | `help`, `describe`, `variables`, `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`, `row`, `time`, `hash`, `length`, `text`, `repeat`, `clear`, `history_clear`, `measure_completion`, `shutdown` | The language and the console itself |
 
 `modules`, `replacements`, `process_modules`, `memory` and `locks` stay in the console because the processes that serve the same facts (`manual`, `monitor`) do not run at each boot, and these commands must work with no other process. The stores are a fact of the storage service: the console has no built-in command for them, and calls `storage.stores()` and `storage.usage()`.
