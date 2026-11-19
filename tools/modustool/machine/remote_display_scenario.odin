@@ -60,7 +60,7 @@ scenario_remote_display := [?]Step {
 	{kind = .Remote_Display_Case, text = "a third viewer"},
 	// The view: the whole screen, then the damage, equal to the screen.
 	{kind = .Remote_Display_Case, text = "view"},
-	{kind = .Wait, text = "compositor: the capture face of remote_display is open: a copy of ", any_order = true},
+	{kind = .Wait, text = "compositor: the capture face is open: a copy of ", any_order = true},
 	{kind = .Wait, text = "remote_display: a measure: the whole screen of ", any_order = true},
 	{kind = .Remote_Display_Case, text = "compare"},
 	{kind = .Remote_Display_Case, text = "small frames"},

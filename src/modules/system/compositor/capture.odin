@@ -71,7 +71,7 @@ capture_is_open :: proc "contextless" () -> bool {
 @(private = "file")
 capture_refuse :: proc "contextless" (client: ^Client, why: string) {
 	if capture.refused == 0 {
-		system.log(.Warning, "compositor: refused a command of the capture face of ", system.name_of(client.title[:]), ": ", why, "; the next refusals are counted only")
+		system.log(.Warning, "compositor: refused a command of the capture face: ", why, "; the next refusals are counted only")
 	}
 	capture.refused += 1
 }
@@ -198,7 +198,9 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 		interface.damage_add(&capture.changed, whole)
 		// The mark of the bar, and a frame that writes the first picture.
 		damage_add(0, 0, screen.width, BAR_HEIGHT)
-		system.log(.Info, "compositor: the capture face of ", system.name_of(client.title[:]), " is open: a copy of ", u64(screen.width), "x", u64(screen.height), " after each frame, and the mark of a viewer in the bar")
+		// The client of a capture face has no window, so it has no title:
+		// the root service allows one process, and the line names none.
+		system.log(.Info, "compositor: the capture face is open: a copy of ", u64(screen.width), "x", u64(screen.height), " after each frame, and the mark of a viewer in the bar")
 		return
 	}
 	system.close(memory)
