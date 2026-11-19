@@ -234,8 +234,7 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 	case .None:
 		// A refusal that names its cause, of this start or of a start that
 		// it made first, has its record; another one has the record of the
-		// dispatch.
-		refusal: [7]u64
+		// dispatch. The record of the words is still zero here.
 		status := start(name, item.principal, item, nil, &started_place, &refusal)
 		if status != .Ok && refusal != ([7]u64{}) {
 			values^ = refusal
