@@ -143,6 +143,26 @@ fact_find :: proc "contextless" (file: []u8, key: u64) -> (index: u32, value: Fa
 	return 0, {}, {}, false
 }
 
+// record_is_fact says if a row of the table Records is the record type of
+// a row of the table Facts. A fact type is read through the readers of the
+// log, never made by hand, so a reader of the records of a module that
+// offers a way to make one (the console) leaves it out. The table Facts is
+// sorted by key, not by record: the search reads each of its rows, which
+// a module holds a few dozen of. The record 0, and a record past the table,
+// is no fact.
+record_is_fact :: proc "contextless" (file: []u8, record_index: u32) -> bool {
+	if record_index == 0 || record_index >= count(file, .Records) {
+		return false
+	}
+	for index in 1 ..< count(file, .Facts) {
+		row, row_read := record(file, .Facts, index, Fact)
+		if row_read && row.record == record_index {
+			return true
+		}
+	}
+	return false
+}
+
 // Why a fact template breaks the rules of its language
 // (src/md/features/log_facts.md, "The fact template").
 Fact_Template_Fault :: enum u8 {
