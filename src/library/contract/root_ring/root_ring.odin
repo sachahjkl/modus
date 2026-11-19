@@ -319,20 +319,30 @@ Root_Command :: enum u32 {
 	// (modus:contract/remote, Client_Table; docs/PRINCIPALS.md, "The client
 	// keys of remote"): values[0..3] is the Ed25519 public key of a client,
 	// values[4] the action. Remote_Client_Action.Allow gives the key a row for the
-	// principal of the caller: each call of that client then acts for it.
-	// Remote_Client_Action.Revoke frees the row of the key: the root service ends
+	// principal of the caller, with the uses of the word in values[5]
+	// (remote.Client_Uses: Calls, View, Input; a word that
+	// remote.client_uses_of_word refuses is refused with `Bad_Value`,
+	// argument 3). With Calls, each call of that client acts for the
+	// principal; with View, `remote_display` shows it the screen; with
+	// Input, the keys and the pointer of the client go to the desktop. An
+	// allow of a key of a row of the same principal adds the uses to the
+	// row and keeps its serial.
+	// Remote_Client_Action.Revoke frees the row of the key, whatever its
+	// uses: the root service ends
 	// each connection to a service that was made for the row, and the remote
-	// service ends the open connection of the client. The allow and the
-	// revocation also change the disk grant table of the principal, which
-	// keeps the key across a restart. The completion of a revocation has
+	// services end the open connection of the client. The allow of Calls and
+	// the revocation also change the disk grant table of the principal,
+	// which keeps the key of Calls across a restart; View and Input last
+	// until the machine stops. The completion of a revocation has
 	// the count of the connections that ended in values[0], and
 	// REMOTE_CLIENT_KEY_CAN_COME_BACK in values[1] when the disk grant table
 	// did not take the revocation. Remote_Client_Action.Read reads the place
 	// values[5], below remote.CLIENT_READ_PLACES: a row of the client table,
 	// then a contested key of the disk grant table of the caller, whose row
 	// is a row of another principal. The completion has the key in
-	// values[0..3], the principal in values[4], 1 in values[5] for a key of
-	// the principal of the caller, and its state in values[6]
+	// values[0..3], the principal in values[4], the word of its uses in
+	// values[5] for a key of the principal of the caller (0: no key at the
+	// place), and its state in values[6]
 	// (Remote_Client_State.Holds, Remote_Client_State.Locked, Remote_Client_State.Contested).
 	// The caller must act for its principal (`No_Grant`, unit
 	// `Acts_For_Principal`). A key of zeros is refused with `Bad_Value`; a
@@ -343,7 +353,7 @@ Root_Command :: enum u32 {
 	// that the principal of the caller did not allow with `Absent` (unit
 	// `Grants`). A revocation is never refused for the state of the disk
 	// grant table. The allow of a key that the principal allowed already
-	// changes nothing.
+	// with each of the uses changes nothing.
 	Remote_Client = 26,
 	// Machine_Usable comes from the start policy that runs only: the
 	// machine is usable, as its own policy says (src/md/features/start_policy.md).

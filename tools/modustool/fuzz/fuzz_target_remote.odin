@@ -263,14 +263,26 @@ fuzz_remote_client_table_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			}
 		}
 	}
+	// The model of the uses: a word with a bit past Input, no bit, or Input
+	// without View names no set, and holds no use.
+	known_uses := remote.client_uses_word({.Calls, .View, .Input})
+	view_bit := remote.client_uses_word({.View})
+	input_bit := remote.client_uses_word({.Input})
 	for client, place in clients {
-		holds := remote.client_grant_holds(&clients, place, client.serial)
-		if holds != (client.serial != 0 && client.session_locked == 0 && client.contested == 0) {
-			return fuzz_broken(.Contract, "client_grant_holds of the row %d is %v", place, holds)
+		word := client.uses
+		uses_named := word != 0 && word & ~known_uses == 0 && (word & input_bit == 0 || word & view_bit != 0)
+		for use in remote.Client_Use {
+			holds := remote.client_grant_holds(&clients, place, client.serial, use)
+			in_front := use == .Calls || client.not_in_front == 0
+			if holds != (client.serial != 0 && client.session_locked == 0 && client.contested == 0 && uses_named && word >> u64(use) & 1 != 0 && in_front) {
+				return fuzz_broken(.Model, "client_grant_holds of the row %d for %v is %v, with the uses %x", place, use, holds, word)
+			}
 		}
 	}
-	if remote.client_grant_holds(&clients, -1, 1) || remote.client_grant_holds(&clients, remote.CLIENT_CAPACITY, 1) {
-		return fuzz_broken(.Contract, "client_grant_holds holds for a place that names no row")
+	for use in remote.Client_Use {
+		if remote.client_grant_holds(&clients, -1, 1, use) || remote.client_grant_holds(&clients, remote.CLIENT_CAPACITY, 1, use) {
+			return fuzz_broken(.Contract, "client_grant_holds holds for a place that names no row")
+		}
 	}
 	return FUZZ_PASSED
 }
@@ -278,7 +290,7 @@ fuzz_remote_client_table_execute :: proc(input: []u8) -> Fuzz_Verdict {
 fuzz_remote_client_table_seeds :: proc(seeds: ^[dynamic][]u8) {
 	table: remote.Client_Table
 	for place in 0 ..< remote.CLIENT_CAPACITY / 2 {
-		client := remote.Client{principal = u64(place % 2), serial = u64(place + 1), session_locked = u64(place == 2 ? 1 : 0), contested = u64(place == 3 ? 1 : 0)}
+		client := remote.Client{principal = u64(place % 2), serial = u64(place + 1), session_locked = u64(place == 2 ? 1 : 0), contested = u64(place == 3 ? 1 : 0), uses = remote.client_uses_word(place == 1 ? remote.Client_Uses{.View, .Input} : remote.Client_Uses{.Calls})}
 		client.key[0], client.key[31] = u8(place + 1), 0x5A
 		table.clients[place] = client
 	}

@@ -169,6 +169,8 @@ Step_Kind :: enum {
 	Openssl_Quic, // `openssl s_client -quic` of the host sends the line text to quic_echo through the UDP relay of the peer, and must get it back, from the key that the step Quic_Key read (quic_real.odin, peer_relay.odin).
 	Remote_Key, // As Quic_Key, for the QUIC client of `remote` in the peer (peer_remote.odin): each Call after it goes over QUIC with this key. The client proves its own key, which a step allows first: remote_allow("{client key}") in a console (CLIENT_KEY_MARK).
 	Remote_Case, // The peer runs the case text of `remote` (peer_remote.odin, remote_case_run) and checks its outcome.
+	Remote_Display_Key, // As Quic_Key, for the viewer of `remote_display` in the peer (peer_remote_display.odin). The viewer proves its own key, which a step allows first: remote_display_allow("{viewer key}", "view") in a console (VIEWER_KEY_MARK).
+	Remote_Display_Case, // The viewer of the peer runs the case text of `remote_display` (peer_remote_display.odin, remote_display_case_run) and checks its outcome.
 	// Read the text of the element `element` of the window with the title
 	// text off a picture of the screen, in Spleen 8x16 (screen_text.odin).
 	// A later step of the part, in this machine or the next, names it with
@@ -4583,6 +4585,13 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			step.text = client_key_expand(machine.peer.remote, step.text)
 		}
+		if strings.contains(step.text, VIEWER_KEY_MARK) {
+			if machine.peer == nil || machine.peer.display_viewers[0] == nil {
+				fmt.eprintfln("modustool: test failed: step %d names %s, and the machine has no peer with a viewer of remote_display", index + 1, VIEWER_KEY_MARK)
+				return false
+			}
+			step.text = viewer_key_expand(machine.peer.display_viewers[0], step.text)
+		}
 		switch step.kind {
 		case .Wait:
 			limit := first_wait ? BOOT_HANG_BOUND : foundation.HANG_BOUND
@@ -5140,6 +5149,28 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("modustool: the QUIC client of remote in the peer pins the key %s", line)
+		case .Remote_Display_Key:
+			if !log_wait(machine, step.text, false) {
+				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			log := log_read(machine)
+			rest := log[machine.seen:]
+			line := strings.trim_right(rest[:max(strings.index_byte(rest, '\n'), 0)], "\r")
+			for viewer in machine.peer.display_viewers {
+				if !peer_display_pin_text(viewer, line) {
+					fmt.eprintfln("modustool: test failed: step %d: \"%s\" is not a public key of 64 hexadecimal digits", index + 1, line)
+					return false
+				}
+			}
+			fmt.printfln("modustool: the viewers of remote_display in the peer pin the key %s", line)
+		case .Remote_Display_Case:
+			passed, result := remote_display_case_run(machine, step.text)
+			if !passed {
+				fmt.eprintfln("modustool: test failed: step %d: the case \"%s\" of remote_display: %s", index + 1, step.text, result)
+				return false
+			}
+			foundation.test_passed_print("the case \"%s\" of remote_display: %s", step.text, result)
 		case .Remote_Case:
 			if !machine.client_open {
 				if !call_client_open(&machine.client, machine.call_socket) {

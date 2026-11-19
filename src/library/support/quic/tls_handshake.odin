@@ -428,7 +428,7 @@ Level_Bytes :: struct {
 // - **The other groups, signatures and suites**: no P-256, no RSA, no ECDSA, no
 //   TLS_AES_256_GCM_SHA384, no AES-128-CCM.
 //
-// See (docs/QUIC.md, "9. What is not built, and will not be in version 1 of this library").
+// See (docs/QUIC.md, "10. What is not built, and will not be in version 1 of this library").
 Tls_Handshake :: struct {
 	// The copy of the configuration that `tls_start` made. It holds the copy of the private key of a
 	// server.

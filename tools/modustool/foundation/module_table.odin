@@ -144,6 +144,7 @@ module_builds := [?]Module_Build {
 	{name = "cryptography_vectors", source = DEMONSTRATION_MODULE_SOURCES + "cryptography_vectors", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "quic_echo", source = DEMONSTRATION_MODULE_SOURCES + "quic_echo", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "remote", source = SYSTEM_MODULE_SOURCES + "remote", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "remote_display", source = SYSTEM_MODULE_SOURCES + "remote_display", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "unlock", source = SYSTEM_MODULE_SOURCES + "unlock", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "sample", source = DEMONSTRATION_MODULE_SOURCES + "sample", image = true},
 	{name = "hostile_exports", source = TEST_MODULE_SOURCES + "hostile_exports", image = true},
