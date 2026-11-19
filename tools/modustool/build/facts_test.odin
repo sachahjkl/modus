@@ -308,6 +308,33 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	testing.expect_value(t, rest_lines, 1)
 	plain, plain_lines := fact_lines_render(&catalog, "[root] root: a text\r\n")
 	testing.expect(t, plain == "[root] root: a text\r\n" && plain_lines == 0)
+	// The place of a rendered line counts the bytes of its raw line, its
+	// end of line included, for the measure of the two forms.
+	places := make([dynamic]Fact_Line_Place, context.temp_allocator)
+	_, _ = fact_lines_render(&catalog, log, &places)
+	testing.expect_value(t, len(places), 1)
+	if len(places) == 1 {
+		testing.expect_value(t, places[0].raw_count, len("[log_reader] ") + len(line) + len("\r\n"))
+		testing.expect_value(t, places[0].end - places[0].start, len("[log_reader] probe: the value 42, the mark 0x4c4f4746 and the number 7; {braces}\r\n"))
+	}
+	// The render of the bytes of a record, as a row of log.fact_records
+	// gives them: a key that the file has no fact type for, a count of 0,
+	// one less and one more than the record are refused; the record whole
+	// is the sentence of its line.
+	file_of_line := fact_catalog_file(&catalog, hash_prefix_of(hash))
+	longer: [len(values) + 1]u8
+	copy(longer[:], values[:])
+	Refused_Values :: struct {
+		key:   u64,
+		count: int,
+	}
+	for item in ([?]Refused_Values{{FACT_RENDER_KEY + 1, len(values)}, {0, len(values)}, {FACT_RENDER_KEY, 0}, {FACT_RENDER_KEY, len(values) - 1}, {FACT_RENDER_KEY, len(values) + 1}}) {
+		_, values_rendered := fact_values_render(file_of_line, item.key, longer[:item.count])
+		testing.expectf(t, !values_rendered, "the key %x with %d value bytes is rendered", item.key, item.count)
+	}
+	whole_sentence, whole_rendered := fact_values_render(file_of_line, FACT_RENDER_KEY, values[:])
+	testing.expect(t, whole_rendered)
+	testing.expect_value(t, whole_sentence, sentence)
 }
 
 // A Text value of a fact is bytes of its writer, which the kernel does not

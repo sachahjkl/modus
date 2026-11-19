@@ -376,9 +376,11 @@ fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: [
 			}
 			return .Number
 		case .Status:
+			// The words of the member in a sentence: the name, or the
+			// words that a line of a stop wrote before the facts.
 			which, which_ok := field_contract_enum(item)
-			if name, named := op.contract_enum_member_name(which, u64(value)); which_ok && named {
-				sentence_text(sentence, written, name)
+			if words, named := op.contract_enum_member_words(which, u64(value)); which_ok && named {
+				sentence_text(sentence, written, words)
 				return .Status
 			}
 			// A word that names no member: its number, never the name of

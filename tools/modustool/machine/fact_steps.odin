@@ -1,7 +1,9 @@
 package machine
 
 import "core:fmt"
+import "core:strconv"
 import "core:time"
+import module "modus:contract/module"
 import "modustool:build"
 import "modustool:foundation"
 
@@ -116,6 +118,49 @@ fact_line_after :: proc(machine: ^Machine, checked: build.Fact_Step) -> (place: 
 		}
 	}
 	return {}, false
+}
+
+// record_fact_sentences gives the sentence of each log fact of the log
+// scope of `remote` from the record `from` on, by the number of its record.
+// A row of log.records has an empty text for a fact: log.fact_records gives
+// its module hash, its key and its values, and the tool writes the sentence
+// with the template of the module file of the build that the hash names,
+// as the readers of the system write it. A fact whose module the build
+// does not hold, or whose values do not fit its record, has no sentence:
+// a step Record does not find it by a text.
+record_fact_sentences :: proc(machine: ^Machine, from: i64) -> map[i64]string {
+	sentences := make(map[i64]string, context.temp_allocator)
+	table, ok := table_call(&machine.client, fmt.tprintf("log.fact_records(%d)", from))
+	if !ok {
+		return sentences
+	}
+	machine_fact_catalog_ensure(machine)
+	for row in 0 ..< len(table.rows) / table.size {
+		number, number_ok := strconv.parse_i64(table_value(&table, row, "number"))
+		value_count, count_ok := strconv.parse_int(table_value(&table, row, "value_count"))
+		hash_bytes := table_field_bytes(&table, row, "module_hash")
+		key_bytes := table_field_bytes(&table, row, "key")
+		values := table_field_bytes(&table, row, "values")
+		if !number_ok || !count_ok || len(hash_bytes) != module.HASH_SIZE || len(key_bytes) != 8 || value_count < 0 || value_count > len(values) {
+			continue
+		}
+		hash: [module.HASH_SIZE]u8
+		copy(hash[:], hash_bytes)
+		// The key is an Integer of 8 bytes in the order of the memory of
+		// the machine: little-endian.
+		key: u64
+		for index in 0 ..< 8 {
+			key |= u64(key_bytes[index]) << (8 * u64(index))
+		}
+		file := build.fact_catalog_file(machine.fact_catalog, build.hash_prefix_of(hash))
+		if file == nil {
+			continue
+		}
+		if sentence, rendered := build.fact_values_render(file, key, values[:value_count]); rendered {
+			sentences[number] = sentence
+		}
+	}
+	return sentences
 }
 
 // fact_lines_forget forgets the lines of facts that log_read kept.

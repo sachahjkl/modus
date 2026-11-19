@@ -362,6 +362,8 @@ Contract_Enum :: enum u8 {
 	Status    = 1, // operation.Status: the status of a kernel operation.
 	Log_Level = 2, // operation.Log_Level: the level of a log record.
 	Log_Record_Form = 3, // operation.Log_Record_Form: what a log record holds, a text or a fact.
+	Stop_Cause      = 4, // operation.Stop_Cause: why a process stopped, as the kernel recorded it.
+	Stop_Outcome    = 5, // operation.Stop_Outcome: what a process said of its work when it stopped itself.
 }
 
 // contract_enum_of_word is the border of the byte of a contract enum in a
@@ -385,6 +387,8 @@ CONTRACT_ENUM_TYPES := [Contract_Enum]Contract_Enum_Type {
 	.Status    = {package_name = "operation", name = "Status"},
 	.Log_Level = {package_name = "operation", name = "Log_Level"},
 	.Log_Record_Form = {package_name = "operation", name = "Log_Record_Form"},
+	.Stop_Cause      = {package_name = "operation", name = "Stop_Cause"},
+	.Stop_Outcome    = {package_name = "operation", name = "Stop_Outcome"},
 }
 
 // The types that a field of a record takes to state its field kind, in

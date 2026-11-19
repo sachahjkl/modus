@@ -24,6 +24,33 @@ LOG_RECORD_FORM_NAMES := [Log_Record_Form]string {
 	.Fact = "Fact",
 }
 
+// The name of each stop cause, as `Stop_Cause` names it. A sentence writes
+// the words of STOP_CAUSE_TEXTS in its place (contract_enum_member_words).
+@(rodata)
+STOP_CAUSE_NAMES := [Stop_Cause]string {
+	.None              = "None",
+	.Itself            = "Itself",
+	.Holder            = "Holder",
+	.Last_Thread_Ended = "Last_Thread_Ended",
+	.Handles_Closed    = "Handles_Closed",
+	.Fault             = "Fault",
+	.Not_Committed     = "Not_Committed",
+	.Cannot_Return     = "Cannot_Return",
+	.Fault_Unanswered  = "Fault_Unanswered",
+}
+
+// The name of each stop outcome, as `Stop_Outcome` names it. A sentence
+// writes the words of STOP_OUTCOME_TEXTS in its place
+// (contract_enum_member_words).
+@(rodata)
+STOP_OUTCOME_NAMES := [Stop_Outcome]string {
+	.None               = "None",
+	.Done               = "Done",
+	.Failed             = "Failed",
+	.Refused            = "Refused",
+	.Stopped_On_Request = "Stopped_On_Request",
+}
+
 // The bytes of each contract enum: the size of a field of the kind Status
 // that holds it. None has no field.
 @(rodata)
@@ -32,6 +59,8 @@ CONTRACT_ENUM_SIZES := [value_kinds.Contract_Enum]u32 {
 	.Status          = size_of(Status),
 	.Log_Level       = size_of(Log_Level),
 	.Log_Record_Form = size_of(Log_Record_Form),
+	.Stop_Cause      = size_of(Stop_Cause),
+	.Stop_Outcome    = size_of(Stop_Outcome),
 }
 
 // contract_enum_member_count gives the count of the members of a contract
@@ -48,6 +77,10 @@ contract_enum_member_count :: proc "contextless" (which: value_kinds.Contract_En
 		return u64(max(Log_Level)) + 1
 	case .Log_Record_Form:
 		return u64(max(Log_Record_Form)) + 1
+	case .Stop_Cause:
+		return u64(max(Stop_Cause)) + 1
+	case .Stop_Outcome:
+		return u64(max(Stop_Outcome)) + 1
 	}
 	return 0
 }
@@ -72,6 +105,37 @@ contract_enum_member_name :: proc "contextless" (which: value_kinds.Contract_Enu
 	case .Log_Record_Form:
 		form := enum_word.member_of_word(Log_Record_Form, word) or_return
 		return LOG_RECORD_FORM_NAMES[form], true
+	case .Stop_Cause:
+		cause := enum_word.member_of_word(Stop_Cause, word) or_return
+		return STOP_CAUSE_NAMES[cause], true
+	case .Stop_Outcome:
+		outcome := enum_word.member_of_word(Stop_Outcome, word) or_return
+		return STOP_OUTCOME_NAMES[outcome], true
+	}
+	return "", false
+}
+
+// contract_enum_member_words gives the words of the member of a contract
+// enum in a sentence: the sentence of a log fact writes them where its
+// template names a field of the kind Status. They are the name of the
+// member, but for the two enums of a stop, whose members a line has
+// written with the words of a reader since before the facts ("itself,
+// done", "a holder"): a fact template then writes the sentence of today. A
+// column and a condition keep the name, which a principal types. ok is
+// false as for contract_enum_member_name.
+//
+// Example: `contract_enum_member_words(.Stop_Outcome, 1)` is `"done", true`,
+// and `contract_enum_member_words(.Log_Level, 2)` is `"Warning", true`.
+contract_enum_member_words :: proc "contextless" (which: value_kinds.Contract_Enum, word: u64) -> (words: string, ok: bool) {
+	switch which {
+	case .None, .Status, .Log_Level, .Log_Record_Form:
+		return contract_enum_member_name(which, word)
+	case .Stop_Cause:
+		cause := enum_word.member_of_word(Stop_Cause, word) or_return
+		return STOP_CAUSE_TEXTS[cause], true
+	case .Stop_Outcome:
+		outcome := enum_word.member_of_word(Stop_Outcome, word) or_return
+		return STOP_OUTCOME_TEXTS[outcome], true
 	}
 	return "", false
 }

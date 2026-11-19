@@ -177,8 +177,17 @@ fact_line_render :: proc(catalog: ^Fact_Catalog, text: string) -> (sentence: str
 	if line.value_count > int(description.size) {
 		return "", false
 	}
+	return fact_values_render(file, line.key, line.values[:description.size])
+}
+
+// fact_values_render gives the sentence of a fact of a module file from the
+// bytes of its record, by the one render of the contract. rendered is false
+// when the file has no fact type of the key, when the count of the bytes is
+// not the size of its record, or when its template breaks a rule. A step
+// Record reads a fact of log.fact_records with it.
+fact_values_render :: proc(file: []u8, key: u64, values: []u8) -> (sentence: string, rendered: bool) {
 	written: [module.FACT_SENTENCE_BYTES_MOST]u8
-	count, _, refusal := module.fact_sentence_write(file, line.key, line.values[:description.size], written[:], nil)
+	count, _, refusal := module.fact_sentence_write(file, key, values, written[:], nil)
 	if refusal != .None {
 		return "", false
 	}
@@ -196,6 +205,7 @@ FACT_LINE_MARK :: "] #"
 // types can render one sentence.
 Fact_Line_Place :: struct {
 	start, end: int, // The bytes of the rendered line, its end of line included, from the start of the text that was rendered.
+	raw_count:  int, // The bytes of the raw line that the serial port got, its end of line included: a measure compares them with end - start.
 	process:    string, // The name in the head of the line, in the allocator of the list.
 	line:       Fact_Line,
 }
@@ -230,7 +240,7 @@ fact_lines_render :: proc(catalog: ^Fact_Catalog, text: string, places: ^[dynami
 					// fact_line_render read the same text: it parses.
 					parsed, _ := fact_line_parse(body[mark + 2:])
 					process := strings.clone(body[1:mark], places.allocator)
-					append(places, Fact_Line_Place{start = start, end = strings.builder_len(builder), process = process, line = parsed})
+					append(places, Fact_Line_Place{start = start, end = strings.builder_len(builder), raw_count = len(line), process = process, line = parsed})
 				}
 				continue
 			}

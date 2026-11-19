@@ -576,6 +576,9 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "[console] net      machine  held"},
 	{kind = .Wait, text = "[console] net      network  held"},
 	{kind = .Type, text = "revoke(\"net\", \"network\")"},
+	// The line of the revocation is a log fact of the root service: the
+	// step reads its field, the wait its sentence.
+	{kind = .Fact, process = "root", fact = "root.Grant_Revoked_Endpoints", condition = "endpoints = 1", any_order = true},
 	{kind = .Wait, text = "root: revoked the grant network of net, endpoints changed: 1", any_order = true}, // The network service can write its line first.
 	{kind = .Wait, text = "network: the grant of the endpoint of net changed: none"},
 	{kind = .Front, text = "net"},
@@ -2572,6 +2575,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader storm] log_reader storm: the last record, after more records than the whole log keeps", fails_on = "log_reader: WRONG"},
+	// The connection is a log fact of the root service: the step reads the
+	// Text field of the service, the wait its sentence.
+	{kind = .Fact, process = "root", fact = "root.Connected", condition = "service = \"log\"", any_order = true},
 	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
 	{kind = .Wait, text = "[log_reader] log_reader: its own records: 1 rows from the own number 0, its first record, in the slot ", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = ", lost 0: no row of another process or of an earlier run: as it must"},
@@ -2602,6 +2608,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
+	// The stop of log_reader is a log fact of the root service, with its
+	// stop cause and its stop outcome as fields: the clean stop is the
+	// outcome Done (src/md/api/process_stop.md).
+	{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "outcome = Done", any_order = true},
 	{kind = .Wait, text = "root: log_reader stopped: itself, done"},
 	// The remote service acts for the principal and still reads the whole
 	// log in order: the last record of the storm child, then the line of
@@ -2620,7 +2630,14 @@ scenario := [?]Step {
 	{kind = .Type, text = "log.records({record}) |> facts(log_reader.Fact_Probe) |> where(value = 42)"},
 	{kind = .Wait, text = "[console] 1 row of Fact_Probe"},
 	{kind = .Record, process = "log_reader", level = "Info", text = "log_reader: ok"},
+	// The step Record reads the stop, a log fact, by its sentence, which
+	// the tool writes from log.fact_records.
 	{kind = .Record, process = "root", level = "Info", text = "root: log_reader stopped: itself, done"},
+	// The console reads the same fact of the root service by its fields,
+	// from that record: the stop cause and the stop outcome are statuses of
+	// their contract enums, which a condition names by their members.
+	{kind = .Type, text = "log.records({record}) |> facts(root.Process_Stopped) |> where(outcome = Done)"},
+	{kind = .Wait, text = "[console] 1 row of Process_Stopped"},
 	{kind = .Type, text = "start(\"log_reader\")"},
 	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
@@ -2648,6 +2665,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
+	{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "cause = Itself", any_order = true},
 	{kind = .Wait, text = "root: log_reader stopped: itself, done"},
 	{kind = .Record, process = "log_reader storm", level = "Info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
 	{kind = .Record, process = "log_reader", level = "Info", text = "log_reader: ok"},
@@ -2888,6 +2906,10 @@ scenario := [?]Step {
 	// block service, and the block ring to its client. The device reads and
 	// writes the memory of the client.
 	{kind = .Launch, text = "disk"},
+	// The start of a device service is a log fact with the place of its
+	// device: the step Fact reads the place on the serial port, the step
+	// Record the sentence through log.records and log.fact_records.
+	{kind = .Fact, process = "root", fact = "root.Device_Service_Started", condition = "device = 17", any_order = true},
 	{kind = .Record, process = "root", level = "Info", text = "root: started block for the device at the place 17 of the bus"},
 	{kind = .Record, process = "block", level = "Info", text = "block: ok, 8192 blocks of 4096 bytes, a queue of ", any_order = true},
 	{kind = .Wait, text = "disk: ok, the disk has 8192 blocks"},
@@ -2962,6 +2984,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] console  store               held"},
 	{kind = .Wait, text = "[console] console  acts_for_principal  held"},
 	{kind = .Type, text = "revoke(\"console\", \"store\")"},
+	{kind = .Fact, process = "root", fact = "root.Grant_Revoked_Connections", condition = "connections = 1", any_order = true},
 	{kind = .Record, process = "root", level = "Info", text = "root: revoked the grant store of console, connections changed: 1"},
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
@@ -3789,6 +3812,8 @@ Machine :: struct {
 	fact_render_lines: int, // The lines of facts that log_read rendered.
 	fact_render_reads: int, // The reads of the log that rendered new lines.
 	fact_catalog_time: time.Duration, // The time to make the catalog of the module files.
+	fact_raw_bytes: int, // The bytes of the serial lines of the facts that log_read rendered, as the serial port got them: a measure.
+	fact_sentence_bytes: int, // The bytes of the same lines with their sentences, the text of the line that each fact replaced: a measure.
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -4045,13 +4070,7 @@ log_read :: proc(machine: ^Machine) -> string {
 		test_times_first_line_note(machine, len(text))
 		return text
 	}
-	if machine.fact_catalog == nil {
-		catalog_started := time.tick_now()
-		machine.fact_catalog = machine_fact_catalog()
-		machine.fact_catalog_time = time.tick_since(catalog_started)
-		machine.fact_rendered = make([dynamic]u8, runtime.heap_allocator())
-		machine.fact_lines = make([dynamic]build.Fact_Line_Place, runtime.heap_allocator())
-	}
+	machine_fact_catalog_ensure(machine)
 	if len(text) < machine.fact_raw_length {
 		// A new file of the same name: nothing kept holds for it.
 		clear(&machine.fact_rendered)
@@ -4068,6 +4087,8 @@ log_read :: proc(machine: ^Machine) -> string {
 		for place_index in places_before ..< len(machine.fact_lines) {
 			machine.fact_lines[place_index].start += rendered_before
 			machine.fact_lines[place_index].end += rendered_before
+			machine.fact_raw_bytes += machine.fact_lines[place_index].raw_count
+			machine.fact_sentence_bytes += machine.fact_lines[place_index].end - machine.fact_lines[place_index].start
 		}
 		append(&machine.fact_rendered, chunk)
 		machine.fact_raw_length = len(text)
@@ -4080,6 +4101,20 @@ log_read :: proc(machine: ^Machine) -> string {
 	text = strings.clone(string(machine.fact_rendered[:]), context.temp_allocator)
 	test_times_first_line_note(machine, len(text))
 	return text
+}
+
+// machine_fact_catalog_ensure makes the catalog of the machine and the
+// memory of its rendered log, one time: the first read of the log that
+// holds a fact, or the first step Record that reads a fact.
+machine_fact_catalog_ensure :: proc(machine: ^Machine) {
+	if machine.fact_catalog != nil {
+		return
+	}
+	catalog_started := time.tick_now()
+	machine.fact_catalog = machine_fact_catalog()
+	machine.fact_catalog_time = time.tick_since(catalog_started)
+	machine.fact_rendered = make([dynamic]u8, runtime.heap_allocator())
+	machine.fact_lines = make([dynamic]build.Fact_Line_Place, runtime.heap_allocator())
 }
 
 // machine_fact_catalog gives the catalog of the module files of the build,
@@ -4509,6 +4544,11 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	}
 	if machine.fact_catalog != nil {
 		fmt.printfln("modustool: measure: the tool wrote the sentences of %d lines of log facts of %s in %d us, over %d reads of the log, each read rendering only its new lines; the catalog of %d module files took %d us", machine.fact_render_lines, output, i64(machine.fact_render_time / time.Microsecond), machine.fact_render_reads, len(machine.fact_catalog.modules), i64(machine.fact_catalog_time / time.Microsecond))
+		// The serial bytes of the two forms of the same lines: a template
+		// writes the sentence of the text line that the fact replaced, so
+		// the rendered line is the line of the text form, byte for byte
+		// (src/md/features/log_facts.md, "The measures that decide it").
+		fmt.printfln("modustool: measure: the serial lines of %d log facts of %s took %d bytes as values in hexadecimal; the same lines as text take %d bytes", machine.fact_render_lines, output, machine.fact_raw_bytes, machine.fact_sentence_bytes)
 		delete(machine.fact_rendered)
 		fact_lines_forget(&machine)
 		delete(machine.fact_lines)
@@ -4998,6 +5038,17 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				rows := ok ? len(table.rows) / table.size : 0
 				last_rows, last_total, last_ok = rows, table.total, ok
 				last_table = table
+				// A log fact has an empty text in its row: the step reads
+				// its sentence, which the tool writes from its values
+				// (fact_steps.odin), so a wait on the sentence of a line
+				// that became a fact reads it as before.
+				fact_sentences: map[i64]string
+				for row in 0 ..< rows {
+					if table_value(&table, row, "form") == "Fact" {
+						fact_sentences = record_fact_sentences(machine, from)
+						break
+					}
+				}
 				// A text goes on in the next row when its row says so
 				// (log.records: a row is one log record, of 168 bytes of
 				// text): the rows of one text are joined before the
@@ -5011,10 +5062,14 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 						break // The rest of the text is after the rows of this call: read again from it.
 					}
 					joined := strings.builder_make(context.temp_allocator)
-					for part in row ..= last {
-						strings.write_string(&joined, table_value(&table, part, "text"))
-					}
 					number, _ := strconv.parse_i64(table_value(&table, row, "number"))
+					if table_value(&table, row, "form") == "Fact" {
+						strings.write_string(&joined, fact_sentences[number])
+					} else {
+						for part in row ..= last {
+							strings.write_string(&joined, table_value(&table, part, "text"))
+						}
+					}
 					last_number, _ := strconv.parse_i64(table_value(&table, last, "number"))
 					if table_value(&table, row, "process") == step.process && table_value(&table, row, "level") == step.level && strings.contains(strings.to_string(joined), step.text) {
 						found = true
