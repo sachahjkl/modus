@@ -1,6 +1,7 @@
 #+build !freestanding
 package bar
 
+import "base:runtime"
 import "core:sync"
 import "core:testing"
 import "modus:contract/font_outlines"
@@ -25,7 +26,10 @@ b612_open :: proc(t: ^testing.T) {
 	}
 	fonts := [1]font_outlines.Font_Input{{"b612", #load("../../../../../resources/fonts/b612.ttf")}}
 	size := font_outlines.resource_size(fonts[:])
-	outlines_words = make([]u64, (size + 7) / 8)
+	// The heap of the process, not the allocator of the test: the runner
+	// frees all that a test allocated at its end, and the open fonts of the
+	// state read these words in each later test.
+	outlines_words = make([]u64, (size + 7) / 8, runtime.heap_allocator())
 	bytes := ([^]u8)(raw_data(outlines_words))[:size]
 	_, written := font_outlines.resource_write(fonts[:], bytes)
 	testing.expect(t, written)

@@ -1,11 +1,18 @@
 #+build !freestanding
 package text_rendering_module
 
+import "core:fmt"
 import "core:testing"
+import "core:time"
 import "modus:contract/errors"
 import "modus:contract/font_outlines"
 import "modus:support/system"
 import "modus:support/text_rendering"
+import "modus:support/vector_font"
+
+// The measures of this file run only with -define:MEASURE=true: a test
+// that measures time is opt-in, and a normal run prints nothing.
+MEASURE :: #config(MEASURE, false)
 
 @(private = "file")
 b612_file := #load("../../../../resources/fonts/b612.ttf")
@@ -353,4 +360,218 @@ the_bounds_hold_at_each_size :: proc(t: ^testing.T) {
 			testing.expect(t, sum < 1 << 31)
 		}
 	}
+}
+
+// The lies of a hostile B612, each in one copy of its file.
+@(private = "file")
+Lie :: enum {
+	Advance_Of_The_Largest, // The hmtx advance of "W" is 0xFFFF units.
+	Pairs_Of_The_Least, // Each kern adjustment is -32768 units.
+	Pairs_Of_The_Most, // Each kern adjustment is +32767 units.
+	Pair_Count_Past_The_Table, // The kern subtable states 0xFFFF pairs.
+	Subtable_Length_Wrong, // The kern subtable states a length of 0.
+	One_Long_Metric, // hhea states one long metric: each other glyph is past numberOfHMetrics.
+}
+
+// The places in the table kern: the subtable after the 4 bytes of the
+// table header, its length and its count of pairs, and its first pair, of
+// 6 bytes, whose adjustment is at 4.
+@(private = "file")
+KERN_SUBTABLE :: 4
+@(private = "file")
+KERN_LENGTH :: KERN_SUBTABLE + 2
+@(private = "file")
+KERN_PAIR_COUNT :: KERN_SUBTABLE + 6
+@(private = "file")
+KERN_FIRST_PAIR :: KERN_SUBTABLE + 14
+@(private = "file")
+HHEA_LONG_METRICS :: 34
+
+@(private = "file")
+write_u16 :: proc(bytes: []u8, at: int, value: int) {
+	bytes[at] = u8(value >> 8 & 0xFF)
+	bytes[at + 1] = u8(value & 0xFF)
+}
+
+@(private = "file")
+read_u16 :: proc(bytes: []u8, at: int) -> int {
+	return int(bytes[at]) << 8 | int(bytes[at + 1])
+}
+
+// lying_b612 gives a copy of B612 with one lie.
+@(private = "file")
+lying_b612 :: proc(t: ^testing.T, lie: Lie) -> []u8 {
+	bytes := make([]u8, len(b612_file))
+	copy(bytes, b612_file)
+	font, problem := vector_font.font_open(b612_file)
+	testing.expect_value(t, problem, vector_font.Font_Problem.None)
+	kern := font.kern.offset
+	testing.expect(t, font.kern.length > KERN_FIRST_PAIR)
+	pair_count := read_u16(bytes, kern + KERN_PAIR_COUNT)
+	switch lie {
+	case .Advance_Of_The_Largest:
+		glyph, found := vector_font.glyph_of(&font, 'W')
+		testing.expect(t, found == .None && glyph < font.horizontal_metrics)
+		write_u16(bytes, font.hmtx.offset + 4 * glyph, 0xFFFF)
+	case .Pairs_Of_The_Least:
+		for index in 0 ..< pair_count {
+			write_u16(bytes, kern + KERN_FIRST_PAIR + 6 * index + 4, 0x8000)
+		}
+	case .Pairs_Of_The_Most:
+		for index in 0 ..< pair_count {
+			write_u16(bytes, kern + KERN_FIRST_PAIR + 6 * index + 4, 0x7FFF)
+		}
+	case .Pair_Count_Past_The_Table:
+		write_u16(bytes, kern + KERN_PAIR_COUNT, 0xFFFF)
+	case .Subtable_Length_Wrong:
+		write_u16(bytes, kern + KERN_LENGTH, 0)
+	case .One_Long_Metric:
+		write_u16(bytes, font.hhea.offset + HHEA_LONG_METRICS, 1)
+	}
+	return bytes
+}
+
+// shape_through_module shapes a text in the face Interface through the
+// export, and gives its placed glyphs and its width.
+@(private = "file")
+shape_through_module :: proc(t: ^testing.T, outlines: ^Test_Outlines, text: string, size: int, placed: []text_rendering.Placed_Glyph) -> (count: int, width: i64) {
+	error: errors.Error_Record
+	text_table := bytes_to_read(transmute([]u8)text)
+	table := system.Table_To_Append(text_rendering.Placed_Glyph){records = raw_data(placed), count = 0, capacity = u64(len(placed))}
+	result := shape_text(&outlines.table, i64(text_rendering.Face.Interface), i64(size), &text_table, &table, &error)
+	testing.expect_value(t, error.kind, i64(0))
+	count = int(result)
+	for glyph in placed[:min(count, len(placed))] {
+		width += i64(glyph.advance)
+	}
+	return count, width
+}
+
+// The bounds hold over a font that lies: an advance of 0xFFFF units is one
+// line; a pair of -32768 or +32767 units is half a line, on its side; a
+// table kern with a count of pairs past its end is refused, and the font
+// still measures, with no pair; a length of a subtable that disagrees with
+// its count changes nothing, as the count and the table are the bounds; a
+// glyph past numberOfHMetrics has the advance of the last long metric. A
+// text of the largest count of bytes at the largest size keeps each x the
+// sum of the advances before it, in an i32.
+@(test)
+a_font_that_lies_keeps_the_bounds :: proc(t: ^testing.T) {
+	true_outlines := repository_outlines(t)
+	defer delete(true_outlines.words)
+	placed: [4]text_rendering.Placed_Glyph
+	size := text_rendering.TEXT_SIZE_OF_SCALE_ONE
+	shape_through_module(t, &true_outlines, "T", size, placed[:])
+	t_alone := placed[0].advance
+	shape_through_module(t, &true_outlines, "To", size, placed[:])
+	t_before_o := placed[0].advance
+	testing.expect(t, t_before_o < t_alone) // B612 has the pair "To".
+	shape_through_module(t, &true_outlines, "A", size, placed[:])
+	a_alone := placed[0].advance
+	long := make([]u8, text_rendering.TEXT_LIMIT)
+	defer delete(long)
+	for &value, index in long {
+		value = index % 2 == 0 ? 'T' : 'o'
+	}
+	many := make([]text_rendering.Placed_Glyph, text_rendering.TEXT_LIMIT)
+	defer delete(many)
+	for lie in Lie {
+		lying := lying_b612(t, lie)
+		defer delete(lying)
+		fonts := [4]font_outlines.Font_Input{{"b612", lying}, {"b612_bold", b612_bold_file}, {"paper_mono", paper_mono_file}, {"paper_mono_semibold", paper_mono_semibold_file}}
+		outlines := test_outlines_of(t, fonts[:])
+		defer delete(outlines.words)
+		switch lie {
+		case .Advance_Of_The_Largest:
+			for line in ([?]int{size, text_rendering.TEXT_SIZE_LIMIT}) {
+				shape_through_module(t, &outlines, "W", line, placed[:])
+				testing.expectf(t, placed[0].advance == i32(line), "%v at %v: %v, one line", lie, line, placed[0].advance)
+			}
+			for &value in long {
+				value = 'W'
+			}
+		case .Pairs_Of_The_Least:
+			shape_through_module(t, &outlines, "To", size, placed[:])
+			testing.expect_value(t, placed[0].advance, t_alone - i32(size / 2))
+		case .Pairs_Of_The_Most:
+			shape_through_module(t, &outlines, "To", size, placed[:])
+			testing.expect_value(t, placed[0].advance, t_alone + i32(size / 2))
+		case .Pair_Count_Past_The_Table:
+			shape_through_module(t, &outlines, "To", size, placed[:])
+			testing.expect_value(t, placed[0].advance, t_alone)
+			shape_through_module(t, &outlines, "A", size, placed[:])
+			testing.expect_value(t, placed[0].advance, a_alone)
+		case .Subtable_Length_Wrong:
+			shape_through_module(t, &outlines, "To", size, placed[:])
+			testing.expect_value(t, placed[0].advance, t_before_o)
+		case .One_Long_Metric:
+			shape_through_module(t, &outlines, "A", size, placed[:])
+			first := placed[0].advance
+			shape_through_module(t, &outlines, "W", size, placed[:])
+			testing.expect_value(t, placed[0].advance, first)
+			testing.expect(t, first >= 0 && i64(first) <= i64(size))
+		}
+		// The longest text at the largest size.
+		count, width := shape_through_module(t, &outlines, string(long), text_rendering.TEXT_SIZE_LIMIT, many)
+		testing.expect_value(t, count, text_rendering.TEXT_LIMIT)
+		limit := i64(text_rendering.TEXT_SIZE_LIMIT)
+		sum: i64
+		for glyph in many {
+			testing.expect_value(t, i64(glyph.x), sum)
+			testing.expect(t, i64(glyph.advance) >= -limit / 2 && i64(glyph.advance) <= limit + limit / 2)
+			sum += i64(glyph.advance)
+		}
+		testing.expect(t, sum == width && sum < 1 << 31 && sum > -(1 << 31))
+		for &value, index in long {
+			value = index % 2 == 0 ? 'T' : 'o'
+		}
+	}
+}
+
+// A call opens only the fonts that the chains of its face name: the bold
+// weights and Paper Mono SemiBold stay closed for the face Interface. A
+// font that is not wanted is not missing.
+@(test)
+a_call_opens_the_fonts_of_its_face :: proc(t: ^testing.T) {
+	outlines := repository_outlines(t)
+	defer delete(outlines.words)
+	testing.expect_value(t, text_rendering.fonts_of_face(.None), text_rendering.Outline_Fonts{})
+	testing.expect_value(t, text_rendering.fonts_of_face(.Interface), text_rendering.Outline_Fonts{.B612, .Paper_Mono})
+	testing.expect_value(t, text_rendering.fonts_of_face(.Cells_Bold), text_rendering.Outline_Fonts{.Paper_Mono_Semibold, .B612_Bold, .B612})
+	resource, problem := font_outlines.validate(outlines.bytes)
+	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
+	fonts := new(Package_Fonts)
+	defer free(fonts)
+	outline := text_rendering.outline_of(&fonts.outline)
+	missing := text_rendering.fonts_open(&fonts.set, &resource, &outline, text_rendering.fonts_of_face(.Interface))
+	testing.expect_value(t, missing, text_rendering.Outline_Fonts{})
+	for font in text_rendering.Outline_Font {
+		wanted := font == .B612 || font == .Paper_Mono
+		testing.expectf(t, fonts.set.fonts[font].opened == wanted, "%v is open: %v", font, fonts.set.fonts[font].opened)
+	}
+}
+
+// The time of one call of shape_text on a label, from its start to its
+// end, the open of the fonts of its face included: the least of 200. A
+// measure, never a test of a speed; it runs only with -define:MEASURE=true.
+@(test)
+the_time_of_one_call :: proc(t: ^testing.T) {
+	if !MEASURE {
+		return
+	}
+	outlines := repository_outlines(t)
+	defer delete(outlines.words)
+	LABEL :: "Settings"
+	label := bytes_to_read(transmute([]u8)string(LABEL))
+	placed: [len(LABEL)]text_rendering.Placed_Glyph
+	least := max(i64)
+	for _ in 0 ..< 200 {
+		error: errors.Error_Record
+		table := system.Table_To_Append(text_rendering.Placed_Glyph){records = &placed[0], count = 0, capacity = len(LABEL)}
+		start := time.tick_now()
+		result := shape_text(&outlines.table, i64(text_rendering.Face.Interface), text_rendering.TEXT_SIZE_OF_SCALE_ONE, &label, &table, &error)
+		least = min(least, i64(time.tick_since(start)))
+		testing.expect_value(t, result, i64(len(LABEL)))
+	}
+	fmt.printfln("text_rendering: one call of shape_text on a label of %v bytes, the fonts of its face opened, the least of 200: %v ns", len(LABEL), least)
 }

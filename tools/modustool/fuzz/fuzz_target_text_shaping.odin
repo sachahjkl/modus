@@ -15,20 +15,85 @@ import "modus:support/text_rendering"
 
 // The head of an input: the face, the text size, whether the pairs are
 // off, then the counts of the parts that follow it, in this order: the
-// text, the ranges. A part cut by the end of the input is shorter.
+// text, the ranges. A part cut by the end of the input is shorter. With
+// font_from_input, the bytes after the ranges are the font file of B612,
+// which the input gives whole: a hostile font through the open of a set of
+// fonts and the shaper, as a caller of the library module gives it.
 Fuzz_Shaping_Head :: struct {
-	face:          u8, // A text_rendering.Face; a word that names no member, or None, measures nothing.
-	without_pairs: u8, // Not 0: the spacing has no pair.
-	size:          u16, // The text size in 1/64 of a pixel, any value: a size out of its range is refused.
-	text_count:    u16,
-	range_count:   u8,
-	reserved:      u8,
+	face:            u8, // A text_rendering.Face; a word that names no member, or None, measures nothing.
+	without_pairs:   u8, // Not 0: the spacing has no pair.
+	size:            u16, // The text size in 1/64 of a pixel, any value: a size out of its range is refused.
+	text_count:      u16,
+	range_count:     u8,
+	font_from_input: u8, // Not 0: the rest of the input is the font file of B612.
 }
 #assert(size_of(Fuzz_Shaping_Head) == 8)
 
 @(private = "file")
 FUZZ_SHAPING_RANGE_LIMIT :: 32
-FUZZ_SHAPING_INPUT_LIMIT :: 16 << 10
+// Room for the subset of B612 (55 676 bytes), a text and its ranges.
+FUZZ_SHAPING_INPUT_LIMIT :: 96 << 10
+
+@(private = "file")
+fuzz_paper_mono := #load("../../../resources/fonts/paper_mono.ttf")
+@(private = "file")
+fuzz_b612 := #load("../../../resources/fonts/b612.ttf")
+
+// fuzz_shaping_font_from_input: a font file of the input, opened as the
+// B612 of a set beside the true Paper Mono, through fonts_open and shape.
+// Its numbers are not modelled; each one stays in its bound: one placed
+// glyph for each character at its first byte, each advance from minus half
+// a line to one line and a half, each x the sum of the advances before it,
+// the width their sum in an i32, and text_width the same width. A font
+// that the open refuses gives no spacing of the face Interface.
+@(private = "file")
+fuzz_shaping_font_from_input :: proc(face: text_rendering.Face, size: int, without_pairs: bool, text: []u8, font_bytes: []u8) -> Fuzz_Verdict {
+	if len(font_bytes) == 0 {
+		return FUZZ_PASSED
+	}
+	fonts := [2]font_outlines.Font_Input{{"b612", font_bytes}, {"paper_mono", fuzz_paper_mono}}
+	resource_size := font_outlines.resource_size(fonts[:])
+	words := make([]u64, (resource_size + 7) / 8, context.temp_allocator)
+	bytes := ([^]u8)(raw_data(words))[:resource_size]
+	if _, written := font_outlines.resource_write(fonts[:], bytes); !written {
+		return fuzz_broken(.Contract, "the resource of a font of %d bytes is not written", len(font_bytes))
+	}
+	outlines, problem := font_outlines.validate(bytes)
+	if problem.kind != .None {
+		return fuzz_broken(.Round_Trip, "the resource that resource_write wrote is refused: %v", problem.kind)
+	}
+	set := new(text_rendering.Font_Set, context.temp_allocator)
+	outline_memory := new(text_rendering.Outline_Memory, context.temp_allocator)
+	outline := text_rendering.outline_of(outline_memory)
+	_ = text_rendering.fonts_open(set, &outlines, &outline)
+	spacing, spacing_ok := text_rendering.spacing_in(set, face, size)
+	if !spacing_ok {
+		return FUZZ_PASSED
+	}
+	spacing.without_pairs = without_pairs
+	placed := make([]text_rendering.Placed_Glyph, len(text) + 1, context.temp_allocator)
+	count, width, ok := text_rendering.shape(&spacing, text, placed)
+	if !ok || count != text_encoding.character_count(text) {
+		return fuzz_broken(.Two_Readers, "shape over a font of the input gives %d glyphs, %v; the text has %d characters", count, ok, text_encoding.character_count(text))
+	}
+	x: i64
+	place := 0
+	for item, index in placed[:count] {
+		_, length, _ := text_encoding.character_decode(text, place)
+		if item.cluster != u32(place) || i64(item.x) != x || i64(item.advance) < -i64(size) / 2 || i64(item.advance) > i64(size) + i64(size) / 2 {
+			return fuzz_broken(.Contract, "over a font of the input, the glyph %d at %d is at %d with the advance %d, after %d", index, item.cluster, item.x, item.advance, x)
+		}
+		x += i64(item.advance)
+		place += length
+	}
+	if x != width || width >= 1 << 31 || width <= -(1 << 31) {
+		return fuzz_broken(.Contract, "over a font of the input, shape gives the width %d; its advances give %d", width, x)
+	}
+	if text_width, width_ok := text_rendering.text_width(&spacing, text); !width_ok || text_width != width {
+		return fuzz_broken(.Two_Readers, "over a font of the input, text_width gives %d, %v; shape gives %d", text_width, width_ok, width)
+	}
+	return FUZZ_PASSED
+}
 
 // The fonts of the target, opened at the start and only read after it: the
 // executions on several threads share them.
@@ -45,9 +110,9 @@ fuzz_shaping_long_text: []u8
 fuzz_text_shaping_start :: proc() -> bool {
 	fuzz_shaping_long_text = make([]u8, text_rendering.TEXT_LIMIT + 1)
 	fonts := [4]font_outlines.Font_Input {
-		{"b612", #load("../../../resources/fonts/b612.ttf")},
+		{"b612", fuzz_b612},
 		{"b612_bold", #load("../../../resources/fonts/b612_bold.ttf")},
-		{"paper_mono", #load("../../../resources/fonts/paper_mono.ttf")},
+		{"paper_mono", fuzz_paper_mono},
 		{"paper_mono_semibold", #load("../../../resources/fonts/paper_mono_semibold.ttf")},
 	}
 	size := font_outlines.resource_size(fonts[:])
@@ -137,6 +202,9 @@ fuzz_text_shaping_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	face, face_ok := text_rendering.face_of_word(i64(head.face))
 	if !face_ok {
 		return FUZZ_PASSED
+	}
+	if head.font_from_input != 0 {
+		return fuzz_shaping_font_from_input(face, size, head.without_pairs != 0, text, rest)
 	}
 	spacing, spacing_ok := text_rendering.spacing_in(fuzz_shaping_fonts, face, size)
 	if spacing_ok != (text_rendering.size_check(size) == .None) {
@@ -283,6 +351,18 @@ fuzz_text_shaping_seeds :: proc(seeds: ^[dynamic][]u8) {
 				append(&seed, ..slice.to_bytes(ranges[:]))
 				append(seeds, seed[:])
 			}
+		}
+	}
+	// The font from the input: the true B612, at a size of the glyph
+	// caches and at the largest size, with and without pairs.
+	for size in ([2]u16{text_rendering.TEXT_SIZE_OF_SCALE_ONE, text_rendering.TEXT_SIZE_LIMIT}) {
+		for without_pairs in ([2]u8{0, 1}) {
+			head := Fuzz_Shaping_Head{face = u8(text_rendering.Face.Interface), without_pairs = without_pairs, size = size, text_count = u16(len(text)), range_count = 0, font_from_input = 1}
+			seed := make([dynamic]u8)
+			append(&seed, ..mem.ptr_to_bytes(&head))
+			append(&seed, ..transmute([]u8)text)
+			append(&seed, ..fuzz_b612)
+			append(seeds, seed[:])
 		}
 	}
 }

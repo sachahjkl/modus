@@ -301,13 +301,17 @@ open :: proc "contextless" (outlines: ^font_outlines.Outlines) -> (missing: Outl
 // fonts_open opens the fonts of the outlines into a set, with the memory of
 // one outline for the measures of each font. It gives the fonts that the
 // outlines do not hold or that the parser refuses: a chain skips them. A
-// set that is open stays as it is.
-fonts_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outlines, outline: ^vector_font.Outline) -> (missing: Outline_Fonts) {
+// set that is open stays as it is. wanted names the fonts to open: a call
+// of the library module opens the fonts of the chains of one face only
+// (fonts_of_face), as each open reads the outlines of 94 characters for
+// the measures of its font; a font that is not wanted stays closed, and is
+// not missing.
+fonts_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outlines, outline: ^vector_font.Outline, wanted: Outline_Fonts = ~Outline_Fonts{}) -> (missing: Outline_Fonts) {
 	if set.opened {
 		return {}
 	}
 	for font in Outline_Font {
-		if font == .None {
+		if font == .None || font not_in wanted {
 			continue
 		}
 		missing += {font}
@@ -411,9 +415,24 @@ chain_fonts :: proc "contextless" (face: Face) -> (fonts: Outline_Fonts) {
 	if face == .None || !state.opened {
 		return {}
 	}
+	for font in fonts_of_face(face) {
+		if state.fonts[font].opened {
+			fonts += {font}
+		}
+	}
+	return fonts
+}
+
+// fonts_of_face gives the fonts that the chains of a face name, for each
+// script and for the default chain, whether a set holds them or not: the
+// fonts that a measure of the face can read. None for the face None.
+fonts_of_face :: proc "contextless" (face: Face) -> (fonts: Outline_Fonts) {
+	if face == .None {
+		return {}
+	}
 	chain_add :: proc "contextless" (fonts: ^Outline_Fonts, chain: Chain) {
 		for font in chain {
-			if font != .None && state.fonts[font].opened {
+			if font != .None {
 				fonts^ += {font}
 			}
 		}

@@ -24,8 +24,17 @@ paper_mono_semibold_file := #load("../../../../resources/fonts/paper_mono_semibo
 // The state, the render memory and the private cache of the package are
 // one per process, as in the system, but the runner runs tests on several
 // threads of one process: each test holds this lock from its first line to
-// its end. The tests of shaping_test.odin take it too.
+// its end. The tests of shaping_test.odin and raster_test.odin take it too.
+//
+// The words of the outlines that a test opens come from the allocator of
+// the test, which the runner frees at its end: the state would then point
+// at freed bytes. So the end of the lock clears the state, in each test of
+// the package, before the next test can take it.
 test_state_lock: sync.Mutex
+
+// The measures of time of this package run only with -define:MEASURE=true:
+// a test that measures time is opt-in, and a normal run prints no time.
+MEASURE :: #config(MEASURE, false)
 
 @(deferred_none = test_state_give)
 test_state_take :: proc() {
@@ -33,6 +42,7 @@ test_state_take :: proc() {
 }
 
 test_state_give :: proc() {
+	state = {}
 	sync.mutex_unlock(&test_state_lock)
 }
 
@@ -658,7 +668,6 @@ the_words_are_the_words_of_the_glyph_caches :: proc(t: ^testing.T) {
 			continue
 		}
 		compared, differ := 0, 0
-		start := time.tick_now()
 		for scale in 1 ..= form.scale_count {
 			text_size := size_of_scale(scale)
 			golden_bytes := make([dynamic]u8)
@@ -695,7 +704,7 @@ the_words_are_the_words_of_the_glyph_caches :: proc(t: ^testing.T) {
 			fmt.printfln("text_rendering: the golden hash of %v at the size %v: %s", each.face, text_size, found)
 			golden_hash_check(t, each.face, text_size, .Glyph_Cache, found)
 		}
-		fmt.printfln("text_rendering: %v: %v glyphs equal to the glyph caches of today, %v differ, %v", each.face, compared - differ, differ, time.tick_since(start))
+		fmt.printfln("text_rendering: %v: %v glyphs equal to the glyph caches of today, %v differ", each.face, compared - differ, differ)
 	}
 }
 
@@ -936,6 +945,9 @@ the_measure_is_the_draw :: proc(t: ^testing.T) {
 // glyph of the cells, past the private cache. A measure, never a test.
 @(test)
 the_raster_time_of_one_glyph :: proc(t: ^testing.T) {
+	if !MEASURE {
+		return
+	}
 	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
@@ -968,6 +980,9 @@ the_raster_time_of_one_glyph :: proc(t: ^testing.T) {
 // widths. A measure, never a test of a speed.
 @(test)
 the_measure_time_of_a_hundred_lines :: proc(t: ^testing.T) {
+	if !MEASURE {
+		return
+	}
 	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])

@@ -88,7 +88,9 @@ call_spacing :: proc "contextless" (fonts: ^Call_Fonts, outlines: ^system.Bytes_
 		return {}, false
 	}
 	outline := text_rendering.outline_of(&fonts.outline)
-	_ = text_rendering.fonts_open(&fonts.set, &resource, &outline)
+	// Only the fonts that the chains of the face name: each open reads the
+	// outlines of 94 characters for its measures.
+	_ = text_rendering.fonts_open(&fonts.set, &resource, &outline, text_rendering.fonts_of_face(face))
 	spacing, ok = text_rendering.spacing_in(&fonts.set, face, int(size))
 	if !ok {
 		errors.fail(error, -1, .Absent, .None, 1, i64(text_rendering.face_forms[face].primary))

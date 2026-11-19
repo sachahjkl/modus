@@ -357,7 +357,7 @@ A module (property 10: shared code with exports), with batch exports whose param
 
 - **The font outlines are bytes of the caller**: the resource `font_outlines` that its starter mapped, or a copy of it, on 8 bytes. Each call opens the fonts of those bytes on its stack (about 16 KiB), measures with them, and keeps nothing. So an isolated call receives the outlines in the call region like the text, and gives the answer of a direct call.
 - **The face** is a number of `text_rendering.Face` from 1 to 5. The export refuses each other number, and `None`, with `Bad_Value`. **The text size** is the height of a line in 1/64 of a pixel: a size under 256 is refused with `Too_Small`, a size past 16 384 with `Bad_Value`. Outlines that `font_outlines.validate` refuses give `Bad_Value` with the problem as the value; outlines with no first font of the face give `Absent` with the font as the value.
-- **Hostile bytes**: the caller can change its bytes during the call. The header and the records of the outlines are copied once and checked; the parser checks each read of a font file against its bytes; each advance and each pair is kept in its bound at its read (an advance from 0 to one line, a pair within half a line, at any size). A changed byte gives other numbers, never a read out of the bytes, and the x of each glyph holds in an `i32`.
+- **Hostile bytes**: the caller can change its bytes during the call. The header and the records of the outlines are copied once and checked; the parser checks each read of a font file against its bytes; `font_open` refuses a character map whose segments pass its subtable or whose end codes do not grow strictly, so `glyph_of` finds a segment by halves, not in a line of up to 32 767 segments; each advance and each pair is kept in its bound at its read (an advance from 0 to one line, a pair within half a line, at any size). A changed byte gives other numbers, never a read out of the bytes, and the x of each glyph holds in an `i32`.
 - **A character that no font of the chain has** (and a control character, and an invalid sequence of UTF-8) is placed as `REPLACEMENT_GLYPH`, with the advance of `0` and no pair, and the reader draws the replacement glyph there, so a reader sees that the font does not draw it. Each placed glyph has the first byte of its character as its cluster.
 - **The widths in a table of ranges**: the width is a field of each range record, which the export writes (the direction Change), as `sum` in the records of `sample.sum_words`.
 
@@ -621,9 +621,12 @@ Each one is a measure, never a test.
 
 | Measure | Command |
 |---|---|
-| The raster of one glyph of each face at the lines of 16, 20, 24 and 32 pixels, the least of 200 | `nix develop -c taskset -c 2 odin test src/library/support/text_rendering -vet -collection:modus=src/library -o:speed -define:ODIN_TEST_NAMES=text_rendering.the_raster_time_of_one_glyph` |
+| The raster of one glyph of each face at the lines of 16, 20, 24 and 32 pixels, the least of 200 | `nix develop -c taskset -c 2 odin test src/library/support/text_rendering -vet -collection:modus=src/library -o:speed -define:MEASURE=true -define:ODIN_TEST_NAMES=text_rendering.the_raster_time_of_one_glyph` |
 | The glyphs of the frame that fills the cache | the same, with `ODIN_TEST_NAMES=text_rendering.a_frame_larger_than_the_cache` |
 | The measure of 100 lines of B612 from the font file, against the tables of a glyph cache, the least of 200 | the same, with `ODIN_TEST_NAMES=text_rendering.the_measure_time_of_a_hundred_lines` |
+| One call of `shape_text` of the library module on a label, the open of the fonts of its face included, the least of 200 | `nix develop -c taskset -c 2 odin test src/modules/libraries/text_rendering -vet -collection:modus=src/library -o:speed -define:MEASURE=true -define:ODIN_TEST_NAMES=text_rendering_module.the_time_of_one_call` |
+
+The measures of time run only with `-define:MEASURE=true`: a normal run of the host tests skips them and prints no time.
 
 ### 14.7 The measure from the font file
 
