@@ -113,6 +113,30 @@ client_uses_refuse_each_word_that_names_no_set :: proc(t: ^testing.T) {
 	testing.expect(t, client_grant_holds(&clients, 0, 3, .View) && client_grant_holds(&clients, 0, 3, .Input))
 }
 
+// The session in front: a row of another principal than the principal in
+// front holds no View and no Input, and keeps Calls; principal 0 sees
+// nothing while a named session is in front, and a named principal sees
+// nothing while principal 0 is in front.
+@(test)
+a_row_out_of_front_holds_no_view_and_no_input :: proc(t: ^testing.T) {
+	MACHINE :: u64(0)
+	ALICE :: u64(1)
+	testing.expect(t, client_display_paused(MACHINE, ALICE), "principal 0 sees the session of alice")
+	testing.expect(t, client_display_paused(ALICE, MACHINE), "alice sees the session of principal 0")
+	testing.expect(t, client_display_paused(ALICE, ALICE + 1))
+	testing.expect(t, client_display_paused(max(u64), MACHINE))
+	clients: [CLIENT_CAPACITY]Client
+	clients[0] = {key = {0 = 7}, principal = MACHINE, serial = 4, uses = client_uses_word({.Calls, .View, .Input}), not_in_front = 1}
+	testing.expect(t, !client_grant_holds(&clients, 0, 4, .View), "a row out of front holds View")
+	testing.expect(t, !client_grant_holds(&clients, 0, 4, .Input), "a row out of front holds Input")
+	testing.expect(t, client_grant_holds(&clients, 0, 4, .Calls), "a row out of front loses Calls")
+	// The cases that hold come last.
+	testing.expect(t, !client_display_paused(MACHINE, MACHINE))
+	testing.expect(t, !client_display_paused(ALICE, ALICE))
+	clients[0].not_in_front = 0
+	testing.expect(t, client_grant_holds(&clients, 0, 4, .View) && client_grant_holds(&clients, 0, 4, .Input))
+}
+
 // The code of the end of a connection whose grant ended has its name.
 @(test)
 revoked_has_its_name :: proc(t: ^testing.T) {

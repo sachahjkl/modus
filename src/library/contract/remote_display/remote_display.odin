@@ -6,7 +6,7 @@
 // key in mutual TLS 1.3 as a client of `remote` does, then one
 // bidirectional stream, whose first record is its Session_Start. The
 // service writes the screen in its direction of
-// the stream; the viewer writes its input and the end of each frame in the
+// the stream; the viewer writes its input and the end of each viewer frame in the
 // other. QUIC controls the flow of each direction alone, so a key never
 // waits behind the pixels.
 //
@@ -16,10 +16,10 @@
 // bound of its direction is refused before any byte of its body is read
 // (record_length_problem).
 //
-// The screen goes as frames, one at a time: Frame_Start, its tiles, then
-// Frame_End. The service sends the next frame only after the Frame_Taken
-// of the viewer for the last one. A tile is a rectangle of at most
-// TILE_WIDTH x TILE_HEIGHT pixels in the tile coder (tile_coder.odin).
+// The screen goes as viewer frames, one at a time: Viewer_Frame_Start, its screen pieces, then
+// Viewer_Frame_End. The service sends the next viewer frame only after the Viewer_Frame_Taken
+// of the viewer for the last one. A screen piece is a rectangle of at most
+// SCREEN_PIECE_WIDTH x SCREEN_PIECE_HEIGHT pixels in the screen piece coder (screen_piece_coder.odin).
 //
 // All numbers are little-endian. This package allocates no memory and calls
 // no kernel operation.
@@ -47,15 +47,15 @@ CONNECTION_CAPACITY :: 2
 SCREEN_WIDTH_LIMIT :: 1920
 SCREEN_HEIGHT_LIMIT :: 1080
 
-// The largest tile. A rectangle of the damage goes as tiles of this size at
+// The largest screen piece. A rectangle of the damage goes as screen pieces of this size at
 // most, from its top left corner, row after row.
-TILE_WIDTH :: 128
-TILE_HEIGHT :: 64
-TILE_PIXEL_LIMIT :: TILE_WIDTH * TILE_HEIGHT
+SCREEN_PIECE_WIDTH :: 128
+SCREEN_PIECE_HEIGHT :: 64
+SCREEN_PIECE_PIXEL_LIMIT :: SCREEN_PIECE_WIDTH * SCREEN_PIECE_HEIGHT
 
-// The most tiles of one frame: a whole screen of the largest size, with the
-// partial tiles of 8 rectangles that do not meet.
-FRAME_TILE_LIMIT :: 1024
+// The most screen pieces of one viewer frame: a whole screen of the largest size, with the
+// partial screen pieces of 8 rectangles that do not meet.
+VIEWER_FRAME_PIECE_LIMIT :: 1024
 
 // The application error code of a CONNECTION_CLOSE or a RESET_STREAM of a
 // connection to the service.
@@ -65,8 +65,8 @@ Display_Error :: enum u64 {
 	Bad_Record        = 2, // A record that its border refused: an unknown kind, a wrong length, a field out of its range.
 	Input_Not_Allowed = 3, // A key or a pointer from a client key whose row holds View and not Input.
 	Revoked           = 4, // The grant of the key ended: a revocation, or a lock of the session of its principal.
-	Out_Of_Order      = 5, // A Frame_Taken that names no frame in flight.
-	Timeout           = 6, // The viewer did not take a frame in its bound.
+	Out_Of_Order      = 5, // A Viewer_Frame_Taken that names no viewer frame in flight.
+	Timeout           = 6, // The viewer did not take a viewer frame in its bound.
 }
 
 // The name of each code, for the log of the two sides.
@@ -93,12 +93,12 @@ display_error_name :: proc "contextless" (code: u64) -> string {
 Record_Kind :: enum u32 {
 	None          = 0, // Not a record: refused.
 	Screen_Size   = 1, // The first record of the service: Screen_Size_Body.
-	Frame_Start   = 2, // Frame_Start_Body, then its tiles.
-	Tile          = 3, // A Tile_Header, then its coded pixels.
-	Frame_End     = 4, // Frame_End_Body.
+	Viewer_Frame_Start   = 2, // Viewer_Frame_Start_Body, then its screen pieces.
+	Screen_Piece          = 3, // A Screen_Piece_Header, then its coded pixels.
+	Viewer_Frame_End     = 4, // Viewer_Frame_End_Body.
 	Pointer_Place = 5, // Pointer_Place_Body.
-	Frame_Taken   = 16, // Frame_Taken_Body.
-	Tile_Request  = 17, // Tile_Request_Body.
+	Viewer_Frame_Taken   = 16, // Viewer_Frame_Taken_Body.
+	Screen_Piece_Request  = 17, // Screen_Piece_Request_Body.
 	Key           = 18, // Key_Body.
 	Pointer       = 19, // Pointer_Body.
 	// Session_Start_Body: the first record of the viewer, which opens the
@@ -135,26 +135,26 @@ Screen_Size_Body :: struct {
 	height: u32,
 }
 
-Frame_Start_Body :: struct {
-	serial:     u64, // One more for each frame of the session, from 1.
-	tile_count: u32, // The Tile records before Frame_End.
+Viewer_Frame_Start_Body :: struct {
+	serial:     u64, // One more for each viewer frame of the session, from 1.
+	screen_piece_count: u32, // The Screen_Piece records before Viewer_Frame_End.
 	_:          u32,
-	// The most bytes of those Tile records, their headers included: each
-	// pixel at its worst code. The service codes each tile as it goes, so
-	// it knows the bound before the bytes; a viewer can hold the frame.
+	// The most bytes of those Screen_Piece records, their headers included: each
+	// pixel at its worst code. The service codes each screen piece as it goes, so
+	// it knows the bound before the bytes; a viewer can hold the viewer frame.
 	bytes:      u64,
 }
 
-// The head of the body of a Tile: the coded pixels follow it.
-Tile_Header :: struct {
+// The head of the body of a Screen_Piece: the coded pixels follow it.
+Screen_Piece_Header :: struct {
 	x, y:          u32, // The top left corner, in pixels of the screen.
 	width, height: u32,
 	coded_length:  u32, // The bytes of the coded pixels after this header.
 	_:             u32,
 }
-#assert(size_of(Tile_Header) == 24)
+#assert(size_of(Screen_Piece_Header) == 24)
 
-Frame_End_Body :: struct {
+Viewer_Frame_End_Body :: struct {
 	serial: u64,
 }
 
@@ -166,13 +166,13 @@ Pointer_Place_Body :: struct {
 	left, top, right, bottom: u32,
 }
 
-Frame_Taken_Body :: struct {
+Viewer_Frame_Taken_Body :: struct {
 	serial: u64,
 }
 
 // A rectangle of the screen that the viewer asks again: the service adds
 // it to the damage of the viewer.
-Tile_Request_Body :: struct {
+Screen_Piece_Request_Body :: struct {
 	x, y:          u32,
 	width, height: u32,
 }
@@ -196,7 +196,10 @@ Pointer_Body :: struct {
 }
 
 // The largest code of a key: a scan code of set 1, with KEY_EXTENDED.
-KEY_CODE_LIMIT :: 0x1FF
+KEY_CODE_LIMIT :: 0x17F
+// The bit of a released key in a scan code of set 1. The record carries
+// pressed apart, so a code with this bit names no key.
+KEY_RELEASE_BIT :: 0x80
 // The largest code point.
 CHARACTER_LIMIT :: 0x10FFFF
 // The modifier bits that a key carries: shift and control.
@@ -206,20 +209,20 @@ POINTER_BUTTONS :: 0b11
 // The most notches of the wheel in one record.
 WHEEL_NOTCHES_LIMIT :: 64
 
-// The bytes of the body of each kind; Tile has its header and at most the
-// coded pixels of a whole tile.
+// The bytes of the body of each kind; Screen_Piece has its header and at most the
+// coded pixels of a whole screen piece.
 // The values of Record_Kind have a gap between the two directions, so the
 // table is sparse.
 @(rodata)
 BODY_SIZES := #sparse[Record_Kind]u32 {
 	.None          = 0,
 	.Screen_Size   = size_of(Screen_Size_Body),
-	.Frame_Start   = size_of(Frame_Start_Body),
-	.Tile          = size_of(Tile_Header),
-	.Frame_End     = size_of(Frame_End_Body),
+	.Viewer_Frame_Start   = size_of(Viewer_Frame_Start_Body),
+	.Screen_Piece          = size_of(Screen_Piece_Header),
+	.Viewer_Frame_End     = size_of(Viewer_Frame_End_Body),
 	.Pointer_Place = size_of(Pointer_Place_Body),
-	.Frame_Taken   = size_of(Frame_Taken_Body),
-	.Tile_Request  = size_of(Tile_Request_Body),
+	.Viewer_Frame_Taken   = size_of(Viewer_Frame_Taken_Body),
+	.Screen_Piece_Request  = size_of(Screen_Piece_Request_Body),
 	.Key           = size_of(Key_Body),
 	.Pointer       = size_of(Pointer_Body),
 	.Session_Start = size_of(Session_Start_Body),
@@ -229,21 +232,21 @@ BODY_SIZES := #sparse[Record_Kind]u32 {
 // viewer is small: one past this is a viewer that sends what no viewer
 // sends.
 VIEWER_BODY_LIMIT :: 16
-TILE_BODY_LIMIT :: size_of(Tile_Header) + CODED_TILE_LIMIT
-SERVICE_BODY_LIMIT :: TILE_BODY_LIMIT
-// The bytes of the tiles of one frame at most: each pixel of the largest
-// screen in its worst code, and the headers of the most tiles.
-FRAME_BYTES_LIMIT :: SCREEN_WIDTH_LIMIT * SCREEN_HEIGHT_LIMIT * CODED_PIXEL_LIMIT + FRAME_TILE_LIMIT * (RECORD_HEADER_SIZE + size_of(Tile_Header))
+SCREEN_PIECE_BODY_LIMIT :: size_of(Screen_Piece_Header) + CODED_SCREEN_PIECE_LIMIT
+SERVICE_BODY_LIMIT :: SCREEN_PIECE_BODY_LIMIT
+// The bytes of the screen pieces of one viewer frame at most: each pixel of the largest
+// screen in its worst code, and the headers of the most screen pieces.
+VIEWER_FRAME_BYTES_LIMIT :: SCREEN_WIDTH_LIMIT * SCREEN_HEIGHT_LIMIT * CODED_PIXEL_LIMIT + VIEWER_FRAME_PIECE_LIMIT * (RECORD_HEADER_SIZE + size_of(Screen_Piece_Header))
 
 // Why a border refused a record.
 Record_Problem :: enum u8 {
 	None,
 	Unknown_Kind, // The kind names no member, or None.
 	Wrong_Direction, // A kind of the other direction.
-	Past_Bound, // A length past the bound of the direction, a frame past FRAME_BYTES_LIMIT or FRAME_TILE_LIMIT.
+	Past_Bound, // A length past the bound of the direction, a viewer frame past VIEWER_FRAME_BYTES_LIMIT or VIEWER_FRAME_PIECE_LIMIT.
 	Wrong_Length, // A length that is not the length of the kind, or a body that is not that length.
 	Outside_Screen, // A rectangle or a place outside the screen, or a screen past its limit.
-	Empty_Rectangle, // A rectangle of width or height 0, or a tile larger than TILE_WIDTH x TILE_HEIGHT.
+	Empty_Rectangle, // A rectangle of width or height 0, or a screen piece larger than SCREEN_PIECE_WIDTH x SCREEN_PIECE_HEIGHT.
 	Bad_Field, // A field out of its range: a key code, a character, pressed, a modifier, a button, the wheel, a serial of 0, a reserved field that is not 0.
 }
 
@@ -256,7 +259,7 @@ RECORD_PROBLEM_SENTENCES := [Record_Problem]string {
 	.Past_Bound      = "it is past its bound",
 	.Wrong_Length    = "its length is not the length of its kind",
 	.Outside_Screen  = "it names a place outside the screen",
-	.Empty_Rectangle = "it names an empty rectangle, or a tile larger than 128 x 64",
+	.Empty_Rectangle = "it names an empty rectangle, or a screen piece larger than 128 x 64",
 	.Bad_Field       = "a field is out of its range",
 }
 
@@ -299,8 +302,8 @@ header_read :: proc "contextless" (bytes: []u8) -> (header: Record_Header, ok: b
 // reads the header only, so a reader refuses a record past its bound before
 // it reads or keeps any byte of the body. It refuses a kind that names no
 // member, a kind of the other direction, and a length that is not the
-// length of the kind (a Tile: its header, and at most the coded pixels of a
-// whole tile).
+// length of the kind (a Screen_Piece: its header, and at most the coded pixels of a
+// whole screen piece).
 record_length_problem :: proc "contextless" (header: Record_Header, direction: Direction) -> Record_Problem {
 	kind, known := enum_word.member_of_word(Record_Kind, u64(header.kind))
 	if !known || kind == .None {
@@ -313,8 +316,8 @@ record_length_problem :: proc "contextless" (header: Record_Header, direction: D
 	if header.length > limit {
 		return .Past_Bound
 	}
-	if kind == .Tile {
-		if header.length < size_of(Tile_Header) {
+	if kind == .Screen_Piece {
+		if header.length < size_of(Screen_Piece_Header) {
 			return .Wrong_Length
 		}
 		return .None
@@ -328,9 +331,9 @@ record_length_problem :: proc "contextless" (header: Record_Header, direction: D
 // kind_direction gives the direction of a kind.
 kind_direction :: proc "contextless" (kind: Record_Kind) -> Direction {
 	switch kind {
-	case .None, .Screen_Size, .Frame_Start, .Tile, .Frame_End, .Pointer_Place:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place:
 		return .To_Viewer
-	case .Frame_Taken, .Tile_Request, .Key, .Pointer, .Session_Start:
+	case .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start:
 		return .To_Service
 	}
 	return .To_Viewer
@@ -341,8 +344,8 @@ kind_direction :: proc "contextless" (kind: Record_Kind) -> Direction {
 Viewer_Record :: struct {
 	kind:          Record_Kind,
 	session_start: Session_Start_Body,
-	frame_taken:   Frame_Taken_Body,
-	tile_request: Tile_Request_Body,
+	viewer_frame_taken:   Viewer_Frame_Taken_Body,
+	screen_piece_request: Screen_Piece_Request_Body,
 	key:          Key_Body,
 	pointer:      Pointer_Body,
 }
@@ -359,7 +362,7 @@ viewer_record_check :: proc "contextless" (header: Record_Header, body: []u8, sc
 	}
 	record.kind = header.kind
 	switch header.kind {
-	case .None, .Screen_Size, .Frame_Start, .Tile, .Frame_End, .Pointer_Place:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place:
 		// record_length_problem took only a kind of this direction.
 		return {}, .Wrong_Direction
 	case .Session_Start:
@@ -368,20 +371,20 @@ viewer_record_check :: proc "contextless" (header: Record_Header, body: []u8, sc
 			return {}, .Bad_Field
 		}
 		record.session_start = start
-	case .Frame_Taken:
-		record.frame_taken = body_read(body, Frame_Taken_Body)
-		if record.frame_taken.serial == 0 {
+	case .Viewer_Frame_Taken:
+		record.viewer_frame_taken = body_read(body, Viewer_Frame_Taken_Body)
+		if record.viewer_frame_taken.serial == 0 {
 			return {}, .Bad_Field
 		}
-	case .Tile_Request:
-		request := body_read(body, Tile_Request_Body)
+	case .Screen_Piece_Request:
+		request := body_read(body, Screen_Piece_Request_Body)
 		if problem = rectangle_problem(request.x, request.y, request.width, request.height, screen); problem != .None {
 			return {}, problem
 		}
-		record.tile_request = request
+		record.screen_piece_request = request
 	case .Key:
 		key := body_read(body, Key_Body)
-		if key.code == 0 || key.code > KEY_CODE_LIMIT || key.character > CHARACTER_LIMIT || (key.character >= 0xD800 && key.character <= 0xDFFF) || key.pressed > 1 || key.modifiers & ~u32(KEY_MODIFIERS) != 0 {
+		if key.code == 0 || key.code > KEY_CODE_LIMIT || key.code & KEY_RELEASE_BIT != 0 || key.character > CHARACTER_LIMIT || (key.character >= 0xD800 && key.character <= 0xDFFF) || key.pressed > 1 || key.modifiers & ~u32(KEY_MODIFIERS) != 0 {
 			return {}, .Bad_Field
 		}
 		record.key = key
@@ -402,10 +405,10 @@ viewer_record_check :: proc "contextless" (header: Record_Header, body: []u8, sc
 Service_Record :: struct {
 	kind:          Record_Kind,
 	screen_size:   Screen_Size_Body,
-	frame_start:   Frame_Start_Body,
-	tile:          Tile_Header,
-	coded:         []u8, // A Tile: its coded pixels, in the body that the caller gave.
-	frame_end:     Frame_End_Body,
+	viewer_frame_start:   Viewer_Frame_Start_Body,
+	screen_piece:          Screen_Piece_Header,
+	coded:         []u8, // A Screen_Piece: its coded pixels, in the body that the caller gave.
+	viewer_frame_end:     Viewer_Frame_End_Body,
 	pointer_place: Pointer_Place_Body,
 }
 
@@ -421,7 +424,7 @@ service_record_check :: proc "contextless" (header: Record_Header, body: []u8, s
 	}
 	record.kind = header.kind
 	switch header.kind {
-	case .None, .Frame_Taken, .Tile_Request, .Key, .Pointer, .Session_Start:
+	case .None, .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start:
 		// record_length_problem took only a kind of this direction.
 		return {}, .Wrong_Direction
 	case .Screen_Size:
@@ -430,34 +433,34 @@ service_record_check :: proc "contextless" (header: Record_Header, body: []u8, s
 			return {}, problem
 		}
 		record.screen_size = size
-	case .Frame_Start:
-		start := body_read(body, Frame_Start_Body)
+	case .Viewer_Frame_Start:
+		start := body_read(body, Viewer_Frame_Start_Body)
 		switch {
 		case start.serial == 0:
 			return {}, .Bad_Field
-		case start.tile_count > FRAME_TILE_LIMIT || start.bytes > FRAME_BYTES_LIMIT:
+		case start.screen_piece_count > VIEWER_FRAME_PIECE_LIMIT || start.bytes > VIEWER_FRAME_BYTES_LIMIT:
 			return {}, .Past_Bound
-		case u64(start.tile_count) * (RECORD_HEADER_SIZE + size_of(Tile_Header)) > start.bytes:
-			// Each tile has its two headers at least.
+		case u64(start.screen_piece_count) * (RECORD_HEADER_SIZE + size_of(Screen_Piece_Header)) > start.bytes:
+			// Each screen piece has its two headers at least.
 			return {}, .Wrong_Length
 		}
-		record.frame_start = start
-	case .Tile:
-		tile := body_read(body, Tile_Header)
-		if problem = rectangle_problem(tile.x, tile.y, tile.width, tile.height, screen); problem != .None {
+		record.viewer_frame_start = start
+	case .Screen_Piece:
+		screen_piece := body_read(body, Screen_Piece_Header)
+		if problem = rectangle_problem(screen_piece.x, screen_piece.y, screen_piece.width, screen_piece.height, screen); problem != .None {
 			return {}, problem
 		}
-		if tile.width > TILE_WIDTH || tile.height > TILE_HEIGHT {
+		if screen_piece.width > SCREEN_PIECE_WIDTH || screen_piece.height > SCREEN_PIECE_HEIGHT {
 			return {}, .Empty_Rectangle
 		}
-		if u64(tile.coded_length) != u64(header.length) - size_of(Tile_Header) || tile.coded_length > coded_limit(tile.width * tile.height) {
+		if u64(screen_piece.coded_length) != u64(header.length) - size_of(Screen_Piece_Header) || screen_piece.coded_length > coded_limit(screen_piece.width * screen_piece.height) {
 			return {}, .Wrong_Length
 		}
-		record.tile = tile
-		record.coded = body[size_of(Tile_Header):]
-	case .Frame_End:
-		record.frame_end = body_read(body, Frame_End_Body)
-		if record.frame_end.serial == 0 {
+		record.screen_piece = screen_piece
+		record.coded = body[size_of(Screen_Piece_Header):]
+	case .Viewer_Frame_End:
+		record.viewer_frame_end = body_read(body, Viewer_Frame_End_Body)
+		if record.viewer_frame_end.serial == 0 {
 			return {}, .Bad_Field
 		}
 	case .Pointer_Place:
@@ -499,38 +502,38 @@ record_write :: proc "contextless" (out: []u8, kind: Record_Kind, body: $T) -> (
 	return out[:total], true
 }
 
-// tile_record_write writes a whole Tile record in out: the header, the tile
+// screen_piece_record_write writes a whole Screen_Piece record in out: the header, the screen piece
 // header, then the code of the pixels of the rectangle of a picture, from
 // the pixel at (x, y) of rows of stride pixels. ok is false when out cannot
-// hold the worst code of the tile.
-tile_record_write :: proc "contextless" (out: []u8, pixels: []u32, stride: int, x, y, width, height: u32) -> (bytes: []u8, ok: bool) {
-	head := RECORD_HEADER_SIZE + size_of(Tile_Header)
-	if width == 0 || height == 0 || width > TILE_WIDTH || height > TILE_HEIGHT || u64(len(out)) < u64(head) + u64(coded_limit(width * height)) {
+// hold the worst code of the screen piece.
+screen_piece_record_write :: proc "contextless" (out: []u8, pixels: []u32, stride: int, x, y, width, height: u32) -> (bytes: []u8, ok: bool) {
+	head := RECORD_HEADER_SIZE + size_of(Screen_Piece_Header)
+	if width == 0 || height == 0 || width > SCREEN_PIECE_WIDTH || height > SCREEN_PIECE_HEIGHT || u64(len(out)) < u64(head) + u64(coded_limit(width * height)) {
 		return nil, false
 	}
-	coded := tile_encode(pixels, stride, int(x), int(y), int(width), int(height), out[head:])
-	tile := Tile_Header{x = x, y = y, width = width, height = height, coded_length = u32(coded)}
-	header := Record_Header{kind = .Tile, length = u32(size_of(Tile_Header) + coded)}
+	coded := screen_piece_encode(pixels, stride, int(x), int(y), int(width), int(height), out[head:])
+	screen_piece := Screen_Piece_Header{x = x, y = y, width = width, height = height, coded_length = u32(coded)}
+	header := Record_Header{kind = .Screen_Piece, length = u32(size_of(Screen_Piece_Header) + coded)}
 	intrinsics.mem_copy_non_overlapping(raw_data(out), &header, RECORD_HEADER_SIZE)
-	intrinsics.mem_copy_non_overlapping(raw_data(out[RECORD_HEADER_SIZE:]), &tile, size_of(Tile_Header))
+	intrinsics.mem_copy_non_overlapping(raw_data(out[RECORD_HEADER_SIZE:]), &screen_piece, size_of(Screen_Piece_Header))
 	return out[:head + coded], true
 }
 
-// The tiles of a rectangle: a rectangle of the damage goes as tiles of
-// TILE_WIDTH x TILE_HEIGHT at most, from its top left corner, row after
+// The screen pieces of a rectangle: a rectangle of the damage goes as screen pieces of
+// SCREEN_PIECE_WIDTH x SCREEN_PIECE_HEIGHT at most, from its top left corner, row after
 // row.
-tile_count :: proc "contextless" (width, height: u32) -> u32 {
-	return ((width + TILE_WIDTH - 1) / TILE_WIDTH) * ((height + TILE_HEIGHT - 1) / TILE_HEIGHT)
+screen_piece_count :: proc "contextless" (width, height: u32) -> u32 {
+	return ((width + SCREEN_PIECE_WIDTH - 1) / SCREEN_PIECE_WIDTH) * ((height + SCREEN_PIECE_HEIGHT - 1) / SCREEN_PIECE_HEIGHT)
 }
 
-// tile_at gives the tile with an index of a rectangle, from 0 to
-// tile_count - 1.
-tile_at :: proc "contextless" (x, y, width, height: u32, index: u32) -> (tile_x, tile_y, tile_width, tile_height: u32) {
-	across := (width + TILE_WIDTH - 1) / TILE_WIDTH
+// screen_piece_at gives the screen piece with an index of a rectangle, from 0 to
+// screen_piece_count - 1.
+screen_piece_at :: proc "contextless" (x, y, width, height: u32, index: u32) -> (piece_x, piece_y, piece_width, piece_height: u32) {
+	across := (width + SCREEN_PIECE_WIDTH - 1) / SCREEN_PIECE_WIDTH
 	column, row := index % max(across, 1), index / max(across, 1)
-	tile_x = x + column * TILE_WIDTH
-	tile_y = y + row * TILE_HEIGHT
-	tile_width = min(TILE_WIDTH, x + width - tile_x)
-	tile_height = min(TILE_HEIGHT, y + height - tile_y)
+	piece_x = x + column * SCREEN_PIECE_WIDTH
+	piece_y = y + row * SCREEN_PIECE_HEIGHT
+	piece_width = min(SCREEN_PIECE_WIDTH, x + width - piece_x)
+	piece_height = min(SCREEN_PIECE_HEIGHT, y + height - piece_y)
 	return
 }

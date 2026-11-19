@@ -273,7 +273,8 @@ fuzz_remote_client_table_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		uses_named := word != 0 && word & ~known_uses == 0 && (word & input_bit == 0 || word & view_bit != 0)
 		for use in remote.Client_Use {
 			holds := remote.client_grant_holds(&clients, place, client.serial, use)
-			if holds != (client.serial != 0 && client.session_locked == 0 && client.contested == 0 && uses_named && word >> u64(use) & 1 != 0) {
+			in_front := use == .Calls || client.not_in_front == 0
+			if holds != (client.serial != 0 && client.session_locked == 0 && client.contested == 0 && uses_named && word >> u64(use) & 1 != 0 && in_front) {
 				return fuzz_broken(.Model, "client_grant_holds of the row %d for %v is %v, with the uses %x", place, use, holds, word)
 			}
 		}

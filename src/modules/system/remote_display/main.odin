@@ -13,9 +13,9 @@
 // the row loses View, the connection ends with the code Revoked.
 //
 // The viewer opens one bidirectional stream. This process writes the
-// screen in its direction: Screen_Size, then frames of tiles from its copy
-// of the screen, one frame in flight. The viewer writes Frame_Taken, a
-// Tile_Request, and, for a row that holds Input, its keys and its pointer,
+// screen in its direction: Screen_Size, then viewer frames of screen pieces from its copy
+// of the screen, one viewer frame in flight. The viewer writes Viewer_Frame_Taken, a
+// Screen_Piece_Request, and, for a row that holds Input, its keys and its pointer,
 // which go to the compositor on the ring of the window of this process
 // (modus:contract/remote_display). A record that its border refuses ends the
 // connection with Bad_Record, a record past its bound with Too_Large, and a
@@ -25,7 +25,7 @@
 // process gives the compositor the memory of two pictures and a header
 // (display.Capture_Open), copies the rectangles of each Capture_Frame into
 // its own copy of the screen, and gives the picture back. It copies only
-// while no viewer is in the middle of a frame, so that each frame shows one
+// while no viewer is in the middle of a viewer frame, so that each viewer frame shows one
 // moment: a slow viewer delays the copy, never the compositor, which merges
 // the damage while the picture is held. With no viewer, it closes the face,
 // and the mark of a viewer leaves the bar.
@@ -112,11 +112,19 @@ STREAM_BYTES :: CAPACITY * STREAMS_PER_CONNECTION * size_of(quic.Stream)
 TABLE_PAGES :: (CONNECTION_BYTES + STREAM_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 IDLE_TIMEOUT_MILLISECONDS :: 30_000
 
-// The bounds of a frame, in milliseconds of the machine: its records must go
+// The bounds of a viewer frame, in milliseconds of the machine: its records must go
 // into the stream, and the viewer must take it, this long after the phase
 // started; else the connection ends with the code Timeout.
-FRAME_WRITE_LIMIT :: 10_000
-FRAME_TAKEN_LIMIT :: 10_000
+VIEWER_FRAME_WRITE_LIMIT :: 10_000
+VIEWER_FRAME_TAKEN_LIMIT :: 10_000
+// The write bound while another viewer waits: the copy of the screen waits
+// for the viewer frame that is written, so one viewer holds the other back for
+// this long at most.
+VIEWER_FRAME_WRITE_LIMIT_SHARED :: 2_000
+// A record of the viewer that came in part must be whole this long after
+// its first byte: a viewer that stops in the middle of a record ends here,
+// not at the idle timeout of QUIC.
+RECORD_READ_LIMIT :: 10_000
 
 // The datagram region: 256 places of 2048 bytes, as `remote`.
 PLACE_SIZE :: 2048
@@ -136,11 +144,11 @@ HELD_CAPACITY :: PLACE_COUNT + 2 * RECEIVE_PLACES + CAPACITY
 // writer, and no key is dropped.
 COMPOSITOR_HOLD_CAPACITY :: 64
 LOG_LIMIT :: 50 // Lines of connections and of refusals in one second at most.
-// The frames of a small damage that one measure line takes: the median of
+// The viewer frames of a small damage that one measure line takes: the median of
 // 21, as the other measures of the system.
-SMALL_FRAME_SAMPLES :: 21
-// A frame of a small damage: at most this many pixels.
-SMALL_FRAME_PIXELS :: 64 * 64
+SMALL_VIEWER_FRAME_SAMPLES :: 21
+// A viewer frame of a small damage: at most this many pixels.
+SMALL_VIEWER_FRAME_PIXELS :: 64 * 64
 
 process_generator: random.Generator
 server: quic.Server
@@ -164,7 +172,12 @@ log_count: u64
 // face of the compositor ride it.
 window_memory: system.Handle
 window: ring.Ring
-compositor_held: [COMPOSITOR_HOLD_CAPACITY]ring.Record
+Compositor_Held :: struct {
+	record:            ring.Record,
+	viewer_place:      int, // The viewer of a key or a pointer record; -1: a command of the face.
+	viewer_generation: u64,
+}
+compositor_held: [COMPOSITOR_HOLD_CAPACITY]Compositor_Held
 compositor_held_count: int
 
 // The client table that the root service writes, and the copy of its rows
@@ -188,7 +201,7 @@ capture_pictures: [display.PICTURE_COUNT][^]u32
 // The picture of the last Capture_Frame, which this process holds until it
 // copied it: -1, none.
 held_picture := -1
-// The copy of the screen: each viewer codes its tiles from it.
+// The copy of the screen: each viewer codes its screen pieces from it.
 mirror: [^]u32
 mirror_memory: system.Handle
 mirror_pixels: int
@@ -196,17 +209,18 @@ mirror_valid: bool // The first record of the face, the whole screen, is in the 
 pointer_place: protocol.Pointer_Place_Body
 captures: u64 // The records of the compositor that went into the copy.
 
-// What one viewer is at in its frame.
-Frame_Step :: enum u8 {
-	None, // No frame: the viewer waits for damage, or took the last frame.
+// What one viewer is at in its viewer frame.
+Viewer_Frame_Step :: enum u8 {
+	None, // No viewer frame: the viewer waits for damage, or took the last viewer frame.
 	Pointer_Place, // The place of the pointer goes first, when it moved.
-	Frame_Start,
-	Tiles,
-	Frame_End,
-	In_Flight, // Frame_End went: the viewer takes the frame.
+	Viewer_Frame_Start,
+	Screen_Pieces,
+	Viewer_Frame_End,
+	In_Flight, // Viewer_Frame_End went: the viewer takes the viewer frame.
 }
 
 Viewer :: struct {
+	place:      int, // The place of its record in the server, and of this viewer.
 	generation: u64, // The generation of the record of the binding.
 	bound:      bool,
 	ended:      bool, // The connection was closed by this process: nothing binds it again.
@@ -222,35 +236,36 @@ Viewer :: struct {
 	incoming:       [protocol.RECORD_HEADER_SIZE + protocol.VIEWER_BODY_LIMIT]u8,
 	incoming_count: int,
 	// The record of this process that is being written to the stream.
-	outgoing:         [protocol.RECORD_HEADER_SIZE + protocol.TILE_BODY_LIMIT]u8,
+	outgoing:         [protocol.RECORD_HEADER_SIZE + protocol.SCREEN_PIECE_BODY_LIMIT]u8,
 	outgoing_length:  int,
 	outgoing_written: int,
 	session_started:  bool, // Session_Start came: the first record of the viewer.
 	size_sent:        bool,
 	damage:           interface.Damage, // The rectangles that the viewer does not have.
 	merges:           u64, // Rectangles that joined another because the damage set was full.
-	frame:            interface.Damage, // The rectangles of the frame that goes.
-	frame_step:       Frame_Step,
-	frame_serial:     u64,
-	frame_rectangle:  int,
-	frame_tile:       u32,
-	frame_tiles:      u32,
-	frame_pixels:     u64,
-	frame_bytes:      u64,
-	frame_coded_time: u64, // Nanoseconds of the tile coder in this frame.
-	step_started_at:  u64, // Milliseconds of the machine: the start of the bound of the step.
-	frame_started_at: u64, // Nanoseconds: Frame_Start went into the stream.
+	viewer_frame:            interface.Damage, // The rectangles of the viewer frame that goes.
+	viewer_frame_step:       Viewer_Frame_Step,
+	viewer_frame_serial:     u64,
+	viewer_frame_rectangle:  int,
+	viewer_frame_piece:       u32,
+	viewer_frame_pieces:      u32,
+	viewer_frame_pixels:     u64,
+	viewer_frame_bytes:      u64,
+	viewer_frame_coded_time: u64, // Nanoseconds of the screen piece coder in this viewer frame.
+	step_started_at:  u64, // Milliseconds of the machine: the start of the write bound or of the take bound.
+	read_started_at:  u64, // Milliseconds of the machine: the first byte of the record that is read.
+	viewer_frame_started_at: u64, // Nanoseconds: Viewer_Frame_Start went into the stream.
 	pointer_sent:     protocol.Pointer_Place_Body,
 	frames:           u64,
 	whole_logged:     bool,
 }
 viewers: [CAPACITY]Viewer
 
-// The measure of the frames of a small damage, in the machine.
-small_frame_bytes: [SMALL_FRAME_SAMPLES]u64
-small_frame_times: [SMALL_FRAME_SAMPLES]u64
-small_frame_count: int
-small_frames_logged: bool
+// The measure of the viewer frames of a small damage, in the machine.
+small_viewer_frame_bytes: [SMALL_VIEWER_FRAME_SAMPLES]u64
+small_viewer_frame_times: [SMALL_VIEWER_FRAME_SAMPLES]u64
+small_viewer_frame_count: int
+small_viewer_frames_logged: bool
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log("remote_display: ", text)
@@ -356,7 +371,9 @@ log_allowed :: proc "contextless" () -> bool {
 
 // compositor_send gives a record to the compositor, after the records that
 // its ring did not take, in their order.
-compositor_send :: proc "contextless" (record: ring.Record) {
+// A key or a pointer of a viewer carries the place and the generation of
+// that viewer; a command of the capture face carries none (place -1).
+compositor_send :: proc "contextless" (record: ring.Record, viewer_place: int = -1, viewer_generation: u64 = 0) {
 	if compositor_held_count == 0 && system.send(&window.commands, record) {
 		return
 	}
@@ -365,17 +382,34 @@ compositor_send :: proc "contextless" (record: ring.Record) {
 		// commands of the face are a few: this does not happen.
 		fail("the records to the compositor passed their bound")
 	}
-	compositor_held[compositor_held_count] = record
+	compositor_held[compositor_held_count] = {record = record, viewer_place = viewer_place, viewer_generation = viewer_generation}
 	compositor_held_count += 1
 }
 
 compositor_held_push :: proc "contextless" () {
 	done := 0
-	for done < compositor_held_count && system.send(&window.commands, compositor_held[done]) {
+	for done < compositor_held_count && system.send(&window.commands, compositor_held[done].record) {
 		done += 1
 	}
 	copy(compositor_held[:], compositor_held[done:compositor_held_count])
 	compositor_held_count -= done
+}
+
+// compositor_held_drop takes out the keys and the pointer records of one
+// viewer that wait for room in the window ring: the end of a viewer ends
+// its input at once. The commands of the face stay, in their order.
+compositor_held_drop :: proc "contextless" (viewer_place: int, viewer_generation: u64) -> (dropped: int) {
+	kept := 0
+	for held in compositor_held[:compositor_held_count] {
+		if held.viewer_place == viewer_place && held.viewer_generation == viewer_generation {
+			dropped += 1
+			continue
+		}
+		compositor_held[kept] = held
+		kept += 1
+	}
+	compositor_held_count = kept
+	return dropped
 }
 
 // client_key_allowed is the check of the handshake: the client proved this
@@ -390,15 +424,22 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 	}
 	if log_allowed() {
 		text: [64]u8
-		system.log("remote_display: refused the viewer key ", hex_text(text[:], proven[:]), ": no principal allowed it for the view, or the session of its principal is locked; the handshake ends before any frame")
+		system.log("remote_display: refused the viewer key ", hex_text(text[:], proven[:]), ": no principal allowed it for the view, or the session of its principal is locked; the handshake ends before any viewer frame")
 	}
 	return false
 }
 
+// viewer_close ends the session of a viewer: its connection, and its keys
+// and pointer records that wait for room in the window ring. A record that
+// is in the ring already cannot be taken back.
 viewer_close :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer, code: protocol.Display_Error) {
 	viewer.ended = true
 	viewer.bound = false
 	quic.connection_close(connection, u64(code), now_microseconds())
+	if dropped := compositor_held_drop(viewer.place, viewer.generation); dropped > 0 && log_allowed() {
+		head: [16]u8
+		system.log("remote_display: the end of the viewer key ", hex_text(head[:], viewer.key[:8]), " dropped ", u64(dropped), " of its input records that waited for the compositor")
+	}
 }
 
 // viewer_bind binds a record whose handshake ended to the row of its key.
@@ -416,7 +457,7 @@ viewer_bind :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer
 	}
 	viewer.bound, viewer.row, viewer.serial, viewer.principal, viewer.key = true, row, client_rows[row].serial, client_rows[row].principal, key
 	viewer.input = remote.client_grant_holds(&client_rows, row, viewer.serial, .Input)
-	// The first frame is the whole screen.
+	// The first viewer frame is the whole screen.
 	viewer.damage = {}
 	interface.damage_add(&viewer.damage, {0, 0, int(protocol.SCREEN_WIDTH_LIMIT), int(protocol.SCREEN_HEIGHT_LIMIT)})
 	system.log("remote_display: ", address_text(text[:], peer), " proved the viewer key ", hex_text(head[:], key[:8]), ": it sees the screen for principal ", viewer.principal, viewer.input ? ", and its keys and its pointer go to the desktop" : ", with no input")
@@ -447,13 +488,15 @@ viewers_tell :: proc "contextless" () {
 }
 
 // viewer_grant_check ends the connection of a viewer whose grant ended, in
-// the middle of a frame too, and follows a change of its input.
+// the middle of a viewer frame too, and follows a change of its input.
 viewer_grant_check :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer, peer: quic.Remote) {
 	head: [16]u8
 	text: [40]u8
 	if !remote.client_grant_holds(&client_rows, viewer.row, viewer.serial, .View) {
 		viewer_close(connection, viewer, .Revoked)
-		system.log("remote_display: the grant of the viewer key ", hex_text(head[:], viewer.key[:8]), " of principal ", viewer.principal, " ended (a revocation, or a lock of its session): the connection from ", address_text(text[:], peer), " ends with the code Revoked")
+		if log_allowed() {
+			system.log("remote_display: the grant of the viewer key ", hex_text(head[:], viewer.key[:8]), " of principal ", viewer.principal, " ended (a revocation, a lock of its session, or another session in front): the connection from ", address_text(text[:], peer), " ends with the code Revoked")
+		}
 		viewers_tell()
 		return
 	}
@@ -491,6 +534,9 @@ viewer_read :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer
 			viewer_close(connection, viewer, .None)
 			viewers_tell()
 			return
+		}
+		if viewer.incoming_count == 0 && count > 0 {
+			viewer.read_started_at = system.time()
 		}
 		viewer.incoming_count += count
 		// The header is checked once, by the read that completes it.
@@ -538,33 +584,35 @@ viewer_record_take :: proc "contextless" (connection: ^quic.Connection, viewer: 
 		return
 	}
 	switch record.kind {
-	case .None, .Screen_Size, .Frame_Start, .Tile, .Frame_End, .Pointer_Place:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place:
 		// The border took a record of the viewer only.
 		viewer_refuse(connection, viewer, .Bad_Record, protocol.RECORD_PROBLEM_SENTENCES[.Wrong_Direction])
 	case .Session_Start:
 		viewer.session_started = true
-	case .Frame_Taken:
-		if viewer.frame_step != .In_Flight || record.frame_taken.serial != viewer.frame_serial {
-			viewer_refuse(connection, viewer, .Out_Of_Order, "a Frame_Taken of no frame in flight")
+	case .Viewer_Frame_Taken:
+		if viewer.viewer_frame_step != .In_Flight || record.viewer_frame_taken.serial != viewer.viewer_frame_serial {
+			viewer_refuse(connection, viewer, .Out_Of_Order, "a Viewer_Frame_Taken of no viewer frame in flight")
 			return
 		}
 		viewer_frame_taken(viewer)
-	case .Tile_Request:
-		request := record.tile_request
+	case .Screen_Piece_Request:
+		request := record.screen_piece_request
 		viewer_damage_add(viewer, {int(request.x), int(request.y), int(request.x + request.width), int(request.y + request.height)})
 	case .Key, .Pointer:
 		if !remote.client_grant_holds(&client_rows, viewer.row, viewer.serial, .Input) {
 			viewer_close(connection, viewer, .Input_Not_Allowed)
-			system.log("remote_display: the viewer key ", hex_text(head[:], viewer.key[:8]), " sent input, and principal ", viewer.principal, " allowed it for the view only: nothing reaches the desktop, and the connection ends with the code Input_Not_Allowed")
+			if log_allowed() {
+				system.log("remote_display: the viewer key ", hex_text(head[:], viewer.key[:8]), " sent input, and principal ", viewer.principal, " allowed it for the view only: nothing reaches the desktop, and the connection ends with the code Input_Not_Allowed")
+			}
 			viewers_tell()
 			return
 		}
 		if record.kind == .Key {
 			key := record.key
-			compositor_send({kind = u32(display.Command.Remote_Key), values = {0 = u64(key.code), 1 = u64(key.character), 2 = u64(key.pressed), 3 = u64(key.modifiers)}})
+			compositor_send({kind = u32(display.Command.Remote_Key), values = {0 = u64(key.code), 1 = u64(key.character), 2 = u64(key.pressed), 3 = u64(key.modifiers)}}, viewer.place, viewer.generation)
 		} else {
 			pointer := record.pointer
-			compositor_send({kind = u32(display.Command.Remote_Pointer), values = {0 = u64(pointer.x), 1 = u64(pointer.y), 2 = u64(pointer.buttons), 3 = u64(i64(pointer.wheel))}})
+			compositor_send({kind = u32(display.Command.Remote_Pointer), values = {0 = u64(pointer.x), 1 = u64(pointer.y), 2 = u64(pointer.buttons), 3 = u64(i64(pointer.wheel))}}, viewer.place, viewer.generation)
 		}
 	}
 }
@@ -579,27 +627,27 @@ viewer_damage_add :: proc "contextless" (viewer: ^Viewer, rectangle: interface.R
 	interface.damage_add(&viewer.damage, rectangle)
 }
 
-// viewer_frame_taken ends a frame that the viewer took, and takes its
+// viewer_frame_taken ends a viewer frame that the viewer took, and takes its
 // measures.
 viewer_frame_taken :: proc "contextless" (viewer: ^Viewer) {
-	viewer.frame_step = .None
+	viewer.viewer_frame_step = .None
 	viewer.frames += 1
 	taken_at := system.nanoseconds()
-	spent := taken_at - min(viewer.frame_started_at, taken_at)
-	if !viewer.whole_logged && viewer.frame_pixels == u64(screen.width) * u64(screen.height) {
+	spent := taken_at - min(viewer.viewer_frame_started_at, taken_at)
+	if !viewer.whole_logged && viewer.viewer_frame_pixels == u64(screen.width) * u64(screen.height) {
 		viewer.whole_logged = true
-		system.log("remote_display: a measure: the whole screen of ", u64(screen.width), "x", u64(screen.height), " in one frame: ", u64(viewer.frame_tiles), " tiles, ", viewer.frame_bytes, " bytes of tiles for ", viewer.frame_pixels * 4, " bytes of pixels, coded in ", viewer.frame_coded_time / 1000, " us, taken by the viewer ", spent / 1000, " us after its start")
+		system.log("remote_display: a measure: the whole screen of ", u64(screen.width), "x", u64(screen.height), " in one viewer frame: ", u64(viewer.viewer_frame_pieces), " screen pieces, ", viewer.viewer_frame_bytes, " bytes of screen pieces for ", viewer.viewer_frame_pixels * 4, " bytes of pixels, coded in ", viewer.viewer_frame_coded_time / 1000, " us, taken by the viewer ", spent / 1000, " us after its start")
 	}
-	if viewer.frame_pixels > 0 && viewer.frame_pixels <= SMALL_FRAME_PIXELS && small_frame_count < SMALL_FRAME_SAMPLES {
-		small_frame_bytes[small_frame_count] = viewer.frame_bytes
-		small_frame_times[small_frame_count] = spent
-		small_frame_count += 1
+	if viewer.viewer_frame_pixels > 0 && viewer.viewer_frame_pixels <= SMALL_VIEWER_FRAME_PIXELS && small_viewer_frame_count < SMALL_VIEWER_FRAME_SAMPLES {
+		small_viewer_frame_bytes[small_viewer_frame_count] = viewer.viewer_frame_bytes
+		small_viewer_frame_times[small_viewer_frame_count] = spent
+		small_viewer_frame_count += 1
 	}
-	if small_frame_count == SMALL_FRAME_SAMPLES && !small_frames_logged {
-		small_frames_logged = true
-		median_sort(small_frame_bytes[:])
-		median_sort(small_frame_times[:])
-		system.log("remote_display: a measure: frames of a small damage (at most ", u64(SMALL_FRAME_PIXELS), " pixels), the median of ", u64(SMALL_FRAME_SAMPLES), ": ", small_frame_bytes[SMALL_FRAME_SAMPLES / 2], " bytes of tiles, ", small_frame_times[SMALL_FRAME_SAMPLES / 2] / 1000, " us from Frame_Start in the stream to Frame_Taken; the least ", small_frame_bytes[0], " bytes and ", small_frame_times[0] / 1000, " us")
+	if small_viewer_frame_count == SMALL_VIEWER_FRAME_SAMPLES && !small_viewer_frames_logged {
+		small_viewer_frames_logged = true
+		median_sort(small_viewer_frame_bytes[:])
+		median_sort(small_viewer_frame_times[:])
+		system.log("remote_display: a measure: viewer frames of a small damage (at most ", u64(SMALL_VIEWER_FRAME_PIXELS), " pixels), the median of ", u64(SMALL_VIEWER_FRAME_SAMPLES), ": ", small_viewer_frame_bytes[SMALL_VIEWER_FRAME_SAMPLES / 2], " bytes of screen pieces, ", small_viewer_frame_times[SMALL_VIEWER_FRAME_SAMPLES / 2] / 1000, " us from Viewer_Frame_Start in the stream to Viewer_Frame_Taken; the least ", small_viewer_frame_bytes[0], " bytes and ", small_viewer_frame_times[0] / 1000, " us")
 	}
 }
 
@@ -628,30 +676,32 @@ viewer_next_record :: proc "contextless" (viewer: ^Viewer) -> bool {
 		bytes, _ := protocol.record_write(viewer.outgoing[:], .Screen_Size, protocol.Screen_Size_Body{screen.width, screen.height})
 		viewer.outgoing_length = len(bytes)
 		viewer.size_sent = true
+		// The write bound starts with the first record of the service.
+		viewer.step_started_at = system.time()
 		return true
 	}
 	now := system.time()
-	switch viewer.frame_step {
+	switch viewer.viewer_frame_step {
 	case .In_Flight:
 		return false
 	case .None:
 		if !mirror_valid || held_picture >= 0 || viewer.damage.count == 0 {
-			// A picture that waits for its copy goes into the frame first:
-			// a frame shows the newest moment.
+			// A picture that waits for its copy goes into the viewer frame first:
+			// a viewer frame shows the newest moment.
 			return false
 		}
-		// The frame takes the damage of the viewer, cut to the screen.
-		viewer.frame = {}
-		viewer.frame_tiles, viewer.frame_pixels, viewer.frame_bytes, viewer.frame_coded_time = 0, 0, 0, 0
+		// The viewer frame takes the damage of the viewer, cut to the screen.
+		viewer.viewer_frame = {}
+		viewer.viewer_frame_pieces, viewer.viewer_frame_pixels, viewer.viewer_frame_bytes, viewer.viewer_frame_coded_time = 0, 0, 0, 0
 		for rectangle in viewer.damage.rectangles[:viewer.damage.count] {
 			cut := interface.Rectangle{max(rectangle.left, 0), max(rectangle.top, 0), min(rectangle.right, int(screen.width)), min(rectangle.bottom, int(screen.height))}
 			if cut.right <= cut.left || cut.bottom <= cut.top {
 				continue
 			}
-			viewer.frame.rectangles[viewer.frame.count] = cut
-			viewer.frame.count += 1
-			viewer.frame_tiles += protocol.tile_count(u32(cut.right - cut.left), u32(cut.bottom - cut.top))
-			viewer.frame_pixels += u64(cut.right - cut.left) * u64(cut.bottom - cut.top)
+			viewer.viewer_frame.rectangles[viewer.viewer_frame.count] = cut
+			viewer.viewer_frame.count += 1
+			viewer.viewer_frame_pieces += protocol.screen_piece_count(u32(cut.right - cut.left), u32(cut.bottom - cut.top))
+			viewer.viewer_frame_pixels += u64(cut.right - cut.left) * u64(cut.bottom - cut.top)
 		}
 		viewer.damage = {}
 		if viewer.merges > 0 && log_allowed() {
@@ -659,58 +709,58 @@ viewer_next_record :: proc "contextless" (viewer: ^Viewer) -> bool {
 			system.log("remote_display: the damage of the viewer key ", hex_text(head[:], viewer.key[:8]), " was full: ", viewer.merges, " rectangles joined another, and the viewer receives more pixels")
 			viewer.merges = 0
 		}
-		if viewer.frame.count == 0 {
+		if viewer.viewer_frame.count == 0 {
 			return false
 		}
-		viewer.frame_serial += 1
-		viewer.frame_rectangle, viewer.frame_tile = 0, 0
-		viewer.frame_step = viewer.pointer_sent == pointer_place ? .Frame_Start : .Pointer_Place
+		viewer.viewer_frame_serial += 1
+		viewer.viewer_frame_rectangle, viewer.viewer_frame_piece = 0, 0
+		viewer.viewer_frame_step = viewer.pointer_sent == pointer_place ? .Viewer_Frame_Start : .Pointer_Place
 		viewer.step_started_at = now
 		return viewer_next_record(viewer)
 	case .Pointer_Place:
 		bytes, _ := protocol.record_write(viewer.outgoing[:], .Pointer_Place, pointer_place)
 		viewer.outgoing_length = len(bytes)
 		viewer.pointer_sent = pointer_place
-		viewer.frame_step = .Frame_Start
+		viewer.viewer_frame_step = .Viewer_Frame_Start
 		return true
-	case .Frame_Start:
-		start := protocol.Frame_Start_Body{serial = viewer.frame_serial, tile_count = viewer.frame_tiles, bytes = 0}
-		// The bytes of the tiles are known when they are coded: the
-		// header gives the bound of the frame, its tiles at their worst.
-		start.bytes = u64(viewer.frame_tiles) * (protocol.RECORD_HEADER_SIZE + size_of(protocol.Tile_Header)) + viewer.frame_pixels * protocol.CODED_PIXEL_LIMIT
-		bytes, _ := protocol.record_write(viewer.outgoing[:], .Frame_Start, start)
+	case .Viewer_Frame_Start:
+		start := protocol.Viewer_Frame_Start_Body{serial = viewer.viewer_frame_serial, screen_piece_count = viewer.viewer_frame_pieces, bytes = 0}
+		// The bytes of the screen pieces are known when they are coded: the
+		// header gives the bound of the viewer frame, its screen pieces at their worst.
+		start.bytes = u64(viewer.viewer_frame_pieces) * (protocol.RECORD_HEADER_SIZE + size_of(protocol.Screen_Piece_Header)) + viewer.viewer_frame_pixels * protocol.CODED_PIXEL_LIMIT
+		bytes, _ := protocol.record_write(viewer.outgoing[:], .Viewer_Frame_Start, start)
 		viewer.outgoing_length = len(bytes)
-		viewer.frame_step = .Tiles
-		viewer.frame_started_at = system.nanoseconds()
+		viewer.viewer_frame_step = .Screen_Pieces
+		viewer.viewer_frame_started_at = system.nanoseconds()
 		return true
-	case .Tiles:
-		if viewer.frame_rectangle >= viewer.frame.count {
-			viewer.frame_step = .Frame_End
+	case .Screen_Pieces:
+		if viewer.viewer_frame_rectangle >= viewer.viewer_frame.count {
+			viewer.viewer_frame_step = .Viewer_Frame_End
 			return viewer_next_record(viewer)
 		}
-		rectangle := viewer.frame.rectangles[viewer.frame_rectangle]
+		rectangle := viewer.viewer_frame.rectangles[viewer.viewer_frame_rectangle]
 		width, height := u32(rectangle.right - rectangle.left), u32(rectangle.bottom - rectangle.top)
-		x, y, tile_width, tile_height := protocol.tile_at(u32(rectangle.left), u32(rectangle.top), width, height, viewer.frame_tile)
+		x, y, piece_width, piece_height := protocol.screen_piece_at(u32(rectangle.left), u32(rectangle.top), width, height, viewer.viewer_frame_piece)
 		coded_start := system.nanoseconds()
-		bytes, written := protocol.tile_record_write(viewer.outgoing[:], mirror[:mirror_pixels], int(screen.width), x, y, tile_width, tile_height)
-		viewer.frame_coded_time += system.nanoseconds() - coded_start
+		bytes, written := protocol.screen_piece_record_write(viewer.outgoing[:], mirror[:mirror_pixels], int(screen.width), x, y, piece_width, piece_height)
+		viewer.viewer_frame_coded_time += system.nanoseconds() - coded_start
 		if !written {
-			// The bytes hold the worst code of a whole tile: this does not
+			// The bytes hold the worst code of a whole screen piece: this does not
 			// happen.
-			fail("a tile did not fit its record")
+			fail("a screen piece did not fit its record")
 		}
 		viewer.outgoing_length = len(bytes)
-		viewer.frame_bytes += u64(len(bytes))
-		viewer.frame_tile += 1
-		if viewer.frame_tile == protocol.tile_count(width, height) {
-			viewer.frame_rectangle += 1
-			viewer.frame_tile = 0
+		viewer.viewer_frame_bytes += u64(len(bytes))
+		viewer.viewer_frame_piece += 1
+		if viewer.viewer_frame_piece == protocol.screen_piece_count(width, height) {
+			viewer.viewer_frame_rectangle += 1
+			viewer.viewer_frame_piece = 0
 		}
 		return true
-	case .Frame_End:
-		bytes, _ := protocol.record_write(viewer.outgoing[:], .Frame_End, protocol.Frame_End_Body{serial = viewer.frame_serial})
+	case .Viewer_Frame_End:
+		bytes, _ := protocol.record_write(viewer.outgoing[:], .Viewer_Frame_End, protocol.Viewer_Frame_End_Body{serial = viewer.viewer_frame_serial})
 		viewer.outgoing_length = len(bytes)
-		viewer.frame_step = .In_Flight
+		viewer.viewer_frame_step = .In_Flight
 		viewer.step_started_at = now
 		return true
 	}
@@ -733,11 +783,11 @@ viewer_write :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewe
 	}
 }
 
-// viewer_writing says if a viewer is in the middle of a frame: its tiles
+// viewer_writing says if a viewer is in the middle of a viewer frame: its screen pieces
 // come from the copy of the screen, which must not change under them.
 viewer_writing :: proc "contextless" (viewer: ^Viewer) -> bool {
-	switch viewer.frame_step {
-	case .Pointer_Place, .Frame_Start, .Tiles, .Frame_End:
+	switch viewer.viewer_frame_step {
+	case .Pointer_Place, .Viewer_Frame_Start, .Screen_Pieces, .Viewer_Frame_End:
 		return true
 	case .None, .In_Flight:
 		return viewer.outgoing_written < viewer.outgoing_length
@@ -746,31 +796,30 @@ viewer_writing :: proc "contextless" (viewer: ^Viewer) -> bool {
 }
 
 // viewers_work moves each viewer: its binding, its grant, its stream, its
-// records, and the bounds of its frame.
+// records, and the bounds of its viewer frame.
 viewers_work :: proc "contextless" () {
 	client_table_version_seen = intrinsics.atomic_load_explicit(&client_table.version, .Acquire)
 	remote.client_table_read(client_table, &client_rows)
 	now := system.time()
 	for record, place in records {
 		viewer := &viewers[place]
-		if !record.in_use {
-			if viewer.bound {
-				viewer^ = {}
+		if !record.in_use || viewer.generation != record.generation {
+			// The client of the place ended, or another one took it: the
+			// input of the one before goes nowhere.
+			compositor_held_drop(place, viewer.generation)
+			was_bound := viewer.bound
+			viewer^ = {place = place, generation = record.in_use ? record.generation : 0}
+			if was_bound {
 				viewers_tell()
 			}
-			viewer^ = {}
-			continue
-		}
-		if viewer.generation != record.generation {
-			if viewer.bound {
-				viewer^ = {generation = record.generation}
-				viewers_tell()
+			if !record.in_use {
+				continue
 			}
-			viewer^ = {generation = record.generation}
 		}
 		connection := &quic_connections[place]
 		if connection.state == .Closed && viewer.bound {
 			viewer.bound = false
+			compositor_held_drop(place, viewer.generation)
 			viewers_tell()
 		}
 		if connection.state != .Connected {
@@ -797,24 +846,84 @@ viewers_work :: proc "contextless" () {
 		}
 		viewer_read(connection, viewer)
 		viewer_write(connection, viewer)
-		elapsed := now - min(viewer.step_started_at, now)
-		writing := viewer_writing(viewer)
-		if viewer.bound && ((writing && elapsed >= FRAME_WRITE_LIMIT) || (viewer.frame_step == .In_Flight && elapsed >= FRAME_TAKEN_LIMIT)) {
-			head: [16]u8
-			viewer_close(connection, viewer, .Timeout)
-			system.log("remote_display: the viewer key ", hex_text(head[:], viewer.key[:8]), " did not take its frame ", viewer.frame_serial, " in its bound of ", u64(FRAME_TAKEN_LIMIT), " ms: the connection ends with the code Timeout")
-			viewers_tell()
+		if !viewer.bound {
+			continue
 		}
+		bound, limit := viewer_bound_of(viewer)
+		if bound == .None || now - min(viewer_bound_start(viewer, bound), now) < limit {
+			continue
+		}
+		viewer_close(connection, viewer, .Timeout)
+		if log_allowed() {
+			head: [16]u8
+			system.log("remote_display: the viewer key ", hex_text(head[:], viewer.key[:8]), " ", VIEWER_BOUND_SENTENCES[bound], " in its bound of ", limit, " ms: the connection ends with the code Timeout")
+		}
+		viewers_tell()
 	}
 }
 
-// viewers_deadline gives the nearest bound of a frame, in milliseconds of
+// The bound of time that a viewer is under, each with its own start and
+// its own line.
+Viewer_Bound :: enum u8 {
+	None, // The viewer waits for damage: no bound.
+	Write, // A record of the service goes into the stream: Screen_Size, or a viewer frame up to Viewer_Frame_End.
+	Take, // Viewer_Frame_End went: the viewer must send Viewer_Frame_Taken.
+	Read, // A record of the viewer came in part: the rest must come.
+}
+
+@(rodata)
+VIEWER_BOUND_SENTENCES := [Viewer_Bound]string {
+	.None  = "has no bound",
+	.Write = "did not let the stream take the records of its viewer frame",
+	.Take  = "did not take its viewer frame",
+	.Read  = "did not send the rest of its record",
+}
+
+// viewer_bound_of gives the bound that a viewer is under now, and its
+// length in milliseconds. The write bound is shorter while another viewer
+// waits for the copy of the screen, which a viewer frame that is written holds
+// back.
+viewer_bound_of :: proc "contextless" (viewer: ^Viewer) -> (bound: Viewer_Bound, limit: u64) {
+	switch {
+	case viewer.incoming_count > 0:
+		return .Read, RECORD_READ_LIMIT
+	case viewer.viewer_frame_step == .In_Flight && viewer.outgoing_written == viewer.outgoing_length:
+		return .Take, VIEWER_FRAME_TAKEN_LIMIT
+	case viewer_writing(viewer):
+		for &other in viewers {
+			if &other != viewer && other.bound && other.viewer_frame_step == .None && other.damage.count > 0 {
+				return .Write, VIEWER_FRAME_WRITE_LIMIT_SHARED
+			}
+		}
+		return .Write, VIEWER_FRAME_WRITE_LIMIT
+	}
+	return .None, 0
+}
+
+// viewer_bound_start gives the start of a bound, in milliseconds of the
+// machine.
+viewer_bound_start :: proc "contextless" (viewer: ^Viewer, bound: Viewer_Bound) -> u64 {
+	switch bound {
+	case .Read:
+		return viewer.read_started_at
+	case .Write, .Take:
+		return viewer.step_started_at
+	case .None:
+	}
+	return max(u64)
+}
+
+// viewers_deadline gives the nearest bound of a viewer, in milliseconds of
 // the machine, or max(u64).
 viewers_deadline :: proc "contextless" () -> u64 {
 	deadline := max(u64)
 	for &viewer in viewers {
-		if viewer.bound && viewer.frame_step != .None {
-			deadline = min(deadline, viewer.step_started_at + FRAME_TAKEN_LIMIT)
+		if !viewer.bound {
+			continue
+		}
+		bound, limit := viewer_bound_of(&viewer)
+		if bound != .None {
+			deadline = min(deadline, viewer_bound_start(&viewer, bound) + limit)
 		}
 	}
 	return deadline
@@ -920,7 +1029,7 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 }
 
 // capture_apply copies the picture that the compositor wrote into the copy
-// of the screen, while no viewer is in the middle of a frame, then gives it
+// of the screen, while no viewer is in the middle of a viewer frame, then gives it
 // back. The header is copied, then checked: the compositor wrote it.
 capture_apply :: proc "contextless" () {
 	if held_picture < 0 || capture_state != .Open {
@@ -1074,7 +1183,7 @@ exchange :: proc "contextless" (arrived: []ring.Record) -> (deadline: u64) {
 // server, moves the viewers, takes the records of the compositor, copies a
 // picture that waits, and opens or closes the capture face. The loop waits
 // for a datagram, a record of the compositor, a change of the client table,
-// the next deadline of QUIC, or the bound of a frame.
+// the next deadline of QUIC, or the bound of a viewer frame.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
@@ -1187,7 +1296,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		capture_follow()
 		// A picture that the viewers no longer hold back goes into the copy
-		// in this pass, and the frames that it damaged go at once.
+		// in this pass, and the viewer frames that it damaged go at once.
 		capture_apply()
 		system.wake_reader(&endpoint.commands)
 		if !ring.empty(&endpoint.completions) || !ring.empty(&window.completions) {

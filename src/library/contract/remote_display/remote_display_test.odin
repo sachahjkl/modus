@@ -35,7 +35,7 @@ service_check :: proc(kind: Record_Kind, body: $T) -> (Service_Record, Record_Pr
 // of the kind.
 @(test)
 record_length_problem_refuses_each_header_that_breaks_a_rule :: proc(t: ^testing.T) {
-	unknown := [?]u32{u32(Record_Kind.None), u32(Record_Kind.Pointer_Place) + 1, u32(Record_Kind.Frame_Taken) - 1, u32(max(Record_Kind)) + 1, 1 << 31, max(u32)}
+	unknown := [?]u32{u32(Record_Kind.None), u32(Record_Kind.Pointer_Place) + 1, u32(Record_Kind.Viewer_Frame_Taken) - 1, u32(max(Record_Kind)) + 1, 1 << 31, max(u32)}
 	for word in unknown {
 		for direction in Direction {
 			problem := record_length_problem({kind = Record_Kind(word), length = 8}, direction)
@@ -50,7 +50,7 @@ record_length_problem_refuses_each_header_that_breaks_a_rule :: proc(t: ^testing
 		testing.expectf(t, record_length_problem({kind = kind, length = BODY_SIZES[kind]}, other) == .Wrong_Direction, "the kind %v went the other way", kind)
 		own := kind_direction(kind)
 		testing.expectf(t, record_length_problem({kind = kind, length = BODY_SIZES[kind]}, own) == .None, "the kind %v with its length was refused", kind)
-		if kind != .Tile {
+		if kind != .Screen_Piece {
 			testing.expectf(t, record_length_problem({kind = kind, length = BODY_SIZES[kind] - 1}, own) == .Wrong_Length, "the kind %v one byte short was taken", kind)
 		}
 	}
@@ -61,21 +61,21 @@ record_length_problem_refuses_each_header_that_breaks_a_rule :: proc(t: ^testing
 	// The body of Key is the largest of the viewer, at the bound: one byte
 	// more is past the bound. A body under the bound with one byte more has a
 	// wrong length.
-	#assert(size_of(Key_Body) == VIEWER_BODY_LIMIT && size_of(Frame_Taken_Body) < VIEWER_BODY_LIMIT)
+	#assert(size_of(Key_Body) == VIEWER_BODY_LIMIT && size_of(Viewer_Frame_Taken_Body) < VIEWER_BODY_LIMIT)
 	testing.expect_value(t, record_length_problem({kind = .Key, length = BODY_SIZES[.Key] + 1}, .To_Service), Record_Problem.Past_Bound)
-	testing.expect_value(t, record_length_problem({kind = .Frame_Taken, length = BODY_SIZES[.Frame_Taken] + 1}, .To_Service), Record_Problem.Wrong_Length)
-	testing.expect_value(t, record_length_problem({kind = .Tile, length = SERVICE_BODY_LIMIT + 1}, .To_Viewer), Record_Problem.Past_Bound)
-	testing.expect_value(t, record_length_problem({kind = .Tile, length = max(u32)}, .To_Viewer), Record_Problem.Past_Bound)
-	testing.expect_value(t, record_length_problem({kind = .Tile, length = size_of(Tile_Header) - 1}, .To_Viewer), Record_Problem.Wrong_Length)
-	testing.expect_value(t, record_length_problem({kind = .Tile, length = 0}, .To_Viewer), Record_Problem.Wrong_Length)
-	testing.expect_value(t, record_length_problem({kind = .Tile, length = SERVICE_BODY_LIMIT}, .To_Viewer), Record_Problem.None)
+	testing.expect_value(t, record_length_problem({kind = .Viewer_Frame_Taken, length = BODY_SIZES[.Viewer_Frame_Taken] + 1}, .To_Service), Record_Problem.Wrong_Length)
+	testing.expect_value(t, record_length_problem({kind = .Screen_Piece, length = SERVICE_BODY_LIMIT + 1}, .To_Viewer), Record_Problem.Past_Bound)
+	testing.expect_value(t, record_length_problem({kind = .Screen_Piece, length = max(u32)}, .To_Viewer), Record_Problem.Past_Bound)
+	testing.expect_value(t, record_length_problem({kind = .Screen_Piece, length = size_of(Screen_Piece_Header) - 1}, .To_Viewer), Record_Problem.Wrong_Length)
+	testing.expect_value(t, record_length_problem({kind = .Screen_Piece, length = 0}, .To_Viewer), Record_Problem.Wrong_Length)
+	testing.expect_value(t, record_length_problem({kind = .Screen_Piece, length = SERVICE_BODY_LIMIT}, .To_Viewer), Record_Problem.None)
 }
 
 // Each record of the viewer whose field breaks its range is refused, at its
 // edges first; the body must be the length that the header names.
 @(test)
 viewer_record_check_refuses_each_field_out_of_its_range :: proc(t: ^testing.T) {
-	_, problem := viewer_check(.Frame_Taken, Frame_Taken_Body{serial = 0})
+	_, problem := viewer_check(.Viewer_Frame_Taken, Viewer_Frame_Taken_Body{serial = 0})
 	testing.expect_value(t, problem, Record_Problem.Bad_Field)
 	starts := [?]Session_Start_Body{{version = 0}, {version = PROTOCOL_VERSION + 1}, {version = max(u32)}, {version = PROTOCOL_VERSION, reserved = 1}}
 	for start in starts {
@@ -85,7 +85,7 @@ viewer_record_check_refuses_each_field_out_of_its_range :: proc(t: ^testing.T) {
 	_, start_held := viewer_check(.Session_Start, Session_Start_Body{version = PROTOCOL_VERSION})
 	testing.expect_value(t, start_held, Record_Problem.None)
 	requests := [?]struct {
-		body:    Tile_Request_Body,
+		body:    Screen_Piece_Request_Body,
 		problem: Record_Problem,
 	} {
 		{{0, 0, 0, 1}, .Empty_Rectangle},
@@ -98,12 +98,16 @@ viewer_record_check_refuses_each_field_out_of_its_range :: proc(t: ^testing.T) {
 		{{0, max(u32), 1, max(u32)}, .Outside_Screen},
 	}
 	for item in requests {
-		_, refused := viewer_check(.Tile_Request, item.body)
+		_, refused := viewer_check(.Screen_Piece_Request, item.body)
 		testing.expectf(t, refused == item.problem, "the request %v gave %v, not %v", item.body, refused, item.problem)
 	}
 	keys := [?]Key_Body {
 		{code = 0, pressed = 1},
 		{code = KEY_CODE_LIMIT + 1, pressed = 1},
+		{code = KEY_RELEASE_BIT, pressed = 1},
+		{code = KEY_RELEASE_BIT | 0x1E, pressed = 0},
+		{code = 0x100 | KEY_RELEASE_BIT, pressed = 1},
+		{code = 0x1FF, pressed = 1},
 		{code = max(u32), pressed = 1},
 		{code = 0x1E, character = CHARACTER_LIMIT + 1, pressed = 1},
 		{code = 0x1E, character = 0xD800, pressed = 1},
@@ -142,52 +146,52 @@ viewer_record_check_refuses_each_field_out_of_its_range :: proc(t: ^testing.T) {
 	testing.expect_value(t, record.key.code, KEY_CODE_LIMIT)
 	_, pointer_held := viewer_check(.Pointer, Pointer_Body{x = SCREEN.width - 1, y = SCREEN.height - 1, buttons = POINTER_BUTTONS, wheel = -WHEEL_NOTCHES_LIMIT})
 	testing.expect_value(t, pointer_held, Record_Problem.None)
-	request, request_held := viewer_check(.Tile_Request, Tile_Request_Body{0, 0, SCREEN.width, SCREEN.height})
+	request, request_held := viewer_check(.Screen_Piece_Request, Screen_Piece_Request_Body{0, 0, SCREEN.width, SCREEN.height})
 	testing.expect_value(t, request_held, Record_Problem.None)
-	testing.expect_value(t, request.tile_request.height, SCREEN.height)
+	testing.expect_value(t, request.screen_piece_request.height, SCREEN.height)
 }
 
 // Each record of the service that breaks a rule is refused: a screen past
-// its limit, a frame past its bound, a tile larger than a tile or outside
+// its limit, a viewer frame past its bound, a screen piece larger than a screen piece or outside
 // the screen, a coded length that the header does not count.
 @(test)
-service_record_check_refuses_each_frame_and_tile_past_its_bound :: proc(t: ^testing.T) {
+service_record_check_refuses_each_viewer_frame_and_screen_piece_past_its_bound :: proc(t: ^testing.T) {
 	screens := [?]Screen_Size_Body{{0, 1}, {1, 0}, {SCREEN_WIDTH_LIMIT + 1, 1}, {1, SCREEN_HEIGHT_LIMIT + 1}, {max(u32), max(u32)}}
 	for size in screens {
 		_, problem := service_check(.Screen_Size, size)
 		testing.expectf(t, problem == .Outside_Screen, "the screen %v gave %v", size, problem)
 	}
 	starts := [?]struct {
-		body:    Frame_Start_Body,
+		body:    Viewer_Frame_Start_Body,
 		problem: Record_Problem,
 	} {
-		{{serial = 0, tile_count = 1, bytes = 64}, .Bad_Field},
-		{{serial = 1, tile_count = FRAME_TILE_LIMIT + 1, bytes = FRAME_BYTES_LIMIT}, .Past_Bound},
-		{{serial = 1, tile_count = 1, bytes = FRAME_BYTES_LIMIT + 1}, .Past_Bound},
-		{{serial = 1, tile_count = max(u32), bytes = max(u64)}, .Past_Bound},
-		{{serial = 1, tile_count = 2, bytes = 2 * (RECORD_HEADER_SIZE + size_of(Tile_Header)) - 1}, .Wrong_Length},
+		{{serial = 0, screen_piece_count = 1, bytes = 64}, .Bad_Field},
+		{{serial = 1, screen_piece_count = VIEWER_FRAME_PIECE_LIMIT + 1, bytes = VIEWER_FRAME_BYTES_LIMIT}, .Past_Bound},
+		{{serial = 1, screen_piece_count = 1, bytes = VIEWER_FRAME_BYTES_LIMIT + 1}, .Past_Bound},
+		{{serial = 1, screen_piece_count = max(u32), bytes = max(u64)}, .Past_Bound},
+		{{serial = 1, screen_piece_count = 2, bytes = 2 * (RECORD_HEADER_SIZE + size_of(Screen_Piece_Header)) - 1}, .Wrong_Length},
 	}
 	for item in starts {
-		_, problem := service_check(.Frame_Start, item.body)
+		_, problem := service_check(.Viewer_Frame_Start, item.body)
 		testing.expectf(t, problem == item.problem, "the start %v gave %v, not %v", item.body, problem, item.problem)
 	}
-	tiles := [?]struct {
-		tile:    Tile_Header,
+	pieces := [?]struct {
+		screen_piece:    Screen_Piece_Header,
 		problem: Record_Problem,
 	} {
-		{{x = 0, y = 0, width = TILE_WIDTH + 1, height = 1, coded_length = 1}, .Empty_Rectangle},
-		{{x = 0, y = 0, width = 1, height = TILE_HEIGHT + 1, coded_length = 1}, .Empty_Rectangle},
+		{{x = 0, y = 0, width = SCREEN_PIECE_WIDTH + 1, height = 1, coded_length = 1}, .Empty_Rectangle},
+		{{x = 0, y = 0, width = 1, height = SCREEN_PIECE_HEIGHT + 1, coded_length = 1}, .Empty_Rectangle},
 		{{x = 0, y = 0, width = 0, height = 1, coded_length = 1}, .Empty_Rectangle},
 		{{x = SCREEN.width - 1, y = 0, width = 2, height = 1, coded_length = 1}, .Outside_Screen},
 		{{x = 0, y = 0, width = 1, height = 1, coded_length = 2}, .Wrong_Length},
 		{{x = 0, y = 0, width = 1, height = 1, coded_length = coded_limit(1) + 1}, .Wrong_Length},
 	}
-	for item in tiles {
-		bytes := make([]u8, size_of(Tile_Header) + 1, context.temp_allocator)
-		tile := item.tile
-		copy(bytes, (cast([^]u8)&tile)[:size_of(Tile_Header)])
-		_, problem := service_record_check({kind = .Tile, length = u32(len(bytes))}, bytes, SCREEN)
-		testing.expectf(t, problem == item.problem, "the tile %v gave %v, not %v", item.tile, problem, item.problem)
+	for item in pieces {
+		bytes := make([]u8, size_of(Screen_Piece_Header) + 1, context.temp_allocator)
+		screen_piece := item.screen_piece
+		copy(bytes, (cast([^]u8)&screen_piece)[:size_of(Screen_Piece_Header)])
+		_, problem := service_record_check({kind = .Screen_Piece, length = u32(len(bytes))}, bytes, SCREEN)
+		testing.expectf(t, problem == item.problem, "the screen piece %v gave %v, not %v", item.screen_piece, problem, item.problem)
 	}
 	places := [?]struct {
 		body:    Pointer_Place_Body,
@@ -202,24 +206,24 @@ service_record_check_refuses_each_frame_and_tile_past_its_bound :: proc(t: ^test
 		_, problem := service_check(.Pointer_Place, item.body)
 		testing.expectf(t, problem == item.problem, "the place %v gave %v, not %v", item.body, problem, item.problem)
 	}
-	_, end_problem := service_check(.Frame_End, Frame_End_Body{serial = 0})
+	_, end_problem := service_check(.Viewer_Frame_End, Viewer_Frame_End_Body{serial = 0})
 	testing.expect_value(t, end_problem, Record_Problem.Bad_Field)
-	// The cases that hold: the largest screen, a frame at its bounds.
+	// The cases that hold: the largest screen, a viewer frame at its bounds.
 	_, size_held := service_check(.Screen_Size, Screen_Size_Body{SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT})
 	testing.expect_value(t, size_held, Record_Problem.None)
-	_, start_held := service_check(.Frame_Start, Frame_Start_Body{serial = 1, tile_count = FRAME_TILE_LIMIT, bytes = FRAME_BYTES_LIMIT})
+	_, start_held := service_check(.Viewer_Frame_Start, Viewer_Frame_Start_Body{serial = 1, screen_piece_count = VIEWER_FRAME_PIECE_LIMIT, bytes = VIEWER_FRAME_BYTES_LIMIT})
 	testing.expect_value(t, start_held, Record_Problem.None)
 }
 
-// What tile_encode writes, tile_decode reads to the same pixels, for each
-// kind of picture at the edges of the size of a tile.
+// What screen_piece_encode writes, screen_piece_decode reads to the same pixels, for each
+// kind of picture at the edges of the size of a screen piece.
 @(test)
-tile_coder_round_trip :: proc(t: ^testing.T) {
-	sizes := [?][2]int{{1, 1}, {2, 1}, {1, 2}, {TILE_WIDTH, TILE_HEIGHT}, {TILE_WIDTH - 1, 3}, {63, 63}}
-	STRIDE :: TILE_WIDTH + 7
-	picture := make([]u32, STRIDE * (TILE_HEIGHT + 3), context.temp_allocator)
-	out := make([]u8, CODED_TILE_LIMIT, context.temp_allocator)
-	decoded := make([]u32, TILE_PIXEL_LIMIT, context.temp_allocator)
+screen_piece_coder_round_trip :: proc(t: ^testing.T) {
+	sizes := [?][2]int{{1, 1}, {2, 1}, {1, 2}, {SCREEN_PIECE_WIDTH, SCREEN_PIECE_HEIGHT}, {SCREEN_PIECE_WIDTH - 1, 3}, {63, 63}}
+	STRIDE :: SCREEN_PIECE_WIDTH + 7
+	picture := make([]u32, STRIDE * (SCREEN_PIECE_HEIGHT + 3), context.temp_allocator)
+	out := make([]u8, CODED_SCREEN_PIECE_LIMIT, context.temp_allocator)
+	decoded := make([]u32, SCREEN_PIECE_PIXEL_LIMIT, context.temp_allocator)
 	for pattern in 0 ..< 5 {
 		for &pixel, index in picture {
 			switch pattern {
@@ -237,9 +241,9 @@ tile_coder_round_trip :: proc(t: ^testing.T) {
 		}
 		for size in sizes {
 			width, height := size[0], size[1]
-			coded := tile_encode(picture, STRIDE, 3, 2, width, height, out)
+			coded := screen_piece_encode(picture, STRIDE, 3, 2, width, height, out)
 			testing.expectf(t, coded <= int(coded_limit(u32(width * height))), "the code of %dx%d is %d bytes, past its limit", width, height, coded)
-			problem := tile_decode(out[:coded], decoded[:width * height])
+			problem := screen_piece_decode(out[:coded], decoded[:width * height])
 			testing.expectf(t, problem == .None, "the pattern %d, %dx%d: %v", pattern, width, height, problem)
 			for row in 0 ..< height {
 				for column in 0 ..< width {
@@ -257,12 +261,12 @@ tile_coder_round_trip :: proc(t: ^testing.T) {
 // Each damaged code is refused: too short, cut, past its pixels, bytes
 // after the last one, the reserved tag, a recent color that no pixel gave.
 @(test)
-tile_decode_refuses_each_damaged_code :: proc(t: ^testing.T) {
+screen_piece_decode_refuses_each_damaged_code :: proc(t: ^testing.T) {
 	out: [4]u32
 	cases := [?]struct {
 		code:    []u8,
 		pixels:  int,
-		problem: Tile_Problem,
+		problem: Screen_Piece_Problem,
 	} {
 		{{}, 1, .Short},
 		{{TAG_RUN | 0}, 2, .Short},
@@ -276,31 +280,31 @@ tile_decode_refuses_each_damaged_code :: proc(t: ^testing.T) {
 		{{TAG_INDEX | 5}, 1, .Empty_Recent},
 	}
 	for item in cases {
-		problem := tile_decode(item.code, out[:item.pixels])
+		problem := screen_piece_decode(item.code, out[:item.pixels])
 		testing.expectf(t, problem == item.problem, "the code %v for %d pixels gave %v, not %v", item.code, item.pixels, problem, item.problem)
 	}
 	// The case that holds: one whole color, then a run of it.
 	code := [?]u8{TAG_COLOR, 0x12, 0x34, 0x56, TAG_RUN | 2}
-	testing.expect_value(t, tile_decode(code[:], out[:]), Tile_Problem.None)
+	testing.expect_value(t, screen_piece_decode(code[:], out[:]), Screen_Piece_Problem.None)
 	testing.expect_value(t, out[3], u32(0x00123456))
 }
 
-// The tiles of a rectangle cover it once, each at most a tile, at the edges
-// of the size of a tile.
+// The screen pieces of a rectangle cover it once, each at most a screen piece, at the edges
+// of the size of a screen piece.
 @(test)
-tiles_cover_a_rectangle_once :: proc(t: ^testing.T) {
-	sizes := [?][2]u32{{1, 1}, {TILE_WIDTH, TILE_HEIGHT}, {TILE_WIDTH + 1, TILE_HEIGHT + 1}, {SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT}}
+screen_pieces_cover_a_rectangle_once :: proc(t: ^testing.T) {
+	sizes := [?][2]u32{{1, 1}, {SCREEN_PIECE_WIDTH, SCREEN_PIECE_HEIGHT}, {SCREEN_PIECE_WIDTH + 1, SCREEN_PIECE_HEIGHT + 1}, {SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT}}
 	for size in sizes {
 		covered: u64
-		count := tile_count(size[0], size[1])
+		count := screen_piece_count(size[0], size[1])
 		for index in 0 ..< count {
-			x, y, width, height := tile_at(5, 7, size[0], size[1], index)
-			testing.expect(t, width >= 1 && width <= TILE_WIDTH && height >= 1 && height <= TILE_HEIGHT)
+			x, y, width, height := screen_piece_at(5, 7, size[0], size[1], index)
+			testing.expect(t, width >= 1 && width <= SCREEN_PIECE_WIDTH && height >= 1 && height <= SCREEN_PIECE_HEIGHT)
 			testing.expect(t, x >= 5 && y >= 7 && x + width <= 5 + size[0] && y + height <= 7 + size[1])
 			covered += u64(width) * u64(height)
 		}
-		testing.expectf(t, covered == u64(size[0]) * u64(size[1]), "the tiles of %v cover %d pixels", size, covered)
+		testing.expectf(t, covered == u64(size[0]) * u64(size[1]), "the screen pieces of %v cover %d pixels", size, covered)
 	}
-	testing.expect_value(t, tile_count(SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT), 15 * 17)
-	testing.expect(t, tile_count(SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT) <= FRAME_TILE_LIMIT)
+	testing.expect_value(t, screen_piece_count(SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT), 15 * 17)
+	testing.expect(t, screen_piece_count(SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT) <= VIEWER_FRAME_PIECE_LIMIT)
 }

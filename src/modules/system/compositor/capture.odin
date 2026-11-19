@@ -31,6 +31,10 @@ import "modus:support/system"
 // bit of its prefix.
 REMOTE_KEY_CODE_LIMIT :: display.KEY_EXTENDED | 0xFF
 
+// The header of a picture holds each rectangle of a damage set: a set
+// never has more than the header can name.
+#assert(interface.DAMAGE_CAPACITY <= display.CAPTURE_RECTANGLE_CAPACITY)
+
 Capture_Face :: struct {
 	client:       int, // The client that holds the face, or -1.
 	memory:       system.Handle,
@@ -309,9 +313,7 @@ capture_mark_records :: proc "contextless" (table: ^interface.Draw_Table, right:
 	if capture.client < 0 {
 		return
 	}
-	windows_x, _, windows_width, _ := bar.windows_button(bar_layout)
-	left := windows_x + windows_width + 16
-	room := right - 16 - left
+	room := capture_mark_room(right)
 	full: [96]u8
 	full_writer := system.Writer{buffer = full[:]}
 	system.write_part(&full_writer, capture.viewer_count > 1 ? "viewers: " : "viewer")
@@ -328,7 +330,6 @@ capture_mark_records :: proc "contextless" (table: ^interface.Draw_Table, right:
 	system.write_part(&count_writer, "viewers: ")
 	system.write_unsigned(&count_writer, u64(capture.viewer_count))
 	candidates := [2]string{system.written(&full_writer), system.written(&count_writer)}
-	MARK_SQUARE :: 16
 	for text in candidates {
 		width := interface.text_measured_width(table, interface.FONT_INTERFACE, text) + 2 * bar.PADDING
 		if width > room {
@@ -339,7 +340,17 @@ capture_mark_records :: proc "contextless" (table: ^interface.Draw_Table, right:
 		interface.draw_text(table, x + bar.PADDING, bar.BUTTON_Y + (bar.BUTTON_HEIGHT - graphics.CELL_HEIGHT) / 2, text, graphics.colors.text, interface.FONT_INTERFACE)
 		return
 	}
-	if room >= MARK_SQUARE {
-		interface.draw_rectangle(table, right - 16 - MARK_SQUARE, bar.BUTTON_Y + (bar.BUTTON_HEIGHT - MARK_SQUARE) / 2, MARK_SQUARE, MARK_SQUARE, graphics.colors.warning)
-	}
+	// The square alone: screen_build gives it the room of the hint of the
+	// palette when it has no other, so the mark is always drawn.
+	interface.draw_rectangle(table, right - 16 - CAPTURE_MARK_SQUARE, bar.BUTTON_Y + (bar.BUTTON_HEIGHT - CAPTURE_MARK_SQUARE) / 2, CAPTURE_MARK_SQUARE, CAPTURE_MARK_SQUARE, graphics.colors.warning)
+}
+
+// The mark of a viewer with no text.
+CAPTURE_MARK_SQUARE :: 16
+
+// capture_mark_room gives the room of the mark between the menu of the
+// windows and an element of the bar that starts at right.
+capture_mark_room :: proc "contextless" (right: int) -> int {
+	windows_x, _, windows_width, _ := bar.windows_button(bar_layout)
+	return right - 16 - (windows_x + windows_width + 16)
 }

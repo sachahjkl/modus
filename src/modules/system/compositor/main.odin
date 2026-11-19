@@ -1779,9 +1779,15 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	// its two parts as they are drawn.
 	hint_width := interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_NAME) + interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_KEY)
 	hint_x := width - CLOCK_WIDTH - 32 - hint_width
-	interface.draw_text(table, interface.draw_text(table, hint_x, 8, PALETTE_HINT_NAME, graphics.colors.dim, interface.FONT_INTERFACE), 8, PALETTE_HINT_KEY, graphics.colors.text, interface.FONT_INTERFACE)
-	// The mark of a viewer of the remote display, at the left of the hint.
-	capture_mark_records(table, hint_x) // capture.odin
+	// The mark of a viewer of the remote display, at the left of the hint
+	// (capture.odin). It is never left out: when the bar has no room for
+	// it there, it takes the room of the hint, which is not drawn.
+	if capture_is_open() && capture_mark_room(hint_x) < CAPTURE_MARK_SQUARE {
+		capture_mark_records(table, width - CLOCK_WIDTH - 16)
+	} else {
+		interface.draw_text(table, interface.draw_text(table, hint_x, 8, PALETTE_HINT_NAME, graphics.colors.dim, interface.FONT_INTERFACE), 8, PALETTE_HINT_KEY, graphics.colors.text, interface.FONT_INTERFACE)
+		capture_mark_records(table, hint_x)
+	}
 	seconds := now / 1000
 	x := width - CLOCK_WIDTH - 16
 	if milliseconds, known := date.milliseconds_now(date_page, now); known {

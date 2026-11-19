@@ -144,7 +144,7 @@ Do not use: pasteboard, selection buffer, primary selection.
 
 The remote display is the service `remote_display`, which shows the screen to a viewer on another machine over QUIC, and gives the compositor the keys and the pointer of a viewer allowed for the input.
 
-It holds the capture face and the input face of the compositor, the client table read-only, and a listen grant of UDP for the host only. It copies the screen once for all its viewers, and codes the tiles of each frame from that copy. It is not a part of the compositor, and not of the kernel.
+It holds the capture face and the input face of the compositor, the client table read-only, and a listen grant of UDP for the host only. It copies the screen once for all its viewers, and codes the screen pieces of each viewer frame from that copy. It is not a part of the compositor, and not of the kernel.
 
 The design: `src/md/features/remote_display.md`.
 
@@ -160,6 +160,26 @@ The design: `src/md/features/remote_display.md`.
 
 Do not use: remote client, spectator, observer.
 
+### Viewer frame
+
+A viewer frame is one update of the screen that the remote display sends to one viewer: `Viewer_Frame_Start`, its screen pieces, then `Viewer_Frame_End`.
+
+It holds the damage of the screen since the viewer frame before, the whole screen for the first. One viewer frame is in flight: the next goes after `Viewer_Frame_Taken`. A viewer frame shows one moment of the screen. It is not a frame of the compositor, which draws the screen itself; a viewer frame can hold the damage of several of them.
+
+The design: `src/md/features/remote_display.md`, "The transport: a protocol of modus over QUIC".
+
+Do not use: frame (alone, for this), update, packet.
+
+### Screen piece
+
+A screen piece is a rectangle of at most 128 × 64 pixels of the screen that a viewer frame carries as one record, coded alone without loss by the screen piece coder.
+
+The coder is in the manner of QOI: a run of the last color, an index of recent colors, a small difference, a whole color. A piece decodes in any order, and a damaged piece spoils no other, so a viewer decodes it into memory of its own and changes nothing of its screen when the decode refuses it. It is not a tile of a card, which stands for one thing of a set.
+
+The design: `src/md/features/remote_display.md`, "The transport: a protocol of modus over QUIC".
+
+Do not use: tile (for this), block, chunk.
+
 ### Capture face
 
 The capture face is the part of the ring of the window of the remote display through which the compositor writes a copy of the screen into two pictures that the remote display gives.
@@ -174,7 +194,7 @@ Do not use: screen grab, framebuffer read.
 
 The mark of a viewer is the box of the bar that shows, while the capture face is open, the word viewer, the start of the key of each viewer, and which ones have the input.
 
-The compositor draws it from its own state, so the remote display cannot hide it. A text that does not fit becomes the count of the viewers, then a square with no text. It is the visible indicator that property 20 asks of a capture of the screen.
+The compositor draws it from its own state, so the remote display cannot hide it. A text that does not fit becomes the count of the viewers, then a square with no text, which takes the room of the key of the palette when it has no other: it is never left out. It is the visible indicator that property 20 asks of a capture of the screen.
 
 The design: `docs/DESIGN.md`, "Background and bar".
 

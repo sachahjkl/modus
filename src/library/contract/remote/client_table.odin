@@ -54,6 +54,17 @@ Client :: struct {
 	// The word of the uses of the key (Client_Uses): a reader takes it
 	// through client_uses_of_word only.
 	uses:           u64,
+	// 1 while the session in front is the session of another principal
+	// (client_display_paused): the row holds no View and no Input, as
+	// principal 0 cannot see the screen of a named session.
+	not_in_front:   u64,
+}
+
+// client_display_paused says if a row of a principal holds no View and no
+// Input while the session of another principal is in front: the screen of
+// a session shows its data to its principal only.
+client_display_paused :: proc "contextless" (row_principal: u64, principal_in_front: u64) -> bool {
+	return row_principal != principal_in_front
 }
 
 // What a client key may do with its row (src/md/features/remote_display.md,
@@ -143,13 +154,15 @@ client_find :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u
 // client_grant_holds says if the row at place of a copy of the table still
 // carries the grant with this serial for a use: the same row, not freed and
 // not given again, a session of its principal that is not locked, a key
-// that no other principal holds, and a word of uses that holds the use.
+// that no other principal holds, a word of uses that holds the use, and,
+// for View and Input, the session of its principal in front.
 client_grant_holds :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, place: int, serial: u64, use: Client_Use) -> bool {
 	if place < 0 || place >= CLIENT_CAPACITY || serial == 0 {
 		return false
 	}
 	uses, uses_ok := client_uses_of_word(clients[place].uses)
-	return clients[place].serial == serial && clients[place].session_locked == 0 && clients[place].contested == 0 && uses_ok && use in uses
+	in_front := use == .Calls || clients[place].not_in_front == 0
+	return clients[place].serial == serial && clients[place].session_locked == 0 && clients[place].contested == 0 && uses_ok && use in uses && in_front
 }
 
 // What the root service does with a client key of the disk grant table of

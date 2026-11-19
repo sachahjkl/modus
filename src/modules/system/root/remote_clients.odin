@@ -231,7 +231,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 				continue
 			}
 			client_serial_last += 1
-			client_row_write(free, {key = key, principal = principal, serial = client_serial_last, session_locked = locked, uses = remote.client_uses_word(asked)})
+			client_row_write(free, {key = key, principal = principal, serial = client_serial_last, session_locked = locked, uses = remote.client_uses_word(asked), not_in_front = client_not_in_front(principal)})
 			if .Calls not_in asked {
 				system.log_in("calls", .Info, "root: principal ", principal, " allowed the client key ", key_head_text(&head, key), " for the remote display: ", client_uses_text(asked), "; the uses of the remote display last until the machine stops")
 				return .Ok
@@ -351,7 +351,7 @@ client_keys_restore :: proc "contextless" () {
 				locked: u64 = principal_records[principal].state == .Locked ? 1 : 0
 				client_serial_last += 1
 				// The disk keeps the uses of Calls only.
-				client_row_write(place, {key = key, principal = principal, serial = client_serial_last, session_locked = locked, uses = remote.client_uses_word({.Calls})})
+				client_row_write(place, {key = key, principal = principal, serial = client_serial_last, session_locked = locked, uses = remote.client_uses_word({.Calls}), not_in_front = client_not_in_front(principal)})
 				system.log_in("calls", .Info, "root: the client key ", key_head_text(&head, key), " of remote holds again for principal ", principal, ", from its disk grant table: each call of that client acts for it")
 			case .Contest:
 				changed := client_table.clients[place]
@@ -435,6 +435,54 @@ remote_clients_session_changed :: proc "contextless" (principal: u64, locked: bo
 		if locked {
 			client_connections_end(place)
 		}
+	}
+	// The session in front changed: the rows of the other principals lose
+	// the screen, and the rows of the principal in front get it back.
+	remote_clients_front_follow()
+}
+
+// client_not_in_front gives the flag not_in_front of a new row of a
+// principal: the session in front now is desktop_principal().
+client_not_in_front :: proc "contextless" (principal: u64) -> u64 {
+	return remote.client_display_paused(principal, desktop_principal()) ? 1 : 0
+}
+
+// remote_clients_front_follow writes the flag not_in_front of each row for
+// the session in front: a row of another principal holds no View and no
+// Input (src/md/features/remote_display.md, "The authority"). A row with
+// View whose flag changes gets a new serial, as a lock does, so a session
+// of remote_display open through it ends, and no pass of that service can
+// miss the change; its connections to services end with the old serial.
+remote_clients_front_follow :: proc "contextless" () {
+	if client_table == nil {
+		return
+	}
+	in_front := desktop_principal()
+	head: [16]u8
+	for row, place in client_table.clients {
+		if row.serial == 0 {
+			continue
+		}
+		flag: u64 = remote.client_display_paused(row.principal, in_front) ? 1 : 0
+		if flag == row.not_in_front {
+			continue
+		}
+		changed := row
+		changed.not_in_front = flag
+		uses, known := remote.client_uses_of_word(row.uses)
+		if known && .View in uses {
+			client_serial_last += 1
+			changed.serial = client_serial_last
+			client_row_write(place, changed)
+			count := client_connections_end(place)
+			if flag == 1 {
+				system.log_in("calls", .Info, "root: the client key ", key_head_text(&head, row.key), " of principal ", row.principal, " loses the view and the input while the session of principal ", in_front, " is in front; connections to services ended: ", count)
+			} else {
+				system.log_in("calls", .Info, "root: the client key ", key_head_text(&head, row.key), " of principal ", row.principal, " has the view again: the session of its principal is in front")
+			}
+			continue
+		}
+		client_row_write(place, changed)
 	}
 }
 

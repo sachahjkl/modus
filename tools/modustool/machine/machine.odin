@@ -4480,11 +4480,11 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			step.text = client_key_expand(machine.peer.remote, step.text)
 		}
 		if strings.contains(step.text, VIEWER_KEY_MARK) {
-			if machine.peer == nil || machine.peer.display_viewer == nil {
+			if machine.peer == nil || machine.peer.display_viewers[0] == nil {
 				fmt.eprintfln("modustool: test failed: step %d names %s, and the machine has no peer with a viewer of remote_display", index + 1, VIEWER_KEY_MARK)
 				return false
 			}
-			step.text = viewer_key_expand(machine.peer.display_viewer, step.text)
+			step.text = viewer_key_expand(machine.peer.display_viewers[0], step.text)
 		}
 		switch step.kind {
 		case .Wait:
@@ -5051,11 +5051,13 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			log := log_read(machine)
 			rest := log[machine.seen:]
 			line := strings.trim_right(rest[:max(strings.index_byte(rest, '\n'), 0)], "\r")
-			if !peer_display_pin_text(machine.peer.display_viewer, line) {
-				fmt.eprintfln("modustool: test failed: step %d: \"%s\" is not a public key of 64 hexadecimal digits", index + 1, line)
-				return false
+			for viewer in machine.peer.display_viewers {
+				if !peer_display_pin_text(viewer, line) {
+					fmt.eprintfln("modustool: test failed: step %d: \"%s\" is not a public key of 64 hexadecimal digits", index + 1, line)
+					return false
+				}
 			}
-			fmt.printfln("modustool: the viewer of remote_display in the peer pins the key %s", line)
+			fmt.printfln("modustool: the viewers of remote_display in the peer pin the key %s", line)
 		case .Remote_Display_Case:
 			passed, result := remote_display_case_run(machine, step.text)
 			if !passed {

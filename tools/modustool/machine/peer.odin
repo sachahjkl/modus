@@ -72,7 +72,7 @@ Peer :: struct {
 	call_socket:  string, // The path of the Unix socket where the tool gives the calls.
 	lock:         sync.Mutex, // machine and hardware: two threads read them.
 	remote:       ^Peer_Remote, // The peer as the QUIC client of `remote` (peer_remote.odin).
-	display_viewer: ^Peer_Remote_Display, // The peer as the viewer of `remote_display` (peer_remote_display.odin).
+	display_viewers: [PEER_DISPLAY_VIEWERS]^Peer_Remote_Display, // The peer as the viewers of `remote_display` (peer_remote_display.odin).
 	tcp:          ^Peer_Tcp, // The peer as a TCP client (peer_tcp.odin).
 	quic:         ^Peer_Quic, // The peer as QUIC clients (peer_quic.odin).
 	relay:        Peer_Relay, // UDP of programs of the host to the machine (peer_relay.odin).
@@ -141,7 +141,9 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 		return false
 	}
 	peer.call_socket = peer.remote.socket_path
-	peer.display_viewer = peer_display_make()
+	for &viewer, number in peer.display_viewers {
+		viewer = peer_display_make(number)
+	}
 	peer.tcp = peer_tcp_make()
 	peer.quic = peer_quic_make()
 	if !peer_relay_start(&peer.relay) {
@@ -149,8 +151,11 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 		peer_quic_free(peer.quic)
 		peer_remote_socket_stop(peer.remote)
 		peer_remote_free(peer.remote)
-		peer_display_free(peer.display_viewer)
-		peer.tcp, peer.quic, peer.remote, peer.display_viewer = nil, nil, nil, nil
+		for &viewer in peer.display_viewers {
+			peer_display_free(viewer)
+			viewer = nil
+		}
+		peer.tcp, peer.quic, peer.remote = nil, nil, nil
 		net.close(machine_socket)
 		net.close(socket)
 		return false
@@ -215,8 +220,10 @@ peer_stop :: proc(peer: ^Peer) {
 	peer_remote_report(peer.remote)
 	peer_remote_free(peer.remote)
 	peer.remote = nil
-	peer_display_free(peer.display_viewer)
-	peer.display_viewer = nil
+	for &viewer in peer.display_viewers {
+		peer_display_free(viewer)
+		viewer = nil
+	}
 }
 
 // peer_check says if the peer saw only correct frames, and if the network

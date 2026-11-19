@@ -1,9 +1,9 @@
 package remote_display
 
-// The tile coder: the pixels of one tile without loss, in the manner of QOI
-// (the Quite OK Image format), for opaque pixels 0x00RRGGBB. Each tile is
-// coded alone, from the same start state, so a tile decodes in any order
-// and a damaged tile spoils no other.
+// The screen piece coder: the pixels of one screen piece without loss, in the manner of QOI
+// (the Quite OK Image format), for opaque pixels 0x00RRGGBB. Each screen piece is
+// coded alone, from the same start state, so a screen piece decodes in any order
+// and a damaged screen piece spoils no other.
 //
 // The codes, each a tag in the high bits of its first byte:
 //
@@ -24,7 +24,7 @@ package remote_display
 
 // The most bytes of the code of one pixel: the tag and three channels.
 CODED_PIXEL_LIMIT :: 4
-CODED_TILE_LIMIT :: TILE_PIXEL_LIMIT * CODED_PIXEL_LIMIT
+CODED_SCREEN_PIECE_LIMIT :: SCREEN_PIECE_PIXEL_LIMIT * CODED_PIXEL_LIMIT
 
 TAG_INDEX :: 0x00
 TAG_DIFFERENCE :: 0x40
@@ -51,11 +51,11 @@ recent_place :: #force_inline proc "contextless" (color: u32) -> u32 {
 	return (red * 3 + green * 5 + blue * 7 + 255 * 11) % RECENT_COLORS
 }
 
-// tile_encode codes the pixels of a rectangle of a picture whose rows have
+// screen_piece_encode codes the pixels of a rectangle of a picture whose rows have
 // stride pixels, from (x, y), into out, and gives the bytes of the code.
-// out must hold coded_limit of the pixels: tile_record_write checks it. The
+// out must hold coded_limit of the pixels: screen_piece_record_write checks it. The
 // high byte of each pixel is not coded: the screen is opaque.
-tile_encode :: proc "contextless" (pixels: []u32, stride, x, y, width, height: int, out: []u8) -> int {
+screen_piece_encode :: proc "contextless" (pixels: []u32, stride, x, y, width, height: int, out: []u8) -> int {
 	recent: [RECENT_COLORS]u32
 	for &color in recent {
 		color = RECENT_COLOR_START
@@ -117,22 +117,22 @@ tile_encode :: proc "contextless" (pixels: []u32, stride, x, y, width, height: i
 	return written
 }
 
-// Why tile_decode refused a code.
-Tile_Problem :: enum u8 {
+// Why screen_piece_decode refused a code.
+Screen_Piece_Problem :: enum u8 {
 	None,
-	Past_Pixels, // A run or a pixel past the pixels of the tile.
+	Past_Pixels, // A run or a pixel past the pixels of the screen piece.
 	Short, // The code ends before the last pixel.
 	Bytes_After, // A byte after the last pixel.
 	Cut_Code, // A code whose bytes the code does not hold.
 	Reserved_Tag, // The tag of a color with alpha.
-	Empty_Recent, // A recent color that no pixel of the tile gave.
+	Empty_Recent, // A recent color that no pixel of the screen piece gave.
 }
 
 // The sentence of each problem, for a line of the log.
 @(rodata)
-TILE_PROBLEM_SENTENCES := [Tile_Problem]string {
-	.None         = "the tile holds",
-	.Past_Pixels  = "its code gives more pixels than the tile has",
+SCREEN_PIECE_PROBLEM_SENTENCES := [Screen_Piece_Problem]string {
+	.None         = "the screen piece holds",
+	.Past_Pixels  = "its code gives more pixels than the screen piece has",
 	.Short        = "its code ends before the last pixel",
 	.Bytes_After  = "its code has bytes after the last pixel",
 	.Cut_Code     = "its last code is cut",
@@ -140,11 +140,11 @@ TILE_PROBLEM_SENTENCES := [Tile_Problem]string {
 	.Empty_Recent = "its code names a recent color that no pixel gave",
 }
 
-// tile_decode decodes a code into out, which holds the pixels of the tile
+// screen_piece_decode decodes a code into out, which holds the pixels of the screen piece
 // row after row. Each refusal can leave pixels written in out: the caller
-// decodes into its own memory, and copies the tile to the screen only when
-// the decode held, so a damaged tile changes nothing.
-tile_decode :: proc "contextless" (coded: []u8, out: []u32) -> Tile_Problem {
+// decodes into its own memory, and copies the screen piece to the screen only when
+// the decode held, so a damaged screen piece changes nothing.
+screen_piece_decode :: proc "contextless" (coded: []u8, out: []u32) -> Screen_Piece_Problem {
 	recent: [RECENT_COLORS]u32
 	for &color in recent {
 		color = RECENT_COLOR_START
