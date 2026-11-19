@@ -496,7 +496,7 @@ stress :: proc "contextless" (image: []u8, processes_free: u64) {
 			}
 			switch (round + u64(index)) % 3 {
 			case 0:
-				system.call(.Process_Stop, u64(churner), 7)
+				system.call(.Process_Stop, u64(churner), 0)
 				stopped += 1
 			case 1:
 				// The other thread stops it while this one closes the handle.
@@ -621,7 +621,7 @@ stopper_run :: proc "c" (parameter: rawptr) -> ! {
 			system.word_wait(&stopper.target, 0, system.time() + 100)
 			continue
 		}
-		system.call(.Process_Stop, u64(target), 7)
+		system.call(.Process_Stop, u64(target), 0)
 		intrinsics.atomic_add(&stopper.done, 1)
 	}
 	system.thread_stop()

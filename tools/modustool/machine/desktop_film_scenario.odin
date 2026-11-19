@@ -35,7 +35,7 @@ package machine
 scenario_desktop_film := [?]Step {
 	// The boot. The processes write in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
-	{kind = .Wait, text = "root: settings stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: settings stopped: itself, code 0", any_order = true},
 	{kind = .Wait, text = "compositor: the palette has a provider", any_order = true},
 	// The pointer leaves the place of the windows: a press on the
 	// background, in the corner of the screen, which no window covers.

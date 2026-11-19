@@ -175,7 +175,7 @@ line_records_ask :: proc "contextless" (function: module.Function, export: u32, 
 			rows, _ := isolated.result_table(sandbox.region, buffer, completion.values[0], u64(described.size))
 			return {kind = .Table, record = rows, file = line_records.file, detail = function.result_detail}, completion.values[0], true
 		}
-		if state, _ := system.process_state(sandbox.process); state == .Stopped {
+		if state, _, _ := system.process_state(sandbox.process); state == .Stopped {
 			return {}, 0, false
 		}
 		system.wait_records(&wait, &sandbox.ring.completions)

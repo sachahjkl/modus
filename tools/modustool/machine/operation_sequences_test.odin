@@ -144,7 +144,11 @@ oracle_sequence :: proc(steps: ..operation_sequence.Sequence_Step) -> operation_
 @(private = "file")
 oracle_header :: proc() -> operation_sequence.Mailbox_Header {
 	header: operation_sequence.Mailbox_Header
-	header.outcome = u64(operation_sequence.Execution_Outcome.Ran)
+	// A runner that a step stopped: a stop of itself with no end written,
+	// which agrees with results whose end word is 0. A test of the outcome
+	// Ran writes the end Ran too.
+	header.outcome = u64(operation_sequence.Execution_Outcome.Stopped)
+	header.stop_cause = u64(operation.Stop_Cause.Itself)
 	header.budget_before = {pages = 100, processes = 2, threads = 3}
 	header.budget_after = header.budget_before
 	return header
@@ -200,10 +204,23 @@ the_oracles_of_the_outcome_and_of_the_budget :: proc(t: ^testing.T) {
 	}
 	header = oracle_header()
 	header.outcome = u64(operation_sequence.Execution_Outcome.Stopped)
-	for code in ([]u64{operation_sequence.RUNNER_SEQUENCE_REFUSED_CODE, operation_sequence.RUNNER_BATCH_REFUSED_CODE}) {
-		header.stop_code = code
-		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "a runner that stopped with the code %x is taken", code)
+	header.stop_cause = u64(operation.Stop_Cause.Itself)
+	for end in ([]operation_sequence.Runner_End{.Sequence_Refused, .Batch_Refused}) {
+		results.end = u64(end)
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "a runner that ended with %v is taken", end)
 	}
+	// A word of the memory of the machine that names no end, or no cause, is
+	// a finding, never an end or a cause.
+	for word in ([]u64{u64(max(operation_sequence.Runner_End)) + 1, max(u64)}) {
+		results.end = word
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the end word %d is taken", word)
+	}
+	results.end = u64(operation_sequence.Runner_End.Ran)
+	for word in ([]u64{u64(max(operation.Stop_Cause)) + 1, max(u64)}) {
+		header.stop_cause = word
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the stop cause word %d is taken", word)
+	}
+	results.end = 0
 	header = oracle_header()
 	results.steps_run = 1
 	testing.expect(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "more steps than the sequence are taken")
@@ -216,6 +233,71 @@ the_oracles_of_the_outcome_and_of_the_budget :: proc(t: ^testing.T) {
 	header = oracle_header()
 	header.outcome = u64(operation_sequence.Execution_Outcome.Stopped)
 	testing.expect_value(t, len(operation_findings(&sequence, &header, &results, &grammar)), 0)
+	header.outcome = u64(operation_sequence.Execution_Outcome.Ran)
+	results.end = u64(operation_sequence.Runner_End.Ran)
+	testing.expect_value(t, len(operation_findings(&sequence, &header, &results, &grammar)), 0)
+	results.end = 0
+}
+
+// The outcome, the stop cause and the end tell one story, or the tool
+// takes the execution: each pair that cannot come from the runner and the
+// service is a finding, and the pairs that can are the last cases.
+@(test)
+the_words_of_a_stop_come_as_pairs :: proc(t: ^testing.T) {
+	grammar, ok := operation_grammar_read()
+	testing.expect(t, ok, "the grammar is not read")
+	sequence := oracle_sequence()
+	results: operation_sequence.Runner_Results
+	Pair :: struct {
+		outcome: operation_sequence.Execution_Outcome,
+		cause:   operation.Stop_Cause,
+		end:     operation_sequence.Runner_End,
+	}
+	refused := [?]Pair {
+		{.Ran, .Holder, .Ran}, // Ran with a cause other than Itself.
+		{.Ran, .Fault, .Ran},
+		{.Ran, .Itself, .None}, // Ran with no end written.
+		{.Stopped, .None, .None}, // Stopped with no cause.
+		{.Ran, .None, .Ran},
+		{.Stopped, .Holder, .Ran}, // The end Ran with a stop by a holder.
+		{.Stopped, .Fault, .Ran},
+	}
+	for pair in refused {
+		header := oracle_header()
+		header.outcome = u64(pair.outcome)
+		header.stop_cause = u64(pair.cause)
+		results.end = u64(pair.end)
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the outcome %v, the cause %v and the end %v are taken", pair.outcome, pair.cause, pair.end)
+		testing.expectf(t, operation_stop_pair_problem(pair.outcome, pair.cause, pair.end) != "", "the pair %v has a problem", pair)
+	}
+	accepted := [?]Pair {
+		{.Ran, .Itself, .Ran},
+		{.Stopped, .Itself, .None}, // A step stopped the runner.
+		{.Stopped, .Holder, .None},
+		{.Stopped, .Fault, .None},
+	}
+	for pair in accepted {
+		testing.expectf(t, operation_stop_pair_problem(pair.outcome, pair.cause, pair.end) == "", "the pair %v has no problem", pair)
+	}
+}
+
+// A mailbox of another format, or with another magic, is refused: its
+// fields are at other places or mean other things. The format of this tool
+// is the last case.
+@(test)
+a_mailbox_of_another_format_is_refused :: proc(t: ^testing.T) {
+	header := operation_sequence.Mailbox_Header{magic = operation_sequence.MAILBOX_MAGIC}
+	for format in ([]u64{0, 1, operation_sequence.MAILBOX_FORMAT - 1, operation_sequence.MAILBOX_FORMAT + 1, max(u64)}) {
+		header.format = format
+		testing.expectf(t, !operation_mailbox_header_known(&header), "the format %d is refused", format)
+	}
+	header.format = operation_sequence.MAILBOX_FORMAT
+	header.magic = operation_sequence.MAILBOX_MAGIC + 1
+	testing.expect(t, !operation_mailbox_header_known(&header), "another magic is refused")
+	header.magic = 0
+	testing.expect(t, !operation_mailbox_header_known(&header), "the magic 0 is refused")
+	header.magic = operation_sequence.MAILBOX_MAGIC
+	testing.expect(t, operation_mailbox_header_known(&header), "the magic and the format of this tool are known")
 }
 
 // The oracles of a status: a word that names no status, an unknown

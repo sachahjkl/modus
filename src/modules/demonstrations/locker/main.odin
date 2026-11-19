@@ -99,7 +99,7 @@ churn :: proc "contextless" (stop_after: u64, peer: system.Handle) -> ! {
 				system.stop(0)
 			}
 			// Two processes stop each other: `locks` stops this one now too.
-			system.call(.Process_Stop, u64(peer), 5)
+			system.call(.Process_Stop, u64(peer), 0)
 			stop_after = 0
 		}
 		if thread, status := system.thread_start(brief, nil); status == .Ok {
@@ -126,6 +126,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address, status := system.memory_map(ctx.handles[lockers.GRANT_BOARD])
 	index := ctx.values[lockers.VALUE_INDEX]
 	if status != .Ok || index >= lockers.LOCKER_CAPACITY {
+		system.log(.Info, "locker: no board, or the slot ", index, " is past the board")
 		system.stop(1)
 	}
 	slot := &(^lockers.Board)(address).slots[index]
@@ -149,7 +150,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		mode, mode_ok := enum_word.member_of_word(lockers.Mode, u64(slot.mode))
 		if !mode_ok {
 			system.log(.Info, "locker: the board names the mode ", u64(slot.mode), ", which names no mode")
-			system.stop(2)
+			system.stop(1)
 		}
 		start := slot.start
 		end := slot.end

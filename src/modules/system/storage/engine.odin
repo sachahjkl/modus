@@ -149,7 +149,7 @@ disk_wait_goes_on :: proc "contextless" (deadline: u64) -> bool {
 	if events := intrinsics.volatile_load(system.events()); !block_service_state_read || events != block_service_events {
 		block_service_events = events
 		block_service_state_read = true
-		state, _ = system.process_state(block_service)
+		state, _, _ = system.process_state(block_service)
 	}
 	switch system.answer_wait_of(system.time(), deadline, state) {
 	case .Waits:

@@ -240,7 +240,7 @@ fuzz_stop_report_name :: proc(number: int) -> string {
 // can be.
 @(private = "file")
 fuzz_stop_report_of :: proc(choices: ^Fuzz_Choices) -> (report: op.Stop_Report) {
-	report.code = u32(fuzz_choice_word(choices, 2))
+	report.cause = u32(fuzz_choice_word(choices, 2))
 	report.vector = u32(fuzz_choice_byte(choices))
 	report.module.base = fuzz_choice_word(choices, 8)
 	report.module.size = fuzz_choice_word(choices, 4)

@@ -837,16 +837,16 @@ lent_service_handle_refused :: proc "contextless" (connection: ^system.Call_Conn
 	return ""
 }
 
-// child_wait waits until a child stopped, and gives its stop code. The
-// bound only ends a hang.
-child_wait :: proc "contextless" (child: system.Handle) -> (code: u32, stopped: bool) {
+// child_wait waits until a child stopped, and gives its stop cause and its
+// stop code. The bound only ends a hang.
+child_wait :: proc "contextless" (child: system.Handle) -> (cause: op.Stop_Cause, code: u32, stopped: bool) {
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		if state, stop_code := system.process_state(child); state == .Stopped {
-			return stop_code, true
+		if state, stop_cause, stop_code := system.process_state(child); state == .Stopped {
+			return stop_cause, stop_code, true
 		}
 		system.sleep(system.time() + 10)
 	}
-	return 0, false
+	return .None, 0, false
 }
 
 // children_start starts the two children, and waits until each one
@@ -875,13 +875,16 @@ children_start :: proc "contextless" (ctx: ^system.Context, image: []u8) -> stri
 		children[index] = process
 	}
 	for index in 0 ..< CHILD_COUNT {
-		code, stopped := child_wait(children[index])
+		cause, code, stopped := child_wait(children[index])
 		if !stopped {
 			system.log(.Info, "log_reader: WRONG: ", child_names[index], " did not stop")
 			return "a child did not stop"
 		}
-		if code != 0 {
-			system.log(.Info, "log_reader: WRONG: ", child_names[index], " stopped with the code ", u64(code))
+		if cause != .Itself || code != 0 {
+			buffer: [64]u8
+			stop_text := system.Writer{buffer = buffer[:]}
+			system.stop_write(&stop_text, cause, code)
+			system.log(.Info, "log_reader: WRONG: ", child_names[index], " stopped: ", system.written(&stop_text))
 			return "a child did not write its record"
 		}
 	}
@@ -976,12 +979,12 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 		system.log(.Info, "log_reader: WRONG: while the storm child runs, this process holds ", storm_log_records_kept, " log records of each second of its ", whole_log_records)
 		return "the storm child did not take its log records from the budget of this process"
 	}
-	code, stopped := child_wait(child)
+	cause, code, stopped := child_wait(child)
 	if !stopped {
 		return "the storm child did not stop within the hang bound"
 	}
-	if code != 0 {
-		return "the storm child stopped with a code other than 0"
+	if cause != .Itself || code != 0 {
+		return "the storm child did not stop itself with the code 0"
 	}
 	if held, reached := log_records_wait(whole_log_records); !reached {
 		system.log(.Info, "log_reader: WRONG: after the stop of the storm child, this process holds ", held, " log records of each second, and not ", whole_log_records)

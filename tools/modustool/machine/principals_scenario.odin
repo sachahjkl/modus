@@ -31,7 +31,7 @@ scenario_principals_first := [?]Step {
 	// The machine has no TPM: principal 0 has no measure.
 	{kind = .Wait, text = "root: principal 0 is the machine: the system is not measured; its key, the attestation key of the TPM, is not built", any_order = true},
 	{kind = .Wait, text = "unlock: no named principal: the machine runs as principal 0, with no unlock", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	{kind = .Wait, text = "root: unlock stopped: itself, code 0"},
 	{kind = .Type, text = "principals()"},
 	{kind = .Wait, text = "[console]      0  machine  machine"},
 	// A note of principal 0: the console starts notes in its own session.
@@ -46,7 +46,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Type, text = "grants(\"notes\")"},
 	{kind = .Wait, text = "[console] notes    log    held           0  machine"},
 	{kind = .Type, text = "stop(\"notes\")"},
-	{kind = .Wait, text = "root: notes stopped with code "},
+	{kind = .Wait, text = "root: notes stopped: "},
 	// The creation: the name in the console, the passphrase in the window
 	// of unlock, never in the console, which keeps its lines.
 	{kind = .Type, text = "principal_create(\"alice\")"},
@@ -58,7 +58,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Wait, text = "root: principal 1 \"alice\" is recorded, its public key ", any_order = true},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is created: its keys are sealed in the store of unlock under a key of Argon2id, 19456 KiB and 2 passes, derived in ", any_order = true},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it"},
-	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	{kind = .Wait, text = "root: unlock stopped: itself, code 0"},
 	// notes from the menu: in the session, with a store of its own.
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "root: started notes, in the session of principal 1 \"alice\""},
@@ -98,7 +98,7 @@ scenario_principals_first := [?]Step {
 	// The lock: the processes of the session stop, and unlock asks again.
 	{kind = .Type, text = "lock()"},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: 1 processes stopped"},
-	{kind = .Wait, text = "root: notes stopped with code ", any_order = true},
+	{kind = .Wait, text = "root: notes stopped: ", any_order = true},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is locked: its passphrase opens its session", any_order = true},
 	{kind = .Wait, text = "[console] 1", any_order = true},
 	{kind = .Wait, text = "compositor: surface unlock"},

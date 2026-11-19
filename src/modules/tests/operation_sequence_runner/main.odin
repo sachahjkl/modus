@@ -52,20 +52,22 @@ entry_read_address_zero :: proc "c" (_: rawptr) -> ! {
 }
 
 // The entry of the runner: it checks its sequence, runs each kernel entry
-// of it, writes the results after each one, then stops itself with
-// RUNNER_END_CODE.
+// of it, writes the results after each one, then writes its end `Ran` and
+// stops itself with the code 0. A refusal writes its end and stops with 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// The service maps the results before the start, so the end of a
+	// refusal has its place too.
+	results := (^operation_sequence.Runner_Results)(uintptr(operation_sequence.RUNNER_RESULTS_ADDRESS))
 	byte_count := ctx.values[operation_sequence.RUNNER_VALUE_SEQUENCE_BYTES]
 	if byte_count > operation_sequence.SEQUENCE_BYTES_MOST {
-		system.stop(operation_sequence.RUNNER_SEQUENCE_REFUSED_CODE)
+		end_and_stop(results, .Sequence_Refused)
 	}
 	sequence_bytes := ([^]u8)(uintptr(operation_sequence.RUNNER_SEQUENCE_ADDRESS))
 	bytes := sequence_bytes[:byte_count]
 	if refusal := operation_sequence.check(bytes, &sequence); refusal.problem != .None {
-		system.stop(operation_sequence.RUNNER_SEQUENCE_REFUSED_CODE)
+		end_and_stop(results, .Sequence_Refused)
 	}
-	results := (^operation_sequence.Runner_Results)(uintptr(operation_sequence.RUNNER_RESULTS_ADDRESS))
 	start := operation_sequence.Start_Words {
 		budget  = u64(ctx.handles[op.CONTEXT_BUDGET]),
 		log     = u64(ctx.handles[op.CONTEXT_LOG]),
@@ -94,7 +96,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// the entry names it.
 		intrinsics.volatile_store(&results.step_started, u64(first + 1))
 		if _, status := system.commands_call(commands[:end - first], completions[:end - first], 0); status != .Ok {
-			system.stop(operation_sequence.RUNNER_BATCH_REFUSED_CODE)
+			end_and_stop(results, .Batch_Refused)
 		}
 		for step in first ..< end {
 			result_write(step, commands[step - first], completions[step - first], results)
@@ -102,7 +104,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		intrinsics.volatile_store(&results.steps_run, u64(end))
 		first = end
 	}
-	system.stop(operation_sequence.RUNNER_END_CODE)
+	end_and_stop(results, .Ran)
+}
+
+// end_and_stop writes the end of the runner in its results, then stops it:
+// the stop says only right or wrong, the end says which.
+end_and_stop :: proc "contextless" (results: ^operation_sequence.Runner_Results, end: operation_sequence.Runner_End) -> ! {
+	intrinsics.volatile_store(&results.end, u64(end))
+	system.stop(end == .Ran ? 0 : 1)
 }
 
 // command_of_step gives the command record of one step: its operation word

@@ -797,7 +797,7 @@ tpm_open :: proc "contextless" (ctx: ^system.Context) {
 
 // tpm_service_runs says if the TPM service has not stopped.
 tpm_service_runs :: proc "contextless" () -> bool {
-	state, _ := system.process_state(tpm_process)
+	state, _, _ := system.process_state(tpm_process)
 	return state != .Stopped && state != .None
 }
 

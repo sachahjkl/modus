@@ -303,14 +303,16 @@ sleep :: proc "contextless" (deadline: u64) -> u64 {
 
 // stop ends this process with a stop code: each of its threads ends, and
 // its memory and its handles end. A holder of its process handle reads the
-// code with `Process_State`. It does not return.
+// stop cause `Itself` and the code with `Process_State`. Give 0 or 1: a
+// result goes through memory that the starter shares, never through the
+// code. It does not return.
 //
 // It stops the process whatever its kernel ring holds: it drops each
 // completion that waits, as the process ends and wants no answer, and
 // enters the kernel so that each held command runs, at most one round for
 // each place of the ring. Then it sends its stop. A ring that still cannot
 // take the stop ends the process with a fault that no handler can take,
-// and the stop code is then the one of a page fault
+// and the stop cause is then `Fault`, never `Itself`
 // (src/md/api/kernel_ring_completion_room.md, "The stop of a process").
 //
 // Example: `system.stop(1)` after a check of a test that failed.
@@ -368,8 +370,8 @@ stop_step :: proc "contextless" (kernel: ^ring.Ring, round: int) -> Stop_Step {
 
 // stop_by_fault ends the process with a write to the time page, which a
 // process can only read. The kernel serves no fault at that address to a
-// fault handler or a debugger, so it stops the process, with the stop code
-// of a page fault and its report.
+// fault handler or a debugger, so it stops the process, with the stop cause
+// Fault and the report of a page fault.
 @(private = "file")
 stop_by_fault :: proc "contextless" () -> ! {
 	intrinsics.volatile_store((^u64)(uintptr(op.TIME_ADDRESS)), 0)
@@ -545,7 +547,7 @@ fault_handler_set :: proc "contextless" (thread: Handle = 0, kinds: op.Fault_Kin
 
 // fault_handler_end ends the delivery: a fault stops the process again.
 // If a thread waits for an answer, its record is lost with the ring: the
-// process stops with STOP_CODE_FAULT_UNANSWERED. Answer first.
+// process stops with the stop cause Fault_Unanswered. Answer first.
 fault_handler_end :: proc "contextless" () -> Status {
 	_, status := call(.Fault_Handler_Set, 0, u64(op.Fault_Handler_Action.End))
 	return status
@@ -1232,7 +1234,7 @@ event_next :: proc "contextless" (head: ^op.Event_Ring, ring_records: []op.Event
 
 // thread_stop ends the thread that calls it. Its stack stays until another
 // thread calls `thread_end` or `thread_wait`. The end of the last thread
-// ends the process with the stop code 0.
+// ends the process with the stop cause Last_Thread_Ended.
 thread_stop :: proc "contextless" () -> ! {
 	call(.Thread_Stop, 0)
 	for {}

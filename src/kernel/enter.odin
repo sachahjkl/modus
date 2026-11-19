@@ -474,7 +474,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		created := process_create(budget.object, name[:v[2]]) or_return
 		handle := handle_insert(process, {kind = .Process, rights = RIGHTS_PROCESS, object = created})
 		if handle == 0 {
-			process_stop(created, 0)
+			// No handle ever named it, so no reader sees this cause.
+			process_stop(created, .Handles_Closed, 0)
 			return .No_Slot
 		}
 		results[0] = u64(handle)
@@ -552,7 +553,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		require_control() or_return
 		to, taken := target_lock(process, v[0]) or_return
 		process_unlock(index_of_process(to), taken)
-		process_stop(index_of_process(to), u32(v[1]))
+		// The cause comes from the target, not from the argument 0: a handle
+		// that names the caller still makes a stop of the caller.
+		cause := op.Stop_Cause.Holder
+		if to == process {
+			cause = .Itself
+		}
+		process_stop(index_of_process(to), cause, u32(v[1]))
 		return .Ok
 
 	case .Process_State:
@@ -561,13 +568,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		taken := process_lock(slot.object)
 		defer process_unlock(slot.object, taken)
 		results[0] = u64(process_state(slot.object))
-		results[1] = u64(processes[slot.object].code)
-		results[2] = processes[slot.object].entries
+		results[1] = u64(processes[slot.object].cause)
+		results[2] = u64(processes[slot.object].code)
+		results[3] = processes[slot.object].entries
 		// The place of the process in the reports of Inspect: a starter that
 		// states facts of its child by its slot needs no search of the
 		// reports, which another process with the same name can confuse.
-		results[3] = u64(slot.object)
-		results[4] = u64(intrinsics.atomic_load(&processes[slot.object].serial))
+		results[4] = u64(slot.object)
+		results[5] = u64(intrinsics.atomic_load(&processes[slot.object].serial))
 		if v[1] != 0 {
 			if !user_range(process, v[1], size_of(op.Stop_Report), true) {
 				return .Bad_Address
@@ -916,24 +924,30 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				about := &processes[v[2]]
 				about_taken := process_lock(u32(v[2]))
 				defer process_unlock(u32(v[2]), about_taken)
-				report = {
-					state        = process_state(u32(v[2])),
-					thread_count = u64(about.thread_count),
-					code         = about.code,
-					name         = about.name,
-					mapped_pages = about.mapped_pages,
-					present_pages = about.state == .None || about.table == 0 ? 0 : present_pages(about),
-					process_serial = u64(about.serial),
-					run_time     = about.run_time,
-					start_time   = about.start_time,
-					entries      = about.entries,
-				}
-				if about.state != .None {
-					report.budget = budgets[about.budget].amounts
-				}
-				for slot in about.handles {
-					if slot.kind != .None {
-						report.handle_count += 1
+				// A free slot keeps the facts of its last process: the report
+				// gives only its state and its serial, as the stop report of a
+				// free slot gives nothing (stop_report_for_inspect).
+				if about.state == .None {
+					report = {state = .None, process_serial = u64(about.serial)}
+				} else {
+					report = {
+						state        = process_state(u32(v[2])),
+						thread_count = u64(about.thread_count),
+						code         = about.code,
+						stop_cause   = u32(about.cause),
+						name         = about.name,
+						mapped_pages = about.mapped_pages,
+						present_pages = about.table == 0 ? 0 : present_pages(about),
+						process_serial = u64(about.serial),
+						run_time     = about.run_time,
+						start_time   = about.start_time,
+						entries      = about.entries,
+						budget       = budgets[about.budget].amounts,
+					}
+					for slot in about.handles {
+						if slot.kind != .None {
+							report.handle_count += 1
+						}
 					}
 				}
 			}
@@ -1228,7 +1242,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		fault_frame := waiter.frame
 		fault_frame.rip = waiter.fault_instruction
 		fault_frame.rbp = waiter.fault_frame_pointer
-		process_stop(process_index, process_fault_report(process_index, &fault_frame, waiter.fault_address))
+		process_stop(process_index, process_fault_report(process_index, &fault_frame, waiter.fault_address), 0)
 		return .Ok
 
 	case .Events_Set:

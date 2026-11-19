@@ -57,7 +57,9 @@
 // - "terminal: a press on the arrow up of the scroll bar of console: the
 //   view starts at line L of N", or "... the view follows the last lines";
 // - "terminal: a drag of the thumb of the scroll bar of console: ...";
-// - "terminal: console stopped with code C after L lines and R records";
+// - "terminal: console stopped: itself, code C, after L lines and R
+//   records", or the text of another stop cause in place of "itself, code
+//   C";
 // - "terminal: console draws its interface text in the interface font", or
 //   "... in the font of the cells", at its first frame and at each change
 //   of the setting `font`;
@@ -80,6 +82,7 @@
 package terminal_process
 
 import "modus:contract/enum_word"
+import op "modus:contract/operation"
 import "modus:support/display"
 import "modus:support/text_rendering"
 import "modus:support/graphics"
@@ -294,6 +297,7 @@ Request :: struct {
 	follow: bool, // The view shows the last lines.
 	top:    u64, // If not follow: the line of the first row.
 	stopped: bool, // The process stopped: the reader writes a line that says it.
+	cause:   op.Stop_Cause,
 	code:    u32,
 }
 
@@ -754,7 +758,10 @@ note :: proc "contextless" (parts: ..system.Part) {
 // view_make fills the view for the request.
 view_make :: proc "contextless" () {
 	if request.stopped {
-		note("-- ", process_name, " stopped with code ", u64(request.code), " after ", lines_written, " lines --")
+		stop_buffer: [64]u8
+		stop_text := system.Writer{buffer = stop_buffer[:]}
+		system.stop_write(&stop_text, request.cause, request.code)
+		note("-- ", process_name, " stopped: ", system.written(&stop_text), ", after ", lines_written, " lines --")
 		status_line.total = 0
 		edit_line = {}
 		edit_runs_pending = {}
@@ -1529,10 +1536,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// after this read ends the next wait with nothing to draw at once.
 		events_seen = intrinsics.volatile_load(system.events())
 		if process != 0 {
-			if state, code := system.process_state(process); state == .Stopped {
-				request.stopped, request.code = true, code
+			if state, cause, code := system.process_state(process); state == .Stopped {
+				request.stopped, request.cause, request.code = true, cause, code
 				view_take()
-				system.log(.Info, "terminal: ", process_name, " stopped with code ", u64(code), " after ", view.count - 1, " lines and ", view.records, " records")
+				stop_buffer: [64]u8
+				stop_text := system.Writer{buffer = stop_buffer[:]}
+				system.stop_write(&stop_text, cause, code)
+				system.log(.Info, "terminal: ", process_name, " stopped: ", system.written(&stop_text), ", after ", view.count - 1, " lines and ", view.records, " records")
 				if lost, ended := key_path.loss_end(&keys_loss); ended {
 					system.log(.Info, "terminal: ", process_name, " stopped and did not read its keys: ", lost, " keys were lost")
 				}

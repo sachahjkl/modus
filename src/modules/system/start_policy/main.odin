@@ -149,21 +149,24 @@ row_watch :: proc "contextless" (state: ^Row_State) {
 	if state.process == 0 {
 		return
 	}
-	process_state, code := system.process_state(state.process)
+	process_state, cause, code := system.process_state(state.process)
 	if process_state != .Stopped {
 		return
 	}
 	system.close(state.process)
 	state.process = 0
 	name := start_list.row_name(&state.row)
+	buffer: [64]u8
+	stop_text := system.Writer{buffer = buffer[:]}
+	system.stop_write(&stop_text, cause, code)
 	if state.restarts_left == 0 {
 		if state.row.restart_count != 0 {
-			system.log(.Warning, "start_policy: ", system.Module_Name{name}, " stopped with the code ", u64(code), ": past its ", u64(state.row.restart_count), " restarts, it stays stopped")
+			system.log(.Warning, "start_policy: ", system.Module_Name{name}, " stopped: ", system.written(&stop_text), "; past its ", u64(state.row.restart_count), " restarts, it stays stopped")
 		}
 		return
 	}
 	state.restarts_left -= 1
-	system.log(.Info, "start_policy: ", system.Module_Name{name}, " stopped with the code ", u64(code), ": it starts again, ", u64(state.restarts_left), " restarts left")
+	system.log(.Info, "start_policy: ", system.Module_Name{name}, " stopped: ", system.written(&stop_text), "; it starts again, ", u64(state.restarts_left), " restarts left")
 	row_start(state)
 }
 

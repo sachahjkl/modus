@@ -63,7 +63,7 @@ scenario_hierarchy_first := [?]Step {
 	{kind = .Wait, text = "hierarchy: after unshare, the guess of the holder stays hidden: the same bytes written by the maker took 4 blocks: as it must"},
 	{kind = .Wait, text = "hierarchy: the first run leaves 102100 objects and 1090 trees: as it must"},
 	{kind = .Wait, text = "hierarchy: done, 0 wrong"},
-	{kind = .Wait, text = "root: hierarchy stopped with code 0"},
+	{kind = .Wait, text = "root: hierarchy stopped: itself, code 0"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

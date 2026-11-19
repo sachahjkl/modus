@@ -9,7 +9,7 @@ import op "modus:contract/operation"
 // of the stack.
 @(private = "file")
 test_report :: proc() -> (report: op.Stop_Report) {
-	report.code = op.STOP_CODE_FAULT + 14
+	report.cause = u32(op.Stop_Cause.Fault)
 	report.vector = 14
 	report.instruction = 0x401010
 	report.module = {base = 0x400000, size = 0x2000}

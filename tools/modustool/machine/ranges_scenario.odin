@@ -48,7 +48,7 @@ scenario_ranges_first := [?]Step {
 	{kind = .Wait, text = "ranges: loop, 200 commits of 4 range writes, in "},
 	{kind = .Wait, text = "ranges: the loop made 200 commits of range writes: as it must"},
 	{kind = .Wait, text = "ranges: done, 0 wrong"},
-	{kind = .Wait, text = "root: ranges stopped with code 0"},
+	{kind = .Wait, text = "root: ranges stopped: itself, code 0"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

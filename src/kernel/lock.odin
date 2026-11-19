@@ -144,7 +144,7 @@ control_free :: proc "contextless" () {
 		if process.state == .Stopped {
 			process_free(process) // Only after the cleanup; else the cleanup frees it.
 		} else if process.state != .None {
-			process_stop(index, op.STOP_CODE_NO_HANDLE)
+			process_stop(index, .Handles_Closed, 0)
 		}
 	}
 	lock_free(&control_lock, .Control)

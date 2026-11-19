@@ -73,7 +73,7 @@ The chosen form, in rounds:
 
 The bound is a count, never a time. With room in the completion queue, each entry runs at least one held command, so an honest ring is empty after at most one round for each place.
 
-**The fault.** `stop` writes to the time page. A process can only read that page, so the write is a page fault at an address at or above `THREAD_AREA_BASE`. The kernel never gives a fault at such an address to a fault handler or a debugger, so it stops the process at once. It writes its report and one line of the log, with the stop code of a page fault (`STOP_CODE_FAULT` plus the vector 14). The same fault ends the process when `Process_Stop` itself is refused.
+**The fault.** `stop` writes to the time page. A process can only read that page, so the write is a page fault at an address at or above `THREAD_AREA_BASE`. The kernel never gives a fault at such an address to a fault handler or a debugger, so it stops the process at once. It writes its report and one line of the log, with the stop cause `Fault` and the vector 14 in the report. The same fault ends the process when `Process_Stop` itself is refused.
 
 The refused forms:
 
@@ -83,7 +83,7 @@ The refused forms:
 - **A new kernel operation, or a stop with no ring.** The kernel has one entry, through the ring, and its operations are counted. The fault already ends a process, with no change of the kernel.
 - **A wait with a time as the bound.** A test would then depend on the speed of the machine, and a time is no proof that the ring cannot empty.
 
-The decision of each round is a pure procedure (`stop_step`), which the host tests. The machine case is the child of the process `errors`: it fills its completion queue, holds one command, and stops with its own code. Its starter reads that code with `Process_State`.
+The decision of each round is a pure procedure (`stop_step`), which the host tests. The machine case is the child of the process `errors`: it fills its completion queue, holds one command, and stops itself with the code 0. Its starter checks with `Process_State` that the stop cause is `Itself`: a stop by the fault of the time page would give `Fault`.
 
 ## State
 

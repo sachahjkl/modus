@@ -26,6 +26,7 @@ Process :: struct {
 	slot:     i64, // The place of the process in the kernel.
 	name:     [32]u8,
 	state:    [8]u8, // created, ready, waiting or stopped.
+	cause:    [40]u8, // The stop cause of a stopped process, as op.STOP_CAUSE_TEXTS words it; empty while it runs.
 	resident: value_kinds.Size_In_Pages, // The mapped pages that have a page frame.
 	mapped:   value_kinds.Size_In_Pages, // The mapped pages.
 	handles:  i64,
@@ -86,7 +87,7 @@ acts_for_principal :: proc "contextless" () -> bool {
 	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
-// processes gives one row for each process that runs, from the reports of the kernel: its slot, its name, its state, its resident pages (the mapped pages with a page frame) and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, the time of its start in microseconds, and the hash of the file of a disk process.
+// processes gives one row for each process that runs, from the reports of the kernel: its slot, its name, its state, the stop cause of a stopped process, its resident pages (the mapped pages with a page frame) and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, the time of its start in microseconds, and the hash of the file of a disk process.
 //
 // The monitor asks the kernel for the report of each process slot, and skips a slot with no process. A stopped
 // process that its parent has not closed yet has a row, with the state `stopped`.
@@ -108,6 +109,7 @@ acts_for_principal :: proc "contextless" () -> bool {
 //
 // Example, in the console after `connect("monitor")`: `monitor.processes()`, or
 // `where(monitor.processes(), "threads", 2)` to keep the rows of a column value, or
+// `where(monitor.processes(), "cause", "a fault")` for the processes that a fault stopped, or
 // `columns(where(monitor.processes(), "name", "visitor"), "name hash")` for the file of a disk process.
 @(export, link_name = "processes")
 processes :: proc "c" (result: ^[]Process, error: ^errors.Error_Record) -> i64 {
@@ -148,6 +150,12 @@ processes :: proc "c" (result: ^[]Process, error: ^errors.Error_Record) -> i64 {
 			}
 			if process.state <= max(op.Process_State) {
 				copy(row.state[:], state_names[process.state])
+			}
+			// The state and the cause cross the border of the kernel
+			// together: a pair that the border refuses leaves the cell
+			// empty, never a cause that did not happen.
+			if _, cause, known := op.stop_of_words(u64(process.state), u64(process.stop_cause)); known && cause != .None {
+				copy(row.cause[:], op.STOP_CAUSE_TEXTS[cause])
 			}
 		}
 		total += 1

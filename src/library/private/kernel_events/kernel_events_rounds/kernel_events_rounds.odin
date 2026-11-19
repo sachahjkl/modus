@@ -1,6 +1,5 @@
 // What the process `kernel_events` and its load child agree on: the round
-// that the parent writes in the shared page, and the stop of a child that
-// refuses it.
+// that the parent writes in the shared page.
 package kernel_events_rounds
 
 // The rounds of the load child. The parent writes the word of a round in
@@ -31,14 +30,11 @@ Round :: enum u32 {
 	After_Revocation  = 14,
 }
 
-// The stop code of a load child that got a word that names no round, or
-// the word of None: the parent reads it at once, and does not wait for the
-// end of a round that never runs.
-REFUSED_ROUND_STOP_CODE :: 21
-
 // round_of_word is the border of the shared page. A word that names no
 // round, and the word of None, which is no round to run, are refused: the
-// child runs nothing in their place and stops with REFUSED_ROUND_STOP_CODE.
+// child runs nothing in their place, writes the line of the refusal, and
+// stops itself with the code 1. The parent sees the stop at once, and does
+// not wait for the end of a round that never runs.
 round_of_word :: proc "contextless" (word: u32) -> (round: Round, ok: bool) {
 	for member in Round {
 		if member != .None && u32(member) == word {

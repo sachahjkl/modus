@@ -261,7 +261,7 @@ The root service starts `unlock` at boot, after the boot pass of `settings`.
 ```
 root: the session of principal 1 "alice" ends: 2 processes stopped
 root: the lock stops the window of unlock, which ran for the machine passphrase that is set; unlock asks for the passphrase when it stopped
-root: unlock stopped with code ...
+root: unlock stopped: a holder
 unlock: principal 1 "alice" is locked: its passphrase opens its session
 ```
 

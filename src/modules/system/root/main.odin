@@ -227,9 +227,9 @@ own_records_amount_of :: proc "contextless" (caller: ^Started) -> u64 {
 	if status != .Ok {
 		return 0
 	}
-	amount, ok := log_scope.own_records_amount(results[3], results[4])
+	amount, ok := log_scope.own_records_amount(results[4], results[5])
 	if !ok {
-		system.log(.Warning, "root: the process slot ", results[3], " or the process serial ", results[4], " of ", system.Module_Name{system.name_of(caller.name[:])}, " does not fit the grant of the log service: it reads no record")
+		system.log(.Warning, "root: the process slot ", results[4], " or the process serial ", results[5], " of ", system.Module_Name{system.name_of(caller.name[:])}, " does not fit the grant of the log service: it reads no record")
 		return 0
 	}
 	return amount
@@ -1944,15 +1944,30 @@ reap :: proc "contextless" () {
 		if item.process == 0 {
 			continue
 		}
-		state, code := system.process_state(item.process)
+		state, cause, code := system.process_state(item.process)
 		if state == .Stopped {
+			buffer: [64]u8
+			stop_text := system.Writer{buffer = buffer[:]}
+			system.stop_write(&stop_text, cause, code)
+			// A stop of itself with the code 0 and a stop by a holder are the
+			// expected ends; each other stop is a warning.
+			level := op.Log_Level.Warning
+			switch cause {
+			case .Itself:
+				if code == 0 {
+					level = .Info
+				}
+			case .Holder:
+				level = .Info
+			case .None, .Last_Thread_Ended, .Handles_Closed, .Fault, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
+			}
 			// The run of `unlock` before the start policy has a line of its
 			// own: a wait for the stop of the run of the start list never
 			// takes it.
 			if unlock_without_window_running(&item) {
-				system.log(code == 0 ? .Info : .Warning, "root: unlock read the machine key with no window and stopped with code ", u64(code))
+				system.log(level, "root: unlock read the machine key with no window and stopped: ", system.written(&stop_text))
 			} else {
-				system.log(code == 0 ? .Info : .Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " stopped with code ", u64(code))
+				system.log(level, "root: ", system.Module_Name{system.name_of(item.name[:])}, " stopped: ", system.written(&stop_text))
 			}
 			// The kernel forgets the stop report with the last handle,
 			// which release closes: a disk process keeps it here.
@@ -1960,7 +1975,7 @@ reap :: proc "contextless" () {
 			if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 				unlock_stopped()
 			}
-			start_policy_stopped(&item, code)
+			start_policy_stopped(&item, cause, code)
 			// release closes the handle of the process, which is the handle
 			// of the compositor: no later start may give to it.
 			compositor_reaped := item.process == compositor

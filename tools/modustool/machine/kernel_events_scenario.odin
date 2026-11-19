@@ -46,7 +46,7 @@ scenario_kernel_events := [?]Step {
 	{kind = .Wait, text = "kernel_events: a seventeenth rule: 16 rules Ok, 17 rules No_Slot: as it must"},
 	{kind = .Wait, text = "kernel_events: 1000 operations Memory_Size of one process: 1000 records, 0 lost: as it must"},
 	{kind = .Wait, text = "kernel_events: a thread that sleeps 20 times: "},
-	{kind = .Wait, text = "kernel_events: a child that faults once: 1 record of a fault that stopped it, vector 14, address 0000000000001000, stop code 000000000000010e: as it must"},
+	{kind = .Wait, text = "kernel_events: a child that faults once: 1 record of a fault that stopped it, vector 14, address 0000000000001000, stopped: a fault: as it must"},
 	{kind = .Wait, text = "kernel_events: one in 10: 100 records of 1000 operations: as it must"},
 	{kind = .Wait, text = "kernel_events: a full ring of 16 records: "},
 	{kind = .Wait, text = "kernel_events: the table taken away: 0 records after it; a second take gave Bad_State: as it must"},
@@ -57,6 +57,8 @@ scenario_kernel_events := [?]Step {
 	{kind = .Wait, text = " lost, of 0); a rule for every process that matches nothing "},
 	{kind = .Wait, text = " lost, of 0); a rule that accepts each of its operations "},
 	{kind = .Wait, text = "kernel_events: in 200 ms while this process sleeps, every process: "},
+	// A later stop by a holder keeps the first stop cause.
+	{kind = .Wait, text = "kernel_events: the child that faults, stopped again by this process: its stop cause stays a fault: as it must"},
 	{kind = .Wait, text = "kernel_events: the table is given; waiting for the revocation of the grant machine"},
 	// The end of the table with its owner.
 	{kind = .Front, text = "console"},

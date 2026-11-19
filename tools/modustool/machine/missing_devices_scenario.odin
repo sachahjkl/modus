@@ -53,7 +53,7 @@ entropy_read_late_line :: proc() -> string {
 scenario_missing_devices_no_screen := [?]Step {
 	{kind = .Wait, text = NO_SCREEN_LINE, fails_on = "compositor: ok "},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
-	{kind = .Wait, text = "root: settings stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: settings stopped: itself, code 0", any_order = true},
 	{kind = .Wait, text = "unlock: no named principal: the machine runs as principal 0, with no unlock", any_order = true},
 	{kind = .Wait, text = "root: the machine is usable, by the start policy ", fails_on = "root: started console"},
 	{kind = .Quit},

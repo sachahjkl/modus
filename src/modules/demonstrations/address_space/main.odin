@@ -392,7 +392,7 @@ guard_page :: proc "contextless" (ctx: ^system.Context) {
 	}
 	defer system.close(process)
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		state, _ := system.process_state(process)
+		state, _, _ := system.process_state(process)
 		if state == .Stopped {
 			break
 		}
@@ -488,8 +488,8 @@ refuse :: proc "contextless" () {
 // The edge cases of the virtual memory: each one is a case where the
 // kernel did something wrong once, and that must stay right. Each one logs
 // a line and sets its result.
-EDGE_CASES :: 14
-edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the sums of the frames", "an unmap ends the protection of parts: the object is mapped again", "large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "a decommit wakes a thread that waits on a word of the page", "a word in the second 4 KiB of a large page is its own word", "an object with parts of their own protection is not mapped again", "a small uncommitted object costs a page", "a part cannot get more than its mapping", "a page that is not committed stops with its own code", "a revocation of a large uncommitted mapping wakes its waiter", "an uncommitted object of 1 GiB ends with few pages walked", "a thread whose first instruction is not an address of a process is refused", "a map with a flag that the kernel does not know is refused"}
+EDGE_CASES :: 16
+edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the sums of the frames", "an unmap ends the protection of parts: the object is mapped again", "large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "a decommit wakes a thread that waits on a word of the page", "a word in the second 4 KiB of a large page is its own word", "an object with parts of their own protection is not mapped again", "a small uncommitted object costs a page", "a part cannot get more than its mapping", "a page that is not committed stops with its own stop cause", "a revocation of a large uncommitted mapping wakes its waiter", "an uncommitted object of 1 GiB ends with few pages walked", "a thread whose first instruction is not an address of a process is refused", "a map with a flag that the kernel does not know is refused", "the end of the last thread stops the process with its own stop cause and the code 0", "a process gets no Control over itself, and its stop through its own handle is refused"}
 edge_case_results: [EDGE_CASES]bool
 
 Waiter :: struct #align (64) {
@@ -611,8 +611,14 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		system.close(memory)
 	}
 	// A child touches a page of an uncommitted object that is not committed:
-	// it stops with the code of a page that is not committed.
-	edge_case_results[9] = child_stop_code(ctx, 3) == op.STOP_CODE_NOT_COMMITTED
+	// it stops with the stop cause of a page that is not committed.
+	not_committed_cause, _ := child_stop_cause(ctx, 3)
+	edge_case_results[9] = not_committed_cause == .Not_Committed
+	// A child whose one thread ends: the kernel stops it with the cause of
+	// the end of its last thread, never as a stop of itself.
+	last_thread_cause, last_thread_code := child_stop_cause(ctx, 5)
+	edge_case_results[14] = last_thread_cause == .Last_Thread_Ended && last_thread_code == 0
+	edge_case_results[15] = own_handle_stop(ctx)
 	// An Uncommitted object of 1 page, then a report: the test build
 	// checks the sums of the frames at each report (a page that such an
 	// object pays and that no count names stops the machine), and the free
@@ -763,8 +769,7 @@ revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
 	// The revocation must find the child in its wait: its one thread is
 	// not Ready.
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		states, _ := system.call(.Process_State, u64(process))
-		if op.Process_State(states[0]) == .Waiting {
+		if state, _, _ := system.process_state(process); state == .Waiting {
 			break
 		}
 		system.sleep(system.time() + 1)
@@ -813,11 +818,13 @@ large_object_ends_quickly :: proc "contextless" () -> bool {
 	return kept == 0
 }
 
-// child_stop_code starts the child with a role and gives its stop code.
-child_stop_code :: proc "contextless" (ctx: ^system.Context, role: u64) -> u32 {
+// child_stop_cause starts the child with a role and gives its stop cause
+// and its stop code: None when it did not start or did not stop within the
+// hang bound.
+child_stop_cause :: proc "contextless" (ctx: ^system.Context, role: u64) -> (cause: op.Stop_Cause, code: u32) {
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		return 0
+		return .None, 0
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	grants: [op.CONTEXT_HANDLES]system.Grant
@@ -825,17 +832,104 @@ child_stop_code :: proc "contextless" (ctx: ^system.Context, role: u64) -> u32 {
 	values[VALUE_ROLE] = role
 	process, start := system.process_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
 	if start != .Ok {
-		return 0
+		return .None, 0
 	}
 	defer system.close(process)
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		if state, _ := system.process_state(process); state == .Stopped {
+		if state, _, _ := system.process_state(process); state == .Stopped {
 			break
 		}
 		system.sleep(system.time() + 10)
 	}
-	_, code := system.process_state(process)
-	return code
+	_, cause, code = system.process_state(process)
+	return cause, code
+}
+
+// The child of the role 5: its one thread ends with Thread_Stop, and the
+// process stops with no stop of its own.
+child_last_thread :: proc "contextless" () -> ! {
+	system.thread_stop()
+}
+
+// The page that the parent shares with the child of the role 6.
+Own_Handle_Board :: struct {
+	handle: u64, // The number in the child of its own process handle, which the parent gave.
+	given:  u32, // 1: handle is written.
+	status: u32, // The status of the Process_Stop of the child through that handle, plus 1 (0: none).
+}
+
+// The child of the role 6 tries to stop itself through a handle of its own
+// process, with the code 1. A process never holds Control over itself: the
+// give takes Control away, so the kernel refuses the stop with No_Right.
+// The child then writes the status and stops itself with the code 0. A stop
+// that went through would end the child with the code 1, which the parent
+// sees.
+child_stop_by_own_handle :: proc "contextless" (ctx: ^system.Context) -> ! {
+	address, mapped := system.memory_map(ctx.handles[GRANT_REVOCATION_BOARD])
+	if mapped != .Ok {
+		system.log(.Info, "address_space: the child of its own handle could not map its board: ", op.STATUS_NAMES[mapped])
+		system.stop(1)
+	}
+	board := (^Own_Handle_Board)(address)
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; intrinsics.atomic_load(&board.given) == 0 && system.time() < deadline; {
+		system.word_wait(&board.given, 0, system.time() + 100)
+	}
+	if intrinsics.atomic_load(&board.given) == 0 {
+		system.log(.Info, "address_space: the child of its own handle got no handle")
+		system.stop(1)
+	}
+	_, status := system.call(.Process_Stop, intrinsics.volatile_load(&board.handle), 1)
+	intrinsics.atomic_store(&board.status, u32(status) + 1)
+	system.stop(0)
+}
+
+// own_handle_stop starts the child of the role 6, gives it its own process
+// handle with Read and Control, and checks that the give took Control away:
+// the stop of the child through that handle is refused with No_Right, and
+// the child then stops itself with the code 0, the stop cause Itself. A
+// stop through the handle, if the kernel took it, would have the stop cause
+// Itself too (the kernel compares the target with the caller), with the
+// code 1.
+own_handle_stop :: proc "contextless" (ctx: ^system.Context) -> bool {
+	board_memory, created := system.memory_create(1)
+	if created != .Ok {
+		return false
+	}
+	defer system.close(board_memory)
+	board_address, _ := system.memory_map(board_memory)
+	defer system.memory_unmap(board_address)
+	board := (^Own_Handle_Board)(board_address)
+	image_address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
+	if status != .Ok {
+		return false
+	}
+	image := ([^]u8)(image_address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	grants[GRANT_REVOCATION_BOARD] = {board_memory, {.Read, .Write}}
+	values: [op.CONTEXT_VALUES]u64
+	values[VALUE_ROLE] = 6
+	process, start := system.process_start(system.image_find(image, "address_space"), "address_space own handle", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
+	if start != .Ok {
+		return false
+	}
+	defer system.close(process)
+	own_handle, given := system.give(process, process, {.Read, .Control})
+	intrinsics.volatile_store(&board.handle, u64(own_handle))
+	intrinsics.atomic_store(&board.given, 1)
+	system.word_wake(&board.given)
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+		if state, _, _ := system.process_state(process); state == .Stopped {
+			break
+		}
+		system.sleep(system.time() + 10)
+	}
+	_, cause, code := system.process_state(process)
+	refused := intrinsics.atomic_load(&board.status) == u32(system.Status.No_Right) + 1
+	buffer: [64]u8
+	stop_text := system.Writer{buffer = buffer[:]}
+	system.stop_write(&stop_text, cause, code)
+	system.log(.Info, "address_space: a child stopped through its own process handle: the give gave ", op.STATUS_NAMES[given], ", the stop through the handle ", refused ? string("was refused with No_Right") : string("was not refused with No_Right"), ", and the child stopped: ", system.written(&stop_text))
+	return given == .Ok && refused && cause == .Itself && code == 0
 }
 
 // The child of the role 3: it touches a page that is not committed.
@@ -1371,6 +1465,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if ctx.values[VALUE_ROLE] == 2 {
 		child_delegate(ctx)
+	}
+	if ctx.values[VALUE_ROLE] == 5 {
+		child_last_thread()
+	}
+	if ctx.values[VALUE_ROLE] == 6 {
+		child_stop_by_own_handle(ctx)
 	}
 	random.generator_from_context(&process_generator, ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "address_space")

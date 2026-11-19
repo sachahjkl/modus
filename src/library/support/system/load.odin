@@ -1179,18 +1179,42 @@ write_hash :: proc "contextless" (writer: ^Writer, value: [32]u8) {
 // start. The handle needs the right Read.
 process_entries :: proc "contextless" (process: Handle) -> u64 {
 	results, _ := call(.Process_State, u64(process))
-	return results[2]
+	return results[3]
 }
 
-// process_state gives the state of a process, and its code when it stopped.
-process_state :: proc "contextless" (process: Handle) -> (state: op.Process_State, code: u32) {
+// process_state gives the state of a process, and its stop cause and its
+// stop code when it stopped. A pair that the border refuses (a word that
+// names no member, a stopped process with no cause, a cause of a process
+// that runs) is a fault of the kernel: the process stops, and never reads
+// a stop that did not happen.
+//
+// Example: `state, cause, _ := system.process_state(child)`, then a whole
+// switch on `cause`; for `Fault`, `system.process_stop_report(child).vector`.
+process_state :: proc "contextless" (process: Handle) -> (state: op.Process_State, cause: op.Stop_Cause, code: u32) {
 	results, _ := call(.Process_State, u64(process))
 	known: bool
-	state, known = enum_word.member_of_word(op.Process_State, results[0])
+	state, cause, known = op.stop_of_words(results[0], results[1])
 	if !known {
-		kernel_word_refused("the state of a process", results[0])
+		if _, state_known := enum_word.member_of_word(op.Process_State, results[0]); !state_known {
+			kernel_word_refused("the state of a process", results[0])
+		}
+		kernel_word_refused("the stop cause of a process, or a cause that does not fit its state,", results[1])
 	}
-	return state, u32(results[1])
+	return state, cause, u32(results[2])
+}
+
+// stop_write writes the words of a stop for a line or a cell: the text of
+// the stop cause, and the stop code for a stop of itself.
+//
+// Example: "itself, code 0", "a holder", "a fault".
+stop_write :: proc "contextless" (writer: ^Writer, cause: op.Stop_Cause, code: u32) {
+	write_part(writer, op.STOP_CAUSE_TEXTS[cause])
+	switch cause {
+	case .Itself:
+		write_part(writer, ", code ")
+		write_part(writer, u64(code))
+	case .None, .Holder, .Last_Thread_Ended, .Handles_Closed, .Fault, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
+	}
 }
 
 // process_stop_report gives where a process stopped on a fault, and the
