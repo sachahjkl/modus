@@ -1,6 +1,7 @@
 package machine
 
 import "core:fmt"
+import "core:os"
 import "core:strconv"
 import "core:time"
 import module "modus:contract/module"
@@ -184,6 +185,25 @@ record_fact_sentences :: proc(machine: ^Machine, from: i64) -> (sentences: map[i
 		}
 	}
 	return sentences, read_through
+}
+
+// log_file_rendered gives the text of the log file of a machine that
+// stopped, with the line of each fact rendered by the module files of the
+// build, as a step reads it: QEMU writes the raw lines, and a check after
+// the run reads the sentences. The text is in the temporary memory.
+log_file_rendered :: proc(log_path: string) -> (text: string, ok: bool) {
+	log, read_error := os.read_entire_file(log_path, context.temp_allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: test failed: cannot read %s: %v", log_path, read_error)
+		return "", false
+	}
+	catalog, problem := build.fact_catalog_of_build(context.temp_allocator)
+	if problem != "" {
+		fmt.eprintfln("modustool: test failed: the facts of %s cannot be rendered: %s", log_path, problem)
+		return "", false
+	}
+	rendered, _ := build.fact_lines_render(&catalog, string(log))
+	return rendered, true
 }
 
 // fact_lines_forget forgets the lines of facts that log_read kept.

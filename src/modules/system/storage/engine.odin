@@ -92,10 +92,6 @@ Disk_Silence :: enum {
 // no change until its next start (src/md/features/missing_hardware.md).
 disk_silent: bool
 
-// The line that the storage service writes once when the disk goes silent,
-// after its cause. A machine test waits for it.
-DISK_SILENT_LINE :: "; the service reads and changes nothing on the disk until its next start, and refuses each call that needs the disk"
-
 // The open of the disk is done: the service knows its stores. A disk that
 // went silent before it leaves this false, and each call is refused.
 disk_opened: bool
@@ -123,14 +119,19 @@ disk_silence_note :: proc "contextless" (cause: Disk_Silence) {
 	disk_errors += 1
 	system.close(block_service)
 	block_service = 0
+	// The sentence of the cause lives in this buffer until the fact is
+	// written.
+	words_buffer: [DISK_SILENT_CAUSE_BYTES]u8
+	words: string
 	switch cause {
 	case .No_Answer:
-		system.log(.Error, "storage: the disk does not answer: the block service says that the device did not answer a request", DISK_SILENT_LINE)
+		words = "the block service says that the device did not answer a request"
 	case .Block_Service_Stopped:
-		system.log(.Error, "storage: the disk does not answer: the block service stopped before it answered", DISK_SILENT_LINE)
+		words = "the block service stopped before it answered"
 	case .No_Completion:
-		system.log(.Error, "storage: the disk does not answer: no completion came in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms", DISK_SILENT_LINE)
+		words = system.format(words_buffer[:], "no completion came in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms")
 	}
+	system.log_fact(.Error, Disk_Silent{cause = cause_field(words)})
 }
 
 // disk_answer_absent says if a completion of the block service says that
@@ -1267,7 +1268,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	if plan.tree_damaged {
 		plan_drop()
 		store_damaged[plan.store_index] = true
-		system.log(.Warning, "storage: a node of a tree of the store ", system.name_of(plan.next.stores[plan.store_index].name[:]), " has a wrong check or breaks a rule of the format: the service changes nothing more in the store")
+		system.log_fact(.Warning, Tree_Node_Damaged{store = store_field(system.name_of(plan.next.stores[plan.store_index].name[:]))})
 		return errors.fail(error, failure(.Damaged), .Damaged, .Stores)
 	}
 	if plan.device {
@@ -1277,7 +1278,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	if plan.count_fault {
 		plan_drop()
 		store_faulty[plan.store_index] = true
-		system.log(.Error, "storage: a fault of the engine: a commit would take a count of names of a block below 0; the service makes no change in the store ", system.name_of(plan.next.stores[plan.store_index].name[:]), " until its next start, which counts again")
+		system.log_fact(.Error, Commit_Count_Below_Zero{store = store_field(system.name_of(plan.next.stores[plan.store_index].name[:]))})
 		return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
 	}
 	if plan.capacity_reached {
@@ -1328,13 +1329,17 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		// on from it.
 		plan_drop()
 		commits_refused += 1
-		system.log(.Error, "storage: the read back of the commit of generation ", plan.next.generation, " found ", differ, differ == 1 ? string(" block with other bytes: the disk did not keep it") : string(" blocks with other bytes: the disk did not keep them"), "; the commit is refused before its root, and the service goes on from generation ", root.generation)
+		if differ == 1 {
+			system.log_fact(.Error, Commit_Block_Dropped{generation = plan.next.generation, generation_before = root.generation})
+		} else {
+			system.log_fact(.Error, Commit_Blocks_Dropped{generation = plan.next.generation, blocks = differ, generation_before = root.generation})
+		}
 		return errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, i64(differ))
 	case .Device:
 		// No root names the blocks: the disk holds the state before.
 		plan_drop()
 		commits_refused += 1
-		system.log(.Error, "storage: the read back of the commit of generation ", plan.next.generation, " failed on the device: the commit is refused before its root")
+		system.log_fact(.Error, Commit_Read_Back_Failed{generation = plan.next.generation})
 		return errors.fail(error, failure(.Disk), .Device)
 	}
 	plan.next.time = time_now()
@@ -1346,7 +1351,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		// The root on the disk is the old one, or the new one: the service
 		// cannot know. It stops serving changes.
 		plan_drop()
-		root_undecided(plan.next.generation, "its write failed on the device")
+		root_undecided(plan.next.generation, .Write)
 		return errors.fail(error, failure(.Disk), .Device)
 	}
 	blocks_written += 1
@@ -1361,13 +1366,13 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		// writes its root in that place.
 		plan_drop()
 		commits_refused += 1
-		system.log(.Error, "storage: the read back of the root of the commit of generation ", plan.next.generation, " found other bytes: the disk did not keep it; the commit is refused, and the service goes on from generation ", root.generation)
+		system.log_fact(.Error, Commit_Root_Dropped{generation = plan.next.generation, generation_before = root.generation})
 		root_refused_in_a_row()
 		return errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, 1)
 	case .Device:
 		// The root can be on the disk: as for a failed write of a root.
 		plan_drop()
-		root_undecided(plan.next.generation, "its read back failed on the device")
+		root_undecided(plan.next.generation, .Read_Back)
 		return errors.fail(error, failure(.Disk), .Device)
 	}
 	roots_refused_in_a_row = 0
@@ -1378,7 +1383,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	commits += 1
 	opened.store_versions[plan.store_index] = u64(i64(opened.store_versions[plan.store_index]) + plan.versions_change)
 	if plan.dropped_versions != 0 {
-		system.log(.Warning, "storage: the commit of generation ", root.generation, " dropped ", plan.dropped_versions, " version indexes or leaves with a wrong check in the store ", system.name_of(root.stores[plan.store_index].name[:]), ": those versions are lost, the objects stay")
+		system.log_fact(.Warning, Versions_Dropped_At_Commit{generation = root.generation, dropped = plan.dropped_versions, store = store_field(system.name_of(root.stores[plan.store_index].name[:]))})
 	}
 	owner := u8(plan.store_index + 1)
 	for place in plan.delta_places[:plan.delta_count] {
@@ -1608,17 +1613,28 @@ root_refused_in_a_row :: proc "contextless" () {
 	roots_refused_in_a_row += 1
 	if roots_refused_in_a_row == ROOT_REFUSAL_LIMIT {
 		broken = true
-		system.log(.Error, "storage: the disk did not keep the root of ", u64(ROOT_REFUSAL_LIMIT), " commits in a row: a place of the root drops its writes; the service makes no change until its next start, and its objects can still be read")
+		system.log_fact(.Error, Root_Place_Drops_Writes{commits = u64(ROOT_REFUSAL_LIMIT)})
 	}
+}
+
+// The step of a root that failed on the device.
+Root_Failure :: enum {
+	Write, // The write of the root, or its Flush.
+	Read_Back, // The read back of the root.
 }
 
 // root_undecided ends a commit whose root can be on the disk or not: the
 // service does not take it, makes no change until its next start, and the
 // open of that start decides.
-root_undecided :: proc "contextless" (generation: u64, cause: string) {
+root_undecided :: proc "contextless" (generation: u64, failed_step: Root_Failure) {
 	commits_undecided += 1
 	broken = true
-	system.log(.Error, "storage: the root of the commit of generation ", generation, ": ", cause, "; the commit is not taken, the open of the next start decides, and the service makes no change until then")
+	switch failed_step {
+	case .Write:
+		system.log_fact(.Error, Root_Write_Failed{generation = generation})
+	case .Read_Back:
+		system.log_fact(.Error, Root_Read_Back_Failed{generation = generation})
+	}
 }
 
 // root_read_back reads the root in `place` from the device and compares it

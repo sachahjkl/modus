@@ -436,7 +436,7 @@ commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error:
 	measure.generation = generation
 	measure.written = i64(blocks_written - written_before)
 	measure.milliseconds = i64(system.time() - start)
-	system.log(.Info, "storage: the commit of generation ", u64(generation), " of ", kept_text(&ranged.named.name), ": ", u64(measure.changed), " blocks changed of ", u64(measure.object_blocks), ", ", u64(measure.hashed_blocks), " blocks and ", u64(measure.hashed_nodes), " object nodes hashed, ", u64(measure.written), " blocks written; the object holds ", system.Size{u64(measure.held_blocks), .Blocks}, "; in ", system.Duration{u64(measure.milliseconds), .Milliseconds})
+	system.log_fact(.Info, Ranges_Committed{generation = u64(generation), changed = u64(measure.changed), object_blocks = u64(measure.object_blocks), hashed_blocks = u64(measure.hashed_blocks), hashed_nodes = u64(measure.hashed_nodes), written = u64(measure.written), held = blocks_field(u64(measure.held_blocks)), elapsed = milliseconds_field(u64(measure.milliseconds)), object = object_field(kept_text(&ranged.named.name))})
 	if len(result) > 0 {
 		result[0] = measure
 	}

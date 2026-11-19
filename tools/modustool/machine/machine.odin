@@ -2975,6 +2975,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed at the limit\")"},
 	{kind = .Wait, text = "[console] {generation+4}"},
 	{kind = .Record, process = "storage", level = "Info", text = "storage: the store console is at its limit of 3 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
+	{kind = .Fact, process = "storage", fact = "storage_service.Store_At_Limit_Thinned_One_Version", condition = "store = \"console\"", any_order = true},
 	// An error of a service is a record: the console writes it as a sentence.
 	{kind = .Type, text = "storage.write(0, \"\", \"x\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 64 bytes (-3)"},

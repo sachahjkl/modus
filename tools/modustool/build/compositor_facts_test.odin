@@ -28,20 +28,21 @@ WINDOW_TITLE_BYTES_MOST :: 32
 ELEMENT_NAME_BYTES_MOST :: 32
 
 // line_of_before gives the line that the writer wrote before the fact, with the
-// parts of its call of system.log.
-@(private = "file")
+// parts of its call of system.log. The tests of the facts of each module
+// share it.
+@(private)
 line_of_before :: proc(parts: ..sentence.Part) -> string {
 	buffer: [module.FACT_SENTENCE_BYTES_MOST]u8
 	return strings.clone(sentence.format(buffer[:], ..parts), context.temp_allocator)
 }
 
-@(private = "file")
+@(private)
 facts_expect_line :: proc(t: ^testing.T, written, old: string, loc := #caller_location) {
 	testing.expectf(t, written == old, "the fact writes %q, the line of before was %q", written, old, loc = loc)
 }
 
 // The bits of a signed value in a field of these tests.
-@(private = "file")
+@(private)
 signed_bits :: proc(value: i64) -> u64 {
 	return u64(value)
 }
