@@ -86,7 +86,7 @@ scenario_start_policy_missing_console := [?]Step {
 	{kind = .Wait, text = "start_policy: cannot start console_missing: status ", fails_on = "kernel: the machine stops with code"},
 	{kind = .Wait, text = "start_policy: the machine is not usable without console_missing: the start policy stops before Machine_Usable"},
 	{kind = .Wait, text = " stopped before the machine was usable: "},
-	{kind = .Wait, text = ": the rescue start policy starts"},
+	{kind = .Wait, text = "; the rescue start policy starts"},
 	// The rescue list of this image: the default rescue list and the two rows
 	// of the test of the restarts, each with 2 restarts.
 	{kind = .Wait, text = "start_policy: the start list has 6 rows: each starts in its order"},
