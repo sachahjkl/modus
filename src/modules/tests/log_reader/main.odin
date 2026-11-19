@@ -539,12 +539,12 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 		system.log("log_reader: WRONG: while the storm child runs, this process holds ", storm_log_records_kept, " log records of each second of its ", whole_log_records)
 		return "the storm child did not take its log records from the budget of this process"
 	}
-	code, stopped := child_wait(child)
+	cause, code, stopped := child_wait(child)
 	if !stopped {
 		return "the storm child did not stop within the hang bound"
 	}
-	if code != 0 {
-		return "the storm child stopped with a code other than 0"
+	if cause != .Itself || code != 0 {
+		return "the storm child did not stop itself with the code 0"
 	}
 	if held, reached := log_records_wait(whole_log_records); !reached {
 		system.log("log_reader: WRONG: after the stop of the storm child, this process holds ", held, " log records of each second, and not ", whole_log_records)
