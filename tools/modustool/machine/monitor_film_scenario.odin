@@ -10,13 +10,16 @@ package machine
 //
 //  1. monitor starts from the start menu and goes to the right of the
 //     screen, and its graphs fill with the samples of a quiet machine;
-//  2. plasma starts: it draws each frame, so the processor time and the
-//     gauge of the compositor rise;
-//  3. the close button stops plasma, and the curves come down.
+//  2. scheduler starts: its tests run spinners on the four processors, so
+//     the processor time rises and the gauges change their color;
+//  3. the close button stops scheduler, and the curves come down.
+//
+// plasma was refused as the load: it draws each frame, but takes 1 % of the
+// processors, so no curve and no gauge moves.
 //
 // Each hold is long enough for the graphs to take samples: a sample comes
 // every 500 ms. The places keep both windows whole on the reference screen
-// of 1920 by 1080: monitor (520 by 640) at the right, plasma at its place
+// of 1920 by 1080: monitor (520 by 640) at the right, scheduler at its place
 // of start, at the left.
 @(private = "file")
 MONITOR_FILM_SAMPLES_HOLD :: 12_000
@@ -36,14 +39,14 @@ scenario_monitor_film := [?]Step {
 	{kind = .Film_Start, text = "monitor"},
 	{kind = .Film_Hold, milliseconds = MONITOR_FILM_SAMPLES_HOLD},
 
-	// Scene 2: a load. plasma draws each frame.
-	{kind = .Launch, text = "plasma"},
-	{kind = .Wait, text = "compositor: surface plasma"},
+	// Scene 2: a load. The tests of scheduler run spinners.
+	{kind = .Launch, text = "scheduler"},
+	{kind = .Wait, text = "compositor: surface scheduler"},
 	{kind = .Film_Hold, milliseconds = MONITOR_FILM_SAMPLES_HOLD},
 	{kind = .Film_Hold, milliseconds = MONITOR_FILM_SAMPLES_HOLD},
 
 	// Scene 3: the load stops, and the curves come down.
-	{kind = .Close, text = "plasma"},
+	{kind = .Close, text = "scheduler"},
 	{kind = .Film_Hold, milliseconds = MONITOR_FILM_SAMPLES_HOLD},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
 	{kind = .Film_Stop},
