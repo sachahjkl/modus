@@ -332,7 +332,9 @@ record_description_of_file :: proc(file: []u8, number: u32) -> (description: Rec
 	for &item, index in fields {
 		stored := module.field(file, record, u32(index)) or_return
 		type := module.field_type(stored) or_return
-		item = {name = module.string_at(file, stored.name_offset, stored.name_count), offset = stored.offset, type = type, detail = stored.detail, unsigned = stored.unsigned, integer_unit = stored.integer_unit}
+		kind := module.field_kind(stored) or_return
+		which := module.field_contract_enum(stored) or_return
+		item = {name = module.string_at(file, stored.name_offset, stored.name_count), offset = stored.offset, type = type, detail = stored.detail, unsigned = stored.unsigned, integer_unit = stored.integer_unit, kind = kind, contract_enum = which}
 	}
 	return {name = module.string_at(file, record.name_offset, record.name_count), size = record.size, fields = fields}, true
 }
@@ -394,6 +396,10 @@ record_layouts_difference :: proc(declared, described: Record_Description) -> st
 		// parameter: a reader shows the value in it.
 		if field.integer_unit != other.integer_unit {
 			return fmt.tprintf("the field %s of the record %s is %s, the field %s of %s is %s", field.name, declared.name, integer_unit_words(field.integer_unit), other.name, described.name, integer_unit_words(other.integer_unit))
+		}
+		// The kind and the enum are part of what the field means too.
+		if field.kind != other.kind || field.contract_enum != other.contract_enum {
+			return fmt.tprintf("the field %s of the record %s has the kind %v (%v), the field %s of %s has the kind %v (%v)", field.name, declared.name, field.kind, field.contract_enum, other.name, described.name, other.kind, other.contract_enum)
 		}
 	}
 	return ""

@@ -61,6 +61,15 @@ host_test_commands_take_the_kernel_parts_where_they_compile :: proc(t: ^testing.
 			}
 		}
 		testing.expectf(t, tool_flag_count == (foundation.source_folder_is_of_the_tool(folder) ? 1 : 0), "%s: the flag of the source library of the tool %d times", folder, tool_flag_count)
+		// Each host test compiles packages of src/, which can declare a
+		// fact type: the compiler then needs to know the attribute.
+		attribute_flag_count := 0
+		for word in command {
+			if word == foundation.LOG_FACT_ATTRIBUTE_FLAG {
+				attribute_flag_count += 1
+			}
+		}
+		testing.expectf(t, attribute_flag_count == 1, "%s: the flag of the attribute of a fact type %d times", folder, attribute_flag_count)
 		test_program := command[len(command) - 1]
 		testing.expectf(t, strings.has_prefix(test_program, "-out:" + foundation.BUILD_FOLDER + "/test_"), "%s: the last word is the test program, not %s", folder, test_program)
 		testing.expectf(t, !test_programs[test_program], "%s: the test program %s is the test program of another folder", folder, test_program)

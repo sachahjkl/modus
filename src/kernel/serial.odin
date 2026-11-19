@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "kernel:delivery_count"
 import "kernel:time_base"
 import "modus:contract/cut_mark"
+import "modus:contract/enum_word"
 import op "modus:contract/operation"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
@@ -688,7 +689,18 @@ serial_record_line :: proc "contextless" (record: ^op.Log_Record) {
 	serial_line_count, serial_line_written = 0, 0
 	serial_line_time = max(record.time, 1)
 	serial_line_put(head[:head_count])
-	serial_line_put(record.text[:text_count])
+	// The kernel wrote each record, so its form is known; a form that
+	// names no member would write the head only.
+	if form, form_known := op.log_record_form(record); form_known {
+		switch form {
+		case .Text:
+			serial_line_put(record.text[:text_count])
+		case .Fact:
+			// The head is at most LOG_LINE_HEAD_CAPACITY bytes, so the
+			// line of the fact fits after it (LOG_SERIAL_LINE_BYTES_MOST).
+			serial_line_count += op.log_fact_line(op.log_record_fact(record), (^[op.LOG_FACT_LINE_BYTES_MOST]u8)(&serial_line[serial_line_count]))
+		}
+	}
 	serial_line_open = record.more != 0
 	if !serial_line_open {
 		serial_line_put({'\r', '\n'})
@@ -1006,46 +1018,141 @@ log_record :: proc "contextless" (process: u32, process_serial: u32, owner: ^Pro
 			}
 		}
 		rest = rest[len(part):]
-		written := log_head.written
-		// The store of `written` for the record before must come before any
-		// store of this record: a reader that sees a byte of this record then
-		// sees the new `written`, and drops its copy (op.log_copy_kept).
-		// Between two calls the log lock orders them; inside one long text
-		// only this fence does. On x86 it only stops the compiler.
-		intrinsics.atomic_thread_fence(.Release)
-		own_count: u64
-		if owner != nil {
-			own_count = owner.log_records_written
-			owner.log_records_written += 1
-		}
-		record := &log_records[written % op.LOG_RECORD_CAPACITY]
-		record^ = {
-			sequence       = written,
-			time           = microseconds(cycles_now()),
-			process        = u8(process),
-			thread         = u8(thread),
-			process_serial = process_serial,
-			own_number     = u32(own_count), // The low bits: a reader names a record by its distance to the count (op.own_log_window).
-			level          = level,
-			more           = u8(len(rest) != 0),
-			text_count     = u16(len(part)),
-		}
-		copy(record.name[:len(record.name) - 1], name)
+		record, written, own_count := log_record_open(process, process_serial, owner, thread, name, level, len(rest) != 0)
+		record.text_count = u16(len(part))
 		copy(record.text[:], part)
 		record.run_count = u8(value_kinds.value_runs_of_record(runs, offset, len(part), record.runs[:]))
 		offset += len(part)
-		// The same bytes in the own log ring. No reader maps that ring: a
-		// copy comes only from Log_Read, under the log lock, so no fence.
-		if owner != nil && owner.log_ring_frames[0] != 0 {
-			own_log_record(owner, own_count)^ = record^
-		}
-		// The record is complete before a reader can see it.
-		intrinsics.atomic_store(&log_head.written, written + 1)
+		log_record_close(record, owner, own_count, written)
 		if len(rest) == 0 {
 			break
 		}
 	}
 	word_wake(physical_of(&log_head.written), max(u64))
+}
+
+// log_record_open gives the next record of the whole log with its head
+// written and zero bytes after the name. The caller holds the log lock,
+// writes the bytes of its form, then calls log_record_close.
+@(private = "file")
+log_record_open :: proc "contextless" (process: u32, process_serial: u32, owner: ^Process, thread: u32, name: []u8, level: op.Log_Level, more: bool) -> (record: ^op.Log_Record, written: u64, own_count: u64) {
+	written = log_head.written
+	// The store of `written` for the record before must come before any
+	// store of this record: a reader that sees a byte of this record then
+	// sees the new `written`, and drops its copy (op.log_copy_kept).
+	// Between two calls the log lock orders them; inside one long text
+	// only this fence does. On x86 it only stops the compiler.
+	intrinsics.atomic_thread_fence(.Release)
+	if owner != nil {
+		own_count = owner.log_records_written
+		owner.log_records_written += 1
+	}
+	record = &log_records[written % op.LOG_RECORD_CAPACITY]
+	record^ = {
+		sequence       = written,
+		time           = microseconds(cycles_now()),
+		process        = u8(process),
+		thread         = u8(thread),
+		process_serial = process_serial,
+		own_number     = u32(own_count), // The low bits: a reader names a record by its distance to the count (op.own_log_window).
+		level          = level,
+		more           = u8(more),
+	}
+	copy(record.name[:len(record.name) - 1], name)
+	return record, written, own_count
+}
+
+// log_record_close copies a record into the own log ring of its process,
+// then makes it visible to the readers of the whole log.
+@(private = "file")
+log_record_close :: proc "contextless" (record: ^op.Log_Record, owner: ^Process, own_count: u64, written: u64) {
+	// The same bytes in the own log ring. No reader maps that ring: a
+	// copy comes only from Log_Read, under the log lock, so no fence.
+	if owner != nil && owner.log_ring_frames[0] != 0 {
+		own_log_record(owner, own_count)^ = record^
+	}
+	// The record is complete before a reader can see it.
+	intrinsics.atomic_store(&log_head.written, written + 1)
+}
+
+// log_fact_record adds one log fact to the memory of the log: one record
+// of the form Fact, with the bytes that the process gave as they are, and
+// the count of its value bytes from their length. The kernel reads no field
+// of the fact: the module hash and the key are claims of the writer
+// (src/md/features/log_facts.md, "Which reader sees which fields"). The
+// caller holds the log lock, and body has at least the head of a fact.
+log_fact_record :: proc "contextless" (process: u32, process_serial: u32, owner: ^Process, thread: u32, name: []u8, level: op.Log_Level, body: []u8) {
+	if log_head == nil || log_serial_only {
+		return
+	}
+	record, written, own_count := log_record_open(process, process_serial, owner, thread, name, level, false)
+	record.form = u8(op.Log_Record_Form.Fact)
+	fact := op.log_record_fact(record)
+	copy(([^]u8)(fact)[:size_of(op.Log_Fact)], body)
+	fact.value_count = u16(min(max(len(body), op.LOG_FACT_HEAD_BYTES), size_of(op.Log_Fact)) - op.LOG_FACT_HEAD_BYTES)
+	fact.reserved = {}
+	log_record_close(record, owner, own_count, written)
+	word_wake(physical_of(&log_head.written), max(u64))
+}
+
+// The buffer of the copy of a Log holds a fact, then the line of that fact,
+// when the log has no memory: its first bytes are a Log_Fact, which has
+// words of 8 bytes.
+#assert(offset_of(Processor, log_text) % 8 == 0)
+#assert(size_of(op.Log_Fact) + op.LOG_FACT_LINE_BYTES_MOST <= op.LOG_TEXT_BYTES_MOST)
+
+// log_fact_operation is `Log` of the form Fact: the bytes of one fact, in
+// one record, with no UTF-8 filter, because they are not text. The caller
+// checked the handle and the form. The line on the serial port is the raw
+// line of the fact (op.log_fact_line), which the tool renders on the host.
+log_fact_operation :: proc "contextless" (process_index: u32, thread_index: u32, process: ^Process, v: [7]u64) -> Operation_Outcome {
+	if v[4] != 0 {
+		return .Bad_Operation
+	}
+	if v[2] < op.LOG_FACT_HEAD_BYTES || v[2] > size_of(op.Log_Fact) || !user_range(process, v[1], v[2], false) {
+		return .Bad_Address
+	}
+	level, level_known := enum_word.member_of_word(op.Log_Level, v[3])
+	if !level_known {
+		return .Bad_Operation
+	}
+	// The copy before the log lock: a page on first use takes the frame
+	// lock, which comes before it.
+	log_text := &processor_self().log_text
+	user_copy(log_text, rawptr(uintptr(v[1])), v[2])
+	body := log_text[:v[2]]
+	if !budget_log(process.budget, 1) {
+		process.log_lines_refused += 1
+		return .No_Budget
+	}
+	process.log_lines_refused = 0
+	name := transmute([]u8)process_name(process)
+	taken := log_take()
+	if taken && log_head != nil {
+		log_fact_record(process_index, intrinsics.atomic_load(&process.serial), process, thread_index, name, level, body)
+		log_free(taken)
+		serial_drain_before_the_tick()
+		return .Ok
+	}
+	// No memory of the log: the serial port only. The fact is the first
+	// bytes of the copy, with zeros after its length, its count and no
+	// reserved byte, as in a record; its line goes after it in the same
+	// buffer, so the kernel stack holds no copy.
+	for &byte_value in log_text[v[2]:size_of(op.Log_Fact)] {
+		byte_value = 0
+	}
+	fact := (^op.Log_Fact)(&log_text[0])
+	fact.value_count = u16(v[2] - op.LOG_FACT_HEAD_BYTES)
+	fact.reserved = {}
+	line := (^[op.LOG_FACT_LINE_BYTES_MOST]u8)(&log_text[size_of(op.Log_Fact)])
+	line_count := op.log_fact_line(fact, line)
+	log_bytes({'['})
+	log_bytes(name)
+	log_bytes({']', ' '})
+	log_bytes(line[:line_count])
+	log_bytes({'\r', '\n'})
+	log_free(taken)
+	return .Ok
 }
 
 // machine_stop ends the machine under QEMU, or halts the processor. It is

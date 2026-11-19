@@ -268,6 +268,15 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Log:
 		_ = handle_find(process, v[0], .Log, {.Write}) or_return
+		form, form_known := enum_word.member_of_word(op.Log_Record_Form, v[5])
+		if !form_known {
+			return .Bad_Operation
+		}
+		switch form {
+		case .Fact:
+			return log_fact_operation(process_index, index, process, v)
+		case .Text:
+		}
 		if v[4] > op.LOG_CALL_RUN_LIMIT {
 			return .Bad_Operation
 		}

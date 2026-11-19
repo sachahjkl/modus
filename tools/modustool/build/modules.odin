@@ -62,6 +62,12 @@ build_modules :: proc() -> bool {
 	// One process for each module, several at once (parallel_build.odin).
 	// A module whose inputs are the same is kept (incremental_build.odin).
 	build_modules_in_parallel() or_return
+	// The line of a log fact names its module by the first 8 bytes of its
+	// hash: two module files that share them would make one line two facts.
+	if _, problem := fact_catalog_of_build(context.temp_allocator); problem != "" {
+		fmt.eprintfln("modustool: %s", problem)
+		return false
+	}
 	library_modules_measure_print()
 	kernel_stack_measure_print()
 	// The steps below run at each build: each one reads outputs of the
@@ -195,6 +201,9 @@ module_compile_command :: proc(build: foundation.Module_Build) -> []string {
 		// imports refuses it before this command runs
 		// (library_imports_check.odin).
 		foundation.SOURCE_LIBRARY_FLAG,
+		// The attribute of a fact type, which the compiler ignores
+		// (src/md/features/log_facts.md).
+		foundation.LOG_FACT_ATTRIBUTE_FLAG,
 		foundation.join("-out:", llvm_ir_folder),
 	)
 	// The line program of DWARF, for the line table of the debug object.
@@ -317,6 +326,14 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 				return false
 			}
 		}
+		// The key of each fact type that the module writes is an immediate
+		// of its code: the typeid that this compiler gives the type
+		// (src/md/features/log_facts.md, "The fact key: why the typeid").
+		facts := module_facts(build) or_return
+		if problem := facts_ir_problem(string(ir), facts); problem != "" {
+			fmt.eprintfln("modustool: log facts of %s: %s", build.name, problem)
+			return false
+		}
 	}
 	if build.kernel {
 		// The features of llc for the kernel hold for all of the IR only
@@ -402,6 +419,10 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 // for the number of each export that a slot names. It runs no compiler.
 module_convert :: proc(build: foundation.Module_Build) -> bool {
 	description := describe_package(build.source) or_return
+	// The log facts of the sources that the compiler read: the table Facts
+	// and the records of their types.
+	facts := module_facts(build) or_return
+	facts_merge(&description, facts) or_return
 	// The request of the table Budget counts the pages of each import, at
 	// each level.
 	if description.budget.stated {
@@ -540,6 +561,10 @@ load_on_host :: proc(name: string, imports: []Host_Module) -> (loaded: Host_Modu
 	if error: module.Load_Error; !module.bind(file, memory, bound[:], &error) {
 		return fail(name, "bind: %v of slot %d", error.stage, error.slot)
 	}
+	// Each loader writes the hash of the module at its own-hash place.
+	if !module.own_hash_write(file, memory, blake3.hash(file)) {
+		return fail(name, "the own-hash place is not in writable data")
+	}
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)
 		protection: linux.Mem_Protection
@@ -568,6 +593,8 @@ test_descriptions :: proc() -> bool {
 	for build in foundation.module_builds {
 		file := foundation.read_file(foundation.module_path(build.name)) or_return
 		described := describe_package(build.source) or_return
+		facts := module_facts(build) or_return
+		facts_merge(&described, facts) or_return
 		exports := described.exports
 		about, text := module.documentation(file)
 		if about != described.about || text != described.text || about == "" {
@@ -644,6 +671,21 @@ test_descriptions :: proc() -> bool {
 				return false
 			}
 			foundation.test_passed_print("the budget that %s asks for is its stated budget and its counted parts: %s", build.name, budget_count_line(counted))
+		}
+		// The log facts: each row of the table Facts is the fact type of its
+		// source, in the order of the keys, and the template is valid.
+		if int(max(module.count(file, .Facts), 1)) != len(described.facts) + 1 {
+			fmt.eprintfln("modustool: test failed: %s has %d log facts, its sources write %d", build.name, int(module.count(file, .Facts)) - 1, len(described.facts))
+			return false
+		}
+		for item, index in described.facts {
+			row, row_record, row_ok := module.fact(file, u32(index + 1))
+			agree := row_ok && row.key == item.key && row.record == item.record_index && module.string_at(file, row.template_offset, row.template_count) == item.template && module.string_at(file, row.package_offset, row.package_count) == item.package_name
+			if !agree || module.fact_template_valid(file, row, row_record) != .None {
+				fmt.eprintfln("modustool: test failed: the log fact %s.%s in %s does not agree with its source", item.package_name, item.type_name, build.name)
+				return false
+			}
+			foundation.test_passed_print("the log fact %s.%s of %s, key %d, comes from its source: \"%s\"", item.package_name, item.type_name, build.name, item.key, item.template)
 		}
 		if build.name == "math" {
 			foundation.test_passed_print("the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))

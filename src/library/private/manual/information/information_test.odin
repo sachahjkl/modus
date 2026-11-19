@@ -5,6 +5,7 @@ import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 import "core:math/rand"
 import "core:testing"
@@ -298,6 +299,11 @@ malformed_modules :: proc(t: ^testing.T) {
 				function.parameters[0], function.parameter_details[0] = u8(module.Type.Integer), 2
 			}, .Function, .Functions, 2},
 		{"a field out of its record", proc(file: []u8) {record(file, .Fields, 2, module.Field).offset = 12}, .Record, .Fields, 2},
+		{"a field kind that names no kind", proc(file: []u8) {record(file, .Fields, 2, module.Field).kind = u8(max(value_kinds.Field_Kind)) + 1}, .Record, .Fields, 2},
+		{"the largest byte of a field kind", proc(file: []u8) {record(file, .Fields, 2, module.Field).kind = max(u8)}, .Record, .Fields, 2},
+		{"a hash kind on an Integer field", proc(file: []u8) {record(file, .Fields, 2, module.Field).kind = u8(value_kinds.Field_Kind.Hash)}, .Record, .Fields, 2},
+		{"a contract enum on a field that is not a Status", proc(file: []u8) {record(file, .Fields, 2, module.Field).contract_enum = u8(value_kinds.Contract_Enum.Log_Level)}, .Record, .Fields, 2},
+		{"a reserved byte of a field that is not 0", proc(file: []u8) {record(file, .Fields, 2, module.Field).reserved[1] = 1}, .Record, .Fields, 2},
 		{"a record of 300 bytes", proc(file: []u8) {record(file, .Records, 1, module.Record).size = 300}, .Record, .Records, 1},
 		{"an entry that names no export", proc(file: []u8) {(^module.Header)(&file[0]).entry_export = 7}, .Entry, .None, 0},
 	}

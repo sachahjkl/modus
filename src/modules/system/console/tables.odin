@@ -112,7 +112,8 @@ row_value :: proc "contextless" (row: []u8, item: module.Field) -> Value {
 	case .Text:
 		return {kind = .Text, text = module.field_text(row, item)}
 	case .None, .Record, .Table, .Bytes:
-		// A field of a row holds no such value: the field gives none.
+		// A field of a row holds no such value: the field gives none. A
+		// hash is a Bytes field, which table_argument refuses before.
 	}
 	return {}
 }
@@ -140,6 +141,13 @@ table_argument :: proc "contextless" (command: string, value: Value, name: strin
 	}
 	if item, ok = table_field(table, name); !ok {
 		fail(command, ": the records ", type_text(table.file, .Record, value.detail), " have no field ", name, "; their fields are ", field_names(table))
+		return
+	}
+	// A hash is neither an Integer nor a Text: the console has no value of
+	// it to compare.
+	if item.type == u8(module.Type.Bytes) {
+		fail(command, ": the field ", name, " is ", type_text_of_field(table.file, item), "; ", command, " compares an Integer or a Text")
+		return table, item, false
 	}
 	return
 }
@@ -325,13 +333,15 @@ columns_of :: proc "contextless" (table: Table, side: int, list: ^[COLUMN_CAPACI
 				}
 			}
 		}
-		// table_of checked each field: a byte that names no type gives no
-		// column, and the new record is refused.
-		type, type_ok := module.field_type(item)
-		if count^ == COLUMN_CAPACITY || !type_ok {
+		// table_of checked each field: a byte that names no type or no
+		// kind gives no column, and the new record is refused. The column
+		// keeps the unit and the kind of the field.
+		column, column_ok := console_results.column_of_field(name, item)
+		if count^ == COLUMN_CAPACITY || !column_ok {
 			return false
 		}
-		list[count^] = {name = name, type = type, detail = item.detail, unsigned = item.unsigned, integer_unit = item.integer_unit, side = side, from = item.offset}
+		column.side = side
+		list[count^] = column
 		count^ += 1
 	}
 	return true
@@ -423,11 +433,11 @@ table_columns :: proc "contextless" (arguments: []Value) -> Value {
 		if count == COLUMN_CAPACITY {
 			return fail("columns: more than ", i64(COLUMN_CAPACITY), " fields")
 		}
-		type, type_ok := module.field_type(item)
-		if !type_ok {
-			return fail("columns: the field ", name, " has a type that names no type")
+		column, column_ok := console_results.column_of_field(name, item)
+		if !column_ok {
+			return fail("columns: the field ", name, " has a type or a kind that names nothing")
 		}
-		columns[count] = {name = name, type = type, detail = item.detail, unsigned = item.unsigned, integer_unit = item.integer_unit, from = item.offset}
+		columns[count] = column
 		count += 1
 	}
 	if count == 0 {
