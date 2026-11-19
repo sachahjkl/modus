@@ -122,7 +122,7 @@ It refuses: a name that names no field, a field that it does not name, a field n
 
 ### The record
 
-**The size.** A log record has 256 bytes today (`#assert(size_of(Log_Record) == 256)` in `src/library/contract/operation/operation.odin`), 16 records in a page, and a text line of up to 152 bytes takes one record. A fact takes one record of the same 256 bytes, so it costs no more memory in the whole log, in an own log ring or in the budget of each second than a text line of one record. A text line longer than one record costs more records than the fact of the same line. The size stays 256 until a measure shows that a smaller record pays (measure 8).
+**The size.** A log record has 256 bytes today (`#assert(size_of(Log_Record) == 256)` in `src/library/contract/operation/operation.odin`), 16 records in a page, and a text line of up to 168 bytes takes one record. A fact takes one record of the same 256 bytes, so it costs no more memory in the whole log, in an own log ring or in the budget of each second than a text line of one record. A text line longer than one record costs more records than the fact of the same line. The size stays 256 until a measure shows that a smaller record pays (measure 8).
 
 The record keeps its head: the number, the time, the process slot, the process serial, the own number, the thread, the level, `more` and the name of the process, which the kernel sets. A byte of the head that is reserved today becomes the record form (`op.Log_Record_Form`, an enum with explicit values): `Text = 0` and `Fact = 1`. A zero record is a text record, as before.
 

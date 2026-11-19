@@ -66,13 +66,16 @@
 // - `log_reader: the process handle of the log service from connect, with
 //   Read and no Give: the lend failed with No_Right, and it reads no record
 //   of the service: as it must`;
-// - `log_reader: Log refused 9 wrong calls, each with its status and its
+// - `log_reader: Log refused 12 wrong calls, each with its status and its
 //   error record: the level word, the runs and the length past their
-//   bounds, and a text past the end of the addresses; the own log ring kept
-//   the same <count> records: as it must`: it calls the kernel operation
-//   `Log` itself (log_operation_check);
-// - `log_reader: Log wrote a text of 0 bytes, of 1 byte and of 4096 bytes,
-//   in 1, 1 and 25 records: as it must`;
+//   bounds, an address that the process cannot read, and a text or its runs
+//   past the end of what it can read; the own log ring kept the same
+//   <count> records, and the budget the same log records and the same
+//   refused count: as it must`: it calls the kernel operation `Log` itself
+//   (log_operation_check);
+// - `log_reader: Log wrote a text of 0 bytes, of 1 byte and of 4096 bytes
+//   in 1, 1 and 25 records, a text at the level Error, a text with 32 runs
+//   that keeps 8, and one byte on the last byte of a page: as it must`;
 // - `log_reader: ok`, then it stops with the code 0.
 //
 // Each child writes `log_reader child: the record that the starter reads
@@ -392,6 +395,20 @@ BOUND_TEXT_RECORDS :: (op.LOG_TEXT_BYTES_MOST + op.LOG_TEXT_CAPACITY - 1) / op.L
 // on the stack, which is small.
 bound_text: [op.LOG_TEXT_BYTES_MOST]u8
 
+// A text with the most value runs that one Log takes, the runs right after
+// the text, as the operation reads them: one run of one byte at each second
+// byte.
+RUNS_TEXT_BYTES :: 2 * op.LOG_CALL_RUN_LIMIT
+Text_With_Runs :: struct {
+	text: [RUNS_TEXT_BYTES]u8,
+	runs: [op.LOG_CALL_RUN_LIMIT]value_kinds.Value_Run_In_Call,
+}
+#assert(offset_of(Text_With_Runs, runs) == RUNS_TEXT_BYTES)
+text_with_runs: Text_With_Runs
+// The byte of the text with runs, which no other text of this process
+// writes, so that its row is found by its text.
+RUNS_TEXT_BYTE :: '7'
+
 // One call of the operation Log that the kernel must refuse, and what its
 // refusal must be: the status, and the kind, the argument and the value of
 // its error record.
@@ -422,16 +439,43 @@ own_record_count :: proc "contextless" (connection: ^system.Call_Connection, fil
 // word that names no member (one past the last member, a word whose low
 // byte names a member, the largest word), a count of runs past its bound
 // and the largest count, a length past its bound and the largest length,
-// and a text or its runs past the end of the addresses of a process (a
+// an address that the process cannot read (0, the end of the addresses of
+// a process, the largest address), a text past the end of the addresses,
+// and runs past the end of a mapped page whose text is inside it (a
 // damaged length). Each refusal has its status and its error record, and
-// the own log ring keeps the same count of records: no refusal wrote one.
-// Then the edges that the kernel takes: a text of 0 bytes, of 1 byte, and
-// of LOG_TEXT_BYTES_MOST bytes, which takes BOUND_TEXT_RECORDS records. It
-// gives the reason of the first check that fails, or "".
+// nothing changed: the own log ring keeps the same count of records, and
+// the budget the same amount of log records and the same count of refused
+// records. Then the edges that the kernel takes: a text of 0 bytes, of 1
+// byte, and of LOG_TEXT_BYTES_MOST bytes, which takes BOUND_TEXT_RECORDS
+// records; the level Error; LOG_CALL_RUN_LIMIT runs; and the one byte of
+// text on the last byte of the mapped page, which proves that only the runs
+// passed the end of the page. It gives the reason of the first check that
+// fails, or "".
 log_operation_check :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, records_export: u32) -> string {
 	for &byte_value in bound_text {
 		byte_value = 'x'
 	}
+	for &byte_value in text_with_runs.text {
+		byte_value = RUNS_TEXT_BYTE
+	}
+	for &run, index in text_with_runs.runs {
+		run = {start = u16(2 * index), length = 1, kind = u8(value_kinds.Value_Kind.Number)}
+	}
+	// One page that the kernel maps with no mapping after it: its last
+	// byte can be read, and the byte after it cannot.
+	page_memory, created := system.memory_create(1)
+	if created != .Ok {
+		return "the page of the test of Log was not made"
+	}
+	defer system.close(page_memory)
+	page_address, mapped := system.memory_map(page_memory)
+	if mapped != .Ok {
+		return "the page of the test of Log was not mapped"
+	}
+	defer system.memory_unmap(page_address)
+	last_byte_of_page := u64(uintptr(page_address)) + op.PAGE_SIZE - 1
+	(^u8)(uintptr(last_byte_of_page))^ = 'x'
+
 	log := u64(system.context_record().handles[op.CONTEXT_LOG])
 	text := u64(uintptr(&bound_text[0]))
 	info := u64(op.Log_Level.Info)
@@ -444,12 +488,20 @@ log_operation_check :: proc "contextless" (connection: ^system.Call_Connection, 
 		{"the largest count of runs", text, 1, info, max(u64), .Bad_Operation, .Too_Long, LOG_ARGUMENT_RUNS, max(u64)},
 		{"one byte past the bound of the text", text, op.LOG_TEXT_BYTES_MOST + 1, info, 0, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, op.LOG_TEXT_BYTES_MOST + 1},
 		{"the largest length", text, max(u64), info, 0, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, max(u64)},
+		{"the address 0", 0, 1, info, 0, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, 0},
+		{"the address of the end of the addresses", op.USER_END, 1, info, 0, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, op.USER_END},
+		{"the largest address", max(u64), 1, info, 0, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, max(u64)},
 		{"a text past the end of the addresses", end_of_addresses, 2, info, 0, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, end_of_addresses},
-		{"runs past the end of the addresses", end_of_addresses, 1, info, 1, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, end_of_addresses},
+		{"runs past the end of a mapped page", last_byte_of_page, 1, info, 1, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, last_byte_of_page},
 	}
 	before, read := own_record_count(connection, file, records_export)
 	if !read {
 		return "log.records did not give the count of the own records"
+	}
+	amounts_before, amounts_read := system.budget_read()
+	_, refused_before := system.budget_used()
+	if amounts_read != .Ok {
+		return "the budget of this process does not read"
 	}
 	for refusal in refusals {
 		record: errors.Error_Record
@@ -461,27 +513,62 @@ log_operation_check :: proc "contextless" (connection: ^system.Call_Connection, 
 		}
 	}
 	after, read_after := own_record_count(connection, file, records_export)
+	amounts_after, amounts_read_after := system.budget_read()
+	_, refused_after := system.budget_used()
 	if !read_after || after != before {
 		system.log(.Error, "log_reader: WRONG: the own log ring kept ", before, " records before the refused calls of Log, and ", after, " after them")
 		return "a refused call of Log wrote a record"
 	}
-	system.log(.Info, "log_reader: Log refused ", u64(len(refusals)), " wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, and a text past the end of the addresses; the own log ring kept the same ", u64(before), " records: as it must")
+	if amounts_read_after != .Ok || amounts_after.log_records != amounts_before.log_records || refused_after != refused_before {
+		system.log(.Error, "log_reader: WRONG: the budget held ", amounts_before.log_records, " log records and counted ", refused_before, " refused before the refused calls of Log, and ", amounts_after.log_records, " and ", refused_after, " after them")
+		return "a refused call of Log changed the log records of the budget"
+	}
+	system.log(.Info, "log_reader: Log refused ", u64(len(refusals)), " wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, an address that the process cannot read, and a text or its runs past the end of what it can read; the own log ring kept the same ", u64(before), " records, and the budget the same log records and the same refused count: as it must")
 
+	// The edges that the kernel takes. Each is one call of Log.
+	Accepted :: struct {
+		name:    string,
+		address: u64,
+		length:  u64,
+		level:   u64,
+		runs:    u64,
+		records: i64, // The records that the text takes.
+	}
+	accepted := [?]Accepted {
+		{"a text of 0 bytes", text, 0, info, 0, 1},
+		{"a text of 1 byte", text, 1, info, 0, 1},
+		{"a text of the most bytes", text, op.LOG_TEXT_BYTES_MOST, info, 0, BOUND_TEXT_RECORDS},
+		{"the level Error", text, 1, u64(op.Log_Level.Error), 0, 1},
+		{"the most runs", u64(uintptr(&text_with_runs)), RUNS_TEXT_BYTES, info, op.LOG_CALL_RUN_LIMIT, 1},
+		{"one byte on the last byte of a mapped page", last_byte_of_page, 1, info, 0, 1},
+	}
 	before, read = own_record_count(connection, file, records_export)
-	lengths := [3]u64{0, 1, op.LOG_TEXT_BYTES_MOST}
-	for length in lengths {
-		if _, status := system.call(.Log, log, text, length, info, 0); status != .Ok {
-			system.log(.Error, "log_reader: WRONG: Log with a text of ", length, " bytes gave ", op.STATUS_NAMES[status])
-			return "the operation Log refused a text at an edge of its length"
+	expected := before
+	for edge in accepted {
+		if _, status := system.call(.Log, log, edge.address, edge.length, edge.level, edge.runs); status != .Ok {
+			system.log(.Error, "log_reader: WRONG: Log with ", edge.name, " gave ", op.STATUS_NAMES[status])
+			return "the operation Log refused a call at an edge that it takes"
 		}
+		expected += edge.records
 	}
 	after, read_after = own_record_count(connection, file, records_export)
-	expected := before + 2 + BOUND_TEXT_RECORDS
 	if !read || !read_after || after != expected {
-		system.log(.Error, "log_reader: WRONG: the texts of 0, 1 and ", u64(op.LOG_TEXT_BYTES_MOST), " bytes took ", after - before, " records, not ", expected - before)
-		return "the operation Log wrote another count of records for a text at an edge of its length"
+		system.log(.Error, "log_reader: WRONG: the calls at the edges took ", after - before, " records, not ", expected - before)
+		return "the operation Log wrote another count of records for a call at an edge"
 	}
-	system.log(.Info, "log_reader: Log wrote a text of 0 bytes, of 1 byte and of ", u64(op.LOG_TEXT_BYTES_MOST), " bytes, in 1, 1 and ", u64(BOUND_TEXT_RECORDS), " records: as it must")
+	// The record of the text with runs keeps the runs that one record
+	// holds: the call gave more, and each was right.
+	runs_kept: i64 = -1
+	for &row in record_rows[:min(int(after), ROWS)] {
+		if string(row.text[:RUNS_TEXT_BYTES]) == string(text_with_runs.text[:]) && row.text[RUNS_TEXT_BYTES] == 0 {
+			runs_kept = row.runs
+		}
+	}
+	if runs_kept != op.LOG_RUN_CAPACITY {
+		system.log(.Error, "log_reader: WRONG: the record of the text with ", u64(op.LOG_CALL_RUN_LIMIT), " runs kept ", runs_kept, " runs")
+		return "the record of a text with the most runs did not keep the runs of one record"
+	}
+	system.log(.Info, "log_reader: Log wrote a text of 0 bytes, of 1 byte and of ", u64(op.LOG_TEXT_BYTES_MOST), " bytes in 1, 1 and ", u64(BOUND_TEXT_RECORDS), " records, a text at the level Error, a text with ", u64(op.LOG_CALL_RUN_LIMIT), " runs that keeps ", u64(op.LOG_RUN_CAPACITY), ", and one byte on the last byte of a page: as it must")
 	return ""
 }
 

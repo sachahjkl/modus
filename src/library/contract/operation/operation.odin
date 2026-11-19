@@ -3366,6 +3366,9 @@ Log_Record :: struct {
 #assert(size_of(Log_Record) == 256)
 #assert(offset_of(Log_Record, name) == 32)
 #assert(offset_of(Log_Record, runs) == 64)
+// A value run names its start and its length in the text of its record
+// with one byte each (value_kinds.Value_Run).
+#assert(LOG_TEXT_CAPACITY <= 256)
 #assert(size_of(Log_Head) == size_of(Log_Record))
 
 // The stacks of the kernel. Each processor has one slot of addresses: a

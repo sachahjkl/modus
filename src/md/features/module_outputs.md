@@ -96,7 +96,7 @@ The refusals of the log design for a record type, and which ones hold for the re
 |---|---|---|
 | A byte that no field covers (padding) | Holds | The record goes into memory that another process reads. A byte that no field names carries memory of the writer across the border. The tool refuses it. |
 | A Handle field | Holds | A handle number in shared memory names nothing for the reader: a handle crosses a border only through `Handle_Give`, which the kernel checks. A handle that a stream must carry is a later design, which waits for a user. |
-| At most 152 bytes of fields | Does not hold | The bound of a log fact is the values of one log record of 256 bytes. The record of a record output has the bound of each record description, 256 bytes, because the ring holds the record whole: the log record itself fits. A body larger than that lives in the body region of the record output, and the record holds its place there ("A large body"). |
+| At most 144 bytes of fields (`op.LOG_FACT_VALUE_CAPACITY`) | Does not hold | The bound of a log fact is the values of one log record of 256 bytes. The record of a record output has the bound of each record description, 256 bytes, because the ring holds the record whole: the log record itself fits. A body larger than that lives in the body region of the record output, and the record holds its place there ("A large body"). |
 
 ### The ring and its records
 

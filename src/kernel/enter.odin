@@ -290,7 +290,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		text_encoding.invalid_sequences_replace(log_text[:v[2]])
 		// A Log spends the records that its text takes, counted in the copy
 		// as log_record cuts it: the amount bounds the lines of the serial
-		// port, and a text of LOG_TEXT_BYTES_MOST bytes is 27 records.
+		// port, and a text of LOG_TEXT_BYTES_MOST bytes is 25 records.
 		if !budget_log(process.budget, log_records_of_text(log_text[:v[2]])) {
 			process.log_lines_refused += 1
 			return .No_Budget

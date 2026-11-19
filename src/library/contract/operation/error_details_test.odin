@@ -18,8 +18,8 @@ the_table_place_of_error_details :: proc(t: ^testing.T) {
 }
 
 // The operations that take a table: each one whose last value is free, but
-// Guest_Run. Log, with no channel, has its last value free: a refused Log
-// writes its error record too.
+// Guest_Run. Log takes its runs in its fifth value, so its last value is
+// free: a refused Log writes its error details too.
 @(test)
 the_operations_that_take_error_details :: proc(t: ^testing.T) {
 	testing.expect(t, !command_takes_error_details(.None))

@@ -347,16 +347,49 @@ kernel_details_check :: proc "contextless" () {
 	} else {
 		system.log(.Info, "errors: WRONG: an accepted kernel command with a table gave the status ", status, " and ", details.count, " error details")
 	}
-	// Log uses its last value: with the bit, the kernel refuses the command
-	// and writes no detail.
+	// Log leaves its last value free, so it takes a table too. With a level
+	// word that names no member and one run past the bound, the kernel
+	// refuses it for the runs, which it reads first, and the table holds the
+	// runs then the level.
 	text := "x"
-	_, status = system.call_with_error_details(&error, &details, .Log, u64(ctx_log), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0)
-	if status == .Bad_Operation && errors.Kind(error.kind) == .Unsupported && details.count == 0 {
-		system.log(.Info, "errors: Log refuses a table of error details: as it must")
+	details.count = 0
+	records = {}
+	_, status = system.call_with_error_details(&error, &details, .Log, u64(ctx_log), u64(uintptr(raw_data(text))), u64(len(text)), LOG_LEVEL_NO_MEMBER, op.LOG_CALL_RUN_LIMIT + 1)
+	written = system.error_details_written(&details)
+	both := status == .Bad_Operation && details.count == 2 && len(written) == 2 && written[0] == error
+	both &&= errors.Kind(written[0].kind) == .Too_Long && written[0].argument == LOG_ARGUMENT_RUNS && u64(written[0].value) == op.LOG_CALL_RUN_LIMIT + 1
+	both &&= errors.Kind(written[1].kind) == .Bad_Value && written[1].argument == LOG_ARGUMENT_LEVEL && u64(written[1].value) == LOG_LEVEL_NO_MEMBER
+	if both {
+		system.log(.Info, "errors: Log with a level that names no member and one run past the bound gives the two in its table of error details: as it must")
 	} else {
-		system.log(.Info, "errors: WRONG: Log with a table of error details gave the status ", status, " and ", details.count, " error details")
+		system.log(.Info, "errors: WRONG: Log with two wrong arguments and a table gave the status ", status, " and ", details.count, " error details")
+	}
+	// An accepted Log with a table leaves the table empty.
+	details.count = 0
+	records = {}
+	_, status = system.call_with_error_details(&error, &details, .Log, u64(ctx_log), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0)
+	if status == .Ok && details.count == 0 && records[0] == (errors.Error_Record{}) {
+		system.log(.Info, "errors: an accepted Log with a table of error details leaves the table empty: as it must")
+	} else {
+		system.log(.Info, "errors: WRONG: an accepted Log with a table gave the status ", status, " and ", details.count, " error details")
 	}
 }
+
+// The arguments of the operation Log, from 1, as an error record names them:
+// (log, address, length, level, runs).
+LOG_ARGUMENT_LEVEL :: i64(4)
+LOG_ARGUMENT_RUNS :: i64(5)
+// A level word whose low byte names the member Info: the word names no
+// member, and the kernel must not cut it to its low byte.
+LOG_LEVEL_NO_MEMBER :: u64(1) << 8
+
+// A line longer than the text of one log record by construction: the kernel
+// cuts it into two records, and the step Record of the machine test finds
+// the whole line only when it joins the two rows of log.records. The tool
+// waits for the same text (tools/modustool/machine/machine.odin).
+JOINED_LINE :: "errors: a line longer than one log record: its words only make it longer than the text of one record, so that the cut between two records falls inside it, and a reader of the log joins two rows to read it whole: as it must"
+#assert(len(JOINED_LINE) > op.LOG_TEXT_CAPACITY)
+#assert(len(JOINED_LINE) <= 2 * op.LOG_TEXT_CAPACITY)
 
 KERNEL_RING_FIRST_TAG :: u32(1)
 
@@ -1188,6 +1221,7 @@ contend :: proc "contextless" () -> bool {
 	wrong := contention.wrong[0] + contention.wrong[1]
 	refused := contention.refused[0] + contention.refused[1]
 	system.log(.Info, "errors: under contention: ", failures, " failures from 2 threads while a third thread closed and made ", contention.made, " handles; ", wrong, " records contradict their status, ", refused, " records name no cause (Refused)")
+	system.log(.Info, JOINED_LINE)
 	// A record with no cause is right only when the state changed between
 	// the failure and the read: most records must name their cause.
 	return started == 3 && failures > 0 && contention.made > 0 && wrong == 0 && refused * 2 < failures

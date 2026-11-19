@@ -474,7 +474,7 @@ Do not use: per-program buffer, log buffer, log mailbox.
 
 The log scope of a connection to the log service is the set of log records that its caller receives from `log.records(after)` and `log.value_runs(after)`: the whole log, or its own records.
 
-The root service writes it in the grant of the connection, and the log service chooses the records; the reader never maps the memory of the log. A caller that acts for the principal, such as the console, receives the whole log; each other caller receives its own records. A starter reads the records of a child with `log.process_records(process, after)`, where it lends the process handle of the child. A log scope never names a channel, because the writer chooses a channel.
+The root service writes it in the grant of the connection, and the log service chooses the records; the reader never maps the memory of the log. A caller that acts for the principal, such as the console, receives the whole log; each other caller receives its own records. A starter reads the records of a child with `log.process_records(process, after)`, where it lends the process handle of the child.
 
 The design: `src/md/features/log_reader_scope.md`.
 

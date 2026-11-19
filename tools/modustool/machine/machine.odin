@@ -1,6 +1,7 @@
 package machine
 
 import "modus:contract/glyph_cache"
+import op "modus:contract/operation"
 import "modus:contract/reference_screen"
 import "modus:contract/store"
 import tree "modus:private/storage/storage_tree"
@@ -981,6 +982,12 @@ self_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	return true
 }
+
+// The line of `errors` that is longer than the text of one log record by
+// construction (`JOINED_LINE` in src/modules/demonstrations/errors/main.odin):
+// the step Record finds it only when it joins two rows of log.records.
+ERRORS_JOINED_LINE :: "errors: a line longer than one log record: its words only make it longer than the text of one record, so that the cut between two records falls inside it, and a reader of the log joins two rows to read it whole: as it must"
+#assert(len(ERRORS_JOINED_LINE) > op.LOG_TEXT_CAPACITY)
 
 // The positions below come from src/modules/system/compositor/main.odin: the buttons
 // in the bar, and the place of window n at (60 + 36 n, 52 + 30 n).
@@ -2555,9 +2562,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: the storm child took 900 of the 1000 log records of each second of this process, which kept 100, and each child gave its records back at its stop: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: a memory object in place of a process handle: the log service refused it with Handle_Kind: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: Log refused 9 wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, and a text past the end of the addresses; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
-	{kind = .Wait, text = " records: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a text of 0 bytes, of 1 byte and of 4096 bytes, in 1, 1 and 25 records: as it must", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: Log refused 12 wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, an address that the process cannot read, and a text or its runs past the end of what it can read; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = " records, and the budget the same log records and the same refused count: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a text of 0 bytes, of 1 byte and of 4096 bytes in 1, 1 and 25 records, a text at the level Error, a text with 32 runs that keeps 8, and one byte on the last byte of a page: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	{kind = .Wait, text = "root: log_reader stopped with code 0"},
 	// The remote service acts for the principal and still reads the whole
@@ -2583,9 +2590,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: the storm child took 900 of the 1000 log records of each second of this process, which kept 100, and each child gave its records back at its stop: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: a memory object in place of a process handle: the log service refused it with Handle_Kind: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: Log refused 9 wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, and a text past the end of the addresses; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
-	{kind = .Wait, text = " records: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a text of 0 bytes, of 1 byte and of 4096 bytes, in 1, 1 and 25 records: as it must", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: Log refused 12 wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, an address that the process cannot read, and a text or its runs past the end of what it can read; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = " records, and the budget the same log records and the same refused count: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a text of 0 bytes, of 1 byte and of 4096 bytes in 1, 1 and 25 records, a text at the level Error, a text with 32 runs that keeps 8, and one byte on the last byte of a page: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	{kind = .Wait, text = "root: log_reader stopped with code 0"},
 	{kind = .Record, process = "log_reader storm", level = "info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
@@ -2980,7 +2987,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "errors: a table of 1 place: 1 more error detail did not fit in the table of error details"},
 	{kind = .Wait, text = "errors: a table smaller than its error details holds the first and counts each one: as it must"},
 	{kind = .Wait, text = "errors: an accepted kernel command leaves its table of error details empty: as it must"},
-	{kind = .Wait, text = "errors: Log refuses a table of error details: as it must"},
+	{kind = .Wait, text = "errors: Log with a level that names no member and one run past the bound gives the two in its table of error details: as it must", fails_on = "errors: WRONG: Log with two wrong arguments"},
+	{kind = .Wait, text = "errors: an accepted Log with a table of error details leaves the table empty: as it must", fails_on = "errors: WRONG: an accepted Log"},
 	// A full completion queue of the kernel ring loses no answer
 	// (src/md/api/kernel_ring_completion_room.md).
 	{kind = .Wait, text = "errors: a command past a full completion queue stays unrun in the kernel ring, and the entry does not wait: as it must"},
@@ -2988,9 +2996,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "errors: a wait of the library on a kernel ring that holds records ends at once and pushes nothing: as it must"},
 	{kind = .Wait, text = "errors: each answer of a full completion queue arrives once and in order, and the held command runs once after them: as it must"},
 	{kind = .Wait, text = "errors: under contention: "},
-	// A text longer than one row of log.records (one log record, 152
-	// bytes): its end is in the next row, and the tool joins the rows.
-	{kind = .Record, process = "errors", level = "info", text = " records name no cause (Refused)", any_order = true},
+	// A text longer than one row of log.records (one log record,
+	// op.LOG_TEXT_CAPACITY bytes) by construction: no one row holds it, so
+	// the step finds it only when it joins the rows.
+	{kind = .Record, process = "errors", level = "info", text = ERRORS_JOINED_LINE, any_order = true},
 	{kind = .Wait, text = " handles; 0 records contradict their status, "},
 	{kind = .Wait, text = "errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", any_order = true},
 	// The child of errors stops on a kernel ring that holds records

@@ -37,9 +37,9 @@ Error_Details_Place :: struct {
 #assert(size_of(Error_Details_Place) == 24)
 
 // command_takes_error_details says if a command of an operation can name a
-// table of error details: its last value is not one of its parameters
-// (`Log` uses it), and it is not `Guest_Run`, which the kernel runs before
-// the dispatch of the other operations.
+// table of error details: its last value is not one of its parameters, and
+// it is not `Guest_Run`, which the kernel runs before the dispatch of the
+// other operations.
 command_takes_error_details :: proc "contextless" (operation: Operation) -> bool {
 	return operation != .None && operation != .Guest_Run && OPERATIONS[operation].parameters[ERROR_DETAILS_VALUE].form == .None
 }
