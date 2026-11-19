@@ -486,20 +486,20 @@ second_run :: proc "contextless" (counts: storage.Usage) {
 // store it runs the first run: it makes the trees, then checks each case.
 // On a store that the first run filled it runs the second run: it checks
 // the counts and the contents. Each case writes its line on the log. The
-// process then stops with the code 0 when each case held, else 2. With no
-// store or no usage, it writes `hierarchy: WRONG: no store` (or `no usage`)
-// at the level error, and stops with the code 1.
+// process then stops with `Done` when each case held, else with `Failed`.
+// With no store or no usage, it writes `hierarchy: WRONG: no store` (or `no
+// usage`) at the level error, and stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ok: bool
 	if client, ok = storage.open(ctx); !ok {
 		system.log(.Error, "hierarchy: WRONG: no store")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	counts, status := storage.usage(&client)
 	if status != .Ok {
 		system.log(.Error, "hierarchy: WRONG: no usage")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if counts.objects == 0 {
 		system.log(.Info, "hierarchy: a new store: the first run")
@@ -509,5 +509,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		second_run(counts)
 	}
 	system.log(.Info, "hierarchy: done, ", u64(wrong_cases), " wrong")
-	system.stop(wrong_cases == 0 ? 0 : 1)
+	if wrong_cases != 0 {
+		system.stop(.Failed)
+	}
+	system.stop(.Done)
 }

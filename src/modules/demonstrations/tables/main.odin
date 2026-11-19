@@ -660,7 +660,7 @@ process_generator: random.Generator
 // The entry of tables: it prepares the three ways, runs the cases, the
 // hostile cases and the measures once, then shows the result for ever.
 //
-// With no seed or no window it stops with the code 1. It loads `sample`
+// With no seed it stops with `Refused`, with no window with `Failed`. It loads `sample`
 // here (the direct way), starts a call host of it (the second way), and
 // connects to the service `sample` (the third way); a way that fails is
 // marked refused and the process goes on. It does the same for
@@ -670,11 +670,11 @@ process_generator: random.Generator
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log(.Info, "tables: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	window, opened := display.open(ctx, WIDTH, HEIGHT, "tables")
 	if !opened {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	image_memory = ctx.handles[system.GRANT_IMAGE]
 	if address, status := system.memory_map(image_memory, {}); status == .Ok {

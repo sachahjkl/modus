@@ -1978,13 +1978,16 @@ export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Recor
 	return result
 }
 
-// stop_reason_write writes why a process stopped: the text of its stop
-// cause, then the name of the vector for a fault, or the stop code for a
-// stop of itself. A whole switch: a new cause is a compile error here.
-stop_reason_write :: proc "contextless" (writer: ^system.Writer, cause: op.Stop_Cause, code: u32, vector: u32) {
-	system.write_part(writer, op.STOP_CAUSE_TEXTS[cause])
+// stop_reason_write writes why a process stopped: the stop outcome for a
+// stop of itself ("failed", "refused"), else the text of its stop cause,
+// with the name of the vector for a fault. A whole switch: a new cause is a
+// compile error here.
+stop_reason_write :: proc "contextless" (writer: ^system.Writer, cause: op.Stop_Cause, outcome: op.Stop_Outcome, vector: u32) {
 	switch cause {
+	case .Itself:
+		system.write_part(writer, op.STOP_OUTCOME_TEXTS[outcome])
 	case .Fault:
+		system.write_part(writer, op.STOP_CAUSE_TEXTS[cause])
 		system.write_part(writer, ", ")
 		if kind, known := op.fault_kind_of_word(u64(vector)); known {
 			system.write_part(writer, fault_kind_text(kind))
@@ -1992,10 +1995,8 @@ stop_reason_write :: proc "contextless" (writer: ^system.Writer, cause: op.Stop_
 			system.write_part(writer, "vector ")
 			system.write_part(writer, u64(vector))
 		}
-	case .Itself:
-		system.write_part(writer, ", code ")
-		system.write_part(writer, u64(code))
 	case .None, .Holder, .Last_Thread_Ended, .Handles_Closed, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
+		system.write_part(writer, op.STOP_CAUSE_TEXTS[cause])
 	}
 }
 
@@ -2211,12 +2212,12 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				return fail("the process ", sandbox.name, " gave the status of a load for a call")
 			}
 		}
-		if state, cause, code := system.process_state(sandbox.process); state == .Stopped {
+		if state, cause, outcome := system.process_state(sandbox.process); state == .Stopped {
 			report := system.process_stop_report(sandbox.process)
 			sandbox_end(sandbox)
 			buffer: [96]u8
 			reason := system.Writer{buffer = buffer[:]}
-			stop_reason_write(&reason, cause, code, report.vector)
+			stop_reason_write(&reason, cause, outcome, report.vector)
 			result := fail("the process ", sandbox.name, " stopped: ", system.written(&reason))
 			// Only these three causes have a stop report: its stack trace.
 			switch cause {

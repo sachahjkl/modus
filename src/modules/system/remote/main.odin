@@ -328,7 +328,7 @@ log_count: u64
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log(.Info, "remote: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 now_microseconds :: proc "contextless" () -> u64 {

@@ -223,13 +223,13 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 // not give, or that does not fit, gives 0: the caller then reads no record,
 // never the records of another process.
 own_records_amount_of :: proc "contextless" (caller: ^Started) -> u64 {
-	results, status := system.call(.Process_State, u64(caller.process))
+	slot, serial, status := system.process_place(caller.process)
 	if status != .Ok {
 		return 0
 	}
-	amount, ok := log_scope.own_records_amount(results[4], results[5])
+	amount, ok := log_scope.own_records_amount(slot, serial)
 	if !ok {
-		system.log(.Warning, "root: the process slot ", results[4], " or the process serial ", results[5], " of ", system.Module_Name{system.name_of(caller.name[:])}, " does not fit the grant of the log service: it reads no record")
+		system.log(.Warning, "root: the process slot ", slot, " or the process serial ", serial, " of ", system.Module_Name{system.name_of(caller.name[:])}, " does not fit the grant of the log service: it reads no record")
 		return 0
 	}
 	return amount
@@ -552,7 +552,7 @@ failure_show :: proc "contextless" (text: string, status: system.Status) {
 				item.stop_asked_by_root_service = true
 			}
 		}
-		system.call(.Process_Stop, u64(compositor), 0) // The screen returns to this service.
+		system.process_stop(compositor) // The screen returns to this service.
 		// The compositor could leave the page 1 on the screen; the boot
 		// display is on the page 0, the framebuffer of the firmware.
 		if display_registers_address != nil {
@@ -1072,7 +1072,7 @@ control_ring_serve :: proc "contextless" () {
 					if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 						unlock_stop_ask()
 					}
-					system.call(.Process_Stop, u64(item.process), 0)
+					system.process_stop(item.process)
 				}
 			}
 		}
@@ -1868,7 +1868,7 @@ release :: proc "contextless" (item: ^Started) {
 	// A terminal that stops: its process stops. A process that stops: its
 	// terminal stays, and shows what the process wrote.
 	if item.writer != nil && item.writer.process != 0 {
-		system.call(.Process_Stop, u64(item.writer.process), 0)
+		system.process_stop(item.writer.process)
 	}
 	// A debugged process that stops, a debugger service that stops, and a
 	// caller of the debugger service that stops: the debug access ends.
@@ -1892,7 +1892,7 @@ release :: proc "contextless" (item: ^Started) {
 	// A client that stops: its block service stops. A block service that
 	// stops: the device stops using memory.
 	if item.driver != nil && item.driver.process != 0 {
-		system.call(.Process_Stop, u64(item.driver.process), 0)
+		system.process_stop(item.driver.process)
 	}
 	if item.is_driver {
 		driver_end(item)
@@ -1944,18 +1944,21 @@ reap :: proc "contextless" () {
 		if item.process == 0 {
 			continue
 		}
-		state, cause, code := system.process_state(item.process)
+		state, cause, outcome := system.process_state(item.process)
 		if state == .Stopped {
 			buffer: [64]u8
 			stop_text := system.Writer{buffer = buffer[:]}
-			system.stop_write(&stop_text, cause, code)
-			// A stop of itself with the code 0 and a stop by a holder are the
-			// expected ends; each other stop is a warning.
+			system.stop_write(&stop_text, cause, outcome)
+			// A finished work, a clean stop that a call or an event asked,
+			// and a stop by a holder are the expected ends; each other stop
+			// is a warning.
 			level := op.Log_Level.Warning
 			switch cause {
 			case .Itself:
-				if code == 0 {
+				switch outcome {
+				case .Done, .Stopped_On_Request:
 					level = .Info
+				case .None, .Failed, .Refused:
 				}
 			case .Holder:
 				level = .Info
@@ -1975,7 +1978,7 @@ reap :: proc "contextless" () {
 			if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 				unlock_stopped()
 			}
-			start_policy_stopped(&item, cause, code)
+			start_policy_stopped(&item, cause, outcome)
 			// release closes the handle of the process, which is the handle
 			// of the compositor: no later start may give to it.
 			compositor_reaped := item.process == compositor

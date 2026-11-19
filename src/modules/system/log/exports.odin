@@ -166,12 +166,12 @@ scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^err
 	}
 	// The lent handle keeps the slot of the process for the whole call, so
 	// the slot and the serial name that process, also after it stopped.
-	results, status := system.call(.Process_State, u64(process))
+	slot, serial, status := system.process_place(process)
 	if status != .Ok {
 		errors.fail(error, ERROR, .Refused, .None, LENT_PROCESS_ARGUMENT, 0, 0, i64(status))
 		return {}, false
 	}
-	return log_scope.lent_process_scope(results[4], results[5]), true
+	return log_scope.lent_process_scope(slot, serial), true
 }
 
 // records gives the log records of the log scope of the caller from the number `after` on, one row each: the number, the time in microseconds, the process and its slot, the level, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows of the scope from `after` to the last record.

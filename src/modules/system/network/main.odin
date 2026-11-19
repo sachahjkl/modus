@@ -231,7 +231,7 @@ machine_problems: network.Problem_Table // The frames that no endpoint owns.
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log(.Error, "network: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 place_bytes :: proc "contextless" (place: int) -> []u8 {
@@ -1187,7 +1187,7 @@ call :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {
 			frame_service_stopped_fail()
 		case .Silent:
 			system.log(.Error, "network: the frame service did not answer the command ", frame.command_name(i64(command)), " in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms: this service stops")
-			system.stop(1)
+			system.stop(.Failed)
 		}
 		system.wait_records(&wait, &frames.completions)
 		system.wait_end(&wait, deadline)
@@ -1239,7 +1239,7 @@ frame_service_check :: proc "contextless" () {
 // or when the frame service does not answer a command in
 // system.ANSWER_BOUND_MILLISECONDS, and in the loop at that stop, it writes
 // "network: the frame service stopped: ..." (or the command that had no
-// answer) and stops with the code 1. The root service then refuses each
+// answer) and stops with `Failed`. The root service then refuses each
 // process that needs an endpoint (src/md/features/missing_hardware.md).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {

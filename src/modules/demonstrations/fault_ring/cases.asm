@@ -160,8 +160,8 @@ mov_ss_then_int3_end:
 ; one of the debug exception, on its own interrupt stack. A processor that
 ; gives the held trap at the first instruction of that stub puts its frame
 ; where the frame of int1 was: the kernel then cannot return to the thread,
-; and stops the process with the stop code of a debug exception and the
-; instruction address 0. A processor that does not gives debug records
+; and stops the process with the stop cause Fault, the vector of a debug
+; exception in its stop report and the instruction address 0. A processor that does not gives debug records
 ; between mov_ss_then_int1 and mov_ss_then_int1_end.
 global mov_ss_then_int1
 global mov_ss_then_int1_end

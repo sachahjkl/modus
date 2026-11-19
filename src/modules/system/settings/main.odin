@@ -397,11 +397,15 @@ boot_pass :: proc "contextless" () -> ! {
 	choice: settings.Choice
 	zone_offset_minutes: i32
 	what := "no settings kept: the defaults"
+	// A store that fails a read or refuses the write of the defaults: the
+	// page still holds the defaults, and the stop says that the pass failed.
+	store_refused := false
 	if has_store {
 		bytes, found, status := storage.read(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, buffer[:])
 		switch {
 		case status != .Ok:
 			what = "the store gives no record (status not Ok): the defaults"
+			store_refused = true
 		case !found:
 		case:
 			read, read_zone, valid := settings.kept_read(bytes)
@@ -419,6 +423,7 @@ boot_pass :: proc "contextless" () -> ! {
 					what = "the record of the store is refused (another version, or a value that its setting does not have): the defaults, kept in its place"
 				} else {
 					what = "the record of the store is refused (another version, or a value that its setting does not have): the defaults, NOT kept: the store refused"
+					store_refused = true
 				}
 			}
 		}
@@ -429,7 +434,10 @@ boot_pass :: proc "contextless" () -> ! {
 	text: [256]u8
 	writer := system.Writer{buffer = text[:]}
 	system.log(.Info, "settings: the boot pass: ", what, ": ", values_text(&writer, choice), "; in ", (system.nanoseconds() - start) / 1000, " us")
-	system.stop(0)
+	if store_refused {
+		system.stop(.Failed)
+	}
+	system.stop(.Done)
 }
 
 // A button of the row of the time zone: its label and how far it moves the
@@ -571,16 +579,20 @@ draw_with_bar :: proc "contextless" (window: ^display.Window) {
 // The entry of settings: the boot pass, or the window and the service.
 //
 // The entry maps the settings page; with no page it writes "settings: no
-// settings page" and stops with the code 1. It opens its private store; a
-// process with no store still runs, and says "NOT kept: no store".
+// settings page" and stops with `Refused` when the context names no page or
+// a handle that it cannot map, and with `Failed` for any other status. It
+// opens its private store; a process with no store still runs, and says
+// "NOT kept: no store".
 //
 // - **The boot pass** (the context value `VALUE_BOOT_PASS` is not 0): it
 //   reads the record of its store, writes the page, wakes the compositor,
-//   writes "settings: the boot pass: ..." with its time, and stops with the
-//   code 0. A missing or unreadable record gives the defaults. A record of
+//   writes "settings: the boot pass: ..." with its time, and stops with
+//   `Done`. A missing or unreadable record gives the defaults. A record of
 //   another version gives the defaults, which the pass keeps in its place.
-// - **Otherwise**: it opens its window (with none, it stops with the code
-//   1) and its service, draws, and writes "settings: ok, ...". Then one loop
+//   A store that fails the read or refuses that write gives the defaults
+//   too, and the pass stops with `Failed`.
+// - **Otherwise**: it opens its window (with none, it stops with `Failed`)
+//   and its service, draws, and writes "settings: ok, ...". Then one loop
 //   waits on the events of the window and on the service ring, runs the
 //   calls, and draws after an event. It never stops by itself.
 @(export, link_name = "entry")
@@ -589,7 +601,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address, status := system.memory_map(page_handle)
 	if status != .Ok {
 		system.log(.Info, "settings: no settings page: status ", u64(status))
-		system.stop(1)
+		system.stop(system.stop_outcome_of_grant(page_handle, status))
 	}
 	page = (^settings.Page)(address)
 	date_page = date.page_of(ctx)
@@ -599,7 +611,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "settings")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	service, _ = system.service_open(ctx)
 	draw_with_bar(&window)

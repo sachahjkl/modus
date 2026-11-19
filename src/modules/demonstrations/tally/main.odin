@@ -213,7 +213,7 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^syst
 // runs the calls and the key Space in one loop until the principal closes
 // the window.
 //
-// With no window it stops with the code 1. It writes "tally: ok". Each turn
+// With no window it stops with `Failed`. It writes "tally: ok". Each turn
 // draws the window, waits for an event or a call, runs the calls, then the
 // keys: Space is one add of 1.
 @(export, link_name = "entry")
@@ -221,7 +221,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "tally")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	system.log(.Info, "tally: ok")
 	for {

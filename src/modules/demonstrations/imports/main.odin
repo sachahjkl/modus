@@ -324,14 +324,14 @@ process_generator: random.Generator
 // entry runs each load case once with the loader of the system, calls
 // `agenda` and `calendar` through their import slots, measures the calls
 // and the bind, writes the lines on the log, then keeps the window open
-// until the process is stopped. With no window, it stops with the code 1.
+// until the process is stopped. With no window, it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log(.Info, "imports: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	// A process that this process started to share calendar: it waits.
 	if ctx.values[VALUE_CHILD] != 0 {
@@ -341,7 +341,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "imports")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {

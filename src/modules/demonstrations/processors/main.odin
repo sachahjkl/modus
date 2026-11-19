@@ -24,7 +24,7 @@
 // - **Inspect**: the machine with the right Inspect, for the processor
 //   reports (what each processor runs) and the system report (how many
 //   processors exist). With no such grant it writes "processors: no grant
-//   to inspect the machine" and stops with the code 1.
+//   to inspect the machine" and stops with `Refused`.
 //
 // **What a reader sees**: the picture in the tints of the threads, the time
 // of each of the three pictures, the load of each processor and the waits
@@ -152,7 +152,7 @@ run_together :: proc "contextless" () {
 		thread, status = system.thread_start(spin, nil)
 		if status != .Ok {
 			system.log(.Info, "processors: cannot start a thread")
-			system.stop(1)
+			system.stop(.Failed)
 		}
 	}
 	// This thread is the fifth: with the four others, it can fill 5 processors.
@@ -227,8 +227,8 @@ load_measure :: proc "contextless" (elapsed: u64) {
 // The entry of processors: the test of the processors at one time, then the
 // pictures with 1, 2 and 4 threads in a loop for ever.
 //
-// With no window, or with no grant to inspect the machine, it stops with
-// the code 1. It runs `run_together` once and writes its result. Then it
+// With no window, it stops with `Failed`; with no grant to inspect the
+// machine, with `Refused`. It runs `run_together` once and writes its result. Then it
 // starts 4 threads that compute rows, and the main thread gives them the
 // same picture with 1, then 2, then 4 of them at work, and starts again.
 // The main thread draws the panel at the rate of the screen.
@@ -236,7 +236,7 @@ load_measure :: proc "contextless" (elapsed: u64) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "processors")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	// The window shows the picture with a picture record: until the first
 	// rows, the picture is the background.
@@ -255,7 +255,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	report: op.System_Report
 	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
 		system.log(.Info, "processors: no grant to inspect the machine")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	processor_count = report.processors
 
@@ -272,7 +272,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		worker.number = index
 		if _, status := system.thread_start(compute, &worker); status != .Ok {
 			system.log(.Info, "processors: cannot start a thread")
-			system.stop(1)
+			system.stop(.Failed)
 		}
 	}
 

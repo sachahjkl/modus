@@ -62,7 +62,7 @@ scenario_return_fault := [?]Step {
 	{kind = .Wait, text = "return_fault: the instruction address after the last page: the child stopped: the kernel cannot return to its thread, the address 0000800000000000: as it must", any_order = true},
 	{kind = .Wait, text = "kernel: process return_fault child stopped: the kernel cannot return to its thread: the stack address is not canonical: 8000000000000000", any_order = true},
 	{kind = .Wait, text = "return_fault: a stack address that is not canonical: the child stopped: the kernel cannot return to its thread, the address 8000000000000000: as it must", any_order = true},
-	{kind = .Wait, text = "return_fault: the flag nested task at a syscall: the child stopped: itself, code 0, the address 0000000000000000: as it must", any_order = true},
+	{kind = .Wait, text = "return_fault: the flag nested task at a syscall: the child stopped: itself, done, the address 0000000000000000: as it must", any_order = true},
 	{kind = .Wait, text = "return_fault: the trap flag at a syscall: the child stopped: a fault, vector 1, the address 0000000000000000: as it must", any_order = true},
 	{kind = .Wait, text = "return_fault: a stack address that is not canonical at a syscall: the child stopped: the kernel cannot return to its thread, the address 8000000000000000: as it must", any_order = true},
 	{kind = .Wait, text = "extended_state: ok, ", any_order = true},

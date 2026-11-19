@@ -341,7 +341,7 @@ THREAD_TABLE_CAPACITY :: 256
 Process :: struct {
 	state:        op.Process_State, // None, Created, Ready or Stopped.
 	cause:        op.Stop_Cause, // Why it stopped: set with the state Stopped, under the process lock.
-	code:         u32,
+	outcome:      op.Stop_Outcome, // What it said of its work: None but for the cause Itself; set with the cause.
 	name:         [op.PROCESS_NAME_BYTES_MOST + 1]u8, // Zero bytes after the name.
 	table:        u64,
 	references:   u32, // Handles to this process.
@@ -1436,11 +1436,13 @@ page_give :: proc "contextless" (process: ^Process, address: u64, write: bool, e
 }
 
 // stop_cause_missing stops the machine when a path of the kernel stops a
-// process with no stop cause: a fault of the kernel, which no process can
-// cause, since each operation names the cause itself.
+// process with no stop cause, or with a stop outcome that does not fit its
+// cause: a fault of the kernel, which no process can cause, since each
+// operation names the cause itself and the dispatch refuses the outcome
+// word before.
 stop_cause_missing :: proc "contextless" (index: u32) -> ! {
 	fault_report_begin()
-	log("kernel: the kernel stopped the process slot ", u64(index), " with no stop cause")
+	log("kernel: the kernel stopped the process slot ", u64(index), " with no stop cause, or with a stop outcome that does not fit its cause")
 	machine_stop(.Invariant_Broken)
 }
 
@@ -1568,10 +1570,11 @@ process_free :: proc "contextless" (process: ^Process) {
 	}
 	own_log_ring_end(process)
 	process.state = .None
-	// A slot with no process has no stop cause. Its other facts (the name,
-	// the code, the counts) stay until a new process takes the slot: the
-	// reports of Inspect give none of them for a free slot.
+	// A slot with no process has no stop cause and no stop outcome. Its
+	// other facts (the name, the counts) stay until a new process takes the
+	// slot: the reports of Inspect give none of them for a free slot.
 	process.cause = .None
+	process.outcome = .None
 	budgets[process.budget].amounts.processes += 1
 }
 
@@ -1809,9 +1812,9 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 		thread_free(thread)
 	}
 	if last {
-		process_stop(process_index, .Last_Thread_Ended, 0)
+		process_stop(process_index, .Last_Thread_Ended, .None)
 	} else if unanswered {
-		process_stop(process_index, .Fault_Unanswered, 0)
+		process_stop(process_index, .Fault_Unanswered, .None)
 	} else if running {
 		process_event(process_index)
 	}
@@ -1852,11 +1855,12 @@ process_state :: proc "contextless" (index: u32) -> op.Process_State {
 // queue ends now; each thread on a processor gets stop_requested. The last
 // of these processors to leave its thread, or this call if none runs one,
 // cleans the process up. The caller holds the control lock. The first stop
-// keeps its cause and its code: a later stop or fault changes neither.
-process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, code: u32) {
-	// Every path of the kernel names its cause: a stop with none would give
-	// readers the state Stopped with no cause, which their border refuses.
-	if cause == .None {
+// keeps its cause and its outcome: a later stop or fault changes neither.
+process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, outcome: op.Stop_Outcome) {
+	// Every path of the kernel names its cause, and only a stop of the
+	// process itself carries an outcome: another pair would give readers a
+	// triple that their border refuses.
+	if cause == .None || (cause == .Itself) != (outcome != .None) {
 		stop_cause_missing(index)
 	}
 	process := &processes[index]
@@ -1876,7 +1880,7 @@ process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, code: u32)
 	// name this process, and an operation of the process sees it.
 	process.state = .Stopped
 	process.cause = cause
-	process.code = code
+	process.outcome = outcome
 	// The debugging of a process ends with the process: its debug handler
 	// is free for another process, and no ring takes a record of a process
 	// that stops.
@@ -2288,7 +2292,7 @@ page_fault :: proc "contextless" (index: u32, address: u64, error: u64) -> bool 
 process_fault :: proc "contextless" (index: u32, frame: ^Frame, address: u64) {
 	control_take()
 	defer control_free()
-	process_stop(index, process_fault_report(index, frame, address), 0)
+	process_stop(index, process_fault_report(index, frame, address), .None)
 }
 
 // process_fault_report writes the stop report and the line of the log of a

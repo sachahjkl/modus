@@ -142,7 +142,7 @@ interrupts: u64
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log(.Error, "frame: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // start resets the device, agrees on the features, and gives it the queues.
@@ -475,7 +475,7 @@ harvest :: proc "contextless" () -> (count: int) {
 // each new command of the client, and waits for the interrupt of the
 // device or a new command. With no ring, no configuration, or a device
 // that refuses its setup, it writes the reason at the level error and
-// stops with the code 1.
+// stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]

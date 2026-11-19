@@ -25,6 +25,7 @@ package start_list
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
+import op "modus:contract/operation"
 
 // The names of the two lists in the resource table of the boot image.
 START_LIST_RESOURCE :: "start_list"
@@ -51,6 +52,25 @@ ROW_CAPACITY :: 32
 MODULE_NAME_SIZE :: 32
 // The restarts of one row at most, for the whole run of the machine.
 RESTART_LIMIT :: 16
+
+// stop_restarts says if a stop of the process of a row starts the row again,
+// while it has restarts left (src/md/features/start_policy.md, "The
+// subtle points"). A process that stopped itself with `Done`
+// finished its work, and one that stopped with `Refused` would get the same
+// input again: neither restarts. Each other stop restarts. The outcome
+// passed the border of `op.stop_of_words`, so it is not `None` only for a
+// stop of the process itself.
+//
+// Example: `stop_restarts(.Done)` is false; `stop_restarts(.None)`, for a
+// fault or a stop by a holder, is true.
+stop_restarts :: proc "contextless" (outcome: op.Stop_Outcome) -> bool {
+	switch outcome {
+	case .Done, .Refused:
+		return false
+	case .None, .Failed, .Stopped_On_Request:
+	}
+	return true
+}
 
 // A part of the machine that a row can need. The member is the bit of the
 // part in a word of Machine_Parts.

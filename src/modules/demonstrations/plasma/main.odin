@@ -40,14 +40,14 @@ drawing: interface.Window_Drawing
 // The entry of plasma: it builds the sine table and the palette, then
 // computes and shows one picture every 33 ms for ever.
 //
-// With no window it stops with the code 1. The time of each picture is
+// With no window it stops with `Failed`. The time of each picture is
 // fixed from the first one: after a slow picture, the next pictures follow
 // with no sleep until the process is on time again.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "plasma")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	// Bhaskara's approximation of the sine, in integers.
 	for i in 0 ..< 128 {

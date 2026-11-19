@@ -1019,7 +1019,7 @@ child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	}
 	system.enter(0)
 	_ = ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.None)})
-	system.stop(0)
+	system.stop(.Done)
 }
 
 // free_slot_check reads the report of the slot of a child after its last
@@ -1043,7 +1043,7 @@ free_slot_check :: proc "contextless" (slot: u64, serial: u64) {
 	case report.process_serial != serial:
 		system.log(.Info, "errors: WRONG: the slot ", slot, " of the child served another process before its report was read")
 	case report != free:
-		system.log(.Info, "errors: WRONG: the report of the free slot ", slot, " gives the state ", u64(report.state), ", the stop cause ", u64(report.stop_cause), ", the code ", u64(report.code), ", ", report.handle_count, " handles, ", report.entries, " entries of the process before it")
+		system.log(.Info, "errors: WRONG: the report of the free slot ", slot, " gives the state ", u64(report.state), ", the stop cause ", u64(report.stop_cause), ", the stop outcome ", u64(report.stop_outcome), ", ", report.handle_count, " handles, ", report.entries, " entries of the process before it")
 	case:
 		system.log(.Info, "errors: the report of the slot of the child after its last handle closed gives its state None and its serial, and no fact of the child: as it must")
 	}
@@ -1076,28 +1076,16 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 			system.sleep(system.time() + 10)
 		}
 		// The child then stops on a kernel ring that holds records. The
-		// event word of this thread changes when a process that it holds
-		// stops; the hang bound only ends a stop that never comes.
-		deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
-		child_state: op.Process_State
-		child_cause: op.Stop_Cause
-		child_code: u32
-		for {
-			wait := system.wait_begin()
-			child_state, child_cause, child_code = system.process_state(process)
-			if child_state == .Stopped || system.time() >= deadline {
-				break
-			}
-			system.wait_end(&wait, deadline)
-		}
-		if child_cause == .Itself && child_code == 0 {
+		// hang bound only ends a stop that never comes.
+		child_cause, child_outcome, child_stopped := system.process_stop_wait(process, system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
+		if child_outcome == .Done {
 			system.log(.Info, "errors: a stop on a kernel ring that holds records ends the process as a stop of itself, not a fault: as it must")
 		} else {
-			system.log(.Info, "errors: WRONG: a stop on a kernel ring that holds records left the child in the state ", op.STATE_NAMES[child_state], ", stopped by ", op.STOP_CAUSE_TEXTS[child_cause], ", with the code ", u64(child_code))
+			system.log(.Info, "errors: WRONG: a stop on a kernel ring that holds records left the child ", child_stopped ? string("stopped by ") : string("running, its stop cause "), op.STOP_CAUSE_TEXTS[child_cause], ", with the outcome ", op.STOP_OUTCOME_TEXTS[child_outcome])
 		}
-		places, _ := system.call(.Process_State, u64(process))
+		slot, serial, _ := system.process_place(process)
 		system.close(process)
-		free_slot_check(places[4], places[5])
+		free_slot_check(slot, serial)
 	} else {
 		// A child that does not start measures nothing: the case says so,
 		// and does not pass in silence.
@@ -1270,7 +1258,7 @@ process_generator: random.Generator
 //
 // **When it is the child** (the value `VALUE_CHILD` of its context is not
 // 0), it only runs the refused `Log` operations of the measure (`child`)
-// and stops with the code 0.
+// and stops with `Done`.
 //
 // **Else, in order:**
 //
@@ -1287,7 +1275,8 @@ process_generator: random.Generator
 //    from `a` to `y`, or a press on a case, runs that case again and writes
 //    its new sentence.
 //
-// **The stop**: with no random seed or no window, it stops with the code 1.
+// **The stop**: with no random seed, it stops with `Refused`; with no
+// window, with `Failed`.
 // Else it never returns. A wrong case does not stop it: the log says
 // `WRONG:` before the sentence.
 @(export, link_name = "entry")
@@ -1296,14 +1285,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log(.Info, "errors: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	if ctx.values[VALUE_CHILD] != 0 {
 		child(ctx)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "errors")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	ctx_log = ctx.handles[op.CONTEXT_LOG]
 	the_context = ctx

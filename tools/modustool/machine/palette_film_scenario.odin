@@ -34,7 +34,7 @@ scenario_palette_film := [?]Step {
 	// The boot, and the console as the palette provider. The processes
 	// write in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
-	{kind = .Wait, text = "root: settings stopped: itself, code 0", any_order = true},
+	{kind = .Wait, text = "root: settings stopped: itself, done", any_order = true},
 	{kind = .Wait, text = "console: the palette table has ", any_order = true},
 	{kind = .Wait, text = "compositor: the palette has a provider", any_order = true},
 	// The desktop of the film. The monitor at the right, the console over

@@ -67,7 +67,7 @@ A process that asks to stop must stop, whatever its kernel ring holds. `system.s
 The chosen form, in rounds:
 
 1. Drop each completion that waits. The process ends, so no answer is wanted.
-2. If the ring is empty, send `Process_Stop` with the code of the process through `command_call`.
+2. If the ring is empty, send `Process_Stop` with the stop outcome of the process through `command_call`.
 3. Else enter the kernel with no deadline, so that the held commands run, and go back to 1.
 4. Stop the process by a fault when the ring does not empty: after a number of rounds equal to the capacity of the ring, or at once when a completion stays after the drop. A completion stays only when the process wrote false counters, and no entry changes them.
 
@@ -83,7 +83,7 @@ The refused forms:
 - **A new kernel operation, or a stop with no ring.** The kernel has one entry, through the ring, and its operations are counted. The fault already ends a process, with no change of the kernel.
 - **A wait with a time as the bound.** A test would then depend on the speed of the machine, and a time is no proof that the ring cannot empty.
 
-The decision of each round is a pure procedure (`stop_step`), which the host tests. The machine case is the child of the process `errors`: it fills its completion queue, holds one command, and stops itself with the code 0. Its starter checks with `Process_State` that the stop cause is `Itself`: a stop by the fault of the time page would give `Fault`.
+The decision of each round is a pure procedure (`stop_step`), which the host tests. The machine case is the child of the process `errors`: it fills its completion queue, holds one command, and stops itself with `Done`. Its starter checks with `system.process_stop_wait` that the stop outcome is `Done`, which comes only with the stop cause `Itself`: a stop by the fault of the time page would give `Fault` and no outcome.
 
 ## State
 

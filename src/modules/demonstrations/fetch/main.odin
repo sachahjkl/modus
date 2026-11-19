@@ -123,7 +123,7 @@ command_push_or_hold :: proc "contextless" (record: ring.Record) {
 	}
 	if held_count == len(held) {
 		system.log(.Info, "fetch: the held commands passed their proven bound")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	held[held_count] = record
 	held_count += 1
@@ -447,28 +447,28 @@ process_generator: random.Generator
 // generator of the process, opens the segment endpoint and the datagram
 // region that the grant gives, and runs the cases (`cases_run`). After the
 // summary line it ends the connection and writes `fetch: the connection
-// ended, its record is free`. With no random seed, no endpoint, no
-// datagram region, or no memory for the connections, it writes the reason
-// on the log and stops with the code 1.
+// ended, its record is free`. With no random seed or no endpoint, it
+// writes the reason on the log and stops with `Refused`; with no datagram
+// region or no memory for the connections, with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log(.Info, "fetch: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "fetch")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
 		system.log(.Info, "fetch: no endpoint: the process has no grant of the network")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
 	if map_status != .Ok {
 		system.log(.Info, "fetch: no datagram region")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
 	// The buffers of the connections: memory of this process, which gives
@@ -478,7 +478,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	buffers, buffers_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || buffers_status != .Ok {
 		system.log(.Info, "fetch: no memory for the buffers of the connections")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	// The secret of the initial sequence numbers: 32 bytes of the generator
 	// of this process (docs/RANDOMNESS.md).

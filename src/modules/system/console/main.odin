@@ -209,9 +209,9 @@ process_generator: random.Generator
 // a key, for a change of the second thread, or for 100 ms while a line
 // runs, so that the time of the line on the screen moves.
 //
-// **The stop.** With no random seed, no terminal or no second thread, the
-// console writes the reason on the log (`console: no terminal`) and stops
-// with the code 1. Else it never returns: `stop("console")` or
+// **The stop.** With no random seed or no terminal, the console writes the
+// reason on the log (`console: no terminal`) and stops with `Refused`; with
+// no second thread, with `Failed`. Else it never returns: `stop("console")` or
 // `shutdown()` ends it.
 @(export, link_name = "entry")
 entry :: proc "c" (start_context: ^system.Context) -> ! {
@@ -219,19 +219,19 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, start_context) {
 		system.log(.Info, "console: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	ctx = start_context
 	ok: bool
 	if output, ok = terminal.open(ctx); !ok {
 		system.log(.Info, "console: no terminal")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	commands_start()
 	palette_provider_start() // palette_provider.odin
 	if _, status := system.thread_start(run_lines, nil); status != .Ok {
 		system.log(.Info, "console: cannot start a thread")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	print("kernel console. A command is a typed function: try help()\n")
 	edit_show()

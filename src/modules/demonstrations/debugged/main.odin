@@ -104,7 +104,7 @@ Role :: enum u64 {
 
 // What a child does after it wrote its known value.
 Child_Mode :: enum u64 {
-	Rounds      = 0, // It waits for the parent, runs CHILD_ROUNDS rounds of its loop, and stops itself with the code 0.
+	Rounds      = 0, // It waits for the parent, runs CHILD_ROUNDS rounds of its loop, and stops itself with `Done`.
 	Forever     = 1, // Its loop has no end.
 	With_Worker = 2, // Its loop has no end; a second thread runs the same procedure, and the main thread holds and releases it when the parent asks.
 	Kernel_Copy = 3, // It gives a watched buffer to the kernel, loads its stack selector from a watched word before a syscall, then reads the buffer itself.
@@ -206,29 +206,27 @@ wait_for_growth :: proc "contextless" (word: ^u32, before: u32, amount: u32 = 1)
 }
 
 // wait_for_stop waits until a process stopped, and says if it stopped
-// itself with the code 0: its clean end. A trap flag that stayed in a
-// thread would stop it with the cause Fault instead. The line of detail
-// gives the stop. The bound only ends a hang.
+// itself with Done: its clean end. A trap flag that stayed in a thread
+// would stop it with the cause Fault instead. The line of detail gives the
+// stop. The bound only ends a hang.
 wait_for_stop :: proc "contextless" (process: system.Handle, what: string) -> (clean: bool) {
-	for deadline := hang_bound(); system.time() < deadline; {
-		if state, cause, code := system.process_state(process); state == .Stopped {
-			buffer: [64]u8
-			stop_text := system.Writer{buffer = buffer[:]}
-			system.stop_write(&stop_text, cause, code)
-			system.log(.Info, "debugged: detail: ", what, " stopped: ", system.written(&stop_text))
-			return cause == .Itself && code == 0
-		}
-		system.sleep(system.time() + 10)
+	cause, outcome, stopped := system.process_stop_wait(process, hang_bound())
+	if !stopped {
+		system.log(.Info, "debugged: detail: ", what, " did not stop")
+		return false
 	}
-	system.log(.Info, "debugged: detail: ", what, " did not stop")
-	return false
+	buffer: [64]u8
+	stop_text := system.Writer{buffer = buffer[:]}
+	system.stop_write(&stop_text, cause, outcome)
+	system.log(.Info, "debugged: detail: ", what, " stopped: ", system.written(&stop_text))
+	return outcome == .Done
 }
 
 // step_failed ends a child or a second debugger at a step that failed: the
 // line names the step, and the stop says only that it failed.
 step_failed :: proc "contextless" (role: string, step: string) -> ! {
 	system.log(.Info, "debugged: ", role, ": ", step, " failed")
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // child_worker is the second thread of a child of the mode With_Worker: it
@@ -255,7 +253,7 @@ child_run :: proc "contextless" (ctx: ^system.Context) -> ! {
 	mode, mode_ok := enum_word.member_of_word(Child_Mode, ctx.values[VALUE_MODE])
 	if !mode_ok {
 		system.log(.Info, "debugged: the context names the child mode ", ctx.values[VALUE_MODE], ", which names no mode")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	intrinsics.volatile_store(&child_known_value, KNOWN_VALUE)
 	intrinsics.volatile_store(&child_stack_selector, op.THREAD_STACK_SELECTOR)
@@ -326,13 +324,13 @@ child_run :: proc "contextless" (ctx: ^system.Context) -> ! {
 		intrinsics.volatile_store(&child_calls, intrinsics.volatile_load(&child_watched_text[0]))
 		intrinsics.atomic_store(&shared.stage, 3)
 	}
-	system.stop(0)
+	system.stop(.Done)
 }
 
 // second_debugger attaches to the process of its context and stops its
 // first thread at an execute breakpoint, then does what its mode says. It
-// stops itself with the code 0 at its end; a step that failed writes the
-// line that names it and stops with 1.
+// stops itself with `Done` at its end; a step that failed writes the
+// line that names it and stops with `Failed`.
 second_debugger :: proc "contextless" (ctx: ^system.Context) -> ! {
 	ROLE :: "a second debugger"
 	address, status := system.memory_map(ctx.handles[GRANT_SHARED], {.Write})
@@ -343,7 +341,7 @@ second_debugger :: proc "contextless" (ctx: ^system.Context) -> ! {
 	mode, mode_ok := enum_word.member_of_word(Debugger_Mode, ctx.values[VALUE_MODE])
 	if !mode_ok {
 		system.log(.Info, "debugged: the context names the debugger mode ", ctx.values[VALUE_MODE], ", which names no mode")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	target := ctx.handles[GRANT_TARGET]
 	if system.debug_attach(target) != .Ok {
@@ -401,7 +399,7 @@ second_debugger :: proc "contextless" (ctx: ^system.Context) -> ! {
 			system.sleep(system.time() + 1000)
 		}
 	}
-	system.stop(0)
+	system.stop(.Done)
 }
 
 // parked is a thread of the parent that only waits: the parent names it by
@@ -474,7 +472,7 @@ child_with_page :: proc "contextless" (role: Role, mode: u64, wait_ready: bool, 
 // child_end stops a child that has no end of its own, and closes what the
 // parent holds for it.
 child_end :: proc "contextless" (child: Started_Child) {
-	system.call(.Process_Stop, u64(child.process), 0)
+	system.process_stop(child.process)
 	system.close(child.process)
 	system.close(child.memory)
 }
@@ -852,15 +850,17 @@ case_of_the_full_ring :: proc "contextless" () {
 // - `Second_Debugger`: a debugger whose debugging ends while its process
 //   waits at a breakpoint (`second_debugger`).
 // - `Parent` (0, as the root service starts it): it takes its random
-//   generator and maps the boot image (a failure stops it with the code
-//   1), runs the cases, writes the result on the log, and then waits for
-//   ever.
+//   generator and maps the boot image (no seed stops it with `Refused`, no
+//   image with `Failed`), runs the cases, writes the result on the log, and
+//   then waits for ever.
+//
+// A role or a mode word that names no member stops it with `Refused`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	role, role_ok := enum_word.member_of_word(Role, ctx.values[VALUE_ROLE])
 	if !role_ok {
 		system.log(.Info, "debugged: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	switch role {
 	case .Child:
@@ -871,12 +871,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log(.Info, "debugged: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
 		system.log(.Info, "debugged: no boot image")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	log_handle = ctx.handles[op.CONTEXT_LOG]

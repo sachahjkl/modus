@@ -194,7 +194,7 @@ disk_process_log :: proc "contextless" (slot: u64, process_serial: u64, nickname
 // a picture of the machine every 500 ms and runs the calls between two
 // pictures.
 //
-// With no window it stops with the code 1. Each turn of the loop:
+// With no window it stops with `Failed`. Each turn of the loop:
 //
 // 1. asks the kernel for the system report, then the report of each
 //    process slot that is in use;
@@ -209,7 +209,7 @@ disk_process_log :: proc "contextless" (slot: u64, process_serial: u64, nickname
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "monitor")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	for graph in Graph {
 		// The boxes are constants inside the window: the start refuses none.

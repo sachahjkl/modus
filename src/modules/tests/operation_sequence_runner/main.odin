@@ -53,7 +53,8 @@ entry_read_address_zero :: proc "c" (_: rawptr) -> ! {
 
 // The entry of the runner: it checks its sequence, runs each kernel entry
 // of it, writes the results after each one, then writes its end `Ran` and
-// stops itself with the code 0. A refusal writes its end and stops with 1.
+// stops itself with `Done`. A refusal of its sequence writes its end and
+// stops with `Refused`; a refusal of a batch, with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The service maps the results before the start, so the end of a
@@ -108,10 +109,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 }
 
 // end_and_stop writes the end of the runner in its results, then stops it:
-// the stop says only right or wrong, the end says which.
+// the stop outcome says what kind of end, the end says which.
 end_and_stop :: proc "contextless" (results: ^operation_sequence.Runner_Results, end: operation_sequence.Runner_End) -> ! {
 	intrinsics.volatile_store(&results.end, u64(end))
-	system.stop(end == .Ran ? 0 : 1)
+	switch end {
+	case .Ran:
+		system.stop(.Done)
+	case .Sequence_Refused:
+		// The sequence is the input of the runner: its check refused it.
+		system.stop(.Refused)
+	case .Batch_Refused, .None:
+		system.stop(.Failed)
+	}
+	system.stop(.Failed)
 }
 
 // command_of_step gives the command record of one step: its operation word

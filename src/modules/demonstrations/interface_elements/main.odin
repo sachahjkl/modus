@@ -262,12 +262,12 @@ measure_fonts :: proc "contextless" (window: ^display.Window) {
 // entry opens the window, runs the four measures of the damage by
 // difference and the measure of one whole frame, writes them on the log,
 // then draws a frame at each event of the window until the process is
-// stopped. With no window, it stops with the code 1.
+// stopped. With no window, it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_elements")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	measure("nothing changed", 7, 7, false)
 	measure("one number changed", 7, 8, false)

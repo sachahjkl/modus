@@ -217,3 +217,16 @@ a_written_list_reads_back :: proc(t: ^testing.T) {
 	testing.expect_value(t, full_problem, List_Problem.None)
 	testing.expect_value(t, full_count, ROW_CAPACITY)
 }
+
+// A row that stopped itself with Done finished its work, and one that
+// stopped with Refused would get the same input: neither starts again. Each
+// other stop restarts: a failure, a stop that a request asked, and each
+// stop with no outcome (a fault, a holder, the end of the last thread).
+@(test)
+a_clean_stop_starts_no_restart :: proc(t: ^testing.T) {
+	testing.expect(t, !stop_restarts(.Done), "a stop with Done restarts")
+	testing.expect(t, !stop_restarts(.Refused), "a stop with Refused restarts")
+	testing.expect(t, stop_restarts(.Failed), "a stop with Failed does not restart")
+	testing.expect(t, stop_restarts(.Stopped_On_Request), "a stop with Stopped_On_Request does not restart")
+	testing.expect(t, stop_restarts(.None), "a stop with no outcome does not restart")
+}

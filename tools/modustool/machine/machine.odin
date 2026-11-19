@@ -335,7 +335,7 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "root: started storage", any_order = true},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
-	{kind = .Wait, text = "root: settings stopped: itself, code 0"},
+	{kind = .Wait, text = "root: settings stopped: itself, done"},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "root: started notes"},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
@@ -1055,7 +1055,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "root: connected console to the store of its line history in the service storage, 4 blocks", any_order = true},
 	{kind = .Wait, text = "console: no line history kept: the history starts empty", any_order = true},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; in ", any_order = true},
-	{kind = .Wait, text = "root: settings stopped: itself, code 0"},
+	{kind = .Wait, text = "root: settings stopped: itself, done"},
 
 	// The console: a language with typed commands.
 	{kind = .Type, text = "1 + 2 * 3"},
@@ -2076,8 +2076,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
 	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
 	{kind = .Wait, text = "address_space: edge case: a map with a flag that the kernel does not know is refused: right", any_order = true},
-	{kind = .Wait, text = "address_space: edge case: the end of the last thread stops the process with its own stop cause and the code 0: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: the end of the last thread stops the process with its own stop cause and no stop outcome: right", any_order = true},
 	{kind = .Wait, text = "address_space: edge case: a process gets no Control over itself, and its stop through its own handle is refused: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: a holder's stop with an outcome and a stop of itself with no outcome are refused, and nothing stops: right", any_order = true},
 	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
 	// Each page table that a mapping made returns to the budget with its
 	// unmap, at three levels, for a reservation, for a large page, and
@@ -2585,14 +2586,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
-	{kind = .Wait, text = "root: log_reader stopped: itself, code 0"},
+	{kind = .Wait, text = "root: log_reader stopped: itself, done"},
 	// The remote service acts for the principal and still reads the whole
 	// log in order: the last record of the storm child, then the line of
 	// log_reader after it, then the stop that the root service writes. The
 	// earlier records of the run are gone from the whole log.
 	{kind = .Record, process = "log_reader storm", level = "info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
 	{kind = .Record, process = "log_reader", level = "info", text = "log_reader: ok"},
-	{kind = .Record, process = "root", level = "info", text = "root: log_reader stopped: itself, code 0"},
+	{kind = .Record, process = "root", level = "info", text = "root: log_reader stopped: itself, done"},
 	{kind = .Type, text = "start(\"log_reader\")"},
 	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
@@ -2618,10 +2619,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
-	{kind = .Wait, text = "root: log_reader stopped: itself, code 0"},
+	{kind = .Wait, text = "root: log_reader stopped: itself, done"},
 	{kind = .Record, process = "log_reader storm", level = "info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
 	{kind = .Record, process = "log_reader", level = "info", text = "log_reader: ok"},
-	{kind = .Record, process = "root", level = "info", text = "root: log_reader stopped: itself, code 0"},
+	{kind = .Record, process = "root", level = "info", text = "root: log_reader stopped: itself, done"},
 	// An arena grows one page at a time until its budget refuses the
 	// commit: the refusal is a value that the process reads, the arena
 	// keeps its state, a reset takes the same pages again with no commit,
@@ -2630,7 +2631,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "start(\"arena\")"},
 	{kind = .Wait, text = "arena: grew to ", fails_on = "arena: WRONG"},
 	{kind = .Wait, text = "arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must", fails_on = "arena: WRONG"},
-	{kind = .Wait, text = "root: arena stopped: itself, code 0"},
+	{kind = .Wait, text = "root: arena stopped: itself, done"},
 	// The refusals of the root service give an error record: the console
 	// writes its sentence.
 	// No window drew in a picture on the screen: each surface has two
@@ -3628,8 +3629,9 @@ scenario_measure_address_space := [?]Step {
 	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
 	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
 	{kind = .Wait, text = "address_space: edge case: a map with a flag that the kernel does not know is refused: right", any_order = true},
-	{kind = .Wait, text = "address_space: edge case: the end of the last thread stops the process with its own stop cause and the code 0: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: the end of the last thread stops the process with its own stop cause and no stop outcome: right", any_order = true},
 	{kind = .Wait, text = "address_space: edge case: a process gets no Control over itself, and its stop through its own handle is refused: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: a holder's stop with an outcome and a stop of itself with no outcome are refused, and nothing stops: right", any_order = true},
 	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
 	// Each page table that a mapping made returns to the budget with its
 	// unmap, at three levels, for a reservation, for a large page, and

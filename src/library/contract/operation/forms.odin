@@ -13,7 +13,7 @@ package operation
 // argument by its name and its value in its form.
 Form :: enum u8 {
 	None    = 0, // No parameter.
-	Value   = 1, // A number that the operation does not check.
+	Value   = 1, // A number that the form does not check. The operation can check it with another argument: the outcome of `Process_Stop` depends on its target.
 	Handle  = 2, // A handle of `kind` (None: any kind) with `rights`.
 	Handle_Or_Zero = 3, // The same, or 0: the caller itself, or no handle.
 	Address = 4, // An address in the process.
@@ -56,7 +56,7 @@ OPERATIONS := [Operation]Operation_Form {
 	.Memory_Size = {"Memory_Size", {{"memory", .Handle, .Memory, {}, 0}, {}, {}, {}, {}, {}, {}}},
 	.Process_Create = {"Process_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"name", .Address, .None, {}, 0}, {"name_length", .Count, .None, {}, PROCESS_NAME_BYTES_MOST}, {}, {}, {}, {}}},
 	.Process_Start = {"Process_Start", {{"process", .Handle, .Process, {.Control}, 0}, {"entry", .Address, .None, {}, 0}, {"stack", .Address, .None, {}, 0}, {"context", .Address, .None, {}, 0}, {}, {}, {}}},
-	.Process_Stop = {"Process_Stop", {{"process", .Handle_Or_Zero, .Process, {.Control}, 0}, {"code", .Value, .None, {}, 0}, {}, {}, {}, {}, {}}},
+	.Process_Stop = {"Process_Stop", {{"process", .Handle_Or_Zero, .Process, {.Control}, 0}, {"outcome", .Value, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Process_State = {"Process_State", {{"process", .Handle, .Process, {.Read}, 0}, {"report", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Handle_Give = {"Handle_Give", {{"target", .Handle_Or_Zero, .None, {}, 0}, {"handle", .Handle, .None, {.Give}, 0}, {"rights", .Flags, .None, {}, 0}, {}, {}, {}, {}}},
 	.Handle_Close = {"Handle_Close", {{"handle", .Handle, .None, {}, 0}, {}, {}, {}, {}, {}, {}}},

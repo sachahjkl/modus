@@ -130,8 +130,8 @@ Choice_Walk :: struct {
 	uses:       ^map[string]Choice_Use, // "folder name" to the first use of the constant as a choice.
 }
 
-// choice_key names a declaration of a package in the tables of the walk.
-@(private = "file")
+// choice_key names a declaration of a package in the tables of the walk,
+// and in the aliases of the check of the stop words.
 choice_key :: proc(folder, name: string) -> string {
 	return strings.concatenate({folder, " ", name}, context.temp_allocator)
 }
@@ -145,8 +145,8 @@ Choice_Use :: struct {
 	form:   Choice_Use_Form,
 }
 
-// One source that the parser read, with the folder of its package.
-@(private = "file")
+// One source that the parser read, with the folder of its package. The
+// check of the stop words reads the same parse.
 Choice_Parsed :: struct {
 	source: Export_Source,
 	folder: string,
@@ -154,9 +154,8 @@ Choice_Parsed :: struct {
 }
 
 // choice_sources_parse parses the sources once, for the check of the
-// families and for the check of the casts. ok false: a source that the
-// parser refuses.
-@(private = "file")
+// families, the check of the casts and the check of the stop words. ok
+// false: a source that the parser refuses.
 choice_sources_parse :: proc(sources: []Export_Source) -> (parsed: []Choice_Parsed, ok: bool) {
 	context.allocator = context.temp_allocator
 	list := make([dynamic]Choice_Parsed)
@@ -490,7 +489,6 @@ parameter_names_of :: proc(literal: ^ast.Proc_Lit) -> []string {
 // imports_of maps the name of each import of a file to the folder of its
 // package: "modus:" names the source library and "kernel:" a kernel part, a
 // relative path the folder of the file. An import of base: or core: is not read.
-@(private = "file")
 imports_of :: proc(file: ^ast.File, folder: string) -> map[string]string {
 	imports := make(map[string]string)
 	for statement in file.decls {
@@ -981,7 +979,6 @@ enum_cast_note :: proc(walk: ^Enum_Cast_Walk, node: ^ast.Node, type_name: string
 }
 
 // unparenthesized gives the expression inside its parentheses.
-@(private = "file")
 unparenthesized :: proc(expression: ^ast.Expr) -> ^ast.Expr {
 	inner := expression
 	for inner != nil {
@@ -1080,8 +1077,9 @@ enum_cast_exception_matches :: proc(exception: Enum_Cast_Exception, cast_of_word
 
 // choice_families_of_tree reads each source of the system that is not a
 // test, under a root ("" is the repository), and gives the families of
-// constants and the casts of a word to an enum that it finds.
-choice_families_of_tree :: proc(root: string) -> (families: []Choice_Family, casts: []Enum_Cast, file_count: int, ok: bool) {
+// constants, the casts of a word to an enum and the stop word faults that
+// it finds.
+choice_families_of_tree :: proc(root: string) -> (families: []Choice_Family, casts: []Enum_Cast, stop_faults: []Stop_Word_Fault, file_count: int, ok: bool) {
 	files := make([dynamic]string, context.temp_allocator)
 	folders := CHOICE_CONSTANT_FOLDERS
 	for folder in folders {
@@ -1097,24 +1095,27 @@ choice_families_of_tree :: proc(root: string) -> (families: []Choice_Family, cas
 		text, read_ok := foundation.read_text_file_quiet(file)
 		if !read_ok {
 			fmt.eprintfln("modustool: cannot read %s", file)
-			return nil, nil, 0, false
+			return nil, nil, nil, 0, false
 		}
 		append(&sources, Export_Source{path = file, text = text})
 	}
-	// One parse of the sources for the two checks.
+	// One parse of the sources for the three checks.
 	parsed := choice_sources_parse(sources[:]) or_return
-	return choice_families_of_parsed(parsed), enum_casts_of_parsed(parsed), len(sources), true
+	return choice_families_of_parsed(parsed), enum_casts_of_parsed(parsed), stop_word_faults_of_parsed(parsed), len(sources), true
 }
 
 // choice_constant_check refuses a family of integer constants that the
 // code uses as a closed set of choices, a cast of a word to an enum that
-// the code keeps, passes or switches on, and an exception that names no
-// such family or cast.
+// the code keeps, passes or switches on, an exception that names no such
+// family or cast, and a stop word fault: a conversion to a stop enum or a
+// raw call of a stop operation outside its home package.
 choice_constant_check :: proc() -> bool {
-	families, casts, file_count, ok := choice_families_of_tree("")
+	families, casts, stop_faults, file_count, ok := choice_families_of_tree("")
 	if !ok {
 		return false
 	}
+	refused_stop_words, stop_word_exception_faults := stop_words_judged(stop_faults, STOP_WORD_EXCEPTIONS[:])
+	stop_words_refused, stop_words_stale := stop_word_faults_write(refused_stop_words, stop_word_exception_faults)
 	// A cast skips the border: the word becomes a member that the writer
 	// may not have named, and each switch after it runs no case for it.
 	refused_casts, exception_faults := enum_casts_judged(casts, ENUM_CAST_EXCEPTIONS[:])
@@ -1156,10 +1157,10 @@ choice_constant_check :: proc() -> bool {
 			fmt.eprintfln("modustool: %s: the exception %s of the check of the choice constants names no family that the code uses as choices: remove it from CHOICE_CONSTANT_EXCEPTIONS", exception.folder, choice_family_text(exception.word, exception.word_place))
 		}
 	}
-	if refused > 0 || stale > 0 || casts_refused > 0 || casts_stale > 0 {
-		fmt.eprintfln("modustool: test failed: %d families of integer constants are closed sets of choices, %d exceptions name no family, %d casts of a word to an enum skip a border, and %d exceptions of casts do not hold their count", refused, stale, casts_refused, casts_stale)
+	if refused > 0 || stale > 0 || casts_refused > 0 || casts_stale > 0 || stop_words_refused > 0 || stop_words_stale > 0 {
+		fmt.eprintfln("modustool: test failed: %d families of integer constants are closed sets of choices, %d exceptions name no family, %d casts of a word to an enum skip a border, %d exceptions of casts do not hold their count, %d stop words skip their border, and %d exceptions of stop words do not hold their count", refused, stale, casts_refused, casts_stale, stop_words_refused, stop_words_stale)
 		return false
 	}
-	foundation.test_passed_print("no family of integer constants is a closed set of choices, and no cast of a word to an enum is kept, passed or switched on, in the %d source files of the system and of the tool that are not tests (%d exceptions of outside standards, %d casts of a design)", file_count, len(CHOICE_CONSTANT_EXCEPTIONS), len(ENUM_CAST_EXCEPTIONS))
+	foundation.test_passed_print("no family of integer constants is a closed set of choices, no cast of a word to an enum is kept, passed or switched on, and no stop word skips its border, in the %d source files of the system and of the tool that are not tests (%d exceptions of outside standards, %d casts of a design)", file_count, len(CHOICE_CONSTANT_EXCEPTIONS), len(ENUM_CAST_EXCEPTIONS))
 	return true
 }

@@ -266,7 +266,7 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&again, Step{kind = .Wait, text = "unlock: the machine passphrase is set: the machine key is sealed in the store of unlock under a key of Argon2id, 19456 KiB and 2 passes, derived in "})
 	// unlock can stop before or after the lines of the root service on the
 	// table: this wait does not move the place of the log.
-	append(&again, Step{kind = .Wait, text = "root: unlock stopped: itself, code 0", any_order = true})
+	append(&again, Step{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true})
 	append(&again, Step{kind = .Wait, text = "root: refused the disk grant table of principal 0 from the store module_files: its tag does not verify under the key of the principal: another key wrote it, or a byte changed; it gives no grant, and the table of the new machine passphrase is written over it"})
 	append(&again, Step{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store module_files: 1 rows, with the tag of the machine key"})
 	append(&again, Step{kind = .Front, text = "console"})
@@ -294,7 +294,7 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&third, Step{kind = .Wait, text = "unlock: the machine passphrase is wrong: the seal does not open, the disk grants of principal 0 stay absent (1 in all)"})
 	append(&third, Step{kind = .Type, text = MACHINE_PASSPHRASE})
 	append(&third, Step{kind = .Wait, text = "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", any_order = true})
-	append(&third, Step{kind = .Wait, text = "root: unlock stopped: itself, code 0", any_order = true})
+	append(&third, Step{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true})
 	append(&third, Step{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store module_files: 1 rows, with the tag of the machine key"})
 	append(&third, Step{kind = .Front, text = "console"})
 	append(&third, Step{kind = .Type, text = "connect(\"storage\")"})
@@ -335,7 +335,7 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&fourth, Step{kind = .Front, text = "unlock"})
 	append(&fourth, Step{kind = .Type, text = MACHINE_PASSPHRASE})
 	append(&fourth, Step{kind = .Wait, text = "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", any_order = true})
-	append(&fourth, Step{kind = .Wait, text = "root: unlock stopped: itself, code 0", any_order = true})
+	append(&fourth, Step{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true})
 	append(&fourth, Step{kind = .Wait, text = "root: refused the disk grant table of principal 0 from the store module_files: its tag does not verify under the key of the principal: another key wrote it, or a byte changed; it gives no grant, and it is kept: no change is written over it", fails_on = "root: the disk grant table of principal 0 is written in the store module_files"})
 	append(&fourth, Step{kind = .Front, text = "console"})
 	append(&fourth, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"\")", foundation.DISK_MODULE_NAME)})
@@ -378,7 +378,7 @@ disk_processes_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: str
 	append(&fifth, Step{kind = .Front, text = "unlock"})
 	append(&fifth, Step{kind = .Key, text = "ret"})
 	append(&fifth, Step{kind = .Wait, text = "unlock: the machine passphrase is not typed: the disk grants of principal 0 stay absent until unlock asks again"})
-	append(&fifth, Step{kind = .Wait, text = "root: unlock stopped: itself, code 0"})
+	append(&fifth, Step{kind = .Wait, text = "root: unlock stopped: itself, done"})
 	append(&fifth, Step{kind = .Front, text = "console"})
 	append(&fifth, Step{kind = .Type, text = "principal_create(\"alice\")"})
 	append(&fifth, Step{kind = .Wait, text = "root: started unlock"})
@@ -389,7 +389,7 @@ disk_processes_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: str
 	append(&fifth, Step{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it"})
 	// unlock stops before or after the lines of the root service on the
 	// table: this wait does not move the place of the log.
-	append(&fifth, Step{kind = .Wait, text = "root: unlock stopped: itself, code 0", any_order = true})
+	append(&fifth, Step{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true})
 	// The table that the tool wrote has a tag under a key of zero bytes:
 	// refused, and written over, as no record of alice signed it.
 	append(&fifth, Step{kind = .Wait, text = "root: refused the disk grant table of principal 1 from the store module_files: its tag does not verify under the key of the principal: another key wrote it, or a byte changed; it gives no grant, and the table of the new principal is written over it"})
@@ -431,7 +431,7 @@ disk_processes_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: str
 	append(&sixth, Step{kind = .Type, text = PRINCIPAL_PASSPHRASE})
 	append(&sixth, Step{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" opens its seal; the root service receives the key of its disk grant table only, and the secret keys are erased", any_order = true})
 	append(&sixth, Step{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it"})
-	append(&sixth, Step{kind = .Wait, text = "root: unlock stopped: itself, code 0", any_order = true})
+	append(&sixth, Step{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true})
 	append(&sixth, Step{kind = .Wait, text = "root: read the disk grant table of principal 1 from the store module_files: 1 rows, with the tag of the key of the principal; 1 client keys of remote", fails_on = "root: the disk grant table of principal 1 is written in the store module_files"})
 	// The client key of alice holds again from her table, with no new
 	// allow.

@@ -127,7 +127,7 @@ process_return_refused :: proc "contextless" (thread: ^Thread, refusal: Return_R
 	}
 	log_with_level(.Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: the kernel cannot return to its thread: ", return_refusal_sentences[refusal], Hex(value))
 	process_unlock(index, taken)
-	process_stop(index, .Cannot_Return, 0)
+	process_stop(index, .Cannot_Return, .None)
 }
 
 // return_refused_by_the_processor ends a fault of the iretq of resume. The

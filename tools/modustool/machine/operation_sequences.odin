@@ -189,11 +189,13 @@ operation_findings :: proc(sequence: ^operation_sequence.Sequence, header: ^oper
 		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the outcome is %v (problem %d, start status %d, step started %d)", outcome, header.refusal_problem, header.start_status, results.step_started)})
 		return findings[:]
 	}
-	// The stop cause and the end are words of the memory of the machine:
-	// each becomes its member here, and a word that names none is a finding.
-	cause, cause_known := operation.stop_cause_of_word(header.stop_cause)
-	if !cause_known {
-		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the stop cause word %d of the runner names no cause", header.stop_cause)})
+	// The stop cause, the stop outcome and the end are words of the memory
+	// of the machine: each becomes its member here, and a word that names
+	// none, or a cause and an outcome that cannot come together, is a
+	// finding. The runner stopped, so the state is Stopped.
+	_, cause, stop_outcome, stop_known := operation.stop_of_words(u64(operation.Process_State.Stopped), header.stop_cause, header.stop_outcome)
+	if !stop_known {
+		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the stop cause word %d and the stop outcome word %d of the runner name no stop", header.stop_cause, header.stop_outcome)})
 		return findings[:]
 	}
 	end, end_known := enum_word.member_of_word(operation_sequence.Runner_End, results.end)
@@ -203,14 +205,13 @@ operation_findings :: proc(sequence: ^operation_sequence.Sequence, header: ^oper
 	}
 	switch end {
 	case .Sequence_Refused, .Batch_Refused:
-		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the runner could not run its sequence: its end is %v, its stop cause %s", end, operation.STOP_CAUSE_TEXTS[cause])})
+		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the runner could not run its sequence: its end is %v, its stop: %s, %s", end, operation.STOP_CAUSE_TEXTS[cause], operation.STOP_OUTCOME_TEXTS[stop_outcome])})
 		return findings[:]
 	case .None, .Ran:
 	}
-	// The words come as pairs: the outcome, the stop cause and the end must
-	// tell one story. A stopped runner has a cause; the end Ran and the
-	// outcome Ran come only from a stop of the runner itself.
-	if problem := operation_stop_pair_problem(outcome, cause, end); problem != "" {
+	// The words must tell one story: the end Ran and the outcome Ran come
+	// only from a stop of the runner itself with Done.
+	if problem := operation_stop_pair_problem(outcome, stop_outcome, end); problem != "" {
 		append(&findings, Operation_Finding{.Outcome, -1, problem})
 		return findings[:]
 	}
@@ -229,19 +230,19 @@ operation_findings :: proc(sequence: ^operation_sequence.Sequence, header: ^oper
 	return findings[:]
 }
 
-// operation_stop_pair_problem says why an outcome, a stop cause and an end
-// of the runner cannot come together, or "". The outcome is Ran or Stopped
-// here: the other outcomes are findings before.
-operation_stop_pair_problem :: proc(outcome: operation_sequence.Execution_Outcome, cause: operation.Stop_Cause, end: operation_sequence.Runner_End) -> string {
+// operation_stop_pair_problem says why an outcome of the service, a stop
+// outcome and an end of the runner cannot come together, or "". The
+// outcome is Ran or Stopped here: the other outcomes are findings before.
+// The stop outcome passed the border, so it is not None only with the
+// cause Itself.
+operation_stop_pair_problem :: proc(outcome: operation_sequence.Execution_Outcome, stop_outcome: operation.Stop_Outcome, end: operation_sequence.Runner_End) -> string {
 	switch {
-	case cause == .None:
-		return fmt.tprintf("the runner has the outcome %v with no stop cause", outcome)
-	case outcome == .Ran && cause != .Itself:
-		return fmt.tprintf("the outcome Ran with the stop cause %s: only a stop of the runner itself ends a run", operation.STOP_CAUSE_TEXTS[cause])
+	case outcome == .Ran && stop_outcome != .Done:
+		return fmt.tprintf("the outcome Ran with the stop outcome %s: only a stop of the runner itself with Done ends a run", operation.STOP_OUTCOME_TEXTS[stop_outcome])
 	case outcome == .Ran && end != .Ran:
 		return fmt.tprintf("the outcome Ran with the end %v: the runner did not write that it ran each step", end)
-	case end == .Ran && cause != .Itself:
-		return fmt.tprintf("the end Ran with the stop cause %s: the runner stops itself after it writes that end", operation.STOP_CAUSE_TEXTS[cause])
+	case end == .Ran && stop_outcome != .Done:
+		return fmt.tprintf("the end Ran with the stop outcome %s: the runner stops itself with Done after it writes that end", operation.STOP_OUTCOME_TEXTS[stop_outcome])
 	}
 	return ""
 }
