@@ -351,7 +351,8 @@ a_distance_past_2_gibibytes_is_refused :: proc(t: ^testing.T) {
 		resolved := references_resolve(workspace)
 		if move == i128(max(i32)) {
 			testing.expect_value(t, resolved.refusal, Refusal.None)
-			testing.expect_value(t, string(workspace.code[:5]), string([]u8{0xE9, 0xFF, 0xFF, 0xFF, 0x7F}))
+			expected := [5]u8{0xE9, 0xFF, 0xFF, 0xFF, 0x7F}
+			testing.expect_value(t, string(workspace.code[:5]), string(expected[:]))
 		} else {
 			testing.expect_value(t, resolved.refusal, Refusal.Distance_Too_Large)
 			testing.expect_value(t, resolved.place.line, u32(1))
