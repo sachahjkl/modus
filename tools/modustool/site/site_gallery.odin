@@ -73,7 +73,7 @@ site_gallery_groups := [Site_Gallery_Group]Site_Gallery_Group_Text {
 	.Interface       = {"The interface and the fonts", "The elements of the interface package, the two fonts of the system, and the settings that change them while the processes run."},
 	.Network         = {"The network, the cryptography and the randomness", "The network service and its endpoints, TCP and QUIC in processes, the cryptography module and the seed of the system."},
 	.Storage         = {"The storage", "The block service, the storage service with its stores and its versions, and a process that keeps its data across a restart."},
-	.Boot            = {"The boot and the trusted boot", "The boot display with the stages of the start, and the starts that the trusted boot refuses."},
+	.Boot            = {"The boot and the trusted boot", "The boot display with the stages of the start, the rescue start policy, and the starts that the trusted boot refuses."},
 }
 
 // One picture of the table: a file of docs/screenshots, its group, a
@@ -204,7 +204,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "settings.png", group = .Interface, guide = "docs/FONTS.md", caption = "The process settings: the font, the subpixel order, the pointer theme and the grid fit change while the processes run."},
 	{file = "desktop_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The light appearance: the bar, the console and the settings in the light form of the color tokens, set with settings.set(\"appearance\", \"light\")."},
 	{file = "console_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The console in the light appearance: each value kind keeps its color, in its light value."},
-	{file = "monitor_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The monitor in the light appearance: the pages in the color of memory, the share of each process in the color of a process."},
+	{file = "monitor_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The monitor in the light appearance: three graphs of the last minute over the grid of points, and each bar in the color of its intensity step."},
 	{file = "rings_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The rings in the light appearance: each node a card, each record in the series color of its number, in its light value."},
 	{file = "clock_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The clock in the light appearance: the time page in the color of memory, the kernel entry in the kernel blue."},
 	{file = "clock_resized.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The clock after a drag of its corner: its process made the surface of the new size, paid by its budget, and drew its next frame in it."},
@@ -240,6 +240,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "boot.png", group = .Boot, home = true, guide = "docs/DESIGN.md", caption = "The boot display: the stages of the start on a line of time, the memory, the machine, the boot image, the processes."},
 	{file = "boot_measured.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "A measured start: the card of the boot image names the test key and the value of the PCR 11 of the TPM."},
 	{file = "boot_secure_boot.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "A start with Secure Boot: the firmware verified the boot program, then the boot program verified the system."},
+	{file = "rescue.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "The rescue after the key R: the console lists its twelve processes, and monitor, started on demand, shows their pages and their share of the processor."},
 	{file = "boot_fails.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "A start that fails: the boot display stays, with the failure."},
 	{file = "boot_fails_changed_module.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "A start that fails: the boot display names the changed file and its two hashes."},
 	{file = "boot_fails_changed_kernel.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "A start that fails at the kernel module: its hash is not the hash that the system description expects."},

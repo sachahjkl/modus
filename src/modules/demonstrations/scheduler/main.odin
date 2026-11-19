@@ -127,8 +127,10 @@ import "modus:support/system"
 // stack and a thread area for each of the 24 threads, and its window. The
 // working memory: 512 for each of the four processes of the shares, its
 // own tables, and the rest of the 5632 pages that it had before the tool
-// counted.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3659, processes = 5, threads = 24, window_width = WIDTH, window_height = HEIGHT}
+// counted: 3659 pages. And the glyph memory of the copy of the text
+// rendering of the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 3659 + 354 = 4013.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4013, processes = 5, threads = 24, window_width = WIDTH, window_height = HEIGHT}
 
 STRATEGY_COUNT :: 3
 @(rodata)

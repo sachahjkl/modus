@@ -16,8 +16,9 @@
 // Who uses it: each process with a window (`open`, `next_event`,
 // `present`), the compositor (the other side of the ring, and the rings
 // `Control` and `Input`), and `src/library/support/interface`, which draws with it. It
-// also loads the text settings of the process: the glyph caches and the
-// setting of the font (`text_settings_open`, `interface_font_open`).
+// also loads the text settings of the process: the font outlines, their
+// faces and the setting of the font (`text_settings_open`,
+// `interface_font_open`).
 //
 // ```odin
 // window := display.open(ctx, 640, 400, "clock") or_return
@@ -52,7 +53,6 @@ import "modus:support/key_path"
 import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
 import op "modus:contract/operation"
-import "modus:contract/glyph_cache"
 import "modus:support/text_rendering"
 import "modus:contract/pointer_pictures"
 import "modus:contract/settings"
@@ -570,6 +570,12 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 		return false
 	}
 	picture_end(window)
+	// A picture ends a frame of the text of the process: a process that
+	// draws its text by hand with src/library/support/graphics calls no
+	// other procedure at its frame, and its copy of the text rendering
+	// gets its glyph memory here, after its first glyph. Without it, each
+	// glyph of each frame would be drawn band by band.
+	text_frame_begin()
 	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0)), PRESENT_KEY_SERIAL = window.key_shown_serial}}
 	if !system.send(&window.ring.commands, record) {
 		return false
@@ -875,7 +881,7 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 			continue
 		}
 		if read.kind == .Settings_Changed {
-			text_settings_apply()
+			_ = text_settings_apply()
 		}
 		if read.kind == .Resized {
 			window.resize_asked = true
@@ -973,67 +979,48 @@ settings_page: ^settings.Page
 @(private)
 text_state_started: bool
 
-// The two glyph caches of this process, each validated once: with the grid fit
-// and without it (the setting "grid_fit").
-glyph_caches: [settings.Grid_Fit]glyph_cache.Cache
-glyph_cache_valid: [settings.Grid_Fit]bool
-
-// text_settings_open finds the settings page in the context, validates the
-// glyph caches once (a font file and a cache are hostile input), and
-// applies the choice of the owner. With no page, or a cache that the
-// validation refuses, the text of the process is Spleen 8x16, with a line
-// on the log. The compositor calls it too.
+// text_settings_open finds the settings page in the context, opens the
+// font outlines once (a font file is hostile input), and applies the
+// choice of the owner. With no page, with no outlines, or with outlines
+// that the validation refuses, the text of the process is Spleen 8x16,
+// with a line on the log. The compositor calls it too.
 //
-// Why one validation is enough: the drawing code reads the counts and the
-// offsets of a cache again at each glyph, so the bytes must not change
-// after `validate`. A process trusts its starter, which already chooses
-// its grants, its mappings and its budget: the starter states in the
-// context which fixed ranges it mapped (modus:contract/fixed_addresses) and maps
-// the memory there; the cache states its own size in its header. So a
-// starter that sets a bit with no mapping, or maps less than the header
-// states, makes this process fault, and a starter that keeps that memory
-// with Write could change it. The root service is the starter of each
-// process with a surface. It maps each cache from the boot image with the
-// right Read only, for every process, and the one handle of the boot image,
-// its own, has no right Write. So under the root service no process can
-// write the bytes of a cache, nor point this process at other bytes. The
+// Why one validation is enough: the parser reads the tables of a font file
+// again at each glyph, so the bytes must not change after `validate`. A
+// process trusts its starter, which already chooses its grants, its
+// mappings and its budget: the starter states in the context which fixed
+// ranges it mapped (modus:contract/fixed_addresses) and maps the memory
+// there; the outlines state their own size in their header. So a starter
+// that sets a bit with no mapping, or maps less than the header states,
+// makes this process fault, and a starter that keeps that memory with
+// Write could change it. The root service is the starter of each process
+// with a surface. It maps the outlines from the boot image with the right
+// Read only, for every process, and the one handle of the boot image, its
+// own, has no right Write. So under the root service no process can write
+// the bytes of a font file, nor point this process at other bytes. The
 // settings page, which the process `settings` writes, gives choices only.
 text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 	problems, loaded := text_settings_load(ctx)
 	if !loaded {
 		return
 	}
-	for problem, grid_fit in problems.cells {
-		switch {
-		case problem.kind == .None:
-		case problem.kind == .Not_Mapped:
-			system.log(.Warning, "display: no glyph cache with the grid fit ", settings.descriptions[.Grid_Fit].value_names[grid_fit], ": that text is Spleen 8x16")
-		case problems.cells_of_another_font[grid_fit]:
-			system.log(.Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": that text is Spleen 8x16")
-		case:
-			system.log(.Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": that text is Spleen 8x16")
-		}
-	}
-	if problems.bold.kind != .None && problems.bold.kind != .Not_Mapped {
-		system.log(.Warning, "display: the bold glyph cache is refused: ", glyph_cache.problem_sentences[problems.bold.kind], ": the titles are the regular weight")
-	}
-	if problems.outlines.kind != .None && problems.outlines.kind != .Not_Mapped {
-		system.log(.Warning, "display: the font outlines are refused: ", font_outlines.problem_sentences[problems.outlines.kind], ", value ", problems.outlines.value, ": the characters past the glyph caches draw the replacement glyph")
+	switch {
+	case problems.outlines.kind == .None:
+	case problems.outlines.kind == .Not_Mapped:
+		system.log(.Warning, "display: no font outlines: the text is Spleen 8x16")
+	case:
+		system.log(.Warning, "display: the font outlines are refused: ", font_outlines.problem_sentences[problems.outlines.kind], ", value ", problems.outlines.value, ": the text is Spleen 8x16")
 	}
 	if problems.fonts_missing != {} {
 		system.log(.Warning, "display: the font outlines lack ", u64(card(problems.fonts_missing)), " fonts of the fallback chains, or the renderer refuses them: the chains skip them")
 	}
 }
 
-// What text_settings_load refused: the problem of each glyph cache of the
-// font of the cells, of the bold weight and of the font outlines. A record
-// of zeros: no problem.
+// What text_settings_load refused: the problem of the font outlines, and
+// the fonts that they lack. A record of zeros: no problem.
 Text_Settings_Problems :: struct {
-	cells:                 [settings.Grid_Fit]glyph_cache.Problem, // The cache of each grid fit.
-	cells_of_another_font: [settings.Grid_Fit]bool, // The cache is valid, and cannot draw cells (graphics.cell_cache_problem).
-	bold:                  glyph_cache.Problem, // The cache of the bold weight. Not_Mapped: the process has none.
-	outlines:              font_outlines.Problem, // The font outlines. Not_Mapped: the process has none.
-	fonts_missing:         text_rendering.Outline_Fonts, // The fonts of the chains that the outlines lack or that the renderer refuses.
+	outlines:      font_outlines.Problem, // The font outlines. Not_Mapped: the process has none.
+	fonts_missing: text_rendering.Outline_Fonts, // The fonts of the chains that the outlines lack or that the renderer refuses.
 }
 
 // text_settings_load does the work of text_settings_open and writes no
@@ -1056,79 +1043,56 @@ text_settings_load :: proc "contextless" (ctx: ^system.Context) -> (problems: Te
 		return {}, false
 	}
 	settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
-	// The outlines first: the faces of the glyph caches below are found
-	// by the hash of their font files.
 	problems.outlines, problems.fonts_missing = fallback_load(ctx)
-	places := [settings.Grid_Fit]settings.Glyph_Cache {
-		.On  = .With_Grid_Fit,
-		.Off = .Without_Grid_Fit,
-	}
-	for cache, grid_fit in places {
-		glyph_caches[grid_fit], problems.cells[grid_fit] = settings.glyph_cache_open(&ctx.values, cache)
-		if problems.cells[grid_fit].kind != .None {
-			continue
-		}
-		if refused := graphics.cell_cache_problem(&glyph_caches[grid_fit]); refused.kind != .None {
-			problems.cells[grid_fit] = refused
-			problems.cells_of_another_font[grid_fit] = true
-			continue
-		}
-		glyph_cache_valid[grid_fit] = true
-	}
-	// The bold weight of the titles: a text in the regular weight when it
-	// is absent or refused.
-	bold: glyph_cache.Cache
-	bold, problems.bold = settings.glyph_cache_open(&ctx.values, .Bold)
-	if problems.bold.kind == .None {
-		problems.bold = graphics.text_bold_cache_use(bold)
-	}
-	text_settings_apply()
+	_ = text_settings_apply()
 	return problems, true
 }
 
-// Interface_Font: the two glyph caches of the interface font (docs/FONTS.md,
-// section 12), each validated once.
+// Interface_Font: the two faces of the interface font (docs/FONTS.md,
+// section 12), which this copy of text_rendering opened. A draw table that
+// points to one draws its texts of the kind Interface in it.
 Interface_Font :: struct {
-	regular: glyph_cache.Cache, // The regular weight.
-	bold:    glyph_cache.Cache, // The bold weight.
+	regular: text_rendering.Face, // The regular weight: Interface.
+	bold:    text_rendering.Face, // The bold weight: Interface_Bold.
 }
 
-// interface_font_open validates the two glyph caches of the interface font
-// that the starter mapped at their fixed ranges (settings.glyph_cache_open:
-// the same rule as the caches of the text of cells). ok is false when one
-// is absent or refused, with a line on the log: the process then draws its
-// text with the font of the cells. Each cache must be of a proportional
-// font: graphics.text_proportional draws it.
+// The interface font of a copy of text_rendering that opened its two faces.
+INTERFACE_FONT :: Interface_Font{regular = .Interface, bold = .Interface_Bold}
+
+// interface_faces_opened says if this copy of
+// src/library/support/text_rendering opened the two faces of the interface
+// font: every text in the interface font is measured and drawn from its
+// font files, so a process with no outlines, or outlines that lack B612,
+// draws its elements in the font of the cells.
+interface_faces_opened :: proc "contextless" () -> bool {
+	return text_rendering.face_opened(.Interface) && text_rendering.face_opened(.Interface_Bold)
+}
+
+// interface_font_open says if this process draws its elements in the
+// interface font: the faces of the outlines that text_settings_open
+// opened. ok is false with no outlines, with no line on the log (the line
+// of text_settings_open says it), and when the outlines lack the interface
+// font, with a line: the process then draws its text with the font of the
+// cells.
 interface_font_open :: proc "contextless" (ctx: ^system.Context) -> (font: Interface_Font, ok: bool) {
-	weights := [2]settings.Glyph_Cache{.Interface, .Interface_Bold}
-	caches: [2]glyph_cache.Cache
-	for weight, index in weights {
-		problem: glyph_cache.Problem
-		caches[index], problem = settings.glyph_cache_open(&ctx.values, weight)
-		if problem.kind == .None && caches[index].header.flags & glyph_cache.FLAG_PROPORTIONAL == 0 {
-			problem = {kind = .Bad_Flags, value = u64(caches[index].header.flags), limit = glyph_cache.FLAG_PROPORTIONAL}
-		}
-		if problem.kind == .Not_Mapped {
-			// A process that its starter gave no interface font: its
-			// elements draw in the font of the cells, with no line on the log.
-			return {}, false
-		}
-		if problem.kind != .None {
-			system.log(.Warning, "display: the glyph cache of the interface font is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value)
-			return {}, false
-		}
+	if .Font_Outlines not_in fixed_addresses.ranges_mapped(&ctx.values) || !text_rendering.state.opened {
+		return {}, false
 	}
-	return {regular = caches[0], bold = caches[1]}, true
+	if !interface_faces_opened() {
+		system.log(.Warning, "display: the font outlines lack the interface font: the elements draw in the font of the cells")
+		return {}, false
+	}
+	return INTERFACE_FONT, true
 }
 
-// The interface font of this process, validated once by open: the elements
+// The interface font of this process, found once by open: the elements
 // of src/library/support/interface draw their names, titles and labels in it
 // (docs/FONTS.md, section 12.6). Absent: they draw in the font of the
 // cells.
 process_interface_font: Interface_Font
 process_interface_font_given: bool
 
-// interface_font_load validates the interface font of this process once:
+// interface_font_load finds the interface font of this process once:
 // open calls it, and the compositor, which draws with no window of its own.
 interface_font_load :: proc "contextless" (ctx: ^system.Context) {
 	if !process_interface_font_given {
@@ -1139,20 +1103,6 @@ interface_font_load :: proc "contextless" (ctx: ^system.Context) {
 // interface_font_of gives the interface font of this process, or nil.
 interface_font_of :: proc "contextless" () -> ^Interface_Font {
 	return process_interface_font_given ? &process_interface_font : nil
-}
-
-// appearance_apply gives the appearance in force of the settings page to
-// src/library/support/graphics. It gives true when the appearance changed:
-// the caller then draws its whole window, so that no picture shows two
-// appearances. With no page the process keeps the dark appearance.
-appearance_apply :: proc "contextless" () -> (changed: bool) {
-	if settings_page == nil {
-		return false
-	}
-	// A refused page gives the defaults: the process draws with them, as
-	// with a page that never stays stable.
-	choice, _ := settings.read(settings_page)
-	return appearance_of_choice_use(choice)
 }
 
 // appearance_of_choice_use makes the appearance in force of a choice the
@@ -1167,26 +1117,40 @@ appearance_of_choice_use :: proc "contextless" (choice: settings.Choice) -> bool
 	return true
 }
 
+// The face of the cells of each value of the setting "grid_fit".
+@(rodata)
+cell_faces := [settings.Grid_Fit]text_rendering.Face {
+	.On  = .Cells,
+	.Off = .Cells_Without_Grid_Fit,
+}
+
 // text_settings_apply gives the choice of the settings page to
 // src/library/support/graphics: the font, the order of the stripes, the
-// glyph cache of the grid fit, and the appearance in force. The private
-// glyph cache keeps its glyphs: its key holds the grid fit and the scale,
-// and its words do not depend on the order of the stripes.
-text_settings_apply :: proc "contextless" () {
+// face of the cells of the grid fit, and the appearance in force. The
+// private glyph cache keeps its glyphs: its key holds the face and the
+// size, and its words do not depend on the order of the stripes. A face
+// that the outlines lack draws nothing, and graphics draws in Spleen.
+//
+// It gives true when the font, the order of the stripes, a face or the
+// appearance changed: the caller then draws its whole window.
+// interface.window_frame_begin calls it at each frame, as the drawing
+// module does at each draw. The event Settings_Changed alone is not
+// enough: the compositor tells only the windows that have a surface, and a
+// window that read the page before the boot pass of `settings` and made
+// its surface after it gets no event, while its cells, which the drawing
+// module draws, follow the page.
+text_settings_apply :: proc "contextless" () -> (changed: bool) {
 	if settings_page == nil {
-		return
+		return false
 	}
 	// A refused page gives the defaults: the process draws with them, as
 	// with a page that never stays stable.
 	choice, _ := settings.read(settings_page)
-	_ = appearance_of_choice_use(choice)
-	grid_fit := choice.grid_fit
+	state := &graphics.text_state
+	font_before, order_before, cells_before, bold_before := state.font, state.order, state.cell_face, state.bold_face
+	changed = appearance_of_choice_use(choice)
 	font := choice.font == .Spleen ? graphics.Text_Font.Spleen : graphics.Text_Font.Vector
-	if glyph_cache_valid[grid_fit] {
-		graphics.text_cache_use(glyph_caches[grid_fit])
-	} else {
-		font = .Spleen
-	}
+	graphics.text_faces_use(cell_faces[choice.grid_fit], .Cells_Bold)
 	order: graphics.Subpixel_Order
 	switch choice.subpixel_order {
 	case .Red_Green_Blue:
@@ -1197,4 +1161,6 @@ text_settings_apply :: proc "contextless" () {
 		order = .None
 	}
 	graphics.text_choice_set(font, order)
+	changed = changed || state.font != font_before || state.order != order_before || state.cell_face != cells_before || state.bold_face != bold_before
+	return changed
 }

@@ -55,10 +55,12 @@ import "modus:support/random"
 import "modus:support/system"
 
 // 64 MiB of large pages, two ranges of 1 GiB with their page tables, and
-// a child. With the counted parts, the pages are above the largest budget
-// of a process: the root service has an exception for it
-// (src/modules/system/root/budgets.odin).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 40530, processes = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
+// a child: 40530 pages. And the glyph memory of the copy of the text
+// rendering of the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 40530 + 354 = 40884. With the counted
+// parts, the pages are above the largest budget of a process: the root
+// service has an exception for it (src/modules/system/root/budgets.odin).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 40884, processes = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 960
 HEIGHT :: 640

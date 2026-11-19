@@ -42,8 +42,11 @@ import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-// Itself and one process that only receives.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1372, processes = 2, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// Itself and one process that only receives: 1372 pages. And the glyph
+// memory of the copy of the text rendering of the drawing module, which
+// draws its text: 354 pages (display.TEXT_MEMORY_PAGES). 1372 + 354 =
+// 1726.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1726, processes = 2, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)

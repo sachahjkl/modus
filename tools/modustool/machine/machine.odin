@@ -1,12 +1,13 @@
 package machine
 
-import "modus:contract/glyph_cache"
+import "modus:contract/font_outlines"
 import op "modus:contract/operation"
 import "modus:contract/reference_screen"
 import "modus:contract/store"
 import tree "modus:private/storage/storage_tree"
 import "modus:private/compositor/bar"
 import "modus:private/compositor/palette"
+import "modus:support/text_rendering"
 import "core:fmt"
 import "core:math/rand"
 import "core:os"
@@ -374,6 +375,10 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; in ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; "},
+	// The console read the page before the boot pass, and may have made its
+	// surface after the compositor told the windows: it reads the setting
+	// itself, and draws its interface text in Spleen cells.
+	{kind = .Wait, text = "terminal: console draws its interface text in the font of the cells", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
@@ -1183,7 +1188,9 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette asks to confirm: close plasma"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "compositor: the palette closes the window plasma"},
+	// The compositor and the root service write their lines in either
+	// order: the wait of the compositor does not move the mark.
+	{kind = .Wait, text = "compositor: the palette closes the window plasma", any_order = true},
 	{kind = .Wait, text = "root: plasma stopped"},
 
 	// The commands of the console in the palette: the console is the
@@ -3234,12 +3241,17 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; ", any_order = true},
+	// The interface text of the console follows the setting: Spleen cells.
+	// The terminal reads the setting at each turn of its loop, so its line
+	// can come before the line of settings: this wait does not move the mark.
+	{kind = .Wait, text = "terminal: console draws its interface text in the font of the cells", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "font_spleen"},
 	{kind = .Call, text = "settings.get(\"font\")", expected = "spleen"},
 	{kind = .Call, text = "settings.set(\"font\", \"vector\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; ", any_order = true},
+	{kind = .Wait, text = "terminal: console draws its interface text in the interface font", any_order = true},
 	{kind = .Call, text = "settings.set(\"grid_fit\", \"off\")", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us, appearance auto; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us"},
@@ -3879,17 +3891,17 @@ window_of_compositor :: proc(machine: ^Machine, title: string) -> (x, y, width: 
 // log_read gives the complete lines of the log of the machine. QEMU writes
 // the log one byte at a time: the last line can be a part of a line, and a
 // part of "at 168,142" reads as another place.
-// The regular cache of the interface font, read once from the build: the
-// bytes of the resource interface_glyph_cache of the boot image. The
-// machines of several parts read it at once: the lock holds its first read.
-machine_interface_cache: glyph_cache.Cache
-machine_interface_cache_words: []u64
-machine_interface_cache_lock: sync.Mutex
+// The font outlines of the build, read once and opened in the state of the
+// text rendering of the tool: the bytes of the resource font_outlines of
+// the boot image, from which the compositor measures its bar. The machines
+// of several parts read it at once: the lock holds its first read.
+machine_outlines_words: []u64
+machine_outlines_lock: sync.Mutex
 
 // machine_bar_layout gives the places of the bar of the compositor of the
 // machine. The last line of the log that names the font of the bar says
 // which font it is; in the interface font, the tool measures the layout
-// from the cache file of the build, and confirms it against the numbers
+// from the font outlines of the build, and confirms it against the numbers
 // that the compositor wrote: a press must land on the entry that the eye
 // sees. ok is false, with a line, when the two measures differ or the log
 // has no such line yet.
@@ -3904,31 +3916,35 @@ machine_bar_layout :: proc(machine: ^Machine) -> (layout: bar.Layout, ok: bool) 
 		return {}, false
 	}
 	if interface_at < cells_at {
-		return bar.layout_of(nil), true
+		return bar.layout_of(.None), true
 	}
-	sync.mutex_lock(&machine_interface_cache_lock)
-	defer sync.mutex_unlock(&machine_interface_cache_lock)
-	if machine_interface_cache_words == nil {
-		bytes, read_error := os.read_entire_file(resources.INTERFACE_GLYPH_CACHE_OUTPUT, context.allocator)
+	sync.mutex_lock(&machine_outlines_lock)
+	defer sync.mutex_unlock(&machine_outlines_lock)
+	if machine_outlines_words == nil {
+		bytes, read_error := os.read_entire_file(resources.FONT_OUTLINES_OUTPUT, context.allocator)
 		if read_error != nil {
-			fmt.eprintfln("modustool: test failed: cannot read %s: %v", resources.INTERFACE_GLYPH_CACHE_OUTPUT, read_error)
+			fmt.eprintfln("modustool: test failed: cannot read %s: %v", resources.FONT_OUTLINES_OUTPUT, read_error)
 			return {}, false
 		}
-		// validate needs memory aligned on 8 bytes.
-		machine_interface_cache_words = make([]u64, (len(bytes) + 7) / 8)
-		aligned := ([^]u8)(raw_data(machine_interface_cache_words))[:len(bytes)]
+		// validate needs memory aligned on 8 bytes; the open fonts read it
+		// for the rest of the run.
+		machine_outlines_words = make([]u64, (len(bytes) + 7) / 8)
+		aligned := ([^]u8)(raw_data(machine_outlines_words))[:len(bytes)]
 		copy(aligned, bytes)
 		delete(bytes)
-		refused: glyph_cache.Problem
-		machine_interface_cache, refused = glyph_cache.validate(aligned)
+		outlines, refused := font_outlines.validate(aligned)
 		if refused.kind != .None {
-			fmt.eprintfln("modustool: test failed: %s is refused: %s", resources.INTERFACE_GLYPH_CACHE_OUTPUT, glyph_cache.problem_sentences[refused.kind])
-			delete(machine_interface_cache_words)
-			machine_interface_cache_words = nil
+			fmt.eprintfln("modustool: test failed: %s is refused: %s", resources.FONT_OUTLINES_OUTPUT, font_outlines.problem_sentences[refused.kind])
+			delete(machine_outlines_words)
+			machine_outlines_words = nil
+			return {}, false
+		}
+		if missing := text_rendering.open(&outlines); .B612 in missing {
+			fmt.eprintfln("modustool: test failed: %s has no B612 that the text rendering opens", resources.FONT_OUTLINES_OUTPUT)
 			return {}, false
 		}
 	}
-	layout = bar.layout_of(&machine_interface_cache)
+	layout = bar.layout_of(.Interface)
 	expected := fmt.tprintf("%sstart %d pixels, windows %d, the widest name %d", INTERFACE_LINE, layout.label_width, layout.windows_label_width, layout.longest_name_width)
 	if !strings.has_prefix(text[interface_at:], expected) {
 		end := strings.index_byte(text[interface_at:], '\n')
