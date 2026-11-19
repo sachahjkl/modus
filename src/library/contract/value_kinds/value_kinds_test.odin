@@ -9,6 +9,50 @@ import "core:testing"
 TEST_RECORD_TEXT :: 168
 TEST_RECORD_RUNS :: 8
 
+// The field of a name keeps a zero byte at its end, whatever the length of
+// the name: a name of the field size less one is whole, a name of the
+// field size and one longer are cut before the last byte, and an empty
+// name is a field of zeros. The bytes past the name are zero.
+@(test)
+a_field_of_a_name_keeps_its_last_byte_zero :: proc(t: ^testing.T) {
+	Case :: struct {
+		name: string,
+		kept: int, // The bytes of the name in the field.
+	}
+	letters := "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+	module_cases := [?]Case {
+		{"", 0},
+		{letters[:1], 1},
+		{letters[:MODULE_NAME_FIELD_BYTES - 1], MODULE_NAME_FIELD_BYTES - 1},
+		{letters[:MODULE_NAME_FIELD_BYTES], MODULE_NAME_FIELD_BYTES - 1},
+		{letters[:MODULE_NAME_FIELD_BYTES + 1], MODULE_NAME_FIELD_BYTES - 1},
+	}
+	for item in module_cases {
+		field := module_name_field(item.name)
+		testing.expectf(t, string(field[:item.kept]) == item.name[:item.kept], "the name of %d bytes keeps %q", len(item.name), string(field[:item.kept]))
+		for value, index in field[item.kept:] {
+			testing.expectf(t, value == 0, "the name of %d bytes leaves the byte %d at %d", len(item.name), item.kept + index, value)
+		}
+	}
+	TEXT_BYTES :: 24
+	text_cases := [?]Case {
+		{"", 0},
+		{letters[:TEXT_BYTES - 1], TEXT_BYTES - 1},
+		{letters[:TEXT_BYTES], TEXT_BYTES - 1},
+		{letters[:TEXT_BYTES + 1], TEXT_BYTES - 1},
+	}
+	for item in text_cases {
+		field := text_field(item.name, TEXT_BYTES)
+		testing.expectf(t, string(field[:item.kept]) == item.name[:item.kept], "the text of %d bytes keeps %q", len(item.name), string(field[:item.kept]))
+		for value, index in field[item.kept:] {
+			testing.expectf(t, value == 0, "the text of %d bytes leaves the byte %d at %d", len(item.name), item.kept + index, value)
+		}
+	}
+	// The least field: one byte, always zero.
+	least := text_field("a", 1)
+	testing.expect_value(t, least[0], u8(0))
+}
+
 // A text with no value: no run in its record.
 @(test)
 a_record_with_no_run :: proc(t: ^testing.T) {

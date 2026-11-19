@@ -14,8 +14,8 @@ import "modus:contract/value_kinds"
 //
 // A field of a name holds the bytes of the name and a zero byte after it.
 // A Text field is [N]u8 with N written out, as the tool reads it: 24
-// bytes for the name of a principal or of a grant, 32 for the name of a
-// store.
+// bytes for the name of a principal, of a grant or for the head of a
+// client key, 32 for the name of a store.
 
 // A process stopped itself: its stop cause is Itself, and its stop outcome
 // says what it did with its work. `where(outcome = Done)` keeps the clean
@@ -33,6 +33,41 @@ Process_Stopped :: struct {
 Process_Stopped_Without_Outcome :: struct {
 	stopped_process: value_kinds.Module_Name_Field,
 	cause:           op.Stop_Cause,
+}
+
+// The run of `unlock` that reads the machine key with no window, before
+// the start policy, stopped itself. Its sentence is apart, so a wait for
+// the stop of the `unlock` of the start list never takes it; its fields
+// are those of Process_Stopped, so a reader of the stops reads both.
+@(log_fact = "root: {stopped_process} read the machine key with no window and stopped: {cause}, {outcome}")
+Unlock_Without_Window_Stopped :: struct {
+	stopped_process: value_kinds.Module_Name_Field,
+	cause:           op.Stop_Cause,
+	outcome:         op.Stop_Outcome,
+}
+
+// The run of `unlock` with no window stopped for another cause than
+// itself.
+@(log_fact = "root: {stopped_process} read the machine key with no window and stopped: {cause}")
+Unlock_Without_Window_Stopped_Without_Outcome :: struct {
+	stopped_process: value_kinds.Module_Name_Field,
+	cause:           op.Stop_Cause,
+}
+
+// A process of a test that this service starts by its own procedure, with
+// the pages of its budget: shortage, operation_fuzzing.
+@(log_fact = "root: started {started_process} with {pages}")
+Process_Started_With_Budget :: struct {
+	started_process: value_kinds.Module_Name_Field,
+	pages:           value_kinds.Size_In_Pages,
+}
+
+// The start policy that principal 0 chose, started from the disk by its
+// nickname, with the grant Start_Policy only.
+@(log_fact = "root: started the chosen start policy \"{started_process}\" from the disk, hash {hash}, with the grant Start_Policy only")
+Chosen_Start_Policy_Started :: struct {
+	started_process: value_kinds.Module_Name_Field,
+	hash:            value_kinds.Hash_Field,
 }
 
 // A process of the boot image started, for the machine.
@@ -133,6 +168,29 @@ Connected_Acting :: struct {
 	principal: u64,
 }
 
+// `remote` is connected to a service for one row of its client table, and
+// calls for the principal of the row. The client key is the first 8 bytes
+// of the key in 16 hexadecimal digits, as key_head_text writes them: a
+// Text field, because a Hash field writes each byte of the field, and 24
+// bytes so that the field after it starts on 8 bytes with no padding.
+@(log_fact = "root: connected {caller} to the service {service}, for principal {principal}, for the client key {client_key}")
+Connected_With_Client_Key :: struct {
+	caller:     value_kinds.Module_Name_Field,
+	service:    value_kinds.Module_Name_Field,
+	client_key: [24]u8,
+	principal:  u64,
+}
+
+// `remote` is connected to a service for one row of its client table, and
+// acts for the principal of the row there.
+@(log_fact = "root: connected {caller} to the service {service}, acting for principal {principal}, for the client key {client_key}")
+Connected_Acting_With_Client_Key :: struct {
+	caller:     value_kinds.Module_Name_Field,
+	service:    value_kinds.Module_Name_Field,
+	client_key: [24]u8,
+	principal:  u64,
+}
+
 // A caller is connected to the store of its line history.
 @(log_fact = "root: connected {caller} to the store of its line history in the service {service}, {limit}, for principal {principal}")
 Connected_History :: struct {
@@ -183,16 +241,7 @@ Debug_Right_Given :: struct {
 	principal: u64,
 }
 
-// module_name_field gives the field of a fact that holds the name of a
-// process, with a zero byte after it.
-module_name_field :: proc "contextless" (name: string) -> (field: value_kinds.Module_Name_Field) {
-	copy(field[:value_kinds.MODULE_NAME_FIELD_BYTES - 1], name)
-	return
-}
-
-// text_field gives a Text field of a fact of N bytes: the text, cut at
-// N - 1 bytes, with zero bytes after it.
-text_field :: proc "contextless" (text: string, $N: int) -> (field: [N]u8) {
-	copy(field[:N - 1], text)
-	return
-}
+// The fields of a name: the writers of the facts above fill them with the
+// procedures of the contract, whose host tests give the edges of a cut.
+module_name_field :: value_kinds.module_name_field
+text_field :: value_kinds.text_field

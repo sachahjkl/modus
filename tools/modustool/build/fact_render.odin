@@ -97,6 +97,18 @@ fact_catalog_file :: proc(catalog: ^Fact_Catalog, prefix: [FACT_LINE_HASH_BYTES]
 	return nil
 }
 
+// fact_catalog_file_of_hash gives the module file whose whole hash is
+// hash, read one time. nil: no module of the catalog has it, a module
+// whose hash only starts with the same bytes too.
+fact_catalog_file_of_hash :: proc(catalog: ^Fact_Catalog, hash: [module.HASH_SIZE]u8) -> []u8 {
+	for item in catalog.modules {
+		if item.hash == hash {
+			return fact_catalog_file(catalog, hash_prefix_of(hash))
+		}
+	}
+	return nil
+}
+
 // hash_prefix_of gives the first bytes of a hash, which the line of a fact
 // names.
 hash_prefix_of :: proc(hash: [module.HASH_SIZE]u8) -> [FACT_LINE_HASH_BYTES]u8 {

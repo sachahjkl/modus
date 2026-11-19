@@ -122,6 +122,7 @@ import "modus:support/disk_process"
 import "modus:contract/settings"
 import "modus:contract/palette_table"
 import "modus:contract/start_grant"
+import "modus:contract/value_kinds"
 
 ROOT_MARK :: "root: ok"
 
@@ -442,7 +443,7 @@ shortage_start :: proc "contextless" () -> system.Status {
 		shortage_failed()
 	}
 	part_place_fill(slot, "shortage", process)
-	system.log(.Info, "root: started shortage with ", system.Size{amounts.pages, .Pages})
+	system.log_fact(.Info, Process_Started_With_Budget{started_process = module_name_field("shortage"), pages = value_kinds.Size_In_Pages(amounts.pages)})
 	return .Ok
 }
 
@@ -514,7 +515,7 @@ operation_fuzzing_start :: proc "contextless" () -> system.Status {
 		return status
 	}
 	part_place_fill(slot, OPERATION_FUZZING_NAME, process)
-	system.log(.Info, "root: started operation_fuzzing with ", system.Size{amounts.pages, .Pages})
+	system.log_fact(.Info, Process_Started_With_Budget{started_process = module_name_field(OPERATION_FUZZING_NAME), pages = value_kinds.Size_In_Pages(amounts.pages)})
 	return .Ok
 }
 
@@ -1683,14 +1684,15 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), hash[0], hash[1], hash[2], hash[3]}
 	// The principal of the connection, and whether the caller acts for it.
 	acts := connection_grant(free) & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
-	// A connection of a client key stays a text: the head of the key has no
-	// field kind, as a Hash field holds a whole hash.
 	switch {
 	case history:
 		system.log_fact(.Info, Connected_History{caller = module_name_field(system.name_of(caller.name[:])), service = module_name_field(name), limit = HISTORY_STORE_LIMIT, principal = caller.principal})
+	case client.place != 0 && acts:
+		head: [16]u8
+		system.log_fact(.Info, Connected_Acting_With_Client_Key{caller = module_name_field(system.name_of(caller.name[:])), service = module_name_field(name), principal = client.principal, client_key = text_field(key_head_text(&head, client.key), 24)})
 	case client.place != 0:
 		head: [16]u8
-		system.log(.Info, "root: connected ", system.Module_Name{system.name_of(caller.name[:])}, " to the service ", system.Module_Name{name}, acts ? ", acting for principal " : ", for principal ", client.principal, ", for the client key ", key_head_text(&head, client.key))
+		system.log_fact(.Info, Connected_With_Client_Key{caller = module_name_field(system.name_of(caller.name[:])), service = module_name_field(name), principal = client.principal, client_key = text_field(key_head_text(&head, client.key), 24)})
 	case acts:
 		system.log_fact(.Info, Connected_Acting{caller = module_name_field(system.name_of(caller.name[:])), service = module_name_field(name), principal = caller.principal})
 	case:
@@ -1978,17 +1980,20 @@ reap :: proc "contextless" () {
 			}
 			// The run of `unlock` before the start policy has a line of its
 			// own: a wait for the stop of the run of the start list never
-			// takes it. It stays a text: it is one step of the start, which
-			// no reader of the stops groups with the others.
-			if unlock_without_window_running(&item) {
-				buffer: [64]u8
-				stop_text := system.Writer{buffer = buffer[:]}
-				system.stop_write(&stop_text, cause, outcome)
-				system.log(level, "root: unlock read the machine key with no window and stopped: ", system.written(&stop_text))
-			} else if cause == .Itself {
-				system.log_fact(level, Process_Stopped{stopped_process = module_name_field(system.name_of(item.name[:])), cause = cause, outcome = outcome})
-			} else {
-				system.log_fact(level, Process_Stopped_Without_Outcome{stopped_process = module_name_field(system.name_of(item.name[:])), cause = cause})
+			// takes it. A template has no condition: a stop of itself has
+			// its outcome, each other stop has none, so each sentence is a
+			// fact type.
+			stopped_process := module_name_field(system.name_of(item.name[:]))
+			without_window := unlock_without_window_running(&item)
+			switch {
+			case without_window && cause == .Itself:
+				system.log_fact(level, Unlock_Without_Window_Stopped{stopped_process = stopped_process, cause = cause, outcome = outcome})
+			case without_window:
+				system.log_fact(level, Unlock_Without_Window_Stopped_Without_Outcome{stopped_process = stopped_process, cause = cause})
+			case cause == .Itself:
+				system.log_fact(level, Process_Stopped{stopped_process = stopped_process, cause = cause, outcome = outcome})
+			case:
+				system.log_fact(level, Process_Stopped_Without_Outcome{stopped_process = stopped_process, cause = cause})
 			}
 			// The kernel forgets the stop report with the last handle,
 			// which release closes: a disk process keeps it here.

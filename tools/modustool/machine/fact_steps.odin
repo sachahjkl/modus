@@ -126,22 +126,42 @@ fact_line_after :: proc(machine: ^Machine, checked: build.Fact_Step) -> (place: 
 // its module hash, its key and its values, and the tool writes the sentence
 // with the template of the module file of the build that the hash names,
 // as the readers of the system write it. A fact whose module the build
-// does not hold, or whose values do not fit its record, has no sentence:
-// a step Record does not find it by a text.
-record_fact_sentences :: proc(machine: ^Machine, from: i64) -> map[i64]string {
-	sentences := make(map[i64]string, context.temp_allocator)
+// does not hold has no sentence: a step Record does not find it by a text.
+// read_through is the number of the last record that the answer reached:
+// the last record of the log when the answer holds each fact of the scope
+// from `from`, else the record of its last row. A failed call reached no
+// record. A row that the tool cannot read prints a line with its cause.
+record_fact_sentences :: proc(machine: ^Machine, from: i64) -> (sentences: map[i64]string, read_through: i64) {
+	sentences = make(map[i64]string, context.temp_allocator)
+	read_through = from - 1
 	table, ok := table_call(&machine.client, fmt.tprintf("log.fact_records(%d)", from))
 	if !ok {
-		return sentences
+		return sentences, read_through
 	}
 	machine_fact_catalog_ensure(machine)
-	for row in 0 ..< len(table.rows) / table.size {
+	rows := len(table.rows) / table.size
+	if i64(rows) >= table.total {
+		read_through = max(i64)
+	}
+	for row in 0 ..< rows {
 		number, number_ok := strconv.parse_i64(table_value(&table, row, "number"))
+		if !number_ok {
+			fmt.eprintfln("modustool: a row of log.fact_records(%d) has no number that the tool reads: its fact has no sentence", from)
+			continue
+		}
+		if read_through != max(i64) {
+			read_through = max(read_through, number)
+		}
 		value_count, count_ok := strconv.parse_int(table_value(&table, row, "value_count"))
 		hash_bytes := table_field_bytes(&table, row, "module_hash")
 		key_bytes := table_field_bytes(&table, row, "key")
 		values := table_field_bytes(&table, row, "values")
-		if !number_ok || !count_ok || len(hash_bytes) != module.HASH_SIZE || len(key_bytes) != 8 || value_count < 0 || value_count > len(values) {
+		if !count_ok || len(hash_bytes) != module.HASH_SIZE || len(key_bytes) != 8 {
+			fmt.eprintfln("modustool: the row of the log fact %d of log.fact_records has no module hash, key or count that the tool reads: it has no sentence", number)
+			continue
+		}
+		if value_count < 0 || value_count > len(values) {
+			fmt.eprintfln("modustool: the log fact %d has %d value bytes, and a fact holds 0 to %d: it has no sentence", number, value_count, len(values))
 			continue
 		}
 		hash: [module.HASH_SIZE]u8
@@ -152,7 +172,10 @@ record_fact_sentences :: proc(machine: ^Machine, from: i64) -> map[i64]string {
 		for index in 0 ..< 8 {
 			key |= u64(key_bytes[index]) << (8 * u64(index))
 		}
-		file := build.fact_catalog_file(machine.fact_catalog, build.hash_prefix_of(hash))
+		// The whole hash names the module: two modules that share the 8
+		// bytes of a serial line are refused in the catalog, and a row of
+		// fact_records holds all 32 bytes.
+		file := build.fact_catalog_file_of_hash(machine.fact_catalog, hash)
 		if file == nil {
 			continue
 		}
@@ -160,7 +183,7 @@ record_fact_sentences :: proc(machine: ^Machine, from: i64) -> map[i64]string {
 			sentences[number] = sentence
 		}
 	}
-	return sentences
+	return sentences, read_through
 }
 
 // fact_lines_forget forgets the lines of facts that log_read kept.

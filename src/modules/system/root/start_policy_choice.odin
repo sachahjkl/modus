@@ -26,6 +26,7 @@ import "modus:support/principals"
 import "modus:support/random"
 import "modus:support/storage"
 import "modus:support/system"
+import "modus:contract/value_kinds"
 
 // What the read of the choice waits for, before any start policy runs.
 Start_Policy_Choice_Stage :: enum u8 {
@@ -334,7 +335,7 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	start_policy_hash = hash
 	start_policy_stage = .Running
 	start_policy_deadline = system.time() + START_POLICY_HANG_BOUND_MILLISECONDS
-	system.log(.Info, "root: started the chosen start policy \"", name, "\" from the disk, hash ", system.Hash{start_policy_hash[:]}, ", with the grant Start_Policy only")
+	system.log_fact(.Info, Chosen_Start_Policy_Started{started_process = module_name_field(name), hash = value_kinds.Hash_Field(start_policy_hash)})
 	return .Ok
 }
 

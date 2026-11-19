@@ -285,6 +285,11 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	twin[module.HASH_SIZE - 1] = 0xFF
 	testing.expect(t, fact_catalog_add(&catalog, twin, "", file) != "")
 	testing.expect_value(t, len(catalog.modules), 1)
+	// A whole hash names its module only: the twin, which starts with the
+	// same 8 bytes, and the hash of zeros name none.
+	testing.expect(t, fact_catalog_file_of_hash(&catalog, twin) == nil)
+	testing.expect(t, fact_catalog_file_of_hash(&catalog, {}) == nil)
+	testing.expect(t, fact_catalog_file_of_hash(&catalog, hash) != nil)
 
 	sentence, rendered := fact_line_render(&catalog, line)
 	testing.expect(t, rendered)

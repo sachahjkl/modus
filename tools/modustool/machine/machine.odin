@@ -577,8 +577,9 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "[console] net      network  held"},
 	{kind = .Type, text = "revoke(\"net\", \"network\")"},
 	// The line of the revocation is a log fact of the root service: the
-	// step reads its field, the wait its sentence.
-	{kind = .Fact, process = "root", fact = "root.Grant_Revoked_Endpoints", condition = "endpoints = 1", any_order = true},
+	// step reads the field that names its process, the wait its sentence
+	// with the count.
+	{kind = .Fact, process = "root", fact = "root.Grant_Revoked_Endpoints", condition = "holder = \"net\"", any_order = true},
 	{kind = .Wait, text = "root: revoked the grant network of net, endpoints changed: 1", any_order = true}, // The network service can write its line first.
 	{kind = .Wait, text = "network: the grant of the endpoint of net changed: none"},
 	{kind = .Front, text = "net"},
@@ -2576,8 +2577,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader storm] log_reader storm: the last record, after more records than the whole log keeps", fails_on = "log_reader: WRONG"},
 	// The connection is a log fact of the root service: the step reads the
-	// Text field of the service, the wait its sentence.
-	{kind = .Fact, process = "root", fact = "root.Connected", condition = "service = \"log\"", any_order = true},
+	// field that names the caller, the wait its sentence with the service.
+	{kind = .Fact, process = "root", fact = "root.Connected", condition = "caller = \"log_reader\"", any_order = true},
 	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
 	{kind = .Wait, text = "[log_reader] log_reader: its own records: 1 rows from the own number 0, its first record, in the slot ", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = ", lost 0: no row of another process or of an earlier run: as it must"},
@@ -2609,9 +2610,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	// The stop of log_reader is a log fact of the root service, with its
-	// stop cause and its stop outcome as fields: the clean stop is the
-	// outcome Done (src/md/api/process_stop.md).
-	{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "outcome = Done", any_order = true},
+	// stop cause and its stop outcome as fields. The step reads the field
+	// that names the process; the console reads the outcome Done of the
+	// same fact below (src/md/api/process_stop.md).
+	{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "stopped_process = \"log_reader\"", any_order = true},
 	{kind = .Wait, text = "root: log_reader stopped: itself, done"},
 	// The remote service acts for the principal and still reads the whole
 	// log in order: the last record of the storm child, then the line of
@@ -2635,8 +2637,10 @@ scenario := [?]Step {
 	{kind = .Record, process = "root", level = "Info", text = "root: log_reader stopped: itself, done"},
 	// The console reads the same fact of the root service by its fields,
 	// from that record: the stop cause and the stop outcome are statuses of
-	// their contract enums, which a condition names by their members.
-	{kind = .Type, text = "log.records({record}) |> facts(root.Process_Stopped) |> where(outcome = Done)"},
+	// their contract enums, which a condition names by their members. The
+	// first condition keeps the stops of log_reader only, so a clean stop
+	// of another process after it is not counted.
+	{kind = .Type, text = "log.records({record}) |> facts(root.Process_Stopped) |> where(stopped_process = \"log_reader\") |> where(outcome = Done)"},
 	{kind = .Wait, text = "[console] 1 row of Process_Stopped"},
 	{kind = .Type, text = "start(\"log_reader\")"},
 	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
@@ -2665,7 +2669,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
-	{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "cause = Itself", any_order = true},
+	{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "stopped_process = \"log_reader\"", any_order = true},
 	{kind = .Wait, text = "root: log_reader stopped: itself, done"},
 	{kind = .Record, process = "log_reader storm", level = "Info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
 	{kind = .Record, process = "log_reader", level = "Info", text = "log_reader: ok"},
@@ -2907,9 +2911,10 @@ scenario := [?]Step {
 	// writes the memory of the client.
 	{kind = .Launch, text = "disk"},
 	// The start of a device service is a log fact with the place of its
-	// device: the step Fact reads the place on the serial port, the step
-	// Record the sentence through log.records and log.fact_records.
-	{kind = .Fact, process = "root", fact = "root.Device_Service_Started", condition = "device = 17", any_order = true},
+	// device: the step Fact reads the field that names the service on the
+	// serial port, the step Record the sentence with the place through
+	// log.records and log.fact_records.
+	{kind = .Fact, process = "root", fact = "root.Device_Service_Started", condition = "service = \"block\"", any_order = true},
 	{kind = .Record, process = "root", level = "Info", text = "root: started block for the device at the place 17 of the bus"},
 	{kind = .Record, process = "block", level = "Info", text = "block: ok, 8192 blocks of 4096 bytes, a queue of ", any_order = true},
 	{kind = .Wait, text = "disk: ok, the disk has 8192 blocks"},
@@ -2984,7 +2989,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] console  store               held"},
 	{kind = .Wait, text = "[console] console  acts_for_principal  held"},
 	{kind = .Type, text = "revoke(\"console\", \"store\")"},
-	{kind = .Fact, process = "root", fact = "root.Grant_Revoked_Connections", condition = "connections = 1", any_order = true},
+	{kind = .Fact, process = "root", fact = "root.Grant_Revoked_Connections", condition = "holder = \"console\"", any_order = true},
 	{kind = .Record, process = "root", level = "Info", text = "root: revoked the grant store of console, connections changed: 1"},
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
@@ -4072,10 +4077,13 @@ log_read :: proc(machine: ^Machine) -> string {
 	}
 	machine_fact_catalog_ensure(machine)
 	if len(text) < machine.fact_raw_length {
-		// A new file of the same name: nothing kept holds for it.
+		// A new file of the same name: nothing kept holds for it. The two
+		// counts of the serial bytes start again with the lines, so the
+		// measure counts the lines of one file.
 		clear(&machine.fact_rendered)
 		fact_lines_forget(machine)
 		machine.fact_raw_length = 0
+		machine.fact_raw_bytes, machine.fact_sentence_bytes = 0, 0
 	}
 	if len(text) > machine.fact_raw_length {
 		render_started := time.tick_now()
@@ -4548,7 +4556,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		// writes the sentence of the text line that the fact replaced, so
 		// the rendered line is the line of the text form, byte for byte
 		// (src/md/features/log_facts.md, "The measures that decide it").
-		fmt.printfln("modustool: measure: the serial lines of %d log facts of %s took %d bytes as values in hexadecimal; the same lines as text take %d bytes", machine.fact_render_lines, output, machine.fact_raw_bytes, machine.fact_sentence_bytes)
+		fmt.printfln("modustool: measure: the serial lines of %d log facts of %s took %d bytes as values in hexadecimal; the same lines as text take %d bytes", len(machine.fact_lines), output, machine.fact_raw_bytes, machine.fact_sentence_bytes)
 		delete(machine.fact_rendered)
 		fact_lines_forget(&machine)
 		delete(machine.fact_lines)
@@ -5041,11 +5049,18 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				// A log fact has an empty text in its row: the step reads
 				// its sentence, which the tool writes from its values
 				// (fact_steps.odin), so a wait on the sentence of a line
-				// that became a fact reads it as before.
+				// that became a fact reads it as before. A row of
+				// fact_records is not larger than a row of records (an
+				// #assert of the log service), and only a fact has one, so
+				// the answer from the same number covers each fact of this
+				// answer; read_through still says how far it reached, so a
+				// fact past it is read again and never skipped.
 				fact_sentences: map[i64]string
+				fact_read_through := from - 1
+				fact_waits := false
 				for row in 0 ..< rows {
 					if table_value(&table, row, "form") == "Fact" {
-						fact_sentences = record_fact_sentences(machine, from)
+						fact_sentences, fact_read_through = record_fact_sentences(machine, from)
 						break
 					}
 				}
@@ -5064,7 +5079,18 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					joined := strings.builder_make(context.temp_allocator)
 					number, _ := strconv.parse_i64(table_value(&table, row, "number"))
 					if table_value(&table, row, "form") == "Fact" {
-						strings.write_string(&joined, fact_sentences[number])
+						fact_sentence, has_sentence := fact_sentences[number]
+						if !has_sentence && number > fact_read_through {
+							// The answer of fact_records did not reach this
+							// fact: read again from it, as for a text that
+							// goes on.
+							fact_waits = true
+							break
+						}
+						// A fact that the answer reached and whose module
+						// the build does not hold has no sentence: no text
+						// is in it.
+						strings.write_string(&joined, fact_sentence)
 					} else {
 						for part in row ..= last {
 							strings.write_string(&joined, table_value(&table, part, "text"))
@@ -5083,7 +5109,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					from = last_number + 1
 					row = last + 1
 				}
-				if !found && rows == 0 {
+				if !found && (rows == 0 || fact_waits) {
 					time.sleep(CONDITION_POLL_PERIOD)
 				}
 			}

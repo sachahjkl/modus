@@ -139,7 +139,7 @@ Each case is a fault of the kernel. `system.process_state` stops its process thr
 | A parent learns why its child stopped | `state, cause, outcome := system.process_state(child)`, then a whole switch on `cause`; for `Fault`, `Not_Committed` and `Cannot_Return`, `system.process_stop_report(child)`; later, `report.error` for `Failed` and `Refused` |
 | A test waits for a clean stop | `_, outcome, stopped := system.process_stop_wait(child, system.TEST_HANG_BOUND_MILLISECONDS)`, then `stopped && outcome == .Done` |
 | A test waits for a fault | `cause, _, stopped := system.process_stop_wait(child, ...)`, then `cause == .Fault && system.process_stop_report(child).vector == u32(op.Fault_Kind.Page_Fault)` |
-| A machine test waits for a clean stop | the step `{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "outcome = Done"}`, or the line "root: unlock stopped: itself, done" |
+| A machine test waits for a clean stop | the step `{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "stopped_process = \"unlock\""}`, which names the process, then the line "root: unlock stopped: itself, done"; in the console, `log.records({record}) \|> facts(root.Process_Stopped) \|> where(stopped_process = "unlock") \|> where(outcome = Done)` |
 | The console shows the processes that failed | `where(monitor.processes(), outcome = "failed")` |
 
 No expression names a number. The check `outcome == .Done` is enough, because the border refuses an outcome with a cause other than `Itself`.

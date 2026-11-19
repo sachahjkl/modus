@@ -427,6 +427,11 @@ Fact_Row :: struct {
 	values:      value_kinds.Fact_Values_Field, // The value bytes, each of them: the bytes past value_count are 0.
 }
 #assert(size_of(Fact_Row) == 224)
+// A reader that reads records and fact_records from one number, in call
+// regions of one size, gets a row of each fact of its answer of records:
+// a fact row is not larger than a row of records, and only a fact has one.
+// The step Record of the machine tests counts on it.
+#assert(size_of(Fact_Row) <= size_of(Record))
 
 // fact_row_add adds the row of a record of the form Fact, and counts each
 // such record, also the ones that do not fit in the result. A record of

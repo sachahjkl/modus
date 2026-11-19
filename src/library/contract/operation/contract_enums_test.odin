@@ -10,7 +10,7 @@ import "modus:contract/value_kinds"
 // own name, and two members never give one name.
 @(test)
 a_word_that_names_no_member_has_no_name :: proc(t: ^testing.T) {
-	refused_levels := [?]u64{u64(max(Log_Level)) + 1, u64(max(u8)), max(u64)}
+	refused_levels := [?]u64{u64(max(Log_Level)) + 1, u64(max(u8)), u64(max(u32)), max(u64)}
 	for word in refused_levels {
 		name, ok := contract_enum_member_name(.Log_Level, word)
 		testing.expectf(t, !ok && name == "", "the word %d of a log level gives the name %q", word, name)
@@ -123,10 +123,24 @@ a_member_has_the_words_of_its_sentence :: proc(t: ^testing.T) {
 		_, ok := contract_enum_member_words(.None, word)
 		testing.expectf(t, !ok, "the enum None gives words for the word %d", word)
 	}
-	refused_levels := [?]u64{u64(max(Log_Level)) + 1, max(u64)}
-	for word in refused_levels {
-		_, ok := contract_enum_member_words(.Log_Level, word)
-		testing.expectf(t, !ok, "the word %d of a log level gives words", word)
+	Refused_Word :: struct {
+		which: value_kinds.Contract_Enum,
+		word:  u64,
+	}
+	refused_words := [?]Refused_Word {
+		{.Log_Level, u64(max(Log_Level)) + 1},
+		{.Log_Level, u64(max(u32))},
+		{.Log_Level, max(u64)},
+		{.Status, u64(max(Status)) + 1},
+		{.Status, u64(max(u32))},
+		{.Status, max(u64)},
+		{.Log_Record_Form, u64(max(Log_Record_Form)) + 1},
+		{.Log_Record_Form, u64(max(u8))},
+		{.Log_Record_Form, max(u64)},
+	}
+	for item in refused_words {
+		words, ok := contract_enum_member_words(item.which, item.word)
+		testing.expectf(t, !ok && words == "", "the word %d of %v gives the words %q", item.word, item.which, words)
 	}
 }
 
@@ -148,6 +162,10 @@ a_name_that_names_no_member_has_no_word :: proc(t: ^testing.T) {
 		{.Log_Level, "Fact"},
 		{.Log_Record_Form, "Warning"},
 		{.Log_Record_Form, "fact"},
+		{.Status, ""},
+		{.Status, "Itself"},
+		{.Status, "Warning"},
+		{.Log_Record_Form, ""},
 		{.Stop_Cause, "itself"},
 		{.Stop_Cause, "a holder"},
 		{.Stop_Cause, "Done"},
