@@ -102,10 +102,12 @@ PROCESS_PAGES :: 180
 PAGE_TABLE_PAGES :: 32
 
 // The three canvases of the screen, the four surfaces, the pictures, the
-// process and its page tables. The tool reads a literal only, so the
-// assert ties it to the parts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8815, processes = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == 3 * SCREEN_PAGES + WINDOW_PAGES + PICTURE_PAGES + PROCESS_PAGES + PAGE_TABLE_PAGES)
+// process and its page tables, and the glyph memory of the copy of the
+// text rendering of the drawing module, which draws each glyph of its text
+// and reserves that memory at its first glyph. The tool reads a literal
+// only, so the assert ties it to the parts.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 9169, processes = 1, threads = 1}
+#assert(MODULE_BUDGET.working_memory_pages == 3 * SCREEN_PAGES + WINDOW_PAGES + PICTURE_PAGES + PROCESS_PAGES + PAGE_TABLE_PAGES + display.GLYPH_MEMORY_PAGES_IN_THE_BUDGETS)
 
 // The frame of a window and the bar, in the form of the compositor
 // (src/modules/system/compositor/main.odin, frame_records).

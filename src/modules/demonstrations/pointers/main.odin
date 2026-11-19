@@ -49,8 +49,10 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
 
-// The pointer themes that it checks.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1616, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The pointer themes that it checks: 1616 pages. And the glyph memory of
+// its own copy of the text rendering, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 1616 + 354 = 1970.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1970, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 976
 HEIGHT :: 704

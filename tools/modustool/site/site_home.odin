@@ -358,8 +358,8 @@ site_measure_charts := [?]Site_Measure_Chart {
 		unit = "nanoseconds",
 		unit_after = " ns",
 		kind = .Time,
-		about = "A glyph of the vector font drawn from its outline at three scales, the same glyph copied from the glyph cache, and a glyph of the bitmap font. The difference is the work that the glyph cache saves each process.",
-		bars = {{"Outline, scale 1", "scale 1 "}, {"Outline, scale 2", "scale 2 "}, {"Outline, scale 3", "scale 3 "}, {"Glyph cache", "from the glyph cache: "}, {"Bitmap font", "Spleen 8x16: "}},
+		about = "A glyph of the vector font drawn from its outline at three scales, the same glyph copied from the private glyph cache of the process, and a glyph of the bitmap font. A process draws each glyph from its outline once, then copies it at each frame.",
+		bars = {{"Outline, scale 1", "scale 1 "}, {"Outline, scale 2", "scale 2 "}, {"Outline, scale 3", "scale 3 "}, {"Private glyph cache", "from the private glyph cache: "}, {"Bitmap font", "Spleen 8x16: "}},
 	},
 }
 

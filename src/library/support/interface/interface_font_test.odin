@@ -5,28 +5,28 @@ import "base:runtime"
 import "modus:contract/draw_record"
 import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
+import "modus:contract/settings"
 import "core:slice"
 import "core:sync"
 import "core:testing"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/text_rendering"
-import "modus:support/vector_font"
 
-// The interface font of the tests: B612 Regular (three positions at scale
-// 1, one at the scales 2 and 3) and B612 Bold (scale 1, three positions),
-// built from the subsets, in memory that the caller frees.
+// The interface font of the tests: the faces B612 Regular and B612 Bold,
+// from the font outlines that interface_outlines_open opened.
 @(private = "file")
 Test_Interface_Font :: struct {
-	font:           display.Interface_Font,
-	regular_memory: []u64,
-	bold_memory:    []u64,
+	font: display.Interface_Font,
 }
 
 // The font outlines of the tests, opened once in the state of the text
-// rendering of the process: a text in the interface font is measured from
-// its font file. No test of this package changes that state; the words
-// stay for the run, as the open fonts read them.
+// rendering of the process, with its glyph memory: a text in the interface
+// font is measured from its font file, and its glyphs are drawn into the
+// private glyph cache. No test of this package changes that state; the
+// words and the memory stay for the run, as the open fonts and the cache
+// read them, so they come from the heap of the process: the runner frees
+// what a test allocated at its end.
 @(private = "file")
 interface_outlines_lock: sync.Mutex
 @(private = "file")
@@ -52,6 +52,7 @@ interface_outlines_open :: proc(t: ^testing.T) {
 	testing.expect(t, written)
 	outlines, problem := font_outlines.validate(bytes)
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
+	text_rendering.memory_give(new(text_rendering.Glyph_Memory, runtime.heap_allocator()))
 	missing := text_rendering.open(&outlines)
 	testing.expect_value(t, missing, text_rendering.Outline_Fonts{})
 }
@@ -59,39 +60,9 @@ interface_outlines_open :: proc(t: ^testing.T) {
 @(private = "file")
 test_interface_font :: proc(t: ^testing.T) -> (result: Test_Interface_Font) {
 	interface_outlines_open(t)
-	Weight :: struct {
-		bytes:     []u8,
-		name:      string,
-		positions: []int,
-	}
-	regular_positions := [3]int{3, 1, 1}
-	bold_positions := [1]int{3}
-	weights := [2]Weight{{#load("../../../../resources/fonts/b612.ttf"), "b612", regular_positions[:]}, {#load("../../../../resources/fonts/b612_bold.ttf"), "b612_bold", bold_positions[:]}}
-	render := new(vector_font.Render_Memory)
-	defer free(render)
-	for weight, index in weights {
-		file, problem := vector_font.font_open(weight.bytes)
-		testing.expect_value(t, problem, vector_font.Font_Problem.None)
-		memory := make([]u64, vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT / 8)
-		out := ([^]u8)(raw_data(memory))[:vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT]
-		size: int
-		size, problem = vector_font.glyph_cache_build_proportional(&file, weight.bytes, weight.name, true, render, out, weight.positions)
-		testing.expect_value(t, problem, vector_font.Font_Problem.None)
-		cache, refused := glyph_cache.validate(out[:size])
-		testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
-		if index == 0 {
-			result.font.regular, result.regular_memory = cache, memory
-		} else {
-			result.font.bold, result.bold_memory = cache, memory
-		}
-	}
+	testing.expect(t, display.interface_faces_opened())
+	result.font = display.INTERFACE_FONT
 	return result
-}
-
-@(private = "file")
-test_interface_font_free :: proc(font: ^Test_Interface_Font) {
-	delete(font.regular_memory)
-	delete(font.bold_memory)
 }
 
 // A draw of a text in the interface font changes the blend tables of the
@@ -205,7 +176,6 @@ build_labels :: proc(table: ^Draw_Table, seed: u32, changed: int) {
 damage_of_interface_text_equals_the_whole_frame :: proc(t: ^testing.T) {
 	interface_text_drawing_begin()
 	font := test_interface_font(t)
-	defer test_interface_font_free(&font)
 	first, second := new(Font_Tables), new(Font_Tables)
 	defer free(first)
 	defer free(second)
@@ -287,7 +257,6 @@ interface_text_record_of :: proc(fields: draw_record.Text_Fields, left, top, rig
 @(test)
 no_element_passes_its_box_in_either_font :: proc(t: ^testing.T) {
 	font := test_interface_font(t)
-	defer test_interface_font_free(&font)
 	LONG :: "a name far too long for its box, WWWWW MMMMM, and more text after it"
 	Element_Case :: struct {
 		name: string,
@@ -354,7 +323,6 @@ no_element_passes_its_box_in_either_font :: proc(t: ^testing.T) {
 @(test)
 the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 	font := test_interface_font(t)
-	defer test_interface_font_free(&font)
 	with_font, without_font := new(Font_Tables), new(Font_Tables)
 	defer free(with_font)
 	defer free(without_font)
@@ -407,7 +375,6 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 hostile_interface_text_records_draw_nothing :: proc(t: ^testing.T) {
 	interface_text_drawing_begin()
 	font := test_interface_font(t)
-	defer test_interface_font_free(&font)
 	memory := new(Font_Tables)
 	defer free(memory)
 	table := font_table_of(memory, &font.font)
@@ -454,19 +421,18 @@ hostile_interface_text_records_draw_nothing :: proc(t: ^testing.T) {
 TEXT_PARTS :: [4]Rectangle{{0, 0, 37, 64}, {37, 0, 151, 30}, {37, 30, 151, 64}, {151, 0, 400, 64}}
 
 // The old path of a text in the interface font: the shaping and the glyphs
-// of the interface font from the origin of the text, cut to the box of its
-// record, as the kind Interface_Text drew it.
+// of the face of the interface font from the origin of the text, cut to
+// the box of its record, as the kind Interface_Text drew it.
 @(private = "file")
-interface_text_reference :: proc(canvas: graphics.Canvas, caches: ^display.Interface_Font, box: Rectangle, origin: i64, text: string, font: Font, color: graphics.Color) {
+interface_text_reference :: proc(canvas: graphics.Canvas, box: Rectangle, origin: i64, text: string, font: Font, color: graphics.Color) {
 	view := graphics.view(canvas, box.left, box.top, box.right - box.left, box.bottom - box.top)
-	cache := interface_cache_of(caches, font)
 	spacing, ok := interface_spacing_of(font)
 	if !ok {
 		return
 	}
 	placed: [INTERFACE_TEXT_LIMIT]text_rendering.Placed_Glyph
 	count, _, _ := text_rendering.shape(&spacing, transmute([]u8)text, placed[:])
-	graphics.text_proportional(view, origin - i64(box.left) * 64, 0, placed[:min(count, len(placed))], cache, font_scale(font), color)
+	graphics.text_proportional(view, origin - i64(box.left) * 64, 0, placed[:min(count, len(placed))], interface_face_of(font), font_scale(font), color)
 }
 
 // The old path of a text in the font of the cells: the cells from the top
@@ -488,7 +454,6 @@ cells_text_reference :: proc(canvas: graphics.Canvas, x, y: int, text: string, f
 each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 	interface_text_drawing_begin()
 	font := test_interface_font(t)
-	defer test_interface_font_free(&font)
 	WIDTH :: 400
 	HEIGHT :: 64
 	texts := [?]string{"To LT", "settings and more", "W", "palette 42", "Ty"}
@@ -531,7 +496,7 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 					execute(&table, canvas_of(drawn))
 					rectangles := TEXT_PARTS
 					execute_in_rectangles(&table, canvas_of(parts), rectangles[:])
-					interface_text_reference(canvas_of(expected), &font.font, record_rectangle(table.records[0]), origin, text, used, color)
+					interface_text_reference(canvas_of(expected), record_rectangle(table.records[0]), origin, text, used, color)
 					testing.expectf(t, slice.equal(drawn, expected), "%q, scale %d, weight %v, third %d: the interface font draws other pixels", text, scale, weight, third)
 					testing.expectf(t, slice.equal(parts, expected), "%q, scale %d, weight %v, third %d: the interface font in parts draws other pixels", text, scale, weight, third)
 					free(memory)
@@ -572,4 +537,66 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 	view := graphics.view(canvas_of(expected), box.left, box.top, box.right - box.left, box.bottom - box.top)
 	text_draw(view, 20 - box.left, 0, "To LT", color, 1, .Regular)
 	testing.expect(t, slice.equal(drawn, expected), "a text in the interface font with no font draws other pixels than the font of the cells")
+}
+
+// The font of an interface text follows the settings page at each read,
+// with no event Settings_Changed between two reads: the case of a window
+// that read the page before the boot pass of `settings` and made its
+// surface after it, so that the compositor never told it. The setting
+// `spleen` gives a text in the font of the cells, in Spleen; `vector`
+// gives the interface font again; each change is told, and a read with no
+// change is not. A page left in the middle of a change is refused and
+// gives the defaults: the vector font. The record that draw_text appends
+// is the record of the font in use, last.
+@(test)
+the_interface_text_follows_the_setting_of_the_font :: proc(t: ^testing.T) {
+	interface_text_drawing_begin()
+	font := test_interface_font(t)
+	saved_page := display.settings_page
+	saved_font, saved_order := graphics.text_state.font, graphics.text_state.order
+	saved_cells, saved_bold := graphics.text_state.cell_face, graphics.text_state.bold_face
+	saved_appearance := graphics.appearance
+	defer {
+		display.settings_page = saved_page
+		graphics.text_choice_set(saved_font, saved_order)
+		graphics.text_state.cell_face, graphics.text_state.bold_face = saved_cells, saved_bold
+		graphics.appearance_use(saved_appearance)
+	}
+	page := new(settings.Page)
+	defer free(page)
+	display.settings_page = page
+	memory := new(Font_Tables)
+	defer free(memory)
+	table := font_table_of(memory, &font.font)
+	// The state before the first read: the other font, so that the first
+	// read is a change.
+	graphics.text_choice_set(.Vector, .Red_Green_Blue)
+	Case :: struct {
+		font: settings.Font,
+		kind: Font_Kind,
+	}
+	cases := [?]Case{{.Spleen, .Cells_8x16}, {.Vector, .Interface}, {.Spleen, .Cells_8x16}}
+	for each in cases {
+		settings.write(page, settings.Choice{font = each.font}, 0, .Dark)
+		testing.expectf(t, display.text_settings_apply(), "%v: the change of the font is told", each.font)
+		testing.expectf(t, !display.text_settings_apply(), "%v: a read with no change tells a change", each.font)
+		testing.expect_value(t, font_in_use(&table, FONT_INTERFACE, 5).kind, each.kind)
+		testing.expect_value(t, graphics.text_state.cell_face, text_rendering.Face.Cells)
+	}
+	// A page left in a change: the defaults, the vector font.
+	page.change_count += 1
+	testing.expect(t, display.text_settings_apply(), "a page left in a change: the defaults are a change from spleen")
+	testing.expect_value(t, graphics.text_state.font, graphics.Text_Font.Vector)
+	testing.expect_value(t, font_in_use(&table, FONT_INTERFACE, 5).kind, Font_Kind.Interface)
+	// The record of a text: in the font of the cells with spleen, in the
+	// interface font with vector.
+	for each in cases[:2] {
+		page.change_count = 0
+		settings.write(page, settings.Choice{font = each.font}, 0, .Dark)
+		_ = display.text_settings_apply()
+		memory^ = {}
+		table = font_table_of(memory, &font.font)
+		draw_text(&table, 8, 8, "To LT", graphics.colors.text, FONT_INTERFACE)
+		testing.expectf(t, table.record_count == 1 && is_interface_text(table.records[0]) == (each.kind == .Interface), "%v: the record of the text is not in the font in use", each.font)
+	}
 }

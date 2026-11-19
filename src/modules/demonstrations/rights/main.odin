@@ -43,8 +43,11 @@ import op "modus:contract/operation"
 import "modus:support/system"
 
 // The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module, its threads and its window.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1554, processes = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
+// by its name, once the tool counts its module, its threads and its
+// window: 1554 pages. And the glyph memory of the copy of the text
+// rendering of the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 1554 + 354 = 1908.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1908, processes = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)

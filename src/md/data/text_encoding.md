@@ -14,7 +14,7 @@ The `Text` of the module contract is UTF-8 already ([`docs/MODULE_CONTRACT.md`](
 - **The kernel holds the border of the log.** A process calls the operation `Log` directly, so a check in the support library is no check.
 - **Each contract has a fixed size of field.** A length is a count of bytes, and a field holds fewer characters than bytes when a text has characters outside ASCII.
 - **The grid of cells shows one character in one cell.** A text that a byte count places is wrong for a character of two bytes.
-- **The fonts hold 32 to 126, the Latin-1 Supplement and the added characters only.** The glyph caches and Spleen have no other glyph.
+- **The fonts hold 32 to 126, the Latin-1 Supplement and the added characters only.** Spleen has no other glyph; a character past them comes from a fallback chain.
 - **Contract packages import no support package**, and the kernel imports contract packages only ([infrastructure/repository_layout.md](../infrastructure/repository_layout.md)).
 
 ## The chosen form

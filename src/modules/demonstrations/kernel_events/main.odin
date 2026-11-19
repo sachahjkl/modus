@@ -79,8 +79,10 @@ import "modus:support/system"
 // main thread, 1; the load child, its main thread and 4 loaders, 5 (taken
 // from this budget when it starts, for its life); then either the child
 // that faults or the thread that empties the rings, 1, never both at one
-// time: 7.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1769, processes = 3, threads = 7, window_width = WIDTH, window_height = HEIGHT}
+// time: 7. Its pages: 1769, and the glyph memory of the copy of the text
+// rendering of the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 1769 + 354 = 2123.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2123, processes = 3, threads = 7, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 960

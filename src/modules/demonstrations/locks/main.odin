@@ -55,8 +55,11 @@ import "modus:contract/ring"
 import "modus:support/random"
 import "modus:support/system"
 
-// Four lockers of 1024 pages, then three at a time of the stress case.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7745, processes = 8, threads = 20, window_width = WIDTH, window_height = HEIGHT}
+// Four lockers of 1024 pages, then three at a time of the stress case:
+// 7745 pages. And the glyph memory of the copy of the text rendering of
+// the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 7745 + 354 = 8099.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8099, processes = 8, threads = 20, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(1024, 16384)

@@ -2,22 +2,23 @@
 // placed by src/library/support/text_rendering and drawn by graphics.text_proportional.
 // It shows a paragraph, three pairs with and without their adjustment, one
 // word at the three positions of a pixel, enlarged, the digits in columns,
-// three lines of characters past the glyph cache (Greek letters of B612,
-// box-drawing characters of Paper Mono, the second font of the fallback
-// chain: src/md/features/glyphs_on_demand.md), and the time of one line.
+// three lines of characters past the Latin-1 Supplement (Greek letters of
+// B612, box-drawing characters of Paper Mono, the second font of the
+// fallback chain: src/md/features/glyphs_on_demand.md), and the time of
+// one line.
 //
-// The two glyph caches are resources of the boot image that the root
-// service maps read-only at their fixed ranges (display.interface_font_open
-// validates them). The labels of the window are the text of the system.
+// The process draws each glyph from the font outlines, a resource of the
+// boot image that the root service maps read-only at its fixed range, into
+// its private glyph cache. The labels of the window are the text of the
+// system.
 //
 // **What it is for.** It shows the [interface font](term:interface-font)
 // as the system draws it: [text shaping](term:text-shaping) with the
 // [pair adjustments](term:pair-adjustment) of the font, glyphs at a
-// [subpixel position](term:subpixel-position), the
-// [glyph caches](term:glyph-cache) that the build computes once, and the
-// [fallback chain](term:fallback-chain) past them. A reader compares a pair
-// with and without its adjustment, and one word at three positions of a
-// pixel.
+// [subpixel position](term:subpixel-position), drawn by the process into
+// its [private glyph cache](term:private-glyph-cache), and the
+// [fallback chain](term:fallback-chain). A reader compares a pair with and
+// without its adjustment, and one word at three positions of a pixel.
 //
 // **What a reader sees.** Start it from the start menu, or with
 // `start("interface_font")` in the console. The log gets the time of
@@ -31,14 +32,13 @@
 // `interface_font: <n> characters that no font of the chain has draw the
 // replacement glyph: as it must`. A line that names a fault starts with
 // `interface_font: the fallback chain of the interface is wrong: `. With
-// no valid glyph cache in the boot image, it writes `interface_font: the
-// boot image gives no valid cache of the interface font`.
+// no font outlines that hold B612, it writes `interface_font: the boot
+// image gives no font outlines with the interface font`.
 //
-// **Its grants**: none. The root service maps the glyph caches and the
-// font outlines into each process that it starts.
+// **Its grants**: none. The root service maps the font outlines into each
+// process that it starts.
 package interface_font
 
-import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -50,14 +50,13 @@ WIDTH :: 800
 HEIGHT :: 720
 
 // The glyph memory of its two copies of the text rendering: its own, which
-// draws the lines of B612 and the Greek letters past the glyph cache by
-// hand, and the one of the drawing module, which draws its labels. Each
-// reserves its memory at its first glyph past the glyph caches: its own
-// copy always, the copy of the drawing module when a label holds such a
-// glyph. 2 x 354 pages (display.TEXT_MEMORY_PAGES).
+// draws the lines of B612 and the Greek letters by hand, and the one of
+// the drawing module, which draws its labels. Each reserves its memory at
+// its first glyph. 2 x 354 pages (display.TEXT_MEMORY_PAGES).
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 708, window_width = WIDTH, window_height = HEIGHT}
 
-regular_cache, bold_cache: glyph_cache.Cache
+// The faces of the interface font that this process opened.
+interface_faces: display.Interface_Font
 // The spacing of the regular weight at scale 1 and at scale 3, the bold
 // weight at scale 1, and the regular weight at scale 3 with no pair.
 regular_spacing, regular_spacing_large, bold_spacing, no_pair_spacing_large: text_rendering.Spacing
@@ -78,8 +77,8 @@ ENLARGED_COLUMNS :: 48 // The columns of the small canvas that are enlarged: the
 // The places of the enlarged word in a pixel, in 1/64: 0, a third, two thirds.
 ENLARGED_FRACTIONS := [3]i64{0, 21, 43}
 NUMBERS := [?]string{"7", "42", "1 024", "65 536", "4 294 967 296", "100 000"}
-// Characters past the glyph cache: the capitals and the small letters of
-// the Greek script of the fallback chains that B612 has, each one, made
+// Characters past the Latin-1 Supplement: the capitals and the small
+// letters of the Greek script of the fallback chains that B612 has, each one, made
 // from the font file at the start, then a line with some of them and
 // box-drawing characters, which B612 lacks and Paper Mono, the second font
 // of the chain of the interface, has. A letter that B612 lacks is in no
@@ -97,7 +96,7 @@ BOX_CHARACTERS := [?]rune{0x250C, 0x2500, 0x252C, 0x2510, 0x2592, 0x2593, 0x2588
 // pi and the small rho that B612 lacks, and a Cyrillic letter.
 MISSING_CHARACTERS := [?]rune{0x03A0, 0x03C1, 0x0416}
 
-fallback_told: bool // The lines of the characters past the glyph cache are on the log.
+fallback_told: bool // The lines of the characters of the fallback chain are on the log.
 
 // One line of B612 drawn into a canvas of its own: the enlarged word, and
 // the measure of the time of one line.
@@ -111,11 +110,11 @@ window_memory: interface.Window_Memory(128, 4096)
 
 // line_draw places a text and draws it, its origin at the whole pixel x and
 // the top of its line at y; it gives the width in 1/64 of a pixel.
-line_draw :: proc "contextless" (canvas: graphics.Canvas, place: i64, y: int, text: string, spacing: ^text_rendering.Spacing, cache: ^glyph_cache.Cache, scale: int, color: graphics.Color) -> (width: i64) {
+line_draw :: proc "contextless" (canvas: graphics.Canvas, place: i64, y: int, text: string, spacing: ^text_rendering.Spacing, scale: int, color: graphics.Color) -> (width: i64) {
 	placed: [LINE_LIMIT]text_rendering.Placed_Glyph
 	count := min(len(text), LINE_LIMIT)
 	_, width, _ = text_rendering.shape(spacing, transmute([]u8)(text[:count]), placed[:count])
-	graphics.text_proportional(canvas, place, y, placed[:count], cache, scale, color)
+	graphics.text_proportional(canvas, place, y, placed[:count], spacing.face, scale, color)
 	return width
 }
 
@@ -146,9 +145,9 @@ greek_lines_make :: proc "contextless" () {
 	GREEK = {string(greek_capitals[:capitals]), string(greek_small[:small]), GREEK_SENTENCE}
 }
 
-// fallback_lines_tell writes, once, what the frame drew past the glyph
-// cache, from the fallback chain of the interface: each Greek letter of the
-// subset of B612, each box-drawing character from Paper Mono, and the
+// fallback_lines_tell writes, once, what the frame drew from the fallback
+// chain of the interface past the Latin-1 Supplement: each Greek letter of
+// the subset of B612, each box-drawing character from Paper Mono, and the
 // replacement glyph for the characters that no font of the chain has. The
 // process draws each glyph as its frame drew it, from its own private
 // glyph cache.
@@ -158,16 +157,11 @@ fallback_lines_tell :: proc "contextless" () {
 		return
 	}
 	fallback_told = true
-	face := text_rendering.face_of_cache(&regular_cache)
-	if face != .Interface {
-		system.log(.Warning, FAULT, "the glyph cache of B612 Regular has no face; the font outlines are not given")
-		return
-	}
-	// The glyphs below come from the private glyph cache of this process:
-	// its glyph memory first, which a process reserves at the first glyph
-	// that needs it.
+	face := interface_faces.regular
+	// The glyphs below come from the private glyph cache of this process,
+	// whose glyph memory the entry reserved.
 	if !display.text_memory_reserve() {
-		system.log(.Warning, FAULT, "this process has no glyph memory: each glyph past its glyph caches is drawn band by band")
+		system.log(.Warning, FAULT, "this process has no glyph memory: each glyph is drawn band by band")
 		return
 	}
 	drawn, missing: u64
@@ -246,7 +240,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		{PAIRS_TOP - 24, "three pairs at scale 3: with the adjustment of the font, then without"},
 		{ENLARGED_TOP - 24, "one word at 0, 1/3 and 2/3 of a pixel, enlarged 4 times"},
 		{DIGITS_TOP - 24, "digits in columns: each digit has the same advance, so a column aligns"},
-		{GREEK_TOP - 24, "past the glyph cache: Greek of B612, box drawing of Paper Mono, the next font of its chain"},
+		{GREEK_TOP - 24, "the fallback chain: Greek of B612, box drawing of Paper Mono, the next font of its chain"},
 	}
 	for label in labels {
 		interface.draw_text(frame.table, content.x, content.y + label.top, label.text, graphics.colors.dim)
@@ -255,7 +249,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// that it needs (docs/INTERFACE.md, "The text in a box"), and the card
 	// has room for three under TIME_TOP.
 	timing: [192]u8
-	interface.draw_text_wrapped(frame.table, content.x, content.y + TIME_TOP, content.width, system.format(timing[:], "one line of ", u64(len(PARAGRAPH[1])), " characters: shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; caches of ", u64(regular_cache.header.file_size), " and ", u64(bold_cache.header.file_size), " bytes, from the boot image"), graphics.colors.dim)
+	interface.draw_text_wrapped(frame.table, content.x, content.y + TIME_TOP, content.width, system.format(timing[:], "one line of ", u64(len(PARAGRAPH[1])), " characters: shaping ", shaping_time, " ns, drawing ", drawing_time, " ns, its glyphs in the private glyph cache of this process"), graphics.colors.dim)
 	// The lines below are drawn by hand over the frame, in the same
 	// picture of the surface, before the present.
 	if !interface.window_frame_end_without_present(&window_memory.drawing, &frame, window) {
@@ -266,17 +260,17 @@ draw :: proc "contextless" (window: ^display.Window) {
 	x := i64(content.x) * 64
 	// The paragraph and the bold line.
 	for line, index in PARAGRAPH {
-		line_draw(canvas, x, content.y + PARAGRAPH_TOP + index * 20, line, &regular_spacing, &regular_cache, 1, graphics.colors.text)
+		line_draw(canvas, x, content.y + PARAGRAPH_TOP + index * 20, line, &regular_spacing, 1, graphics.colors.text)
 	}
-	line_draw(canvas, x, content.y + PARAGRAPH_TOP + len(PARAGRAPH) * 20 + 8, BOLD_LINE, &bold_spacing, &bold_cache, 1, graphics.colors.text)
+	line_draw(canvas, x, content.y + PARAGRAPH_TOP + len(PARAGRAPH) * 20 + 8, BOLD_LINE, &bold_spacing, 1, graphics.colors.text)
 	// The pairs at scale 3, with and without their adjustment.
-	line_draw(canvas, x, content.y + PAIRS_TOP, PAIRS, &regular_spacing_large, &regular_cache, 3, graphics.colors.text)
-	line_draw(canvas, x + 360 * 64, content.y + PAIRS_TOP, PAIRS, &no_pair_spacing_large, &regular_cache, 3, graphics.colors.dim)
+	line_draw(canvas, x, content.y + PAIRS_TOP, PAIRS, &regular_spacing_large, 3, graphics.colors.text)
+	line_draw(canvas, x + 360 * 64, content.y + PAIRS_TOP, PAIRS, &no_pair_spacing_large, 3, graphics.colors.dim)
 	// One word at the three positions, each pixel enlarged.
 	small := graphics.Canvas{pixels = raw_data(small_pixels[:]), width = SMALL_WIDTH, height = 16, stride = SMALL_WIDTH}
 	for fraction, index in ENLARGED_FRACTIONS {
 		graphics.clear(small, graphics.colors.card_bottom)
-		line_draw(small, 2 * 64 + fraction, 0, ENLARGED_WORD, &regular_spacing, &regular_cache, 1, graphics.colors.text)
+		line_draw(small, 2 * 64 + fraction, 0, ENLARGED_WORD, &regular_spacing, 1, graphics.colors.text)
 		left := content.x + index * (ENLARGED_COLUMNS * ENLARGED + 24)
 		for row in 0 ..< 16 {
 			for column in 0 ..< ENLARGED_COLUMNS {
@@ -289,58 +283,74 @@ draw :: proc "contextless" (window: ^display.Window) {
 	bold_right := i64(content.x + 440) * 64
 	for number, index in NUMBERS {
 		y := content.y + DIGITS_TOP + index * 20
-		line_draw(canvas, column_right - line_width(number, &regular_spacing), y, number, &regular_spacing, &regular_cache, 1, graphics.colors.text)
-		line_draw(canvas, bold_right - line_width(number, &bold_spacing), y, number, &bold_spacing, &bold_cache, 1, graphics.colors.process)
+		line_draw(canvas, column_right - line_width(number, &regular_spacing), y, number, &regular_spacing, 1, graphics.colors.text)
+		line_draw(canvas, bold_right - line_width(number, &bold_spacing), y, number, &bold_spacing, 1, graphics.colors.process)
 	}
-	// The characters past the glyph cache: each one from its font of the
+	// The characters of the fallback chain: each one from its font of the
 	// fallback chain, or the replacement glyph; the frame never waits.
 	for line, index in GREEK {
-		line_draw(canvas, x, content.y + GREEK_TOP + index * 20, line, &regular_spacing, &regular_cache, 1, graphics.colors.text)
+		line_draw(canvas, x, content.y + GREEK_TOP + index * 20, line, &regular_spacing, 1, graphics.colors.text)
 	}
 	display.present(window)
 	fallback_lines_tell()
 }
 
-// measure gives the least time of one line in batches, so that a batch
-// that the host stops in its middle does not count: the shaping, then the
-// shaping and the drawing, into a canvas that is not the window.
+// measure gives the time of one line: the first draw, which draws each of
+// its glyphs into the private glyph cache, and the least time in batches
+// after it, so that a batch that the host stops in its middle does not
+// count: the shaping, then the drawing, into a canvas that is not the
+// window.
 measure :: proc "contextless" () {
 	BATCHES :: 50
 	canvas := graphics.Canvas{pixels = raw_data(measure_pixels[:]), width = MEASURE_WIDTH, height = 16, stride = MEASURE_WIDTH}
 	text := transmute([]u8)(PARAGRAPH[1])
 	placed: [LINE_LIMIT]text_rendering.Placed_Glyph
 	shaping_time, drawing_time = max(u64), max(u64)
-	for _ in 0 ..< BATCHES {
+	for batch in 0 ..< BATCHES {
 		graphics.clear(canvas, graphics.colors.card_bottom)
 		start := system.nanoseconds()
 		count, _, _ := text_rendering.shape(&regular_spacing, text, placed[:])
 		shaped := system.nanoseconds()
-		graphics.text_proportional(canvas, 0, 0, placed[:count], &regular_cache, 1, graphics.colors.text)
+		graphics.text_proportional(canvas, 0, 0, placed[:count], interface_faces.regular, 1, graphics.colors.text)
 		drawn := system.nanoseconds()
 		shaping_time = min(shaping_time, shaped - start)
-		drawing_time = min(drawing_time, drawn - shaped)
+		if batch == 0 {
+			first_drawing_time = drawn - shaped
+		} else {
+			drawing_time = min(drawing_time, drawn - shaped)
+		}
 	}
 }
 
-// entry opens the window, opens the glyph caches of the interface font,
-// measures one line, writes the lines on the log, then draws the window at
-// each event until the process is stopped. With no window, it stops with
-// the code 1.
+// The time of the first draw of the line of measure: each of its glyphs
+// drawn from its outline.
+first_drawing_time: u64
+
+// entry opens the window, finds the faces of the interface font, reserves
+// the glyph memory, measures one line, writes the lines on the log, then
+// draws the window at each event until the process is stopped. With no
+// window, it stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_font")
 	if !ok {
 		system.stop(1)
 	}
-	font, font_ok := display.interface_font_open(ctx)
+	font_ok: bool
+	interface_faces, font_ok = display.interface_font_open(ctx)
 	if !font_ok {
-		system.log(.Info, "interface_font: the boot image gives no valid cache of the interface font")
+		system.log(.Info, "interface_font: the boot image gives no font outlines with the interface font")
 		system.stop(1)
 	}
-	regular_cache, bold_cache = font.regular, font.bold
+	// The glyphs of this copy come from its private glyph cache: its glyph
+	// memory before the measure, so that the measure draws no glyph band
+	// by band.
+	if !display.text_memory_reserve() {
+		system.log(.Warning, "interface_font: this process has no glyph memory: each glyph is drawn band by band")
+	}
 	// The places from the font files, at the text sizes of the scales 1
-	// and 3; display.interface_font_open gave the caches only with both
-	// faces open.
+	// and 3; display.interface_font_open gave the faces only with both
+	// open.
 	spacing_ok: [3]bool
 	regular_spacing, spacing_ok[0] = text_rendering.spacing_of(.Interface, text_rendering.size_of_scale(1))
 	regular_spacing_large, spacing_ok[1] = text_rendering.spacing_of(.Interface, text_rendering.size_of_scale(3))
@@ -352,9 +362,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	no_pair_spacing_large.without_pairs = true
 	greek_lines_make()
 	measure()
-	system.log(.Info, "interface_font: one line of ", u64(len(PARAGRAPH[1])), " characters in B612 at scale 1 (the least of 50 batches): shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; the caches of ", regular_cache.header.file_size, " and ", bold_cache.header.file_size, " bytes, from the boot image")
+	system.log(.Info, "interface_font: one line of ", u64(len(PARAGRAPH[1])), " characters in B612 at scale 1 (the least of 50 batches): shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; its first draw, each glyph from its outline: ", first_drawing_time, " ns")
 	draw(&window)
-	system.log(.Info, "interface_font: ok, B612 Regular and Bold, ", u64(regular_cache.header.pair_count), " and ", u64(bold_cache.header.pair_count), " pairs")
+	system.log(.Info, "interface_font: ok, B612 Regular and Bold, ", u64(text_rendering.state.fonts[.B612].pairs.count), " and ", u64(text_rendering.state.fonts[.B612_Bold].pairs.count), " pairs")
 	for {
 		// The input of the window: each event gives a frame.
 		list: system.Wait

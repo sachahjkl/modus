@@ -59,8 +59,9 @@ Budget_Exception :: struct {
 budget_exceptions := [?]Budget_Exception {
 	// It maps 64 MiB of large pages and two ranges of 1 GiB with their page
 	// tables: the test of the address space needs them, and no other
-	// process asks for that much.
-	{name = "address_space", largest = {pages = 41984}},
+	// process asks for that much. And its window draws its text, whose
+	// glyph memory is 354 pages more.
+	{name = "address_space", largest = {pages = 42338}},
 	// Its cases reach the limit of processor time: a small limit makes
 	// them short.
 	{name = "limits", processor = 1_500_000},

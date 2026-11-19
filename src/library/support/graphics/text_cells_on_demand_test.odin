@@ -74,17 +74,17 @@ cell_ink_count :: proc(pixels: []Color, width, left, scale: int) -> (inside, out
 	return inside, outside
 }
 
-// A cell past the glyph cache draws its glyph from the fallback chain of
-// the cells, with the blend of each cell, into the private glyph cache of
-// the process. First what draws the replacement glyph: no outlines open, a
-// character that no font has, and the setting Spleen. Then the glyph of
-// 'A' that the private glyph cache draws gives the pixels of 'A' from the
-// glyph cache of cells of the same font file, at each scale, so a cell
-// does not depend on which of the two drew it. Last, a box-drawing
-// character of Paper Mono and a Greek letter of B612, the second font of
-// the chain, each stay in their cell.
+// A cell draws its glyph from the face of the cells, with the blend of
+// each cell, into the private glyph cache of the process. First what draws
+// the replacement glyph: no outlines open, a character that no font has,
+// and the setting Spleen with a character that Spleen lacks. Then 'A' from
+// the face of the cells gives the pixels of 'A' from a glyph cache that the
+// build of the same font file draws, at each scale: the pixels of the
+// glyph caches that left the boot image. Last, a box-drawing character of
+// Paper Mono and a Greek letter of B612, the second font of the chain,
+// each stay in their cell.
 @(test)
-a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
+a_cell_of_a_face_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
 	defer sync.mutex_unlock(&fallback_test_lock)
 	defer text_rendering.state = {}
@@ -104,7 +104,7 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 
 	saved := text_state
 	defer text_state = saved
-	testing.expect_value(t, text_cache_use(cache).kind, glyph_cache.Problem_Kind.None)
+	text_state_start()
 	WIDTH :: 3 * CELL_WIDTH * 3
 	HEIGHT :: CELL_HEIGHT * 3
 	built_pixels, fallback_pixels: [WIDTH * HEIGHT]Color
@@ -131,6 +131,7 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 			words = fallback_open_for_test(t)
 			text_choice_set(.Spleen, .Red_Green_Blue)
 		}
+		text_faces_use(.Cells, .Cells_Bold)
 		clear(built, DARK_CARD_BOTTOM)
 		clear(drawn, DARK_CARD_BOTTOM)
 		character_replacement(built, CELL_WIDTH, 0, DARK_TEXT, 1)
@@ -140,20 +141,32 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	}
 	text_choice_set(.Vector, .Red_Green_Blue)
 
-	// 'A' from the private glyph cache and from the glyph cache of cells.
+	// 'A' from the face of the cells and from the glyph cache of the build.
 	words := fallback_open_for_test(t)
 	defer delete(words)
+	text_faces_use(.Cells, .Cells_Bold)
 	text_rendering.frame_begin()
 	testing.expect_value(t, cell_face(), text_rendering.Face.Cells)
 	for scale in 1 ..= 3 {
 		clear(built, DARK_CARD_BOTTOM)
 		clear(drawn, DARK_CARD_BOTTOM)
-		text_scaled(built, CELL_WIDTH * scale, 0, "A", DARK_TEXT, scale)
-		testing.expectf(t, face_glyph_draw(.Cells, 'A', text_rendering.size_of_scale(scale), 0, &text_state.square_root, &text_state.blend_tables, text_state.order, drawn, CELL_WIDTH * scale, 0, DARK_TEXT, OPAQUE), "scale %v: the private glyph cache draws A", scale)
+		character_vector_with(&cache, &text_state.square_root, &text_state.blend_tables, text_state.order, built, CELL_WIDTH * scale, 0, 'A', DARK_TEXT, scale)
+		text_scaled(drawn, CELL_WIDTH * scale, 0, "A", DARK_TEXT, scale)
 		_, _, source := text_rendering.glyph(.Cells, 'A', text_rendering.size_of_scale(scale), 0)
 		testing.expect_value(t, source, text_rendering.Glyph_Source.Private_Cache)
-		testing.expectf(t, built_pixels == fallback_pixels, "scale %v: the private cell has the pixels of the glyph cache", scale)
+		testing.expectf(t, built_pixels == fallback_pixels, "scale %v: the cell of the face has the pixels of the glyph cache", scale)
 	}
+	// A face that the outlines do not open, and a proportional face, are
+	// not faces of the cells: the text is Spleen, and the titles the
+	// regular weight.
+	text_faces_use(.None, .Interface_Bold)
+	testing.expect_value(t, text_state.cell_face, text_rendering.Face.None)
+	testing.expect_value(t, text_state.bold_face, text_rendering.Face.None)
+	testing.expect(t, !text_vector_drawn())
+	text_faces_use(.Interface, .Cells_Bold)
+	testing.expect_value(t, text_state.cell_face, text_rendering.Face.None)
+	testing.expect_value(t, text_state.bold_face, text_rendering.Face.Cells_Bold)
+	text_faces_use(.Cells, .Cells_Bold)
 
 	// ═ of Paper Mono and α of B612: each from the private glyph cache, and
 	// each in its cell.

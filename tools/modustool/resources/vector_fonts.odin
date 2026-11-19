@@ -19,33 +19,21 @@ import "modustool:foundation"
 // the glyph .notdef, each glyph a simple glyph with no hinting
 // instructions. A font that lacks one of them is refused. The subsets of
 // the regular weight of the interface font and of the two weights of the
-// font of the cells also hold characters past the glyph cache, which each
-// process draws from the outlines into its private glyph cache
-// (past_cache_characters_of), after the others, so the glyphs of
-// their glyph caches do not change; the hash of the font file in the
-// header of each cache does. The
-// subsets are in the repository, as the output of the command "font" is:
-// a build does not need the build inputs. The command also writes
-// build/fonts/candidates.png, the picture of the choice, from the same
-// renderer as the system.
+// font of the cells also hold characters past these
+// (past_cache_characters_of), after the others, so the glyphs of the 192
+// characters keep their indices. The subsets are in the repository, as the
+// output of the command "font" is: a build does not need the build inputs.
+// The command also writes build/fonts/candidates.png, the picture of the
+// choice, from the same renderer as the system.
 //
-// The build makes the glyph caches of the default font and of the interface font, and
-// the font outlines (build_glyph_caches): the boot image holds them as resources.
+// The build makes the font outlines (font_outlines_write): the boot image
+// holds them as its one resource of the text, and each process draws each
+// glyph of its text from them.
 
 VECTOR_FONT_SOURCES_VARIABLE :: "VECTOR_FONT_SOURCES"
 VECTOR_FONT_FOLDER :: "resources/fonts"
 VECTOR_FONT_BUILD_FOLDER :: foundation.BUILD_FOLDER + "/fonts"
-GLYPH_CACHE_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/glyph_cache.bin"
-GLYPH_CACHE_RESOURCE :: "glyph_cache"
-GLYPH_CACHE_WITHOUT_GRID_FIT_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/glyph_cache_no_grid_fit.bin"
-GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE :: "glyph_cache_no_grid_fit"
-GLYPH_CACHE_BOLD_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/glyph_cache_bold.bin"
-GLYPH_CACHE_BOLD_RESOURCE :: "glyph_cache_bold"
 CANDIDATES_PICTURE :: VECTOR_FONT_BUILD_FOLDER + "/candidates.png"
-INTERFACE_GLYPH_CACHE_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/interface_glyph_cache.bin"
-INTERFACE_GLYPH_CACHE_BOLD_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/interface_glyph_cache_bold.bin"
-INTERFACE_GLYPH_CACHE_RESOURCE :: "interface_glyph_cache"
-INTERFACE_GLYPH_CACHE_BOLD_RESOURCE :: "interface_glyph_cache_bold"
 
 // The default font of the system: one line to change (docs/FONTS.md, "The
 // font file").
@@ -165,8 +153,7 @@ run_vector_fonts :: proc(args: []string) -> int {
 			fmt.printfln("modustool: %s has no single substitution of the feature zero for '0': its subset keeps the zero of the font", candidate.name)
 		}
 	}
-	_, interface_written := interface_glyph_caches_write()
-	if !candidates_picture_write() || !interface_written {
+	if !candidates_picture_write() {
 		return foundation.EXIT_FAILURE
 	}
 	fmt.printfln("modustool: the subsets are in %s, the picture of the choice is %s", VECTOR_FONT_FOLDER, CANDIDATES_PICTURE)
@@ -759,7 +746,8 @@ append_u32 :: proc(out: ^[dynamic]u8, value: u32) {
 
 // glyph_cache_of draws the characters of a glyph cache of a font file at the three
 // scales of the grid, and gives the glyph cache file (src/library/contract/glyph_cache),
-// in memory aligned on 8 bytes.
+// in memory aligned on 8 bytes: the picture of the candidates draws each
+// candidate from it. No glyph cache is a resource of the boot image.
 glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scale_count := 3) -> (cache: []u8, ok: bool) {
 	font, problem := vector_font.font_open(font_bytes)
 	memory := new(vector_font.Render_Memory, context.temp_allocator)
@@ -782,47 +770,19 @@ glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scal
 	return out[:size], true
 }
 
-// build_glyph_caches writes the glyph caches of the default font, with the
-// grid fit and without it, and of its bold weight at scale 1, and gives
-// them as resources of the boot image. The setting "grid_fit" of the
-// system chooses one of the first two at run time.
-build_glyph_caches :: proc() -> (resources: [6]Resource_File, ok: bool) {
-	foundation.make_folder(VECTOR_FONT_BUILD_FOLDER)
-	builds := [3]struct {
-		font:         string,
-		grid_fit:     bool,
-		scale_count:  int,
-		output, name: string,
-	}{{DEFAULT_VECTOR_FONT, true, 3, GLYPH_CACHE_OUTPUT, GLYPH_CACHE_RESOURCE}, {DEFAULT_VECTOR_FONT, false, 3, GLYPH_CACHE_WITHOUT_GRID_FIT_OUTPUT, GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE}, {EMPHASIS_VECTOR_FONT, true, 1, GLYPH_CACHE_BOLD_OUTPUT, GLYPH_CACHE_BOLD_RESOURCE}}
-	for build, index in builds {
-		font := foundation.read_file(foundation.join(VECTOR_FONT_FOLDER, "/", build.font, ".ttf")) or_return
-		cache := glyph_cache_of(font, build.font, build.grid_fit, build.scale_count) or_return
-		if err := os.write_entire_file(build.output, cache); err != nil {
-			fmt.eprintfln("modustool: cannot write %s: %v", build.output, err)
-			return {}, false
-		}
-		resources[index] = {name = build.name, path = build.output}
-	}
-	// The two caches of the interface font (docs/FONTS.md, section 12).
-	interface_resources := interface_glyph_caches_write() or_return
-	resources[3], resources[4] = interface_resources[0], interface_resources[1]
-	// The font outlines: the files of the four caches, from which each
-	// process draws the glyphs past them (docs/FONTS.md, "13. Glyphs past
-	// the glyph cache").
-	resources[5] = font_outlines_write() or_return
-	return resources, true
-}
-
 FONT_OUTLINES_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/font_outlines.bin"
 
 // The fonts of the resource of the outlines, by the names that
-// text_rendering.outline_font_name gives: the files of the glyph caches.
+// text_rendering.outline_font_name gives: the fonts of the faces.
 FONT_OUTLINES_FONTS :: [?]string{INTERFACE_VECTOR_FONT, INTERFACE_EMPHASIS_VECTOR_FONT, DEFAULT_VECTOR_FONT, EMPHASIS_VECTOR_FONT}
 
 // font_outlines_write writes the resource of the font outlines from the
 // subsets in resources/fonts, checks it with the reader of the modules,
-// and gives it as a resource of the boot image.
+// and gives it as a resource of the boot image: the one resource of the
+// text, from which each process draws each glyph of its text
+// (docs/FONTS.md, "14. Text at any size").
 font_outlines_write :: proc() -> (resource: Resource_File, ok: bool) {
+	foundation.make_folder(VECTOR_FONT_BUILD_FOLDER)
 	names := FONT_OUTLINES_FONTS
 	fonts: [len(names)]font_outlines.Font_Input
 	for name, index in names {
@@ -851,46 +811,3 @@ font_outlines_write :: proc() -> (resource: Resource_File, ok: bool) {
 	return {name = font_outlines.RESOURCE_NAME, path = FONT_OUTLINES_OUTPUT}, true
 }
 
-// The subpixel positions of the caches of the interface font, for each
-// scale (docs/FONTS.md, section 12.4): three at scale 1, one at the scales
-// 2 and 3; the bold weight at scale 1 only, for the titles.
-INTERFACE_POSITIONS := [3]int{3, 1, 1}
-INTERFACE_BOLD_POSITIONS := [1]int{3}
-
-// interface_glyph_caches_write draws the two glyph caches of the interface
-// font from its subsets, checks them with the reader of the modules (so a
-// resource is never shorter than its header, and states its own size), and
-// writes them with their sizes: the two resources of the boot image of the
-// interface font.
-interface_glyph_caches_write :: proc() -> (resources: [2]Resource_File, ok: bool) {
-	builds := [2]struct {
-		font, output, name: string,
-		positions:          []int,
-	}{{INTERFACE_VECTOR_FONT, INTERFACE_GLYPH_CACHE_OUTPUT, INTERFACE_GLYPH_CACHE_RESOURCE, INTERFACE_POSITIONS[:]}, {INTERFACE_EMPHASIS_VECTOR_FONT, INTERFACE_GLYPH_CACHE_BOLD_OUTPUT, INTERFACE_GLYPH_CACHE_BOLD_RESOURCE, INTERFACE_BOLD_POSITIONS[:]}}
-	for build, index in builds {
-		font_bytes := foundation.read_file(foundation.join(VECTOR_FONT_FOLDER, "/", build.font, ".ttf")) or_return
-		font, problem := vector_font.font_open(font_bytes)
-		memory := new(vector_font.Render_Memory, context.temp_allocator)
-		words := make([]u64, vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT / 8, context.temp_allocator)
-		out := ([^]u8)(raw_data(words))[:vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT]
-		size := 0
-		if problem == .None {
-			size, problem = vector_font.glyph_cache_build_proportional(&font, font_bytes, build.font, true, memory, out, build.positions)
-		}
-		if problem != .None {
-			fmt.eprintfln("modustool: the interface font %s: %s", build.font, vector_font.font_problem_names[problem])
-			return {}, false
-		}
-		if _, refused := glyph_cache.validate(out[:size]); refused.kind != .None {
-			fmt.eprintfln("modustool: the glyph cache of %s is refused: %s", build.font, glyph_cache.problem_sentences[refused.kind])
-			return {}, false
-		}
-		if err := os.write_entire_file(build.output, out[:size]); err != nil {
-			fmt.eprintfln("modustool: cannot write %s: %v", build.output, err)
-			return {}, false
-		}
-		fmt.printfln("modustool: the glyph cache of %s with the positions %v: %d bytes, in %s", build.font, build.positions, size, build.output)
-		resources[index] = {name = build.name, path = build.output}
-	}
-	return resources, true
-}

@@ -1,9 +1,7 @@
 package interface
 
 import "modus:contract/draw_record"
-import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
-import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/text_rendering"
 
@@ -68,18 +66,9 @@ font_in_use :: proc "contextless" (table: ^Draw_Table, font: Font, text_length: 
 	return used
 }
 
-// interface_cache_of gives the cache of the interface font that draws a
+// interface_face_of gives the face of the interface font that draws a
 // weight at a scale: the bold weight has scale 1 only; at another scale it
 // is the regular weight, as in the font of the cells.
-interface_cache_of :: proc "contextless" (caches: ^display.Interface_Font, font: Font) -> ^glyph_cache.Cache {
-	if font.weight == .Bold && font_scale(font) == 1 {
-		return &caches.bold
-	}
-	return &caches.regular
-}
-
-// interface_face_of gives the face of the interface font that draws a
-// weight at a scale: the bold weight has scale 1 only, as its cache.
 interface_face_of :: proc "contextless" (font: Font) -> text_rendering.Face {
 	if font.weight == .Bold && font_scale(font) == 1 {
 		return .Interface_Bold

@@ -81,9 +81,9 @@ Private_Cache :: struct {
 
 // The glyph memory of a copy: the private glyph cache and the memory of the
 // rasterizer, about 1.4 MiB. It is no global: a process receives it at the
-// first glyph that needs it (memory_give), so a copy that never draws a
-// glyph past the glyph caches pays nothing for it. It starts all zero, as
-// the pages of a new memory object do.
+// first glyph that it draws (memory_give), so a copy that only measures
+// pays nothing for it. It starts all zero, as the pages of a new memory
+// object do.
 Glyph_Memory :: struct {
 	cache:  Private_Cache,
 	raster: Raster_Memory,
