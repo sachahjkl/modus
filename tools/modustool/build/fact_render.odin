@@ -190,13 +190,24 @@ fact_line_render :: proc(catalog: ^Fact_Catalog, text: string) -> (sentence: str
 // returned as it is.
 FACT_LINE_MARK :: "] #"
 
+// A line of a fact that fact_lines_render rendered: its place in the
+// rendered text, the process of its head and its fields. A step of a
+// machine test waits for a fact by these, not by its sentence: two fact
+// types can render one sentence.
+Fact_Line_Place :: struct {
+	start, end: int, // The bytes of the rendered line, its end of line included, from the start of the text that was rendered.
+	process:    string, // The name in the head of the line, in the allocator of the list.
+	line:       Fact_Line,
+}
+
 // fact_lines_render gives the text of a log with the line of each fact
 // rendered: "[name] " then the sentence, and the end of the line as it is,
 // and the count of the lines that it rendered. A line that
 // fact_line_render does not render stays raw. The same lines give the same
 // text, so a place in the text of one read is the same place in the next
-// one, and the lines after a place render alone.
-fact_lines_render :: proc(catalog: ^Fact_Catalog, text: string) -> (rendered_text: string, fact_lines: int) {
+// one, and the lines after a place render alone. places, when it is not
+// nil, receives the place of each rendered line.
+fact_lines_render :: proc(catalog: ^Fact_Catalog, text: string, places: ^[dynamic]Fact_Line_Place = nil) -> (rendered_text: string, fact_lines: int) {
 	if !strings.contains(text, FACT_LINE_MARK) {
 		return text, 0
 	}
@@ -210,10 +221,17 @@ fact_lines_render :: proc(catalog: ^Fact_Catalog, text: string) -> (rendered_tex
 		mark := strings.index(body, FACT_LINE_MARK)
 		if mark > 0 && body[0] == '[' && strings.index_byte(body[:mark], ']') < 0 {
 			if sentence, rendered := fact_line_render(catalog, body[mark + 2:]); rendered {
+				start := strings.builder_len(builder)
 				strings.write_string(&builder, body[:mark + 2])
 				strings.write_string(&builder, sentence)
 				strings.write_string(&builder, line[len(body):])
 				fact_lines += 1
+				if places != nil {
+					// fact_line_render read the same text: it parses.
+					parsed, _ := fact_line_parse(body[mark + 2:])
+					process := strings.clone(body[1:mark], places.allocator)
+					append(places, Fact_Line_Place{start = start, end = strings.builder_len(builder), process = process, line = parsed})
+				}
 				continue
 			}
 		}

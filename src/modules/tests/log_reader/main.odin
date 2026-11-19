@@ -437,12 +437,15 @@ LOG_ARGUMENT_FORM :: 6
 // The log fact of this process. The machine test waits for its sentence,
 // which the tool writes on the host from the fields of the record, with
 // the template of the fact table of this module
-// (src/md/features/log_facts.md, "The serial port").
-@(log_fact = "log_reader: a log fact with the value {value}, the mark {mark} and the number {number}")
+// (src/md/features/log_facts.md, "The serial port"). A step of the machine
+// test also waits for the fact by its fields, and the console reads it with
+// facts(): no field has the name of a column of the head of a row of facts()
+// (number, time, process, level), which facts() refuses.
+@(log_fact = "log_reader: a log fact with the value {value}, the mark {mark} and the number {probe_number}")
 Fact_Probe :: struct {
-	value:  u64,
-	mark:   value_kinds.Hexadecimal_32,
-	number: u32,
+	value:        u64,
+	mark:         value_kinds.Hexadecimal_32,
+	probe_number: u32,
 }
 FACT_VALUE :: 42
 FACT_MARK :: 0x4C4F_4746 // "LOGF" in ASCII: a hexadecimal field shows it as 0x4c4f4746.
@@ -561,7 +564,7 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 			return "the operation Log refused a fact at an edge that it takes"
 		}
 	}
-	system.log_fact(.Info, Fact_Probe{value = FACT_VALUE, mark = FACT_MARK, number = FACT_NUMBER})
+	system.log_fact(.Info, Fact_Probe{value = FACT_VALUE, mark = FACT_MARK, probe_number = FACT_NUMBER})
 	written, read_written := own_record_count(connection, file, records_export)
 	amounts_written, amounts_read_written := system.budget_read()
 	_, refused_written := system.budget_used()
@@ -612,7 +615,7 @@ fact_rows_check :: proc "contextless" (connection: ^system.Call_Connection, file
 		{form = .Fact, key = FACT_BODY_KEY, value_count = op.LOG_FACT_VALUE_CAPACITY, values = fact_body.values},
 		{form = .Fact, key = transmute(u64)typeid_of(Fact_Probe), module_hash = own_module_hash, value_count = size_of(Fact_Probe)},
 	}
-	probe := Fact_Probe{value = FACT_VALUE, mark = FACT_MARK, number = FACT_NUMBER}
+	probe := Fact_Probe{value = FACT_VALUE, mark = FACT_MARK, probe_number = FACT_NUMBER}
 	copy(expected[2].values[:], ([^]u8)(&probe)[:size_of(Fact_Probe)])
 	zero_hash: [32]u8
 	if own_module_hash == zero_hash {

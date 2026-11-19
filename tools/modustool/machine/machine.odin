@@ -137,6 +137,14 @@ Step_Kind :: enum {
 	Monitor, // Send the line text to the QEMU monitor, as it is (for example "nmi": a non-maskable interrupt to each processor).
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool takes the name that the system wrote in a frame, or names a frame "module + offset" from the debug object of its module, and the names start with `names`.
 	Record, // A log record with the process `process`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place. A later step names the number of the record that it found with {record} (RECORD_MARK) in its text.
+	// The line of a log fact of the fact type `fact` ("log_reader.Fact_Probe"),
+	// written by the process `process`, whose fields pass `condition`
+	// ("value = 42", the form of a condition of `where`; "": any values),
+	// after the text of the last Wait. The tool reads the fields of the
+	// line, not its sentence, and checks the step against the fact tables
+	// of the build before the machine starts (fact_steps.odin). With
+	// any_order, the next Wait searches from the same place.
+	Fact,
 	Agree, // The process `text`: the mapped pages and the threads that inspect.mappings() and inspect.threads() give are the ones that monitor.processes() gives (two tools, two reports of the kernel).
 	// The disk that the tool serves will lose its power at a write of a
 	// root: after `commits` writes of a root and a seeded 1 to 40 more,
@@ -201,7 +209,9 @@ Step :: struct {
 	rows_call:  string, // For Call: a call whose Integer result is the count of rows of the Table.
 	lose:       int, // For Call: the peer drops this many datagrams of `remote` to the host; QUIC sends them again, and monitor.served() shows that the call ran one time.
 	wrong_hash: bool, // For Call: the request names another hash of the module.
-	process:    string, // For Record: the process that wrote the record.
+	process:    string, // For Record and Fact: the process that wrote the record.
+	fact:       string, // For Fact: the fact type, "package.Type".
+	condition:  string, // For Fact: a condition on one field of the fact type, "value = 42", or "".
 	level:      string, // For Record: Info, Debug, Warning or Error, the member of Log_Level that the row of log.records gives.
 	pointer:    bool, // For Call: when the call has its result, the tool confirms each place of the pointer from now on (pointer_confirm).
 	repeat:     int, // For Call: the calls of the measure of the round trip.
@@ -2577,8 +2587,12 @@ scenario := [?]Step {
 	// its error record and writes no record. Then the log fact of
 	// log_reader, whose serial line is bytes: the tool writes its sentence
 	// from its fields with the template of the module file (fact_render.odin).
+	// The step Fact waits for the same line by its fact type and a field,
+	// not by its sentence: the tool checked the step against the fact table
+	// of log_reader before the machine started (fact_steps.odin).
 	{kind = .Wait, text = "[log_reader] log_reader: Log refused 11 wrong facts, each with its status and its error record: the form word, a run, the length below the head and past the whole fact, an address that the process cannot read, and the level; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = " records, and the budget the same log records and the same refused count: as it must"},
+	{kind = .Fact, process = "log_reader", fact = "log_reader.Fact_Probe", condition = "value = 42", any_order = true},
 	{kind = .Wait, text = "[log_reader] log_reader: a log fact with the value 42, the mark 0x4c4f4746 and the number 7", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
@@ -2589,6 +2603,17 @@ scenario := [?]Step {
 	// log_reader after it, then the stop that the root service writes. The
 	// earlier records of the run are gone from the whole log.
 	{kind = .Record, process = "log_reader storm", level = "Info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
+	// The console reads the fact of log_reader as a row of a table, by its
+	// fields: facts() reads its values through log.fact_records, and where
+	// takes a field of the fact type, which the console checks before the
+	// call. The rows of log.records start at the last record of the storm,
+	// so they fit in the call region of the console; the whole log, from
+	// 0, does not. Of the three facts after the storm, two have no module
+	// of the image, and one is a Fact_Probe.
+	{kind = .Type, text = "connect(\"log\")"},
+	{kind = .Wait, text = "[console]   module     log"},
+	{kind = .Type, text = "log.records({record}) |> facts(log_reader.Fact_Probe) |> where(value = 42)"},
+	{kind = .Wait, text = "[console] 1 row of Fact_Probe"},
 	{kind = .Record, process = "log_reader", level = "Info", text = "log_reader: ok"},
 	{kind = .Record, process = "root", level = "Info", text = "root: log_reader stopped with code 0"},
 	{kind = .Type, text = "start(\"log_reader\")"},
@@ -2612,6 +2637,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a text of 0 bytes, of 1 byte and of 4096 bytes in 1, 1 and 25 records, a text at the level Error, a text with 32 runs that keeps 8, and one byte on the last byte of a page: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log refused 11 wrong facts, each with its status and its error record: the form word, a run, the length below the head and past the whole fact, an address that the process cannot read, and the level; the own log ring kept the same ", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = " records, and the budget the same log records and the same refused count: as it must"},
+	// A hexadecimal field, with the form of its sentence.
+	{kind = .Fact, process = "log_reader", fact = "log_reader.Fact_Probe", condition = "mark = 0x4c4f4746", any_order = true},
 	{kind = .Wait, text = "[log_reader] log_reader: a log fact with the value 42, the mark 0x4c4f4746 and the number 7", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
@@ -3748,6 +3775,7 @@ Machine :: struct {
 	fact_catalog: ^build.Fact_Catalog, // The module files whose log facts log_read renders; nil until the log holds a fact.
 	fact_rendered: [dynamic]u8, // The log with the sentence of each fact, up to fact_raw_length bytes of the file: each read renders only the lines after it.
 	fact_raw_length: int, // The bytes of the file of the log that fact_rendered covers.
+	fact_lines: [dynamic]build.Fact_Line_Place, // The place, the process and the fields of each rendered line of a fact of fact_rendered, in order: the step Fact reads them.
 	fact_render_time: time.Duration, // The time of the renders: a measure.
 	fact_render_lines: int, // The lines of facts that log_read rendered.
 	fact_render_reads: int, // The reads of the log that rendered new lines.
@@ -4013,15 +4041,25 @@ log_read :: proc(machine: ^Machine) -> string {
 		machine.fact_catalog = machine_fact_catalog()
 		machine.fact_catalog_time = time.tick_since(catalog_started)
 		machine.fact_rendered = make([dynamic]u8, runtime.heap_allocator())
+		machine.fact_lines = make([dynamic]build.Fact_Line_Place, runtime.heap_allocator())
 	}
 	if len(text) < machine.fact_raw_length {
 		// A new file of the same name: nothing kept holds for it.
 		clear(&machine.fact_rendered)
+		fact_lines_forget(machine)
 		machine.fact_raw_length = 0
 	}
 	if len(text) > machine.fact_raw_length {
 		render_started := time.tick_now()
-		chunk, fact_lines := build.fact_lines_render(machine.fact_catalog, text[machine.fact_raw_length:])
+		rendered_before := len(machine.fact_rendered)
+		places_before := len(machine.fact_lines)
+		chunk, fact_lines := build.fact_lines_render(machine.fact_catalog, text[machine.fact_raw_length:], &machine.fact_lines)
+		// The render places a line from the start of the text that it was
+		// given: the kept log holds the lines before it.
+		for place_index in places_before ..< len(machine.fact_lines) {
+			machine.fact_lines[place_index].start += rendered_before
+			machine.fact_lines[place_index].end += rendered_before
+		}
 		append(&machine.fact_rendered, chunk)
 		machine.fact_raw_length = len(text)
 		machine.fact_render_time += time.tick_since(render_started)
@@ -4266,6 +4304,11 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	volume, output, exit_status := options.volume, options.output, options.exit_status
 	data_disk := options.data_disk != "" ? options.data_disk : part.data_disk
 	firmware, tpm_device := options.firmware, options.tpm_device
+	// A scenario that cannot pass is refused before its machine starts,
+	// with the cause of each fault, not at the end of a bound.
+	if !scenario_check_before_start(steps) {
+		return false
+	}
 	machine_test_started := time.tick_now()
 	// The software TPM runs before QEMU and ends after it, with a folder of
 	// its own for each machine, and a state of its own unless the machines
@@ -4458,6 +4501,8 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	if machine.fact_catalog != nil {
 		fmt.printfln("modustool: measure: the tool wrote the sentences of %d lines of log facts of %s in %d us, over %d reads of the log, each read rendering only its new lines; the catalog of %d module files took %d us", machine.fact_render_lines, output, i64(machine.fact_render_time / time.Microsecond), machine.fact_render_reads, len(machine.fact_catalog.modules), i64(machine.fact_catalog_time / time.Microsecond))
 		delete(machine.fact_rendered)
+		fact_lines_forget(&machine)
+		delete(machine.fact_lines)
 	}
 	os.close(monitor_write)
 	os.close(monitor_read)
@@ -4534,10 +4579,6 @@ remote_key_problem :: proc(steps: []Step) -> string {
 }
 
 scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
-	if problem := remote_key_problem(steps); problem != "" {
-		fmt.eprintfln("modustool: test failed: the scenario is refused before it runs: %s", problem)
-		return false
-	}
 	peer_case_started := 0 // The number of the case of the last step Peer_Start.
 	first_wait := true // The first Wait of the machine is its boot: BOOT_HANG_BOUND.
 	generation_base: i64 = -1 // The number that the last step Generation read; -1: none.
@@ -4984,6 +5025,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool:     the rows (number:continues): %s", strings.to_string(compact))
 				return false
 			}
+		case .Fact:
+			fact_step_run(machine, index, step) or_return // fact_steps.odin
 		case .Agree:
 			// The process list of the monitor, and the reports of inspect. The
 			// monitor reads the processes of the machine at its own rhythm: a

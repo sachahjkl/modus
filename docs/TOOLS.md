@@ -144,6 +144,31 @@ The tool reads each call of `system.log_fact` in the sources that the compiler r
 
 `modustool test descriptions` compares the table `Facts` of each module with its sources, and prints one line for each fact type: "the log fact log_reader.Fact_Probe of log_reader, key <key>, comes from its source". The host tests of `tools/modustool/build` (`facts_test.odin`) give each refused form and check the refusal.
 
+### The step of a log fact
+
+A step `Fact` of a scenario waits for a log fact by its fact type, its process and a condition on one field, not by its sentence:
+
+```odin
+{kind = .Fact, process = "log_reader", fact = "log_reader.Fact_Probe", condition = "value = 42"},
+```
+
+- **The fact type** is the package name and the record name, as the writer declares it, and as the console names it in `facts(...)`.
+- **The condition** has the form of the condition of `where` in the console (`docs/CONSOLE.md`, "Conditions"): a field, an operator (`=`, `!=`, `<`, `<=`, `>`, `>=`) and a value. The value is an Integer (`42`, `-1`, `0x4c4f4746`), a Text in quotes, or the name of a member for a status. The console and the tool read and check it with one package, `console_condition`, so a condition has one set of refusals and one sentence for each. An empty condition takes any values.
+- **What matches.** The tool reads the raw line of each fact that it renders, and keeps its place in the rendered log, the process of its head and its value bytes. The step passes at the first line after the place of the last `Wait` whose process is the process of the step, whose module hash and fact key are those of the fact type in a module of the build, and whose values pass the condition. With `any_order`, the next `Wait` searches from the same place. Two fact types that render the same sentence are two facts for the step.
+
+**The check before the machine starts.** Before a machine starts, the tool reads each step `Fact` of its scenario against the tables `Facts` of the module files of the build, and stops with one line for each refused step, its number and its cause:
+
+- a step with no process;
+- a name that is not a package name, a dot and a record name;
+- a fact type that no module of the build writes, with the fact types of the same package, or each fact type when the package has none;
+- a condition with no field, no operator, `==` or a `!` alone, or no value;
+- a field that the fact type does not have, with its fields;
+- an order on a Text or a status, and any operator on a Bytes field;
+- a value of another kind than the field, a negative value for an unsigned field, a value that the field cannot hold, a name of no member for a status;
+- a value that is neither an Integer nor a Text in quotes, and text after the value.
+
+A renamed fact type or field then fails before the boot, with its cause, not at the bound of a hang. The same check refuses a call of `remote` with no step `Remote_Key` before it. The host tests of `tools/modustool/build` (`fact_step_test.odin`) give each refusal and check its cause and its sentence; those of `tools/modustool/machine` (`fact_steps_test.odin`) check one line for each refused step.
+
 ### The serial port and the log limit
 
 The operation `Log` writes the records of the log only. The serial writer (`glossary/running_code.md`) prints them on the serial port after it: at each tick, a processor prints the lines of the records that the serial port does not have yet, in their order, for at most 100 µs, and only while the device takes bytes. Its time is charged to no budget. A processor that waits for a lock more than 1 s prints them too. So a `Log` never waits for the lines of other processes, and a hang of one processor does not silence the others. Before the first tick, each writer of a record prints it at once; before the machine stops, the kernel prints each record that is left; a report of a fault of the kernel prints them before its own lines. When the log wrote over records before the drain printed them, the serial port gets "kernel: <count> records of the log did not reach the serial port", and each scenario of the tool fails at once on that line, and once more on the whole log after the machine ends. A processor with nothing to run drains too, before its idle wait, at the rate of the port, with a window for interrupts after each byte: on a machine with an idle processor the serial port lags the log only by the rate of the port. A machine whose processors are all busy drains at the ticks only, and lags: a test that acts on the moment of a line under load must wait for a state instead. The first drains that wrote 64 KiB together write their measured rate once: "kernel: the drain of the serial port wrote <size> in <time> of port writes: <rate> bytes each second while it writes; <count> bytes in the idle loop, at that rate, and <count> at the ticks, at most <rate> each second for one busy processor". After the flush before the machine stops, the serial port gets the largest lag of a line in the run, from the time of its record to the write of its end on the port: "kernel: the largest lag of a line of the log on the serial port: <time> us". No test asserts either. In a flood, the processes write faster than the device keeps: the serial port then loses lines, and says how many.

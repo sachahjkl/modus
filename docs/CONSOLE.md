@@ -200,15 +200,16 @@ error: where: the field level holds a member of Log_Level, and a member is a nam
 ```
 > connect("log")
 > log.records(0) |> facts(log_reader.Fact_Probe)
-> log.records(0) |> facts(log_reader.Fact_Probe) |> where(number = 7)
+> log.records(0) |> facts(log_reader.Fact_Probe) |> where(probe_number = 7)
 ```
 
 - **The fact name is a name**, the package that declares the record type, a dot, and the record type, as the writer declares it. The console finds it in the fact tables of the module files of the boot image, and refuses before any call a name that none holds, with the fact names of the same package, or each fact name when the package has none. The completion list offers the fact names inside `facts(`, and the record types of a package after its dot.
 - **The values** come from `log.fact_records`, which the console calls itself: a fact record has no text, and its row of `log.records` has an empty text.
 - **One description.** Each module of the boot image that writes the fact type is read. The first one gives the description of the table; a row of another description of the same fact name is left out.
 - **The table** is a table as any other: `where` takes its fields, and `columns`, `sort`, `first` and `rows` take it.
+- **No field of a fact type has the name of a column of the head** (`number`, `time`, `process`, `level`): `where` would not know which of the two values a name means, so `facts` refuses such a fact type.
 
-Errors: a name that names no fact type; a table that is not rows of `log.records`; no connection to the service `log`.
+Errors: a name that names no fact type; a fact type with a field named as a column of the head; a table that is not rows of `log.records`; no connection to the service `log`.
 
 ### How a line composes
 

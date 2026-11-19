@@ -180,8 +180,9 @@ the_fact_keys_are_in_the_llvm_ir :: proc(t: ^testing.T) {
 // A module file of one fact type, with its record, its template and its
 // package name, for the render: the record "Probe" with an unsigned
 // Integer "value" of 8 bytes and a hexadecimal "mark" of 4 bytes and a
-// "number" of 4 bytes.
-@(private = "file")
+// "number" of 4 bytes. The tests of the step of a fact read it too
+// (fact_step_test.odin).
+@(private)
 fact_render_file :: proc(template: string, last_is_text := false) -> []u8 {
 	TABLES :: module.TABLE_COUNT
 	file := make([dynamic]u8, size_of(module.Header) + TABLES * size_of(module.Table_Entry), context.temp_allocator)
@@ -228,11 +229,11 @@ fact_render_file :: proc(template: string, last_is_text := false) -> []u8 {
 	return file[:]
 }
 
-@(private = "file")
+@(private)
 FACT_RENDER_KEY :: u64(0xfa0a_df38_a559_f4d1)
 
 // fact_render_line gives the line of a fact as the kernel writes it.
-@(private = "file")
+@(private)
 fact_render_line :: proc(hash: [module.HASH_SIZE]u8, key: u64, values: []u8) -> string {
 	fact := op.Log_Fact{module_hash = hash, key = key, value_count = u16(len(values))}
 	copy(fact.values[:], values)

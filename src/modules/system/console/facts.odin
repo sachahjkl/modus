@@ -89,7 +89,7 @@ facts_start :: proc "contextless" () {
 	// fields are names of the table: `where` takes them.
 	//
 	// ```
-	// > log.records(0) |> facts(log_reader.Fact_Probe) |> where(number = 7)
+	// > log.records(0) |> facts(log_reader.Fact_Probe) |> where(probe_number = 7)
 	// ```
 	//
 	// Errors: a name that no fact table of the boot image holds, before any
