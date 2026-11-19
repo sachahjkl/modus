@@ -812,7 +812,7 @@ build_glyph_caches :: proc() -> (resources: [6]Resource_File, ok: bool) {
 FONT_OUTLINES_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/font_outlines.bin"
 
 // The fonts of the resource of the outlines, by the names that
-// fallback_glyphs.outline_font_name gives: the files of the glyph caches.
+// text_rendering.outline_font_name gives: the files of the glyph caches.
 FONT_OUTLINES_FONTS :: [?]string{INTERFACE_VECTOR_FONT, INTERFACE_EMPHASIS_VECTOR_FONT, DEFAULT_VECTOR_FONT, EMPHASIS_VECTOR_FONT}
 
 // font_outlines_write writes the resource of the font outlines from the

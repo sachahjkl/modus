@@ -1,5 +1,7 @@
 # Glyphs past the glyph cache
 
+What changed: the package `fallback_glyphs` became the support package `text_rendering`, with the rasterizer at any text size and a larger private glyph cache keyed by glyph index and text size ([text_rendering.md](text_rendering.md), "The cache" and "The rasterizer"). The names `fallback_glyphs` and "fallback face" below are the names of that design; the face is now `text_rendering.Face`. The layers 0 and 1 are as this file says.
+
 ## Purpose
 
 The glyph caches of the boot image hold 192 characters: ASCII, the Latin-1 Supplement and the euro sign ([../data/text_encoding.md](../data/text_encoding.md)). Each character of a cache costs about 2.2 KB of drawn words in each cache, at each scale and each position. So each new character of each font makes the boot image larger.
@@ -133,11 +135,11 @@ The decisions that they made:
 ## Subtle points
 
 - **The drawing module is shared code; its cache is not shared.** The module is one file in the boot image, but the loader gives each process its own copy of its data. So a process that draws through the module has two private glyph caches: the one of the module (the draw of its frames) and the one of the process (the text that it draws itself, as the process `interface_font` does). Both are paid by the budget of that process. Both read the same outlines, so the measure in the process and the draw in the module give the same advances.
-- **The memory of a copy.** A copy reserves about 390 KiB: 256 KiB of words, the entries and the table, the blocks, and 75 KiB of render memory. The kernel gives a frame at the first use of a page, so a process that never draws a glyph past the glyph cache uses none of it, and the budget pays the reservation.
+- **The memory of a copy.** A copy carries about 25 KiB of globals: the memory of one outline and a band of one row. The glyph memory, about 1.4 MiB (the private glyph cache and the render memory), is no global: a process reserves it from its budget at the frame after its first glyph past the glyph caches, so a copy that never draws one pays nothing for it. The figures and the rule: [text_rendering.md](text_rendering.md), "The cache", and [`docs/FONTS.md`](../../../docs/FONTS.md), "14.4 The private glyph cache".
 - **One thread of a process draws at a time.** The draw changes the private glyph cache, as it changes the blend tables: the rule of the drawing module. The measure only reads the outlines, so another thread can measure.
 - **The compositor** draws its bar and its palette through the drawing module and its own code: it gets the outlines and the demand cache as each process does, and pays for its glyphs. A process never draws in the compositor.
 - **The terminal** draws its cells through the drawing module. Its first frames can come before the font service ends: a box-drawing cell is then drawn in its private glyph cache, with the bytes of the demand cache. It waits for nothing.
-- **A frame number that never moves.** A process that never calls `frame_begin` has one frame for its whole life. Its glyphs still leave by the order of their first use, and a glyph is drawn again when needed: never a wrong glyph.
+- **A frame number that never moves.** A process that never calls `frame_begin` has one frame for its whole life, and a glyph of the frame in progress is never evicted ([text_rendering.md](text_rendering.md), "The cache"). Once its cache is full, each new glyph is drawn and not kept: right pixels, more time, never a wrong glyph. Such a process also never reserves its glyph memory, since the reservation is at a frame start: it draws each glyph past the glyph caches band by band.
 - **The key holds the face, the scale and the position.** A change of the grid fit, of the scale or of the order of the stripes needs no clear: see the refused invalidation above.
 - **A glyph drawn in each process.** The same glyph is drawn once in each process that shows it: 3 to 46 µs each time, and 300 to 6 000 bytes of words in each. It is the price of no shared state.
 - **The hash of the font file names the face.** A glyph cache and a record of the outlines with one hash are the same font file. A process uses a fallback face only beside the glyph cache of its first font, and layer 1 only when the demand face names the same hash and flags.
@@ -154,7 +156,7 @@ Each step leaves a working system.
 
 ## State
 
-Built: the resource `font_outlines` and its fixed range; the package `fallback_glyphs` with the private glyph cache, the fallback faces, the chains by script and the frame of the first font; the shaper and the draws of `graphics` with it, in each process and in the drawing module; the demand cache with its four faces, drawn whole by the font service, which then ends; the root service, which maps the outlines and the demand cache with the glyph caches; the terminal and the process `interface_font` with their machine test lines; the host tests of the cache and of the measure.
+Built: the resource `font_outlines` and its fixed range; the package `fallback_glyphs`, now `text_rendering`, with the private glyph cache (its form of today: [text_rendering.md](text_rendering.md), "The cache"), the fallback faces, the chains by script and the frame of the first font; the shaper and the draws of `graphics` with it, in each process and in the drawing module; the demand cache with its four faces, drawn whole by the font service, which then ends; the root service, which maps the outlines and the demand cache with the glyph caches; the terminal and the process `interface_font` with their machine test lines; the host tests of the cache and of the measure.
 
 Left (`ROADMAP.md`): a font for the missing Greek letters, Cyrillic and Latin Extended-A; a CJK font; the shaping of complex scripts.
 

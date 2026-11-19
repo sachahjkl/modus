@@ -2,8 +2,7 @@ package graphics
 
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
-import "modus:support/fallback_glyphs"
-import "modus:support/text_shaping"
+import "modus:support/text_rendering"
 
 // The text of the system (docs/FONTS.md). Two fonts draw on one grid of
 // cells of 8 x 16 pixels at scale 1 (16 x 32, 24 x 48 at the scales 2 and
@@ -118,9 +117,9 @@ text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, 
 	}
 	bytes := transmute([]u8)characters
 	at, place := x, 0
-	// The fallback face of the bold cache, found at the first character
+	// The face of the bold cache, found at the first character
 	// past it.
-	face, face_found := fallback_glyphs.Face.None, false
+	face, face_found := text_rendering.Face.None, false
 	for place < len(bytes) {
 		character, length, _ := text_encoding.character_decode(bytes, place)
 		place += length
@@ -129,7 +128,7 @@ text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, 
 				character_vector_with(&text_state.bold_cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, at, y, character, color, 1, alpha)
 			} else {
 				if !face_found {
-					face, face_found = fallback_glyphs.face_of_cache(&text_state.bold_cache), true
+					face, face_found = text_rendering.face_of_cache(&text_state.bold_cache), true
 				}
 				if !character_fallback(face, canvas, at, y, character, color, 1, alpha) {
 					character_replacement(canvas, at, y, color, 1, alpha)
@@ -142,18 +141,45 @@ text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, 
 }
 
 // character_fallback draws a character past the glyph cache in the cell at
-// (x, y) from the fallback face of the cache of cells (fallback_glyphs:
-// the demand cache or the private glyph cache), and gives true; false when
-// no font of the chain draws it: the caller draws the replacement glyph. A
-// glyph of a face of cells stays in its cell.
+// (x, y) from the face of the cache of cells (text_rendering: the demand
+// cache or the private glyph cache), and gives true; false when no font of
+// the chain draws it: the caller draws the replacement glyph. A glyph of a
+// face of cells stays in its cell.
 @(private)
-character_fallback :: proc "contextless" (face: fallback_glyphs.Face, canvas: Canvas, x, y: int, character: rune, color: Color, scale: int, alpha: u32 = OPAQUE) -> bool {
-	glyph, words, source := fallback_glyphs.glyph(face, character, scale, 0)
-	if source == .Missing {
+character_fallback :: proc "contextless" (face: text_rendering.Face, canvas: Canvas, x, y: int, character: rune, color: Color, scale: int, alpha: u32 = OPAQUE) -> bool {
+	return face_glyph_draw(face, character, text_rendering.size_of_scale(scale), 0, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, x, y, color, alpha)
+}
+
+// face_glyph_draw draws the glyph of a character of a face at a text size
+// and a position across a pixel (text_rendering.glyph), its origin at the
+// whole pixel x and the top of its line at y, and gives true; false when
+// the face has no glyph for it. A glyph that is too large to be kept is
+// drawn band by band, each band blended as it is drawn.
+@(private)
+face_glyph_draw :: proc "contextless" (face: text_rendering.Face, character: rune, size, position: int, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32) -> bool {
+	entry, words, source := text_rendering.glyph(face, character, size, position)
+	switch source {
+	case .Missing:
 		return false
+	case .Demand_Cache, .Private_Cache, .Not_Kept:
+		glyph_words_draw(entry, words, square_root, tables, order, canvas, x, y, color, alpha)
+		return true
+	case .Banded:
+		job, started := text_rendering.glyph_bands(face, character, size, position)
+		if !started {
+			return false
+		}
+		for {
+			first_row, row_count, band_words := text_rendering.band_next(&job)
+			if row_count == 0 {
+				break
+			}
+			band := glyph_cache.Glyph_Entry{first_row = u16(first_row), row_count = u16(row_count), left = i16(-job.origin_column), width = u16(job.columns)}
+			glyph_words_draw(band, band_words, square_root, tables, order, canvas, x, y, color, alpha)
+		}
+		return true
 	}
-	glyph_words_draw(glyph, words, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, x, y, color, alpha)
-	return true
+	return false
 }
 
 // paint fills a rectangle of a glyph drawn by its pixels (Spleen, the
@@ -171,14 +197,14 @@ paint :: #force_inline proc "contextless" (canvas: Canvas, x, y, width, height: 
 	blend_fill(canvas, x, y, width, height, alpha << 24 | color & 0x00FFFFFF, table)
 }
 
-// cell_face gives the fallback face of the glyph cache of cells of the
+// cell_face gives the face of the glyph cache of cells of the
 // process now: None with Spleen, where a cell past the glyph cache draws
 // the replacement glyph.
-cell_face :: proc "contextless" () -> fallback_glyphs.Face {
+cell_face :: proc "contextless" () -> text_rendering.Face {
 	if !text_vector_drawn() {
 		return .None
 	}
-	return fallback_glyphs.face_of_cache(&text_state.cache)
+	return text_rendering.face_of_cache(&text_state.cache)
 }
 
 // square_root_table_fill makes the table of the blend in linear light:
@@ -291,8 +317,8 @@ text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string
 		return x + text_encoding.character_count(transmute([]u8)characters) * advance
 	}
 	vector := text_vector_drawn()
-	// The fallback face, found at the first character past the cache.
-	face, face_found := fallback_glyphs.Face.None, false
+	// The face, found at the first character past the cache.
+	face, face_found := text_rendering.Face.None, false
 	// The text is UTF-8: one cell for each character, and one for each
 	// invalid sequence, which draws the replacement glyph.
 	bytes := transmute([]u8)characters
@@ -371,7 +397,7 @@ glyph_entry_draw :: proc "contextless" (cache: ^glyph_cache.Cache, entry: glyph_
 }
 
 // glyph_words_draw draws one glyph past the glyph cache from its first
-// word (fallback_glyphs.glyph): an entry of the demand cache, copied and
+// word (text_rendering.glyph): an entry of the demand cache, copied and
 // checked against its contract, or of the private glyph cache, which this
 // process wrote. Its words are row_count rows of width words; the draw is
 // the draw of a glyph of a glyph cache.
@@ -478,7 +504,7 @@ character_spleen_enlarged :: proc "contextless" (canvas: Canvas, x, y: int, valu
 }
 
 // The ink of a text of a proportional font can pass the box that its
-// measure gives (text_shaping.text_width), on each side, by at most this
+// measure gives (text_rendering.text_width), on each side, by at most this
 // many pixels at scale 1: a glyph that starts left of its origin (B612: at
 // most 126 units, 0.84 pixel), the spread of the filter (two thirds of a
 // pixel), and the rounding to a third of a pixel (one sixth). A caller that
@@ -487,16 +513,16 @@ character_spleen_enlarged :: proc "contextless" (canvas: Canvas, x, y: int, valu
 PROPORTIONAL_INK_MARGIN :: 2
 
 // text_proportional draws the placed glyphs of a text of a proportional
-// font (text_shaping.shape) from a cache of that font: place is the x of
+// font (text_rendering.shape) from a cache of that font: place is the x of
 // the origin of the text in 1/64 of a pixel, y the top of its line. Each
 // glyph is drawn at the nearest of the positions of its scale, through the
 // blend of the text of cells, cut to the canvas. The state of the process
 // gives the order of the stripes and the blend tables. A fallback glyph
-// (text_shaping.FALLBACK_GLYPH_FIRST and past) is drawn from the fallback
-// face of the cache (fallback_glyphs.glyph): the demand cache or the
+// (text_rendering.FALLBACK_GLYPH_FIRST and past) is drawn from the fallback
+// face of the cache (text_rendering.glyph): the demand cache or the
 // private glyph cache of the process. A glyph that no font of the chain
 // draws is the replacement glyph, at the advance that the shaper gave it.
-text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, cache: ^glyph_cache.Cache, scale: int, color: Color, alpha: u32 = OPAQUE) {
+text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, placed: []text_rendering.Placed_Glyph, cache: ^glyph_cache.Cache, scale: int, color: Color, alpha: u32 = OPAQUE) {
 	if text_state.square_root[4095] == 0 {
 		square_root_table_fill(&text_state.square_root)
 	}
@@ -506,16 +532,16 @@ text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, pla
 // text_proportional_with is text_proportional with its state given: the
 // tests draw with it, each with its own tables. alpha is the alpha of the
 // color, as in text_scaled.
-text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, scale: int, color: Color, alpha: u32 = OPAQUE) {
+text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, place: i64, y: int, placed: []text_rendering.Placed_Glyph, scale: int, color: Color, alpha: u32 = OPAQUE) {
 	if scale < 1 || scale > len(cache.sizes) || alpha == 0 {
 		return
 	}
 	position_count := int(cache.sizes[scale - 1].position_count)
-	// The fallback face of the cache, found at the first fallback glyph.
-	face, face_found := fallback_glyphs.Face.None, false
+	// The face of the cache, found at the first fallback glyph.
+	face, face_found := text_rendering.Face.None, false
 	for glyph in placed {
-		replacement := glyph.glyph == text_shaping.REPLACEMENT_GLYPH
-		fallback := !replacement && glyph.glyph >= text_shaping.FALLBACK_GLYPH_FIRST
+		replacement := glyph.glyph == text_rendering.REPLACEMENT_GLYPH
+		fallback := !replacement && glyph.glyph >= text_rendering.FALLBACK_GLYPH_FIRST
 		if glyph.glyph >= cache.header.character_count && !replacement && !fallback {
 			continue
 		}
@@ -531,13 +557,10 @@ text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_
 		}
 		if fallback {
 			if !face_found {
-				face, face_found = fallback_glyphs.face_of_cache(cache), true
+				face, face_found = text_rendering.face_of_cache(cache), true
 			}
-			entry, words, source := fallback_glyphs.glyph(face, rune(glyph.glyph - text_shaping.FALLBACK_GLYPH_FIRST), scale, position)
-			if source == .Missing {
+			if !face_glyph_draw(face, rune(glyph.glyph - text_rendering.FALLBACK_GLYPH_FIRST), text_rendering.size_of_scale(scale), position, square_root, tables, order, canvas, int(pixel), y, color, alpha) {
 				character_replacement(canvas, int(pixel), y, color, scale, alpha)
-			} else {
-				glyph_words_draw(entry, words, square_root, tables, order, canvas, int(pixel), y, color, alpha)
 			}
 			continue
 		}

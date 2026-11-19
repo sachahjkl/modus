@@ -174,29 +174,19 @@ Do not use: font bundle, font pack.
 
 A fallback chain is the list of fonts, in order, that give the glyph of a character past the glyph cache of a face: the first font of the list that has the character gives its glyph and its advance.
 
-The chains are data, one row for each script (`fallback_glyphs.scripts`): Greek, Cyrillic, the box-drawing characters and the block elements, and a default chain for each other character. The first font of each chain is the font of the glyph cache of the face, and a glyph of another font stands on its baseline, with its capitals as high. A character that no font of its chain has draws the replacement glyph. The chain of the interface is B612 then Paper Mono; the chain of the cells is Paper Mono then B612.
+The chains are data, one row for each script (`text_rendering.scripts`): Greek, Cyrillic, the box-drawing characters and the block elements, and a default chain for each other character. The first font of each chain is the font of the glyph cache of the face, and a glyph of another font stands on its baseline, with its capitals as high. A character that no font of its chain has draws the replacement glyph. The chain of the interface is B612 then Paper Mono; the chain of the cells is Paper Mono then B612.
 
 The design: `src/md/features/glyphs_on_demand.md`, "The fallback chain by script".
 
 Do not use: font stack, font fallback list.
 
-### Fallback face
-
-A fallback face is a glyph cache of the system that a glyph past it stands beside: B612 Regular, B612 Bold, Paper Mono with and without the grid fit, and Paper Mono SemiBold.
-
-A glyph past the cache has the form, the baseline and the scale of the glyphs of that cache: a glyph of a face of cells stays in its cell, and a glyph of the interface is the box of its ink at a subpixel position. A process finds the face of a glyph cache by the hash of its font file and its flags (`fallback_glyphs.face_of_cache`). Each face has its fallback chain. A fallback face is not a demand face, which names a fixed subset of the demand cache.
-
-The design: `src/md/features/glyphs_on_demand.md`, "The fallback face".
-
-Do not use: font face (for this), font slot.
-
 ### Private glyph cache
 
-The private glyph cache is the memory where a process keeps the glyphs past the glyph caches that it drew itself, which no other process reads.
+The private glyph cache is the memory where a copy of the text rendering module keeps the glyphs that it drew, which no other process reads.
 
-A glyph is drawn at its first use and kept; a new glyph that finds no room evicts the glyphs used the longest time ago, counted in frames of the process. The budget of the process pays for it. A process that draws through the drawing module has two: the one of the module and its own. It holds no advance: that comes from the font file. It is not the demand cache: it is not shared, so its content and its evictions tell no process what another draws.
+A glyph is drawn at its first use and kept, by its face, font, glyph index, text size and position: 1 MiB of words and 4 096 entries at most. A new glyph that finds no room evicts the glyphs of the oldest frames, never one of the frame in progress; past that it is drawn and not kept. The budget of the process pays for it. It holds no advance. It is not the demand cache: it is not shared, so it tells no process what another draws.
 
-The design: `src/md/features/glyphs_on_demand.md`, "Layer 2: the private glyph cache".
+The design: `src/md/features/text_rendering.md`, "The cache".
 
 Do not use: glyph atlas, local cache, per-program cache.
 
@@ -404,7 +394,7 @@ Do not use: crossed zero, zero with a slash.
 
 Text shaping is the step that turns the characters of a text into placed glyphs, with the advances and the pair adjustments of one font.
 
-A proportional text needs it: the x of each glyph is the sum of the advances and adjustments before it. The package `src/library/support/text_shaping` does it for a direct call, and the module `text_shaping` exports the same work: `shape_text` gives the placed glyphs of one text, and `measure_texts` the width of many text ranges in one call. The module holds no font and no state: the caller passes the spacing. Text shaping here does advances and pairs only: no ligature, no other script, no line break.
+A proportional text needs it: the x of each glyph is the sum of the advances and adjustments before it. The package `src/library/support/text_rendering` does it for a direct call, and the module `text_shaping` exports the same work: `shape_text` gives the placed glyphs of one text, and `measure_texts` the width of many text ranges in one call. The module holds no font and no state: the caller passes the spacing. Text shaping here does advances and pairs only: no ligature, no other script, no line break.
 
 The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
@@ -524,7 +514,7 @@ Do not use: label box, text area, text field (a text input is the element that t
 
 A text size is the height of the line of a face, in 1/64 pixel, which a process gives to measure and draw a text.
 
-It is the design of the coming steps: today a text has one of three scales. A line of 16 pixels is the size 1 024, so the scales of today are 1 024, 2 048 and 3 072. The frame of a face turns it into units of the font. A label and its value at one text size share one line. It is not an em, not a size in points and not a scale factor.
+A line of 16 pixels is the size 1 024, so the three scales of a text record are 1 024, 2 048 and 3 072. The text rendering module takes any size from 256 to 16 384, a line of 4 to 256 pixels, and refuses another. The frame of a face turns it into units of the font. A label and its value at one text size share one line. It is not an em, not a size in points and not a scale factor.
 
 The design: `src/md/features/text_rendering.md`, "The text size".
 
@@ -534,7 +524,7 @@ Do not use: font size (alone), point size, scale (for this).
 
 The frame of a face is the rule that turns a text size into the units of the first font of a face.
 
-It is the design of the coming steps. In a face of cells the advance of the font is half the line; in a face of the interface the cap height is 10/16 of the line. At a line of 16 pixels each frame gives the scale of today. A glyph of a fallback font is drawn in the frame of the first font of its face, on its baseline. It is not the line box of a text.
+In a face of cells the advance of the font is half the line; in a face of the interface the cap height is 10/16 of the line. At a line of 16 pixels each frame gives the scale of today. A glyph of a fallback font is drawn in the frame of the first font of its face, on its baseline. It is not the line box of a text.
 
 The design: `src/md/features/text_rendering.md`, "The text size".
 
@@ -544,7 +534,7 @@ Do not use: font metrics (for this), em box.
 
 A face is a first font with its frame, its weight and its grid fit, from which each glyph of a text comes.
 
-It is the design of the coming steps, and replaces the fallback face and the demand face when the glyph caches of the boot image leave. The faces are `Interface`, `Interface_Bold`, `Cells`, `Cells_Without_Grid_Fit` and `Cells_Bold`, each with its fallback chain. A text record names a font kind and a weight; the drawing module adds the grid fit of the settings page. A face is not a font file: two faces can share one.
+The faces are `Interface`, `Interface_Bold`, `Cells`, `Cells_Without_Grid_Fit` and `Cells_Bold` (`text_rendering.Face`), each with its fallback chain. A glyph of another font of the chain stands in the frame of the first font: in its cell for a face of cells. A process finds the face of a glyph cache by the hash of its font file and its flags. A face is not a font file: two faces can share one. It is not a demand face, which names a subset of the demand cache.
 
 The design: `src/md/features/text_rendering.md`, "The faces".
 
@@ -554,7 +544,7 @@ Do not use: font face (for this), font slot, typeface.
 
 The text rendering module is the support package `text_rendering` and its library module, which shape, measure, break, keep and draw a text at any text size.
 
-It is the design of the coming steps: today `fallback_glyphs` and `text_shaping` hold these parts. Each process compiles the measure in; the drawing module compiles the draw and the private glyph cache in. A caller that compiles nothing calls the library module, with the font outlines as bytes. It is not a service: no process asks another for a glyph.
+Each process compiles the measure in; the drawing module compiles the draw and the private glyph cache in. Its rasterizer draws any size with a work row as wide as the glyph, in bands of rows. A caller that compiles nothing calls the library module `text_shaping`, which takes the spacing of a glyph cache; the module with the font outlines as bytes is a coming step. It is not a service: no process asks another for a glyph.
 
 The design: `src/md/features/text_rendering.md`.
 

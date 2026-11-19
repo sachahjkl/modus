@@ -1,9 +1,9 @@
 // Text shaping as a module (docs/FONTS.md, section 12.3): each export calls
-// one function of src/library/support/text_shaping over tables in memory of the
+// one function of src/library/support/text_rendering over tables in memory of the
 // caller. The spacing of the font is two tables of the caller: the
 // advances of the 192 characters of a glyph cache (ASCII 32 to 126, then
 // U+00A0 to U+00FF, then the euro sign, by their character index) and the
-// pairs, of one scale of a glyph cache (text_shaping.spacing_of gives them
+// pairs, of one scale of a glyph cache (text_rendering.spacing_of gives them
 // from a cache). The
 // module holds no state of a process.
 //
@@ -17,7 +17,7 @@
 // whole text or measures all the labels of a window. Because the spacing
 // comes from the caller, the module holds no font and no state, and an
 // isolated call gives the same answer as a direct call. A module in the
-// system calls the package `src/library/support/text_shaping` directly; this module is
+// system calls the package `src/library/support/text_rendering` directly; this module is
 // the same code for a caller that loads it or isolates it.
 //
 // **The units**: each position and width is in 1/64 of a pixel.
@@ -30,7 +30,7 @@ package text_shaping_module
 import "modus:contract/errors"
 import "modus:contract/glyph_cache"
 import "modus:support/system"
-import shaping "modus:support/text_shaping"
+import shaping "modus:support/text_rendering"
 
 // The most records or bytes of a table of a caller, its count included: no
 // count times a size wraps, and a count holds in the i64 of the result.

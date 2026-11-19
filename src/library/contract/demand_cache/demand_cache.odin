@@ -6,7 +6,7 @@
 // (the process `glyphs`) is its one writer; each process that gets the
 // glyph caches maps it read-only at ADDRESS. So its entries are the same
 // whatever the processes draw. A character past it is drawn by the process
-// itself, into its private glyph cache (src/library/support/fallback_glyphs).
+// itself, into its private glyph cache (src/library/support/text_rendering).
 //
 // A face is one glyph cache that the demand cache stands beside (Face): a
 // font file in one form. An entry is keyed by its face and its code point,

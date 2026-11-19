@@ -1125,8 +1125,15 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 	case .Map, .Unmap:
 		write_part(writer, error.stage == .Map ? "the kernel refused to map " : "the kernel refused to remove ")
 		name(writer, &error.module)
+		// The name of the contract (op.STATUS_NAMES). The record can come
+		// from another process: a word that names no status is written as
+		// its number.
 		write_part(writer, ": status ")
-		write_part(writer, u64(error.status))
+		if status, known := op.status_of_word(u64(error.status)); known {
+			write_part(writer, op.STATUS_NAMES[status])
+		} else {
+			write_part(writer, u64(error.status))
+		}
 		write_part(writer, "\n")
 	case .Room:
 		write_part(writer, "no room for ")

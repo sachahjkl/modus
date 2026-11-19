@@ -33,7 +33,7 @@ package glyphs
 import "modus:contract/blake3"
 import "modus:contract/demand_cache"
 import "modus:contract/font_outlines"
-import "modus:support/fallback_glyphs"
+import "modus:support/text_rendering"
 import "modus:support/system"
 import "modus:support/vector_font"
 
@@ -44,7 +44,7 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 192, processes = 1,
 // The font of the outlines of each face: the file of its glyph cache. The
 // demand cache names each one by its hash, and a process uses a face only
 // beside the glyph cache of that hash.
-font_of_face :: proc "contextless" (face: demand_cache.Face) -> fallback_glyphs.Outline_Font {
+font_of_face :: proc "contextless" (face: demand_cache.Face) -> text_rendering.Outline_Font {
 	switch face {
 	case .Interface:
 		return .B612
@@ -112,9 +112,9 @@ character_add :: proc "contextless" (face: demand_cache.Face, character: rune) -
 }
 
 // font_bytes_of gives the font file of a font of the outlines, or nil.
-font_bytes_of :: proc "contextless" (outlines: ^font_outlines.Outlines, font: fallback_glyphs.Outline_Font) -> (bytes: []u8, hash: [32]u8) {
+font_bytes_of :: proc "contextless" (outlines: ^font_outlines.Outlines, font: text_rendering.Outline_Font) -> (bytes: []u8, hash: [32]u8) {
 	for &record, index in outlines.records {
-		if font_outlines.name_of(&record) == fallback_glyphs.outline_font_name(font) {
+		if font_outlines.name_of(&record) == text_rendering.outline_font_name(font) {
 			return font_outlines.font_bytes(outlines, index), record.hash
 		}
 	}
@@ -125,13 +125,13 @@ font_bytes_of :: proc "contextless" (outlines: ^font_outlines.Outlines, font: fa
 // its characters the chain of the interface and the chain of the cells
 // draw, and names the ones that no font of the system has.
 coverage_log :: proc "contextless" () {
-	for script in fallback_glyphs.Script {
-		interface_drawn, total := fallback_glyphs.coverage(.Interface, script)
-		cells_drawn, _ := fallback_glyphs.coverage(.Cells, script)
+	for script in text_rendering.Script {
+		interface_drawn, total := text_rendering.coverage(.Interface, script)
+		cells_drawn, _ := text_rendering.coverage(.Cells, script)
 		if interface_drawn == total && cells_drawn == total {
-			system.log_in("processes", .Info, "glyphs: the script ", fallback_glyphs.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn))
+			system.log_in("processes", .Info, "glyphs: the script ", text_rendering.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn))
 		} else {
-			system.log_in("processes", .Info, "glyphs: the script ", fallback_glyphs.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn), "; no font of the system has the others")
+			system.log_in("processes", .Info, "glyphs: the script ", text_rendering.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn), "; no font of the system has the others")
 		}
 	}
 }
@@ -162,14 +162,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			demand_fonts[face], font_problem = vector_font.demand_font_open(bytes, face, &render_memory)
 		}
 		if font_problem != .None {
-			system.log_in("processes", .Error, "glyphs: the font ", fallback_glyphs.outline_font_name(font), " of the face ", face_name_of(face), " is refused: ", vector_font.font_problem_names[font_problem])
+			system.log_in("processes", .Error, "glyphs: the font ", text_rendering.outline_font_name(font), " of the face ", face_name_of(face), " is refused: ", vector_font.font_problem_names[font_problem])
 			system.stop(1)
 		}
 		// The hash of the record: the root service checked the hash of the
 		// whole resource, and the tool wrote each record from its file.
 		faces[face] = {font_hash = hash, flags = demand_fonts[face].flags}
 		if hash != blake3.hash(bytes) {
-			system.log_in("processes", .Error, "glyphs: the font ", fallback_glyphs.outline_font_name(font), " does not have the hash of its record")
+			system.log_in("processes", .Error, "glyphs: the font ", text_rendering.outline_font_name(font), " does not have the hash of its record")
 			system.stop(1)
 		}
 	}
@@ -193,7 +193,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		total += drawn
-		font_name := fallback_glyphs.outline_font_name(font_of_face(face))
+		font_name := text_rendering.outline_font_name(font_of_face(face))
 		if refused == 0 && absent == 0 {
 			system.log_in("processes", .Info, "glyphs: the face ", face_name_of(face), " of the demand cache holds each of the ", u64(demand_cache.subset_count(face)), " characters of its subset of ", font_name)
 		} else {
@@ -203,7 +203,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_in("processes", .Info, "glyphs: the font service drew each face of its subset into the demand cache: ", total, " characters, ", u64(writer.words_used), " words of ", u64(demand_cache.WORD_CAPACITY))
 	// What the fallback chains draw past the glyph caches, script by
 	// script: the log names what no font of the system has.
-	_ = fallback_glyphs.open(&outlines, 0)
+	_ = text_rendering.open(&outlines, 0)
 	coverage_log()
 	system.stop(0)
 }

@@ -3,9 +3,10 @@ package graphics
 
 import "modus:contract/glyph_cache"
 import "core:fmt"
+import "core:sync"
 import "core:testing"
 import "core:time"
-import "modus:support/text_shaping"
+import "modus:support/text_rendering"
 import "modus:support/vector_font"
 
 // The SSE2 forms of the blends against their scalar forms (docs/SIMD.md):
@@ -808,12 +809,14 @@ text_speed_of_each_blend :: proc(t: ^testing.T) {
 // backgrounds.
 @(test)
 proportional_text_gives_the_same_bytes_in_each_blend :: proc(t: ^testing.T) {
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
 	caches := test_caches_build(t)
 	defer for item in caches {
 		delete(item.words)
 	}
 	cache := &caches[2].cache // B612
-	spacing, spacing_ok := text_shaping.spacing_of(cache, 1)
+	spacing, spacing_ok := text_rendering.spacing_of(cache, 1)
 	testing.expect(t, spacing_ok)
 	table: [4096]u8
 	square_root_table_fill(&table)
@@ -836,8 +839,8 @@ proportional_text_gives_the_same_bytes_in_each_blend :: proc(t: ^testing.T) {
 	places := [3]i64{8 * 64, 8 * 64 + 21, 8 * 64 + 43}
 	differences: [2]int
 	for sample_text in texts {
-		placed: [64]text_shaping.Placed_Glyph
-		count, _, _ := text_shaping.shape(&spacing, transmute([]u8)sample_text, placed[:])
+		placed: [64]text_rendering.Placed_Glyph
+		count, _, _ := text_rendering.shape(&spacing, transmute([]u8)sample_text, placed[:])
 		for place in places {
 			for background in Speed_Background {
 				for order in Subpixel_Order {

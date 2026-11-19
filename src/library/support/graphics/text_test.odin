@@ -4,6 +4,7 @@ package graphics
 import "modus:contract/glyph_cache"
 import "core:fmt"
 import "core:math"
+import "core:sync"
 import "core:testing"
 import "core:time"
 import "modus:support/vector_font"
@@ -62,6 +63,10 @@ blend_error_against_srgb :: proc(t: ^testing.T) {
 // The text state is the zero state: no cache yet.
 @(test)
 text_without_cache_is_spleen :: proc(t: ^testing.T) {
+	// The tests of the fallback open the outlines in the state of the
+	// package: with them open, a text draws its glyphs from the outlines.
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
 	first, second: [24 * 48]Color
 	a := Canvas{pixels = raw_data(first[:]), width = 24, height = 48, stride = 24}
 	b := Canvas{pixels = raw_data(second[:]), width = 24, height = 48, stride = 24}
@@ -80,6 +85,10 @@ text_without_cache_is_spleen :: proc(t: ^testing.T) {
 // "été" takes three cells, one for each character.
 @(test)
 text_of_the_latin_supplement_is_drawn :: proc(t: ^testing.T) {
+	// A character past the glyph cache goes to the outlines when a test of
+	// the fallback has them open: one drawer at a time in the private cache.
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
 	drawn, glyph, replacement: [8 * 16]Color
 	a := Canvas{pixels = raw_data(drawn[:]), width = 8, height = 16, stride = 8}
 	b := Canvas{pixels = raw_data(glyph[:]), width = 8, height = 16, stride = 8}

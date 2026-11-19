@@ -5,7 +5,7 @@ import "modus:contract/errors"
 import "modus:contract/glyph_cache"
 import "core:testing"
 import "modus:support/system"
-import shaping "modus:support/text_shaping"
+import shaping "modus:support/text_rendering"
 import "modus:support/vector_font"
 
 @(private = "file")

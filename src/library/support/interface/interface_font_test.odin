@@ -8,7 +8,7 @@ import "core:sync"
 import "core:testing"
 import "modus:support/display"
 import "modus:support/graphics"
-import "modus:support/text_shaping"
+import "modus:support/text_rendering"
 import "modus:support/vector_font"
 
 // The interface font of the tests: B612 Regular (three positions at scale
@@ -424,12 +424,12 @@ TEXT_PARTS :: [4]Rectangle{{0, 0, 37, 64}, {37, 0, 151, 30}, {37, 30, 151, 64}, 
 interface_text_reference :: proc(canvas: graphics.Canvas, caches: ^display.Interface_Font, box: Rectangle, origin: i64, text: string, font: Font, color: graphics.Color) {
 	view := graphics.view(canvas, box.left, box.top, box.right - box.left, box.bottom - box.top)
 	cache := interface_cache_of(caches, font)
-	spacing, ok := text_shaping.spacing_of(cache, font_scale(font))
+	spacing, ok := text_rendering.spacing_of(cache, font_scale(font))
 	if !ok {
 		return
 	}
-	placed: [INTERFACE_TEXT_LIMIT]text_shaping.Placed_Glyph
-	count, _, _ := text_shaping.shape(&spacing, transmute([]u8)text, placed[:])
+	placed: [INTERFACE_TEXT_LIMIT]text_rendering.Placed_Glyph
+	count, _, _ := text_rendering.shape(&spacing, transmute([]u8)text, placed[:])
 	graphics.text_proportional(view, origin - i64(box.left) * 64, 0, placed[:min(count, len(placed))], cache, font_scale(font), color)
 }
 

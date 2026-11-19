@@ -65,10 +65,21 @@ Placement :: struct {
 
 // place_x and place_y give the subunits of a point of the font.
 place_x :: #force_inline proc "contextless" (placement: ^Placement, x: i32) -> i32 {
-	return i32(placement.origin_x + divide_rounded(i64(x) * placement.horizontal_numerator, placement.horizontal_denominator))
+	return i32(place_x_wide(placement, x))
 }
 
 place_y :: proc "contextless" (placement: ^Placement, y: i32) -> i32 {
+	return i32(place_y_wide(placement, y))
+}
+
+// place_x_wide and place_y_wide give the subunits of a point with no cut
+// to 32 bits: a caller that takes a hostile font checks them against its
+// bound before it draws (src/library/support/text_rendering).
+place_x_wide :: #force_inline proc "contextless" (placement: ^Placement, x: i32) -> i64 {
+	return placement.origin_x + divide_rounded(i64(x) * placement.horizontal_numerator, placement.horizontal_denominator)
+}
+
+place_y_wide :: proc "contextless" (placement: ^Placement, y: i32) -> i64 {
 	units := i64(y)
 	height: i64
 	switch {
@@ -81,7 +92,7 @@ place_y :: proc "contextless" (placement: ^Placement, y: i32) -> i32 {
 	case:
 		height = placement.cap_height_place + divide_rounded((units - placement.cap_height) * placement.vertical_numerator, placement.vertical_denominator)
 	}
-	return i32(placement.origin_y - height)
+	return placement.origin_y - height
 }
 
 // outline_add adds each contour of an outline, with the points between two
@@ -150,12 +161,18 @@ outline_add :: proc "contextless" (target: ^Accumulation, outline: ^Outline, pla
 // characters 33 to 126.
 font_measures :: proc "contextless" (font: ^Font_File, memory: ^Render_Memory) -> (measures: Font_Measures, problem: Font_Problem) {
 	outline := Outline{points = memory.points[:], contour_ends = memory.contours[:]}
+	return font_measures_of_outline(font, &outline)
+}
+
+// font_measures_of_outline is font_measures over the memory of an outline
+// of the caller: the text rendering keeps the points in its own memory.
+font_measures_of_outline :: proc "contextless" (font: ^Font_File, outline: ^Outline) -> (measures: Font_Measures, problem: Font_Problem) {
 	measures.monospace = true
 	measures.top = -1 << 30
 	measures.bottom = 1 << 30
 	for character in rune(33) ..= 126 {
 		glyph := glyph_of(font, character) or_return
-		glyph_outline(font, glyph, &outline) or_return
+		glyph_outline(font, glyph, outline) or_return
 		if measures.advance == 0 {
 			measures.advance = outline.advance
 		} else if measures.advance != outline.advance {

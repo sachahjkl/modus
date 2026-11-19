@@ -7,17 +7,25 @@ import "core:testing"
 import "modus:contract/demand_cache"
 import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
-import "modus:support/fallback_glyphs"
+import "base:runtime"
+import "modus:support/text_rendering"
 import "modus:support/vector_font"
 
-// The tests of this package that open the fallback state run one at a
-// time: the state is one for the package, and the runner runs tests on
-// several threads. Each one sets the state back to zero at its end.
+// The tests of this package that read or write the text state of the
+// process (text_state, and the state and the private glyph cache of
+// text_rendering) run one at a time: each state is one for the process, and
+// the runner runs tests on several threads. A test that only reads it takes
+// the lock too: a test that writes it would change it under the reader, and
+// two drawers in one private cache break its lists of runs. Each test that
+// opens the outlines sets the state back to zero at its end.
 fallback_test_lock: sync.Mutex
 
 // fallback_open_for_test opens the four font files of the resource of the
 // boot image, and the demand cache at demand_base (0: none), in a fallback
 // state of all zero. The caller frees the words.
+@(private = "file")
+test_glyph_memory: ^text_rendering.Glyph_Memory
+
 fallback_open_for_test :: proc(t: ^testing.T, demand_base: uintptr) -> (words: []u64) {
 	fonts := [4]font_outlines.Font_Input {
 		{"b612", #load("../../../../resources/fonts/b612.ttf")},
@@ -32,10 +40,20 @@ fallback_open_for_test :: proc(t: ^testing.T, demand_base: uintptr) -> (words: [
 	testing.expect(t, written)
 	outlines, problem := font_outlines.validate(bytes)
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
-	fallback_glyphs.state = {}
-	fallback_glyphs.private_cache = {}
-	missing := fallback_glyphs.open(&outlines, demand_base)
-	testing.expect_value(t, missing, fallback_glyphs.Outline_Fonts{})
+	text_rendering.state = {}
+	// The glyph memory that a process reserves at its first glyph past the
+	// glyph caches: all zero at each open. It comes from the heap of the
+	// process, not from the allocator of the test: the runner frees all that
+	// a test allocated at its end, and the next test would get the same
+	// bytes while the package still draws into them.
+	if test_glyph_memory == nil {
+		test_glyph_memory = new(text_rendering.Glyph_Memory, runtime.heap_allocator())
+	}
+	mem.zero(test_glyph_memory, size_of(text_rendering.Glyph_Memory))
+	text_rendering.cache_state = {}
+	text_rendering.memory_give(test_glyph_memory)
+	missing := text_rendering.open(&outlines, demand_base)
+	testing.expect_value(t, missing, text_rendering.Outline_Fonts{})
 	return words
 }
 
@@ -52,7 +70,7 @@ fallback_open_for_test :: proc(t: ^testing.T, demand_base: uintptr) -> (words: [
 a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
 	defer sync.mutex_unlock(&fallback_test_lock)
-	defer fallback_glyphs.state = {}
+	defer text_rendering.state = {}
 	font_bytes := #load("../../../../resources/fonts/paper_mono.ttf")
 	render := new(vector_font.Render_Memory)
 	defer free(render)
@@ -89,7 +107,7 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 		words: []u64
 		switch each {
 		case .No_Outlines:
-			fallback_glyphs.state = {}
+			text_rendering.state = {}
 		case .No_Font:
 			words = fallback_open_for_test(t, 0)
 			text = "Ж"
@@ -123,8 +141,8 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	demand_cache.publish(&writer, place, .Cells, BOX, entry)
 	words := fallback_open_for_test(t, base)
 	defer delete(words)
-	fallback_glyphs.frame_begin()
-	testing.expect_value(t, cell_face(), fallback_glyphs.Face.Cells)
+	text_rendering.frame_begin()
+	testing.expect_value(t, cell_face(), text_rendering.Face.Cells)
 	for scale in 1 ..= 3 {
 		clear(built, DARK_CARD_BOTTOM)
 		clear(drawn, DARK_CARD_BOTTOM)
@@ -148,17 +166,17 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	place, _ = demand_cache.place_find(&writer, .Cells, DOUBLE)
 	demand_cache.publish(&writer, place, .Cells, DOUBLE, double_entry)
 	for scale in 1 ..= 3 {
-		fallback_glyphs.frame_begin()
+		text_rendering.frame_begin()
 		clear(built, DARK_CARD_BOTTOM)
 		text_scaled(built, CELL_WIDTH * scale, 0, "═", DARK_TEXT, scale)
-		_, _, from_demand := fallback_glyphs.glyph(.Cells, DOUBLE, scale, 0)
-		testing.expect_value(t, from_demand, fallback_glyphs.Glyph_Source.Demand_Cache)
+		_, _, from_demand := text_rendering.glyph(.Cells, DOUBLE, text_rendering.size_of_scale(scale), 0)
+		testing.expect_value(t, from_demand, text_rendering.Glyph_Source.Demand_Cache)
 		delete(words)
 		words = fallback_open_for_test(t, 0)
 		clear(drawn, DARK_CARD_BOTTOM)
 		text_scaled(drawn, CELL_WIDTH * scale, 0, "═", DARK_TEXT, scale)
-		_, _, from_private := fallback_glyphs.glyph(.Cells, DOUBLE, scale, 0)
-		testing.expect_value(t, from_private, fallback_glyphs.Glyph_Source.Private_Cache)
+		_, _, from_private := text_rendering.glyph(.Cells, DOUBLE, text_rendering.size_of_scale(scale), 0)
+		testing.expect_value(t, from_private, text_rendering.Glyph_Source.Private_Cache)
 		testing.expectf(t, built_pixels == fallback_pixels, "scale %v: the private cell has the pixels of the demand cache", scale)
 		clear(drawn, DARK_CARD_BOTTOM)
 		text_scaled(drawn, CELL_WIDTH * scale, 0, "α", DARK_TEXT, scale)
@@ -179,12 +197,12 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 		testing.expectf(t, ink > 0 && outside == 0, "scale %v: α has %v pixels of ink in its cell and %v outside", scale, ink, outside)
 		// A change of the order of the stripes in the same frame: the
 		// words do not depend on it, so the glyph is not drawn again.
-		drawn_before := fallback_glyphs.counts().drawn
+		drawn_before := text_rendering.counts().drawn
 		text_choice_set(.Vector, .Blue_Green_Red)
 		clear(drawn, DARK_CARD_BOTTOM)
 		text_scaled(drawn, CELL_WIDTH * scale, 0, "α", DARK_TEXT, scale)
 		text_choice_set(.Vector, .Red_Green_Blue)
-		testing.expectf(t, fallback_glyphs.counts().drawn == drawn_before, "scale %v: a change of the order of the stripes draws no glyph again", scale)
+		testing.expectf(t, text_rendering.counts().drawn == drawn_before, "scale %v: a change of the order of the stripes draws no glyph again", scale)
 		delete(words)
 		words = fallback_open_for_test(t, base)
 	}
