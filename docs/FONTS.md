@@ -482,7 +482,7 @@ A terminal draws its cells through the drawing module, which draws each glyph pa
 
 - `terminal: console shows the character 945 in its cells, drawn by this process from the font b612 of its fallback chain`, which the main machine test waits for after `character(945) + character(1046)` in the console;
 - `terminal: console shows the character 1046 in its cells as the replacement glyph: no font of its fallback chain has it`, after the same;
-- `terminal: console shows the character 955 in its cells, drawn by this process from the font paper_mono of its fallback chain`, after `character(9472) + character(955)`.
+- `terminal: console shows the character 9472 in its cells, drawn by this process from the font paper_mono of its fallback chain`, after `character(955) + character(9472)`.
 
 ### 13.2.2 What the caches tell a process
 
@@ -515,9 +515,9 @@ Each glyph cache of the boot image, Spleen 8x16 and the boot display stay as the
 
 ### 13.4 The subsets
 
-The subset of B612 Regular holds the Greek letters that its character map has, after the characters of the glyph cache (`interface_past_cache_ranges` of `modustool vector_fonts`): 47 characters, U+0391 to U+039F, U+03A1, U+03A3 to U+03A9, U+03B1 to U+03C0 and U+03C2 to U+03C9. B612 1.008 has no capital pi (U+03A0), no small rho (U+03C1) and no Latin Extended-A. The window `interface_font` shows each of these letters, and its line `interface_font: each Greek letter of B612 is drawn by this process: 47 letters: as it must` is a line of the machine test.
+The subset of B612 Regular holds the Greek letters that its character map has, after the characters of the glyph cache (`font_outlines.interface_past_cache_ranges`, written by `modustool vector_fonts`): 47 characters, U+0391 to U+039F, U+03A1, U+03A3 to U+03A9, U+03B1 to U+03C0 and U+03C2 to U+03C9. B612 1.008 has no capital pi (U+03A0), no small rho (U+03C1) and no Latin Extended-A. The window `interface_font` shows each of these letters, and its line `interface_font: each Greek letter of B612 is drawn by this process: 47 letters: as it must` is a line of the machine test.
 
-The subsets of Paper Mono and of Paper Mono SemiBold hold 165 characters past the glyph cache, after the characters of the glyph cache (`cell_past_cache_ranges`): the box-drawing characters U+2500 to U+257F, the block elements U+2580 to U+259F, and the five Greek letters of Paper Mono, U+039B, U+03A9, U+03BB, U+03BC and U+03C0. Paper Mono has no other Greek letter: a cell of α draws the α of B612, the second font of the chain of the cells. The box-drawing characters of Paper Mono pass their advance by 5 units on each side; the cell cuts them, as it cuts each glyph of the cache of cells.
+The subsets of Paper Mono and of Paper Mono SemiBold hold 165 characters past the glyph cache, after the characters of the glyph cache (`font_outlines.cell_past_cache_ranges`): the box-drawing characters U+2500 to U+257F, the block elements U+2580 to U+259F, and the five Greek letters of Paper Mono, U+039B, U+03A9, U+03BB, U+03BC and U+03C0. Paper Mono has no other Greek letter: a cell of α draws the α of B612, the second font of the chain of the cells. The box-drawing characters of Paper Mono pass their advance by 5 units on each side; the cell cuts them, as it cuts each glyph of the cache of cells.
 
 The glyphs of the glyph caches do not change: the build draws the 192 characters only. The hash of the font file in the header of each cache changes with the subset file, and a face is matched by it.
 
@@ -528,7 +528,7 @@ The glyphs of the glyph caches do not change: the build draws the 192 characters
 
 ### 13.6 The pixels
 
-A glyph past the glyph cache has the bytes that the build gives to the same character from the same font file: the same style, the same renderer, the same positions. The host test `the_words_are_the_words_of_the_glyph_caches` (`src/library/support/text_rendering`) compares the box and the words of each glyph of the glyph caches with the glyph of the private glyph cache (section 14.5). The host test `a_text_on_demand_draws_the_pixels_of_the_glyph_cache` (`src/library/support/graphics`) draws a text from the glyph cache and from the private glyph cache, and compares the pixels at each third of a pixel; `a_cell_on_demand_draws_the_pixels_of_the_glyph_cache` does the same for a cell at each scale, and checks that the ink of a box-drawing character of Paper Mono and of a Greek letter of B612 stays in its cell.
+A glyph past the glyph cache has the bytes that the build gives to the same character from the same font file: the same style, the same renderer, the same positions. The host test `the_glyphs_past_the_glyph_cache_keep_their_golden_hashes` (`src/library/support/text_rendering`) draws the 47 Greek letters of B612 for the face `Interface` and the 165 characters past the glyph cache of Paper Mono and Paper Mono SemiBold for the faces `Cells`, `Cells_Without_Grid_Fit` and `Cells_Bold`, at the sizes and positions that the demand cache held, and compares the hash of their boxes and words with the stored hash (section 14.5, the golden hash). The hashes come from the first build without the demand cache, whose rasterizer a host test of the build before compared with the demand cache, word for word. The host test `a_text_on_demand_draws_the_pixels_of_the_glyph_cache` (`src/library/support/graphics`) draws a text from the glyph cache and from the private glyph cache, and compares the pixels at each third of a pixel; `a_cell_on_demand_draws_the_pixels_of_the_glyph_cache` does the same for a cell at each scale, and checks that the ink of a box-drawing character of Paper Mono and of a Greek letter of B612 stays in its cell.
 
 ### 13.7 Measures
 
@@ -608,6 +608,8 @@ A glyph larger than 16 384 words (a glyph of 128 by 128 pixels) is never kept (`
 ### 14.5 The proof of the pixels
 
 The host test `the_words_are_the_words_of_the_glyph_caches` (`src/library/support/text_rendering`) draws the 192 characters of each face at the sizes of its glyph cache (1 024, 2 048 and 3 072; 1 024 for the bold weights), at each position, and compares the box and each word with the glyph that the build of the glyph caches draws from the same font file (`vector_font.glyph_cache_build`, `glyph_cache_build_proportional`): the code of the tool that makes the caches of the boot image. The faces of the interface are compared at three positions at each size: at 2 048 and 3 072 the position 0 is the glyph of today's cache, and the positions 1 and 2 are the two new ones.
+
+**The golden hash.** The same test computes, for each face and size, the BLAKE3 hash of the box of each glyph (four numbers of 32 bits) and of its words, all in little endian, over the 192 characters by their character index at each position, and compares it with the hash stored in the table `golden_hashes` of the test, taken from a build that had the glyph caches. A hash that differs fails with the face, the size and the hash found. The test `the_glyphs_past_the_glyph_cache_keep_their_golden_hashes` does the same for the characters past the glyph cache (section 13.6). Each prints its lines, `text_rendering: the golden hash of <Face> at the size <n>: <hash>` and `text_rendering: the golden hash of <Face> at the size <n>, past the glyph cache: <hash>`. When the glyph caches leave, these hashes are the proof that the pixels did not change.
 
 The host test `the_measure_is_the_draw` checks, for each face at six sizes, that the x of each placed glyph is the sum of the advances of the font file before it, and that the fit of a room is the start whose measure is that room.
 

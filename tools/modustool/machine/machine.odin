@@ -1068,12 +1068,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "terminal: console shows the character 945 in its cells, drawn by this process from the font b612 of its fallback chain", any_order = true},
 	{kind = .Wait, text = "terminal: console shows the character 1046 in its cells as the replacement glyph: no font of its fallback chain has it", any_order = true},
 	{kind = .Wait, text = "[console] αЖ"},
-	// A box-drawing character and a Greek letter of Paper Mono, the first
-	// font of the chain: λ is now the last such cell of the view. The
+	// A Greek letter and a box-drawing character of Paper Mono, the first
+	// font of the chain: ─ is now the last such cell of the view. The
 	// picture console below shows them.
-	{kind = .Type, text = "character(9472) + character(955)"},
-	{kind = .Wait, text = "terminal: console shows the character 955 in its cells, drawn by this process from the font paper_mono of its fallback chain", any_order = true},
-	{kind = .Wait, text = "[console] ─λ"},
+	{kind = .Type, text = "character(955) + character(9472)"},
+	{kind = .Wait, text = "terminal: console shows the character 9472 in its cells, drawn by this process from the font paper_mono of its fallback chain", any_order = true},
+	{kind = .Wait, text = "[console] λ─"},
 	{kind = .Type, text = "character(55296)"},
 	{kind = .Wait, text = "error: 55296 is no character of a text"},
 	{kind = .Type, text = "length(5)"},

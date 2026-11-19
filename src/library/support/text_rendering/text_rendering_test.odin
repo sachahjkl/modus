@@ -301,6 +301,32 @@ a_font_that_the_outlines_lack_is_skipped :: proc(t: ^testing.T) {
 	testing.expect_value(t, font_of(.Interface, 0x2500), Outline_Font.None)
 }
 
+// The fonts that the chains of a face can name: none before open and for
+// the face None; only the fonts that the outlines hold; each font of each
+// chain of the face with the four fonts, last.
+@(test)
+the_fonts_of_the_chains_of_a_face :: proc(t: ^testing.T) {
+	test_state_take()
+	state = {}
+	memory_reset_for_test()
+	testing.expect_value(t, chain_fonts(.Cells), Outline_Fonts{})
+	only := [1]font_outlines.Font_Input{{"b612", b612_file}}
+	_, words := outlines_open(t, only[:])
+	defer delete(words)
+	testing.expect_value(t, chain_fonts(.None), Outline_Fonts{})
+	testing.expect_value(t, chain_fonts(.Interface), Outline_Fonts{.B612})
+	testing.expect_value(t, chain_fonts(.Cells), Outline_Fonts{.B612})
+	fonts := repository_fonts()
+	_, all_words := outlines_open(t, fonts[:])
+	defer delete(all_words)
+	testing.expect_value(t, chain_fonts(.None), Outline_Fonts{})
+	testing.expect_value(t, chain_fonts(.Interface), Outline_Fonts{.B612, .Paper_Mono})
+	testing.expect_value(t, chain_fonts(.Cells), Outline_Fonts{.Paper_Mono, .B612})
+	testing.expect_value(t, chain_fonts(.Cells_Without_Grid_Fit), Outline_Fonts{.Paper_Mono, .B612})
+	testing.expect_value(t, chain_fonts(.Interface_Bold), Outline_Fonts{.B612_Bold, .B612, .Paper_Mono_Semibold})
+	testing.expect_value(t, chain_fonts(.Cells_Bold), Outline_Fonts{.Paper_Mono_Semibold, .B612_Bold, .B612})
+}
+
 // A script that no font covers is named: the chains of the interface and
 // of the cells draw no Cyrillic letter, and 47 of the 49 Greek letters (no
 // font has Π, U+03A0, nor ρ, U+03C1); each box-drawing character comes
@@ -665,7 +691,9 @@ the_words_are_the_words_of_the_glyph_caches :: proc(t: ^testing.T) {
 					}
 				}
 			}
-			fmt.printfln("text_rendering: the golden hash of %v at the size %v: %s", each.face, text_size, golden_hash_text(blake3.hash(golden_bytes[:])))
+			found := golden_hash_text(blake3.hash(golden_bytes[:]))
+			fmt.printfln("text_rendering: the golden hash of %v at the size %v: %s", each.face, text_size, found)
+			golden_hash_check(t, each.face, text_size, .Glyph_Cache, found)
 		}
 		fmt.printfln("text_rendering: %v: %v glyphs equal to the glyph caches of today, %v differ, %v", each.face, compared - differ, differ, time.tick_since(start))
 	}
@@ -690,6 +718,154 @@ golden_bytes_append :: proc(bytes: ^[dynamic]u8, box: Raster_Box) {
 	for row in 0 ..< box.row_count {
 		for word in test_words()[box.first_word + row * box.stride:][:box.width] {
 			word_append(bytes, word)
+		}
+	}
+}
+
+// The characters of a golden hash.
+Golden_Characters :: enum {
+	// The 192 characters of a glyph cache, by their character index, at
+	// each position of the face (positions_of).
+	Glyph_Cache,
+	// The characters past the glyph cache that the subset of the first
+	// font of the face holds (font_outlines.interface_past_cache_ranges,
+	// cell_past_cache_ranges), in the order of the code points, at the
+	// positions of the glyph cache of the face at each scale
+	// (Face_Form.positions): the glyphs that the demand cache held.
+	Past_The_Glyph_Cache,
+}
+
+// One stored golden hash.
+Golden_Hash :: struct {
+	face:       Face,
+	size:       int,
+	characters: Golden_Characters,
+	hash:       string, // 64 hexadecimal digits in lower case; GOLDEN_HASH_NOT_STORED until a run gives it.
+}
+
+// The mark of a row whose hash a run has not given yet: the test fails on
+// it, and its message gives the hash to store.
+GOLDEN_HASH_NOT_STORED :: ""
+
+// The golden hashes. Those of the glyph caches come from a build that had
+// the glyph caches of the boot image and the code that builds them: the
+// test of the glyph caches compares each word with that code, and these
+// hashes keep the proof when that code leaves
+// (src/md/features/text_rendering.md, "The rasterizer").
+// The hashes of the glyphs past the glyph cache are marked
+// GOLDEN_HASH_NOT_STORED: the line "text_rendering: the golden hash of
+// <Face> at the size <n>, past the glyph cache: <hash>" of the test
+// the_glyphs_past_the_glyph_cache_keep_their_golden_hashes gives each one.
+golden_hashes := [?]Golden_Hash {
+	{.Interface, 1024, .Glyph_Cache, "ffb96a288dce3f7055db33d5272e600f090e3b1ab7e26c7fd4b179f1a01b50a5"},
+	{.Interface, 2048, .Glyph_Cache, "8e71073bbc65aaf60657a7cd959cf516ea6c549c45c131bc3d9864bc5377d2b2"},
+	{.Interface, 3072, .Glyph_Cache, "995580da0f7a1aa66933df5674d52efaec10e81e9a496bb70857a654adcde1d1"},
+	{.Interface_Bold, 1024, .Glyph_Cache, "2505e899bfa2a602c1a89a902a373a9ad64212cad0f78ba9f3ee494aa6931e03"},
+	{.Cells, 1024, .Glyph_Cache, "c2d2aac39d9d1cdbda5d92de2aa436684f7a1a6b808bd3b3af04e72bb5e5139e"},
+	{.Cells, 2048, .Glyph_Cache, "8a30c44752198c04d24b1898e3629724dfba988c4fcfcd9ace46ba4f2c653def"},
+	{.Cells, 3072, .Glyph_Cache, "abc3a2ef28a929950daa36bedfa024485058ffdcabcee989af1adae7dd20624f"},
+	{.Cells_Without_Grid_Fit, 1024, .Glyph_Cache, "5d4508c60ca205998c4ec54e18a858391df734056e4a86cd379198aea0342445"},
+	{.Cells_Without_Grid_Fit, 2048, .Glyph_Cache, "3e3e8731e5c67b4a1c8309082687b0c962117a765e362e62c5d638625f7b6231"},
+	{.Cells_Without_Grid_Fit, 3072, .Glyph_Cache, "4ddef9cb9498ffbaeaf50813e022ca8e2eec629d7c581c2712108a546035b590"},
+	{.Cells_Bold, 1024, .Glyph_Cache, "df9bce041d1ec8ff9cd23d435f56c832e136df6752734fd5b304ba0d7b15cf3e"},
+	{.Interface, 1024, .Past_The_Glyph_Cache, "680eceaeda3786a5d8fd27c6cee901e024fe3a6d0c5e9dffa2dce52ac62a8409"},
+	{.Interface, 2048, .Past_The_Glyph_Cache, "f7222768c7bb9b8485b0f6b344acf824a71d4e8b3e9d6d38f9ee445dda78990d"},
+	{.Interface, 3072, .Past_The_Glyph_Cache, "0b025715646303be9254c0c0bd29b62d34cbe5fd1e8bfba723c49793c7f8776a"},
+	{.Cells, 1024, .Past_The_Glyph_Cache, "2d9a41d2f68b57b9266fee9abe77c7bd09cd7686b3ac6588527637d6d87230ab"},
+	{.Cells, 2048, .Past_The_Glyph_Cache, "1b2ce70a0959e56828c4a59187bd4394dc3d008c075d122803dc19364d93b9a7"},
+	{.Cells, 3072, .Past_The_Glyph_Cache, "2fd2b92c3b7c983ea156b28edefc8598ec77c8a30709fa4a639a755ea1faafad"},
+	{.Cells_Without_Grid_Fit, 1024, .Past_The_Glyph_Cache, "f2734820b63d4324d11e58c5a3aceceeae2813b1f66bf188a37159bb40780b57"},
+	{.Cells_Without_Grid_Fit, 2048, .Past_The_Glyph_Cache, "d870f102e96b46650f7c97510531f0dc6e195b9f5118a6dc8eda61f1681d995d"},
+	{.Cells_Without_Grid_Fit, 3072, .Past_The_Glyph_Cache, "3432d2fc22b9b94b7e8e93cbe72b0c07b5854e7f609e9f2d56743de9d87c8bf4"},
+	{.Cells_Bold, 1024, .Past_The_Glyph_Cache, "5e23b4844eb65bc1ec1ad3fa347e328586685bf5a55858a84a944f700cd2c5fa"},
+}
+
+// golden_hash_check compares a hash that a test found with the stored
+// golden hash of its face, size and characters. A row with no stored hash
+// fails, and gives the hash to store.
+golden_hash_check :: proc(t: ^testing.T, face: Face, size: int, characters: Golden_Characters, found: string) {
+	for row in golden_hashes {
+		if row.face != face || row.size != size || row.characters != characters {
+			continue
+		}
+		if row.hash == GOLDEN_HASH_NOT_STORED {
+			testing.expectf(t, false, "%v at the size %v, %v: no golden hash is stored; store %s in golden_hashes", face, size, characters, found)
+			return
+		}
+		testing.expectf(t, row.hash == found, "%v at the size %v, %v: the golden hash is %s, and the stored one %s", face, size, characters, found, row.hash)
+		return
+	}
+	testing.expectf(t, false, "%v at the size %v, %v: golden_hashes has no row, and the hash is %s", face, size, characters, found)
+}
+
+// The table of the golden hashes: one row for each face, size and set of
+// characters, and each stored hash is 64 digits in lower case.
+@(test)
+the_table_of_the_golden_hashes :: proc(t: ^testing.T) {
+	for row, index in golden_hashes {
+		for other in golden_hashes[index + 1:] {
+			testing.expectf(t, other.face != row.face || other.size != row.size || other.characters != row.characters, "%v at the size %v, %v: two rows", row.face, row.size, row.characters)
+		}
+		if row.hash == GOLDEN_HASH_NOT_STORED {
+			continue
+		}
+		testing.expectf(t, len(row.hash) == 2 * blake3.HASH_SIZE, "%v at the size %v: a hash of %v digits", row.face, row.size, len(row.hash))
+		for digit in row.hash {
+			testing.expectf(t, digit >= '0' && digit <= '9' || digit >= 'a' && digit <= 'f', "%v at the size %v: the digit %v", row.face, row.size, digit)
+		}
+	}
+}
+
+// The glyphs past the glyph cache keep their pixels: for each face that
+// the demand cache held, at each size and position that it held, the
+// characters past the glyph cache of the subset of its first font, each
+// from that font, give the stored golden hash. These are the glyphs that
+// a process drew from the demand cache before it left. The hashes come
+// from the first build without it, whose rasterizer a test of the build
+// before compared with the demand cache, word for word.
+@(test)
+the_glyphs_past_the_glyph_cache_keep_their_golden_hashes :: proc(t: ^testing.T) {
+	test_state_take()
+	fonts := repository_fonts()
+	_, words := outlines_open(t, fonts[:])
+	defer delete(words)
+	Case :: struct {
+		face:   Face,
+		ranges: []font_outlines.Character_Range,
+		count:  int,
+	}
+	cases := [?]Case {
+		{.Interface, font_outlines.interface_past_cache_ranges[:], font_outlines.INTERFACE_PAST_CACHE_COUNT},
+		{.Cells, font_outlines.cell_past_cache_ranges[:], font_outlines.CELL_PAST_CACHE_COUNT},
+		{.Cells_Without_Grid_Fit, font_outlines.cell_past_cache_ranges[:], font_outlines.CELL_PAST_CACHE_COUNT},
+		{.Cells_Bold, font_outlines.cell_past_cache_ranges[:], font_outlines.CELL_PAST_CACHE_COUNT},
+	}
+	for each in cases {
+		form := face_forms[each.face]
+		for scale in 1 ..= form.scale_count {
+			text_size := size_of_scale(scale)
+			golden_bytes := make([dynamic]u8)
+			defer delete(golden_bytes)
+			drawn := 0
+			for position in 0 ..< form.positions[scale - 1] {
+				for range in each.ranges {
+					for character in range.first ..= range.last {
+						font, glyph_index := font_glyph_of(each.face, character)
+						testing.expectf(t, font == form.primary, "%v U+%04X: from %v, not from the first font of its face", each.face, int(character), font)
+						if font == .None {
+							continue
+						}
+						box, problem := glyph_raster(each.face, font, glyph_index, text_size, position)
+						testing.expectf(t, problem == .None, "%v U+%04X at the size %v: %v", each.face, int(character), text_size, problem)
+						golden_bytes_append(&golden_bytes, box)
+						drawn += 1
+					}
+				}
+			}
+			testing.expect_value(t, drawn, each.count * form.positions[scale - 1])
+			found := golden_hash_text(blake3.hash(golden_bytes[:]))
+			fmt.printfln("text_rendering: the golden hash of %v at the size %v, past the glyph cache: %s", each.face, text_size, found)
+			golden_hash_check(t, each.face, text_size, .Past_The_Glyph_Cache, found)
 		}
 	}
 }

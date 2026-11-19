@@ -49,6 +49,14 @@ import "modus:support/text_rendering"
 WIDTH :: 800
 HEIGHT :: 720
 
+// The glyph memory of its two copies of the text rendering: its own, which
+// draws the lines of B612 and the Greek letters past the glyph cache by
+// hand, and the one of the drawing module, which draws its labels. Each
+// reserves its memory at its first glyph past the glyph caches: its own
+// copy always, the copy of the drawing module when a label holds such a
+// glyph. 2 x 354 pages (display.TEXT_MEMORY_PAGES).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 708, window_width = WIDTH, window_height = HEIGHT}
+
 regular_cache, bold_cache: glyph_cache.Cache
 // The spacing of the regular weight at scale 1 and at scale 3, the bold
 // weight at scale 1, and the regular weight at scale 3 with no pair.

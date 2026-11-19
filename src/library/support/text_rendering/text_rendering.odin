@@ -368,6 +368,28 @@ chain_of :: proc "contextless" (face: Face, character: rune) -> Chain {
 	return default_chains[kind]
 }
 
+// chain_fonts gives the fonts that the chains of a face can name, for each
+// script and for the default chain, that the outlines hold: each font from
+// which the face can draw a glyph. None for the face None and before open.
+chain_fonts :: proc "contextless" (face: Face) -> (fonts: Outline_Fonts) {
+	if face == .None || !state.opened {
+		return {}
+	}
+	chain_add :: proc "contextless" (fonts: ^Outline_Fonts, chain: Chain) {
+		for font in chain {
+			if font != .None && state.fonts[font].opened {
+				fonts^ += {font}
+			}
+		}
+	}
+	kind := face_forms[face].chain
+	for script in Script {
+		chain_add(&fonts, scripts[script].chains[kind])
+	}
+	chain_add(&fonts, default_chains[kind])
+	return fonts
+}
+
 // font_glyph_of gives the first font of the chain of a face that has a
 // glyph for a character, and the index of that glyph in that font: None
 // for no font, for the face None, for a character that is no character of

@@ -65,6 +65,11 @@ text_frame_begin :: proc "contextless" () {
 
 // The pages of the glyph memory of one copy of text_rendering.
 TEXT_MEMORY_PAGES :: (size_of(text_rendering.Glyph_Memory) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+// The budgets of the terminal, the compositor and interface_font state two
+// glyph memories as integer literals, which the tool reads: a change of
+// the glyph memory fails here, so that their sums change with it.
+GLYPH_MEMORY_PAGES_IN_THE_BUDGETS :: 354
+#assert(TEXT_MEMORY_PAGES == GLYPH_MEMORY_PAGES_IN_THE_BUDGETS)
 
 // The reservation of the glyph memory of this copy: one try only, so a
 // budget that cannot pay costs one kernel call, not one at each frame.

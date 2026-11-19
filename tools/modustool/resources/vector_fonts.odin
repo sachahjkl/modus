@@ -197,50 +197,21 @@ subset_character :: proc(glyph: int) -> rune {
 	return character
 }
 
-// A run of code points with no gap.
-Character_Range :: struct {
-	first, last: rune,
-}
-
-// The characters past the glyph cache that the subset of B612 holds: the
-// Greek letters that the character map of B612 1.008 has. It lacks the
-// capital pi (U+03A0) and the small rho (U+03C1); U+03A2 is no character.
-@(rodata)
-interface_past_cache_ranges := [?]Character_Range {
-	{0x0391, 0x039F}, // Alpha to omicron, capitals.
-	{0x03A1, 0x03A1}, // Rho, capital.
-	{0x03A3, 0x03A9}, // Sigma to omega, capitals.
-	{0x03B1, 0x03C0}, // Alpha to pi, small.
-	{0x03C2, 0x03C9}, // Final sigma to omega, small.
-}
-
-// The characters past the glyph cache that Paper Mono has, in its regular
-// and its SemiBold weight: its five Greek letters, the box-drawing
-// characters and the block elements. It has no other Greek letter.
-@(rodata)
-cell_past_cache_ranges := [?]Character_Range {
-	{0x039B, 0x039B}, // Lambda, capital.
-	{0x03A9, 0x03A9}, // Omega, capital.
-	{0x03BB, 0x03BC}, // Lambda and mu, small.
-	{0x03C0, 0x03C0}, // Pi, small.
-	{0x2500, 0x257F}, // The box-drawing characters.
-	{0x2580, 0x259F}, // The block elements.
-}
-
 // past_cache_ranges_of gives the runs of the characters past the glyph
 // cache that the subset of a font holds, which each process draws from the
 // outlines into its private glyph cache
 // (src/md/features/glyphs_on_demand.md): for the regular weight of the
 // interface font and for the two weights of the font of the cells; none
-// for each other font. The tool adds them after the characters of the
-// glyph cache, so the glyphs of the glyph caches of the build do not
-// change.
-past_cache_ranges_of :: proc(name: string) -> []Character_Range {
+// for each other font. The lists are in the contract of the outlines,
+// which the golden hashes of these glyphs read too. The tool adds them
+// after the characters of the glyph cache, so the glyphs of the glyph
+// caches of the build do not change.
+past_cache_ranges_of :: proc(name: string) -> []font_outlines.Character_Range {
 	switch name {
 	case INTERFACE_VECTOR_FONT:
-		return interface_past_cache_ranges[:]
+		return font_outlines.interface_past_cache_ranges[:]
 	case DEFAULT_VECTOR_FONT, EMPHASIS_VECTOR_FONT:
-		return cell_past_cache_ranges[:]
+		return font_outlines.cell_past_cache_ranges[:]
 	}
 	return nil
 }

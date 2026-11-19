@@ -193,3 +193,25 @@ validate_refuses_a_damaged_resource :: proc(t: ^testing.T) {
 	testing.expect(t, string(font_bytes(&outlines, 1)) == string(second_file[:]))
 	testing.expect_value(t, outlines.records[1].offset % FONT_ALIGNMENT, u64(0))
 }
+
+// The lists of the characters past the glyph cache: each run is in order
+// and after the run before it, no run is empty, each character is past
+// the Latin-1 Supplement, and the counts are the counts of the constants.
+@(test)
+the_characters_past_the_glyph_cache :: proc(t: ^testing.T) {
+	Case :: struct {
+		ranges: []Character_Range,
+		count:  int,
+	}
+	cases := [2]Case{{interface_past_cache_ranges[:], INTERFACE_PAST_CACHE_COUNT}, {cell_past_cache_ranges[:], CELL_PAST_CACHE_COUNT}}
+	for each in cases {
+		count := 0
+		previous_last := rune(0xFF)
+		for range in each.ranges {
+			testing.expectf(t, range.first <= range.last && range.first > previous_last, "the run %x to %x", range.first, range.last)
+			previous_last = range.last
+			count += int(range.last - range.first) + 1
+		}
+		testing.expect_value(t, count, each.count)
+	}
+}

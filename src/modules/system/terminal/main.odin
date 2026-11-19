@@ -92,8 +92,14 @@ import "base:intrinsics"
 
 // The lines that it keeps, and the two pictures of its window: their size
 // follows the columns and the rows that its starter gives, so the tool
-// cannot count them, and the working memory holds them at their largest.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8035, processes = 1, threads = 2}
+// cannot count them, and the working memory holds them at their largest:
+// 8035 pages. And the glyph memory of its two copies of the text
+// rendering, the one of the drawing module, which draws its cells, and its
+// own, which draws a cell again to tell where its glyph comes from
+// (display.cell_fallback_of): each reserves its memory at its first glyph
+// past the glyph caches, 2 x 354 pages (display.TEXT_MEMORY_PAGES) = 708
+// pages. 8035 + 708 = 8743.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8743, processes = 1, threads = 2}
 
 COLUMNS_LIMIT :: terminal.COLUMNS_LIMIT
 ROWS_LIMIT :: terminal.ROWS_LIMIT
@@ -1647,13 +1653,21 @@ list_scroll_send :: proc "contextless" () -> (sent: bool) {
 list_drag_moved: bool // The drag of the thumb of the completion list that is held now moved its view.
 fallback_fonts_told: text_rendering.Outline_Fonts // The fonts of the fallback chain whose first cell drawn by this process is on the log.
 missing_cell_told: bool // The line of the first cell that no font of the chain has is on the log.
+fallback_cells_all_told: bool // Each line that fallback_cells_tell can write is on the log: it looks at no cell again.
 
 // fallback_cells_tell says, after a frame, where the first and the last
 // cells past the glyph cache of the view come from: once for each font of
 // the fallback chain, and once for no font. The process draws the glyph
 // of the cell as the drawing module drew it, from the same outlines, and
-// checks that it has ink and stays in its cell.
+// checks that it has ink and stays in its cell. Once each line is on the
+// log, it returns at once: no lookup runs at each frame for nothing.
 fallback_cells_tell :: proc "contextless" () {
+	if fallback_cells_all_told {
+		return
+	}
+	defer if missing_cell_told && fallback_fonts_told >= text_rendering.chain_fonts(.Cells) {
+		fallback_cells_all_told = true
+	}
 	for character in ([2]rune{view.fallback_first, view.fallback_last}) {
 		if character == 0 {
 			return
