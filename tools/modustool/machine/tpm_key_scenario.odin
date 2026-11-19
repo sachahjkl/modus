@@ -413,6 +413,7 @@ scenario_tpm_principal_change := [?]Step {
 	// The disk does not keep the write of zeros over the block of the file
 	// of machine 9: the read back of the zeros finds it.
 	{kind = .Wait, text = ZEROS_DROPPED_LINE_END, any_order = true},
+	{kind = .Fact, process = "storage", fact = "storage_service.Versions_Erased_One_Version", condition = "object = \"" + principals.FILE_OBJECT + "\"", any_order = true},
 	{kind = .Wait, text = PRINCIPAL_FILE_ERASED_LINE, any_order = true},
 	// The end goes to the console that asked, and the window shows it
 	// until Enter.
@@ -829,13 +830,8 @@ principal_change_with_a_dropped_zero_run :: proc(part: ^Test_Part_Run, parts: ^P
 	}
 	output := self_test_file(TEST_OUTPUT_TPM_KEY, 10)
 	defer delete(output)
-	log_bytes, log_error := os.read_entire_file(output, context.allocator)
-	if log_error != nil {
-		fmt.eprintfln("modustool: test failed: cannot read %s: %v", output, log_error)
-		return 0, false
-	}
-	defer delete(log_bytes)
-	text := string(log_bytes)
+	// The line of the erase is a log fact: the check reads its sentence.
+	text := log_file_rendered(output) or_return
 	// The line of the dropped zero names the object and the store of the
 	// file; the scenario waited for its end.
 	line_at := strings.index(text, ZEROS_DROPPED_LINE_START)

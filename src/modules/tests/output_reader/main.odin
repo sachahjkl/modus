@@ -18,7 +18,8 @@
 //
 // **Start**: by `output_wiring` only. **What a reader sees**: no window;
 // one line "output_reader: ...: as it must", or a line "output_reader:
-// WRONG: ...". It stops with the code 0.
+// WRONG: ...". It stops itself with the outcome Done, or Failed after a
+// WRONG line.
 package output_reader
 
 import op "modus:contract/operation"

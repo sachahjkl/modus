@@ -1,7 +1,6 @@
 package machine
 
 import "core:fmt"
-import "core:os"
 import "core:strings"
 import "core:sync"
 import "modustool:build"
@@ -29,7 +28,8 @@ TEST_OUTPUT_SILENT_DISK :: foundation.BUILD_FOLDER + "/test_output_silent_disk.t
 TEST_OUTPUT_NO_NETWORK_DEVICE :: foundation.BUILD_FOLDER + "/test_output_no_network_device.txt"
 
 // The end of the line of the storage service when the disk goes silent,
-// after its cause (src/modules/system/storage/engine.odin, DISK_SILENT_LINE).
+// after its cause: the end of the template of storage_service.Disk_Silent
+// (src/modules/system/storage/facts.odin).
 // The cause depends on which bound ends first: the block service and the
 // storage service have the same one.
 SILENT_DISK_STORAGE_LINE_END :: "; the service reads and changes nothing on the disk until its next start, and refuses each call that needs the disk"
@@ -128,15 +128,12 @@ no_network_device_run :: proc(part: ^Test_Part_Run) -> bool {
 
 // lines_once says if the log of a machine holds each text exactly once,
 // and writes the count of each one that it holds another count of times.
+// A line of a fact counts by its sentence.
 lines_once :: proc(log_path: string, texts: []string) -> bool {
-	log, read_error := os.read_entire_file(log_path, context.temp_allocator)
-	if read_error != nil {
-		fmt.eprintfln("modustool: test failed: cannot read %s: %v", log_path, read_error)
-		return false
-	}
+	log := log_file_rendered(log_path) or_return
 	once := true
 	for text in texts {
-		if count := strings.count(string(log), text); count != 1 {
+		if count := strings.count(log, text); count != 1 {
 			fmt.eprintfln("modustool: test failed: the log %s holds \"%s\" %d times, and it must hold it once", log_path, text, count)
 			once = false
 		}

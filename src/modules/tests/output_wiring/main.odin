@@ -34,7 +34,8 @@
 //
 // **Start**: `start("output_wiring")` in the console. **What a reader
 // sees**: no window; one line "output_wiring: ...: as it must" for each
-// case, or a line "output_wiring: WRONG: ...". It stops with the code 0.
+// case, or a line "output_wiring: WRONG: ...". It stops itself with the
+// outcome Done, or Failed after a WRONG line.
 package output_wiring
 
 import "modus:contract/errors"

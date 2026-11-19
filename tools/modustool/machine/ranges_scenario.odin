@@ -22,6 +22,7 @@ scenario_ranges_first := [?]Step {
 	{kind = .Type, text = "start(\"ranges\")"},
 	{kind = .Wait, text = "ranges: a new store: the first run", any_order = true},
 	{kind = .Wait, text = "ranges: three range writes are pending, and the size of the object is 8589934592 bytes: as it must"},
+	{kind = .Fact, process = "storage", fact = "storage_service.Ranges_Committed", condition = "object = \"sparse\"", any_order = true},
 	{kind = .Wait, text = "ranges: the commit of the sparse object: 3 blocks changed of 2097152, "},
 	{kind = .Wait, text = "ranges: a sparse object of 8 GiB from 3 writes and one commit holds 13 blocks: as it must"},
 	{kind = .Wait, text = "ranges: its three blocks read back, a hole reads as zero bytes, and a read across a block edge gives the end of a block and zero bytes: as it must"},

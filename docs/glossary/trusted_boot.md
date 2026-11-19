@@ -299,3 +299,13 @@ The rescue boot entry is the boot option "modus (rescue)" of the firmware, whose
 The boot program writes it at a start where it is absent, and puts its number at the end of `BootOrder`, with one line. Its load options are one record of 16 bytes: the tag `MODUSOPT`, the version 1, and the word of a start request. Load options with no tag are a normal start; a tagged record that is wrong stops the boot program, with its cause on the boot display. A machine with no keyboard, or a remote console, reaches the rescue through it.
 
 Do not use: recovery entry, rescue partition, boot flag.
+
+### Publisher
+
+A publisher is a key pair whose private key signs release pointers and realisations, and which a principal can name as a key that it trusts.
+
+The publisher of the system is one publisher. A key that a principal trusts is valid for that principal only: the system plan trusts the publisher of the system alone. The bytes that a publisher signs come from any source; the trust comes from its key. A publisher is not a server of authority, and not a principal.
+
+The design: `src/md/features/declarations.md`, and `src/md/features/recipes.md`.
+
+Do not use: vendor, maintainer, authority.

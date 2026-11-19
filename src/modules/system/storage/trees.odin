@@ -533,7 +533,11 @@ commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Rec
 		// One line for each store and each start of the service: the later
 		// commits at the limit thin the same way.
 		limit_reached[plan.store_index] = true
-		system.log(.Info, "storage: the store ", store.name, " is at its limit of ", system.Size{store.limit, .Blocks}, ": the commit of generation ", generation, " thinned ", at_limit, at_limit == 1 ? string(" version") : string(" versions"), ", the oldest of the store first")
+		if at_limit == 1 {
+			system.log_fact(.Info, Store_At_Limit_Thinned_One_Version{limit = blocks_field(store.limit), generation = u64(generation), store = store_field(store.name)})
+		} else {
+			system.log_fact(.Info, Store_At_Limit_Thinned_Versions{limit = blocks_field(store.limit), generation = u64(generation), thinned = at_limit, store = store_field(store.name)})
+		}
 	}
 	return generation
 }
@@ -923,9 +927,13 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	}
 	// The count of the zeros is the count of the blocks that read back as
 	// zeros: a block that the disk did not write is in the line above.
-	system.log(.Info, "storage: the versions of ", object_name, " in the store ", store_name, " are erased: ", u64(ended), u64(ended) == 1 ? string(" version") : string(" versions"), " ended, ", zeroed, " blocks written with zeros, ", kept, " blocks kept that another state names, generation ", root.generation)
+	if u64(ended) == 1 {
+		system.log_fact(.Info, Versions_Erased_One_Version{zeroed = zeroed, kept = kept, generation = root.generation, store = store_field(store_name), object = object_field(object_name)})
+	} else {
+		system.log_fact(.Info, Versions_Erased{ended = u64(ended), zeroed = zeroed, kept = kept, generation = root.generation, store = store_field(store_name), object = object_field(object_name)})
+	}
 	if damaged != 0 {
-		system.log(.Warning, "storage: the erase of the versions of ", object_name, " in the store ", store_name, " ended ", damaged, " damaged version indexes, leaves or states with no zeros over them: their blocks keep their bytes, in use until the next start of the service and free after it")
+		system.log_fact(.Warning, Erase_Damaged_Left{damaged = damaged, store = store_field(store_name), object = object_field(object_name)})
 	}
 	return {generation = i64(root.generation), versions = ended, zeroed = i64(zeroed), kept = i64(kept), damaged = i64(damaged)}, 0
 }
@@ -1164,7 +1172,7 @@ removal_step :: proc "contextless" () -> bool {
 	queued_name: Entry_Name
 	queued: Entry
 	if !tree.first_from(&queue.work, first[:], false, queued_name[:], entry_bytes(&queued)) {
-		removal_failed(store_index, "the removal queue gives no first tree")
+		removal_failed(store_index, .No_First_Tree)
 		return true
 	}
 	if queued.kind != u64(format.Entry_Kind.Tree) || queued.pointer.block == 0 {
@@ -1213,20 +1221,35 @@ removal_step :: proc "contextless" () -> bool {
 		}
 	}
 	if plan_refused() {
-		removal_failed(store_index, "a step was refused")
+		removal_failed(store_index, .Step_Refused)
 		plan_drop()
 		return true
 	}
 	plan_finish()
 	if plan_commit(&error) < 0 {
-		removal_failed(store_index, "its commit failed")
+		removal_failed(store_index, .Commit_Failed)
 	}
 	return true
 }
 
-removal_failed :: proc "contextless" (store_index: int, why: string) {
+// Why a step of the removal of a tree stops.
+Removal_Stop :: enum {
+	No_First_Tree, // The removal queue gives no first tree.
+	Step_Refused, // A step of the plan was refused.
+	Commit_Failed, // The commit of the step failed.
+}
+
+removal_failed :: proc "contextless" (store_index: int, why: Removal_Stop) {
 	removal_stalled[store_index] = true
-	system.log(.Warning, "storage: the removal of a tree of the store ", system.name_of(root.stores[store_index].name[:]), " stops: ", why, "; the next change of the store tries again")
+	store := store_field(system.name_of(root.stores[store_index].name[:]))
+	switch why {
+	case .No_First_Tree:
+		system.log_fact(.Warning, Tree_Removal_No_First_Tree{store = store})
+	case .Step_Refused:
+		system.log_fact(.Warning, Tree_Removal_Step_Refused{store = store})
+	case .Commit_Failed:
+		system.log_fact(.Warning, Tree_Removal_Commit_Failed{store = store})
+	}
 }
 
 // ---------------------------------------------------------------------

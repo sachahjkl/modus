@@ -539,3 +539,183 @@ The modus tool writes it as `build/debug.image` and copies it to the boot volume
 The design: `docs/MODULE_CONTRACT.md`, "Where the debug objects are".
 
 Do not use: symbol server, debug archive.
+
+### Module file writer
+
+The module file writer is the contract package that writes a valid module file from its parts: the segments, the exports, the imports, the slots, the rebases, the records, the log facts and the budget.
+
+Its package is `modus:contract/module_file_writer`. The tool and each program of modus that writes a module compile it in, so the format has one writer. It writes into memory that the caller gives, with no allocator and no kernel operation, and refuses a part that a loader or a reader would refuse. The tool fills its parts from the linked file of `lld`; an assembler fills them from its labels. It is not the module writer of a module record.
+
+The design: `src/md/features/first_compiler.md`; the guide: `docs/MODULE_CONTRACT.md`, "The module file writer".
+
+Do not use: module writer (for this), linker, emitter.
+
+### Declaration
+
+A declaration is a tree of a store whose root holds a text in the language of the console, whose value is one record.
+
+A declaration describes a system, a session, a project or an environment, in the manner of Nix, and has a hash, as a module has. A sandboxed evaluation process reads its text and gives typed values only: a plan, a table of recipes, an environment. Its evaluation has no effect. Example: `kernel = declaration(here())`. No service reads it.
+
+The design: `src/md/features/declarations.md`.
+
+Do not use: configuration file, flake, script.
+
+### Plan
+
+A plan is the typed record that an evaluation gives and the root service applies: the hashes of modules, start rows, wirings, rows of the disk grant table, settings and a substitution policy.
+
+A plan names each object by its hash, so the root service never resolves a name. `plan { … }` is a value with no effect; `apply(p)` shows the difference of its grants against the current applied plan, then applies it. A plan runs nothing, and it is no text.
+
+The design: `src/md/features/declarations.md`.
+
+Do not use: configuration, profile, manifest.
+
+### Applied plan
+
+An applied plan is a plan that the root ring command `Apply` wrote in the store `plans` of a principal, with its number.
+
+Each `apply` writes the number after the highest one, then names it in the row "current plan" of the disk grant table: that write makes it current. `rollback()` names the applied plan before it again, and writes no plan. The applied plans that the store keeps are roots of the garbage collector of `module_files`. It is not a generation, which numbers a commit.
+
+The design: `src/md/features/declarations.md`.
+
+Do not use: generation (for this), profile, system list.
+
+### Catalog declaration
+
+A catalog declaration is a declaration whose value is a record of recipes, modules and functions.
+
+A declaration takes the recipes, the tools and the functions that it uses from catalog declarations. `catalog`, the catalog declaration of the system, is the default one, with no mechanism of its own. `catalog with gt.overlay` gives a new catalog declaration. It is not the catalog of an information function, which is the modules that a process can see.
+
+The design: `src/md/features/declarations.md`.
+
+Do not use: catalog (for this), package set, registry, channel.
+
+### Declaration input
+
+A declaration input is a declaration that a project or a plan names in its record `inputs`: a catalog declaration, one exact declaration by hash, or the newest release pointer of a publisher.
+
+`declaration(hash)` names one exact declaration; `follow(publisher, name)` names a release pointer. The evaluation takes the hash of each from its pin, never from the network. It is not the input of the keys and the pointer, and not an input of a recipe, which is a tree that a builder reads.
+
+The design: `src/md/features/declarations.md`.
+
+Do not use: input (for this), dependency, flake input.
+
+### Pin
+
+A pin is the hash that a declaration input resolved to, kept in a typed record of the store of a project or in a plan.
+
+An evaluation reads the pins and never the network, so one declaration gives one plan. `update()` resolves each `follow` again and writes new pins; the store keeps the pins before as a version. `inputs` shows each pin with its publisher and its hash. No process parses a pin. It is not a pinned key of TLS.
+
+The design: `src/md/features/declarations.md`.
+
+Do not use: lock file, lock entry, pinned key (for this).
+
+### Release pointer
+
+A release pointer is a record that a publisher signs: a name, a number that only grows, the hash of a tree, and the signature.
+
+`follow(publisher, name)` takes the newest release pointer of that name, and `update()` asks the sources of the substitution policy for it. Any source can give it, because the signature is checked against the key of the publisher. It does the work of a channel, with no server of authority. It is not a release of the changelog.
+
+The design: `src/md/features/declarations.md`.
+
+Do not use: channel, tag, latest version.
+
+### Project
+
+A project is a declaration of a source tree, its declaration inputs and its outputs: `project { source = here(), inputs = {…}, outputs = {…} }`.
+
+`project` is the function `modus.project` of the catalog declaration under a short name: it adds no mechanism. `build(p)` realises `outputs.default`, `build(p.tools)` one output, and `enter(p)` enters its environment. It is not the work of the repository of modus, which the group Project of this glossary names.
+
+The design: `src/md/features/declarations.md`.
+
+Do not use: package, flake, workspace.
+
+### Recipe
+
+A recipe is a builder hash, a table of the names and hashes of its inputs, and a typed argument record: it names how an output is made.
+
+The recipe hash, its identity, is the BLAKE3 hash of the builder hash, the inputs sorted by name, and the bytes of the argument record. `recipe(builder, arguments)` is a lazy value of the language; forcing it gives its hash and builds nothing. `build` realises it, from a realisation or in a sandbox. It is a record, not a script.
+
+The design: `src/md/features/recipes.md`.
+
+Do not use: derivation, build script, makefile.
+
+### Realisation
+
+A realisation is a signed record that says which output a recipe gave: the recipe hash, the output hash, the builder hash, and the key and the signature of its signer.
+
+A machine that holds a realisation and its output skips the build. A realisation is used only when a key that the substitution policy trusts signed it; a fetch needs none, because its recipe holds its output hash. Two realisations of one recipe with two outputs give the log fact `Realisation_Disagreement`.
+
+The design: `src/md/features/recipes.md`.
+
+Do not use: build result, cache entry, substitute.
+
+### Builder
+
+A builder is a module that exports `build`, with a fixed contract, and writes the output of a recipe into its store "out".
+
+The root service starts it in a sandbox: its inputs as clones with Read, an empty store "out", no network, a random seed equal to the recipe hash, and a frozen date page. It is a plain module: a native compiler, the guest builder, or a small module of a developer. It is not a daemon that builds for others.
+
+The design: `src/md/features/recipes.md`.
+
+Do not use: build daemon, build server, toolchain.
+
+### Guest builder
+
+The guest builder is the builder that runs an existing tool of Linux in a guest, with its inputs as a read-only disk and its output as a blank disk.
+
+Its Linux is an object by hash that the recipe names. The command of its argument record, such as `run = ["cargo", "build", "--release", "--offline"]`, goes into the guest, a foreign system, so no text passes between two processes of modus. It builds with any existing compiler at once. It is not a layer of Linux in the system.
+
+The design: `src/md/features/recipes.md`.
+
+Do not use: container build, chroot.
+
+### Fetcher
+
+The fetcher is the one builder with the network: it fetches an address and writes an output whose hash the recipe gives in advance.
+
+Its network grant names the host of the address only. An output with another hash is refused and discarded, so its realisation needs no signature: each machine checks the output against its recipe. `git_fetch` fetches a git repository at one commit and writes its tree as a tree of modus. It is not a download into a shared folder.
+
+The design: `src/md/features/recipes.md`.
+
+Do not use: downloader, fixed-output derivation.
+
+### Substitution policy
+
+The substitution policy is the typed record `Substitution` of a plan that says where a realisation can come from: its sources, its trusted signers and its mode.
+
+For each recipe, a machine uses its own realisation, else a realisation that a source gives and a trusted signer signed, else a build in the sandbox. The modes are `Prefer_Cache`, `Build_Only`, `Cache_Only` and `Verify`. Each principal has its own, in its plan; `with substitution = {…}` changes it for one evaluation.
+
+The design: `src/md/features/recipes.md`, "The substitution policy".
+
+Do not use: substituters, nix.conf, cache configuration.
+
+### Object cache
+
+An object cache is a source of objects by hash, of realisations and of release pointers, reached by the cache protocol over QUIC.
+
+An object cache needs no trust: an object checks itself against its hash, and a realisation or a release pointer against its signer. A mirror, a peer of the local network, a removable disk and another machine of modus are object caches. It is not the build record of the tool.
+
+The design: `src/md/features/recipes.md`, "The object cache and its protocol".
+
+Do not use: binary cache, substituter, package repository.
+
+### Bootstrap seed
+
+The bootstrap seed is the one object of the chain of the bootstrap that no recipe made: a program small enough that a reader checks it byte by byte.
+
+In the chain of live-bootstrap, it is hex0, about 500 bytes, which reads hexadecimal text and writes bytes. Each stage after it is the output of a recipe whose builder is the stage before. It is not the random seed of a process.
+
+The design: `src/md/features/bootstrap.md`.
+
+Do not use: seed (for this), bootstrap binary, trusted compiler.
+
+### Self-hosting
+
+Self-hosting is the check that a program builds its own source to the same bytes as the release before it built that source.
+
+The tool of release N − 1 builds the source of release N, which gives N₁; N₁ builds the same source, which gives N₂. The check is the equality of their hashes. It proves that the steps of the program are a function of its source, not of the program that ran them. It does not prove the compiler: the bootstrap from the seed does.
+
+The design: `src/md/features/bootstrap.md`.
+
+Do not use: stage comparison, triple test.

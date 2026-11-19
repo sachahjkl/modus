@@ -20,7 +20,8 @@
 //
 // **Start**: by `output_wiring` only. **What a reader sees**: no window;
 // one line "output_writer: ...: as it must" for each case, or a line
-// "output_writer: WRONG: ...". It stops with the code 0.
+// "output_writer: WRONG: ...". It stops itself with the outcome Done, or
+// Failed after a WRONG line.
 package output_writer
 
 import "modus:contract/output"

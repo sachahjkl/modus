@@ -4,6 +4,7 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "core:fmt"
 import "core:odin/ast"
+import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strconv"
@@ -531,16 +532,96 @@ facts_ir_problem :: proc(ir: string, facts: []Fact_Description) -> string {
 	return ""
 }
 
-// module_facts gives the fact types that a module writes: the calls of
+// facts_reached gives the fact types of the sources of a module whose key
+// the LLVM IR of the module holds: the calls that its compile reached. A
+// fact type of a support package whose call no code of the module reaches
+// has no record of the module, so it gets no row: the drawing module
+// compiles the interface package and never writes its element places. A
+// fact type of the package of the module itself (its folder, source) must
+// be in the IR: that keeps the check of the key against the compiler for
+// each module that writes facts of its own. problem names the first fact
+// type that the IR lacks.
+facts_reached :: proc(ir: string, facts: []Fact_Description, source: string) -> (reached: []Fact_Description, problem: string) {
+	kept := make([dynamic]Fact_Description, context.temp_allocator)
+	for fact in facts {
+		if llvm_ir_holds_integer(ir, fact.key) {
+			append(&kept, fact)
+			continue
+		}
+		if filepath.dir(fact.file) == strings.trim_right(source, "/") {
+			return nil, facts_ir_problem(ir, {fact})
+		}
+	}
+	return kept[:], ""
+}
+
+// module_reached_facts_file gives the path of the list of the fact keys
+// that the compile step of a module reached, one decimal key on each line:
+// an output of the compile step, which the conversion reads, so that both
+// steps name one set of fact types and a kept compile keeps its list.
+module_reached_facts_file :: proc(name: string) -> string {
+	return foundation.join(foundation.module_build_folder, "/", name, "/reached_facts.txt")
+}
+
+// module_reached_facts_write writes the list of the fact keys that the
+// compile step of a module reached.
+module_reached_facts_write :: proc(name: string, reached: []Fact_Description) -> bool {
+	text := strings.builder_make(context.temp_allocator)
+	for fact in reached {
+		fmt.sbprintfln(&text, "%d", fact.key)
+	}
+	path := module_reached_facts_file(name)
+	if error := os.write_entire_file(path, strings.to_string(text)); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", path, error)
+		return false
+	}
+	return true
+}
+
+// module_facts gives the fact types that a module writes: those of its
+// sources whose key the list of its compile step names. The caller gives
+// the sources (module_sources), which it also reads for the record streams
+// of the module.
+module_facts :: proc(build: foundation.Module_Build, sources: []Fact_Source) -> (facts: []Fact_Description, ok: bool) {
+	of_sources := facts_of_sources(sources) or_return
+	path := module_reached_facts_file(build.name)
+	listed, read_error := os.read_entire_file(path, context.temp_allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: log facts of %s: the list of the fact keys of its compile step, %s, cannot be read: %v", build.name, path, read_error)
+		return nil, false
+	}
+	keys := make(map[u64]bool, context.temp_allocator)
+	for line in strings.split_lines(string(listed), context.temp_allocator) {
+		if line == "" {
+			continue
+		}
+		key, parsed := strconv.parse_u64_of_base(line, 10)
+		if !parsed {
+			fmt.eprintfln("modustool: log facts of %s: the line \"%s\" of %s is not a fact key", build.name, line, path)
+			return nil, false
+		}
+		keys[key] = true
+	}
+	kept := make([dynamic]Fact_Description, context.temp_allocator)
+	for fact in of_sources {
+		if fact.key in keys {
+			append(&kept, fact)
+		}
+	}
+	return kept[:], true
+}
+
+// module_facts_of_sources gives the fact types of the calls of
 // system.log_fact in each source of the repository that the compiler read
-// for it (its list of dependencies).
-module_facts :: proc(build: foundation.Module_Build) -> (facts: []Fact_Description, ok: bool) {
+// for a module (its list of dependencies), reached by its code or not.
+module_facts_of_sources :: proc(build: foundation.Module_Build) -> (facts: []Fact_Description, ok: bool) {
 	sources := module_sources(build) or_return
 	return facts_of_sources(sources)
 }
 
 // module_sources gives each source of the repository that the compiler
-// read for a module, with no test file: its list of dependencies.
+// read for a module, with no test file: its list of dependencies. The log
+// facts and the record streams of a module come from these sources.
 module_sources :: proc(build: foundation.Module_Build) -> (sources: []Fact_Source, ok: bool) {
 	source_files, _, listed := dependency_list_read(module_dependency_file(build.name))
 	if !listed {

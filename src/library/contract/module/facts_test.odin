@@ -208,6 +208,27 @@ a_fact_row_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 // fact_find gives the row of a key by its search in the sorted table, and
 // no row for the key 0, a key below, between and above the keys, the
 // largest key, and a key whose row `fact` refuses.
+// A record is a fact type when a row of the table Facts names it. The
+// edges first: the record 0, one past the last record, the largest index,
+// and a file with no fact; then a record that no fact names; last, the
+// record of the facts.
+@(test)
+a_record_is_a_fact_type_only_when_a_fact_names_it :: proc(t: ^testing.T) {
+	parts := facts_file_parts()
+	// A second record of the same fields, which no fact names.
+	plain_offset, plain_count := string_add(&parts.strings, "Plain")
+	append(&parts.records, Record{name_offset = plain_offset, name_count = plain_count, size = 16, first_field = 1, field_count = 2})
+	file := facts_file(parts)
+	testing.expect(t, !record_is_fact(file, 0), "the record 0 is a fact type")
+	testing.expect(t, !record_is_fact(file, 3), "a record past the table is a fact type")
+	testing.expect(t, !record_is_fact(file, max(u32)), "the largest index is a fact type")
+	testing.expect(t, !record_is_fact(file, 2), "a record that no fact names is a fact type")
+	without := facts_file_parts()
+	resize(&without.facts, 1)
+	testing.expect(t, !record_is_fact(facts_file(without), 1), "a record of a file with no fact is a fact type")
+	testing.expect(t, record_is_fact(file, 1), "the record of the facts is no fact type")
+}
+
 @(test)
 fact_find_gives_the_row_of_a_key :: proc(t: ^testing.T) {
 	file := facts_file(facts_file_parts())
