@@ -65,9 +65,11 @@ Module_Description :: struct {
 	text:     string, // The documentation text that the module carries: the comment of the package, in its Markdown.
 	markdown: string, // The comment of the package, as its author wrote it: the site renders it.
 	exports:  []Export_Description,
-	records:  []Record_Description, // The records that the exports and the log facts use. Record n + 1 of the module is records[n].
+	records:  []Record_Description, // The records that the exports, the log facts and the record streams use. Record n + 1 of the module is records[n].
 	budget:   Budget_Description, // The budget that the module asks for: the table Budget.
 	facts:    []Fact_Description, // The log facts that the module writes, sorted by key (facts_merge): the table Facts.
+	record_outputs: []Record_Stream_Description, // The record outputs that the module declares, sorted by name (record_streams_merge): the table Record_Outputs.
+	record_inputs:  []Record_Stream_Description, // The record inputs, sorted by name: the table Record_Inputs.
 }
 
 // The parts of the budget that a source states: the record
@@ -439,6 +441,32 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		place_records := [2]module.Own_Hash_Place{1 = {memory_offset = own_hash_place}}
 		add_table(&output, &directory, .Own_Hash, place_records[:])
 	}
+	// The record outputs and the record inputs, sorted by name, with their
+	// name, their help and their text in the strings.
+	if len(description.record_outputs) > 0 {
+		output_rows := make([dynamic]module.Record_Output, context.temp_allocator)
+		append(&output_rows, module.Record_Output{})
+		for item in description.record_outputs {
+			row := module.Record_Output{record = item.record_index, pairing = u8(item.pairing)}
+			row.name_offset, row.name_count = strings_add(&string_bytes, item.name)
+			row.about_offset, row.about_count = strings_add(&string_bytes, item.about)
+			row.text_offset, row.text_count = strings_add(&string_bytes, item.text)
+			append(&output_rows, row)
+		}
+		add_table(&output, &directory, .Record_Outputs, output_rows[:])
+	}
+	if len(description.record_inputs) > 0 {
+		input_rows := make([dynamic]module.Record_Input, context.temp_allocator)
+		append(&input_rows, module.Record_Input{})
+		for item in description.record_inputs {
+			row := module.Record_Input{record = item.record_index, terms = item.terms_index, wirings = u8(item.wirings)}
+			row.name_offset, row.name_count = strings_add(&string_bytes, item.name)
+			row.about_offset, row.about_count = strings_add(&string_bytes, item.about)
+			row.text_offset, row.text_count = strings_add(&string_bytes, item.text)
+			append(&input_rows, row)
+		}
+		add_table(&output, &directory, .Record_Inputs, input_rows[:])
+	}
 	add_table(&output, &directory, .Strings, string_bytes[:])
 	add_table(&output, &directory, .Documentation, documentation_records[:])
 	// A module whose source states no budget has no table Budget: it asks
@@ -480,7 +508,20 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 	if error := module.validate(output[:]); error != .None {
 		return fail(name, "the module that was written is not valid: %v", error)
 	}
+	// The reader of the root service checks the record streams of a file
+	// with this procedure: the tool writes none that it refuses.
+	if fault, place := module.record_streams_check(output[:]); fault != .None {
+		return fail(name, "the record streams that were written break a rule: %v at the row %d", fault, place)
+	}
 	return output[:], true
+}
+
+// strings_add appends a text to the string table, and gives its place.
+@(private = "file")
+strings_add :: proc(table: ^[dynamic]u8, text: string) -> (offset, count: u32) {
+	offset = u32(len(table))
+	append(table, text)
+	return offset, u32(len(text))
 }
 
 // own_hash_place_of_elf gives the memory offset of the own-hash place: the

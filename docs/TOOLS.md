@@ -557,6 +557,20 @@ A module carries the same text, with its marks, and the process `manual` reads t
 
 The documentation of the kernel operations is the model: for each operation, one sentence that says what it does, its arguments as a list, its results, its statuses as a list with when each comes, the rights that it needs in bold, links to its records and to its guide, and an example call through `src/library/support/system` when one helps.
 
+## The record outputs and the record inputs of the build
+
+The tool reads each declaration of `system.Record_Output(...)` and `system.Record_Input(...)` in the sources that the compiler read for a module, and writes the tables `Record_Outputs` and `Record_Inputs` of the module file, sorted by name, with the record of each one in the table `Records` (`docs/MODULE_CONTRACT.md`, "The record outputs and the record inputs"). The comment before a declaration gives its line of help and its text. It has no type checker, so it refuses, with a message that names the source and the line:
+
+- a declaration of one of the two types that is not a package variable of the package of the module: a local variable, a constant, a type, a field of a record, a composite literal, a parameter by value, a declaration inside a `when`, a variable of another package that the module compiles in. A parameter that takes a stream by its address declares none;
+- a record or terms type that is not a record type of the package or of an imported package of the library, `system.Any_Record` as the terms, a record with padding or a Handle field;
+- arguments past the parameters, a name that names no parameter, a parameter given two times, no record type, and a pairing or a count that is not a member written `.Member`;
+- `.Paired` on a record output that is not generic, and `.Many_Types` on a record input that is not generic;
+- two record outputs, two record inputs, or a record output and a record input with one name;
+- a generic record output in a module with no generic record input, or with two;
+- more than 65 535 record outputs or record inputs, and a record whose name the module describes another way.
+
+The tool checks each module file that it writes with `module.record_streams_check`, the reader of the root service. `modustool test descriptions` compares the two tables of each module with its sources, and prints one line for each declaration: "the record output server.requests of the record Access_Record comes from its source". The host tests of `tools/modustool/build` (`record_streams_test.odin`) give each refused form and check the refusal.
+
 ## The intent folder
 
 The folder `src/md` holds the intent files (`glossary/project.md`, "Intent file"): one Markdown file for the design of each part of the system, by the standard of [srcmd.org](https://srcmd.org). Its entry point is `src/md/README.md`: an overview of the system, the points that a newcomer gets wrong, the rules of the form of a file (`src/md/README.md`, "The rules of this folder"), and the file index.

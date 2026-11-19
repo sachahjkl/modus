@@ -1,6 +1,6 @@
 # Module contract
 
-`src/library/contract/module/format.odin` is version 3 of the format at the level of bytes.
+`src/library/contract/module/format.odin` is version 4 of the format at the level of bytes.
 
 This document gives the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `glossary/README.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -66,7 +66,8 @@ A module is one file that holds its code and everything needed to use it: what i
 +--------------------+
 | flat tables        |  segments, imports, slots, exports, rebases,
 |                    |  functions, strings, documentation, records, fields,
-|                    |  budget, facts, own hash
+|                    |  budget, facts, own hash, record outputs,
+|                    |  record inputs
 +--------------------+
 | segment data       |  code, read-only data, data; each segment on a page
 +--------------------+
@@ -357,9 +358,63 @@ offset  size  field          type
 - **The record of a fact type** is a record description of the table `Records`, as the record of an export is. A record that an export takes and a fact writes has one row.
 - **The checks of a reader**: `module.fact` refuses a row with the key 0, a `reserved` word that is not 0, a record that `record_type` refuses or whose values pass `op.LOG_FACT_VALUE_CAPACITY` (144 bytes), a template of 0 bytes or of more than `FACT_TEMPLATE_BYTES_MOST` (256), and a text outside the string table. `module.fact_find` finds a row by its key in the sorted table. `module.fact_template_valid` checks the language of the template against the fields: a reader shows a fact whose template breaks a rule raw.
 - **The own-hash place.** A module file cannot hold its own hash. The support package `system` declares the place, a variable with the symbol `modus_own_hash` (`module.OWN_HASH_PLACE_SYMBOL`), and the build writes its memory offset in the table `Own_Hash`. `validate` refuses a place that is not 32 bytes inside one segment with Write and no Execute (`Bad_Own_Hash_Place`), so no file makes a loader write into its code. A module whose code does not read the place has no table: the link drops the variable.
-- **The version.** Version 3 of the format adds the two tables. A loader of version 2 would leave the place zero, so the version changed, and a loader refuses a file of version 2.
+- **The version.** A loader that does not know the table `Own_Hash` would leave the place zero, and each fact of the module would name no module: a table that a reader must know changes the version (`module.VERSION`), and a loader refuses a file of another version.
 
 What the build checks, and how a source declares a fact type: `TOOLS.md`, "The log facts of the build". The design: `src/md/features/log_facts.md`.
+
+### The record outputs and the record inputs
+
+A record output is a stream of records of one record type that the module writes while it works, with no known end; a record input is a stream that it reads (`glossary/communication.md`, "Record output" and "Record input"). The source declares each one as a package variable of its package, with a documented comment:
+
+```odin
+// One request that the server answered.
+requests: system.Record_Output(Access_Record)
+
+// The orders to serve.
+orders: system.Record_Input(Order, .Many)
+
+// The streams to keep, each with the terms of its space.
+sources: system.Record_Input(system.Any_Record, .Many_Types, Space_Terms)
+```
+
+The generic types of `src/library/support/system` take the record type, then for a record output its pairing (`.Unpaired` by default, or `.Paired`), and for a record input its count of wirings (`.One` by default, `.Many` or `.Many_Types`) and the record type of its wiring terms (`system.No_Terms` by default). `system.Any_Record` declares a generic record output or record input, whose type a wiring fixes. A declaration costs nothing while no wiring names it. Two tables hold them:
+
+| Table | One record describes |
+|---|---|
+| Record_Outputs | One record output: its name, its line of help and its documentation text in the string table; the index of the description of its record in the table `Records`, or 0 for a generic record output; and its pairing, the byte of a `module.Record_Output_Pairing` |
+| Record_Inputs | One record input: the same name, help and text; the index of its record, or 0 for a generic record input; the index of the record of its wiring terms, or 0 for none; and its count of wirings, the byte of a `module.Wiring_Count` |
+
+```byte-layout module.Record_Output module.Record_Input
+module.Record_Output, 32 bytes: one record of the table Record_Outputs
+offset  size  field         type
+     0     4  name_offset   u32
+     4     4  name_count    u32
+     8     4  about_offset  u32
+    12     4  about_count   u32
+    16     4  text_offset   u32
+    20     4  text_count    u32
+    24     4  record        u32
+    28     1  pairing       u8
+    29     3  reserved      [3]u8
+
+module.Record_Input, 36 bytes: one record of the table Record_Inputs
+offset  size  field         type
+     0     4  name_offset   u32
+     4     4  name_count    u32
+     8     4  about_offset  u32
+    12     4  about_count   u32
+    16     4  text_offset   u32
+    20     4  text_count    u32
+    24     4  record        u32
+    28     4  terms         u32
+    32     1  wirings       u8
+    33     3  reserved      [3]u8
+```
+
+- **The record of a row** is a record description of the table `Records`, as the record of an export or of a log fact is: a record that an export takes and a record output writes has one row. A record of a record stream goes into memory that another process reads, so it has no Handle field, and each of its bytes is a byte of one field (`module.record_stream_type`).
+- **The checks of a reader**: `module.record_output` and `module.record_input` refuse a row index of 0 or past `module.RECORD_STREAM_INDEX_MOST` (65 535: a wiring names a row in 16 bits), a reserved byte that is not 0, a name that is not a name of the source or is outside the string table, a help or a text outside it, a record or terms that `record_stream_type` refuses, a pairing or a count that names no member, `Paired` on a typed record output, and `Many_Types` on a typed record input. `module.record_streams_check` checks a whole file: each row, the names of each table sorted with no name two times, no name in both tables, and a generic record output only beside one generic record input. The build writes the rows sorted by name, and checks each file that it writes with it.
+
+What the build checks: `TOOLS.md`, "The record outputs and the record inputs of the build". The wiring, the output ring and the design: `src/md/features/module_outputs.md`.
 
 ## 2. Loading
 

@@ -73,6 +73,18 @@ requests: system.Record_Output(Access_Record)
 orders: system.Record_Input(Order)
 ```
 
+The count of wirings, the wiring terms and the mark `Paired` are parameters of the two generic types, with defaults, so a declaration that takes the defaults is the short form above:
+
+```odin
+// The streams to keep, each with the terms of its space.
+sources: system.Record_Input(system.Any_Record, .Many_Types, Space_Terms)
+
+// The kept records, one ring for each source that asks to forward.
+forward: system.Record_Output(system.Any_Record, .Paired)
+```
+
+`system.Record_Output($Record_Type, $pairing = .Unpaired)` and `system.Record_Input($Record_Type, $wirings = .One, $Terms_Type = system.No_Terms)` hold no state yet: the state of the writer and of the reader comes with the wiring. The arguments go by place or by name. A parameter of a procedure that takes a record stream by its address declares none; the tool reads no other form of the two types.
+
 The tool reads these declarations, as it reads the signature of an export (`describe.odin`), and writes two tables of the module file:
 
 | Table | One row describes |
@@ -80,7 +92,9 @@ The tool reads these declarations, as it reads the signature of an export (`desc
 | `Record_Outputs` | One record output: its name, its line of help and its documentation text in the string table; the index of its record description in the table `Records`, or 0 for a generic record output; and the mark `Paired` for a generic record output that has one ring for each wiring of the generic record input of its module. |
 | `Record_Inputs` | One record input: the same name, help and text; the index of its record description, or 0 for a generic record input; the index of the record description of its wiring terms, or 0 for none; and its count of wirings: `One`, `Many` (several wirings of one type) or `Many_Types` (several wirings, each of its own type, for a generic record input only). |
 
-A module declares as many record outputs and record inputs as it needs. The only bound is the field of the format: the index of a record output or a record input is 16 bits in a wiring, so 65 535 of each. A declaration costs its row and its strings in the module file, and nothing while it is not wired. The tool refuses two record outputs or two record inputs with one name, a declaration that is not a package variable of the package of the module, a generic record output in a module that has no generic record input or two, `Many_Types` on a record input that is not generic, and `Paired` on a record output that is not generic. The tables change the hash of the module, as each byte of the metadata does.
+A module declares as many record outputs and record inputs as it needs. The only bound is the field of the format: the index of a record output or a record input is 16 bits in a wiring, so 65 535 of each. A declaration costs its row and its strings in the module file, and nothing while it is not wired. The tool refuses two record outputs or two record inputs with one name, a record output and a record input with one name (`server.name` names one stream in the console), a declaration that is not a package variable of the package of the module (a local variable, a constant, a type, a field of a record, a declaration inside a `when`, a parameter by value, a variable of another package that the module compiles in), a generic record output in a module that has no generic record input or two, `Many_Types` on a record input that is not generic, and `Paired` on a record output that is not generic. The tables change the hash of the module, as each byte of the metadata does.
+
+The rows of each table are sorted by name, as the rows of `Facts` are sorted by key. The contract reader `module.record_streams_check` then checks a whole file in one walk of each table and one walk of the two: each row (`module.record_output`, `module.record_input`), the order of the names, no name in both tables, and the rule of a generic record output. The root service checks a module file with it before a wiring; the tool checks each file that it writes with it. A sort by name also makes the index of a row stable when a source moves a declaration to another file.
 
 Each process also has one record output that no module declares: `log` ("The record output `log`").
 
@@ -106,9 +120,11 @@ An output ring is a ring ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md
 2. The command queue: one place for each record. A place is the place word (8 bytes), then the record, rounded up to a multiple of 64 bytes: a record of 72 bytes takes a place of 128 bytes, and a log record of 256 bytes a place of 320 bytes.
 3. The completion queue: records of 64 bytes, the same capacity.
 
-**The place word** is a kind (`Place_Kind`, an enum with explicit values: `Record = 0`, `Gap = 1`, `End = 2`, `Joined = 3`) and the serial of the record (32 bits). The serial counts the records of the record output, not of the ring: the writer gives the same serial to the copy of a record in each ring. A zero place word is a record, so a zero place is a valid record of zero fields.
+**The place word** is a kind (`Place_Kind`, an enum with explicit values: `Record = 0`, `Gap = 1`, `End = 2`, `Joined = 3`) and the serial of the record (32 bits): `output.Place_Word`, the word of the kind then the serial. The serial counts the records of the record output, not of the ring: the writer gives the same serial to the copy of a record in each ring. A zero place word is a record, so a zero place is a valid record of zero fields. The serial wraps at the top of its 32 bits, as the counters of a ring do.
 
-**Each side computes the size of a place and the capacity itself**, from the record description and the size of the memory that the kernel gives. Neither side reads them from the shared memory. The ring contract gains one form of `open` that takes the size of a command record, with its host tests; a ring of 64 bytes is the case of today.
+What each kind holds after its word, at offset 8: a record, its bytes; a gap record, its count as 32 bits, and its serial is the serial of the first refused record; an end record, its error record of 56 bytes, and its serial is the count of the records; a joined record, nothing, and its serial is the serial of the next record. So each place of an output ring is at least 64 bytes, and each byte after what the kind names is 0, the bytes between the end of a record and the end of its place too.
+
+**Each side computes the size of a place and the capacity itself**, from the record description and the size of the memory that the kernel gives. Neither side reads them from the shared memory. The ring contract gains one form of `open` that takes the size of a command record, `ring.place_open(memory, page_count, place_size)`, with its host tests: the memory is the head page, then the places, then the completions with no gap between them, so a ring of `1 + ceil(capacity × (place_size + 64) / 4096)` pages; with places of 64 bytes it is the ring of `ring.open` at each capacity, the case of today. The writer and the reader copy a whole place in and out (`ring.place_push`, `ring.place_pop`), and the reader checks its copy only.
 
 **The reader checks each record** at one border, `output.record_of_place`, a pure procedure of a contract package with host tests. It copies the place once into private memory, then checks it against its record description: its own, from its module file, for a declared record input; the one that the root service read from the module file of the writer, for a generic record input or for the console. Never one that the writer sends.
 
@@ -118,9 +134,13 @@ An output ring is a ring ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md
 - each Text field: UTF-8 with no control character, then zero bytes to the end of the field ([text_encoding.md](../data/text_encoding.md));
 - each status field of a contract enum: a value that names no member;
 - each body place: inside the body region, with no overflow;
-- a joined record, a gap record or an end record: the bytes after the place word that its kind does not name are zero.
+- a joined record, a gap record or an end record: the bytes after the place word that its kind does not name are zero;
+- a record: the bytes of its place after the record are zero, as the padding of a record is refused;
+- a gap record of 0 records, and any place after the end record.
 
-A refused record does not reach the reader of the record input. The reader writes one completion with the status `Bad_Record`, the serial of the record as the tag, and the error record that names the field. It writes no completion for a record that it takes: the counter `read` of the queue says that it took it.
+The border gives the fault, an enum `output.Place_Fault`, and the error record: its `value` is the wrong value (the kind word, the serial, the place of the byte), its `limit` what the border expected, and its `found` the part, 0 for the place word and the bytes of its kind, the number of a field from 1, or the count of the fields + 1 for the bytes after the record. On a refusal the state of the reader, `output.Read_State` in its private memory, does not change. A description with a Handle field, or a field that the border cannot read, is refused as `Bad_Field`: the reader takes its description through `module.record_stream_type`, which refuses both, and the border does not trust that.
+
+A refused record does not reach the reader of the record input. The reader writes one completion with the status `Bad_Record`, the serial of the record as the tag, and the error record that names the field. It writes no completion for a record that it takes: the counter `read` of the queue says that it took it. The kind of a completion is `output.Completion_Kind` (`End_Taken = 0`, `Bad_Record = 1`); the writer takes it through `output.completion_of_record`, which refuses a kind that names no member and an `End_Taken` with values.
 
 **The completion queue** carries the refusals and the acknowledgement of the end. The reader reads a record only while the completion queue has room for its answer, as the kernel does for a kernel ring ([../api/kernel_ring_completion_room.md](../api/kernel_ring_completion_room.md)). A writer that never reads its completions stops its own stream at the first refused records, and only that stream.
 
@@ -270,6 +290,7 @@ A writer that serves the network, as `server` does, does not wait for a reader o
 ### The end of a stream
 
 - **The writer ends its stream** with `system.output_end(&output, error)`: an end record with an error record, zero for a clean end, then the close of its handle. The reader reads each record before the end, takes the end, writes its acknowledgement in the completion queue, and closes its end.
+- **The end words.** One line of 64 bytes of the head page, at offset 1024, in the half of the command queue past its counters, which neither side writes: the word of an `output.End_Word` (`None = 0`, `Writer_Stopped = 1`, `Reader_Stopped = 2`, `Asker_Stopped = 3`, `Revoked = 4`), then the words of the stop cause and of the stop outcome, 0 for each end but `Writer_Stopped`, then reserved words of 0. `output.end_words_write` writes the two stop words, then the end word with a release; `output.end_words_read` reads the end word first. The border `output.end_of_words` refuses an end word that names no member, a stop word beside another end, and a reserved word that is not 0. Until the stop cause and the stop outcome are built ([../api/process_stop.md](../api/process_stop.md)), the border gives their two words as they are, and the reader takes them through the border of the stop.
 - **The writer stops with no end record.** When the root service reaps the writer, it maps the head page of each ring of the writer, writes the end word `Writer_Stopped` with the stop cause and the stop outcome of the writer, and wakes the reader. The reader takes the two words through the border of [../api/process_stop.md](../api/process_stop.md); later, the error record of a failed stop comes in the place where an end record holds its error record. Only the root service writes an end word, and only after the writer stopped, so the one-writer rule of each queue holds. The reader reads the end word only when the queue is empty: each record that the writer published before its stop reaches it.
 - **The reader stops, or closes its end.** The root service writes the end word `Reader_Stopped` and wakes the writer, which waits on the counter `read`. The library of the writer removes that ring from the record output at its next write, and closes its handle. A writer with no reader left gets `No_Reader`.
 - **The asker stops.** Its budget pays the wiring, so the wiring ends with it: the root service writes the end word `Asker_Stopped` in each of its rings, as for a revocation. A start policy outlives the processes that it starts; a console that reads a stream is its own asker.
@@ -502,4 +523,6 @@ Each measure is printed, never asserted ([`docs/TOOLS.md`](../../../docs/TOOLS.m
 
 ## State
 
-Designed, not built. No module declares a record output or a record input, no output ring exists, and `server` writes its access records on the log.
+Built: the declarations and the output ring as contracts. The tables `Record_Outputs` and `Record_Inputs` of the module format, version 4, with their readers and `module.record_streams_check`; the generic types `system.Record_Output`, `system.Record_Input`, `system.Any_Record` and `system.No_Terms`; their extraction by the tool with each refusal, the check of each file that it writes, and the comparison of `modustool test descriptions`; the fuzz target of the module file over the two tables. The form of `open` with the size of a place (`ring.place_open`); the contract package `output` with the place word, the places of each kind, the border `output.record_of_place`, the end words and the completions. Each with its host tests.
+
+Left: no module declares a record output or a record input yet, no process writes one, and no output ring exists in a machine. The wiring and each step after it are left, and `server` writes its access records on the log.

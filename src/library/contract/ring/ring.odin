@@ -37,6 +37,9 @@
 //   operations, with no lock and no kernel entry.
 // - `Shared_Head`, `shared_open` (`shared.odin`): the shared queue, which
 //   several writers fill.
+// - `Place_Ring`, `place_open`, `place_push`, `place_pop` (`places.odin`):
+//   the form of a ring whose commands are places of a size that both sides
+//   compute, the output ring of a record output.
 //
 // `src/library/support/system` adds the waits (`system.send`, `system.receive`). See
 // [ring](term:ring), [command record](term:command-record) and

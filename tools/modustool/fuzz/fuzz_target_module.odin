@@ -63,8 +63,47 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 				_, _ = module.record(file, kind, index, module.Fact)
 			case .Own_Hash:
 				_, _ = module.record(file, kind, index, module.Own_Hash_Place)
+			case .Record_Outputs:
+				_, _ = module.record(file, kind, index, module.Record_Output)
+			case .Record_Inputs:
+				_, _ = module.record(file, kind, index, module.Record_Input)
 			}
 		}
+	}
+	// The readers of the record streams: a row that they accept names a
+	// record that another process can read whole (no Handle, each byte of
+	// one field), and Paired and Many_Types only on a generic row.
+	outputs := min(module.count(file, .Record_Outputs), FUZZ_MODULE_INDEX_LIMIT)
+	for index in 0 ..= outputs {
+		row, pairing, record, valid := module.record_output(file, index)
+		if !valid {
+			continue
+		}
+		if pairing == .Paired && row.record != 0 {
+			return fuzz_broken(.Contract, "record_output accepts Paired on a typed record output: row %d", index)
+		}
+		if row.record != 0 && (module.record_has_handle(file, record) || !module.record_covers_each_byte(file, record)) {
+			return fuzz_broken(.Contract, "record_output accepts a record with a Handle or a byte that no field names: row %d", index)
+		}
+	}
+	inputs := min(module.count(file, .Record_Inputs), FUZZ_MODULE_INDEX_LIMIT)
+	for index in 0 ..= inputs {
+		row, wirings, record, terms, valid := module.record_input(file, index)
+		if !valid {
+			continue
+		}
+		if wirings == .Many_Types && row.record != 0 {
+			return fuzz_broken(.Contract, "record_input accepts Many_Types on a typed record input: row %d", index)
+		}
+		if row.record != 0 && (module.record_has_handle(file, record) || !module.record_covers_each_byte(file, record)) {
+			return fuzz_broken(.Contract, "record_input accepts a record with a Handle or a byte that no field names: row %d", index)
+		}
+		if row.terms != 0 && (module.record_has_handle(file, terms) || !module.record_covers_each_byte(file, terms)) {
+			return fuzz_broken(.Contract, "record_input accepts terms with a Handle or a byte that no field names: row %d", index)
+		}
+	}
+	if fault, _ := module.record_streams_check(file); fault > max(module.Record_Stream_Fault) {
+		return fuzz_broken(.Contract, "record_streams_check gives a value out of its enumeration: %d", u8(fault))
 	}
 	// The reader of the facts: a fact that it accepts names a record that
 	// record_type accepts, with values that fit in one log record.
@@ -195,6 +234,10 @@ fuzz_module_record_type :: proc(kind: module.Table_Kind) -> (type: typeid, size:
 		return module.Fact, size_of(module.Fact)
 	case .Own_Hash:
 		return module.Own_Hash_Place, size_of(module.Own_Hash_Place)
+	case .Record_Outputs:
+		return module.Record_Output, size_of(module.Record_Output)
+	case .Record_Inputs:
+		return module.Record_Input, size_of(module.Record_Input)
 	}
 	return nil, 0
 }
@@ -389,6 +432,47 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 		has_own_hash = true
 	}
 
+	// The record outputs and the record inputs of the record, as the build
+	// writes them: each table sorted by name, no name in both (the outputs
+	// start with 'o', the inputs with 'i'), at most one generic record
+	// input, and a generic record output only beside it.
+	stream_outputs := make([dynamic]module.Record_Output, context.temp_allocator)
+	stream_inputs := make([dynamic]module.Record_Input, context.temp_allocator)
+	output_count := fuzz_choice_below(&choices, 3)
+	input_count := fuzz_choice_below(&choices, 3)
+	generic_input := input_count > 0 ? fuzz_choice_below(&choices, input_count + 1) : input_count
+	if input_count > 0 {
+		append(&stream_inputs, module.Record_Input{})
+		for index in 0 ..< input_count {
+			row := module.Record_Input{record = 1}
+			row.name_offset, row.name_count = fuzz_module_stream_name_add(&strings_bytes, 'i', index)
+			row.about_offset, row.about_count = fuzz_module_name_add(&strings_bytes, &choices, 'h')
+			if fuzz_choice_flag(&choices) {
+				row.terms = 1
+			}
+			if index == generic_input {
+				row.record = 0
+				row.wirings = u8(foundation.enum_member_at(module.Wiring_Count, fuzz_choice_below(&choices, len(module.Wiring_Count))))
+			} else if fuzz_choice_flag(&choices) {
+				row.wirings = u8(module.Wiring_Count.Many)
+			}
+			append(&stream_inputs, row)
+		}
+	}
+	if output_count > 0 {
+		append(&stream_outputs, module.Record_Output{})
+		for index in 0 ..< output_count {
+			row := module.Record_Output{record = 1}
+			row.name_offset, row.name_count = fuzz_module_stream_name_add(&strings_bytes, 'o', index)
+			row.text_offset, row.text_count = fuzz_module_name_add(&strings_bytes, &choices, 'x')
+			if generic_input < input_count && fuzz_choice_flag(&choices) {
+				row.record = 0
+				row.pairing = u8(foundation.enum_member_at(module.Record_Output_Pairing, fuzz_choice_below(&choices, len(module.Record_Output_Pairing))))
+			}
+			append(&stream_outputs, row)
+		}
+	}
+
 	documentation := [2]module.Documentation{}
 	documentation[1].about_offset, documentation[1].about_count = fuzz_module_name_add(&strings_bytes, &choices, 'd')
 	budget := [2]module.Budget_Request{{}, {pages = u64(fuzz_choice_below(&choices, 64)), processes = 1, threads = 1}}
@@ -427,6 +511,8 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	if has_own_hash {
 		fuzz_module_table_write(&writer, &directory, .Own_Hash, own_hash[:])
 	}
+	fuzz_module_table_write(&writer, &directory, .Record_Outputs, stream_outputs[:])
+	fuzz_module_table_write(&writer, &directory, .Record_Inputs, stream_inputs[:])
 	strings_at := len(writer.bytes)
 	append(&writer.bytes, ..strings_bytes[:])
 	directory[int(module.Table_Kind.Strings)] = {offset = u64(strings_at), count = u32(len(strings_bytes)), record_size = 1}
@@ -473,6 +559,15 @@ fuzz_module_name_add :: proc(table: ^[dynamic]u8, source: ^Fuzz_Choices, prefix:
 	return offset, u32(len(table^)) - offset
 }
 
+// fuzz_module_stream_name_add adds the name of a record stream: a prefix,
+// then one letter of its place, so that the names of one table follow the
+// order of the rows and no name is in two tables.
+fuzz_module_stream_name_add :: proc(table: ^[dynamic]u8, prefix: u8, place: int) -> (offset, count: u32) {
+	offset = u32(len(table^))
+	append(table, prefix, 'a' + u8(place))
+	return offset, 2
+}
+
 // fuzz_module_table_write appends the records of one table, each aligned,
 // and writes its entry of the directory.
 fuzz_module_table_write :: proc(out: ^Fuzz_Module_Writer, entries: ^[module.TABLE_COUNT]module.Table_Entry, kind: module.Table_Kind, records: []$T) {
@@ -512,6 +607,10 @@ fuzz_module_generated_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			if !valid || !found_ok || found != index {
 				return fuzz_broken(.Round_Trip, "the fact %d that the generator built by the rules is not read or not found by its key", index)
 			}
+		}
+		// The record streams that the generator wrote keep each rule.
+		if fault, place := module.record_streams_check(file); fault != .None {
+			return fuzz_broken(.Round_Trip, "record_streams_check refuses the record streams that the generator built by the rules: %v at the row %d", fault, place)
 		}
 	}
 	return fuzz_module_readers(file)

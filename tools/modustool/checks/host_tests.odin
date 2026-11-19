@@ -297,6 +297,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/datagram",
 	foundation.SOURCE_FOLDER_CONTRACT + "/byte_order",
 	foundation.SOURCE_FOLDER_CONTRACT + "/timed_stream",
+	foundation.SOURCE_FOLDER_CONTRACT + "/output",
 	foundation.SOURCE_FOLDER_PRIVATE + "/sound/sound_device",
 	foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors",
 }

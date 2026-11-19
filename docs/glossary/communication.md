@@ -566,7 +566,7 @@ Do not use: pipe (alone), pipeline, bar, forward operator.
 
 A record output is a stream of records of one record type that a module declares and writes while it works, with no known end.
 
-The module file names each record output in its table `Record_Outputs`, with its record description. A wiring joins it to the record input of another process through one output ring for each reader; a declaration with no wiring costs nothing. Each process also has the record output `log`, which only its starter wires. A record output loses no record: a full ring makes its writer wait, or refuses the record and says so. It replaces standard output, and it is never the lossy log of the kernel. Example: `server.requests`.
+The module file names each record output in its table `Record_Outputs`, with its record description. A wiring joins it to the record input of another process through one output ring for each reader; a declaration with no wiring costs nothing. Each process also has the record output `log`, which only its starter wires. A record output loses no record: a full ring makes its writer wait, or refuses the record and says so. It replaces standard output, and it is never the lossy log of the kernel. Example: `requests: system.Record_Output(Access_Record)`, which the console names `server.requests`.
 
 The design: `src/md/features/module_outputs.md`.
 
