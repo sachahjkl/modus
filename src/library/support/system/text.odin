@@ -250,7 +250,7 @@ log_text :: proc "contextless" (text: string) {
 		// slice with no address.
 		copied: [LOG_CALL_LIMIT]u8
 		count := copy(copied[:], part)
-		log_call(handle, &copied[0], count, .Info, 0)
+		log_call(handle, &copied[0], count, .Info, 0, .Text)
 		if len(rest) == 0 {
 			break
 		}

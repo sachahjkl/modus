@@ -119,11 +119,13 @@ log_record_fact :: proc "contextless" (record: ^Log_Record) -> ^Log_Fact {
 // Example: the hash 1a2b3c4d5e6f7081..., the key 0xfa0adf38a559f4d1 and the
 // values 0c 00 23 00 give "#1a2b3c4d5e6f7081:fa0adf38a559f4d1 0c0023".
 log_fact_line :: proc "contextless" (fact: ^Log_Fact, line: ^[LOG_FACT_LINE_BYTES_MOST]u8) -> int {
-	DIGITS :: "0123456789abcdef"
 	count := 0
 	put_byte :: proc "contextless" (line: ^[LOG_FACT_LINE_BYTES_MOST]u8, count: ^int, value: u8) {
-		line[count^] = DIGITS[value >> 4]
-		line[count^ + 1] = DIGITS[value & 0xF]
+		digit :: proc "contextless" (nibble: u8) -> u8 {
+			return nibble < 10 ? '0' + nibble : 'a' + nibble - 10
+		}
+		line[count^] = digit(value >> 4)
+		line[count^ + 1] = digit(value & 0xF)
 		count^ += 2
 	}
 	line[count] = '#'

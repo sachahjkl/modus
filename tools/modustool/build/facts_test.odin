@@ -35,7 +35,7 @@ Sample :: struct {
 
 // The record type that each refused source below changes, written whole.
 @(private = "file")
-FACT_TEST_GOOD_TYPE :: `@(log_fact = "probe: the block {block} has the check {check}")
+FACT_TEST_GOOD_TYPE :: `@(log_fact = "probe: the block {block} has the check {check} and the other {other}")
 Probe :: struct {
 	block: u64,
 	check: u32,
@@ -110,7 +110,7 @@ the_fact_types_of_a_module_come_from_their_calls :: proc(t: ^testing.T) {
 	}
 	probe, sample := facts[0], facts[1]
 	testing.expect_value(t, probe.key, fact_key("fact_probe", "Probe"))
-	testing.expect_value(t, probe.template, "probe: the block {block} has the check {check}")
+	testing.expect_value(t, probe.template, "probe: the block {block} has the check {check} and the other {other}")
 	testing.expect(t, probe.package_name == "fact_probe" && probe.type_name == "Probe" && probe.record.size == 16 && len(probe.record.fields) == 3)
 	testing.expect_value(t, sample.key, fact_key("fact_sample", "Sample"))
 	testing.expect(t, sample.package_name == "fact_sample" && sample.template == "sample: the place {place}")
