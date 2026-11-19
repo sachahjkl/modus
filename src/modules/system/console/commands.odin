@@ -1316,7 +1316,9 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 		for number in 0 ..< described.field_count {
 			field, _ := module.field(file, described, number)
 			kind, kind_ok := kind_of_type_word(field.type)
-			if !kind_ok {
+			// A hash is a Bytes field: the console has no value of a hash
+			// to type, so a record with one is no command.
+			if !kind_ok || kind == .Bytes {
 				fields_known = false
 				break
 			}

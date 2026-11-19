@@ -19,6 +19,7 @@ import "modus:contract/fixed_addresses"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/start_grant"
+import "modus:contract/value_kinds"
 import "modustool:foundation"
 import "modustool:build"
 import "modustool:checks"
@@ -751,13 +752,7 @@ site_types_read :: proc(site: ^Site) -> bool {
 			for field in record.fields {
 				size, alignment := site_record_field_size(field)
 				type.alignment = max(type.alignment, alignment)
-				text := fmt.tprintf("%v", field.type)
-				#partial switch field.type {
-				case .Integer:
-					text = fmt.tprintf("%s%d", field.unsigned ? "u" : "i", size * 8)
-				case .Text:
-					text = fmt.tprintf("Text(%d)", field.detail)
-				}
+				text := site_record_field_type_text(field, size)
 				append(&fields, Site_Type_Field{name = field.name, type_text = text, type_key = site_wire_form_key(field.type), offset = int(field.offset), size = size})
 			}
 			type.fields, type.padding = site_type_layout(fields[:], type.size)
@@ -780,10 +775,37 @@ site_record_field_size :: proc(field: build.Field_Description) -> (size: int, al
 		return size, size
 	case .Handle:
 		return size_of(op.Handle), align_of(op.Handle)
-	case .Text:
+	case .Text, .Bytes:
 		return int(field.detail), 1
 	}
 	return 0, 1
+}
+
+// site_record_field_type_text gives the type of a field of a record of a
+// module on the page of the types, with its field kind: "u32" for a plain
+// Integer, "hexadecimal u32", the name of the contract enum of a status
+// ("Log_Level"), "Text(16)", "Module_Name(32)", "Hash(32)". size is the
+// size of the field in bytes.
+site_record_field_type_text :: proc(field: build.Field_Description, size: int) -> string {
+	switch field.kind {
+	case .Hexadecimal:
+		return fmt.tprintf("hexadecimal u%d", size * 8)
+	case .Status:
+		return value_kinds.CONTRACT_ENUM_TYPES[field.contract_enum].name
+	case .Module_Name:
+		return fmt.tprintf("Module_Name(%d)", field.detail)
+	case .Hash:
+		return fmt.tprintf("Hash(%d)", field.detail)
+	case .Plain:
+	}
+	switch field.type {
+	case .Integer:
+		return fmt.tprintf("%s%d", field.unsigned ? "u" : "i", size * 8)
+	case .Text:
+		return fmt.tprintf("Text(%d)", field.detail)
+	case .None, .Record, .Handle, .Table, .Bytes:
+	}
+	return fmt.tprintf("%v", field.type)
 }
 
 // site_type_uses_make records where each type is named: the types whose

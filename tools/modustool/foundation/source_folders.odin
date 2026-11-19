@@ -101,6 +101,20 @@ PRIVATE_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_PRIVATE + "/"
 // (library_imports_check.odin).
 SOURCE_LIBRARY_FLAG :: "-collection:" + SOURCE_LIBRARY_NAME + "=" + SOURCE_FOLDER_LIBRARY
 
+// The name of the attribute of a fact type, on a record type of the source
+// (src/md/features/log_facts.md, "The fact type in the source"). The
+// compiler refuses an attribute that it does not know, and accepts this one
+// and ignores it with the flag below; the tool reads it from the syntax
+// tree.
+LOG_FACT_ATTRIBUTE_NAME :: "log_fact"
+// The flag of the compiler that accepts the attribute of a fact type. Each
+// command of the tool that compiles a package of src/ gives it, with the
+// flag of the library: the compile of a module, of the kernel and of the
+// boot program, each host test, and each compile and check of this tool,
+// which compiles packages of src/ in. flake.nix gives the same flag when it
+// builds this tool.
+LOG_FACT_ATTRIBUTE_FLAG :: "-custom-attribute:" + LOG_FACT_ATTRIBUTE_NAME
+
 // The second source library: the kernel parts, the pure packages in the
 // folders under src/kernel that the kernel alone compiles in
 // (src/md/infrastructure/repository_layout.md, "The kernel parts and the

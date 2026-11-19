@@ -31,7 +31,7 @@ TOOL_BUILD_RECORD :: TOOL_BINARY + BUILD_RECORD_SUFFIX
 // The compile of the tool, with no output. flake.nix writes the same
 // words for its first binary and for the derivation of the check; a host
 // test reads them there.
-TOOL_COMPILE_COMMAND :: [?]string{"odin", "build", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG}
+TOOL_COMPILE_COMMAND :: [?]string{"odin", "build", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.LOG_FACT_ATTRIBUTE_FLAG}
 
 // False in the binary of the store, whose sources are the inputs of its
 // derivation, and in the instrumented child of the fuzzing, a build of

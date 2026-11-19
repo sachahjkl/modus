@@ -102,6 +102,14 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 			}
 			_ = module.field_integer(bytes, item)
 			_ = module.field_text(bytes, item)
+			// record_type took the kind of the field, so its border takes
+			// it too, and the bytes of a hash stay inside the record.
+			if _, kind_ok := module.field_kind(item); !kind_ok || !module.field_kind_valid(item) {
+				return fuzz_broken(.Two_Readers, "record_type accepts a field whose kind its border refuses: record %d, field %d", index, number)
+			}
+			if hash := module.field_bytes(bytes, item); item.type == u8(module.Type.Bytes) && len(hash) != int(item.detail) {
+				return fuzz_broken(.Contract, "the bytes of a hash field are not its size: record %d, field %d", index, number)
+			}
 			_ = module.field_integer_fits(item, -1)
 			module.field_integer_set(bytes, item, -1)
 		}
