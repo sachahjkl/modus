@@ -1182,7 +1182,9 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette asks to confirm: close plasma"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "compositor: the palette closes the window plasma"},
+	// The compositor and the root service write their lines in either
+	// order: the wait of the compositor does not move the mark.
+	{kind = .Wait, text = "compositor: the palette closes the window plasma", any_order = true},
 	{kind = .Wait, text = "root: plasma stopped"},
 
 	// The commands of the console in the palette: the console is the
