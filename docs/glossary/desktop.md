@@ -732,7 +732,7 @@ Do not use: straight alpha (for this).
 
 A resource is a file of the boot image that is not a module: data that a process reads in place, named by the hash of its bytes.
 
-The resources are the pointer theme files, the glyph caches, the link pages of the manual, and the system description with its signature. Their table is apart from the table of the modules, so a reader of modules never takes a resource for a module. No process reads the resource table by itself: the root service finds a resource by its name, checks its hash, and gives one process a read-only mapping of it. A resource is not an asset that a process loads by a path: it has no path.
+The resources are the pointer theme files, the font outlines, the link pages of the manual, and the system description with its signature. Their table is apart from the table of the modules, so a reader of modules never takes a resource for a module. No process reads the resource table by itself: the root service finds a resource by its name, checks its hash, and gives one process a read-only mapping of it. A resource is not an asset that a process loads by a path: it has no path.
 
 The design: `docs/ARCHITECTURE.md`, "U2b. Resources of the boot image".
 

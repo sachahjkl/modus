@@ -170,7 +170,7 @@ site_home_timeline_markup :: proc(t: ^testing.T) {
 @(test)
 site_home_charts_hold_one_unit :: proc(t: ^testing.T) {
 	locks_line := "locks: kernel entries in one second, each locker on its own objects: 1 locker 4487253, 2 lockers 9639893, 4 lockers 11207253"
-	glyph_line := "vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 5044 ns, scale 2 12984 ns, scale 3 23506 ns; from the glyph cache: 289 ns; Spleen 8x16: 46 ns"
+	glyph_line := "vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 5044 ns, scale 2 12984 ns, scale 3 23506 ns; from the private glyph cache: 289 ns; Spleen 8x16: 46 ns"
 	charts := site_measure_charts
 	lines := [?]string{locks_line, glyph_line}
 	testing.expect_value(t, len(charts), len(lines))

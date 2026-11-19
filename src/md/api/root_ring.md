@@ -44,7 +44,7 @@ The root ring is the border between the root service and each process that asks 
 - **A table of the roles indexed by an enumeration of the modules.** The compiler would then refuse a missing row, but the enumeration would be a second list of the modules beside `module_builds`, which the tool would have to generate or check; the check of the tool against `module_builds` is the one list.
 - **A default row for each other module.** It is the form that the table replaced: a new module got the zero role with no line that said so.
 - **The grants in the source of each module.** A module would state its own authority; the root service is the one that decides it, and a reader finds every role in one file.
-- **A return value of each giver of a page in place of the refusal record.** Each giver (the date page, the glyph caches, the debug image) would need a result, and each caller a check; one record that the starter reads once covers them all, and no write can be forgotten.
+- **A return value of each giver of a page in place of the refusal record.** Each giver (the date page, the font outlines, the debug image) would need a result, and each caller a check; one record that the starter reads once covers them all, and no write can be forgotten.
 - **The dispatch tested only in a machine.** The decision of the border and the sender reads no state; in the module, a host test and a fuzz target cannot call it.
 
 ## Subtle points

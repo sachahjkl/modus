@@ -67,6 +67,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/storage"
 import "modus:support/system"
+import "modus:support/text_rendering"
 
 WIDTH :: 560
 HEIGHT :: 560
@@ -467,8 +468,8 @@ zone_row :: proc "contextless" (frame: ^interface.Frame, x, y: int, choice: sett
 }
 
 // draw builds the window: a row of buttons for each setting and for the
-// time zone, then the text of the system at its three sizes, then the facts
-// of the glyph caches.
+// time zone, then the text of the system at its three sizes, then the hash
+// of the font of the cells.
 draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	// A refused page shows the defaults: a press writes a whole page again.
 	choice, _ := settings.read(page)
@@ -519,7 +520,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 
 	top := 8 + 40 + rows_height + 32 + 8
 	vector := choice.font == .Vector && graphics.text_vector_drawn()
-	sample := interface.card(&frame, {8, top, WIDTH - 16, HEIGHT - top - 8 - interface.ACTION_BAR_ROW_HEIGHT}, "THE TEXT OF THE SYSTEM", vector ? "the vector font, from the glyph cache" : "Spleen 8x16, the fallback", graphics.colors.machine)
+	sample := interface.card(&frame, {8, top, WIDTH - 16, HEIGHT - top - 8 - interface.ACTION_BAR_ROW_HEIGHT}, "THE TEXT OF THE SYSTEM", vector ? "the vector font, drawn by this process" : "Spleen 8x16, the fallback", graphics.colors.machine)
 	lines := [?]string {
 		"> print(monitor.processes())   31 processes",
 		"compositor   12.4 ms   2 418 pages   runs",
@@ -531,21 +532,16 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	interface.draw_text(frame.table, sample.x, sample.y + 56, "EEVDF fair", graphics.colors.process, interface.FONT_MEDIUM)
 	after := interface.large_number(&frame, sample.x, sample.y + 88, "12 345", graphics.colors.text)
 	interface.draw_text(frame.table, after + 16, sample.y + 112, "wakes in one second", graphics.colors.dim)
-	// The sizes of the caches are in their headers; the hash is that of the
-	// font file, in the header of the cache that this process validated.
+	// The hash of the font file of the cells, which the record of the font
+	// outlines names and this process opened.
 	facts: interface.Text_Builder
-	with_grid_fit_size := display.glyph_cache_valid[.On] ? display.glyph_caches[.On].header.file_size : 0
-	without_grid_fit_size := display.glyph_cache_valid[.Off] ? display.glyph_caches[.Off].header.file_size : 0
-	if with_grid_fit_size == 0 || !graphics.text_state.has_cache {
-		interface.text_put(&facts, "no glyph cache: the text is Spleen 8x16")
+	cells_font := &text_rendering.state.fonts[.Paper_Mono]
+	if !cells_font.opened {
+		interface.text_put(&facts, "no font outlines: the text is Spleen 8x16")
 	} else {
-		interface.text_put(&facts, "glyph caches ")
-		interface.text_put_number(&facts, with_grid_fit_size)
-		interface.text_put(&facts, " and ")
-		interface.text_put_number(&facts, without_grid_fit_size)
-		interface.text_put(&facts, " bytes, font hash ")
+		interface.text_put(&facts, "the font of the cells: hash ")
 		hex := "0123456789abcdef"
-		for byte in graphics.text_state.cache.header.font_hash[:4] {
+		for byte in cells_font.hash[:4] {
 			interface.text_put(&facts, hex[byte >> 4:][:1])
 			interface.text_put(&facts, hex[byte & 15:][:1])
 		}

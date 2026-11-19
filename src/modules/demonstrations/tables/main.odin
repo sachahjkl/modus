@@ -50,8 +50,10 @@ import "modus:support/random"
 import "modus:support/system"
 
 // A table of 65536 readings in a memory object (640 pages), and two call
-// hosts (sample, hostile_exports) with their threads.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2561, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
+// hosts (sample, hostile_exports) with their threads: 2561 pages. And the
+// glyph memory of its own copy of the text rendering, which draws its text
+// by hand: 354 pages (display.TEXT_MEMORY_PAGES). 2561 + 354 = 2915.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2915, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
 // The records of sample, as this process declares them: the layout is the
 // description (a process in C declares the same struct).

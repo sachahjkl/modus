@@ -42,8 +42,10 @@ import "modus:support/random"
 import "modus:support/system"
 import "modus:support/twins"
 
-// 8192 pages at a time, and five twins.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 11446, processes = 6, threads = 6, window_width = WIDTH, window_height = HEIGHT}
+// 8192 pages at a time, and five twins: 11446 pages. And the glyph memory
+// of the copy of the text rendering of the drawing module, which draws its
+// text: 354 pages (display.TEXT_MEMORY_PAGES). 11446 + 354 = 11800.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 11800, processes = 6, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)

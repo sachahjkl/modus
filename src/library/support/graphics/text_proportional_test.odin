@@ -8,7 +8,9 @@ import "modus:support/text_rendering"
 import "modus:support/vector_font"
 
 // The glyph cache of B612 Regular, three positions at scale 1 and one at
-// the scales 2 and 3, in memory that the caller frees.
+// the scales 2 and 3, in memory that the caller frees: the glyphs that the
+// glyph caches of the boot image held, which the build of the same font
+// file draws.
 @(private = "file")
 b612_cache_of :: proc(t: ^testing.T) -> (cache: glyph_cache.Cache, memory: []u64) {
 	bytes := #load("../../../../resources/fonts/b612.ttf")
@@ -28,13 +30,31 @@ b612_cache_of :: proc(t: ^testing.T) -> (cache: glyph_cache.Cache, memory: []u64
 	return cache, memory
 }
 
-// A text whose glyphs are fallback glyphs draws the pixels of the same text
-// from the glyph cache, at each third of a pixel, from the private glyph
-// cache: both draw with the renderer of the build. A fallback glyph that no
-// font of the chain has draws the replacement glyph; so does each glyph
-// with no outlines open.
+// cache_text_draw draws placed glyphs of character indices at scale 1
+// from a glyph cache, as the text of the interface font drew them when the
+// boot image held the caches: each glyph at the nearest of the positions
+// of the scale, with the blend of the text of cells. The reference of the
+// pixels of a text of a face.
+@(private = "file")
+cache_text_draw :: proc(cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, canvas: Canvas, place: i64, y: int, placed: []text_rendering.Placed_Glyph) {
+	position_count := int(cache.sizes[0].position_count)
+	for glyph in placed {
+		pixel, position := glyph_cache.position_of(place + i64(glyph.x), position_count)
+		_, entry, found := glyph_cache.glyph_of_index(cache, int(glyph.glyph), 1, position)
+		if !found {
+			continue
+		}
+		glyph_words_draw(entry, raw_data(cache.words[entry.word_offset:]), square_root, tables, .Red_Green_Blue, canvas, int(pixel), y, DARK_TEXT)
+	}
+}
+
+// A text of the face Interface draws the pixels of the same text from the
+// glyph cache that the build of B612 draws, at each third of a pixel: its
+// glyphs of character indices and its fallback glyphs both. First what
+// draws the replacement glyph: each glyph with no outlines open, and a
+// fallback glyph that no font of the chain has.
 @(test)
-a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
+a_text_of_a_face_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
 	defer sync.mutex_unlock(&fallback_test_lock)
 	defer text_rendering.state = {}
@@ -47,14 +67,14 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	defer free(tables)
 	WIDTH :: 96
 	HEIGHT :: 16
-	built_pixels, fallback_pixels: [WIDTH * HEIGHT]Color
+	built_pixels, drawn_pixels: [WIDTH * HEIGHT]Color
 	built := Canvas{pixels = raw_data(built_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
-	drawn := Canvas{pixels = raw_data(fallback_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	drawn := Canvas{pixels = raw_data(drawn_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
 	placed: [16]text_rendering.Placed_Glyph
 	count: int
 	fallback: [16]text_rendering.Placed_Glyph
 	// The places from the font file; then, with no outlines, the
-	// replacement glyph at the place of each fallback glyph.
+	// replacement glyph at the place of each glyph.
 	measure_words := fallback_open_for_test(t)
 	defer delete(measure_words)
 	spacing, spacing_ok := text_rendering.spacing_of(.Interface, text_rendering.TEXT_SIZE_OF_SCALE_ONE)
@@ -69,11 +89,13 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 		replaced[index].glyph = text_rendering.REPLACEMENT_GLYPH
 		index += 1
 	}
-	clear(built, DARK_CARD_BOTTOM)
-	clear(drawn, DARK_CARD_BOTTOM)
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 0, 0, replaced[:count], 1, DARK_TEXT)
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, fallback[:count], 1, DARK_TEXT)
-	testing.expect(t, built_pixels == fallback_pixels)
+	for each in ([2][]text_rendering.Placed_Glyph{placed[:count], fallback[:count]}) {
+		clear(built, DARK_CARD_BOTTOM)
+		clear(drawn, DARK_CARD_BOTTOM)
+		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, built, 0, 0, replaced[:count], 1, DARK_TEXT)
+		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, each, 1, DARK_TEXT)
+		testing.expect(t, built_pixels == drawn_pixels)
+	}
 	// A character that no font has, Ж, as a fallback glyph: the
 	// replacement glyph.
 	words := fallback_open_for_test(t)
@@ -82,39 +104,43 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	no_glyph := [1]text_rendering.Placed_Glyph{{glyph = text_rendering.REPLACEMENT_GLYPH}}
 	clear(built, DARK_CARD_BOTTOM)
 	clear(drawn, DARK_CARD_BOTTOM)
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 0, 0, no_glyph[:], 1, DARK_TEXT)
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, no_font[:], 1, DARK_TEXT)
-	testing.expect(t, built_pixels == fallback_pixels)
-	// The private glyph cache: the pixels of the glyph cache.
+	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, built, 0, 0, no_glyph[:], 1, DARK_TEXT)
+	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, no_font[:], 1, DARK_TEXT)
+	testing.expect(t, built_pixels == drawn_pixels)
+	// The face: the pixels of the glyph cache, at each third of a pixel.
 	text_rendering.frame_begin()
 	_, _, source := text_rendering.glyph(.Interface, 'R', text_rendering.size_of_scale(1), 0)
 	testing.expectf(t, source == .Private_Cache, "R comes from %v", source)
 	for fraction in ([3]i64{0, 21, 43}) {
-		clear(built, DARK_CARD_BOTTOM)
-		clear(drawn, DARK_CARD_BOTTOM)
-		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 2 * glyph_cache.SUBPIXEL + fraction, 0, placed[:count], 1, DARK_TEXT)
-		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 2 * glyph_cache.SUBPIXEL + fraction, 0, fallback[:count], 1, DARK_TEXT)
-		testing.expectf(t, built_pixels == fallback_pixels, "the place %v/64: the pixels of the glyph cache", fraction)
+		for each in ([2][]text_rendering.Placed_Glyph{placed[:count], fallback[:count]}) {
+			clear(built, DARK_CARD_BOTTOM)
+			clear(drawn, DARK_CARD_BOTTOM)
+			cache_text_draw(&cache, &square_root, tables, built, 2 * glyph_cache.SUBPIXEL + fraction, 0, placed[:count])
+			text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, drawn, 2 * glyph_cache.SUBPIXEL + fraction, 0, each, 1, DARK_TEXT)
+			testing.expectf(t, built_pixels == drawn_pixels, "the place %v/64: the pixels of the glyph cache", fraction)
+		}
 	}
 }
 
-// A valid cache of a proportional font is not a font of cells: the text of
-// cells refuses it and draws with Spleen, and the bold weight refuses it.
+// A proportional face is not a face of the cells: its glyphs pass their
+// cells. The text of cells refuses it and draws with Spleen, and the bold
+// weight refuses it: the titles are the regular weight.
 @(test)
-a_proportional_cache_is_not_a_font_of_cells :: proc(t: ^testing.T) {
+a_proportional_face_is_not_a_face_of_cells :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
 	defer sync.mutex_unlock(&fallback_test_lock)
-	cache, memory := b612_cache_of(t)
-	defer delete(memory)
+	defer text_rendering.state = {}
+	words := fallback_open_for_test(t)
+	defer delete(words)
 	saved := text_state
 	defer text_state = saved
-	text_state.has_cache = true
-	problem := text_cache_use(cache)
-	testing.expect_value(t, problem.kind, glyph_cache.Problem_Kind.Proportional)
-	testing.expect(t, !text_state.has_cache)
-	bold_problem := text_bold_cache_use(cache)
-	testing.expect_value(t, bold_problem.kind, glyph_cache.Problem_Kind.Proportional)
-	testing.expect(t, !text_state.has_bold_cache)
+	text_faces_use(.Interface, .Interface_Bold)
+	testing.expect_value(t, text_state.cell_face, text_rendering.Face.None)
+	testing.expect_value(t, text_state.bold_face, text_rendering.Face.None)
+	testing.expect(t, !text_vector_drawn())
+	text_faces_use(.Cells_Without_Grid_Fit, .Cells_Bold)
+	testing.expect_value(t, text_state.cell_face, text_rendering.Face.Cells_Without_Grid_Fit)
+	testing.expect_value(t, text_state.bold_face, text_rendering.Face.Cells_Bold)
 }
 
 // The measure and the draw agree to the pixel: the ink of each of 200
@@ -128,8 +154,6 @@ the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
 	defer sync.mutex_unlock(&fallback_test_lock)
 	defer text_rendering.state = {}
-	cache, memory := b612_cache_of(t)
-	defer delete(memory)
 	words := fallback_open_for_test(t)
 	defer delete(words)
 	spacing, spacing_ok := text_rendering.spacing_of(.Interface, text_rendering.TEXT_SIZE_OF_SCALE_ONE)
@@ -163,7 +187,8 @@ the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 		for &pixel in pixels {
 			pixel = DARK_CARD_BOTTOM
 		}
-		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, LINE_TOP, placed[:count], 1, DARK_TEXT)
+		text_rendering.frame_begin()
+		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, place, LINE_TOP, placed[:count], 1, DARK_TEXT)
 		// The box in whole pixels: from the pixel of the origin to the pixel
 		// of the end, widened by the margin.
 		left := int(place / 64) - PROPORTIONAL_INK_MARGIN
@@ -182,14 +207,16 @@ the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 	testing.expectf(t, outside == 0, "%v pixels of ink are outside the measured box and its margin", outside)
 }
 
-// A text far outside the canvas, a scale that the cache does not have, and
-// a glyph past the characters of the cache draw nothing, and do not fault.
+// A text far outside the canvas, the scales 0 and one past TEXT_SCALE_LIMIT,
+// a face of cells and the face None, an alpha of 0, and a glyph past the
+// character indices draw nothing, and do not fault.
 @(test)
 a_proportional_text_outside_its_limits :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
 	defer sync.mutex_unlock(&fallback_test_lock)
-	cache, memory := b612_cache_of(t)
-	defer delete(memory)
+	defer text_rendering.state = {}
+	words := fallback_open_for_test(t)
+	defer delete(words)
 	square_root: [4096]u8
 	square_root_table_fill(&square_root)
 	tables := new(Blend_Tables)
@@ -199,10 +226,18 @@ a_proportional_text_outside_its_limits :: proc(t: ^testing.T) {
 	placed := [3]text_rendering.Placed_Glyph{{glyph = 'A' - glyph_cache.ASCII_FIRST, x = 0}, {glyph = glyph_cache.CHARACTER_COUNT, x = 640}, {glyph = 'W' - glyph_cache.ASCII_FIRST, x = max(i32)}}
 	places := [?]i64{-(1 << 40), 1 << 40, -64 * 70, 64 * 70}
 	for place in places {
-		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, 0, placed[:], 1, DARK_TEXT)
+		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, place, 0, placed[:], 1, DARK_TEXT)
 	}
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], 4, DARK_TEXT)
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, 0, -1000, placed[:], 1, DARK_TEXT)
+	for scale in ([2]int{0, TEXT_SCALE_LIMIT + 1}) {
+		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], scale, DARK_TEXT)
+	}
+	for face in ([2]text_rendering.Face{.Cells, .None}) {
+		text_proportional_with(face, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], 1, DARK_TEXT)
+	}
+	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], 1, DARK_TEXT, 0)
+	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, -1000, placed[:], 1, DARK_TEXT)
+	past := [1]text_rendering.Placed_Glyph{{glyph = glyph_cache.CHARACTER_COUNT, x = 0}}
+	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, past[:], 1, DARK_TEXT)
 	for pixel in pixels {
 		testing.expect_value(t, pixel, Color(0))
 	}
