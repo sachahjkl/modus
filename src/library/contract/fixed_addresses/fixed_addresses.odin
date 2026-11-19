@@ -52,8 +52,7 @@ RANGE_SPAN :: SLOT
 // member, is not a fixed range, and the check of the tool refuses it.
 //
 // A starter maps a range in its child before the child runs. For the
-// settings page, the glyph caches, the demand cache, the font outlines,
-// the date page, the debug image, the disk process page and the fresh
+// settings page, the glyph caches, the font outlines, the date page, the debug image, the disk process page and the fresh
 // bytes page, it
 // also sets the bit of the range in the value 20 of the context of the
 // child (`range_mapped_add`). The child reads nothing at a range whose bit
@@ -118,15 +117,11 @@ Fixed_Range :: enum u8 {
 	// the hash of each disk process that runs, by its process slot. The
 	// root service maps it in each process that it starts with the right
 	// Inspect of the machine, as the monitor.
-	Demand_Cache, // The demand cache, read-only (modus:contract/demand_cache).
-	// The glyphs of the fixed subsets past the glyph caches, which the
-	// font service drew at its start. The root service maps it beside the
-	// glyph caches; the font service is its one writer.
 	Font_Outlines, // The font outlines, read-only (modus:contract/font_outlines).
 	// The font files of the system, one resource of the boot image: each
 	// process draws from them the glyphs past the glyph caches into its
 	// private glyph cache. The root service maps it beside the glyph
-	// caches, and in the font service.
+	// caches.
 	Fresh_Bytes_Page, // The fresh bytes page of the process, read-only (modus:contract/fresh_bytes).
 	// The root service writes there, now and then, 32 bytes of its stream
 	// for this process alone, after a read of the entropy device; the
@@ -173,7 +168,6 @@ STORAGE_FILE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Storage_File)
 MODULE_TABLES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Tables)
 DEBUG_IMAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Debug_Image)
 DISK_PROCESS_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Disk_Process_Page)
-DEMAND_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Demand_Cache)
 FONT_OUTLINES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Font_Outlines)
 FRESH_BYTES_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Fresh_Bytes_Page)
 START_POLICY_PAGES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Start_Policy_Pages)

@@ -141,8 +141,8 @@ text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, 
 }
 
 // character_fallback draws a character past the glyph cache in the cell at
-// (x, y) from the face of the cache of cells (text_rendering: the demand
-// cache or the private glyph cache), and gives true; false when no font of
+// (x, y) from the face of the cache of cells (text_rendering: the private
+// glyph cache of the process), and gives true; false when no font of
 // the chain draws it: the caller draws the replacement glyph. A glyph of a
 // face of cells stays in its cell.
 @(private)
@@ -161,7 +161,7 @@ face_glyph_draw :: proc "contextless" (face: text_rendering.Face, character: run
 	switch source {
 	case .Missing:
 		return false
-	case .Demand_Cache, .Private_Cache, .Not_Kept:
+	case .Private_Cache, .Not_Kept:
 		glyph_words_draw(entry, words, square_root, tables, order, canvas, x, y, color, alpha)
 		return true
 	case .Banded:
@@ -397,9 +397,8 @@ glyph_entry_draw :: proc "contextless" (cache: ^glyph_cache.Cache, entry: glyph_
 }
 
 // glyph_words_draw draws one glyph past the glyph cache from its first
-// word (text_rendering.glyph): an entry of the demand cache, copied and
-// checked against its contract, or of the private glyph cache, which this
-// process wrote. Its words are row_count rows of width words; the draw is
+// word (text_rendering.glyph): an entry of the private glyph cache, which
+// this process wrote. Its words are row_count rows of width words; the draw is
 // the draw of a glyph of a glyph cache.
 @(private)
 glyph_words_draw :: proc "contextless" (entry: glyph_cache.Glyph_Entry, words: [^]u32, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32 = OPAQUE) #no_bounds_check {
@@ -519,8 +518,8 @@ PROPORTIONAL_INK_MARGIN :: 2
 // blend of the text of cells, cut to the canvas. The state of the process
 // gives the order of the stripes and the blend tables. A fallback glyph
 // (text_rendering.FALLBACK_GLYPH_FIRST and past) is drawn from the fallback
-// face of the cache (text_rendering.glyph): the demand cache or the
-// private glyph cache of the process. A glyph that no font of the chain
+// face of the cache (text_rendering.glyph): the private glyph cache of the
+// process. A glyph that no font of the chain
 // draws is the replacement glyph, at the advance that the shaper gave it.
 text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, placed: []text_rendering.Placed_Glyph, cache: ^glyph_cache.Cache, scale: int, color: Color, alpha: u32 = OPAQUE) {
 	if text_state.square_root[4095] == 0 {

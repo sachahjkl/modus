@@ -34,8 +34,6 @@ DEFAULT_START_LIST := [?]Start_List_Row {
 	// the line of the input service itself, which stops.
 	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "compositor", needs = {.Screen}, absent_rule = .Not_Started},
-	// The font service draws the demand cache, then ends.
-	{name = "glyphs", absent_rule = .Not_Started},
 	{name = "date", absent_rule = .Not_Started},
 	// A failure of the console no longer stops the machine: the start
 	// policy stops before Machine_Usable, and the rescue starts.
@@ -85,7 +83,6 @@ ABSENT_TEST_MODULE :: "shortage"
 MISSING_CONSOLE_START_LIST := [?]Start_List_Row {
 	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "compositor", needs = {.Screen}, absent_rule = .Not_Started},
-	{name = "glyphs", absent_rule = .Not_Started},
 	{name = "date", absent_rule = .Not_Started},
 	{name = ABSENT_TEST_MODULE, absent_rule = .Not_Started},
 	{name = MISSING_CONSOLE_MODULE, needs = {.Screen}, absent_rule = .Not_Started, usable_mark = .Needed},

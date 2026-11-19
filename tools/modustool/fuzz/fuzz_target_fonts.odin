@@ -9,9 +9,9 @@ import "modus:contract/glyph_cache"
 import "modus:support/vector_font"
 
 // The fuzz targets of the fonts (src/md/infrastructure/fuzzing.md, "The
-// targets, in order of value"): the font service reads a font file with
-// the vector font reader, and each process with text validates its glyph
-// caches and the font outlines once, then trusts each entry. A signed
+// targets, in order of value"): each process with text reads the font
+// files of the outlines with the vector font reader, and validates its
+// glyph caches and the font outlines once, then trusts each entry. A signed
 // image writes them today; a fault there still stops a service.
 
 // fuzz_aligned_input gives an input on a multiple of 8: the readers of a

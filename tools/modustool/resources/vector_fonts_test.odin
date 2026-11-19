@@ -58,15 +58,15 @@ each_source_font_has_the_characters_of_a_cache :: proc(t: ^testing.T) {
 			}
 		}
 		fmt.printfln("modustool: %s: the %d characters of a cache; it lacks:%s", name, glyph_cache.CHARACTER_COUNT, strings.builder_len(lacks) == 0 ? " none" : strings.to_string(lacks))
-		// The characters that its subset holds for the font service: each
-		// one with its own glyph, as no equivalent is a character on demand.
-		demand_characters := demand_characters_of(name)
-		for character in demand_characters {
+		// The characters past the glyph cache that its subset holds: each
+		// one with its own glyph, as no equivalent is such a character.
+		past_cache_characters := past_cache_characters_of(name)
+		for character in past_cache_characters {
 			_, glyph_problem := vector_font.glyph_of(&font, character)
-			testing.expectf(t, glyph_problem == .None, "%s has no glyph for U+%04X, a character on demand", name, int(character))
+			testing.expectf(t, glyph_problem == .None, "%s has no glyph for U+%04X, a character past the glyph cache", name, int(character))
 		}
-		if len(demand_characters) > 0 {
-			fmt.printfln("modustool: %s: %d characters on demand, each with its own glyph", name, len(demand_characters))
+		if len(past_cache_characters) > 0 {
+			fmt.printfln("modustool: %s: %d characters past the glyph cache, each with its own glyph", name, len(past_cache_characters))
 		}
 	}
 }

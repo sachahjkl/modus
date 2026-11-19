@@ -7,7 +7,7 @@ import "core:mem"
 import "core:sync"
 import "core:testing"
 import "core:time"
-import "modus:contract/demand_cache"
+import "modus:contract/blake3"
 import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "modus:support/vector_font"
@@ -57,12 +57,12 @@ resource_of :: proc(t: ^testing.T, fonts: []font_outlines.Font_Input) -> (outlin
 
 // outlines_open opens a resource of fonts in a state of all zero: the
 // state of a process at its start. The caller frees the words.
-outlines_open :: proc(t: ^testing.T, fonts: []font_outlines.Font_Input, demand_base: uintptr = 0) -> (missing: Outline_Fonts, words: []u64) {
+outlines_open :: proc(t: ^testing.T, fonts: []font_outlines.Font_Input) -> (missing: Outline_Fonts, words: []u64) {
 	outlines: font_outlines.Outlines
 	outlines, words = resource_of(t, fonts)
 	state = {}
 	memory_reset_for_test()
-	return open(&outlines, demand_base), words
+	return open(&outlines), words
 }
 
 // The glyph memory of the tests: one for the package, as in a process,
@@ -297,7 +297,7 @@ a_font_that_the_outlines_lack_is_skipped :: proc(t: ^testing.T) {
 	all := repository_fonts()
 	outlines, more := resource_of(t, all[:])
 	defer delete(more)
-	testing.expect_value(t, open(&outlines, 0), Outline_Fonts{})
+	testing.expect_value(t, open(&outlines), Outline_Fonts{})
 	testing.expect_value(t, font_of(.Interface, 0x2500), Outline_Font.None)
 }
 
@@ -479,7 +479,7 @@ a_frame_larger_than_the_cache :: proc(t: ^testing.T) {
 			kept += 1
 		case .Not_Kept:
 			not_kept += 1
-		case .Missing, .Demand_Cache, .Banded:
+		case .Missing, .Banded:
 			testing.expectf(t, false, "size %v: %v", BASE + index, source)
 		}
 	}
@@ -574,7 +574,7 @@ a_fallback_glyph_stands_in_the_frame_of_the_first_font :: proc(t: ^testing.T) {
 	for size in ([?]int{TEXT_SIZE_OF_SCALE_ONE, 1280, 1536, 2 * TEXT_SIZE_OF_SCALE_ONE, 3 * TEXT_SIZE_OF_SCALE_ONE}) {
 		frame_begin()
 		alpha, _, source := glyph(.Cells, 0x03B1, size, 0) // α of B612, no descender.
-		testing.expect(t, source == .Private_Cache || source == .Demand_Cache)
+		testing.expect_value(t, source, Glyph_Source.Private_Cache)
 		testing.expectf(t, alpha.left == 0 && int(alpha.width) == cell_columns(size) && int(alpha.first_row) + int(alpha.row_count) <= line_rows(size), "size %v: α stays in its cell", size)
 		lambda, _, _ := glyph(.Cells, 0x03BB, size, 0) // λ of Paper Mono, no descender.
 		alpha_bottom := int(alpha.first_row) + int(alpha.row_count)
@@ -635,6 +635,8 @@ the_words_are_the_words_of_the_glyph_caches :: proc(t: ^testing.T) {
 		start := time.tick_now()
 		for scale in 1 ..= form.scale_count {
 			text_size := size_of_scale(scale)
+			golden_bytes := make([dynamic]u8)
+			defer delete(golden_bytes)
 			for position in 0 ..< positions_of(each.face) {
 				for index in 0 ..< glyph_cache.CHARACTER_COUNT {
 					character, _ := glyph_cache.character_of_index(index)
@@ -644,6 +646,7 @@ the_words_are_the_words_of_the_glyph_caches :: proc(t: ^testing.T) {
 					testing.expectf(t, glyph_problem == .None, "%v U+%04X: a glyph of its font", each.face, int(character))
 					box, raster_problem := glyph_raster(each.face, form.primary, glyph_index, text_size, position)
 					testing.expectf(t, raster_problem == .None, "%v U+%04X at size %v: %v", each.face, int(character), text_size, raster_problem)
+					golden_bytes_append(&golden_bytes, box)
 					compared += 1
 					same_box := int(built.row_count) == box.row_count && (box.row_count == 0 || int(built.first_row) == box.first_row && int(built.left) == box.left && int(built.width) == box.width)
 					if !same_box {
@@ -662,9 +665,44 @@ the_words_are_the_words_of_the_glyph_caches :: proc(t: ^testing.T) {
 					}
 				}
 			}
+			fmt.printfln("text_rendering: the golden hash of %v at the size %v: %s", each.face, text_size, golden_hash_text(blake3.hash(golden_bytes[:])))
 		}
 		fmt.printfln("text_rendering: %v: %v glyphs equal to the glyph caches of today, %v differ, %v", each.face, compared - differ, differ, time.tick_since(start))
 	}
+}
+
+// golden_bytes_append adds a glyph that glyph_raster drew, as the golden
+// hash reads it: its box as four numbers of 32 bits in little endian
+// (first_row, row_count, left, width), then its words, row after row, each
+// in little endian. The hash of these bytes over the 192 characters of a
+// glyph cache, by their character index, at each position of a face at one
+// size, is the golden hash of that face and size: it stays when the glyph
+// caches of the boot image and the code that builds them leave
+// (src/md/features/text_rendering.md, "The rasterizer").
+golden_bytes_append :: proc(bytes: ^[dynamic]u8, box: Raster_Box) {
+	word_append :: proc(bytes: ^[dynamic]u8, word: u32) {
+		append(bytes, u8(word), u8(word >> 8), u8(word >> 16), u8(word >> 24))
+	}
+	word_append(bytes, u32(i32(box.first_row)))
+	word_append(bytes, u32(i32(box.row_count)))
+	word_append(bytes, u32(i32(box.left)))
+	word_append(bytes, u32(i32(box.width)))
+	for row in 0 ..< box.row_count {
+		for word in test_words()[box.first_word + row * box.stride:][:box.width] {
+			word_append(bytes, word)
+		}
+	}
+}
+
+// golden_hash_text gives a hash as 64 hexadecimal digits, in lower case.
+golden_hash_text :: proc(hash: blake3.Hash) -> string {
+	digits := "0123456789abcdef"
+	text := make([]u8, 2 * blake3.HASH_SIZE, context.temp_allocator)
+	for byte_value, index in hash {
+		text[2 * index] = digits[byte_value >> 4]
+		text[2 * index + 1] = digits[byte_value & 0xF]
+	}
+	return string(text)
 }
 
 // The measure is the draw: at each size, for each face, the width of a
@@ -743,59 +781,6 @@ the_raster_time_of_one_glyph :: proc(t: ^testing.T) {
 				least = min(least, elapsed)
 			}
 			fmt.printfln("text_rendering: the raster of one glyph of %v at a line of %v pixels: %v ns, the least of 200", each.face, pixels, least)
-		}
-	}
-}
-
-// The first font of a face draws the bytes of the demand cache: the glyph
-// that this process draws in its private glyph cache is the glyph that the
-// font service draws for the same face, at each scale and position. So a
-// picture does not depend on which layer drew a glyph.
-@(test)
-a_private_glyph_of_the_first_font_is_the_glyph_of_the_demand_cache :: proc(t: ^testing.T) {
-	test_state_take()
-	fonts := repository_fonts()
-	_, words := outlines_open(t, fonts[:])
-	defer delete(words)
-	render := new(vector_font.Render_Memory)
-	defer free(render)
-	cache_bytes, allocation := mem.alloc_bytes(demand_cache.SIZE, demand_cache.PAGE_SIZE)
-	testing.expect(t, allocation == nil)
-	defer mem.free_bytes(cache_bytes)
-	no_faces: [demand_cache.Face]demand_cache.Face_Header
-	writer := demand_cache.writer_open(uintptr(raw_data(cache_bytes)), vector_font.RENDERER_VERSION, no_faces)
-	Case :: struct {
-		demand:    demand_cache.Face,
-		face:      Face,
-		file:      []u8,
-		character: rune,
-	}
-	cases := [?]Case{{.Interface, .Interface, b612_file, 0x03A9}, {.Cells, .Cells, paper_mono_file, 0x2554}, {.Cells_Without_Grid_Fit, .Cells_Without_Grid_Fit, paper_mono_file, 0x03BB}, {.Cells_Bold, .Cells_Bold, paper_mono_semibold_file, 0x2588}}
-	for each in cases {
-		demand_font, problem := vector_font.demand_font_open(each.file, each.demand, render)
-		testing.expect_value(t, problem, vector_font.Font_Problem.None)
-		entry, result := vector_font.demand_glyph_draw(&demand_font, &writer, each.character, render)
-		testing.expect_value(t, result, vector_font.Demand_Result.Drawn)
-		form := face_forms[each.face]
-		for scale in 1 ..= form.scale_count {
-			for position in 0 ..< form.positions[scale - 1] {
-				built, _ := demand_cache.glyph_of_entry(each.demand, &entry, scale, position)
-				private, private_words, source := glyph(each.face, each.character, size_of_scale(scale), position)
-				testing.expectf(t, source == .Private_Cache, "%v U+%04X: drawn privately", each.face, int(each.character))
-				same_box := private.first_row == built.first_row && private.row_count == built.row_count && private.left == built.left && private.width == built.width
-				testing.expectf(t, same_box, "%v U+%04X at scale %v, position %v: the box of the demand cache", each.face, int(each.character), scale, position)
-				if !same_box {
-					continue
-				}
-				count := int(built.row_count) * int(built.width)
-				differ := 0
-				for word in 0 ..< count {
-					if private_words[word] != writer.words[int(built.word_offset) + word] {
-						differ += 1
-					}
-				}
-				testing.expectf(t, differ == 0, "%v U+%04X at scale %v, position %v: %v words differ", each.face, int(each.character), scale, position, differ)
-			}
 		}
 	}
 }

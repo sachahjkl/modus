@@ -3,9 +3,9 @@
 // resource of the boot image,
 // RESOURCE_NAME. The modus tool writes it from the subsets of
 // resources/fonts. The root service checks its hash once, and maps it
-// read-only at ADDRESS in each process that gets the glyph caches and in
-// the font service. A process draws from it the glyphs past the glyph
-// caches into its private glyph cache.
+// read-only at ADDRESS in each process that gets the glyph caches. A
+// process draws from it the glyphs past the glyph caches into its private
+// glyph cache.
 //
 //   Header        HEADER_SIZE bytes, at 0
 //   Font_Record   RECORD_SIZE bytes x font_count, at RECORDS_OFFSET
@@ -50,7 +50,7 @@ Header :: struct {
 // One font file of the resource.
 Font_Record :: struct {
 	name:   [NAME_SIZE]u8, // The name of the font file in resources/fonts, with no extension: bytes 33 to 126, then zero bytes.
-	hash:   [32]u8, // The BLAKE3 hash of the font file: the hash that its glyph cache and its demand face name.
+	hash:   [32]u8, // The BLAKE3 hash of the font file: the hash that its glyph cache names.
 	offset: u64, // The first byte of the font file, from the start of the resource.
 	size:   u64, // The bytes of the font file.
 }

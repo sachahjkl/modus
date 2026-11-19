@@ -4,8 +4,8 @@
 // rasterizer at any size (raster.odin) and the private glyph cache
 // (private_cache.odin).
 //
-// A process opens it once with the font outlines and the demand cache that
-// its starter mapped (open). The shaper asks for an advance (advance), the
+// A process opens it once with the font outlines that its starter mapped
+// (open). The shaper asks for an advance (advance), the
 // draw for a glyph (glyph), and each frame starts with frame_begin. The
 // state is one for each copy of this package: a process has its own, and
 // the drawing module that it imports has its own. Both read the same
@@ -27,7 +27,6 @@
 // [private glyph cache](term:private-glyph-cache).
 package text_rendering
 
-import "modus:contract/demand_cache"
 import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
@@ -158,8 +157,7 @@ POSITION_LIMIT :: glyph_cache.POSITION_LIMIT
 #assert(POSITION_LIMIT == 3)
 
 // The form of a face: its first font, its chain, its frame and the grid
-// fit; the form of its glyph cache of the boot image; its face of the
-// demand cache.
+// fit; the form of its glyph cache of the boot image.
 Face_Form :: struct {
 	primary:      Outline_Font, // The first font of each of its chains.
 	chain:        Chain_Kind,
@@ -167,18 +165,16 @@ Face_Form :: struct {
 	grid_fit:     bool, // The baseline, the x-height and the cap height on whole pixels.
 	scale_count:  int, // The glyph cache of the boot image of this face has the scales 1 ..= scale_count.
 	positions:    [glyph_cache.SIZE_LIMIT]int, // The positions of each scale of that glyph cache; 0 past scale_count.
-	has_demand:   bool, // The demand cache has a face for it.
-	demand:       demand_cache.Face, // That face.
 }
 
 @(rodata)
 face_forms := [Face]Face_Form {
 	.None = {},
-	.Interface = {primary = .B612, chain = .Interface, proportional = true, grid_fit = true, scale_count = 3, positions = {3, 1, 1}, has_demand = true, demand = .Interface},
+	.Interface = {primary = .B612, chain = .Interface, proportional = true, grid_fit = true, scale_count = 3, positions = {3, 1, 1}},
 	.Interface_Bold = {primary = .B612_Bold, chain = .Interface_Bold, proportional = true, grid_fit = true, scale_count = 1, positions = {3, 0, 0}},
-	.Cells = {primary = .Paper_Mono, chain = .Cells, grid_fit = true, scale_count = 3, positions = {1, 1, 1}, has_demand = true, demand = .Cells},
-	.Cells_Without_Grid_Fit = {primary = .Paper_Mono, chain = .Cells, grid_fit = false, scale_count = 3, positions = {1, 1, 1}, has_demand = true, demand = .Cells_Without_Grid_Fit},
-	.Cells_Bold = {primary = .Paper_Mono_Semibold, chain = .Cells_Bold, grid_fit = true, scale_count = 1, positions = {1, 0, 0}, has_demand = true, demand = .Cells_Bold},
+	.Cells = {primary = .Paper_Mono, chain = .Cells, grid_fit = true, scale_count = 3, positions = {1, 1, 1}},
+	.Cells_Without_Grid_Fit = {primary = .Paper_Mono, chain = .Cells, grid_fit = false, scale_count = 3, positions = {1, 1, 1}},
+	.Cells_Bold = {primary = .Paper_Mono_Semibold, chain = .Cells_Bold, grid_fit = true, scale_count = 1, positions = {1, 0, 0}},
 }
 
 // positions_of gives the positions across a pixel of a face at any size:
@@ -247,7 +243,6 @@ default_chains := [Chain_Kind]Chain {
 // Where a glyph comes from.
 Glyph_Source :: enum u8 {
 	Missing, // No font of the chain has the character, the character is no character of a text, the size or the position is refused, or the renderer refused its outline: the replacement glyph.
-	Demand_Cache, // The words of the demand cache: the first font of the face, drawn by the font service.
 	Private_Cache, // The words of the private glyph cache of this process.
 	Not_Kept, // Drawn into the render memory of this copy and not kept: the glyphs of the frame in progress fill the cache. The words are valid until the next draw.
 	Banded, // Not kept, no entry and no words: the caller draws it band by band (glyph_bands). A glyph larger than the largest block of the cache, and each glyph before the copy has its glyph memory (memory_give).
@@ -266,20 +261,17 @@ Font :: struct {
 // opened, and each character past the glyph cache draws the replacement
 // glyph.
 State :: struct {
-	opened:         bool,
-	fonts:          [Outline_Font]Font,
-	demand_readers: [Face]demand_cache.Reader,
-	demand_open:    [Face]bool,
-	frame:          u64, // The number of the frame: frame_begin adds one.
+	opened: bool,
+	fonts:  [Outline_Font]Font,
+	frame:  u64, // The number of the frame: frame_begin adds one.
 }
 
 state: State
 
-// open opens the fonts of the outlines and the faces of the demand cache
-// mapped at demand_base (0: none). It gives the fonts that the outlines do
-// not hold or that the parser refuses: a chain skips them. A second open
-// does nothing: the outlines never change.
-open :: proc "contextless" (outlines: ^font_outlines.Outlines, demand_base: uintptr) -> (missing: Outline_Fonts) {
+// open opens the fonts of the outlines. It gives the fonts that the
+// outlines do not hold or that the parser refuses: a chain skips them. A
+// second open does nothing: the outlines never change.
+open :: proc "contextless" (outlines: ^font_outlines.Outlines) -> (missing: Outline_Fonts) {
 	if state.opened {
 		return {}
 	}
@@ -310,23 +302,8 @@ open :: proc "contextless" (outlines: ^font_outlines.Outlines, demand_base: uint
 			}
 		}
 	}
-	for form, face in face_forms {
-		if face == .None || !form.has_demand || !state.fonts[form.primary].opened || demand_base == 0 {
-			continue
-		}
-		state.demand_readers[face], state.demand_open[face] = demand_cache.reader_of(demand_base, form.demand, state.fonts[form.primary].hash, demand_flags_of(face))
-	}
 	state.opened = true
 	return missing
-}
-
-// demand_flags_of gives the flags of the glyph cache of a face, as the
-// font service states them in the header of the demand cache
-// (vector_font.demand_font_open).
-@(private)
-demand_flags_of :: proc "contextless" (face: Face) -> u32 {
-	form := face_forms[face]
-	return (form.grid_fit ? glyph_cache.FLAG_GRID_FIT : 0) | (form.proportional ? glyph_cache.FLAG_PROPORTIONAL : 0) | u32(vector_font.Stripe_Filter.Five_Taps) << glyph_cache.FILTER_SHIFT
 }
 
 // face_of_cache gives the face of a glyph cache: the face whose first font
@@ -354,17 +331,11 @@ face_of_cache :: proc "contextless" (cache: ^glyph_cache.Cache) -> Face {
 }
 
 // frame_begin starts a frame of the process: the order of use of the
-// private glyph cache counts in frames, a glyph of the frame in progress is
-// never evicted, and the demand cache gives one generation to each draw of
-// the frame.
+// private glyph cache counts in frames, and a glyph of the frame in
+// progress is never evicted.
 frame_begin :: proc "contextless" () {
 	state.frame += 1
 	cache_state.frame_full = false
-	for &reader, face in state.demand_readers {
-		if state.demand_open[face] {
-			demand_cache.reader_frame_begin(&reader)
-		}
-	}
 }
 
 // character_valid says if a character can have a glyph: a character of a
@@ -507,9 +478,7 @@ coverage :: proc "contextless" (face: Face, script: Script) -> (drawn, total: in
 }
 
 // glyph gives the glyph of a character of a face at a text size and a
-// position across a pixel, and its first word: from the demand cache when
-// the font is the first font of the face, the size is a scale of the
-// demand cache and the demand cache holds it; else from the private glyph
+// position across a pixel, and its first word, from the private glyph
 // cache, where it is drawn at its first use. The words of a row are
 // entry.width words from words + row * entry.width. source is Missing for
 // a face, a size, a position or a character that has no glyph, and for an
@@ -521,17 +490,6 @@ glyph :: proc "contextless" (face: Face, character: rune, size, position: int) -
 	font, glyph_index := font_glyph_of(face, character)
 	if font == .None {
 		return {}, nil, .Missing
-	}
-	scale := size / TEXT_SIZE_OF_SCALE_ONE
-	form := face_forms[face]
-	if font == form.primary && state.demand_open[face] && size % TEXT_SIZE_OF_SCALE_ONE == 0 && scale >= 1 && scale <= form.scale_count && position < form.positions[scale - 1] {
-		reader := &state.demand_readers[face]
-		found, found_state := demand_cache.find(reader, character)
-		if found_state == .Drawn {
-			if demand_glyph, has_glyph := demand_cache.glyph_of_entry(reader.face, &found, scale, position); has_glyph {
-				return demand_glyph, ([^]u32)(&reader.words[int(demand_glyph.word_offset)]), .Demand_Cache
-			}
-		}
 	}
 	return private_glyph(face, font, glyph_index, size, position)
 }

@@ -970,7 +970,7 @@ Do not use: boot loader, bootloader.
 
 A fixed range is an address and a span of the address space of a process where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the disk process page, the fresh bytes page, the files of a module.
 
-Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. The band has 16 slots (`SLOT_COUNT`), and 16 members take them all: a new range needs a larger band first. A mapping that a process places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
+Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. The band has 17 slots (`SLOT_COUNT`), and 16 members take 16 of them: a range past the slots needs a larger band first. A mapping that a process places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
 
 Do not use: well-known address, fixed mapping.
 

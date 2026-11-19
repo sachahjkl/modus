@@ -58,17 +58,14 @@
 //   view starts at line L of N", or "... the view follows the last lines";
 // - "terminal: a drag of the thumb of the scroll bar of console: ...";
 // - "terminal: console stopped with code C after L lines and R records";
-// - "terminal: console shows the character N in its cells from the demand
-//   cache", once, for the first line of the text with a box-drawing
-//   character, a block element or a Greek letter of Paper Mono, which the
-//   font service drew (src/md/features/glyphs_on_demand.md);
 // - "terminal: console shows the character N in its cells, drawn by this
-//   process from the font F of its fallback chain", once, for the first or
-//   the last character of the view past the glyph cache and the cell
-//   subset that a font of the chain of the cells has; and "terminal:
-//   console shows the character N in its cells as the replacement glyph:
-//   no font of its fallback chain has it", once, for the first or the
-//   last such character that no font has.
+//   process from the font F of its fallback chain", once for each font F,
+//   for the first or the last character of the view past the glyph cache
+//   that a font of the chain of the cells has
+//   (src/md/features/glyphs_on_demand.md); and "terminal: console shows
+//   the character N in its cells as the replacement glyph: no font of its
+//   fallback chain has it", once, for the first or the last such
+//   character that no font has.
 //
 // The terminal of flood measures: it shows the rates of the process, and
 // writes one line with the lines, the records and the kernel entries of one
@@ -79,7 +76,6 @@
 // between two writers: one terminal serves one process.
 package terminal_process
 
-import "modus:contract/demand_cache"
 import "modus:contract/enum_word"
 import "modus:support/display"
 import "modus:support/text_rendering"
@@ -320,13 +316,9 @@ View :: struct {
 	// the row under it are not lines of the text. After a clear, the view
 	// can show none.
 	text_rows: u64,
-	// The first cell of a line of the text past the glyph cache that the
-	// cell subset of the demand cache holds; 0: none. The drawer says once
-	// that its cells draw it.
-	demand_character: rune,
 	// The first and the last cells of the lines of the text past the glyph
-	// cache and past the cell subset; 0: none. The drawer says once which
-	// font of the fallback chain draws one, and once that one has no font.
+	// cache; 0: none. The drawer says once for each font of the fallback
+	// chain that it draws one, and once that one has no font.
 	fallback_first, fallback_last: rune,
 	key_serial: u64, // The newest key that the edit line of the view shows (edit_key_serial).
 }
@@ -798,7 +790,6 @@ view_make :: proc "contextless" () {
 		return
 	}
 	view.text_rows = 0
-	view.demand_character = 0
 	view.fallback_first, view.fallback_last = 0, 0
 	top = max(top, oldest)
 	view.top = top
@@ -856,16 +847,10 @@ view_make :: proc "contextless" () {
 				// The fill of the view looks at each cell already: the
 				// drawer then looks at one character, not at the cells.
 				if !graphics.cell_font_draws(character) {
-					if demand_cache.in_subset(.Cells, character) {
-						if view.demand_character == 0 {
-							view.demand_character = character
-						}
-					} else {
-						if view.fallback_first == 0 {
-							view.fallback_first = character
-						}
-						view.fallback_last = character
+					if view.fallback_first == 0 {
+						view.fallback_first = character
 					}
+					view.fallback_last = character
 				}
 				column += 1
 				run_place += length
@@ -1577,7 +1562,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		// The frame of the text of this process: the glyphs past the glyph
 		// cache that it draws below, as the drawing module draws them in
-		// its own copy, from the same outlines and the same demand cache.
+		// its own copy, from the same outlines.
 		display.text_frame_begin()
 		display.text_not_kept_tell()
 		draw(&window, request.follow)
@@ -1660,31 +1645,24 @@ list_scroll_send :: proc "contextless" () -> (sent: bool) {
 }
 
 list_drag_moved: bool // The drag of the thumb of the completion list that is held now moved its view.
-demand_cell_told: bool // The line of the first cell drawn from the demand cache is on the log.
-fallback_cell_told: bool // The line of the first cell that this process drew from a font of its fallback chain is on the log.
+fallback_fonts_told: text_rendering.Outline_Fonts // The fonts of the fallback chain whose first cell drawn by this process is on the log.
 missing_cell_told: bool // The line of the first cell that no font of the chain has is on the log.
 
-// fallback_cells_tell says once, after a frame, where the first cells past
-// the glyph cache of the view come from: the demand cache, a font of the
-// fallback chain, or no font. The process draws the glyph of the cell as
-// the drawing module drew it, from the same outlines, and checks that it
-// has ink and stays in its cell.
+// fallback_cells_tell says, after a frame, where the first and the last
+// cells past the glyph cache of the view come from: once for each font of
+// the fallback chain, and once for no font. The process draws the glyph
+// of the cell as the drawing module drew it, from the same outlines, and
+// checks that it has ink and stays in its cell.
 fallback_cells_tell :: proc "contextless" () {
-	if !demand_cell_told && view.demand_character != 0 {
-		if found := display.cell_fallback_of(view.demand_character); found.source == .Demand_Cache && found.rows > 0 && found.inside {
-			demand_cell_told = true
-			system.log("terminal: ", process_name, " shows the character ", u64(view.demand_character), " in its cells from the demand cache")
-		}
-	}
 	for character in ([2]rune{view.fallback_first, view.fallback_last}) {
-		if character == 0 || fallback_cell_told && missing_cell_told {
+		if character == 0 {
 			return
 		}
 		found := display.cell_fallback_of(character)
 		switch found.source {
-		case .Private_Cache, .Demand_Cache, .Not_Kept:
-			if !fallback_cell_told && found.rows > 0 && found.inside {
-				fallback_cell_told = true
+		case .Private_Cache, .Not_Kept:
+			if found.font not_in fallback_fonts_told && found.rows > 0 && found.inside {
+				fallback_fonts_told += {found.font}
 				system.log("terminal: ", process_name, " shows the character ", u64(character), " in its cells, drawn by this process from the font ", text_rendering.outline_font_name(found.font), " of its fallback chain")
 			}
 		case .Banded:

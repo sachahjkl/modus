@@ -23,9 +23,9 @@
 // `start("interface_font")` in the console. The log gets the time of
 // shaping and of drawing one line, then `interface_font: ok, B612 Regular
 // and Bold, <count> and <count> pairs, ...`. After its first frame it
-// writes `interface_font: each Greek letter of B612 is drawn: <n> letters,
-// <d> from the demand cache`, n the count of the subset of B612, or `not
-// each Greek letter of B612 is drawn: ...`; then `interface_font: the
+// writes `interface_font: each Greek letter of B612 is drawn by this
+// process: <n> letters: as it must`, n the count of the Greek letters of
+// B612, or `not each Greek letter of B612 is drawn: ...`; then `interface_font: the
 // box-drawing characters come from paper_mono, the second font of the
 // chain of the interface: <n> characters: as it must`; then
 // `interface_font: <n> characters that no font of the chain has draw the
@@ -34,11 +34,10 @@
 // no valid glyph cache in the boot image, it writes `interface_font: the
 // boot image gives no valid cache of the interface font`.
 //
-// **Its grants**: none. The root service maps the glyph caches, the font
-// outlines and the demand cache into each process that it starts.
+// **Its grants**: none. The root service maps the glyph caches and the
+// font outlines into each process that it starts.
 package interface_font
 
-import "modus:contract/demand_cache"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 import "modus:support/display"
@@ -72,12 +71,15 @@ ENLARGED_COLUMNS :: 48 // The columns of the small canvas that are enlarged: the
 ENLARGED_FRACTIONS := [3]i64{0, 21, 43}
 NUMBERS := [?]string{"7", "42", "1 024", "65 536", "4 294 967 296", "100 000"}
 // Characters past the glyph cache: the capitals and the small letters of
-// the subset of B612, each one, made from
-// demand_cache.interface_subset_ranges at the start, then a line with some
-// of them and box-drawing characters, which B612 lacks and Paper Mono, the
-// second font of the chain of the interface, has. A letter that B612 lacks
-// is in no line of letters.
+// the Greek script of the fallback chains that B612 has, each one, made
+// from the font file at the start, then a line with some of them and
+// box-drawing characters, which B612 lacks and Paper Mono, the second font
+// of the chain of the interface, has. A letter that B612 lacks is in no
+// line of letters.
 GREEK_SMALL_FIRST :: 0x03B1 // The first small letter of the Greek alphabet.
+// The Greek letters that the character map of B612 1.008 has: the 49 of
+// the script, less the capital pi (U+03A0) and the small rho (U+03C1).
+B612_GREEK_LETTER_COUNT :: 47
 GREEK_SENTENCE :: "Δt = 16 ms   λ = 532 nm   θ = 45°   σ, μ, π = 3.14159   ┌─┬─┐ ▒▓█"
 greek_capitals, greek_small: [LINE_LIMIT]u8
 GREEK: [3]string
@@ -109,12 +111,23 @@ line_draw :: proc "contextless" (canvas: graphics.Canvas, place: i64, y: int, te
 	return width
 }
 
+// greek_letter_of_b612 says if a character of the Greek script of the
+// fallback chains is a letter that B612 draws.
+greek_letter_of_b612 :: proc "contextless" (character: rune) -> bool {
+	return text_rendering.font_of(.Interface, character) == .B612
+}
+
 // greek_lines_make writes the line of the capitals and the line of the
-// small letters of the subset, and fills GREEK.
+// small letters that B612 has, and fills GREEK. The outlines are open:
+// display.open opened them.
 greek_lines_make :: proc "contextless" () {
 	capitals, small := 0, 0
-	for range in demand_cache.interface_subset_ranges {
+	row := text_rendering.scripts[.Greek]
+	for range in row.ranges[:min(row.range_count, text_rendering.RANGE_LIMIT)] {
 		for character in range.first ..= range.last {
+			if !greek_letter_of_b612(character) {
+				continue
+			}
 			if character < GREEK_SMALL_FIRST {
 				capitals += text_encoding.character_encode(character, greek_capitals[capitals:])
 			} else {
@@ -130,7 +143,7 @@ greek_lines_make :: proc "contextless" () {
 // subset of B612, each box-drawing character from Paper Mono, and the
 // replacement glyph for the characters that no font of the chain has. The
 // process draws each glyph as its frame drew it, from its own private
-// glyph cache or from the demand cache.
+// glyph cache.
 fallback_lines_tell :: proc "contextless" () {
 	FAULT :: "interface_font: the fallback chain of the interface is wrong: "
 	if fallback_told {
@@ -149,14 +162,15 @@ fallback_lines_tell :: proc "contextless" () {
 		system.log_in("processes", .Warning, FAULT, "this process has no glyph memory: each glyph past its glyph caches is drawn band by band")
 		return
 	}
-	drawn, from_demand, missing: u64
-	for range in demand_cache.interface_subset_ranges {
+	drawn, missing: u64
+	row := text_rendering.scripts[.Greek]
+	for range in row.ranges[:min(row.range_count, text_rendering.RANGE_LIMIT)] {
 		for character in range.first ..= range.last {
+			if !greek_letter_of_b612(character) {
+				continue
+			}
 			entry, _, source := text_rendering.glyph(face, character, text_rendering.size_of_scale(1), 0)
 			switch source {
-			case .Demand_Cache:
-				from_demand += 1
-				drawn += entry.row_count > 0 ? 1 : 0
 			case .Private_Cache, .Not_Kept:
 				drawn += entry.row_count > 0 ? 1 : 0
 			case .Missing, .Banded:
@@ -167,11 +181,10 @@ fallback_lines_tell :: proc "contextless" () {
 			}
 		}
 	}
-	subset := u64(demand_cache.subset_count(.Interface))
-	if drawn == subset && missing == 0 {
-		system.log("interface_font: each Greek letter of B612 is drawn: ", drawn, " letters, ", from_demand, " from the demand cache")
+	if drawn == B612_GREEK_LETTER_COUNT && missing == 0 {
+		system.log("interface_font: each Greek letter of B612 is drawn by this process: ", drawn, " letters: as it must")
 	} else {
-		system.log_in("processes", .Warning, "interface_font: not each Greek letter of B612 is drawn: ", drawn, " of ", subset, ", ", missing, " with no glyph")
+		system.log_in("processes", .Warning, "interface_font: not each Greek letter of B612 is drawn: ", drawn, " of ", u64(B612_GREEK_LETTER_COUNT), ", ", missing, " with no glyph")
 	}
 	for character in BOX_CHARACTERS {
 		entry, _, source := text_rendering.glyph(face, character, text_rendering.size_of_scale(1), 0)

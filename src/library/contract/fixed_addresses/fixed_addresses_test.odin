@@ -35,7 +35,6 @@ no_two_ranges_overlap :: proc(t: ^testing.T) {
 		.Module_Tables                = MODULE_TABLES_ADDRESS,
 		.Debug_Image                  = DEBUG_IMAGE_ADDRESS,
 		.Disk_Process_Page            = DISK_PROCESS_PAGE_ADDRESS,
-		.Demand_Cache                 = DEMAND_CACHE_ADDRESS,
 		.Font_Outlines                = FONT_OUTLINES_ADDRESS,
 		.Fresh_Bytes_Page             = FRESH_BYTES_PAGE_ADDRESS,
 		.Start_Policy_Pages           = START_POLICY_PAGES_ADDRESS,

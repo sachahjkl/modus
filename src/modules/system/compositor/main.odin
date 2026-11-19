@@ -651,6 +651,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// (modus:contract/settings); a change of the settings wakes this loop.
 	display.text_settings_open(ctx)
 	display.interface_font_load(ctx)
+	// What the fallback chains draw past the glyph caches, script by
+	// script, once at each boot: the log names what no font has.
+	display.script_coverage_tell("compositor")
 	palette_start() // palette.odin
 	bar_layout_update()
 	bar_measure()

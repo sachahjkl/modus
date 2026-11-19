@@ -72,7 +72,7 @@ The deadline and its number: [`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md)
 - **A call of the root service for fresh bytes.** It needs a ring for each process, and the root service would answer at the rate that each process chooses. The page has neither cost, and a process reads it with no wait.
 - **A connection of each process to the entropy service.** It gives each process a part of a device, a new right, and the entropy service many clients; the root service is its one client.
 - **The bytes of the device given as they are.** One read of 32 bytes would go to one process, or the same bytes to several. The stream of the root service after the mix gives each process its own bytes, from one read.
-- **A memory object for each process.** Each object is one more handle of the root service, and a full handle table of the root service refuses the load of the next process (the comment of `demand_cache_memory` in `src/modules/system/root/font_service.odin` says how the table fills). One object of 32 pages is one handle.
+- **A memory object for each process.** Each object is one more handle of the root service, and a full handle table of the root service refuses the load of the next process (the comment of `fresh_bytes_memory` in `src/modules/system/root/fresh_bytes.odin` says how the table fills). One object of 32 pages is one handle.
 - **A check of the page at each draw.** See "Why the mix is never done for each draw".
 - **A refresh with no entropy device.** The stream of the root service alone holds nothing that the seed of a process did not already come from. A machine with no device writes no fresh bytes, and each page keeps the change count 0.
 - **A line of the log for each refresh.** 120 lines an hour say the same fact.
