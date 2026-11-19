@@ -2313,9 +2313,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "manual: manual: a module with an entry, 17 exports, "},
 	// The third link names a procedure of a support package that no
 	// module describes: it opens the page of its declaration, which the
-	// build took from the source.
-	{kind = .Key, text = "tab"},
-	{kind = .Wait, text = "manual: the focus is on the link the description tables to docs/MODULE_CONTRACT.md#description-tables"},
+	// build took from the source. Back keeps the first row of the view
+	// that showed the second link, under the first link: with no focus,
+	// Tab takes the first link at or under the top of the view.
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "manual: the focus is on the link link page to term:link-page"},
 	{kind = .Key, text = "tab"},
