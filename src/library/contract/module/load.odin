@@ -21,6 +21,7 @@ Error :: enum u32 {
 	Bad_Slot        = 9, // No check gives it today: `bind` reports a slot that is not valid at the stage Bind.
 	Bad_Import      = 10, // No check gives it today.
 	Bad_Export      = 11, // `entry_export` is not an index of the export table.
+	Bad_Own_Hash_Place = 12, // The own-hash place is not `HASH_SIZE` bytes inside one segment that the loader can write.
 }
 
 // read copies a T from file at offset. It gives zero when the range is not in file.
@@ -136,6 +137,11 @@ validate :: proc "contextless" (file: []u8) -> Error {
 	if head.entry_export >= max(count(file, .Exports), 1) {
 		return .Bad_Export
 	}
+	// Each loader writes the hash there: a place outside writable data
+	// would let a file make the loader write into its code.
+	if place, present := own_hash_place(file); present && !writable_range(file, place, HASH_SIZE) {
+		return .Bad_Own_Hash_Place
+	}
 	return .None
 }
 
@@ -156,9 +162,16 @@ copy_segments :: proc "contextless" (file: []u8, memory: []u8) {
 // location is in a segment that has Write and not Execute.
 @(private)
 writable :: proc "contextless" (file: []u8, memory_offset: u64) -> bool {
+	return writable_range(file, memory_offset, 8)
+}
+
+// writable_range says if the loader can write size bytes at memory_offset:
+// the bytes are inside one segment that has Write and not Execute.
+@(private)
+writable_range :: proc "contextless" (file: []u8, memory_offset: u64, size: u64) -> bool {
 	for index in 1 ..< count(file, .Segments) {
 		segment, _ := record(file, .Segments, index, Segment)
-		if range_holds(segment.memory_offset, segment.memory_size, memory_offset, 8) {
+		if range_holds(segment.memory_offset, segment.memory_size, memory_offset, size) {
 			return .Write in segment.flags && .Execute not_in segment.flags
 		}
 	}

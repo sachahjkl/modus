@@ -1,4 +1,4 @@
-// The module format, version 2 (docs/MODULE_CONTRACT.md, sections 1 and 2).
+// The module format, version 3 (docs/MODULE_CONTRACT.md, sections 1 and 2).
 //
 // A module is one file:
 //
@@ -25,6 +25,8 @@
 // - `Documentation`: the help of the module and of each export.
 // - `Budget_Request`: the budget that the module asks for its process
 //   (`budget_request`).
+// - `Fact`, `Own_Hash_Place` (`facts.odin`): the log facts that the module
+//   writes, and the place where a loader writes the hash of the module.
 // - `Load_Error`, `Load_Stage`, `Difference` (`error.odin`) and `Error`
 //   (`load.odin`): why a load failed.
 //
@@ -35,7 +37,7 @@ import "modus:contract/enum_word"
 import "modus:contract/value_kinds"
 
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
-VERSION :: 2 // The version of the format that this code reads and writes. A file of another version is refused. 2: a Function record of 168 bytes, with 12 parameters.
+VERSION :: 3 // The version of the format that this code reads and writes. A file of another version is refused. 3: the own-hash place, which a loader must write.
 PAGE_SIZE :: 4096 // The alignment of each segment in the file and in memory: one page of the processor.
 HASH_SIZE :: 32 // The bytes of a BLAKE3 hash: the name of a module.
 
@@ -54,7 +56,7 @@ Machine :: enum u32 {
 // the file when one field is not one that it takes (`validate`).
 //
 // Example: the header of a module with an entry starts with the bytes "MODULE", the
-// version 2, the machine `X86_64`, and `entry_export` the index of its
+// version 3, the machine `X86_64`, and `entry_export` the index of its
 // export `main`.
 Header :: struct {
 	magic:           u64, // `MAGIC`.
@@ -83,6 +85,8 @@ Table_Kind :: enum u32 {
 	Records       = 9, // `Record` records: the descriptions of the records that the exports take and give.
 	Fields        = 10, // `Field` records: the fields of those records.
 	Budget        = 11, // One `Budget_Request` record, at index 1: the budget that the module asks for.
+	Facts         = 12, // `Fact` records: the log facts that the module writes, sorted by fact key.
+	Own_Hash      = 13, // One `Own_Hash_Place` record, at index 1: where a loader writes the hash of the module.
 }
 // The tables that this version of the format knows.
 TABLE_COUNT :: len(Table_Kind)

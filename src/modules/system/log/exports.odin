@@ -374,3 +374,91 @@ value_runs_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, r
 	}
 	return i64(total)
 }
+
+// One log fact of the log: fact_records(). The row of `records` with the
+// same number holds its head; a row there has no room for these fields. The
+// fields are the bytes of the record as the kernel wrote them: the service
+// renders nothing (src/md/features/log_facts.md, "The reader path").
+Fact_Row :: struct {
+	number:      i64, // The number of the log record, as in records().
+	form:        i64, // The byte of the record form: 1, Fact, for each row.
+	continues:   i64, // The byte `more` of the record: 0 for a fact.
+	key:         value_kinds.Hexadecimal_64, // The fact key that the writer gave.
+	module_hash: value_kinds.Hash_Field, // The module hash that the writer gave: its own-hash place.
+	value_count: i64, // The value bytes of the fact, as the kernel counted them from the length.
+	reserved:    value_kinds.Hexadecimal_64, // The 6 reserved bytes of the fact, as a number: 0, which the kernel writes.
+	values_head: value_kinds.Hexadecimal_64, // The first 8 value bytes, as a number in the order of memory.
+}
+#assert(size_of(Fact_Row) == 88)
+
+// fact_row_add adds the row of a record of the form Fact, and counts each
+// such record, also the ones that do not fit in the result. A record of
+// another form, and a byte that names no form, give no row.
+fact_row_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result: ^[]Fact_Row, total: ^int, count: ^int) {
+	if form, known := op.log_record_form(record); !known || form != .Fact {
+		return
+	}
+	total^ += 1
+	if count^ >= len(result^) {
+		return
+	}
+	fact := op.log_record_fact(record)
+	row := &result[count^]
+	row^ = {number = number, form = i64(record.form), continues = i64(record.more), key = value_kinds.Hexadecimal_64(fact.key), value_count = i64(fact.value_count)}
+	copy(row.module_hash[:], fact.module_hash[:])
+	reserved, values_head: u64
+	for value, index in fact.reserved {
+		reserved |= u64(value) << (8 * u64(index))
+	}
+	for index in 0 ..< 8 {
+		values_head |= u64(fact.values[index]) << (8 * u64(index))
+	}
+	row.reserved, row.values_head = value_kinds.Hexadecimal_64(reserved), value_kinds.Hexadecimal_64(values_head)
+	count^ += 1
+}
+
+// fact_records gives the log facts of the log scope of the caller from the number `after` on, one row each, with the bytes that its writer gave: the record form, the fact key, the module hash, the count of the value bytes, the reserved bytes and the first value bytes. The result is the count of the facts of the scope from `after` to the last record.
+//
+// **What it is for.** A log fact is a record with no text: its row in
+// `records` has its number, its time, its process and its level, and an
+// empty text. A reader joins these rows to the rows of `records` by
+// `number`. `log_reader` checks with them what the kernel wrote for each
+// fact that it gave to `Log`.
+//
+// **Parameter**: `after`, the number of the first record, as for
+// `records`.
+//
+// **A row** (`Fact_Row`): `number`, the record; `form`, the byte of its
+// record form; `continues`, its byte `more`; `key`; `module_hash`;
+// `value_count`; `reserved`; `values_head`, the first 8 value bytes.
+//
+// **Grant**: the [log scope](term:log-scope) of the connection, as for
+// `records`.
+//
+// ```
+// connect("log")
+// join(log.records(0), log.fact_records(0), "number")
+// ```
+@(export, link_name = "fact_records")
+fact_records :: proc "c" (after: i64, result: ^[]Fact_Row) -> i64 {
+	scope := caller_scope()
+	total := 0
+	count := 0
+	if !scope.whole_log {
+		own, _, _ := own_records_read(scope, after)
+		for &record in own {
+			fact_row_add(i64(record.own_number), &record, result, &total, &count)
+		}
+		return i64(total)
+	}
+	written := intrinsics.atomic_load(&reader_head.written)
+	next, _ := op.log_first_kept(u64(max(after, 0)), written)
+	for ; next < written; next += 1 {
+		record, whole := record_copy(next)
+		if !whole {
+			continue
+		}
+		fact_row_add(i64(record.sequence), &record, result, &total, &count)
+	}
+	return i64(total)
+}

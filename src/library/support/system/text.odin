@@ -1,6 +1,7 @@
 package system
 
 import "base:intrinsics"
+import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
@@ -134,7 +135,47 @@ log_send :: proc "contextless" (handle: Handle, text: []u8, runs: []value_kinds.
 	if run_count > 0 {
 		copy(area[count:], ([^]u8)(raw_data(runs))[:run_count * RUN_SIZE])
 	}
-	log_call(handle, &area[0], count, level, run_count)
+	log_call(handle, &area[0], count, level, run_count, .Text)
+}
+
+// The own-hash place of the module that compiles this package in: each
+// loader writes the hash of the module file there before the first
+// instruction (module.own_hash_write), and the kernel writes it for the
+// root service. log_fact copies it into each fact, so a reader finds the
+// description of the fact in that file. The symbol is exported, so the
+// compiler cannot take its bytes as the zeros of the file; the link keeps
+// it local to the module (src/md/features/log_facts.md, "The record").
+@(export, link_name = module.OWN_HASH_PLACE_SYMBOL)
+own_hash: [module.HASH_SIZE]u8
+
+// log_fact writes one log fact on the log of the kernel, with a level: the
+// values of a record of a fact type, with no text. The record type has the
+// attribute `log_fact` with its fact template, and the call names a
+// composite literal of it: the tool reads the type there, and writes the
+// fact table of the module (src/md/features/log_facts.md, "The fact type
+// in the source"). The compiler refuses a record with padding, whose bytes
+// would carry memory that no field names, and a record past the values of
+// one log record. A process with no handle to the log writes nothing; a
+// fact past the log records of each second of the budget is dropped and
+// counted, as a line of `log` is.
+//
+// ```odin
+// system.log_fact(.Warning, Bad_Block{block = number, check = found, expected = wanted})
+// ```
+log_fact :: proc "contextless" (level: op.Log_Level, value: $T) where intrinsics.type_is_struct(T) && !intrinsics.type_struct_has_implicit_padding(T) && size_of(T) <= op.LOG_FACT_VALUE_CAPACITY {
+	handle := context_record().handles[op.CONTEXT_LOG]
+	if handle == 0 {
+		return
+	}
+	fact: op.Log_Fact
+	fact.module_hash = own_hash
+	// The typeid of a named type of the package scope is SipHash-2-4 of its
+	// canonical name, an immediate in the code: the fact key, which the
+	// tool computes from the source and finds in the code of the module.
+	fact.key = transmute(u64)typeid_of(T)
+	values := value
+	intrinsics.mem_copy_non_overlapping(&fact.values[0], &values, size_of(T))
+	log_call(handle, (^u8)(&fact), op.LOG_FACT_HEAD_BYTES + size_of(T), level, 0, .Fact)
 }
 
 // The lines of this process that the kernel refused for its log limit, and
@@ -151,7 +192,7 @@ log_lines_refused: u64
 // way; the kernel counts each refused record in the budget too
 // (`budget_used`), which the starter reads.
 @(private = "file")
-log_call :: proc "contextless" (handle: Handle, text: ^u8, count: int, level: op.Log_Level, run_count: int) {
+log_call :: proc "contextless" (handle: Handle, text: ^u8, count: int, level: op.Log_Level, run_count: int, form: op.Log_Record_Form) {
 	if refused := intrinsics.atomic_load(&log_lines_refused); refused != 0 {
 		note: [64]u8
 		digits: [20]u8
@@ -161,7 +202,7 @@ log_call :: proc "contextless" (handle: Handle, text: ^u8, count: int, level: op
 			intrinsics.atomic_sub(&log_lines_refused, refused)
 		}
 	}
-	if _, status := call(.Log, u64(handle), u64(uintptr(text)), u64(count), u64(level), u64(run_count)); status == .No_Budget {
+	if _, status := call(.Log, u64(handle), u64(uintptr(text)), u64(count), u64(level), u64(run_count), u64(form)); status == .No_Budget {
 		intrinsics.atomic_add(&log_lines_refused, 1)
 	}
 }
@@ -209,7 +250,7 @@ log_text :: proc "contextless" (text: string) {
 		// slice with no address.
 		copied: [LOG_CALL_LIMIT]u8
 		count := copy(copied[:], part)
-		log_call(handle, &copied[0], count, .Info, 0)
+		log_call(handle, &copied[0], count, .Info, 0, .Text)
 		if len(rest) == 0 {
 			break
 		}

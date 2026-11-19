@@ -1557,6 +1557,19 @@ The test machine gets SVM from KVM on an AMD host whose module `kvm_amd` has nes
 - An exception or an interrupt that the process injects into the guest.
 - A translation cache kept across runs: each entry flushes it.
 
+## The forms of a log record
+
+A log record has a head that the kernel sets (the number, the time, the process, the thread, the level, the name of the process) and 192 bytes after the name, whose content its record form says (`glossary/running_code.md`, "Record form"): one byte of the head, `op.Log_Record_Form`.
+
+| Form | The 192 bytes | Records of one `Log` |
+|---|---|---|
+| `Text` (0) | The value runs (24 bytes), then the text (168 bytes), UTF-8 with no control character: the kernel writes "?" for each byte of an invalid sequence | One for each 168 bytes of text, with `more` |
+| `Fact` (1) | One `op.Log_Fact`: the module hash (32 bytes), the fact key (8), the count of the value bytes (2), 6 reserved bytes, the values (144) | One, `more` is 0 |
+
+`Log(log, address, length, level, runs, form)` takes the form as its sixth value, after the runs, so a writer of text gives five values and a zero form. The kernel takes the word through its border and refuses a word that names no form with `Bad_Operation`. For a fact it refuses runs with `Bad_Operation`, and a length below `op.LOG_FACT_HEAD_BYTES` (48) or above the 192 bytes with `Bad_Address`; its error record names the argument. It copies the bytes of the process before the log lock, as it copies a text, and under the lock writes them into one record with no filter: they are not text. It writes the count of the value bytes from the length and zeros the reserved bytes, and reads no other byte: the module hash and the key are what the writer says. A fact spends one record of the log limit. The kernel gets no operation: `Log` keeps its number, and the form is one more value. The code: `log_fact_operation` and `log_fact_record` in `src/kernel/serial.odin`.
+
+The serial writer writes the line of a fact from its bytes, as it writes a text: "#", the first 8 bytes of the module hash, ":", the key, a space and the value bytes up to their last byte that is not zero, all in hexadecimal (`op.log_fact_line`). The line holds no byte of the writer as text, so a fact cannot forge or hide a line. The tool writes its sentence on the host (`docs/TOOLS.md`, "Log facts"). The design: `src/md/features/log_facts.md`.
+
 ## The own log ring of a process
 
 The kernel writes each log record of a process in two places: the whole log, the one ring that the root service receives as `ROOT_LOG_RECORDS`, and the own log ring of the process (`glossary/running_code.md`). The own log ring keeps the last `op.OWN_LOG_RECORD_CAPACITY` (64) records of its process in `op.OWN_LOG_PAGES` (4) pages. Only the records of that process fill it, so a log storm of another process never pushes them out. A record of the kernel goes to the whole log only. The design is `src/md/features/own_log_ring.md`.

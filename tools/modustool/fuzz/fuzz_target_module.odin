@@ -2,6 +2,7 @@ package fuzz
 
 import "base:intrinsics"
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modustool:foundation"
 
 // The fuzz targets of the module file (src/md/infrastructure/fuzzing.md,
@@ -58,7 +59,29 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 				_, _ = module.record(file, kind, index, module.Field)
 			case .Budget:
 				_, _ = module.record(file, kind, index, module.Budget_Request)
+			case .Facts:
+				_, _ = module.record(file, kind, index, module.Fact)
+			case .Own_Hash:
+				_, _ = module.record(file, kind, index, module.Own_Hash_Place)
 			}
+		}
+	}
+	// The reader of the facts: a fact that it accepts names a record that
+	// record_type accepts, with values that fit in one log record.
+	facts := min(module.count(file, .Facts), FUZZ_MODULE_INDEX_LIMIT)
+	for index in 0 ..= facts {
+		fact, record, valid := module.fact(file, index)
+		if !valid {
+			continue
+		}
+		if fact.key == 0 || record.size > op.LOG_FACT_VALUE_CAPACITY {
+			return fuzz_broken(.Contract, "fact accepts a fact with the key 0 or with values past the capacity: fact %d", index)
+		}
+		if _, found, _, found_ok := module.fact_find(file, fact.key); found_ok && found.key != fact.key {
+			return fuzz_broken(.Contract, "fact_find gives a fact of another key: fact %d", index)
+		}
+		if fault := module.fact_template_valid(file, fact, record); fault > max(module.Fact_Template_Fault) {
+			return fuzz_broken(.Contract, "fact_template_valid gives a value out of its enumeration: %d", u8(fault))
 		}
 	}
 	exports := min(module.count(file, .Exports), FUZZ_MODULE_INDEX_LIMIT)
@@ -129,6 +152,11 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 		}
 		load_error: module.Load_Error
 		_ = module.bind(file, memory, bound, &load_error)
+		// validate accepted the own-hash place: the write stays inside the
+		// memory of the module.
+		if !module.own_hash_write(file, memory, {}) {
+			return fuzz_broken(.Two_Readers, "validate accepts an own-hash place that own_hash_write refuses")
+		}
 	}
 	return FUZZ_PASSED
 }
@@ -163,6 +191,10 @@ fuzz_module_record_type :: proc(kind: module.Table_Kind) -> (type: typeid, size:
 		return module.Field, size_of(module.Field)
 	case .Budget:
 		return module.Budget_Request, size_of(module.Budget_Request)
+	case .Facts:
+		return module.Fact, size_of(module.Fact)
+	case .Own_Hash:
+		return module.Own_Hash_Place, size_of(module.Own_Hash_Place)
 	}
 	return nil, 0
 }
@@ -317,6 +349,46 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 		}
 	}
 
+	// One or two log facts of the record, with keys in order and a template
+	// that names each field of the record, as the build writes them.
+	facts := make([dynamic]module.Fact, context.temp_allocator)
+	if field_count > 0 {
+		append(&facts, module.Fact{})
+		template_start := len(strings_bytes)
+		append(&strings_bytes, 't')
+		for item in fields[1:] {
+			// A copy first: the append can move the bytes of the table.
+			name: [16]u8
+			name_count := copy(name[:], strings_bytes[item.name_offset:][:item.name_count])
+			append(&strings_bytes, " {")
+			append(&strings_bytes, ..name[:name_count])
+			append(&strings_bytes, '}')
+		}
+		template_count := u32(len(strings_bytes) - template_start)
+		package_offset, package_count := fuzz_module_name_add(&strings_bytes, &choices, 'p')
+		key := fuzz_choice_word(&choices, 8) >> 1 | 1
+		for _ in 0 ..< 1 + fuzz_choice_below(&choices, 2) {
+			append(&facts, module.Fact{key = key, record = 1, template_offset = u32(template_start), template_count = template_count, package_offset = package_offset, package_count = package_count})
+			key += 1 + u64(fuzz_choice_below(&choices, 1000))
+		}
+	}
+	// The own-hash place in the data segment: its first bytes, the last
+	// place that fits, or a word between them.
+	own_hash := [2]module.Own_Hash_Place{}
+	has_own_hash := false
+	if data_segment >= 0 {
+		data := segments[data_segment]
+		switch fuzz_choice_below(&choices, 3) {
+		case 0:
+			own_hash[1].memory_offset = data.memory_offset
+		case 1:
+			own_hash[1].memory_offset = data.memory_offset + data.memory_size - module.HASH_SIZE
+		case:
+			own_hash[1].memory_offset = data.memory_offset + 8 * u64(fuzz_choice_below(&choices, int(data.memory_size - module.HASH_SIZE) / 8))
+		}
+		has_own_hash = true
+	}
+
 	documentation := [2]module.Documentation{}
 	documentation[1].about_offset, documentation[1].about_count = fuzz_module_name_add(&strings_bytes, &choices, 'd')
 	budget := [2]module.Budget_Request{{}, {pages = u64(fuzz_choice_below(&choices, 64)), processes = 1, threads = 1}}
@@ -351,6 +423,10 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	fuzz_module_table_write(&writer, &directory, .Records, records[:])
 	fuzz_module_table_write(&writer, &directory, .Fields, fields[:])
 	fuzz_module_table_write(&writer, &directory, .Budget, budget[:])
+	fuzz_module_table_write(&writer, &directory, .Facts, facts[:])
+	if has_own_hash {
+		fuzz_module_table_write(&writer, &directory, .Own_Hash, own_hash[:])
+	}
 	strings_at := len(writer.bytes)
 	append(&writer.bytes, ..strings_bytes[:])
 	directory[int(module.Table_Kind.Strings)] = {offset = u64(strings_at), count = u32(len(strings_bytes)), record_size = 1}
@@ -428,6 +504,14 @@ fuzz_module_generated_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if !broke {
 		if error := module.validate(file); error != .None {
 			return fuzz_broken(.Round_Trip, "validate refuses a module that the generator built by the rules: %v", error)
+		}
+		// Each fact that the generator wrote is read, and found by its key.
+		for index in 1 ..< module.count(file, .Facts) {
+			value, _, valid := module.fact(file, index)
+			found, _, _, found_ok := module.fact_find(file, value.key)
+			if !valid || !found_ok || found != index {
+				return fuzz_broken(.Round_Trip, "the fact %d that the generator built by the rules is not read or not found by its key", index)
+			}
 		}
 	}
 	return fuzz_module_readers(file)

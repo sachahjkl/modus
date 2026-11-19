@@ -65,8 +65,9 @@ Module_Description :: struct {
 	text:     string, // The documentation text that the module carries: the comment of the package, in its Markdown.
 	markdown: string, // The comment of the package, as its author wrote it: the site renders it.
 	exports:  []Export_Description,
-	records:  []Record_Description, // The records that the exports use. Record n + 1 of the module is records[n].
+	records:  []Record_Description, // The records that the exports and the log facts use. Record n + 1 of the module is records[n].
 	budget:   Budget_Description, // The budget that the module asks for: the table Budget.
+	facts:    []Fact_Description, // The log facts that the module writes, sorted by key (facts_merge): the table Facts.
 }
 
 // The parts of the budget that a source states: the record
@@ -414,6 +415,30 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 	}
 	add_table(&output, &directory, .Records, record_records[:])
 	add_table(&output, &directory, .Fields, field_records[:])
+	// The log facts, sorted by key, and the place where a loader writes the
+	// hash of the module: the variable of the support package system that
+	// log_fact copies (src/md/features/log_facts.md, "The record").
+	own_hash_place, has_place := own_hash_place_of_elf(elf, sections[:], images[:]) or_return
+	if len(description.facts) > 0 && !has_place {
+		return fail(name, "the module writes log facts, and its linked file has no symbol %s: the variable of the support package system that holds the hash of the module", module.OWN_HASH_PLACE_SYMBOL)
+	}
+	if len(description.facts) > 0 {
+		fact_records := make([dynamic]module.Fact, context.temp_allocator)
+		append(&fact_records, module.Fact{})
+		for fact in description.facts {
+			row := module.Fact{key = fact.key, record = fact.record_index}
+			row.template_offset, row.template_count = u32(len(string_bytes)), u32(len(fact.template))
+			append(&string_bytes, fact.template)
+			row.package_offset, row.package_count = u32(len(string_bytes)), u32(len(fact.package_name))
+			append(&string_bytes, fact.package_name)
+			append(&fact_records, row)
+		}
+		add_table(&output, &directory, .Facts, fact_records[:])
+	}
+	if has_place {
+		place_records := [2]module.Own_Hash_Place{1 = {memory_offset = own_hash_place}}
+		add_table(&output, &directory, .Own_Hash, place_records[:])
+	}
 	add_table(&output, &directory, .Strings, string_bytes[:])
 	add_table(&output, &directory, .Documentation, documentation_records[:])
 	// A module whose source states no budget has no table Budget: it asks
@@ -456,6 +481,54 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		return fail(name, "the module that was written is not valid: %v", error)
 	}
 	return output[:], true
+}
+
+// own_hash_place_of_elf gives the memory offset of the own-hash place: the
+// symbol module.OWN_HASH_PLACE_SYMBOL of the symbol table of the linked
+// file, an object of module.HASH_SIZE bytes in a segment that the loader
+// can write. found is false for a file with no such symbol: no code of the
+// module reads the place, and the link dropped it. ok is false for a
+// symbol that breaks a rule, which it prints.
+@(private = "file")
+own_hash_place_of_elf :: proc(elf: []u8, sections: []Elf_Section_Header, images: []Segment_Image) -> (memory_offset: u64, found: bool, ok: bool) {
+	for section in sections {
+		if section.type != ELF_SECTION_SYMBOLS || int(section.link) >= len(sections) {
+			continue
+		}
+		symbols, has_symbols := elf_section_bytes(elf, section)
+		names, has_names := elf_section_bytes(elf, sections[section.link])
+		if !has_symbols || !has_names {
+			continue
+		}
+		for at := 0; at + size_of(Elf_Symbol) <= len(symbols); at += size_of(Elf_Symbol) {
+			symbol: Elf_Symbol
+			mem.copy(&symbol, raw_data(symbols[at:]), size_of(symbol))
+			if symbol.section_index == 0 || text_until_zero(names, u64(symbol.name)) != module.OWN_HASH_PLACE_SYMBOL {
+				continue
+			}
+			if found {
+				fmt.eprintfln("modustool: convert: the linked file has two symbols %s: one module has one own-hash place", module.OWN_HASH_PLACE_SYMBOL)
+				return 0, false, false
+			}
+			if symbol.size != module.HASH_SIZE {
+				fmt.eprintfln("modustool: convert: the symbol %s has %d bytes; the own-hash place has %d", module.OWN_HASH_PLACE_SYMBOL, symbol.size, module.HASH_SIZE)
+				return 0, false, false
+			}
+			writable := false
+			for image in images {
+				segment := image.record
+				if .Write in segment.flags && .Execute not_in segment.flags && symbol.value >= segment.memory_offset && symbol.value - segment.memory_offset + module.HASH_SIZE <= segment.memory_size {
+					writable = true
+				}
+			}
+			if !writable {
+				fmt.eprintfln("modustool: convert: the symbol %s at %x is not in a segment that the loader can write", module.OWN_HASH_PLACE_SYMBOL, symbol.value)
+				return 0, false, false
+			}
+			memory_offset, found = symbol.value, true
+		}
+	}
+	return memory_offset, found, true
 }
 
 // segment_flags_after_the_relocations gives the flags of a segment once
