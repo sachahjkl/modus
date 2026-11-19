@@ -48,21 +48,11 @@ Call_Fonts :: struct {
 	outline: text_rendering.Outline_Memory,
 }
 
-// face_of_word is the border of the face: a word that names no member, and
-// the member None, which measures nothing, are refused.
-@(private)
-face_of_word :: proc "contextless" (word: i64) -> (face: text_rendering.Face, ok: bool) {
-	if word <= i64(text_rendering.Face.None) || word > i64(max(text_rendering.Face)) {
-		return .None, false
-	}
-	return text_rendering.Face(word), true
-}
-
 // face_and_size_check refuses a face (argument 2) and a text size
 // (argument 3) with an error record.
 @(private)
 face_and_size_check :: proc "contextless" (face_word, size: i64, error: ^errors.Error_Record) -> (face: text_rendering.Face, ok: bool) {
-	face, ok = face_of_word(face_word)
+	face, ok = text_rendering.face_of_word(face_word)
 	if !ok {
 		errors.fail(error, -1, .Bad_Value, .None, 2, face_word, i64(max(text_rendering.Face)))
 		return .None, false

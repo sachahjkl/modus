@@ -140,15 +140,27 @@ Chain_Kind :: enum u8 {
 // no outlines; its characters past the glyph cache draw the replacement
 // glyph.
 Face :: enum u8 {
-	None,
-	Interface, // B612 Regular: proportional.
-	Interface_Bold, // B612 Bold: proportional.
-	Cells, // Paper Mono with the grid fit.
-	Cells_Without_Grid_Fit, // Paper Mono with no grid fit.
-	Cells_Bold, // Paper Mono SemiBold.
+	None                   = 0,
+	Interface              = 1, // B612 Regular: proportional.
+	Interface_Bold         = 2, // B612 Bold: proportional.
+	Cells                  = 3, // Paper Mono with the grid fit.
+	Cells_Without_Grid_Fit = 4, // Paper Mono with no grid fit.
+	Cells_Bold             = 5, // Paper Mono SemiBold.
 }
 // The face is 4 bits in the key of the private glyph cache.
 #assert(int(max(Face)) < 1 << 4)
+
+// face_of_word is the border of the face, where a word of an export
+// becomes a face: a word that names no member, and the member None, which
+// measures nothing, are refused.
+face_of_word :: proc "contextless" (word: i64) -> (face: Face, ok: bool) {
+	for member in Face {
+		if member != .None && i64(member) == word {
+			return member, true
+		}
+	}
+	return .None, false
+}
 
 // The positions of a glyph across a pixel: the step of the color stripes.
 // A proportional glyph is at the nearest third of a pixel at each size; a

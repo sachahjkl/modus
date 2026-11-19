@@ -264,7 +264,7 @@ fuzz_font_outlines_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		return fuzz_broken(.Contract, "validate gives a problem out of its enumeration: %d", u8(problem.kind))
 	}
 	if problem.kind != .None {
-		if outlines.header != nil || len(outlines.records) != 0 {
+		if outlines.header != {} || len(outlines.records) != 0 {
 			return fuzz_broken(.Contract, "validate refuses with %v and gives records", problem.kind)
 		}
 		return FUZZ_PASSED

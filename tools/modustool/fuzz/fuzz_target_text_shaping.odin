@@ -134,10 +134,10 @@ fuzz_text_shaping_execute :: proc(input: []u8) -> Fuzz_Verdict {
 
 	// The border of the face, as the library module has it: a byte that
 	// names no member never becomes a face.
-	if head.face == u8(text_rendering.Face.None) || head.face > u8(max(text_rendering.Face)) {
+	face, face_ok := text_rendering.face_of_word(i64(head.face))
+	if !face_ok {
 		return FUZZ_PASSED
 	}
-	face := text_rendering.Face(head.face)
 	spacing, spacing_ok := text_rendering.spacing_in(fuzz_shaping_fonts, face, size)
 	if spacing_ok != (text_rendering.size_check(size) == .None) {
 		return fuzz_broken(.Contract, "a spacing of the face %v at the size %d is %v", face, size, spacing_ok)
