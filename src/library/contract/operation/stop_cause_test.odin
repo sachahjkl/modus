@@ -126,10 +126,11 @@ an_operation_word_of_a_stop_of_itself_names_an_outcome :: proc(t: ^testing.T) {
 
 // The word of Process_Stop for a stop of another process: each word but 0
 // is refused, with the limit 0, because a holder cannot claim the work of
-// another process.
+// another process. The word 1 << 32 has no low bit: a border that read 32
+// bits of it would take it for 0.
 @(test)
 an_operation_word_of_a_holder_is_zero :: proc(t: ^testing.T) {
-	words := [?]u64{u64(Stop_Outcome.Done), u64(Stop_Outcome.Failed), u64(Stop_Outcome.Refused), u64(Stop_Outcome.Stopped_On_Request), u64(max(Stop_Outcome)) + 1, max(u64)}
+	words := [?]u64{u64(Stop_Outcome.Done), u64(Stop_Outcome.Failed), u64(Stop_Outcome.Refused), u64(Stop_Outcome.Stopped_On_Request), u64(max(Stop_Outcome)) + 1, u64(1) << 32, max(u64)}
 	for word in words {
 		outcome, limit, ok := stop_outcome_of_operation_word(word, false)
 		testing.expectf(t, !ok, "the word %x of a holder is refused", word)

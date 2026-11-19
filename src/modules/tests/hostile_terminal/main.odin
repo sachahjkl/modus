@@ -38,7 +38,8 @@ import terminal "modus:support/terminal"
 refused_kind_words := [3]u32{u32(terminal.Kind.None), u32(max(terminal.Kind)) + 1, max(u32)}
 
 // entry writes the three records and the line, waits until the terminal
-// read them, writes the result on the log, and stops with `Done`. With
+// read them, writes the result on the log, and stops with `Done`, or with
+// `Failed` when the terminal did not read them. With
 // no terminal it writes `hostile_terminal: no terminal` and stops with
 // `Refused`.
 @(export, link_name = "entry")
@@ -71,6 +72,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("hostile_terminal: the terminal read the kind words ", u64(refused_kind_words[0]), ", ", u64(refused_kind_words[1]), " and ", u64(refused_kind_words[2]), ", and the line after them: as it must")
 	} else {
 		system.log("hostile_terminal: WRONG: the terminal did not read its records in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
+		system.stop(.Failed)
 	}
 	system.stop(.Done)
 }

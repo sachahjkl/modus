@@ -21,9 +21,9 @@ BOOT_IMAGE :: foundation.BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: foundation.BUILD_FOLDER + "/boot_fails.image"
 BOOT_IMAGE_SHORTAGE :: foundation.BOOT_IMAGE_SHORTAGE
 // The boot image of the test of the rescue: the modules of the boot image,
-// with a start list whose row of the console names no module
-// (start_lists.odin).
-BOOT_IMAGE_MISSING_CONSOLE :: foundation.BUILD_FOLDER + "/boot_missing_console.image"
+// with a start list whose row of the console names no module, and a rescue
+// list with the two rows of the test of the restarts (start_lists.odin).
+BOOT_IMAGE_MISSING_CONSOLE :: foundation.BOOT_IMAGE_MISSING_CONSOLE
 // The boot image of a measure run: the usual one, with one resource more,
 // which the root service looks for (docs/TOOLS.md, "A check by count, a measure by time").
 BOOT_IMAGE_MEASURE :: foundation.BUILD_FOLDER + "/boot_measure.image"

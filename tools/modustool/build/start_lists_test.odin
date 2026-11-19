@@ -47,6 +47,11 @@ a_start_list_that_is_not_valid_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, missing.start_refused_on_purpose)
 	missing_problems := start_list_problems(missing.start, image_modules_with_an_entry(BOOT_IMAGE_MISSING_CONSOLE, ""), false)
 	testing.expect(t, refused_for_the_rows(missing_problems, REFUSED_ON_PURPOSE_ROWS[:]), "the list of the test of the rescue is not refused for its two rows alone")
+	// Its rescue list, with the two rows of the test of the restarts, passes
+	// against its image, and the main image holds neither row.
+	missing_rescue_problems := start_list_problems(missing.rescue, image_modules_with_an_entry(BOOT_IMAGE_MISSING_CONSOLE, ""), true)
+	testing.expectf(t, len(missing_rescue_problems) == 0, "the rescue list of the test of the rescue is refused: %v", missing_rescue_problems)
+	testing.expect_value(t, len(start_list_problems(missing.rescue, image_modules_with_an_entry(BOOT_IMAGE, ""), true)), 2)
 	// shortage is in the image of its test only.
 	testing.expect(t, len(start_list_problems(SHORTAGE_START_LIST[:], image_modules_with_an_entry(BOOT_IMAGE, ""), false)) == 1, "the main image holds shortage")
 	// The check of a list refused on purpose refuses one problem too few,

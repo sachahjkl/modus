@@ -130,8 +130,8 @@ Choice_Walk :: struct {
 	uses:       ^map[string]Choice_Use, // "folder name" to the first use of the constant as a choice.
 }
 
-// choice_key names a declaration of a package in the tables of the walk.
-@(private = "file")
+// choice_key names a declaration of a package in the tables of the walk,
+// and in the aliases of the check of the stop words.
 choice_key :: proc(folder, name: string) -> string {
 	return strings.concatenate({folder, " ", name}, context.temp_allocator)
 }
@@ -1114,7 +1114,8 @@ choice_constant_check :: proc() -> bool {
 	if !ok {
 		return false
 	}
-	stop_words_refused := stop_word_faults_write(stop_faults)
+	refused_stop_words, stop_word_exception_faults := stop_words_judged(stop_faults, STOP_WORD_EXCEPTIONS[:])
+	stop_words_refused, stop_words_stale := stop_word_faults_write(refused_stop_words, stop_word_exception_faults)
 	// A cast skips the border: the word becomes a member that the writer
 	// may not have named, and each switch after it runs no case for it.
 	refused_casts, exception_faults := enum_casts_judged(casts, ENUM_CAST_EXCEPTIONS[:])
@@ -1156,8 +1157,8 @@ choice_constant_check :: proc() -> bool {
 			fmt.eprintfln("modustool: %s: the exception %s of the check of the choice constants names no family that the code uses as choices: remove it from CHOICE_CONSTANT_EXCEPTIONS", exception.folder, choice_family_text(exception.word, exception.word_place))
 		}
 	}
-	if refused > 0 || stale > 0 || casts_refused > 0 || casts_stale > 0 || stop_words_refused > 0 {
-		fmt.eprintfln("modustool: test failed: %d families of integer constants are closed sets of choices, %d exceptions name no family, %d casts of a word to an enum skip a border, %d exceptions of casts do not hold their count, and %d stop words skip their border", refused, stale, casts_refused, casts_stale, stop_words_refused)
+	if refused > 0 || stale > 0 || casts_refused > 0 || casts_stale > 0 || stop_words_refused > 0 || stop_words_stale > 0 {
+		fmt.eprintfln("modustool: test failed: %d families of integer constants are closed sets of choices, %d exceptions name no family, %d casts of a word to an enum skip a border, %d exceptions of casts do not hold their count, %d stop words skip their border, and %d exceptions of stop words do not hold their count", refused, stale, casts_refused, casts_stale, stop_words_refused, stop_words_stale)
 		return false
 	}
 	foundation.test_passed_print("no family of integer constants is a closed set of choices, no cast of a word to an enum is kept, passed or switched on, and no stop word skips its border, in the %d source files of the system and of the tool that are not tests (%d exceptions of outside standards, %d casts of a design)", file_count, len(CHOICE_CONSTANT_EXCEPTIONS), len(ENUM_CAST_EXCEPTIONS))

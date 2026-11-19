@@ -651,7 +651,7 @@ Each boot image holds two resources that the start policy reads: `start_list` an
 - a row that names no module with an entry in that image;
 - a rescue list with no row with the mark `Needed`.
 
-The list of the image `missing_console` has a row of the console that names a module that does not exist, for the test of the rescue: the build checks that the check refuses it for that row alone, then writes it into that image only.
+The list of the image `missing_console` has a row of the console that names a module that does not exist, for the test of the rescue: the build checks that the check refuses it for that row alone, then writes it into that image only. The rescue list of that image adds two rows with 2 restarts each, for the test of the restarts: `stops_refused` stops with the stop outcome `Refused` and the start policy writes that it does not start again, and `stops_failed` stops with `Failed` and starts again with 1, then 0 restarts left, then stays stopped. Only that image holds the two test modules.
 
 **The source of the start policy.** Before the first image is written, the tool reads the sources of `src/modules/system/start_policy`, the tests left out, and refuses more than 400 lines in all, and an import that is not `base:`, `modus:contract/start_list`, `modus:contract/root_ring`, `modus:contract/ring` or `modus:support/system`: the start policy reads a list in its order and holds no logic of its own. The host tests `a_start_list_that_is_not_valid_is_refused` and `a_start_policy_past_its_bound_is_refused` give each fault to the two checks.
 
@@ -700,10 +700,16 @@ modustool: src/library/support/sentence/error.odin:30: a cast of a word to the e
 
 A second short list names the casts of a design, each with its reason: the dispatch of the kernel on the kind of a command record, and the two tests that write a word of no member on purpose (the machine test of an unknown operation, and the peer that breaks a field of a remote request). A row names its file, its enum and its count of casts in the file: another count of such casts in the file, none included, refuses the row and its casts. The tool chooses a member by its place, from 0 (a draw of the fuzzer), with `enum_member_at`, which stops the tool on a place past the last member.
 
-**The stop words.** The same check refuses two forms that skip the borders of the stop of a process (`src/md/api/process_stop.md`). A conversion of a word to `Stop_Cause` or `Stop_Outcome`, in a comparison with a member too, is refused outside the contract package `operation`: a reader takes the words through `op.stop_of_words` or the library. `.Process_Stop` or `.Process_State` passed to `call` or `call_with_error` of the support package `system` is refused outside that package: a process uses `system.stop`, `system.process_stop`, `system.process_state`, `system.process_stop_wait` or `system.process_place`. A refused form stops the check with its place:
+**The stop words.** The same check refuses the forms that skip the borders of the stop of a process (`src/md/api/process_stop.md`):
+
+- a conversion of a word to `Stop_Cause` or `Stop_Outcome` outside the contract package `operation`, in a comparison with a member too: a reader takes the words through `op.stop_of_words` or the library;
+- a mention of the operation `Process_Stop` or `Process_State` (`.Process_Stop`, `op.Operation.Process_Stop`), and a conversion of a word to `Operation`, outside the support package `system`, the contract package `operation`, the kernel and the tool: a process uses `system.stop`, `system.process_stop`, `system.process_state`, `system.process_stop_wait` or `system.process_place`, so no variable, call or command record carries the operation;
+- `system.stop(.None)`, which the kernel refuses.
+
+An alias of one of the three enums (`Outcome :: op.Stop_Outcome`), a chain of aliases, a `distinct` type and a `#type` of one, in a file or inside a procedure, are the enum for the check. A short list names the faults of a design, each with its file, its kind, its count and its reason: the machine test of the refusals of `Process_Stop` in `address_space`, and the machine test of a kind of no operation in `errors`. Another count in the file refuses the row and its faults. A refused form stops the check with its place:
 
 ```
-modustool: src/modules/demonstrations/frames/main.odin:144: a raw call of the operation Process_State outside the support package system: use system.stop, system.process_stop, system.process_state, system.process_stop_wait or system.process_place (src/md/api/process_stop.md)
+modustool: src/modules/demonstrations/frames/main.odin:144: a mention of the operation Process_State outside the support package system: use system.stop, system.process_stop, system.process_state, system.process_stop_wait or system.process_place (src/md/api/process_stop.md)
 ```
 
 What the check does not see: a `#partial switch`, a constant declared inside a procedure or a `when` block, an enum declared inside a procedure, a value past 255 on either side of 0, a value computed from a constant of another package, and a family whose members share neither their first nor their last word. Review holds them. The design: `src/md/infrastructure/choice_constants.md`.
@@ -1361,7 +1367,7 @@ A damaged record is never an error. The tool decides for a module after its impo
 | `main` (`build/boot_volume.img`) | `boot.image`: every module of the image | The system as it is |
 | `fails` | `boot_fails.image`: no `start_policy` | The start must fail: no start policy, and no rescue |
 | `shortage` | `boot_shortage.image`: no input service, and `shortage`, which no other image holds: it takes nearly every page and stops the machine | Its start list and its rescue list start only the process `shortage` |
-| `missing_console` | `boot_missing_console.image`: every module | Its start list has a row of the console that names no module: the rescue takes over |
+| `missing_console` | `boot_missing_console.image`: every module, and `stops_refused` and `stops_failed` | Its start list has a row of the console that names no module: the rescue takes over, and its rescue list tests the restarts after `Refused` and `Failed` |
 | `operation_sequences` | `boot_operation_sequences.image`: every module, and `operation_fuzzing` and `operation_sequence_runner`, which no other image holds | Its start list and its rescue list start only the process `operation_fuzzing` ("The operation sequences") |
 | `measure` | `boot_measure.image`: every module, and the resource `measure_run` | A measure run ("A check by count, a measure by time") |
 | `without_return_check` | `boot.image` | The kernel `kernel_without_return_check` |

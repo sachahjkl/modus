@@ -34,6 +34,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.log("iommu: the test device service answered after its read into a page that was not declared: the machine goes on: as it must")
 			} else {
 				system.log("iommu: the test device service gave the status ", u64(record.kind), " to Info")
+				system.stop(.Failed)
 			}
 			system.stop(.Done)
 		}

@@ -938,6 +938,9 @@ stop_word_refusals :: proc "contextless" (child: system.Handle) -> bool {
 		{u64(child), u64(op.Stop_Outcome.Done), 0},
 		{u64(child), u64(op.Stop_Outcome.Stopped_On_Request), 0},
 		{u64(child), u64(max(op.Stop_Outcome)) + 1, 0},
+		// No low bit: a kernel that read 32 bits of the word would take it
+		// for 0 and stop the child.
+		{u64(child), u64(1) << 32, 0},
 		{u64(child), max(u64), 0},
 		{0, u64(op.Stop_Outcome.None), i64(max(op.Stop_Outcome))},
 		{0, u64(max(op.Stop_Outcome)) + 1, i64(max(op.Stop_Outcome))},
@@ -972,7 +975,8 @@ child_not_committed :: proc "contextless" () -> ! {
 	memory, _ := system.memory_create(16, flags = {.Uncommitted})
 	address, _ := system.memory_map(memory)
 	intrinsics.volatile_store(&([^]u8)(address)[5 * system.PAGE_SIZE], 1)
-	system.stop(.Done)
+	// The write must stop the child: past it, the case failed.
+	system.stop(.Failed)
 }
 
 // The delegation of a commit (docs/ARCHITECTURE.md, "Who pays a commit"): this

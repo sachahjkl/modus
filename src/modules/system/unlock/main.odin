@@ -2514,10 +2514,16 @@ machine_key_without_window :: proc "contextless" () -> ! {
 		system.stop(.Done)
 	case .Unreadable:
 		completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Unreadable)})
-		if !answered || system.Status(completion.kind) != .Ok {
+		taken := answered && system.Status(completion.kind) == .Ok
+		if !taken {
 			system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
 		}
 		system.log("unlock: the record of the machine key cannot be read: the disk grants of principal 0 stay absent, and the start policy of the boot image runs")
+		// The work of this mode is the report to the root service: a report
+		// that it did not take is a failure.
+		if !taken {
+			system.stop(.Failed)
+		}
 		system.stop(.Done)
 	case .Present:
 	}
@@ -2526,7 +2532,7 @@ machine_key_without_window :: proc "contextless" () -> ! {
 	completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)})
 	if !answered || system.Status(completion.kind) != .Ok {
 		system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
-		system.stop(.Done)
+		system.stop(.Failed)
 	}
 	if !sealed_by_the_tpm {
 		system.log("unlock: the machine key opens with the machine passphrase: the window of unlock asks for it after the start policy starts")

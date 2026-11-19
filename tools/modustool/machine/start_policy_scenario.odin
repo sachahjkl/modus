@@ -20,7 +20,9 @@ import "modustool:foundation"
 //    names a module that does not exist: the default start policy stops
 //    before Machine_Usable, the root
 //    service stops what it asked for, and the rescue takes over, with its
-//    line;
+//    line; the rescue list of this image adds two rows with 2 restarts
+//    each: stops_refused stops with Refused and does not start again, and
+//    stops_failed stops with Failed and starts again two times;
 // 3. to 5. three machines with one variable store of the firmware: the
 //    boot program writes the boot entry "modus (rescue)" in a store that
 //    has none; the tool sets BootNext to it with virt-fw-vars, and the next
@@ -71,12 +73,24 @@ scenario_start_policy_missing_console := [?]Step {
 	{kind = .Wait, text = "start_policy: the machine is not usable without console_missing: the start policy stops before Machine_Usable"},
 	{kind = .Wait, text = " stopped before the machine was usable: "},
 	{kind = .Wait, text = ": the rescue start policy starts"},
-	{kind = .Wait, text = "start_policy: the start list has 4 rows: each starts in its order"},
+	// The rescue list of this image: the default rescue list and the two rows
+	// of the test of the restarts, each with 2 restarts.
+	{kind = .Wait, text = "start_policy: the start list has 6 rows: each starts in its order"},
+	{kind = .Wait, text = "stops_refused: it refuses its context on purpose", any_order = true},
+	{kind = .Wait, text = "stops_failed: it fails on purpose", any_order = true},
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	// The root service writes its line when it takes Machine_Usable, before or
 	// after the line of the start policy: two processes, no fixed order.
 	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},
 	{kind = .Wait, text = RESCUE_USABLE_TEXT},
+	// The restarts: a row that stopped itself with Refused does not start
+	// again, whatever its count; a row that stopped with Failed starts again
+	// until its count ends. The two rows run at one time: no fixed order
+	// between their lines.
+	{kind = .Wait, text = "start_policy: stops_refused stopped: itself, refused; it does not start again", any_order = true, fails_on = "start_policy: stops_refused stopped: itself, refused; it starts again"},
+	{kind = .Wait, text = "start_policy: stops_failed stopped: itself, failed; it starts again, 1 restarts left"},
+	{kind = .Wait, text = "start_policy: stops_failed stopped: itself, failed; it starts again, 0 restarts left"},
+	{kind = .Wait, text = "start_policy: stops_failed stopped: itself, failed; past its 2 restarts, it stays stopped"},
 	{kind = .Quit},
 }
 

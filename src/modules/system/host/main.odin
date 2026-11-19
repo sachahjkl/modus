@@ -58,7 +58,9 @@ space: system.Module_Space // The module and its imports, in this process.
 // next command.
 //
 // **The stop**: with no call ring or no call region, it writes `host: no
-// call ring or no call region` and stops with `Refused`. A fault of the
+// call ring or no call region` and stops with `Refused` when its context
+// names no such handle or a handle that it cannot use, else with `Failed`
+// (system.stop_outcome_of_grant). A fault of the
 // module stops it with the stop report of the fault.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -66,9 +68,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region_memory := ctx.handles[isolated.GRANT_REGION]
 	queue, ring_status := system.ring_open(ring_memory)
 	bytes, region_status := system.memory_map(region_memory)
-	if ring_status != .Ok || region_status != .Ok {
+	if ring_status != .Ok {
 		system.log("host: no call ring or no call region")
-		system.stop(.Refused)
+		system.stop(system.stop_outcome_of_grant(ring_memory, ring_status))
+	}
+	if region_status != .Ok {
+		system.log("host: no call ring or no call region")
+		system.stop(system.stop_outcome_of_grant(region_memory, region_status))
 	}
 	region_pages, size_status := system.memory_size(region_memory)
 	if size_status != .Ok {

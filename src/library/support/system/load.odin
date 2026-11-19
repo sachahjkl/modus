@@ -1222,6 +1222,22 @@ process_stop :: proc "contextless" (process: Handle) -> Status {
 	return status
 }
 
+// stop_outcome_of_grant gives the stop outcome of a process that cannot use
+// a handle of its context: `Refused` when the starter gave no handle there
+// (0) or one that names no such object or lacks a right (`Bad_Handle`,
+// `No_Right`), since the context is then wrong; `Failed` for each other
+// status, a budget or a memory that ran short, since the same context can
+// work at the next start. A start policy starts a row again after `Failed`
+// and never after `Refused`.
+//
+// Example: `system.stop(system.stop_outcome_of_grant(ctx.handles[GRANT_PAGE], status))`.
+stop_outcome_of_grant :: proc "contextless" (handle: Handle, status: Status) -> op.Stop_Outcome {
+	if handle == 0 || status == .Bad_Handle || status == .No_Right {
+		return .Refused
+	}
+	return .Failed
+}
+
 // process_stop_wait waits until a process stopped, or until the deadline,
 // and gives its stop cause and its stop outcome. The handle needs the right
 // Read. In a test, the deadline only ends a hang.
