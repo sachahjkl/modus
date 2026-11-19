@@ -1603,6 +1603,7 @@ The hang bound ends a wait for a screen that never settles. The test fails, and 
 | `desktop` | The bar and the console; the start menu; two processes started from it; a window moved, a window resized by its corner; the menu of the windows; a window closed; the palette that starts a module and brings a window to the front | `scenario_desktop_film` (`desktop_film_scenario.odin`) |
 | `console` | An expression and its value; a variable and a command; an argument of the wrong kind and its error; the completion list; a record; a table; the history search | `scenario_console_film` (`console_film_scenario.odin`) |
 | `program` | `start("plasma")` in the console: the module opens its window; the window moved; its row in the table of the processes; `stop("plasma")` | `scenario_program_film` (`program_film_scenario.odin`) |
+| `monitor` | monitor at the right of the screen, its graphs on a quiet machine; plasma as a load, then closed: the curves and the gauges rise, then come down | `scenario_monitor_film` (`monitor_film_scenario.odin`) |
 
 The films differ by their scenario only. The worker, the list of the encoder and the encoders are the same code.
 
