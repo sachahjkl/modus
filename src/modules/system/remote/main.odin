@@ -328,7 +328,7 @@ log_count: u64
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log(.Info, "remote: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 now_microseconds :: proc "contextless" () -> u64 {
@@ -1100,7 +1100,7 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 				return record, {}, true
 			}
 		}
-		if state, _ := system.process_state(connection.process); state == .Stopped || state == .None {
+		if state, _, _ := system.process_state(connection.process); state == .Stopped || state == .None {
 			system.log(.Info, "remote: the service ", remote.name_text(&connection.name), " stopped during a call")
 			connection_end(connection, false)
 			return {}, errors.error_make(.State, .None, remote.FIELD_SERVICE, 0, 0, i64(state)), false

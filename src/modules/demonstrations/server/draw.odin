@@ -34,18 +34,30 @@ bar :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, co
 	graphics.block(canvas, x, y, width, height, graphics.shade(color, 120), graphics.shade(color, 78))
 }
 
-write_large :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string, scale: int, color: graphics.Color) -> int {
-	return graphics.text_scaled(canvas, x, y, characters, color, scale)
+// large_number draws the one number of a card at the large text size
+// (docs/DESIGN.md, "5. Text"). Its line is LARGE_NUMBER_HEIGHT high, an
+// even size: the caption under it starts there.
+large_number :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string, color: graphics.Color) {
+	graphics.text_sized(canvas, x, y, characters, color, interface.font_text_size(interface.FONT_LARGE))
+}
+LARGE_NUMBER_HEIGHT :: graphics.TEXT_LARGE
+
+// caption draws a caption in the dim color at the caption size: the label
+// under the number of a card, or the caption of a card.
+caption :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string) {
+	graphics.text_sized(canvas, x, y, characters, graphics.colors.dim, interface.font_text_size(interface.FONT_CAPTION_CELLS))
 }
 
 // card draws the frame of one subject and gives the canvas of its content.
-card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, accent: graphics.Color) -> graphics.Canvas {
+// Its caption is at the caption size, on the baseline of its title.
+card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption_text: string, accent: graphics.Color) -> graphics.Canvas {
 	graphics.block(canvas, x, y, width, height, graphics.shade(accent, 28), graphics.shade(accent, 14))
 	graphics.block(canvas, x + 1, y + 1, width - 2, height - 2, graphics.colors.card_top, graphics.colors.card_bottom)
-	graphics.block(canvas, x + CARD_MARGIN, y + 12, 4, 16, graphics.shade(accent, 130), accent)
-	after := graphics.text(canvas, x + CARD_MARGIN + 12, y + 12, title, accent)
-	graphics.text(canvas, after + 16, y + 12, caption, graphics.colors.dim)
-	return graphics.view(canvas, x + CARD_MARGIN, y + CARD_TITLE, width - 2 * CARD_MARGIN, height - CARD_TITLE - 8)
+	title_top := y + 12
+	graphics.block(canvas, x + CARD_MARGIN, title_top, 4, 16, graphics.shade(accent, 130), accent)
+	after := graphics.text(canvas, x + CARD_MARGIN + 12, title_top, title, accent)
+	caption(canvas, after + 2 * graphics.GAP, interface.text_top_on_baseline(nil, {}, title_top, interface.FONT_CAPTION_CELLS), caption_text)
+	return graphics.view(canvas, x + CARD_MARGIN, y + CARD_TITLE, width - 2 * CARD_MARGIN, height - CARD_TITLE - graphics.GAP)
 }
 
 // right draws a text that ends at x.
@@ -227,16 +239,16 @@ draw :: proc "contextless" (window: ^display.Window) {
 
 	// The listen grant and the table.
 	inside := card(canvas, 8, 8, 256, TOP_HEIGHT, "LISTEN", "tcp.Table", graphics.colors.process)
-	after := write_large(inside, 0, 0, system.format(buffer[:], u64(open)), 3, graphics.colors.process)
-	graphics.text(inside, after + 8, 24, open == 1 ? "connection" : "connections", graphics.colors.dim)
+	large_number(inside, 0, 0, system.format(buffer[:], u64(open)), graphics.colors.process)
+	caption(inside, 0, LARGE_NUMBER_HEIGHT, open == 1 ? "connection" : "connections")
 	fact(inside, 56, "port", system.format(buffer[:], u64(listen_port), ", any host"))
 	fact(inside, 76, "most at once", system.format(buffer[:], u64(most_open), " of ", u64(CAPACITY)))
 	fact(inside, 96, "accepted", system.format(buffer[:], accepted, ", ", aborted_count, " ended"))
 
 	// The answers by class of status.
 	inside = card(canvas, 272, 8, 232, TOP_HEIGHT, "ANSWERS", "web.Request", graphics.colors.memory)
-	after = write_large(inside, 0, 0, system.format(buffer[:], requests_answered), 3, graphics.colors.memory)
-	graphics.text(inside, after + 8, 24, "requests", graphics.colors.dim)
+	large_number(inside, 0, 0, system.format(buffer[:], requests_answered), graphics.colors.memory)
+	caption(inside, 0, LARGE_NUMBER_HEIGHT, "requests")
 	total := max(requests_answered, 1)
 	classes := [3]int{2, 4, 5}
 	names := [3]string{"2xx", "4xx", "5xx"}

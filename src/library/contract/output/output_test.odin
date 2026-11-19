@@ -283,11 +283,15 @@ the_writer_of_a_compartment_refuses_what_does_not_fit :: proc(t: ^testing.T) {
 }
 
 // The end words: a word that names no end, one past the last and the
-// largest, a stop word beside another end than Writer_Stopped, and a
-// reserved word are refused. The write changes no counter of the head and
-// no byte outside the end words.
+// largest, a stop word beside another end than Writer_Stopped, a
+// Writer_Stopped whose words are no stop, and a reserved word are refused.
+// The write changes no counter of the head and no byte outside the end
+// words.
 @(test)
 the_end_words_are_read_through_their_border :: proc(t: ^testing.T) {
+	WRITER_STOPPED :: u32(End_Word.Writer_Stopped)
+	ITSELF :: u32(op.Stop_Cause.Itself)
+	DONE :: u32(op.Stop_Outcome.Done)
 	refused := [?]End_Words {
 		{end = u32(max(End_Word)) + 1},
 		{end = max(u32)},
@@ -295,6 +299,16 @@ the_end_words_are_read_through_their_border :: proc(t: ^testing.T) {
 		{end = u32(End_Word.Revoked), stop_outcome = 1},
 		{end = u32(End_Word.None), stop_cause = 1},
 		{end = u32(End_Word.Asker_Stopped), reserved = {12 = 1}},
+		// A writer that stopped always has a cause.
+		{end = WRITER_STOPPED},
+		// A cause or an outcome that names no member.
+		{end = WRITER_STOPPED, stop_cause = u32(max(op.Stop_Cause)) + 1},
+		{end = WRITER_STOPPED, stop_cause = max(u32)},
+		{end = WRITER_STOPPED, stop_cause = ITSELF, stop_outcome = u32(max(op.Stop_Outcome)) + 1},
+		{end = WRITER_STOPPED, stop_cause = ITSELF, stop_outcome = max(u32)},
+		// Only a stop of the writer itself has an outcome, and it always has one.
+		{end = WRITER_STOPPED, stop_cause = ITSELF},
+		{end = WRITER_STOPPED, stop_cause = u32(op.Stop_Cause.Holder), stop_outcome = DONE},
 	}
 	for words in refused {
 		_, _, _, ok := end_of_words(words)
@@ -303,7 +317,7 @@ the_end_words_are_read_through_their_border :: proc(t: ^testing.T) {
 	// The write changes the three words only, and the reserved words stay 0.
 	page := make([]u8, END_WORDS_PAGES * ring.PAGE_SIZE, context.temp_allocator)
 	words := (^End_Words)(raw_data(page))
-	end_words_write(words, .Writer_Stopped, 4, 2)
+	end_words_write(words, .Writer_Stopped, .Itself, .Failed)
 	for value, index in page {
 		if index < 3 * size_of(u32) {
 			continue
@@ -311,7 +325,7 @@ the_end_words_are_read_through_their_border :: proc(t: ^testing.T) {
 		testing.expectf(t, value == 0, "the byte %d of the end page is %d", index, value)
 	}
 	end, cause, outcome, ok := end_of_words(end_words_read(words))
-	testing.expect(t, ok && end == .Writer_Stopped && cause == 4 && outcome == 2)
+	testing.expect(t, ok && end == .Writer_Stopped && cause == .Itself && outcome == .Failed)
 	none, _, _, none_ok := end_of_words(end_words_read(new(End_Words, context.temp_allocator)))
 	testing.expect(t, none_ok && none == .None)
 }

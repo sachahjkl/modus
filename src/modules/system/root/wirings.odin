@@ -813,7 +813,7 @@ wiring_list_deliver :: proc "contextless" (work: ^Wiring_Work) {
 // wiring_end ends one wiring: the end words, written with one mapping of
 // the end page that ends at once, a wake of each side that waits on the
 // end word, the close of the handle of this service, and the record.
-wiring_end :: proc "contextless" (asker: ^Started, page: ^Wiring_Page, kept: ^Wiring_Kept, end: output.End_Word, stop_cause: u32 = 0, stop_outcome: u32 = 0) {
+wiring_end :: proc "contextless" (asker: ^Started, page: ^Wiring_Page, kept: ^Wiring_Kept, end: output.End_Word, stop_cause: op.Stop_Cause = .None, stop_outcome: op.Stop_Outcome = .None) {
 	address, status := system.memory_map(kept.end_memory)
 	if status == .Ok {
 		words := (^output.End_Words)(address)
@@ -843,7 +843,7 @@ wiring_end :: proc "contextless" (asker: ^Started, page: ^Wiring_Page, kept: ^Wi
 // its writer, Writer_Stopped with its stop cause and its stop outcome; as
 // its reader, Reader_Stopped; as its asker, Asker_Stopped. Then it closes
 // the wiring ring, the list page and the budget handle of the process.
-wirings_at_stop :: proc "contextless" (item: ^Started, stop_cause: u32 = 0, stop_outcome: u32 = 0) {
+wirings_at_stop :: proc "contextless" (item: ^Started, stop_cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome) {
 	// The end of the last record of a page unmaps the page: each end is
 	// found again from the start of the chains, never read in a page that
 	// an end freed.

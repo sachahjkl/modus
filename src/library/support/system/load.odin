@@ -954,7 +954,7 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 		_, status = call(.Process_Start, u64(process), u64(entry), op.STACK_TOP, op.CONTEXT_ADDRESS)
 	}
 	if status != .Ok {
-		call(.Process_Stop, u64(process), 0)
+		process_stop(process)
 		close(process)
 		if wiring != nil {
 			if wiring.budget != 0 {
@@ -1208,18 +1208,110 @@ write_hash :: proc "contextless" (writer: ^Writer, value: [32]u8) {
 // start. The handle needs the right Read.
 process_entries :: proc "contextless" (process: Handle) -> u64 {
 	results, _ := call(.Process_State, u64(process))
-	return results[2]
+	return results[3]
 }
 
-// process_state gives the state of a process, and its code when it stopped.
-process_state :: proc "contextless" (process: Handle) -> (state: op.Process_State, code: u32) {
+// process_place gives the process slot and the process serial of a
+// process: its place in the reports of `Inspect`, which names this process
+// and no later one. The handle needs the right Read.
+//
+// Example: `slot, serial, status := system.process_place(child)`.
+process_place :: proc "contextless" (process: Handle) -> (slot: u64, serial: u64, status: Status) {
+	results: [7]u64
+	results, status = call(.Process_State, u64(process))
+	return results[4], results[5], status
+}
+
+// process_state gives the state of a process, and its stop cause and its
+// stop outcome when it stopped. A triple that the border refuses (a word
+// that names no member, a stopped process with no cause, a cause of a
+// process that runs, an outcome with a cause other than itself) is a fault
+// of the kernel: the process stops, and never reads a stop that did not
+// happen.
+//
+// Example: `state, cause, outcome := system.process_state(child)`, then a
+// whole switch on `cause`; for `Fault`, `system.process_stop_report(child).vector`.
+process_state :: proc "contextless" (process: Handle) -> (state: op.Process_State, cause: op.Stop_Cause, outcome: op.Stop_Outcome) {
 	results, _ := call(.Process_State, u64(process))
 	known: bool
-	state, known = enum_word.member_of_word(op.Process_State, results[0])
+	state, cause, outcome, known = op.stop_of_words(results[0], results[1], results[2])
 	if !known {
-		kernel_word_refused("the state of a process", results[0])
+		if _, state_known := enum_word.member_of_word(op.Process_State, results[0]); !state_known {
+			kernel_word_refused("the state of a process", results[0])
+		}
+		if _, cause_known := op.stop_cause_of_word(results[1]); !cause_known {
+			kernel_word_refused("the stop cause of a process", results[1])
+		}
+		kernel_word_refused("the stop outcome of a process, or a stop fact that does not fit its state or its cause,", results[2])
 	}
-	return state, u32(results[1])
+	return state, cause, outcome
+}
+
+// process_stop stops another process through a process handle with
+// Control. The process gets the stop cause `Holder` and no outcome: only a
+// process says what its own work gave. A holder writes why it stopped the
+// process in its own log. It returns when no thread of the process runs an
+// instruction any more.
+//
+// Example: `system.process_stop(child)`, then `system.close(child)`.
+process_stop :: proc "contextless" (process: Handle) -> Status {
+	_, status := call(.Process_Stop, u64(process), 0)
+	return status
+}
+
+// stop_outcome_of_grant gives the stop outcome of a process that cannot use
+// a handle of its context: `Refused` when the starter gave no handle there
+// (0) or one that names no such object or lacks a right (`Bad_Handle`,
+// `No_Right`), since the context is then wrong; `Failed` for each other
+// status, a budget or a memory that ran short, since the same context can
+// work at the next start. A start policy starts a row again after `Failed`
+// and never after `Refused`.
+//
+// Example: `system.stop(system.stop_outcome_of_grant(ctx.handles[GRANT_PAGE], status))`.
+stop_outcome_of_grant :: proc "contextless" (handle: Handle, status: Status) -> op.Stop_Outcome {
+	if handle == 0 || status == .Bad_Handle || status == .No_Right {
+		return .Refused
+	}
+	return .Failed
+}
+
+// process_stop_wait waits until a process stopped, or until the deadline,
+// and gives its stop cause and its stop outcome. The handle needs the right
+// Read. In a test, the deadline only ends a hang.
+//
+// Example: `_, outcome, stopped := system.process_stop_wait(child,
+// system.time() + system.TEST_HANG_BOUND_MILLISECONDS)`, then
+// `stopped && outcome == .Done`.
+process_stop_wait :: proc "contextless" (process: Handle, deadline: u64) -> (cause: op.Stop_Cause, outcome: op.Stop_Outcome, stopped: bool) {
+	for {
+		// The event word first: a stop after the read of the state still
+		// ends the wait, since the kernel adds to it at each stop of a
+		// process that this process holds.
+		wait := wait_begin()
+		state: op.Process_State
+		state, cause, outcome = process_state(process)
+		if state == .Stopped {
+			return cause, outcome, true
+		}
+		if time() >= deadline {
+			return .None, .None, false
+		}
+		wait_end(&wait, deadline)
+	}
+}
+
+// stop_write writes the words of a stop for a line or a cell: the text of
+// the stop cause, and the text of the outcome for a stop of itself.
+//
+// Example: "itself, done", "a holder", "a fault".
+stop_write :: proc "contextless" (writer: ^Writer, cause: op.Stop_Cause, outcome: op.Stop_Outcome) {
+	write_part(writer, op.STOP_CAUSE_TEXTS[cause])
+	switch cause {
+	case .Itself:
+		write_part(writer, ", ")
+		write_part(writer, op.STOP_OUTCOME_TEXTS[outcome])
+	case .None, .Holder, .Last_Thread_Ended, .Handles_Closed, .Fault, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
+	}
 }
 
 // process_stop_report gives where a process stopped on a fault, and the

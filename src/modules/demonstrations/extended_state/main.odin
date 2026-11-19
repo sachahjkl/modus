@@ -740,7 +740,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "extended_state")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	facts = sets.processor_facts_read()
 	usable = sets.usable_from(facts)
@@ -776,7 +776,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		worker.thread, status = system.thread_start(worker_run, worker)
 		if status != .Ok {
 			system.log(.Info, "extended_state: cannot start thread ", u64(index + 1))
-			system.stop(1)
+			system.stop(.Failed)
 		}
 	}
 	for !finished {

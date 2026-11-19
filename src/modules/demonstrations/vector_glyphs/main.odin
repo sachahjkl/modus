@@ -200,14 +200,14 @@ draw :: proc "contextless" (window: ^display.Window) {
 // draws the candidates, writes the measures, then draws again after each
 // event for ever.
 //
-// With no window it stops with the code 1. The measures run before the
+// With no window it stops with `Failed`. The measures run before the
 // first picture, on a scratch canvas that is not the window. The caches of
 // the candidates are built during the first `draw`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "vector_glyphs")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 
 	// The measures, before the window: one glyph from its outline, in fixed

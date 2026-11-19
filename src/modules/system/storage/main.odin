@@ -1195,17 +1195,18 @@ shares_serve :: proc "contextless" () -> (calls: int) {
 // The root service starts it on demand: at the first connection to `storage`, or before the first process with a
 // private store. The entry, in order:
 //
-// 1. opens its service ring and the block ring; with no ring, it writes "storage: no service ring" or
-//    "storage: no block ring" and stops with the code 1;
+// 1. opens its service ring and the block ring; with no service ring, it writes "storage: no service ring" and
+//    stops with `Refused`, as with no seed in its context; with no block ring, it writes "storage: no block
+//    ring" and stops with `Failed`;
 // 2. creates the data region, one contiguous memory object that the device reads and writes, and gives it to the
-//    block service with the command `Attach`; a refusal stops it with the code 1;
+//    block service with the command `Attach`; a refusal stops it with `Failed`;
 // 3. opens the disk (`mount`): it reads the two roots, takes the newest one with a good check, and checks each
 //    block that a store names.
 //
 // The open ends in one of three ways:
 //
 // - **no valid root**: "storage: no valid root on the disk"; the service keeps the disk as it is, serves nothing,
-//   and stops with the code 1;
+//   and stops with `Failed`;
 // - **a new disk**: it formats the disk and writes "storage: ok, a new disk: generation 1, N blocks";
 // - **a disk with data**: "storage: ok, generation G: S stores, O objects, ...", with one warning line for each
 //   kind of damage that it found. A damaged object gives `Damaged` to a read; the other objects are served.
@@ -1231,7 +1232,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	slot_key_generator: random.Generator
 	if !random.generator_from_context(&slot_key_generator, ctx) {
 		system.log(.Error, "storage: no seed in the context of the process")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	slot_key: [8]u8
 	random.fill(&slot_key_generator, slot_key[:])
@@ -1240,24 +1241,24 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ok: bool
 	if service, ok = system.service_open(ctx); !ok {
 		system.log(.Error, "storage: no service ring")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	ring_memory := ctx.handles[block.GRANT_RING]
 	status: system.Status
 	if blocks, status = system.ring_open(ring_memory); status != .Ok {
 		system.log(.Error, "storage: no block ring")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	block_service = ctx.handles[block.GRANT_SERVICE]
 	if kind, rights, _ := system.handle_state(block_service); kind != .Process || .Read not_in rights {
 		system.log(.Error, "storage: no handle of the block service with the right Read: a wait for the disk would have no end")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	memory, memory_status := system.memory_create(REGION_BLOCKS, 0, {.Contiguous}) // The device reads and writes it.
 	address, map_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || map_status != .Ok {
 		system.log(.Error, "storage: no data region")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)
 	// The block service maps the ring when it starts.
@@ -1271,7 +1272,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// A block service that stopped before it mapped the ring: the disk is
 	// silent, as at a stop during a wait.
 	if give_status != .Ok {
-		if state, _ := system.process_state(block_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
+		if state, _, _ := system.process_state(block_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
 			disk_silence_note(.Block_Service_Stopped)
 		}
 	}
@@ -1285,7 +1286,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if give_status != .Ok || block.Status(command(.Attach, {0 = u64(given)}).kind) != .Ok {
 		if !disk_silent {
 			system.log(.Error, "storage: the block service refused the data region")
-			system.stop(1)
+			system.stop(.Failed)
 		}
 	}
 	if !disk_silent {
@@ -1329,7 +1330,7 @@ disk_open :: proc "contextless" () {
 	switch {
 	case mounted.failed:
 		system.log(.Error, "storage: no valid root on the disk: the service keeps the disk as it is, and serves nothing")
-		system.stop(1)
+		system.stop(.Failed)
 	case mounted.needs_format:
 		if mounted.first_cut {
 			system.log(.Warning, "storage: the first root of the disk has a wrong check and no commit followed it: a format that a stop cut; the service formats again")

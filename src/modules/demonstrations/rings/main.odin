@@ -97,7 +97,7 @@ series_color :: proc "contextless" (number: u64) -> graphics.Color {
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log(.Info, "rings: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // node_start starts the process of a node. The process receives the ring
@@ -163,8 +163,8 @@ process_generator: random.Generator
 // records in the circle, then draws and answers keys and clicks for ever.
 //
 // It takes its random generator: each node gets its seed from it. With no
-// seed, no window, no boot image, no memory for the rings or a node that
-// does not start, it stops (`fail`, or the code 1). Each turn of the loop
+// seed, it stops with `Refused`; with no window, no boot image, no memory
+// for the rings or a node that does not start, with `Failed` (`fail`). Each turn of the loop
 // takes the events, looks for a node that stopped (`watch`), draws the
 // rings, and waits 33 ms or until the next event.
 @(export, link_name = "entry")
@@ -173,7 +173,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log(.Info, "rings: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "rings")
 	if !ok {
@@ -311,7 +311,7 @@ watch :: proc "contextless" () {
 	}
 	for &node, index in nodes {
 		if node.process != 0 {
-			if state, _ := system.process_state(node.process); state == .Stopped {
+			if state, _, _ := system.process_state(node.process); state == .Stopped {
 				node_stop(index)
 				system.log(.Info, "rings: node ", u64(index + 1), " stopped alone")
 			}

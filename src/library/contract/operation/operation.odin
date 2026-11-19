@@ -451,27 +451,36 @@ Operation :: enum u32 {
 	//   area or its page tables.
 	// - `No_Slot`: the thread table of the kernel is full, or the process has `THREAD_CAPACITY` threads.
 	// - `No_Memory`: no free run of page frames for the thread area.
-	Process_Stop   = 8, // (process, code).
+	Process_Stop   = 8, // (process, outcome: Stop_Outcome).
 	// Stops a process: this one or another one. Each of its threads ends, and the operation returns when no
-	// thread of the process runs an instruction any more. The process is `Stopped` with the stop code, which
-	// `Process_State` gives. Its handles, its mappings and its memory end when its last thread left its
-	// processor. A process that is stopped already stays as it is.
+	// thread of the process runs an instruction any more. The process is `Stopped` with its stop cause and its
+	// stop outcome, which `Process_State` gives. Its handles, its mappings and its memory end when its last
+	// thread left its processor. A process that is stopped already keeps its first stop cause and outcome.
+	//
+	// The kernel records the stop cause from the target, never from the argument: `Itself` when the target is
+	// the process that asks (by 0 or by a handle that names it), `Holder` for another process. Only a process
+	// that stops itself says what its work gave: a holder cannot forge the end of another process
+	// (src/md/api/process_stop.md).
 	//
 	// **Arguments**
 	//
 	// - `process`: 0 for this process, or a process handle with **Control**. With 0, the thread that asks
 	//   ends with its process: the operation does not return.
-	// - `code`: the stop code, any value. The kernel uses the codes `STOP_CODE_FAULT` to
-	//   `STOP_CODE_FAULT_UNANSWERED` for the stops that it makes.
+	// - `outcome`: for a stop of this process, the word of a `Stop_Outcome` other than `None`: `Done`,
+	//   `Failed`, `Refused` or `Stopped_On_Request`. For a stop of another process, 0.
 	//
 	// **Results**: none.
 	//
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
-	Process_State  = 9, // (process, report: Stop_Report) -> state: Process_State, code, entries, slot, serial.
-	// Gives the state of a process, its stop code, its count of kernel entries, and its place in the reports of
-	// `Inspect`. With an address, the kernel also writes there where the process stopped on a fault.
+	// - `Bad_Operation`: `outcome` names no outcome other than `None` for a stop of this process, or it is not 0
+	//   for a stop of another process. The error record gives the word, and the largest word that the target
+	//   takes. Nothing changes: the target runs on.
+	Process_State  = 9, // (process, report: Stop_Report) -> state: Process_State, cause: Stop_Cause, outcome: Stop_Outcome, entries, slot, serial.
+	// Gives the state of a process, its stop cause and its stop outcome, its count of kernel entries, and its
+	// place in the reports of `Inspect`. With an address, the kernel also writes there where the process
+	// stopped on a fault. A reader takes the first three results through `stop_of_words`.
 	//
 	// The root service states facts of a process that it started by that place: the disk process page names
 	// each disk process by its slot and its serial, which the reports of `Inspect` give too
@@ -482,16 +491,18 @@ Operation :: enum u32 {
 	// - `process`: a process handle with **Read**.
 	// - `report`: 0, or the address of a `Stop_Report` that the process can write: the instruction, the
 	//   address of a page fault, the module and the stack trace of the fault that stopped the process. All
-	//   zero while the process runs, or when it stopped with no fault.
+	//   zero while the process runs, or when its stop cause is not `Fault`, `Not_Committed` or
+	//   `Cannot_Return`.
 	//
 	// **Results**
 	//
 	// 1. the `Process_State` of the process: `Created`, `Ready` (one of its threads is ready), `Waiting` or
 	//    `Stopped`;
-	// 2. its stop code: 0 while it runs;
-	// 3. its kernel entries since its start;
-	// 4. its process slot: the index that `Inspect` with the kind `Process` takes for it;
-	// 5. its process serial, as `Process_Report.process_serial` gives it: the slot and the serial name this
+	// 2. its `Stop_Cause`: `None` while it runs;
+	// 3. its `Stop_Outcome`: `None` while it runs, and for each stop cause but `Itself`;
+	// 4. its kernel entries since its start;
+	// 5. its process slot: the index that `Inspect` with the kind `Process` takes for it;
+	// 6. its process serial, as `Process_Report.process_serial` gives it: the slot and the serial name this
 	//    process and no later one. The kernel keeps both until the last handle of the process closes.
 	//
 	// **Statuses**
@@ -538,7 +549,7 @@ Operation :: enum u32 {
 	// - a memory object, when no handle and no mapping names it;
 	// - a budget, when its last handle closes: what it holds returns to the budget that it came from, which
 	//   pays for its objects;
-	// - a process: it stops with `STOP_CODE_NO_HANDLE` when its last handle closes;
+	// - a process: it stops with the stop cause `Handles_Closed` when its last handle closes;
 	// - the event table of the machine, when the last machine handle with **Events** of its process closes.
 	//
 	// **Arguments**
@@ -700,7 +711,8 @@ Operation :: enum u32 {
 	Thread_Stop    = 17, // (thread).
 	// Ends a thread: the calling thread, or a thread that a handle names, of this process or of another one.
 	// A thread on another processor leaves it at once, and the operation returns after it left. The other
-	// threads of its process get an event. A process with no thread left stops, with the code 0.
+	// threads of its process get an event. A process with no thread left stops, with the stop cause
+	// `Last_Thread_Ended` and no stop outcome.
 	//
 	// **Arguments**
 	//
@@ -1054,7 +1066,7 @@ Operation :: enum u32 {
 	// debugger that ends never holds and never stops the process.
 	//
 	// When a thread of the process waits for an answer, a new handler or the end of the delivery ends the
-	// ring that holds its record: the process stops with `STOP_CODE_FAULT_UNANSWERED`, as when the handler
+	// ring that holds its record: the process stops with the stop cause `Fault_Unanswered`, as when the handler
 	// thread ends, and the operation gives `Ok`.
 	//
 	// **Results**: none.
@@ -1083,7 +1095,7 @@ Operation :: enum u32 {
 	// - `answer`: a `Fault_Answer_Kind`:
 	//   - `Resume`: the thread continues with its registers, at the instruction of its record (the faulting
 	//     instruction again, or the next one after a trap), or where `Thread_Control` wrote;
-	//   - `Stop`: the process stops as with no handler: the stop code and the stop report of the fault.
+	//   - `Stop`: the process stops as with no handler: the stop cause and the stop report of the fault.
 	// - `process`: 0, or the process handle with **Debug** of the process that the caller debugs: the answer
 	//   is for a thread of that process, whose record came to the debug handler. Only `Resume`: a debugger
 	//   stops a process with `Process_Stop` and the right **Control**. After a `Debug` fault of an execute
@@ -1731,10 +1743,10 @@ PROCESS_MODULE_CAPACITY :: 16
 // The console and the process `errors` turn it into a stack trace with names
 // (see [stop report](term:stop-report)).
 //
-// Example: a null pointer read gives `code = 0x10E` (`STOP_CODE_FAULT` plus
-// 14), `vector = 14`, `address = 0`, and `frames[0].address` the instruction.
+// Example: a null pointer read gives `cause = u32(Stop_Cause.Fault)`,
+// `vector = 14`, `address = 0`, and `frames[0].address` the instruction.
 Stop_Report :: struct {
-	code:        u32, // The stop code: STOP_CODE_FAULT plus the vector.
+	cause:       u32, // The word of the `Stop_Cause`: `Fault`, `Not_Committed` or `Cannot_Return`, which a reader takes through `stop_cause_of_word`. 0 in a report of another stop, which stays zero.
 	vector:      u32, // The vector of the processor exception: a `Fault_Kind` when the kernel delivers that kind.
 	instruction: u64, // The address of the instruction.
 	address:     u64, // A page fault: the address that the instruction used. 0 for another fault.
@@ -2082,7 +2094,7 @@ Fault_Access :: bit_set[Fault_Access_Bit; u64]
 Fault_Answer_Kind :: enum u64 {
 	None   = 0, // No answer: refused.
 	Resume = 1, // The thread continues with its registers: at the instruction of its record (the faulting instruction again, or the next one after a trap), or where Thread_Control wrote. For a kind of FAULT_KINDS_RESUMABLE, or after a write of Thread_Control.
-	Stop   = 2, // The process stops as if no handler were set: the stop code and the stop report of the fault.
+	Stop   = 2, // The process stops as if no handler were set: the stop cause and the stop report of the fault.
 }
 
 // What Thread_Control does. The results are in the completion record.
@@ -2974,15 +2986,6 @@ MAP_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execut
 // The largest code of `Machine_Stop`: the host receives one byte.
 MACHINE_STOP_CODE_MOST :: 255
 
-// The code of a process that the kernel stopped. `Process_State` gives the
-// code; `Process_Stop` takes any other code from the process that stops a
-// process. The console and the log name each of these codes.
-STOP_CODE_FAULT :: 0x100 // Add the number of the processor exception: 14 is a page fault.
-STOP_CODE_NO_HANDLE :: 0x200 // The last handle to the process closed.
-STOP_CODE_NOT_COMMITTED :: 0x300 // A page fault on a page of an Uncommitted object that is not committed.
-STOP_CODE_RETURN :: 0x400 // The kernel cannot return to a thread of the process: its instruction or stack address is not one that the processor takes (docs/ARCHITECTURE.md, "The return to a process"). The stop report has the address in `address`.
-STOP_CODE_FAULT_UNANSWERED :: 0x500 // The fault ring of the process ended while a thread waited for an answer in it: its handler thread ended, or Fault_Handler_Set named another handler or ended the delivery.
-
 // The state of a process or of a thread. A process is Ready when one of
 // its threads is Ready.
 //
@@ -2996,8 +2999,7 @@ Process_State :: enum u32 {
 	Ready   = 2, // A thread runs or waits for a processor in a run queue.
 	Waiting = 3, // Each thread is in a wait: a deadline or a word wait. A wake makes it Ready again. A hold does not change it.
 	// The process ended: `Process_Stop`, a fault with no fault handler, the close of the last handle to it, or
-	// the end of its last thread (the stop code 0). Its stop code says which. A thread that ended is Stopped
-	// too.
+	// the end of its last thread. Its `Stop_Cause` says which. A thread that ended is Stopped too.
 	Stopped = 4,
 }
 
@@ -3573,7 +3575,12 @@ Boot_Report :: struct {
 // zeros.
 Process_Report :: struct {
 	state:        Process_State, // `None` for a slot with no process.
-	code:         u32, // The stop code: 0 while the process runs.
+	// The word of its `Stop_Cause`: 0 while the process runs. A record of the kernel holds the word, which a
+	// reader takes through `stop_cause_of_word`.
+	stop_cause:   u32,
+	// The word of its `Stop_Outcome`: 0 while the process runs, and for each cause but `Itself`. A reader
+	// takes it through `stop_outcome_of_word`.
+	stop_outcome: u32,
 	name:         [PROCESS_NAME_BYTES_MOST + 1]u8, // The name that `Process_Create` gave; zero bytes after it.
 	mapped_pages: u64, // The pages of all its mappings.
 	handle_count: u64, // The handles in its handle table.

@@ -16,42 +16,97 @@ import "modus:support/text_rendering"
 // a text record: the type is the one of the contract.
 Font_Kind :: draw_record.Font_Kind
 
-// A font and a size. scale: 1, 2 or 3 times the native size (docs/DESIGN.md,
-// section 5); 0 means 1.
+// A font and a text size (docs/DESIGN.md, "5. Text").
 Font :: struct {
 	kind:   Font_Kind, // Which font.
-	scale:  u8, // 1, 2 or 3; 0 is 1.
+	size:   u16, // The text size in 1/64 pixel, a text size token times TEXT_SIZE_UNITS; 0 is the size of the body, graphics.TEXT_BODY.
 	weight: Font_Weight, // Regular or bold.
 }
 
-// The weight of a text, a field of a text record: Regular or Bold. Bold
-// draws at scale 1 only (the titles of the cards); at another scale, and
-// with Spleen 8x16, it is the regular weight. In the font of the cells the
-// width does not change: the cells are the same. In the interface font the
-// bold weight has its own advances.
+// The weight of a text, a field of a text record: Regular or Bold, at each
+// size. With Spleen 8x16 it is the regular weight. In the font of the cells
+// the width does not change: the cells are the same. In the interface font
+// the bold weight has its own advances.
 Font_Weight :: draw_record.Font_Weight
+
+// The units of a text size in one logical pixel: a text size token times it
+// is the size of a Font.
+TEXT_SIZE_UNITS :: draw_record.UNITS_PER_PIXEL
 
 FONT_BOLD :: Font{weight = .Bold} // The font of the cells, bold.
 
-FONT_LARGE :: Font{scale = 3} // The one number of a card.
-FONT_MEDIUM :: Font{scale = 2} // The font of the cells at twice its size.
+// The fonts of the text size tokens (docs/DESIGN.md, "5. Text"). A number
+// is a value: it is in the font of the cells.
+FONT_LARGE :: Font{size = graphics.TEXT_LARGE * TEXT_SIZE_UNITS} // The one number of a card.
+FONT_LARGEST :: Font{size = graphics.TEXT_LARGEST * TEXT_SIZE_UNITS} // The one number that a whole window or panel is about.
 
-// The interface font: the names, the labels, the buttons, the lists, the
-// captions; its bold weight: the titles of the cards.
+// The interface font: the names, the labels, the buttons, the lists; its
+// bold weight: the titles of the cards.
 FONT_INTERFACE :: Font{kind = .Interface}
 FONT_INTERFACE_BOLD :: Font{kind = .Interface, weight = .Bold}
+
+// A caption: the caption of a card, a label under a value, the help line
+// under an element. FONT_CAPTION_CELLS is a value at the caption size: the
+// hash prefix after a nickname.
+FONT_CAPTION :: Font{kind = .Interface, size = graphics.TEXT_CAPTION * TEXT_SIZE_UNITS}
+FONT_CAPTION_CELLS :: Font{size = graphics.TEXT_CAPTION * TEXT_SIZE_UNITS}
+
+// A heading: the title of a page.
+FONT_HEADING :: Font{kind = .Interface, size = graphics.TEXT_HEADING * TEXT_SIZE_UNITS}
 
 // The most bytes of one text in the interface font: the execution places
 // its glyphs on its stack. A longer text is drawn in the font of the cells.
 INTERFACE_TEXT_LIMIT :: draw_record.INTERFACE_TEXT_LIMIT
-// The largest ink margin of a record, in pixels: the margin of the font at
-// scale 3 is far smaller.
+// The largest ink margin of a record at a line of 16 pixels or less, in
+// pixels; past it the bound is one line (draw_record.origin_valid).
 INK_MARGIN_LIMIT :: draw_record.INK_MARGIN_LIMIT
 
-// font_scale gives the scale of a font, from 1 to 3: 0 is 1, and a scale
-// above 3 is 3.
-font_scale :: proc "contextless" (font: Font) -> int {
-	return clamp(int(font.scale), 1, 3)
+// font_text_size gives the text size of a font, in 1/64 pixel: the size of
+// the body for 0. A size out of the bounds of the record is given as it is:
+// no text of it is written (font_size_valid), never a text of another size.
+font_text_size :: proc "contextless" (font: Font) -> int {
+	if font.size == 0 {
+		return graphics.TEXT_BODY * TEXT_SIZE_UNITS
+	}
+	return int(font.size)
+}
+
+// The border of the record and the measure refuse the same sizes, so a
+// text that the writer measures is a text that the border reads.
+#assert(text_rendering.TEXT_SIZE_MINIMUM == draw_record.TEXT_SIZE_MINIMUM && text_rendering.TEXT_SIZE_LIMIT == draw_record.TEXT_SIZE_LIMIT)
+
+// font_size_valid says if the text size of a font is one that a record
+// holds: from draw_record.TEXT_SIZE_MINIMUM to draw_record.TEXT_SIZE_LIMIT.
+font_size_valid :: proc "contextless" (font: Font) -> bool {
+	return text_rendering.size_check(font_text_size(font)) == .None
+}
+
+// text_size_of_scale gives the text size of a whole scale of the body: 2 is
+// a line of 32 pixels. A caller that sizes its text by a count of the body
+// gives it here; a scale whose size passes the u16 of a record gives the
+// largest u16, which no record holds.
+text_size_of_scale :: proc "contextless" (scale: int) -> u16 {
+	size := scale * graphics.TEXT_BODY * TEXT_SIZE_UNITS
+	if size < 0 || size > int(max(u16)) {
+		return max(u16)
+	}
+	return u16(size)
+}
+
+// cell_width_of gives the width of one cell of the font of the cells at the
+// text size of a font, in pixels: half the line, a half up
+// (text_rendering.cell_columns). The cells of a text grid have it too.
+cell_width_of :: proc "contextless" (font: Font) -> int {
+	return text_rendering.cell_columns(font_text_size(font))
+}
+
+// ink_margin_of gives the ink margin of a text of the interface font at the
+// text size of a font, in pixels: graphics.PROPORTIONAL_INK_MARGIN at a line
+// of 16 pixels, grown with the size and rounded up. It stays inside the
+// bound of the origin of the record: at most one line past 16 pixels.
+ink_margin_of :: proc "contextless" (font: Font) -> int {
+	LINE_OF_THE_MARGIN :: text_rendering.TEXT_SIZE_OF_SCALE_ONE
+	return (graphics.PROPORTIONAL_INK_MARGIN * font_text_size(font) + LINE_OF_THE_MARGIN - 1) / LINE_OF_THE_MARGIN
 }
 
 // font_in_use gives the font that draws a text of a table: an Interface
@@ -67,20 +122,20 @@ font_in_use :: proc "contextless" (table: ^Draw_Table, font: Font, text_length: 
 }
 
 // interface_face_of gives the face of the interface font that draws a
-// weight at a scale: the bold weight has scale 1 only; at another scale it
-// is the regular weight, as in the font of the cells.
+// weight, at each size.
 interface_face_of :: proc "contextless" (font: Font) -> text_rendering.Face {
-	if font.weight == .Bold && font_scale(font) == 1 {
+	if font.weight == .Bold {
 		return .Interface_Bold
 	}
 	return .Interface
 }
 
 // interface_spacing_of gives the spacing of the interface font of a weight
-// at a scale: its face at the text size of the scale, measured from its
-// font file. ok is false when this process has not opened that face.
+// at the text size of a font, measured from its font file. ok is false
+// when this process has not opened that face, and for a size that
+// text_rendering.size_check refuses.
 interface_spacing_of :: proc "contextless" (font: Font) -> (spacing: text_rendering.Spacing, ok: bool) {
-	return text_rendering.spacing_of(interface_face_of(font), text_rendering.size_of_scale(font_scale(font)))
+	return text_rendering.spacing_of(interface_face_of(font), font_text_size(font))
 }
 
 // interface_width_subpixels gives the width of a text in the interface
@@ -98,7 +153,7 @@ interface_width_subpixels :: proc "contextless" (font: Font, text: string) -> i6
 // text_width gives the width of a text in pixels, in the font of the cells:
 // one cell for each character of the UTF-8 text, and one for each invalid sequence.
 text_width :: proc "contextless" (font: Font, text: string) -> int {
-	return text_encoding.character_count(transmute([]u8)text) * graphics.CELL_WIDTH * font_scale(font)
+	return text_encoding.character_count(transmute([]u8)text) * cell_width_of(font)
 }
 
 // text_measured_width gives the width of a text in pixels, in the font that the
@@ -126,7 +181,7 @@ texts_measure :: proc "contextless" (table: ^Draw_Table, font: Font, texts: []st
 	spacing, ok := interface_spacing_of(used)
 	for index in 0 ..< count {
 		if !ok || len(texts[index]) > INTERFACE_TEXT_LIMIT {
-			widths[index] = text_width({scale = used.scale}, texts[index])
+			widths[index] = text_width({size = used.size}, texts[index])
 			continue
 		}
 		width, _ := text_rendering.text_width(&spacing, transmute([]u8)texts[index])
@@ -182,7 +237,7 @@ text_fit :: proc "contextless" (table: ^Draw_Table, font: Font, text: string, ro
 // the font of the cells, so it is measured in it.
 text_wrap_line :: proc "contextless" (table: ^Draw_Table, font: Font, text: string, room: int) -> (line: string, rest: string) {
 	used := font_in_use(table, font, 0)
-	cells := text_rendering.cell_spacing(graphics.CELL_WIDTH * font_scale(used))
+	cells := text_rendering.cell_spacing(cell_width_of(used))
 	spacing := cells
 	if used.kind == .Interface {
 		if interface_spacing, ok := interface_spacing_of(used); ok {
@@ -226,10 +281,46 @@ draw_text_wrapped :: proc "contextless" (table: ^Draw_Table, x, y, room: int, te
 	return count
 }
 
-// line_height gives the height of a line of a font, in pixels: both fonts
-// draw in the line of the grid.
+// line_height gives the height of a line of a font, in pixels: two widths
+// of a cell at its text size, so both fonts draw in one line, a whole count
+// of pixels that holds the line of the size. At an even count of pixels it
+// is the size: 16 for the body.
 line_height :: proc "contextless" (font: Font) -> int {
-	return graphics.CELL_HEIGHT * font_scale(font)
+	return 2 * cell_width_of(font)
+}
+
+// baseline_of_font gives the row of the baseline of a text of a font, from
+// the top of its line, in the font that the table draws it in
+// (font_in_use): the row of the face of the vector font that draws it.
+// With Spleen, or with no face open, it is three quarters of the line, the
+// baseline of Spleen 8x16 at the body (row 12 of 16).
+baseline_of_font :: proc "contextless" (table: ^Draw_Table, font: Font) -> int {
+	used := font_in_use(table, font, 0)
+	face := text_rendering.Face.None
+	if graphics.text_state.font == .Vector {
+		switch used.kind {
+		case .Interface:
+			face = interface_face_of(used)
+		case .Cells_8x16:
+			face = graphics.text_state.cell_face
+			if used.weight == .Bold && graphics.text_state.bold_face != .None {
+				face = graphics.text_state.bold_face
+			}
+		}
+	}
+	if row, ok := text_rendering.baseline_row(face, font_text_size(used)); ok {
+		return row
+	}
+	return 3 * line_height(used) / 4
+}
+
+// text_top_on_baseline gives the top of the line of a text of a font whose
+// baseline is the baseline of a line of line_font with its top at
+// line_top: two text sizes on one line, as the title of a card and its
+// caption. The baseline is a row of whole pixels at each size, so the two
+// texts share it exactly.
+text_top_on_baseline :: proc "contextless" (table: ^Draw_Table, line_font: Font, line_top: int, font: Font) -> int {
+	return line_top + baseline_of_font(table, line_font) - baseline_of_font(table, font)
 }
 
 // A short text that a caller builds from parts, in its own memory.

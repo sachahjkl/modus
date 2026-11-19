@@ -232,7 +232,7 @@ A line that fails has one result: its error. The first error ends the line: the 
 | A value of the wrong kind for a field | `error: where: the field code is Integer, the value is Text` |
 | An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8), then the values of the record |
 | The root service refuses | `error: root.Stop: the argument name names a process of the system: ...`: the sentence of the error record of the root ring, then its values |
-| A call in an isolated process that faults | `error: the process agenda stopped: invalid instruction`, then the instruction and the frames of its stop report, each after `error: ` |
+| A call in an isolated process that faults | `error: the process agenda stopped: a fault, invalid instruction`, then the instruction and the frames of its stop report, each after `error: ` |
 
 An overflow has an error record of the kind `Over_Limit`: `value` is the left value, `found` the right value, and `limit` the largest integer.
 

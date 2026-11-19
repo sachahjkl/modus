@@ -98,7 +98,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 				continue
 			}
 			if other.process != 0 && other.process != compositor && !other.is_terminal && system.name_of(other.name[:]) == name {
-				system.call(.Process_Stop, u64(other.process), 0)
+				system.process_stop(other.process)
 				answer.status = .Ok
 				break
 			}

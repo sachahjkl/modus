@@ -21,6 +21,7 @@
 // WRONG: ...". It stops with the code 0.
 package output_reader
 
+import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:support/system"
 
@@ -55,7 +56,7 @@ hang_deadline :: proc "contextless" () -> u64 {
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
 	system.log(.Error, "output_reader: WRONG: ", text, " ", value)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // entry waits for the first record input that has a writer, and reads it.
@@ -66,10 +67,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		switch {
 		case system.input_has_writer(&probes):
 			probes_read()
-			system.stop(0)
+			system.stop(.Done)
 		case system.input_has_writer(&unended):
 			unended_read()
-			system.stop(0)
+			system.stop(.Done)
 		case system.input_has_writer(&watched):
 			// The joined record and the probe, then the stop: the writer
 			// reads Reader_Stopped.
@@ -80,7 +81,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				wrong("watched did not give the joined record and one probe; the status", u64(status))
 			}
 			system.log(.Info, "output_reader: watched: the joined record and one probe, then this reader stops: as it must")
-			system.stop(0)
+			system.stop(.Done)
 		}
 		if system.time() >= deadline {
 			wrong("no record input had a writer within the hang bound", 0)
@@ -125,5 +126,10 @@ unended_read :: proc "contextless" () {
 	if status != .Ended || end.end_word != .Writer_Stopped {
 		wrong("unended did not end with Writer_Stopped; the end word", u64(end.end_word))
 	}
-	system.log(.Info, "output_reader: unended: the joined record of 0, one probe, then the end word ", output.end_word_names[end.end_word], " with the stop cause ", u64(end.stop_cause), " and the stop outcome ", u64(end.stop_outcome), ": as it must")
+	// The writer stops itself with Done after its probe: the end words
+	// carry the stop that the kernel recorded, not a word of the writer.
+	if end.stop_cause != .Itself || end.stop_outcome != .Done {
+		wrong("unended did not carry the stop itself, Done; the stop cause", u64(end.stop_cause))
+	}
+	system.log(.Info, "output_reader: unended: the joined record of 0, one probe, then the end word ", output.end_word_names[end.end_word], " with the stop ", op.STOP_CAUSE_TEXTS[end.stop_cause], ", ", op.STOP_OUTCOME_TEXTS[end.stop_outcome], ": as it must")
 }

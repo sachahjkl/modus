@@ -76,7 +76,7 @@ hang_deadline :: proc "contextless" () -> u64 {
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
 	system.log(.Error, "output_wiring: WRONG: ", text, " ", value)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // root_call sends one command on the root ring and waits for its
@@ -180,11 +180,11 @@ refused :: proc "contextless" (what: string, before: u64, status: system.Status,
 	record := errors.completion_record(answer)
 	if status != wanted || record.kind != i64(kind) || record.unit != i64(unit) {
 		system.log(.Error, "output_wiring: WRONG: ", what, ": the status ", status, ", the kind ", record.kind, ", the unit ", record.unit)
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if after := budget_pages(); after != before {
 		system.log(.Error, "output_wiring: WRONG: ", what, ": the budget held ", before, " pages before and ", after, " after")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	refusals += 1
 }
@@ -456,5 +456,5 @@ asker_case :: proc "contextless" () {
 	}
 	system.log(.Info, "output_wiring: the wiring of this asker gave the joined record of 0 and the probe 0, after ", u64(refusals), " refusals; this asker stops: as it must")
 	system.log(.Info, "output_wiring: ok")
-	system.stop(0)
+	system.stop(.Done)
 }

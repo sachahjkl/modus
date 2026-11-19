@@ -77,7 +77,7 @@ LIST_COLUMNS :: 20
 LIST_WIDTH :: LIST_COLUMNS * CELL_WIDTH + 16
 MARGIN :: 12
 COLUMNS :: 84 // The width of the text.
-ROWS :: 33
+ROWS :: 33 // The rows of the text column: the heading of the page takes the first of them (view_rows).
 SCROLL_WIDTH :: interface.SCROLL_BAR_THICKNESS
 EXAMPLE_BAND_OVERHANG :: 4 // The band of an example passes the text by 4 pixels.
 SCROLL_GAP :: EXAMPLE_BAND_OVERHANG + graphics.GAP // From the text to the scroll bar: a gap after the band of an example.
@@ -143,7 +143,7 @@ page_back :: proc "contextless" () {
 	case .Link_Page:
 		link_page_build(int(place.index))
 	}
-	first_line = clamp(int(place.first_line), 0, max(rows() - ROWS, 0))
+	first_line = clamp(int(place.first_line), 0, max(rows() - view_rows(), 0))
 	if place.kind != .Overview {
 		page_log()
 	}
@@ -162,7 +162,7 @@ page_rebuild :: proc "contextless" () {
 	case .Link_Page:
 		link_page_build(link_page_index)
 	}
-	first_line = clamp(kept, 0, max(rows() - ROWS, 0))
+	first_line = clamp(kept, 0, max(rows() - view_rows(), 0))
 }
 
 // file_of gives the file of an entry of the boot image, or nothing when the
@@ -291,7 +291,7 @@ page_build :: proc "contextless" () {
 	name := system.name_of(entry.name[:])
 	file := file_of(entry)
 	if file == nil {
-		put_built(0, graphics.colors.failed, name)
+		heading_set(name, graphics.colors.failed)
 		put("This file is not a valid module.", 0, graphics.colors.text)
 		return
 	}
@@ -301,8 +301,8 @@ page_build :: proc "contextless" () {
 	has_entry := head.entry_export != 0
 	imports := int(max(module.count(file, .Imports), 1)) - 1
 
-	// The title has the color of the module in the list.
-	put_built(0, module_color(exports, has_entry), name)
+	// The heading is the name of the module, in its color in the list.
+	heading_set(name, module_color(exports, has_entry))
 	put_paragraph(about, 0, graphics.colors.text)
 	put("", 0, 0)
 	hash: [16]u8
@@ -432,7 +432,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	draw_records(&frame)
 	// The scroll bar of the text: the pointer on it moves the text as Page
 	// Up and Page Down do, and the wheel over the text moves it too.
-	moved := interface.scroll_bar(&frame, scroll_area(), scroll_identity(), .Vertical, {total = rows(), visible = ROWS, first = first_line}, {page = ROWS - 2}, "", text_view_area())
+	moved := interface.scroll_bar(&frame, scroll_area(), scroll_identity(), .Vertical, {total = rows(), visible = view_rows(), first = first_line}, {page = view_rows() - 2}, "", text_view_area())
 	// The action bar, last: its list opens over the text.
 	items := bar_items()
 	bar_result := interface.action_bar(&frame, bar_area(), items[:], &bar)
@@ -494,9 +494,9 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 		select(selected + 1)
 		page_log()
 	case display.KEY_PAGE_UP:
-		scroll(-(ROWS - 2))
+		scroll(-(view_rows() - 2))
 	case display.KEY_PAGE_DOWN:
-		scroll(ROWS - 2)
+		scroll(view_rows() - 2)
 	case display.KEY_HOME:
 		scroll(-ROW_PART_CAPACITY)
 	case interface.KEY_TAB:
@@ -544,11 +544,17 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 	}
 
 	left := LIST_WIDTH + MARGIN
+	// The heading of the page, over the rows: it stays when they move.
+	if page_heading != "" {
+		interface.draw_heading(frame, left, MARGIN, TEXT_WIDTH, page_heading, page_heading_color)
+	}
+	top := rows_top()
+	shown_rows := view_rows()
 	row := -first_line - 1
 	for &part, part_index in row_parts[:row_part_count] {
 		if .Row_Start in part.flags {
 			row += 1
-			if row >= ROWS {
+			if row >= shown_rows {
 				break
 			}
 		}
@@ -556,7 +562,7 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 			continue
 		}
 		x := left + int(part.x)
-		y := MARGIN + row * CELL_HEIGHT
+		y := top + row * CELL_HEIGHT
 		if .Code_Block in part.flags {
 			// An example is a block: a band from its indentation to the end
 			// of the text, on each of its rows.
@@ -593,7 +599,7 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 	interface.draw_rectangle(table, place_left, keys.y, WIDTH - place_left, 1, graphics.colors.track)
 	buffer: [64]u8
 	total := rows()
-	place := system.format(buffer[:], "rows ", u64(min(first_line + 1, total)), " to ", u64(min(first_line + ROWS, total)), " of ", u64(total))
+	place := system.format(buffer[:], "rows ", u64(min(first_line + 1, total)), " to ", u64(min(first_line + view_rows(), total)), " of ", u64(total))
 	place_room := WIDTH - MARGIN - place_left
 	interface.draw_text_right(table, WIDTH - MARGIN, keys.y + (keys.height - CELL_HEIGHT) / 2, interface.text_fit(table, {}, place, place_room), graphics.colors.dim)
 }
@@ -695,7 +701,7 @@ select :: proc "contextless" (index: int) {
 }
 
 scroll :: proc "contextless" (rows_moved: int) {
-	first_line = clamp(first_line + rows_moved, 0, max(rows() - ROWS, 0))
+	first_line = clamp(first_line + rows_moved, 0, max(rows() - view_rows(), 0))
 }
 
 // text_result writes a text in the buffer of a Text result, and gives the
@@ -796,7 +802,7 @@ signature :: proc "c" (name: ^string, export: i64, result: ^[]u8, error: ^errors
 // When the loader starts it, the entry:
 //
 // 1. opens the service ring, so that callers can reach the exports;
-// 2. opens a window of two pictures; with no window, it stops with the code 1;
+// 2. opens a window of two pictures; with no window, it stops with `Failed`;
 // 3. maps the boot image and the replacement table, read-only;
 // 4. measures the information functions once (`information_start`), and writes the line
 //    "manual: information: ... modules break a rule" on the log;
@@ -810,7 +816,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "manual")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]

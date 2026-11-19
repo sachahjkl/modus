@@ -158,6 +158,20 @@ baseline_of :: proc "contextless" (frame: vector_font.Font_Measures, size: int) 
 	return int(clamp(baseline, 1, i64(line_rows(size))))
 }
 
+// baseline_row gives the row of the baseline of a face at a text size, from
+// the top of its line: the row where the rasterizer puts it. A caller puts
+// two sizes on one line with it, as the title of a card and its caption.
+// ok is false for a face that this copy has not opened (face_opened), the
+// face None too, and for a size that size_check refuses.
+baseline_row :: proc "contextless" (face: Face, size: int) -> (row: int, ok: bool) {
+	if !face_opened(face) || size_check(size) != .None {
+		return 0, false
+	}
+	form := face_forms[face]
+	first := &state.fonts[form.primary]
+	return baseline_of(form.proportional ? first.stated : first.own, size), true
+}
+
 // placement_at gives the placement of the outlines of a font in a face at
 // a size, in thirds of a pixel across, with the origin of the work row at
 // the left of its margin: the placement of vector_font.placement_of for a

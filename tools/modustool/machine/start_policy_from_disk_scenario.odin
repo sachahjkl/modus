@@ -165,7 +165,7 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&machine.steps, Step{kind = .Key, text = "ret"})
 	machine_wait(&machine, fmt.aprintf("%s", RECOVERY_KEY_ENTER_LINE))
 	machine_wait(&machine, fmt.aprintf("root: the disk grant table of principal 0 is written in the store module_files: 0 rows, with the tag of the machine key"), any_order = true)
-	machine_wait(&machine, fmt.aprintf("root: unlock stopped with code 0"))
+	machine_wait(&machine, fmt.aprintf("root: unlock stopped: itself, done"))
 	// A nickname that names no module.
 	machine_type(&machine, fmt.aprintf("start_policy_choose(\"nobody\", \"\")"))
 	machine_wait(&machine, fmt.aprintf("root: refused the start policy nobody: the nickname names no module, as it has no row in the disk grant table of principal 0; name the hash of its file"))
@@ -193,7 +193,7 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_wait(&machine, fmt.aprintf("tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal"), any_order = true)
 	// The run of unlock before the start policy stops with its own line,
 	// before the measure, whose wait below is ordered.
-	machine_wait(&machine, fmt.aprintf("root: unlock read the machine key with no window and stopped with code 0"), any_order = true)
+	machine_wait(&machine, fmt.aprintf("root: unlock read the machine key with no window and stopped: itself, done"), any_order = true)
 	machine_wait(&machine, fmt.aprintf("root: read the disk grant table of principal 0 from the store module_files: 1 rows, with the tag of the machine key"), any_order = true)
 	machine_wait(&machine, fmt.aprintf("root: reads the chosen start policy \"%s\", the file %s, from the store module_files of principal 0", CHOSEN_NICKNAME, string(chosen_digits[:])), any_order = true)
 	chosen_words := fmt.aprintf("(nickname \"%s\")", CHOSEN_NICKNAME)
@@ -226,11 +226,11 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_start_steps(&machine)
 	broken_words := fmt.aprintf("(nickname \"%s\")", BROKEN_NICKNAME)
 	defer delete(broken_words)
-	machine_wait(&machine, fmt.aprintf("root: unlock read the machine key with no window and stopped with code 0"), any_order = true)
+	machine_wait(&machine, fmt.aprintf("root: unlock read the machine key with no window and stopped: itself, done"), any_order = true)
 	machine_wait(&machine, fmt.aprintf("root: reads the chosen start policy \"%s\", the file %s, from the store module_files of principal 0", BROKEN_NICKNAME, string(broken_digits[:])), any_order = true)
 	machine_wait(&machine, fmt.aprintf("%s%s", broken_words, MEASURED_WORDS))
 	machine_wait(&machine, fmt.aprintf("start_policy: the context names no start list: no row starts"), any_order = true)
-	machine_wait(&machine, fmt.aprintf(" stopped before the machine was usable, with the code 3: the rescue start policy starts"))
+	machine_wait(&machine, fmt.aprintf(" stopped before the machine was usable: itself, refused; the rescue start policy starts"))
 	machine_wait(&machine, fmt.aprintf(" of the list rescue_list%s", MEASURED_WORDS))
 	machine_wait(&machine, fmt.aprintf("start_policy: the start list has 4 rows: each starts in its order"))
 	machine_wait(&machine, fmt.aprintf("root: the machine is usable, by the start policy "), any_order = true)

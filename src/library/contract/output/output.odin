@@ -374,9 +374,9 @@ END_WORDS_PAGES :: 1
 // stop cause and the stop outcome first, then the end word, so that a side
 // that sees the end word sees the two words with it. The root service
 // calls it, then wakes each side that waits on the end word.
-end_words_write :: proc "contextless" (words: ^End_Words, end: End_Word, stop_cause: u32 = 0, stop_outcome: u32 = 0) {
-	intrinsics.atomic_store_explicit(&words.stop_cause, stop_cause, .Relaxed)
-	intrinsics.atomic_store_explicit(&words.stop_outcome, stop_outcome, .Relaxed)
+end_words_write :: proc "contextless" (words: ^End_Words, end: End_Word, stop_cause: op.Stop_Cause = .None, stop_outcome: op.Stop_Outcome = .None) {
+	intrinsics.atomic_store_explicit(&words.stop_cause, u32(stop_cause), .Relaxed)
+	intrinsics.atomic_store_explicit(&words.stop_outcome, u32(stop_outcome), .Relaxed)
 	intrinsics.atomic_store_explicit(&words.end, u32(end), .Release)
 }
 
@@ -398,17 +398,25 @@ end_words_read :: proc "contextless" (words: ^End_Words) -> (copy_of_words: End_
 // Writer_Stopped the words of the stop cause and of the stop outcome, which
 // the reader takes through the border of the stop
 // (src/md/api/process_stop.md). It refuses an end word that names no
-// member, a stop word beside another end than Writer_Stopped, and a
-// reserved word that is not 0.
-end_of_words :: proc "contextless" (words: End_Words) -> (end: End_Word, stop_cause: u32, stop_outcome: u32, ok: bool) {
+// member, a stop word beside another end than Writer_Stopped, a
+// Writer_Stopped whose two words are not a stop that the border of the stop
+// takes, and a reserved word that is not 0.
+end_of_words :: proc "contextless" (words: End_Words) -> (end: End_Word, stop_cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome, ok: bool) {
 	member, known := enum_word.member_of_word(End_Word, u64(words.end))
 	if !known || (words.reserved != [13]u32{}) {
-		return {}, 0, 0, false
+		return {}, {}, {}, false
 	}
-	if member != .Writer_Stopped && (words.stop_cause != 0 || words.stop_outcome != 0) {
-		return {}, 0, 0, false
+	if member != .Writer_Stopped {
+		if words.stop_cause != 0 || words.stop_outcome != 0 {
+			return {}, {}, {}, false
+		}
+		return member, .None, .None, true
 	}
-	return member, words.stop_cause, words.stop_outcome, true
+	_, cause, outcome, stop_known := op.stop_of_words(u64(op.Process_State.Stopped), u64(words.stop_cause), u64(words.stop_outcome))
+	if !stop_known {
+		return {}, {}, {}, false
+	}
+	return member, cause, outcome, true
 }
 
 // What a completion of an output ring says. The reader writes a completion

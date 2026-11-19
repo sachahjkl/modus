@@ -317,10 +317,10 @@ stream_end_open :: proc "contextless" (end: ^Stream_End, record_size: u32) -> bo
 // word that the border refuses ends the end as Revoked: the root service
 // alone writes the page, and a page that names nothing is no stream.
 @(private = "file")
-stream_end_ended :: proc "contextless" (end: ^Stream_End) -> (word: output.End_Word, stop_cause: u32, stop_outcome: u32) {
+stream_end_ended :: proc "contextless" (end: ^Stream_End) -> (word: output.End_Word, stop_cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome) {
 	read, cause, outcome, ok := output.end_of_words(output.end_words_read(end.end_words))
 	if !ok {
-		return .Revoked, 0, 0
+		return .Revoked, .None, .None
 	}
 	return read, cause, outcome
 }
@@ -572,8 +572,8 @@ Input_Item :: struct {
 	gap_count:    u32, // Gap: the records that the reader misses.
 	error:        errors.Error_Record, // End: zero for a clean end.
 	end_word:     output.End_Word, // Ended by an end word: why; None for an end record.
-	stop_cause:   u32, // Writer_Stopped: the words of the stop of the writer.
-	stop_outcome: u32,
+	stop_cause:   op.Stop_Cause, // Writer_Stopped: the stop of the writer, through the border of the end words.
+	stop_outcome: op.Stop_Outcome,
 	refusal:      errors.Error_Record, // Bad_Record: the error record that names the field.
 }
 

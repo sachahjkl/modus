@@ -40,7 +40,7 @@ package machine
 scenario_heron_film := [?]Step {
 	// The boot. The processes write in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
-	{kind = .Wait, text = "root: settings stopped with code 0", any_order = true},
+	{kind = .Wait, text = "root: settings stopped: itself, done", any_order = true},
 	// The desktop of the film. The console goes to the left first: a drag
 	// brings its window to the front, and the window of heron must be the
 	// one in front, with the keys. The window of heron is 644 by 514

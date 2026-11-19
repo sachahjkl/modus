@@ -24,21 +24,21 @@ Do not use: process ID, PID, process number, program number.
 
 A stop cause is the fact that the kernel records of who or what stopped a process (`op.Stop_Cause`): the process itself, a holder of its process handle, a fault, the end of its last thread or the close of its last handle.
 
-No process can forge it: the kernel decides it at each stop, and the first stop keeps it. A holder with Read reads it with `Process_State`. It names no other process. For a fault, the vector and the stack trace are in the stop report. It is not the stop outcome, which the process chooses. Example: the console writes "the process calendar stopped: a fault, page fault".
+No process can forge it: the kernel decides it at each stop, and the first stop keeps it. A holder with Read reads it with `Process_State`, and `monitor.processes()` shows it in its column `cause`. It names no other process. For a fault, the vector and the stack trace are in the stop report. It is not the stop outcome, which the process chooses. Example: the console writes "the process calendar stopped: a fault, page fault".
 
 The design: `src/md/api/process_stop.md`.
 
-Do not use: exit reason, termination reason, signal.
+Do not use: exit reason, termination reason, signal, stop code.
 
 ### Stop outcome
 
 A stop outcome is what a process says about its work when it stops itself (`op.Stop_Outcome`): done, failed, refused, or stopped on request.
 
-The process passes it to `system.stop`, as in `system.stop(.Done)`. The kernel records it only with the stop cause `Itself`, and refuses an outcome from a holder, so `outcome == .Done` alone checks a clean stop. It is a claim of the process about itself, not a proof of its work. A failed stop gives its reason in the log; later, in an error record.
+The process passes it to `system.stop`, as in `system.stop(.Done)`. The kernel records it only with the stop cause `Itself`, and refuses an outcome from a holder, so `outcome == .Done` alone checks a clean stop. `monitor.processes()` shows it in its column `outcome`, and a start policy starts no row again after `Done` or `Refused`. It is a claim of the process about itself, not a proof of its work. A failed stop gives its reason in the log.
 
 The design: `src/md/api/process_stop.md`.
 
-Do not use: exit code, exit status, return code.
+Do not use: exit code, exit status, return code, stop code.
 
 ### Thread
 

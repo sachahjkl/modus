@@ -83,7 +83,7 @@ probe_of :: proc "contextless" (serial: u64) -> Probe {
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
 	system.log(.Error, "output_writer: WRONG: ", text, " ", value)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // entry chooses its case by the record output that its start wired.
@@ -105,7 +105,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case:
 		revoked_case()
 	}
-	system.stop(0)
+	system.stop(.Done)
 }
 
 // probes_case writes the probes before and after the second reader.

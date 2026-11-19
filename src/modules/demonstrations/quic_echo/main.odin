@@ -188,7 +188,7 @@ counters_second: u64
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log(.Info, "quic_echo: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 now_microseconds :: proc "contextless" () -> u64 {
@@ -571,7 +571,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "quic_echo")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	configuration := quic.Connection_Configuration{idle_timeout_milliseconds = IDLE_TIMEOUT_MILLISECONDS}
 	configuration.tls = {role = .Server, least_seed_strength = .Processor}

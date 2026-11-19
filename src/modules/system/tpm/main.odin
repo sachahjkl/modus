@@ -122,7 +122,7 @@ region: []u8
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log(.Error, "tpm: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 register_read :: proc "contextless" (offset: uintptr) -> u32 {
@@ -683,7 +683,7 @@ lockout_authorization_check :: proc "contextless" (seeded: bool) {
 //
 // **The stop**: with no ring, no region, no registers, an interface that is
 // not CRB, or a buffer that is not in the page of the registers, it writes
-// the reason at the level error and stops with the code 1. The client then
+// the reason at the level error and stops with `Failed`. The client then
 // receives no answer, and runs as on a machine with no TPM.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {

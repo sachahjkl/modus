@@ -528,7 +528,7 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 	}
 	if status != .Ok {
 		system.log(.Info, "compositor: no memory")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}
 }
@@ -595,12 +595,12 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 // 6. A frame, at most one each 16 ms, when the screen has damage.
 //
 // **The stop.** With no framebuffer (modus:support/screen_presence), the
-// compositor writes `compositor: no framebuffer` and stops with the code 1;
+// compositor writes `compositor: no framebuffer` and stops with `Failed`;
 // with no input ring or no control ring, it writes `compositor: no input
-// ring or no control ring` and stops with the code 1. When its budget
+// ring or no control ring` and stops with `Failed`. When its budget
 // cannot pay the frame and the background of the screen, it writes
 // `compositor: a screen of <width>x<height> needs <n> pages, the budget
-// holds <m>` and stops with the code 1. Without the
+// holds <m>` and stops with `Failed`. Without the
 // memory of its frame, it writes `compositor: no memory` and stops. Else it
 // never returns.
 @(export, link_name = "entry")
@@ -616,11 +616,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// process: the two never disagree on a screen.
 	if !screen_presence.screen_present(status, ctx.values[VALUE_WIDTH], ctx.values[VALUE_HEIGHT]) {
 		system.log(.Info, "compositor: no framebuffer")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if input_status != .Ok || control_status != .Ok {
 		system.log(.Info, "compositor: no input ring or no control ring")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
 	screen_pages_open(ctx)
@@ -635,7 +635,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	budget_left, budget_status := system.budget_read()
 	if budget_status != .Ok || budget_left.pages < needed_pages {
 		system.log(.Info, "compositor: a screen of ", u64(width), "x", u64(height), " needs ", needed_pages, " pages, the budget holds ", budget_left.pages)
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	frame = canvas_create(width, height)
 	background = canvas_create(width, height)
@@ -1662,7 +1662,7 @@ screen_draw_part :: proc "contextless" (table: ^interface.Draw_Table, first, cou
 		return
 	}
 	screen_refusal_logged = true
-	system.log(.Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_17 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
+	system.log(.Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_18 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
 }
 
 // screen_draw draws the parts of the screen table into the frame, from the
@@ -1813,14 +1813,18 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			// the line: the nickname ends before it.
 			room := line_width - bar.WINDOWS_TITLE_X - bar.PADDING
 			if clients[index].from_disk {
-				room -= bar.WINDOWS_HASH_GAP + interface.text_measured_width(table, {}, string(clients[index].hash_prefix[:]))
+				room -= bar.WINDOWS_HASH_GAP + interface.text_measured_width(table, interface.FONT_CAPTION_CELLS, string(clients[index].hash_prefix[:]))
 			}
 			title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(clients[index].title[:]), room)
 			title_end := interface.draw_text(table, line_x + bar.WINDOWS_TITLE_X, line_y + 4, title, focus || line == menu_line ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 			if clients[index].from_disk {
-				// A value, in the font of the cells, faded: the name is the
-				// nickname, and the prefix only tells two files apart.
-				interface.draw_text(table, title_end + bar.WINDOWS_HASH_GAP, line_y + 4, string(clients[index].hash_prefix[:]), graphics.colors.dim)
+				// A value, in the font of the cells at the caption size,
+				// faded, on the baseline of the nickname: the name is the
+				// nickname, and the prefix only tells two files apart. On the
+				// chosen row it is white, as each text of that row: the dim
+				// color has no contrast on the chosen blue.
+				prefix_top := interface.text_top_on_baseline(table, interface.FONT_INTERFACE, line_y + 4, interface.FONT_CAPTION_CELLS)
+				interface.draw_text(table, title_end + bar.WINDOWS_HASH_GAP, prefix_top, string(clients[index].hash_prefix[:]), line == menu_line ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_CAPTION_CELLS)
 			}
 		}
 	}

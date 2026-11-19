@@ -120,14 +120,14 @@ process_return_refused :: proc "contextless" (thread: ^Thread, refusal: Return_R
 	taken := process_lock(index)
 	first := process.state != .Stopped && process.state != .None
 	if first {
-		process.stop = {code = op.STOP_CODE_RETURN, vector = u32(vector), instruction = thread.frame.rip, address = value}
+		process.stop = {cause = u32(op.Stop_Cause.Cannot_Return), vector = u32(vector), instruction = thread.frame.rip, address = value}
 		if found := module_of(process, thread.frame.rip); found != nil {
 			process.stop.module = found^
 		}
 	}
 	log_with_level(.Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: the kernel cannot return to its thread: ", return_refusal_sentences[refusal], Hex(value))
 	process_unlock(index, taken)
-	process_stop(index, op.STOP_CODE_RETURN)
+	process_stop(index, .Cannot_Return, .None)
 }
 
 // return_refused_by_the_processor ends a fault of the iretq of resume. The

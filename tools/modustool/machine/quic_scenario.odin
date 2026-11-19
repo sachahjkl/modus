@@ -72,7 +72,7 @@ scenario_quic := [?]Step {
 	// bytes of the datagrams of QUIC: one copy each way, and no checksum
 	// (quic_echo writes the UDP checksum, and does not check one).
 	{kind = .Close, text = "quic_echo"},
-	{kind = .Wait, text = "root: quic_echo stopped with code 0"},
+	{kind = .Wait, text = "root: quic_echo stopped: a holder"},
 	{kind = .Wait, text = "network: the endpoint of quic_echo ended: "},
 	{kind = .Wait, text = "network: a measure: the endpoint of quic_echo, UDP: the passes of this service over the data for each payload byte: "},
 	{kind = .Wait, text = "network: the endpoint of quic_echo, UDP: this service read each payload byte one time on receive, for the copy, and on send only the 8 bytes of each header that it checks, and 0 bytes of the data; it computed no checksum: as it must"},

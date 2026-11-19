@@ -110,6 +110,11 @@ module_builds := [?]Module_Build {
 	// end: only the image of its test holds it, so no start policy of
 	// another image can start it.
 	{name = "shortage", source = TEST_MODULE_SOURCES + "shortage", entry = true, image = true, only_in_image = BOOT_IMAGE_SHORTAGE},
+	// The two rows of the test of the restarts of a start policy: each stops
+	// itself at once, one with Refused and one with Failed. Only the image
+	// of that test holds them.
+	{name = "stops_refused", source = TEST_MODULE_SOURCES + "stops_refused", entry = true, image = true, only_in_image = BOOT_IMAGE_MISSING_CONSOLE},
+	{name = "stops_failed", source = TEST_MODULE_SOURCES + "stops_failed", entry = true, image = true, only_in_image = BOOT_IMAGE_MISSING_CONSOLE},
 	{name = "scheduler", source = DEMONSTRATION_MODULE_SOURCES + "scheduler", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "address_space", source = DEMONSTRATION_MODULE_SOURCES + "address_space", entry = true, image = true},
 	{name = "locker", source = DEMONSTRATION_MODULE_SOURCES + "locker", entry = true, image = true},
@@ -232,6 +237,11 @@ BOOT_IMAGE_OPERATION_SEQUENCES :: BUILD_FOLDER + "/boot_operation_sequences.imag
 // The boot image of the shortage of frames: no input service, and the
 // module shortage, which only it holds.
 BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
+
+// The boot image of the test of the rescue and of the restarts: the
+// modules of the boot image, and the two modules of the test of the
+// restarts, which only it holds.
+BOOT_IMAGE_MISSING_CONSOLE :: BUILD_FOLDER + "/boot_missing_console.image"
 
 OPERATION_FUZZING_MODULE :: "operation_fuzzing"
 

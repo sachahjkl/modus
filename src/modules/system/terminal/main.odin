@@ -57,7 +57,9 @@
 // - "terminal: a press on the arrow up of the scroll bar of console: the
 //   view starts at line L of N", or "... the view follows the last lines";
 // - "terminal: a drag of the thumb of the scroll bar of console: ...";
-// - "terminal: console stopped with code C after L lines and R records";
+// - "terminal: console stopped: itself, done, after L lines and R
+//   records", with the stop outcome in place of "done", or the text of
+//   another stop cause in place of "itself, done";
 // - "terminal: console draws its interface text in the interface font", or
 //   "... in the font of the cells", at its first frame and at each change
 //   of the setting `font`;
@@ -80,6 +82,7 @@
 package terminal_process
 
 import "modus:contract/enum_word"
+import op "modus:contract/operation"
 import "modus:support/display"
 import "modus:support/text_rendering"
 import "modus:support/graphics"
@@ -294,7 +297,8 @@ Request :: struct {
 	follow: bool, // The view shows the last lines.
 	top:    u64, // If not follow: the line of the first row.
 	stopped: bool, // The process stopped: the reader writes a line that says it.
-	code:    u32,
+	cause:   op.Stop_Cause,
+	outcome: op.Stop_Outcome,
 }
 
 Cell :: interface.Text_Grid_Cell
@@ -754,7 +758,10 @@ note :: proc "contextless" (parts: ..system.Part) {
 // view_make fills the view for the request.
 view_make :: proc "contextless" () {
 	if request.stopped {
-		note("-- ", process_name, " stopped with code ", u64(request.code), " after ", lines_written, " lines --")
+		stop_buffer: [64]u8
+		stop_text := system.Writer{buffer = stop_buffer[:]}
+		system.stop_write(&stop_text, request.cause, request.outcome)
+		note("-- ", process_name, " stopped: ", system.written(&stop_text), ", after ", lines_written, " lines --")
 		status_line.total = 0
 		edit_line = {}
 		edit_runs_pending = {}
@@ -1039,7 +1046,7 @@ view_grid :: proc "contextless" () -> interface.Text_Grid {
 tile :: proc "contextless" (table: ^interface.Draw_Table, x: int, label: string, value: u64, color: graphics.Color) {
 	buffer: [27]u8
 	interface.draw_text(table, x, 8, label, graphics.colors.dim)
-	interface.draw_text(table, x, 28, number(&buffer, value), color, interface.FONT_MEDIUM)
+	interface.draw_text(table, x, 28, number(&buffer, value), color, interface.FONT_LARGE)
 }
 
 // The font of the interface text of the window in the last frame, once
@@ -1289,7 +1296,7 @@ status_bar_length :: proc "contextless" (value, total: u64, length: int) -> int 
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log(.Info, "terminal: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // The entry of the terminal: it opens the window of one process, starts the
@@ -1301,10 +1308,10 @@ fail :: proc "contextless" (text: string) -> ! {
 // 1. reads its values: the name of the process, the columns (40 at least),
 //    the rows (4 at least), and the flag that it measures;
 // 2. opens a window of two pictures with the name of the process; with no
-//    window, it writes "terminal: no surface" and stops with the code 1;
+//    window, it writes "terminal: no surface" and stops with `Failed`;
 // 3. creates the three areas of the lines;
 // 4. opens the terminal ring and maps the text region, read-only; a wrong
-//    ring or region stops it with the code 1;
+//    ring or region stops it with `Failed`;
 // 5. starts the reader thread, and writes "terminal: ok, ...".
 //
 // The first thread is then the drawer. It sleeps while nothing changes,
@@ -1529,10 +1536,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// after this read ends the next wait with nothing to draw at once.
 		events_seen = intrinsics.volatile_load(system.events())
 		if process != 0 {
-			if state, code := system.process_state(process); state == .Stopped {
-				request.stopped, request.code = true, code
+			if state, cause, outcome := system.process_state(process); state == .Stopped {
+				request.stopped, request.cause, request.outcome = true, cause, outcome
 				view_take()
-				system.log(.Info, "terminal: ", process_name, " stopped with code ", u64(code), " after ", view.count - 1, " lines and ", view.records, " records")
+				stop_buffer: [64]u8
+				stop_text := system.Writer{buffer = stop_buffer[:]}
+				system.stop_write(&stop_text, cause, outcome)
+				system.log(.Info, "terminal: ", process_name, " stopped: ", system.written(&stop_text), ", after ", view.count - 1, " lines and ", view.records, " records")
 				if lost, ended := key_path.loss_end(&keys_loss); ended {
 					system.log(.Info, "terminal: ", process_name, " stopped and did not read its keys: ", lost, " keys were lost")
 				}

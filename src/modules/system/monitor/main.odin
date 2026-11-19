@@ -194,7 +194,7 @@ disk_process_log :: proc "contextless" (slot: u64, process_serial: u64, nickname
 // a picture of the machine every 500 ms and runs the calls between two
 // pictures.
 //
-// With no window it stops with the code 1. Each turn of the loop:
+// With no window it stops with `Failed`. Each turn of the loop:
 //
 // 1. asks the kernel for the system report, then the report of each
 //    process slot that is in use;
@@ -209,7 +209,7 @@ disk_process_log :: proc "contextless" (slot: u64, process_serial: u64, nickname
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "monitor")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	for graph in Graph {
 		// The boxes are constants inside the window: the start refuses none.
@@ -316,19 +316,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					name = process_page.nickname_text(&nickname)
 				}
 				// One line of the grid of the rows for a row with one line of
-				// text; each more line of text adds its height. A row that
-				// does not fit above the last line is counted, not cut.
-				lines := max(interface.text_wrapped_line_count(table, {}, name, NAME_ROOM), 1) + (from_disk ? 1 : 0)
-				row_height := LINE + (lines - 1) * text_line
+				// text; each more line of text adds its height, and the hash
+				// prefix of a disk process adds the line of a caption. A row
+				// that does not fit above the last line is counted, not cut.
+				lines := max(interface.text_wrapped_line_count(table, {}, name, NAME_ROOM), 1)
+				row_height := LINE + (lines - 1) * text_line + (from_disk ? interface.line_height(interface.FONT_CAPTION_CELLS) : 0)
 				if y + row_height > HEIGHT - LINE {
 					hidden += 1
 					continue
 				}
 				name_lines := interface.draw_text_wrapped(table, 10, y, NAME_ROOM, name, graphics.colors.text)
 				if from_disk {
+					// A value under the name, faded: the caption size in the
+					// font of the cells.
 					prefix: [process_page.HASH_PREFIX_DIGITS]u8
 					process_page.hash_prefix_write(&prefix, row.hash[0])
-					interface.draw_text(table, 10, y + name_lines * text_line, string(prefix[:]), graphics.colors.dim)
+					interface.draw_text(table, 10, y + name_lines * text_line, string(prefix[:]), graphics.colors.dim, interface.FONT_CAPTION_CELLS)
 					disk_process_log(slot, process.process_serial, name, row)
 				}
 				interface.draw_unsigned(table, PAGES_X, y, process.present_pages, graphics.colors.text)

@@ -164,7 +164,7 @@ build_labels :: proc(table: ^Draw_Table, seed: u32, changed: int) {
 	value := words[pick(&state, &part, changed) % len(words)]
 	label_value_line(&frame, {8, 140, 300, 16}, label, value)
 	button(&frame, {8, 164, 140, 24}, identity("press"), words[pick(&state, &part, changed) % len(words)])
-	draw_text(table, 160, 168, words[pick(&state, &part, changed) % len(words)], graphics.colors.text, {kind = .Interface, scale = 2})
+	draw_text(table, 160, 168, words[pick(&state, &part, changed) % len(words)], graphics.colors.text, {kind = .Interface, size = graphics.TEXT_LARGE * TEXT_SIZE_UNITS})
 }
 
 // The damage of a frame in the interface font, drawn as a window draws it
@@ -225,7 +225,7 @@ damage_of_interface_text_equals_the_whole_frame :: proc(t: ^testing.T) {
 measured_box :: proc(record: Draw_Record) -> Rectangle {
 	box := record_rectangle(record)
 	if view := record_view(record); view.kind == .Text && view.font == .Interface {
-		margin := ink_margin_of(view)
+		margin := ink_margin_of_view(view)
 		box.left += margin
 		box.right -= margin
 	}
@@ -235,7 +235,7 @@ measured_box :: proc(record: Draw_Record) -> Rectangle {
 // The ink margin of a text in the interface font: from the left edge of
 // its box to the pixel of its origin.
 @(private = "file")
-ink_margin_of :: proc(view: Record_View) -> int {
+ink_margin_of_view :: proc(view: Record_View) -> int {
 	return draw_record.pixels_floor(view.origin_x) - view.x
 }
 
@@ -332,7 +332,7 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 	first := record_view(table.records[0])
 	testing.expect(t, is_interface_text(table.records[0]), "a text in the interface font")
 	testing.expect_value(t, after, 10 + text_measured_width(&table, FONT_INTERFACE, "To LT"))
-	margin := ink_margin_of(first)
+	margin := ink_margin_of_view(first)
 	testing.expect_value(t, margin, graphics.PROPORTIONAL_INK_MARGIN)
 	testing.expect_value(t, first.x, 10 - margin)
 	testing.expect_value(t, first.origin_x, draw_record.units_of_pixels(10))
@@ -350,8 +350,8 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 	draw_text_right(&table, 100, 40, "Ty", graphics.colors.text, FONT_INTERFACE)
 	record := table.records[2]
 	view := record_view(record)
-	testing.expect(t, view.read && draw_record.origin_valid(view.origin_x, record.left))
-	testing.expect(t, view.x + view.width - ink_margin_of(view) <= 101)
+	testing.expect(t, view.read && draw_record.origin_valid(view.origin_x, record.left, u16(view.size)))
+	testing.expect(t, view.x + view.width - ink_margin_of_view(view) <= 101)
 	// The measure of many texts in one call gives the measures one by one.
 	texts := [?]string{"To", "LT", "palette", "", "W"}
 	widths: [len(texts)]int
@@ -385,17 +385,17 @@ hostile_interface_text_records_draw_nothing :: proc(t: ^testing.T) {
 	// inside it: the ink margin of the font.
 	right, bottom := draw_record.units_of_pixels(60), draw_record.units_of_pixels(16)
 	origin := draw_record.units_of_pixels(2)
-	good := interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 1}, 0, 0, right, bottom)
+	good := interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom)
 	hostile := [?]Draw_Record {
-		interface_text_record_of(Fields{first = 3, count = 5, color = graphics.colors.text, origin_x = origin, scale = 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{first = max(u32), count = max(u32), color = graphics.colors.text, origin_x = origin, scale = 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin + 1, scale = 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = max(i32), scale = 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = draw_record.units_of_pixels(INK_MARGIN_LIMIT + 1), scale = 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 0}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = draw_record.TEXT_SCALE_LIMIT + 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 1, weight = u8(max(Font_Weight)) + 1}, 0, 0, right, bottom),
-		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, scale = 1}, max(i32) - 63, max(i32) - 63, max(i32) - 63, max(i32) - 63),
+		interface_text_record_of(Fields{first = 3, count = 5, color = graphics.colors.text, origin_x = origin, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{first = max(u32), count = max(u32), color = graphics.colors.text, origin_x = origin, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin + 1, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = max(i32), size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = draw_record.units_of_pixels(INK_MARGIN_LIMIT + 1), size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, size = 0}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, size = draw_record.TEXT_SIZE_LIMIT + 1}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS, weight = u8(max(Font_Weight)) + 1}, 0, 0, right, bottom),
+		interface_text_record_of(Fields{count = 5, color = graphics.colors.text, origin_x = origin, size = graphics.TEXT_BODY * TEXT_SIZE_UNITS}, max(i32) - 63, max(i32) - 63, max(i32) - 63, max(i32) - 63),
 	}
 	pixels: [64 * 16]graphics.Color
 	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = 64, height = 16, stride = 64}
@@ -432,7 +432,7 @@ interface_text_reference :: proc(canvas: graphics.Canvas, box: Rectangle, origin
 	}
 	placed: [INTERFACE_TEXT_LIMIT]text_rendering.Placed_Glyph
 	count, _, _ := text_rendering.shape(&spacing, transmute([]u8)text, placed[:])
-	graphics.text_proportional(view, origin - i64(box.left) * 64, 0, placed[:min(count, len(placed))], interface_face_of(font), font_scale(font), color)
+	graphics.text_proportional(view, origin - i64(box.left) * 64, 0, placed[:min(count, len(placed))], interface_face_of(font), font_text_size(font), color)
 }
 
 // The old path of a text in the font of the cells: the cells from the top
@@ -441,15 +441,14 @@ interface_text_reference :: proc(canvas: graphics.Canvas, box: Rectangle, origin
 // ink past the right edge onto the next line.
 @(private = "file")
 cells_text_reference :: proc(canvas: graphics.Canvas, x, y: int, text: string, font: Font, color: graphics.Color) {
-	scale := font_scale(font)
-	view := graphics.view(canvas, x, y, min(text_width(font, text), canvas.width - x), min(graphics.CELL_HEIGHT * scale, canvas.height - y))
-	text_draw(view, 0, 0, text, color, scale, font.weight)
+	view := graphics.view(canvas, x, y, min(text_width(font, text), canvas.width - x), min(line_height(font), canvas.height - y))
+	text_draw(view, 0, 0, text, color, font_text_size(font), font.weight)
 }
 
 // Each text drawn through the one Text record equals, pixel by pixel, the
 // old path of its kind, whole and in the rectangles of a damage: in the
 // interface font at each third of a pixel, and in the font of the cells,
-// for several texts, each scale and each weight.
+// for several texts, each text size token and each weight.
 @(test)
 each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 	interface_text_drawing_begin()
@@ -476,12 +475,14 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 	}
 	color := graphics.colors.text
 	checked := 0
+	tokens := [?]int{graphics.TEXT_CAPTION, graphics.TEXT_BODY, graphics.TEXT_HEADING, graphics.TEXT_LARGE, graphics.TEXT_LARGEST}
 	for text in texts {
-		for scale in 1 ..= 3 {
+		for token in tokens {
+			size := u16(token * TEXT_SIZE_UNITS)
 			for weight in weights {
 				for third in 0 ..< 3 {
 					// The interface font, its origin at 20 pixels and a third.
-					used := Font{kind = .Interface, scale = u8(scale), weight = weight}
+					used := Font{kind = .Interface, size = size, weight = weight}
 					memory := new(Font_Tables)
 					table := font_table_of(memory, &font.font)
 					place := i64(20) * 64 + i64(third) * 64 / 3
@@ -497,11 +498,11 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 					rectangles := TEXT_PARTS
 					execute_in_rectangles(&table, canvas_of(parts), rectangles[:])
 					interface_text_reference(canvas_of(expected), record_rectangle(table.records[0]), origin, text, used, color)
-					testing.expectf(t, slice.equal(drawn, expected), "%q, scale %d, weight %v, third %d: the interface font draws other pixels", text, scale, weight, third)
-					testing.expectf(t, slice.equal(parts, expected), "%q, scale %d, weight %v, third %d: the interface font in parts draws other pixels", text, scale, weight, third)
+					testing.expectf(t, slice.equal(drawn, expected), "%q, size %d, weight %v, third %d: the interface font draws other pixels", text, token, weight, third)
+					testing.expectf(t, slice.equal(parts, expected), "%q, size %d, weight %v, third %d: the interface font in parts draws other pixels", text, token, weight, third)
 					free(memory)
 					// The font of the cells, at a whole pixel of each third.
-					cells := Font{kind = .Cells_8x16, scale = u8(scale), weight = weight}
+					cells := Font{kind = .Cells_8x16, size = size, weight = weight}
 					cells_memory := new(Font_Tables)
 					cells_table := font_table_of(cells_memory, nil)
 					x := 13 + third
@@ -515,15 +516,15 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 					execute(&cells_table, canvas_of(drawn))
 					execute_in_rectangles(&cells_table, canvas_of(parts), rectangles[:])
 					cells_text_reference(canvas_of(expected), x, 8, text, cells, color)
-					testing.expectf(t, slice.equal(drawn, expected), "%q, scale %d, weight %v: the font of the cells draws other pixels", text, scale, weight)
-					testing.expectf(t, slice.equal(parts, expected), "%q, scale %d, weight %v: the font of the cells in parts draws other pixels", text, scale, weight)
+					testing.expectf(t, slice.equal(drawn, expected), "%q, size %d, weight %v: the font of the cells draws other pixels", text, token, weight)
+					testing.expectf(t, slice.equal(parts, expected), "%q, size %d, weight %v: the font of the cells in parts draws other pixels", text, token, weight)
 					free(cells_memory)
 					checked += 1
 				}
 			}
 		}
 	}
-	testing.expect_value(t, checked, len(texts) * 3 * len(weights) * 3)
+	testing.expect_value(t, checked, len(texts) * len(tokens) * len(weights) * 3)
 	// A text with no interface font in the table is drawn in the font of
 	// the cells at the pixel of its origin, as the old kind drew it.
 	memory := new(Font_Tables)
@@ -535,8 +536,151 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 	execute(&table, canvas_of(drawn))
 	box := record_rectangle(table.records[0])
 	view := graphics.view(canvas_of(expected), box.left, box.top, box.right - box.left, box.bottom - box.top)
-	text_draw(view, 20 - box.left, 0, "To LT", color, 1, .Regular)
+	text_draw(view, 20 - box.left, 0, "To LT", color, font_text_size({}), .Regular)
 	testing.expect(t, slice.equal(drawn, expected), "a text in the interface font with no font draws other pixels than the font of the cells")
+}
+
+// The caption of a card, in both fonts: at the caption size, on the
+// baseline of the title, after the title with no overlap, and inside the
+// band of the title, so that it never reaches the content under it. The
+// title stays at the size of the body.
+@(test)
+the_caption_of_a_card_is_on_the_baseline_of_its_title :: proc(t: ^testing.T) {
+	font := test_interface_font(t)
+	CARD :: Area{8, 8, 400, 80}
+	fonts := [2]^display.Interface_Font{nil, &font.font}
+	for interface_font in fonts {
+		memory := new(Font_Tables)
+		defer free(memory)
+		table := font_table_of(memory, interface_font)
+		state: Interface_State
+		input: Input
+		frame := frame_begin(&table, &state, &input)
+		content := card(&frame, CARD, "TITLE", "a caption", graphics.colors.kernel, "12")
+		frame_end(&frame)
+		title, caption: Draw_Record
+		title_found, caption_found := false, false
+		for record in table.records[:table.record_count] {
+			text, _, is_text := text_of_record(&table, record)
+			switch {
+			case !is_text:
+			case text == "TITLE":
+				title, title_found = record, true
+			case text == "a caption":
+				caption, caption_found = record, true
+			}
+		}
+		with_font := interface_font != nil
+		testing.expectf(t, title_found && caption_found, "interface font %v: the card writes its title and its caption", with_font)
+		title_view, caption_view := record_view(title), record_view(caption)
+		testing.expect_value(t, title_view.size, BODY_TEXT_SIZE)
+		testing.expect_value(t, caption_view.size, font_text_size(FONT_CAPTION))
+		testing.expect_value(t, caption_view.y + baseline_of_font(&table, FONT_CAPTION), title_view.y + baseline_of_font(&table, FONT_INTERFACE_BOLD))
+		testing.expectf(t, measured_box(caption).left >= measured_box(title).right, "interface font %v: the caption starts after the title", with_font)
+		testing.expectf(t, caption_view.y >= CARD.y && caption_view.y + caption_view.height <= content.y, "interface font %v: the line of the caption, from %v, %v high, is above the content at %v", with_font, caption_view.y, caption_view.height, content.y)
+	}
+}
+
+// A heading and a caption that are wider than their box go on more lines,
+// in both fonts: each line at its size, one line under the line before,
+// inside the box, with no byte lost but the spaces at a break; the height
+// that the draw gives is the height of the measure. The edges come first:
+// an empty text takes no height and writes no record, and a box of 0
+// pixels or of 1 still ends, with one character on each line.
+@(test)
+a_heading_and_a_caption_wrap_in_their_box :: proc(t: ^testing.T) {
+	font := test_interface_font(t)
+	LONG :: "a text far too long for its box, WWWWW MMMMM, and more text after it"
+	Wrapped :: struct {
+		name:    string,
+		font:    Font,
+		draw:    proc "contextless" (frame: ^Frame, x, y, room: int, text: string) -> int,
+		measure: proc "contextless" (table: ^Draw_Table, text: string, room: int) -> int,
+	}
+	cases := [2]Wrapped {
+		{"heading", FONT_HEADING, proc "contextless" (frame: ^Frame, x, y, room: int, text: string) -> int {return draw_heading(frame, x, y, room, text, graphics.colors.text)}, heading_height},
+		{"caption", FONT_CAPTION, draw_caption, caption_height},
+	}
+	non_space_bytes :: proc(text: string) -> (count: int) {
+		for character in transmute([]u8)text {
+			count += int(character != ' ')
+		}
+		return count
+	}
+	X :: 8
+	Y :: 8
+	fonts := [2]^display.Interface_Font{nil, &font.font}
+	for interface_font in fonts {
+		for item in cases {
+			for room in ([?]int{0, 1, 120, 240}) {
+				for text in ([?]string{"", LONG}) {
+					memory := new(Font_Tables)
+					defer free(memory)
+					table := font_table_of(memory, interface_font)
+					state: Interface_State
+					input: Input
+					frame := frame_begin(&table, &state, &input)
+					height := item.draw(&frame, X, Y, room, text)
+					frame_end(&frame)
+					with_font := interface_font != nil
+					testing.expectf(t, height == item.measure(&table, text, room), "%s, interface font %v, room %v: the draw takes %v, the measure %v", item.name, with_font, room, height, item.measure(&table, text, room))
+					line := line_height(item.font)
+					testing.expect_value(t, line, font_text_size(item.font) / TEXT_SIZE_UNITS)
+					lines, bytes := 0, 0
+					for record in table.records[:table.record_count] {
+						shown, size, is_text := text_of_record(&table, record)
+						if !is_text {
+							continue
+						}
+						view := record_view(record)
+						testing.expectf(t, size == font_text_size(item.font), "%s, interface font %v, room %v: a line at the size %v", item.name, with_font, room, size)
+						testing.expectf(t, view.y == Y + lines * line, "%s, interface font %v, room %v: the line %v at %v, not under the line before", item.name, with_font, room, lines, view.y)
+						box := measured_box(record)
+						// A box narrower than one character holds one
+						// character on each line, which passes it.
+						if room >= 120 {
+							testing.expectf(t, box.left >= X && box.right <= X + room, "%s, interface font %v, room %v: the line %q passes its box", item.name, with_font, room, shown)
+						}
+						lines += 1
+						bytes += non_space_bytes(shown)
+					}
+					testing.expect_value(t, height, lines * line)
+					testing.expectf(t, bytes == non_space_bytes(text), "%s, interface font %v, room %v: %v bytes of %v drawn", item.name, with_font, room, bytes, non_space_bytes(text))
+					if text == LONG && room == 120 {
+						testing.expectf(t, lines >= 2, "%s, interface font %v: a text wider than its box takes more lines", item.name, with_font)
+					}
+				}
+			}
+		}
+	}
+}
+
+// The baseline of a font is the baseline of the face that draws it, at
+// each size of the tokens; a font whose text the table draws in the font
+// of the cells takes the baseline of the cells. A larger size never has
+// a higher baseline, so a caption on the line of a title starts lower.
+@(test)
+the_baseline_of_a_font_follows_its_face :: proc(t: ^testing.T) {
+	font := test_interface_font(t)
+	memory := new(Font_Tables)
+	defer free(memory)
+	table := font_table_of(memory, &font.font)
+	plain := font_table_of(memory, nil)
+	tokens := [?]int{graphics.TEXT_CAPTION, graphics.TEXT_BODY, graphics.TEXT_HEADING, graphics.TEXT_LARGE, graphics.TEXT_LARGEST}
+	previous := 0
+	for token in tokens {
+		interface_font := Font{kind = .Interface, size = u16(token * TEXT_SIZE_UNITS)}
+		row, found := text_rendering.baseline_row(.Interface, token * TEXT_SIZE_UNITS)
+		testing.expectf(t, found, "the size %v: B612 has a baseline", token)
+		testing.expect_value(t, baseline_of_font(&table, interface_font), row)
+		testing.expectf(t, row >= previous, "the size %v: the baseline %v is above %v of a smaller size", token, row, previous)
+		previous = row
+		// With no interface font in the table, the text is in the font of
+		// the cells: its baseline.
+		testing.expect_value(t, baseline_of_font(&plain, interface_font), baseline_of_font(&plain, Font{size = interface_font.size}))
+	}
+	testing.expect_value(t, text_top_on_baseline(&table, FONT_INTERFACE, 100, FONT_INTERFACE), 100)
+	testing.expectf(t, text_top_on_baseline(&table, FONT_INTERFACE_BOLD, 100, FONT_CAPTION) >= 100, "a caption on the line of a title starts at its top or lower")
 }
 
 // The font of an interface text follows the settings page at each read,

@@ -1530,7 +1530,7 @@ service_disconnect :: proc "contextless" (sandbox: ^Sandbox) {
 services_check :: proc "contextless" () {
 	for &sandbox in sandboxes {
 		if sandbox.service && sandbox.process != 0 {
-			if state, _ := system.process_state(sandbox.process); state == .Stopped {
+			if state, _, _ := system.process_state(sandbox.process); state == .Stopped {
 				service_disconnect(&sandbox)
 			}
 		}
@@ -1837,7 +1837,7 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	for {
 		wait := system.wait_begin()
 		// The state first: a call host that stopped wrote its completion before.
-		state, _ := system.process_state(sandbox.process)
+		state, _, _ := system.process_state(sandbox.process)
 		for _ in 0 ..< ring.CAPACITY {
 			completion, has_completion := system.receive(&sandbox.ring.completions)
 			if !has_completion {
@@ -1978,42 +1978,56 @@ export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Recor
 	return result
 }
 
-// stop_reason gives the text of the code of a stopped process: each fault
-// kind that the kernel delivers, and each stop code of the kernel.
-stop_reason :: proc "contextless" (code: u32) -> string {
-	switch code {
-	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Divide_Error):
-		return "division by zero"
-	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Debug):
-		return "debug trap"
-	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Breakpoint):
-		return "breakpoint"
-	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Invalid_Opcode):
-		return "invalid instruction"
-	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Segment_Not_Present):
-		return "segment not present"
-	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Stack_Fault):
-		return "stack fault"
-	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.General_Protection):
-		return "protection fault"
-	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Page_Fault):
-		return "page fault"
-	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.X87_Floating_Point):
-		return "x87 floating-point error"
-	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Alignment_Check):
-		return "alignment check"
-	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Simd_Floating_Point):
-		return "SIMD floating-point error"
-	case op.STOP_CODE_NO_HANDLE:
-		return "its last handle closed"
-	case op.STOP_CODE_NOT_COMMITTED:
-		return "page fault on a page that is not committed"
-	case op.STOP_CODE_RETURN:
-		return "the kernel cannot return to its thread"
-	case op.STOP_CODE_FAULT_UNANSWERED:
-		return "a fault that no thread can answer: its fault ring ended"
+// stop_reason_write writes why a process stopped: the stop outcome for a
+// stop of itself ("failed", "refused"), else the text of its stop cause,
+// with the name of the vector for a fault. A whole switch: a new cause is a
+// compile error here.
+stop_reason_write :: proc "contextless" (writer: ^system.Writer, cause: op.Stop_Cause, outcome: op.Stop_Outcome, vector: u32) {
+	switch cause {
+	case .Itself:
+		system.write_part(writer, op.STOP_OUTCOME_TEXTS[outcome])
+	case .Fault:
+		system.write_part(writer, op.STOP_CAUSE_TEXTS[cause])
+		system.write_part(writer, ", ")
+		if kind, known := op.fault_kind_of_word(u64(vector)); known {
+			system.write_part(writer, fault_kind_text(kind))
+		} else {
+			system.write_part(writer, "vector ")
+			system.write_part(writer, u64(vector))
+		}
+	case .None, .Holder, .Last_Thread_Ended, .Handles_Closed, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
+		system.write_part(writer, op.STOP_CAUSE_TEXTS[cause])
 	}
-	return code >= op.STOP_CODE_FAULT ? "fault" : "it stopped itself"
+}
+
+// fault_kind_text gives the words of a fault kind, as a line of the console
+// names it.
+fault_kind_text :: proc "contextless" (kind: op.Fault_Kind) -> string {
+	switch kind {
+	case .Divide_Error:
+		return "division by zero"
+	case .Debug:
+		return "debug trap"
+	case .Breakpoint:
+		return "breakpoint"
+	case .Invalid_Opcode:
+		return "invalid instruction"
+	case .Segment_Not_Present:
+		return "segment not present"
+	case .Stack_Fault:
+		return "stack fault"
+	case .General_Protection:
+		return "protection fault"
+	case .Page_Fault:
+		return "page fault"
+	case .X87_Floating_Point:
+		return "x87 floating-point error"
+	case .Alignment_Check:
+		return "alignment check"
+	case .Simd_Floating_Point:
+		return "SIMD floating-point error"
+	}
+	return ""
 }
 
 // call_isolated calls an export of a module in its call host. The arguments
@@ -2030,7 +2044,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	defer intrinsics.atomic_store(&work.call_stoppable, 0)
 	sandbox := &sandboxes[item.sandbox - 1]
 	if sandbox.process != 0 {
-		if state, _ := system.process_state(sandbox.process); state == .Stopped {
+		if state, _, _ := system.process_state(sandbox.process); state == .Stopped {
 			sandbox_end(sandbox)
 		}
 	}
@@ -2198,11 +2212,19 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				return fail("the process ", sandbox.name, " gave the status of a load for a call")
 			}
 		}
-		if state, code := system.process_state(sandbox.process); state == .Stopped {
+		if state, cause, outcome := system.process_state(sandbox.process); state == .Stopped {
 			report := system.process_stop_report(sandbox.process)
 			sandbox_end(sandbox)
-			result := fail("the process ", sandbox.name, " stopped: ", stop_reason(code))
-			fault_print(&report)
+			buffer: [96]u8
+			reason := system.Writer{buffer = buffer[:]}
+			stop_reason_write(&reason, cause, outcome, report.vector)
+			result := fail("the process ", sandbox.name, " stopped: ", system.written(&reason))
+			// Only these three causes have a stop report: its stack trace.
+			switch cause {
+			case .Fault, .Not_Committed, .Cannot_Return:
+				fault_print(&report)
+			case .None, .Itself, .Holder, .Last_Thread_Ended, .Handles_Closed, .Fault_Unanswered:
+			}
 			return result
 		}
 		if intrinsics.atomic_load_explicit(&work.cancel, .Relaxed) != 0 {

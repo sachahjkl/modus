@@ -70,10 +70,10 @@ DEBUG_EXCEPTION_EXIT_CODE :: 0x88 // The exit of the instruction int1 (icebp).
 INTERRUPTED_RUNS_LIMIT :: 1000
 
 // fail writes the line of a failure, which starts with "guest_demo:
-// failed: ", and stops the process with the code 1.
+// failed: ", and stops the process with `Failed`.
 fail :: proc "contextless" (parts: ..system.Part) -> ! {
 	system.log(.Info, ..parts)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 @(export, link_name = "entry")
@@ -115,7 +115,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 		if run_status == .Bad_Operation && error.kind == i64(errors.Kind.Unsupported) {
 			system.log(.Info, "guest_demo: Guest_Run gave Bad_Operation with the error kind Unsupported: the processors of this machine have no virtualization support that the kernel uses, and no guest runs: as it must")
 			system.log(.Info, "guest_demo: ok")
-			system.stop(0)
+			system.stop(.Done)
 		}
 		if run_status != .Ok {
 			fail("guest_demo: failed: Guest_Run gave ", run_status)
@@ -176,5 +176,5 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	}
 	system.log(.Info, "guest_demo: Process_Start of the guest gave Bad_State: as it must")
 	system.log(.Info, "guest_demo: ok")
-	system.stop(0)
+	system.stop(.Done)
 }

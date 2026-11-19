@@ -107,12 +107,12 @@ within :: proc "contextless" (row: Row) -> bool {
 // processor time, starts one thread that computes with no end on each, and
 // one on its own budget. Each second it reads the processor time of each
 // budget, draws the bars, and writes the summary on the log once. It never
-// returns; with no window, it stops with the code 1.
+// returns; with no window, it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "limits")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	own, _ := system.budget_read()
 	rows[ROW_COUNT - 1].limit = own.processor
