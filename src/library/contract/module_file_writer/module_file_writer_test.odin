@@ -122,7 +122,7 @@ expect_refusal :: proc(t: ^testing.T, parts: Module_Parts, refusal: Refusal, tab
 	testing.expect_value(t, size, 0, loc)
 	for item in output {
 		if item != UNTOUCHED {
-			testing.expect(t, false, "a refused write changed its output", loc)
+			testing.expect(t, false, "a refused write changed its output", loc = loc)
 			break
 		}
 	}
