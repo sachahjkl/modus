@@ -1044,7 +1044,7 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 | `kept_stop_reports` | generated | A hidden stop report names no hidden value, and the table of the kept reports follows its model |
 | `kept_settings` | raw | The kept record, the text of a zone and the settings page read as valid values, and write again to them |
 | `tpm_answers` | raw | Each reader of an answer of the TPM agrees with the check of its header, gives no value on a refusal, and gives slices inside the answer |
-| `text_shaping` | raw | One placed glyph for each character, at its first byte, with the advance of its table and its pair; a text or a range past its limit is refused |
+| `text_shaping` | raw | One placed glyph for each character, at its first byte, with the advance and the pair of its font file at the face and the size of the input, each in its bound, also over a font file that the input gives; a size out of its range, a text or a range past its limit is refused |
 | `operation_sequence`, `operation_sequence_generated` | raw, generated | An operation sequence that `check` accepts follows each rule of its format and writes again to its bytes, and a refusal names its step, its area or its argument; each sequence that the generator builds from the forms of `OPERATIONS` is one that `check` accepts and reads back whole |
 
 A raw target reads its input as the bytes that the system reads. A generated target reads its input as choices, and builds a whole value from them.

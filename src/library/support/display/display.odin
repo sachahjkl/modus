@@ -1118,7 +1118,19 @@ interface_font_open :: proc "contextless" (ctx: ^system.Context) -> (font: Inter
 			return {}, false
 		}
 	}
+	if !interface_faces_opened(&caches[0], &caches[1]) {
+		system.log_in("processes", .Warning, "display: the font outlines lack the interface font: the elements draw in the font of the cells")
+		return {}, false
+	}
 	return {regular = caches[0], bold = caches[1]}, true
+}
+
+// interface_faces_opened says if this copy of src/library/support/text_rendering
+// opened the two faces of the interface font, and if the two glyph caches
+// are of those faces: every text in the interface font is measured from
+// its font file, so a cache with no face has no measure.
+interface_faces_opened :: proc "contextless" (regular, bold: ^glyph_cache.Cache) -> bool {
+	return text_rendering.face_of_cache(regular) == .Interface && text_rendering.face_of_cache(bold) == .Interface_Bold
 }
 
 // The interface font of this process, validated once by open: the elements
