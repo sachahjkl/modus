@@ -73,7 +73,7 @@ site_gallery_groups := [Site_Gallery_Group]Site_Gallery_Group_Text {
 	.Interface       = {"The interface and the fonts", "The elements of the interface package, the two fonts of the system, and the settings that change them while the processes run."},
 	.Network         = {"The network, the cryptography and the randomness", "The network service and its endpoints, TCP and QUIC in processes, the cryptography module and the seed of the system."},
 	.Storage         = {"The storage", "The block service, the storage service with its stores and its versions, and a process that keeps its data across a restart."},
-	.Boot            = {"The boot and the trusted boot", "The boot display with the stages of the start, and the starts that the trusted boot refuses."},
+	.Boot            = {"The boot and the trusted boot", "The boot display with the stages of the start, the rescue start policy, and the starts that the trusted boot refuses."},
 }
 
 // One picture of the table: a file of docs/screenshots, its group, a
@@ -240,6 +240,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "boot.png", group = .Boot, home = true, guide = "docs/DESIGN.md", caption = "The boot display: the stages of the start on a line of time, the memory, the machine, the boot image, the processes."},
 	{file = "boot_measured.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "A measured start: the card of the boot image names the test key and the value of the PCR 11 of the TPM."},
 	{file = "boot_secure_boot.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "A start with Secure Boot: the firmware verified the boot program, then the boot program verified the system."},
+	{file = "rescue.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "The rescue start policy after the key R: the machine is usable with its console, which lists the few processes that run."},
 	{file = "boot_fails.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "A start that fails: the boot display stays, with the failure."},
 	{file = "boot_fails_changed_module.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "A start that fails: the boot display names the changed file and its two hashes."},
 	{file = "boot_fails_changed_kernel.png", group = .Boot, guide = "docs/TRUSTED_BOOT.md", caption = "A start that fails at the kernel module: its hash is not the hash that the system description expects."},

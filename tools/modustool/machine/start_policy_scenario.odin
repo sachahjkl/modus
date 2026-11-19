@@ -14,7 +14,8 @@ import "modustool:foundation"
 // 1. the key R, written on the serial line, the console input of the
 //    firmware with no screen, until the boot program reads it: the root service
 //    starts the rescue start policy in place of the default one, and the
-//    rescue makes the machine usable with its console;
+//    rescue makes the machine usable with its console, whose table of the
+//    processes is the picture rescue;
 // 2. a start list with a row of `shortage`, which this image does not hold,
 //    refused with no stop of the machine, and a row of the console that
 //    names a module that does not exist: the default start policy stops
@@ -58,6 +59,15 @@ scenario_start_policy_key := [?]Step {
 	// after the line of the start policy: two processes, no fixed order.
 	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},
 	{kind = .Wait, text = RESCUE_USABLE_TEXT},
+	// The console of the rescue looks as the console of each start: the
+	// table of the processes is what shows the short rescue list. The
+	// call starts monitor on demand, so the table holds its row too, and
+	// the picture waits for that row.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "processes()"},
+	{kind = .Wait, text = "[console] slot  name"},
+	{kind = .Wait, text = "monitor  "},
+	{kind = .Shot, text = "rescue"},
 	{kind = .Quit},
 }
 
