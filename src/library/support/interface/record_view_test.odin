@@ -19,7 +19,7 @@ Record_View :: struct {
 	format:                         Picture_Format, // A picture.
 	repetition:                     draw_record.Repetition, // The pattern of a rectangle; zero for one rectangle.
 	first, count:                   int, // The range of a text, of a grid or of the points of a path in the text table; the first pixel of a picture.
-	scale:                          int, // A text.
+	size:                           int, // A text and a grid: the text size in 1/64 pixel.
 	weight:                         Font_Weight, // A text.
 	origin_x:                       i32, // A text, in 1/64 pixel.
 	font:                           Font_Kind, // A text.
@@ -29,6 +29,10 @@ Record_View :: struct {
 	fill_alpha:                     u8, // The alpha of the fill of a path.
 	stroke_width:                   int, // The stroke of a path, in 1/64 pixel.
 }
+
+// The text size of the body, in 1/64 pixel: the size of a record that a
+// test writes by hand.
+BODY_TEXT_SIZE :: graphics.TEXT_BODY * TEXT_SIZE_UNITS
 
 // The line of a gradient in a view: the writers of the package write a
 // gradient down or across.
@@ -74,13 +78,13 @@ record_view :: proc(record: Draw_Record) -> Record_View {
 	case draw_record.Draw_Text:
 		view.kind, view.font = .Text, fields.font
 		view.color, view.alpha = draw_record.channels_of(fields.color), draw_record.alpha_of(fields.color)
-		view.first, view.count, view.scale, view.weight, view.origin_x = int(fields.first), int(fields.count), int(fields.scale), fields.weight, fields.origin_x
+		view.first, view.count, view.size, view.weight, view.origin_x = int(fields.first), int(fields.count), int(fields.size), fields.weight, fields.origin_x
 	case draw_record.Draw_Picture:
 		view.kind, view.format = .Picture, fields.format
 		view.memory, view.first, view.stride, view.generation = int(fields.memory), int(fields.first), int(fields.stride), int(fields.generation)
 	case draw_record.Draw_Text_Grid:
 		view.kind = .Text_Grid
-		view.first, view.count, view.columns = int(fields.first), int(fields.count), int(fields.columns)
+		view.first, view.count, view.columns, view.size = int(fields.first), int(fields.count), int(fields.columns), int(fields.size)
 	case draw_record.Draw_Path:
 		view.kind, view.stroke_width = .Path, int(fields.stroke_width)
 		view.first, view.count = int(fields.first), int(fields.count)

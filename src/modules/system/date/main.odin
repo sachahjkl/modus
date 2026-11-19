@@ -213,7 +213,9 @@ synchronize :: proc "contextless" () -> (at_zero: i64, seconds: i64, edge_millis
 //
 // **The stop**: with no date page or no ports, it writes `date: no date
 // page or no ports of the clock: the system has no date` at the level
-// error, and stops with the code 1. A clock that gives no valid date does
+// error, and stops with `Refused` when its context names no such handle or
+// a page that it cannot map, else with `Failed`. A clock that gives no
+// valid date does
 // not stop it: it writes the error, and tries again at the next read.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -221,7 +223,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address, status := system.memory_map(ctx.handles[date.GRANT_PAGE], {.Write})
 	if status != .Ok || ctx.handles[date.GRANT_PORTS] == 0 {
 		system.log(.Error, "date: no date page or no ports of the clock: the system has no date")
-		system.stop(1)
+		// The ports of the clock are a handle of the context: none is a
+		// refused context. A page that does not map is refused only when the
+		// context names none or a handle that cannot be mapped.
+		if ctx.handles[date.GRANT_PORTS] == 0 {
+			system.stop(.Refused)
+		}
+		system.stop(system.stop_outcome_of_grant(ctx.handles[date.GRANT_PAGE], status))
 	}
 	page = (^date.Page)(address)
 	if .Settings_Page in fixed_addresses.ranges_mapped(&ctx.values) {

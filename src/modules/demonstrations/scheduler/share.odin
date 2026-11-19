@@ -772,7 +772,7 @@ share_processes_start :: proc "contextless" () -> bool {
 case_processes_stop :: proc "contextless" (processes: []Share_Process) {
 	for &started in processes {
 		if started.process != 0 {
-			system.call(.Process_Stop, u64(started.process), 0)
+			system.process_stop(started.process)
 			system.close(started.process)
 		}
 		started = {}

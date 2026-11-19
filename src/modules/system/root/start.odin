@@ -194,7 +194,7 @@ start_abandon :: proc "contextless" (work: ^Start_Work) {
 		work.view^ = {}
 	}
 	if work.driver != nil {
-		system.call(.Process_Stop, u64(work.driver.process), 0)
+		system.process_stop(work.driver.process)
 	}
 }
 
@@ -348,7 +348,10 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 	}
 	work.shared[0] = system.memory_create(ring.PAGE_COUNT) or_return
 	work.slot.client = system.give(compositor, work.shared[0], {.Read, .Write}) or_return
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client)}})
+	// The capture face and the input face ride this ring: the compositor
+	// takes them only from the client whose record says so.
+	capture: u64 = .Screen_Capture in work.role.grants ? display.CLIENT_CAPTURE : 0
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client), display.CLIENT_ADD_CAPTURE = capture}})
 	start_grant_put(work, .Display, {work.shared[0], {.Read, .Write}})
 	return .Ok
 }
@@ -544,7 +547,7 @@ start_finish :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	if work.view != nil {
 		if status := terminal_start(work.view, slot, work.shared[0], work.shared[1]); status != .Ok {
-			system.call(.Process_Stop, u64(slot.process), 0)
+			system.process_stop(slot.process)
 			return status
 		}
 		started_log(work.name, work.principal, ", with a terminal")

@@ -212,7 +212,7 @@ sample_log :: proc "contextless" () {
 	}
 	system.log(.Info, "inspect: ", name, ": ", current.mappings.count, " mappings, ", pages, " mapped pages, ", present, " with a frame, ", current.threads.count, " threads, ", current.modules.count, " modules; the kernel says ", current.process.mapped_pages, " mapped pages and ", current.process.thread_count, " threads")
 	system.log(.Info, "inspect: one sample of ", name, " took ", current.nanoseconds / 1000, " us and ", current.entries, " kernel entries")
-	if current.stop.code != 0 {
+	if current.stop.cause != 0 {
 		buffer: [512]u8
 		writer := system.Writer{buffer = buffer[:]}
 		stop_write(&writer, &current.stop)
@@ -399,13 +399,13 @@ key :: proc "contextless" (event: display.Event) {
 // when Space froze the sample, it only reads the list of the processes
 // again.
 //
-// **The stop**: with no window, it stops with the code 1. Else it never
+// **The stop**: with no window, it stops with `Failed`. Else it never
 // returns: `stop("inspect")`, or the close button of its window, ends it.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "inspect")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {

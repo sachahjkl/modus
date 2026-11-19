@@ -151,7 +151,7 @@ worker_start :: proc "contextless" (index: int) -> bool {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "threads")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 
 	// A thread that ends: the first thread waits for it, then reads the
@@ -172,7 +172,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		worker.canvas = square_pictures[index]
 		if !worker_start(index) {
 			system.log(.Info, "threads: cannot start a thread")
-			system.stop(1)
+			system.stop(.Failed)
 		}
 	}
 

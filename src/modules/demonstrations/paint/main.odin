@@ -146,7 +146,7 @@ lines :: proc "c" () -> i64 {
 // calls and the events of the pointer in one loop until the principal
 // closes the window.
 //
-// With no window it stops with the code 1. Each turn draws the palette, the
+// With no window it stops with `Failed`. Each turn draws the palette, the
 // counts of the callers and the paper, then waits for an event or a call.
 // The calls run first, then the events: the left button draws, the right
 // button erases with a wide line, a click on the palette chooses a color,
@@ -156,7 +156,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "paint")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	paper_picture := paper()
 	graphics.clear(paper_picture, COLOR_PAPER)
@@ -250,7 +250,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					graphics.line(paper(), last_x, last_y - PALETTE_HEIGHT, event.x, y - PALETTE_HEIGHT, erase ? 12 : 3, erase ? COLOR_PAPER : color)
 				}
 				last_x, last_y, drawing = event.x, y, true
-			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted:
+			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

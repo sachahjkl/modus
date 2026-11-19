@@ -51,6 +51,49 @@ Client :: struct {
 	// one; 0: none. A contested row holds no grant for either principal,
 	// until one of them revokes the key.
 	contested:      u64,
+	// The word of the uses of the key (Client_Uses): a reader takes it
+	// through client_uses_of_word only.
+	uses:           u64,
+	// 1 while the session in front is the session of another principal
+	// (client_display_paused): the row holds no View and no Input, as
+	// principal 0 cannot see the screen of a named session.
+	not_in_front:   u64,
+}
+
+// client_display_paused says if a row of a principal holds no View and no
+// Input while the session of another principal is in front: the screen of
+// a session shows its data to its principal only.
+client_display_paused :: proc "contextless" (row_principal: u64, principal_in_front: u64) -> bool {
+	return row_principal != principal_in_front
+}
+
+// What a client key may do with its row (src/md/features/remote_display.md,
+// "The authority"). The bit of each use is its value.
+Client_Use :: enum u64 {
+	Calls = 0, // The calls of `remote`, which act for the principal of the row.
+	View  = 1, // The view of the screen through `remote_display`.
+	Input = 2, // The keys and the pointer through `remote_display`. Never without View.
+}
+Client_Uses :: bit_set[Client_Use; u64]
+
+// client_uses_word gives the word of a set of uses, as a row and a command
+// carry it.
+client_uses_word :: proc "contextless" (uses: Client_Uses) -> u64 {
+	return transmute(u64)uses
+}
+
+// client_uses_of_word is the one border of the word of the uses: it refuses
+// a bit that names no use, an empty set, and Input without View.
+client_uses_of_word :: proc "contextless" (word: u64) -> (uses: Client_Uses, ok: bool) {
+	known := client_uses_word({.Calls, .View, .Input})
+	if word == 0 || word & ~known != 0 {
+		return {}, false
+	}
+	uses = transmute(Client_Uses)word
+	if .Input in uses && .View not_in uses {
+		return {}, false
+	}
+	return uses, true
 }
 
 // The client table, in one page that the root service writes.
@@ -109,14 +152,17 @@ client_find :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u
 }
 
 // client_grant_holds says if the row at place of a copy of the table still
-// carries the grant with this serial: the same row, not freed and not
-// given again, a session of its principal that is not locked, and a key
-// that no other principal holds.
-client_grant_holds :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, place: int, serial: u64) -> bool {
+// carries the grant with this serial for a use: the same row, not freed and
+// not given again, a session of its principal that is not locked, a key
+// that no other principal holds, a word of uses that holds the use, and,
+// for View and Input, the session of its principal in front.
+client_grant_holds :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, place: int, serial: u64, use: Client_Use) -> bool {
 	if place < 0 || place >= CLIENT_CAPACITY || serial == 0 {
 		return false
 	}
-	return clients[place].serial == serial && clients[place].session_locked == 0 && clients[place].contested == 0
+	uses, uses_ok := client_uses_of_word(clients[place].uses)
+	in_front := use == .Calls || clients[place].not_in_front == 0
+	return clients[place].serial == serial && clients[place].session_locked == 0 && clients[place].contested == 0 && uses_ok && use in uses && in_front
 }
 
 // What the root service does with a client key of the disk grant table of

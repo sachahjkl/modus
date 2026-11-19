@@ -853,13 +853,13 @@ shows_line_write :: proc "contextless" () {
 // each tile of the stage, then the band. The interface package draws again
 // only the tiles and the texts that changed. The loop then waits for a key,
 // a call, the next picture of an animation, or the end of the still time
-// (with no end while paused). With no random seed or no window, it stops
-// with the code 1.
+// (with no end while paused). With no random seed, it stops with
+// `Refused`; with no window, with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log(.Info, "heron: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	service, _ := system.service_open(ctx)
 	// The surface has two pictures, as each surface has: the process draws
@@ -867,7 +867,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// a damage rectangle that is cleared and does not hold the heron yet.
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "heron")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	stage = {pixels = raw_data(stage_pixels[:]), width = STAGE_WIDTH, height = STAGE_HEIGHT, stride = STAGE_WIDTH}
 	for &picture, index in pictures {
@@ -891,7 +891,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Settings_Changed:
 				// A new font: each text of the band is drawn again.
 				interface.draw_whole_window_next(&window_memory.drawing)
-			case .None, .Pointer, .Go_To, .Resized, .Copy_Asked, .Pasted:
+			case .None, .Pointer, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

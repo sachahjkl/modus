@@ -114,7 +114,7 @@ line_draw :: proc "contextless" (canvas: graphics.Canvas, place: i64, y: int, te
 	placed: [LINE_LIMIT]text_rendering.Placed_Glyph
 	count := min(len(text), LINE_LIMIT)
 	_, width, _ = text_rendering.shape(spacing, transmute([]u8)(text[:count]), placed[:count])
-	graphics.text_proportional(canvas, place, y, placed[:count], spacing.face, scale, color)
+	graphics.text_proportional(canvas, place, y, placed[:count], spacing.face, text_rendering.size_of_scale(scale), color)
 	return width
 }
 
@@ -311,7 +311,7 @@ measure :: proc "contextless" () {
 		start := system.nanoseconds()
 		count, _, _ := text_rendering.shape(&regular_spacing, text, placed[:])
 		shaped := system.nanoseconds()
-		graphics.text_proportional(canvas, 0, 0, placed[:count], interface_faces.regular, 1, graphics.colors.text)
+		graphics.text_proportional(canvas, 0, 0, placed[:count], interface_faces.regular, text_rendering.TEXT_SIZE_OF_SCALE_ONE, graphics.colors.text)
 		drawn := system.nanoseconds()
 		shaping_time = min(shaping_time, shaped - start)
 		if batch == 0 {
@@ -329,18 +329,18 @@ first_drawing_time: u64
 // entry opens the window, finds the faces of the interface font, reserves
 // the glyph memory, measures one line, writes the lines on the log, then
 // draws the window at each event until the process is stopped. With no
-// window, it stops with the code 1.
+// window, it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_font")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	font_ok: bool
 	interface_faces, font_ok = display.interface_font_open(ctx)
 	if !font_ok {
 		system.log(.Info, "interface_font: the boot image gives no font outlines with the interface font")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	// The glyphs of this copy come from its private glyph cache: its glyph
 	// memory before the measure, so that the measure draws no glyph band
@@ -356,7 +356,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	regular_spacing_large, spacing_ok[1] = text_rendering.spacing_of(.Interface, text_rendering.size_of_scale(3))
 	bold_spacing, spacing_ok[2] = text_rendering.spacing_of(.Interface_Bold, text_rendering.size_of_scale(1))
 	if !spacing_ok[0] || !spacing_ok[1] || !spacing_ok[2] {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	no_pair_spacing_large = regular_spacing_large
 	no_pair_spacing_large.without_pairs = true

@@ -168,7 +168,7 @@ connected :: proc "contextless" (client: ^Client) -> bool {
 	}
 	kind, _, _ := system.handle_state(client.ring_memory)
 	region_kind, _, _ := system.handle_state(client.region_memory)
-	state, _ := system.process_state(client.service)
+	state, _, _ := system.process_state(client.service)
 	if kind != .Memory || region_kind != .Memory || state == .Stopped || state == .None {
 		client.gone = true
 	}

@@ -91,11 +91,44 @@ Page_Marks :: struct {
 }
 page_marks: Page_Marks
 
-// page_clear empties the page.
+// page_clear empties the page, its heading too.
 page_clear :: proc "contextless" () {
 	row_part_count, row_count, built_count, first_line = 0, 0, 0, 0
 	page_link_count, focused_link = 0, 0
 	page_marks = {}
+	page_heading, page_heading_color, heading_rows = "", 0, 0
+}
+
+// The heading of the page: its title, at the heading size, over the rows
+// (docs/DESIGN.md, "5. Text"). It is not a row: the rows keep one height,
+// so the scroll counts rows and a press finds its row by a division. The
+// heading takes whole rows of the text column instead, its lines and a gap
+// under them, and it stays when the rows move.
+page_heading: string // In the module file, the resource of the link pages or built.
+page_heading_color: graphics.Color
+heading_rows: int // The rows of the text column that the heading takes.
+
+// heading_set gives the page its heading, and computes the rows that it
+// takes: its lines at the heading size in the width of the text, never
+// cut, and a gap under them.
+heading_set :: proc "contextless" (text: string, color: graphics.Color) {
+	measure_table.interface_font = display.interface_font_of()
+	page_heading, page_heading_color = text, color
+	height := interface.heading_height(&measure_table, text, TEXT_WIDTH) + graphics.GAP
+	heading_rows = (height + CELL_HEIGHT - 1) / CELL_HEIGHT
+}
+
+// view_rows gives the rows of the page that the window shows: the rows of
+// the text column under the heading. A heading of many lines leaves one
+// row at least.
+view_rows :: proc "contextless" () -> int {
+	return max(ROWS - heading_rows, 1)
+}
+
+// rows_top gives the y of the first row that the window shows: under the
+// heading.
+rows_top :: proc "contextless" () -> int {
+	return MARGIN + heading_rows * CELL_HEIGHT
 }
 
 // row_part_add adds a part to the page. It gives false when the page is
@@ -626,10 +659,11 @@ record_described :: proc "contextless" (index: int, name: string) -> bool {
 // of the window, or 0.
 link_at_place :: proc "contextless" (x, y: int) -> int {
 	left := LIST_WIDTH + MARGIN
-	if y < MARGIN || y >= MARGIN + ROWS * CELL_HEIGHT {
+	top := rows_top()
+	if y < top || y >= top + view_rows() * CELL_HEIGHT {
 		return 0
 	}
-	wanted := first_line + (y - MARGIN) / CELL_HEIGHT
+	wanted := first_line + (y - top) / CELL_HEIGHT
 	row := -1
 	for &part in row_parts[:row_part_count] {
 		row += int(.Row_Start in part.flags)
@@ -671,7 +705,7 @@ destination_show :: proc "contextless" (destination: Link_Destination) {
 		select(destination.index)
 		wanted_export, wanted_record = "", ""
 		if wanted_row >= 0 {
-			first_line = clamp(wanted_row, 0, max(rows() - ROWS, 0))
+			first_line = clamp(wanted_row, 0, max(rows() - view_rows(), 0))
 		}
 		page_log()
 	case .Link_Page:
@@ -698,8 +732,8 @@ link_focus_move :: proc "contextless" (backward: bool) {
 	}
 	focused_link = next + 1
 	link := &page_links[next]
-	if link.first_row >= 0 && (link.first_row < first_line || link.first_row >= first_line + ROWS) {
-		first_line = clamp(link.first_row - ROWS / 3, 0, max(rows() - ROWS, 0))
+	if link.first_row >= 0 && (link.first_row < first_line || link.first_row >= first_line + view_rows()) {
+		first_line = clamp(link.first_row - view_rows() / 3, 0, max(rows() - view_rows(), 0))
 	}
 	system.log(.Info, "manual: the focus is on the link ", link.label, " to ", link.target)
 }
@@ -732,14 +766,14 @@ link_pages_open :: proc "contextless" () {
 	system.log(.Info, "manual: ", u64(pages.count), " link pages")
 }
 
-// link_page_build writes a link page: its title, where it comes from, and
-// its text.
+// link_page_build writes a link page: its title as its heading, where it
+// comes from, and its text.
 link_page_build :: proc "contextless" (index: int) {
 	page_clear()
 	wanted_row = -1
 	page_kind, link_page_index = .Link_Page, index
 	target := manual_pages.target_of(link_pages, index)
-	put(manual_pages.title_of(link_pages, index), 0, graphics.colors.text)
+	heading_set(manual_pages.title_of(link_pages, index), graphics.colors.text)
 	source := ""
 	switch manual_pages.link_target_kind(target) {
 	case .Term:
@@ -756,10 +790,12 @@ link_page_build :: proc "contextless" (index: int) {
 		// The page of a declaration names its file and its line in its
 		// first sentence: a line "from" would say it twice.
 	}
+	// The gap under the heading starts the text; the line of the source
+	// has an empty row under it.
 	if source != "" {
 		put_built(0, graphics.colors.dim, "from ", source)
+		put("", 0, 0)
 	}
-	put("", 0, 0)
 	put_markdown(manual_pages.text_of(link_pages, index), 0, graphics.colors.text)
 }
 

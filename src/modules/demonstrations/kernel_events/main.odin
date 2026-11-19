@@ -124,7 +124,6 @@ LOADERS_MOST :: 4
 STRESS_PATTERN :: u64(0x5EED_E7E7_0000_0000)
 FAULT_ADDRESS :: u64(0x1000) // Below the module of the process: no mapping.
 MEASURE_TIME :: 300 // Milliseconds of one measure.
-STOP_BY_PARENT :: 9
 
 // What each child asks of the budget of this process: only what it uses.
 // pages: its own copy of the module (the file is about 160 KiB, 40 pages,
@@ -283,22 +282,22 @@ child_start :: proc "contextless" (role: Role, name: string, amounts: system.Bud
 
 // child_stopped waits until a child stopped. The bound only ends a hang.
 child_stopped :: proc "contextless" (child: ^Child) -> bool {
-	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		results, status := system.call(.Process_State, u64(child.process))
-		if status != .Ok || op.Process_State(results[0]) == .Stopped {
-			return status == .Ok
-		}
-		system.sleep(system.time() + 10)
-	}
-	return false
+	_, _, stopped := system.process_stop_wait(child.process, system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
+	return stopped
 }
 
 // child_end stops a child, closes it, and says if its budget came back
 // whole: each page, each thread and its process. The budget comes back when
-// the last processor left the child; the bound only ends a hang.
-child_end :: proc "contextless" (child: ^Child, name: string) -> (back: bool) {
-	system.call(.Process_Stop, u64(child.process), STOP_BY_PARENT)
+// the last processor left the child; the bound only ends a hang. With
+// cause_after_stop, it gives the stop cause of the child after its own
+// stop, before the close: a child that stopped before keeps its first
+// cause.
+child_end :: proc "contextless" (child: ^Child, name: string, cause_after_stop: ^op.Stop_Cause = nil) -> (back: bool) {
+	system.process_stop(child.process)
 	child_stopped(child)
+	if cause_after_stop != nil {
+		_, cause_after_stop^, _ = system.process_state(child.process)
+	}
 	system.close(child.process)
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; !back && system.time() < deadline; {
 		after, _ := system.budget_read()
@@ -326,14 +325,13 @@ round_run :: proc "contextless" (load: ^Child, round: Round) -> bool {
 		if done == u32(round) {
 			return true
 		}
-		// A child that refused the round stopped: its stop code says so at
-		// once, and the wait for a round that never runs ends now.
-		if results, status := system.call(.Process_State, u64(load.process)); status == .Ok && op.Process_State(results[0]) == .Stopped {
-			if results[1] == rounds.REFUSED_ROUND_STOP_CODE {
-				system.log(.Info, "kernel_events: the load child refused the round ", u64(round), ": its word names no round to run")
-			} else {
-				system.log(.Info, "kernel_events: the load child stopped with the code ", results[1], " before the end of the round ", u64(round))
-			}
+		// A child that refused the round stopped, after its own line that
+		// says so: the wait for a round that never runs ends now.
+		if state, cause, outcome := system.process_state(load.process); state == .Stopped {
+			buffer: [64]u8
+			stop_text := system.Writer{buffer = buffer[:]}
+			system.stop_write(&stop_text, cause, outcome)
+			system.log(.Info, "kernel_events: the load child stopped: ", system.written(&stop_text), ", before the end of the round ", u64(round))
 			return false
 		}
 		system.word_wait(&load.shared.done, done, system.time() + 100)
@@ -509,9 +507,12 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	right = ran && tally.kinds[.Switch] >= SLEEPS
 	system.log(.Info, "kernel_events: a thread that sleeps 20 times: ", tally.kinds[.Switch], " switches to it", right ? string(": as it must") : string(": WRONG"))
 	case_end(3, right, tally.kinds[.Switch], " switches to it, at least 20", right ? string(": as it must") : string(": WRONG"))
-	code, _ := system.call(.Process_State, u64(faulter.process))
-	right = faulted && tally.faults_stopped == 1 && tally.fault_detail == 14 && tally.fault_address == FAULT_ADDRESS
-	system.log(.Info, "kernel_events: a child that faults once: ", tally.faults_stopped, " record of a fault that stopped it, vector ", tally.fault_detail, ", address ", system.Hex(tally.fault_address), ", stop code ", system.Hex(code[1]), right ? string(": as it must") : string(": WRONG"))
+	_, faulter_cause, faulter_outcome := system.process_state(faulter.process)
+	stop_buffer: [64]u8
+	stop_text := system.Writer{buffer = stop_buffer[:]}
+	system.stop_write(&stop_text, faulter_cause, faulter_outcome)
+	right = faulted && faulter_cause == .Fault && tally.faults_stopped == 1 && tally.fault_detail == 14 && tally.fault_address == FAULT_ADDRESS
+	system.log(.Info, "kernel_events: a child that faults once: ", tally.faults_stopped, " record of a fault that stopped it, vector ", tally.fault_detail, ", address ", system.Hex(tally.fault_address), ", stopped: ", system.written(&stop_text), right ? string(": as it must") : string(": WRONG"))
 	case_end(4, right, tally.faults_stopped, " record, vector ", tally.fault_detail, right ? string(": as it must") : string(": WRONG"))
 	interface_draw(window)
 
@@ -800,7 +801,8 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 		status: system.Status
 		load_memory, status = system.memory_create(1)
 		if status != .Ok {
-			system.stop(20)
+			system.log(.Info, "kernel_events: the load child could not make its memory object: ", op.STATUS_NAMES[status])
+			system.stop(.Failed)
 		}
 		round_word: u32
 		loaders: [LOADERS_MOST]system.Thread
@@ -815,7 +817,7 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 			round, round_ok := rounds.round_of_word(round_word)
 			if !round_ok {
 				system.log(.Info, "kernel_events: the load child got the round ", u64(round_word), ", which names no round: it stops")
-				system.stop(rounds.REFUSED_ROUND_STOP_CODE)
+				system.stop(.Refused)
 			}
 			switch round {
 			case .None:
@@ -885,7 +887,9 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 		}
 		_ = intrinsics.volatile_load((^u64)(uintptr(FAULT_ADDRESS)))
 	}
-	system.stop(30) // The child that faults does not come here: its fault stops it.
+	// The child that faults does not come here: its fault stops it.
+	system.log(.Info, "kernel_events: the child of the role ", u64(role), " came past its fault")
+	system.stop(.Failed)
 }
 
 // entry runs the role that the context names, for a child; else it runs
@@ -897,24 +901,24 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	role, role_ok := role_of(ctx.values[VALUE_ROLE])
 	if !role_ok {
 		system.log(.Info, "kernel_events: the context names the role ", ctx.values[VALUE_ROLE] & 0xFFFF_FFFF, ", which names no role")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	if role != .Parent {
 		child_role_run(role)
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log(.Info, "kernel_events: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "kernel_events")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
 		system.log(.Info, "kernel_events: no boot image")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	interface_draw(&window)
@@ -927,12 +931,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	rings_memory, status = system.memory_create(rings_pages, flags = {.Contiguous})
 	if status != .Ok {
 		system.log(.Info, "kernel_events: memory_create of the rings failed: ", op.STATUS_NAMES[status])
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	rings_base, status = system.memory_map(rings_memory)
 	if status != .Ok {
 		system.log(.Info, "kernel_events: memory_map of the rings failed: ", op.STATUS_NAMES[status])
-		system.stop(1)
+		system.stop(.Failed)
 	}
 
 	cases_of_refusal()
@@ -954,7 +958,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		case_of_the_cost(&load, other)
 		if faulter_started {
-			child_end(&faulter, "the child that faults")
+			// The child stopped on its fault long before: the stop of its
+			// parent as a holder does not change its first stop cause.
+			cause_after_stop: op.Stop_Cause
+			child_end(&faulter, "the child that faults", &cause_after_stop)
+			kept := cause_after_stop == .Fault
+			system.log(.Info, "kernel_events: the child that faults, stopped again by this process: its stop cause stays ", op.STOP_CAUSE_TEXTS[cause_after_stop], kept ? string(": as it must") : string(", not a fault: WRONG"))
 		}
 		interface_draw(&window)
 		case_of_the_revoked_right(&load)

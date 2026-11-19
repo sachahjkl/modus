@@ -10,6 +10,7 @@ package root
 // usable (Machine_Usable); this service does not judge what it started.
 
 import info "modus:contract/boot_info"
+import op "modus:contract/operation"
 import "modus:contract/start_list"
 import "modus:contract/system_description"
 import "modus:private/root/start_policy_rules"
@@ -295,7 +296,7 @@ start_policy_running :: proc "contextless" () -> ^Started {
 		// A failed start policy whose stop this service asked can still run
 		// past the bound of the stage Stopping: it is not the one that runs.
 		if item.process != 0 && .Start_Policy in item.role.grants && !item.stop_asked_by_root_service {
-			if state, _ := system.process_state(item.process); state != .Stopped {
+			if state, _, _ := system.process_state(item.process); state != .Stopped {
 				return &item
 			}
 		}
@@ -315,27 +316,33 @@ start_policy_none :: proc "contextless" (cause: string) {
 }
 
 // start_policy_stopped is told of each process that stopped, before its
-// place is freed.
-start_policy_stopped :: proc "contextless" (item: ^Started, code: u32) {
+// place is freed. Any stop cause of the start policy before the machine is
+// usable starts the rescue, whatever its stop outcome: a policy that
+// stopped before it said so did not make the machine usable. The line gives
+// the cause and the outcome.
+start_policy_stopped :: proc "contextless" (item: ^Started, cause: op.Stop_Cause, outcome: op.Stop_Outcome) {
 	if item != start_policy_process {
 		return
 	}
 	start_policy_process = nil
 	hash := start_policy_hash_text(start_policy_hash)
+	buffer: [64]u8
+	stop_text := system.Writer{buffer = buffer[:]}
+	system.stop_write(&stop_text, cause, outcome)
 	switch start_policy_stage {
 	case .None, .Stopping, .No_Policy:
 		// The stop was asked by this service, or the policy was no longer
 		// the one that it waits for.
 	case .Running:
 		if start_policy_list == .Rescue {
-			system.log(.Error, "root: the rescue start policy ", hash, " stopped before the machine was usable, with the code ", u64(code))
+			system.log(.Error, "root: the rescue start policy ", hash, " stopped before the machine was usable: ", system.written(&stop_text))
 			start_policy_none("the rescue start policy stopped before the machine was usable")
 			return
 		}
-		system.log(.Warning, "root: the start policy ", hash, " stopped before the machine was usable, with the code ", u64(code), ": the rescue start policy starts")
+		system.log(.Warning, "root: the start policy ", hash, " stopped before the machine was usable: ", system.written(&stop_text), "; the rescue start policy starts")
 		start_policy_rescue_begin()
 	case .Usable:
-		system.log(.Warning, "root: the start policy ", hash, " stopped with the code ", u64(code), " after the machine was usable: the processes that it asked for keep running")
+		system.log(.Warning, "root: the start policy ", hash, " stopped: ", system.written(&stop_text), ", after the machine was usable: the processes that it asked for keep running")
 	}
 }
 
@@ -367,7 +374,7 @@ root_stop_ask :: proc "contextless" (item: ^Started) {
 	if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 		unlock_stop_ask()
 	}
-	system.call(.Process_Stop, u64(item.process), 0)
+	system.process_stop(item.process)
 }
 
 // start_policy_step runs after each reap: it starts the rescue when the
@@ -519,7 +526,7 @@ start_policy_facts :: proc "contextless" (sender: ^Started, name: string) -> sta
 find_running :: proc "contextless" (name: string) -> ^Started {
 	for &item in started {
 		if item.process != 0 && !item.is_terminal && system.name_of(item.name[:]) == name {
-			if state, _ := system.process_state(item.process); state != .Stopped {
+			if state, _, _ := system.process_state(item.process); state != .Stopped {
 				return &item
 			}
 		}

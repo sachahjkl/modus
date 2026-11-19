@@ -12,7 +12,9 @@ the_rules_keep_their_contrast_in_each_appearance :: proc(t: ^testing.T) {
 	for of in Appearance {
 		tokens := color_tokens_of(of)
 		surfaces := [?]Color{tokens.background, tokens.card_top, tokens.card_bottom}
-		// The text and the dim text: on each surface. On the track (the
+		// The text and the dim text: on each surface. A caption is the dim
+		// text at TEXT_CAPTION, a size under the large text, so the bound of
+		// a text holds for it on each surface of a card. On the track (the
 		// label of a button, a band) the text; the dim text is there only
 		// as a large text, the placeholder of an input at scale 2.
 		for surface in surfaces {

@@ -236,6 +236,10 @@ Client :: struct {
 	key_serial_sent: u64,
 	clipboard: clipboard_rules.Window_State, // What waits for an answer of the process to a key of the clipboard (clipboard.odin).
 	clipboard_refused: u64, // The Copy, Copy_Declined and Paste_Taken records that the compositor refused.
+	// The process holds the start grant Screen_Capture, as its Client_Add
+	// says: the compositor takes the commands of the capture face and of
+	// the input face from it (capture.odin).
+	capture_allowed: bool,
 }
 
 // A rectangle of the screen. right and bottom are not in the rectangle.
@@ -528,7 +532,7 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 	}
 	if status != .Ok {
 		system.log(.Info, "compositor: no memory")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}
 }
@@ -595,12 +599,12 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 // 6. A frame, at most one each 16 ms, when the screen has damage.
 //
 // **The stop.** With no framebuffer (modus:support/screen_presence), the
-// compositor writes `compositor: no framebuffer` and stops with the code 1;
+// compositor writes `compositor: no framebuffer` and stops with `Failed`;
 // with no input ring or no control ring, it writes `compositor: no input
-// ring or no control ring` and stops with the code 1. When its budget
+// ring or no control ring` and stops with `Failed`. When its budget
 // cannot pay the frame and the background of the screen, it writes
 // `compositor: a screen of <width>x<height> needs <n> pages, the budget
-// holds <m>` and stops with the code 1. Without the
+// holds <m>` and stops with `Failed`. Without the
 // memory of its frame, it writes `compositor: no memory` and stops. Else it
 // never returns.
 @(export, link_name = "entry")
@@ -616,11 +620,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// process: the two never disagree on a screen.
 	if !screen_presence.screen_present(status, ctx.values[VALUE_WIDTH], ctx.values[VALUE_HEIGHT]) {
 		system.log(.Info, "compositor: no framebuffer")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if input_status != .Ok || control_status != .Ok {
 		system.log(.Info, "compositor: no input ring or no control ring")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
 	screen_pages_open(ctx)
@@ -635,7 +639,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	budget_left, budget_status := system.budget_read()
 	if budget_status != .Ok || budget_left.pages < needed_pages {
 		system.log(.Info, "compositor: a screen of ", u64(width), "x", u64(height), " needs ", needed_pages, " pages, the budget holds ", budget_left.pages)
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	frame = canvas_create(width, height)
 	background = canvas_create(width, height)
@@ -883,6 +887,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					clipboard_answer_take(index, .Copy_Declined, record)
 				case .Paste_Taken:
 					clipboard_answer_take(index, .Paste_Taken, record)
+				case .Capture_Size_Ask, .Capture_Open, .Capture_Taken, .Capture_Close, .Capture_Viewers, .Remote_Key, .Remote_Pointer:
+					capture_command(index, command, record) // capture.odin
 				}
 			}
 			// The process can wait until this loop took its last picture
@@ -980,6 +986,7 @@ client_add :: proc "contextless" (record: ring.Record) {
 			break
 		}
 		client = {ring_memory = memory, ring = opened}
+		client.capture_allowed = record.values[display.CLIENT_ADD_CAPTURE] == display.CLIENT_CAPTURE
 		nickname := process_page.nickname_of({record.values[1], record.values[2], record.values[3]})
 		if nickname.length > 0 {
 			client.from_disk = true
@@ -1022,6 +1029,9 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 			system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " closed after ", client.commands_refused, " records whose word names no command")
 		}
 		clipboard_client_remove(index) // clipboard.odin
+		if capture.client == index {
+			capture_end("its service stopped") // capture.odin
+		}
 		quality_window_gone(index) // quality_measures.odin
 		window_queue_close(index) // window_events.odin
 		system.ring_close(&client.ring)
@@ -1270,6 +1280,7 @@ pointer_leaves_front :: proc "contextless" () {
 draw :: proc "contextless" (now: u64) {
 	start := system.nanoseconds()
 	quality_frame_start() // quality_measures.odin
+	capture_before_frame() // capture.odin: before the frame takes its areas.
 	screen_build(now, display.interface_font_of())
 	draw_areas(damage[:damage_count])
 	// The frame is on the screen: the copy and the page flip are done.
@@ -1336,6 +1347,9 @@ draw_areas :: proc "contextless" (areas: []Rectangle) {
 		count := rectangles_of_areas(areas, rectangles[:])
 		screen_draw_part(&palette_now, 0, palette_now.record_count, nil, frame, rectangles[:count])
 	}
+
+	// The copy of the screen holds no pointer: it runs before the pointer.
+	capture_after_draw(areas) // capture.odin
 
 	for area in areas {
 		canvas := graphics.view(frame, area.left, area.top, area.right - area.left, area.bottom - area.top)
@@ -1662,7 +1676,7 @@ screen_draw_part :: proc "contextless" (table: ^interface.Draw_Table, first, cou
 		return
 	}
 	screen_refusal_logged = true
-	system.log(.Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_17 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
+	system.log(.Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_18 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
 }
 
 // screen_draw draws the parts of the screen table into the frame, from the
@@ -1765,7 +1779,15 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	// its two parts as they are drawn.
 	hint_width := interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_NAME) + interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_KEY)
 	hint_x := width - CLOCK_WIDTH - 32 - hint_width
-	interface.draw_text(table, interface.draw_text(table, hint_x, 8, PALETTE_HINT_NAME, graphics.colors.dim, interface.FONT_INTERFACE), 8, PALETTE_HINT_KEY, graphics.colors.text, interface.FONT_INTERFACE)
+	// The mark of a viewer of the remote display, at the left of the hint
+	// (capture.odin). It is never left out: when the bar has no room for
+	// it there, it takes the room of the hint, which is not drawn.
+	if capture_is_open() && capture_mark_room(hint_x) < CAPTURE_MARK_SQUARE {
+		capture_mark_records(table, width - CLOCK_WIDTH - 16)
+	} else {
+		interface.draw_text(table, interface.draw_text(table, hint_x, 8, PALETTE_HINT_NAME, graphics.colors.dim, interface.FONT_INTERFACE), 8, PALETTE_HINT_KEY, graphics.colors.text, interface.FONT_INTERFACE)
+		capture_mark_records(table, hint_x)
+	}
 	seconds := now / 1000
 	x := width - CLOCK_WIDTH - 16
 	if milliseconds, known := date.milliseconds_now(date_page, now); known {
@@ -1813,14 +1835,18 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			// the line: the nickname ends before it.
 			room := line_width - bar.WINDOWS_TITLE_X - bar.PADDING
 			if clients[index].from_disk {
-				room -= bar.WINDOWS_HASH_GAP + interface.text_measured_width(table, {}, string(clients[index].hash_prefix[:]))
+				room -= bar.WINDOWS_HASH_GAP + interface.text_measured_width(table, interface.FONT_CAPTION_CELLS, string(clients[index].hash_prefix[:]))
 			}
 			title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(clients[index].title[:]), room)
 			title_end := interface.draw_text(table, line_x + bar.WINDOWS_TITLE_X, line_y + 4, title, focus || line == menu_line ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 			if clients[index].from_disk {
-				// A value, in the font of the cells, faded: the name is the
-				// nickname, and the prefix only tells two files apart.
-				interface.draw_text(table, title_end + bar.WINDOWS_HASH_GAP, line_y + 4, string(clients[index].hash_prefix[:]), graphics.colors.dim)
+				// A value, in the font of the cells at the caption size,
+				// faded, on the baseline of the nickname: the name is the
+				// nickname, and the prefix only tells two files apart. On the
+				// chosen row it is white, as each text of that row: the dim
+				// color has no contrast on the chosen blue.
+				prefix_top := interface.text_top_on_baseline(table, interface.FONT_INTERFACE, line_y + 4, interface.FONT_CAPTION_CELLS)
+				interface.draw_text(table, title_end + bar.WINDOWS_HASH_GAP, prefix_top, string(clients[index].hash_prefix[:]), line == menu_line ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_CAPTION_CELLS)
 			}
 		}
 	}

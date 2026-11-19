@@ -78,7 +78,7 @@ Input :: struct {
 // for an event that it does not take (a key released).
 input_add :: proc "contextless" (input: ^Input, event: display.Event) -> bool {
 	switch event.kind {
-	case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted:
+	case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
 		// The window layer takes these events itself (window_events).
 	case .Pointer:
 		input.pointer_x, input.pointer_y = event.x, event.y

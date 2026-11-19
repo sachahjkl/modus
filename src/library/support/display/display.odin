@@ -113,6 +113,68 @@ Command :: enum u32 {
 	// closed the handle. The compositor revokes the lent handle. values:
 	// the serial of the Pasted (paste_read, paste_refuse).
 	Paste_Taken     = 11,
+	// The capture face and the input face (src/md/features/remote_display.md):
+	// the compositor takes them only from a client whose Client_Add holds
+	// CLIENT_CAPTURE, and counts and drops them from any other.
+	// The size of the screen: the compositor answers with the event
+	// Capture_Size. No values.
+	Capture_Size_Ask = 12,
+	// The memory of the copy of the screen: a header page (Capture_Header),
+	// then two pictures of the size of the screen. values: memory handle
+	// (in the compositor), width, height.
+	Capture_Open     = 13,
+	// The process copied the picture of the last Capture_Frame, and the
+	// compositor may write it again. values: the picture.
+	Capture_Taken    = 14,
+	// The end of the copy: the compositor unmaps the memory. No values.
+	Capture_Close    = 15,
+	// The viewers that the bar names in its mark. values[0]: the count, 0
+	// to CAPTURE_VIEWER_CAPACITY; values[1]: bit n when viewer n has the
+	// input; values[2..]: the first 8 bytes of the key of each viewer.
+	Capture_Viewers  = 16,
+	// A key of a viewer, in the form of the input record Key: code,
+	// character, 1 when pressed, modifiers.
+	Remote_Key       = 17,
+	// The pointer of a viewer at a place of the screen: x, y, buttons,
+	// wheel notches (signed).
+	Remote_Pointer   = 18,
+}
+
+// The place of the capture flag in the values of Client_Add.
+CLIENT_ADD_CAPTURE :: 5
+// The flag of a client that holds the start grant Screen_Capture. A flag,
+// not a choice: 0 says the opposite.
+CLIENT_CAPTURE :: 1
+
+// The viewers that one record Capture_Viewers names.
+CAPTURE_VIEWER_CAPACITY :: 4
+// The rectangles of one record of a picture: the damage of the compositor.
+CAPTURE_RECTANGLE_CAPACITY :: 8
+// The pages of the header of the memory of a copy of the screen.
+CAPTURE_HEADER_PAGES :: 1
+
+// What the compositor writes for one picture before its Capture_Frame: the
+// serial of the record, the rectangles that changed since the record
+// before, and the pointer. The process copies it before it checks it.
+Capture_Picture_Header :: struct {
+	serial:     u64,
+	count:      u64, // The rectangles, at most CAPTURE_RECTANGLE_CAPACITY.
+	rectangles: [CAPTURE_RECTANGLE_CAPACITY][4]u32, // left, top, right, bottom; right and bottom are not in the rectangle.
+	// The place of the pointer, and the rectangle that its picture covers on
+	// the screen: four zeros when the pointer is not drawn.
+	pointer_x, pointer_y:     u32,
+	pointer_left, pointer_top: u32,
+	pointer_right, pointer_bottom: u32,
+}
+
+Capture_Header :: struct {
+	pictures: [PICTURE_COUNT]Capture_Picture_Header,
+}
+#assert(size_of(Capture_Header) <= CAPTURE_HEADER_PAGES * 4096)
+
+// capture_pages gives the pages of the memory of a copy of a screen.
+capture_pages :: proc "contextless" (width, height: int) -> u64 {
+	return CAPTURE_HEADER_PAGES + (u64(PICTURE_COUNT * width * height * size_of(graphics.Color)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 }
 
 // The kind of a content of the clipboard. A word of a record becomes a
@@ -262,6 +324,14 @@ Event_Kind :: enum u32 {
 	// handle (in this process), the Clipboard_Kind, the count of bytes,
 	// the serial of the key, never 0.
 	Pasted           = 7,
+	// The capture face (Command.Capture_Size_Ask): the size of the screen.
+	// values: width, height. Only a client of the capture face gets it; a
+	// window refuses it (event_of_record).
+	Capture_Size     = 8,
+	// The capture face: the compositor wrote a picture and its header.
+	// values: the picture, the count of its rectangles, the serial of the
+	// record. A window refuses it (event_of_record).
+	Capture_Frame    = 9,
 }
 
 // The ring between the root service and the compositor.
@@ -271,7 +341,8 @@ Control :: enum u32 {
 	// a disk process, values 1 to 3 hold its nickname, as the root ring
 	// carries a name of 23 bytes, and value 4 the first 8 bytes of the hash
 	// of its file (modus:contract/disk_process_page, hash_head); for another
-	// process, values 1 to 4 are 0.
+	// process, values 1 to 4 are 0. Value CLIENT_ADD_CAPTURE is
+	// CLIENT_CAPTURE for a process with the start grant Screen_Capture.
 	Client_Add    = 1,
 	Client_Remove = 2, // root to compositor. values: the same handle
 	Start         = 3, // compositor to root. values: name (4 values)
@@ -967,6 +1038,10 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 			return {}, false
 		}
 		event.paste_handle, event.clipboard_kind, event.byte_count, event.clipboard_serial = system.Handle(handle), kind, int(count), serial
+	case .Capture_Size, .Capture_Frame:
+		// The records of the capture face: the service of the remote
+		// display reads them itself, and a window takes none.
+		return {}, false
 	}
 	return event, true
 }

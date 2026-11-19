@@ -129,7 +129,7 @@ pending_count: u32
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log(.Error, "sound: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // control_call gives the device one control request of `request_bytes`
@@ -566,7 +566,7 @@ USED_PROBLEM_TEXTS := [sound_device.Used_Problem]string {
 // configuration, no virtio registers, no output stream of the format, a
 // device that does not answer, needs a reset, or uses a period out of
 // order or that was not given, it writes the reason at the level error and
-// stops with the code 1. Else it never returns.
+// stops with `Failed`. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]

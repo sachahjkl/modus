@@ -93,7 +93,7 @@ live :: proc "contextless" (handle: system.Handle) -> bool {
 // measures a lent handle, then shows the result until the principal closes
 // the window.
 //
-// With no window it stops with the code 1. It creates one memory object and
+// With no window it stops with `Failed`. It creates one memory object and
 // one process "held" from its own budget, runs the cases (each one compares
 // the answer of the kernel with the expected answer), writes the result on
 // the log, and measures 20000 cycles of "lend and take back" and 20000 of
@@ -102,7 +102,7 @@ live :: proc "contextless" (handle: system.Handle) -> bool {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "origin")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	// One memory object, mapped here, and one other process that never
 	// runs: it only receives.

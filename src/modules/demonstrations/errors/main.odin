@@ -60,7 +60,7 @@
 // refused with `Busy` and does not run; a wait of the library ends at once
 // and pushes nothing; and after the read each answer has come once, in
 // order, and the kept command runs once. Its child stops on a kernel ring
-// that holds records, and must stop with its own stop code.
+// that holds records, and its stop must be a stop of itself, not a fault.
 //
 // **The measures**, printed and never compared to a bound: a kernel
 // operation that succeeds and one that fails with its record; a direct
@@ -821,7 +821,7 @@ case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 	limit := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		wait := system.wait_begin()
-		if state, _ := system.process_state(process); state == .Stopped || system.time() > limit {
+		if state, _, _ := system.process_state(process); state == .Stopped || system.time() > limit {
 			break
 		}
 		system.wait_end(&wait, limit)
@@ -836,7 +836,8 @@ case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 		system.frame_text(writer, image, &debug_names, &frame, number)
 		all_in_fault &&= frame.hash == fault_hash
 	}
-	return report.code == op.STOP_CODE_FAULT + 14 && all_in_fault
+	cause, _ := op.stop_cause_of_word(u64(report.cause))
+	return cause == .Fault && report.vector == u32(op.Fault_Kind.Page_Fault) && all_in_fault
 }
 
 // case_run runs the case of an index, writes the sentence of its error
@@ -994,15 +995,12 @@ lock_takes :: proc "contextless" (machine: system.Handle) -> (control, frame: u6
 	return report.locks[op.Lock_Kind.Control].takes, report.locks[op.Lock_Kind.Frame].takes
 }
 
-// The stop code of the child: not 0 and not a code of a fault, so that the
-// starter sees that the child stopped with its own stop, not by a fault.
-CHILD_STOP_CODE :: 7
-
 // child runs REFUSALS refused Log operations, writes their time, and stops
 // on a kernel ring that holds records: a full completion queue, unread, and
 // one command held behind it. A stop must end the process whatever its ring
 // holds (src/md/api/kernel_ring_completion_room.md, "The stop of a
-// process").
+// process"). The starter reads the stop cause Itself, not Fault: the stop
+// went through, and no write to the time page ended the child.
 child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	page := (^Child_Page)(uintptr(MEASURE_ADDRESS))
 	log := u64(ctx.handles[op.CONTEXT_LOG])
@@ -1021,7 +1019,34 @@ child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	}
 	system.enter(0)
 	_ = ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.None)})
-	system.stop(CHILD_STOP_CODE)
+	system.stop(.Done)
+}
+
+// free_slot_check reads the report of the slot of a child after its last
+// handle closed: a free slot gives its state None and its serial, and no
+// fact of the process that it held (its name, its code, its stop cause, its
+// counts). The slot frees when the last processor left the child; the hang
+// bound only ends a wait that never ends. A new process in the slot before
+// the read is a line, not a pass: the check did not run.
+free_slot_check :: proc "contextless" (slot: u64, serial: u64) {
+	report: op.Process_Report
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+		report = {}
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report))
+		if report.state == .None || report.process_serial != serial {
+			break
+		}
+		system.sleep(system.time() + 10)
+	}
+	free := op.Process_Report{state = .None, process_serial = serial}
+	switch {
+	case report.process_serial != serial:
+		system.log(.Info, "errors: WRONG: the slot ", slot, " of the child served another process before its report was read")
+	case report != free:
+		system.log(.Info, "errors: WRONG: the report of the free slot ", slot, " gives the state ", u64(report.state), ", the stop cause ", u64(report.stop_cause), ", the stop outcome ", u64(report.stop_outcome), ", ", report.handle_count, " handles, ", report.entries, " entries of the process before it")
+	case:
+		system.log(.Info, "errors: the report of the slot of the child after its last handle closed gives its state None and its serial, and no fact of the child: as it must")
+	}
 }
 
 // refusals measures the two refusals; the machine handle reads the counts of
@@ -1045,31 +1070,22 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 	process, status := system.process_start(system.image_find(image, "errors"), "errors child", grants, random.values_with_seed(&process_generator, values), {pages = 512, processes = 1, threads = 1, processor = 1_000_000, log_records = 0}, mappings[:], nil, {image = image}, &error)
 	if status == .Ok {
 		for intrinsics.atomic_load(&page.done) == 0 {
-			if state, _ := system.process_state(process); state == .Stopped {
+			if state, _, _ := system.process_state(process); state == .Stopped {
 				break
 			}
 			system.sleep(system.time() + 10)
 		}
 		// The child then stops on a kernel ring that holds records. The
-		// event word of this thread changes when a process that it holds
-		// stops; the hang bound only ends a stop that never comes.
-		deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
-		child_state: op.Process_State
-		child_code: u32
-		for {
-			wait := system.wait_begin()
-			child_state, child_code = system.process_state(process)
-			if child_state == .Stopped || system.time() >= deadline {
-				break
-			}
-			system.wait_end(&wait, deadline)
-		}
-		if child_state == .Stopped && child_code == CHILD_STOP_CODE {
-			system.log(.Info, "errors: a stop on a kernel ring that holds records ends the process with its own stop code: as it must")
+		// hang bound only ends a stop that never comes.
+		child_cause, child_outcome, child_stopped := system.process_stop_wait(process, system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
+		if child_outcome == .Done {
+			system.log(.Info, "errors: a stop on a kernel ring that holds records ends the process as a stop of itself, not a fault: as it must")
 		} else {
-			system.log(.Info, "errors: WRONG: a stop on a kernel ring that holds records left the child in the state ", u64(child_state), " with the code ", u64(child_code))
+			system.log(.Info, "errors: WRONG: a stop on a kernel ring that holds records left the child ", child_stopped ? string("stopped by ") : string("running, its stop cause "), op.STOP_CAUSE_TEXTS[child_cause], ", with the outcome ", op.STOP_OUTCOME_TEXTS[child_outcome])
 		}
+		slot, serial, _ := system.process_place(process)
 		system.close(process)
+		free_slot_check(slot, serial)
 	} else {
 		// A child that does not start measures nothing: the case says so,
 		// and does not pass in silence.
@@ -1242,7 +1258,7 @@ process_generator: random.Generator
 //
 // **When it is the child** (the value `VALUE_CHILD` of its context is not
 // 0), it only runs the refused `Log` operations of the measure (`child`)
-// and stops with the code 0.
+// and stops with `Done`.
 //
 // **Else, in order:**
 //
@@ -1259,7 +1275,8 @@ process_generator: random.Generator
 //    from `a` to `y`, or a press on a case, runs that case again and writes
 //    its new sentence.
 //
-// **The stop**: with no random seed or no window, it stops with the code 1.
+// **The stop**: with no random seed, it stops with `Refused`; with no
+// window, with `Failed`.
 // Else it never returns. A wrong case does not stop it: the log says
 // `WRONG:` before the sentence.
 @(export, link_name = "entry")
@@ -1268,14 +1285,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log(.Info, "errors: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	if ctx.values[VALUE_CHILD] != 0 {
 		child(ctx)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "errors")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	ctx_log = ctx.handles[op.CONTEXT_LOG]
 	the_context = ctx
@@ -1347,7 +1364,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					chosen = case_at(event.y)
 				}
 				pressed = down
-			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted:
+			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 			if chosen >= 0 {

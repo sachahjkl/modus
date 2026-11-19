@@ -496,7 +496,7 @@ stress :: proc "contextless" (image: []u8, processes_free: u64) {
 			}
 			switch (round + u64(index)) % 3 {
 			case 0:
-				system.call(.Process_Stop, u64(churner), 7)
+				system.process_stop(churner)
 				stopped += 1
 			case 1:
 				// The other thread stops it while this one closes the handle.
@@ -621,7 +621,7 @@ stopper_run :: proc "c" (parameter: rawptr) -> ! {
 			system.word_wait(&stopper.target, 0, system.time() + 100)
 			continue
 		}
-		system.call(.Process_Stop, u64(target), 7)
+		system.process_stop(system.Handle(target))
 		intrinsics.atomic_add(&stopper.done, 1)
 	}
 	system.thread_stop()
@@ -633,20 +633,21 @@ process_generator: random.Generator
 // entry starts the four lockers, runs the measures with 1, 2 and 4 of
 // them, the word wait alone and under load, the stress case and the case
 // of the frames, checks the counts, and writes the summary. It then keeps
-// the window open until the process is stopped. With no random seed, no
-// boot image, no memory for the board, or a locker that does not start, it
-// writes the reason on the log and stops with the code 1.
+// the window open until the process is stopped. With no random seed, it
+// writes the reason on the log and stops with `Refused`; with no boot
+// image, no memory for the board, or a locker that does not start, with
+// `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log(.Info, "locks: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "locks")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	draw(&window)
 
@@ -660,7 +661,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address, map_status := system.memory_map(memory)
 	if image == nil || memory_status != .Ok || map_status != .Ok {
 		system.log(.Info, "locks: no boot image or no memory")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	board = (^lockers.Board)(address)
 	names := [lockers.LOCKER_CAPACITY]string{"locker 1", "locker 2", "locker 3", "locker 4"}
@@ -672,7 +673,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		status: system.Status
 		if process, status = system.process_start(system.image_find(image, "locker"), names[index], grants, random.values_with_seed(&process_generator, values), LOCKER_AMOUNTS); status != .Ok {
 			system.log(.Info, "locks: cannot start a locker: status ", u64(status))
-			system.stop(1)
+			system.stop(.Failed)
 		}
 	}
 

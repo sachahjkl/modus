@@ -128,7 +128,7 @@ process_generator: random.Generator // The random generator of this process, fro
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log(.Info, "module_files: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 place_bytes :: proc "contextless" (place: u32) -> []u8 {
@@ -567,7 +567,7 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 // then serves the calls of the console and the timers of TCP until the
 // machine stops.
 //
-// 1. takes its random generator; with no seed it stops with the code 1;
+// 1. takes its random generator; with no seed it stops with `Failed`;
 // 2. opens its service ring and its store, and makes the memory of one
 //    file; a missing part stops it with a line of the log;
 // 3. asks the network service for its grant; a grant that is not a client

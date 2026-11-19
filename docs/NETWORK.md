@@ -250,7 +250,7 @@ The MSL of RFC 9293 is 2 minutes. The library takes 5 s, as an MSL for one link:
 
 ### Randomness
 
-RFC 6528 needs a secret that an attacker cannot guess: with it, a remote cannot predict the first sequence number of a new connection and inject a segment into it. `server` and `fetch` take the secret from their random generator (`random.generator_from_context`): each process has one, seeded by its starter (`docs/RANDOMNESS.md`). A process with no seed in its context stops: `server` writes "server: no random seed in the context" and ends with the code 1.
+RFC 6528 needs a secret that an attacker cannot guess: with it, a remote cannot predict the first sequence number of a new connection and inject a segment into it. `server` and `fetch` take the secret from their random generator (`random.generator_from_context`): each process has one, seeded by its starter (`docs/RANDOMNESS.md`). A process with no seed in its context stops: `server` writes "server: no random seed in the context" and stops with the stop outcome `Refused`.
 
 ## The tests
 

@@ -19,19 +19,24 @@ import "modus:contract/fixed_addresses"
 import "modus:contract/operation"
 
 MAILBOX_MAGIC :: u64(0x4C49_414D_5245_504F) // The bytes "OPERMAIL".
-MAILBOX_FORMAT :: 1
+MAILBOX_FORMAT :: 3
 
 // The process that runs each sequence, and the module of the boot image
 // that holds it.
 RUNNER_NAME :: "operation_sequence_runner"
-// The stop code of a runner that ran each step of its sequence. Any other
-// code is the stop of a step, or a fault.
-RUNNER_END_CODE :: 0x0F0F
-// The stop codes of a runner that could not run its sequence: its copy of
-// the sequence was refused, or the system library refused a batch. Each is
-// a fault of the service or of the runner, never the answer of a step.
-RUNNER_SEQUENCE_REFUSED_CODE :: 0x0F01
-RUNNER_BATCH_REFUSED_CODE :: 0x0F02
+
+// How the runner ended, which it writes in `Runner_Results.end` before it
+// stops itself. A stop carries no result (src/md/api/process_stop.md): the
+// runner stops with the outcome `Done` after `Ran`, `Refused` after
+// `Sequence_Refused` and `Failed` after `Batch_Refused`, and the word here
+// says which end. `None` with the stop cause Itself is not an end of the
+// runner: a step stopped it, with any outcome that the step named.
+Runner_End :: enum u64 {
+	None             = 0, // The runner did not write its end: a step stopped it, or a fault.
+	Ran              = 1, // It ran each step of its sequence.
+	Sequence_Refused = 2, // Its copy of the sequence was refused: a fault of the service or of the runner, never the answer of a step.
+	Batch_Refused    = 3, // The system library refused a batch: a fault of the runner, never the answer of a step.
+}
 
 // The line that the service writes on the log after each sequence, before
 // it adds one to `executions`: "operation_fuzzing: sequence <number>
@@ -45,7 +50,7 @@ SEQUENCE_END_LINE_END :: " ended"
 // What happened to the last sequence that the service took.
 Execution_Outcome :: enum u64 {
 	None        = 0, // No sequence ran yet.
-	Ran         = 1, // The runner ran each step, then stopped itself with `RUNNER_END_CODE`.
+	Ran         = 1, // The runner ran each step, wrote the end `Ran`, then stopped itself.
 	Refused     = 2, // `check` refused the sequence: the refusal fields say why. Nothing ran.
 	Stopped     = 3, // The runner stopped before its end: a step stopped it, or a fault. `step_started` names the step.
 	Not_Started = 4, // The runner did not start: `start_status` holds the status.
@@ -72,7 +77,8 @@ Mailbox_Header :: struct {
 	refusal_index:     i64, // Refused: the `index` of the `Refusal`.
 	refusal_argument:  i64, // Refused: the `argument` of the `Refusal`.
 	start_status:      u64, // Not_Started: the word of the status of the start.
-	stop_code:         u64, // The stop code of the runner.
+	stop_cause:        u64, // The word of the `operation.Stop_Cause` of the runner.
+	stop_outcome:      u64, // The word of the `operation.Stop_Outcome` of the runner; a reader takes the state Stopped, the cause and the outcome through `operation.stop_of_words`.
 	budget_before:     Mailbox_Amounts, // What the budget of the sequence held before the runner started.
 	budget_after:      Mailbox_Amounts, // What it held after the runner stopped and each of its handles ended.
 }
@@ -91,6 +97,7 @@ Step_Result :: struct {
 Runner_Results :: struct {
 	step_started: u64, // The runner writes the number of a step, from 1, before it runs its kernel entry.
 	steps_run:    u64, // The steps whose results are written.
+	end:          u64, // The word of its `Runner_End`, written before its stop; a reader takes it through `enum_word.member_of_word`.
 	results:      [STEPS_MOST]Step_Result,
 }
 

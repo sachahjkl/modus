@@ -15,8 +15,8 @@
 //   8 GiB holds about 2000 blocks with its version, and the loop of range commits about 4000.
 //
 // **What a reader sees**: no window. The log has one line for each case, "...: as it must" or "WRONG", the
-// measures of the commits, and at the end "ranges: done, N wrong". The process stops with the code 0 when no case
-// is wrong, else with the code 2.
+// measures of the commits, and at the end "ranges: done, N wrong". The process stops with `Done` when no case
+// is wrong, else with `Failed`.
 //
 // The exports that it calls: [write_range](storage.write_range), [set_size](storage.set_size) and
 // [commit](storage.commit) of the storage service.
@@ -466,20 +466,21 @@ second_run :: proc "contextless" () {
 // then it stops.
 //
 // It opens its private store and reads its usage; with no store or no usage it writes "ranges: WRONG: ..." and
-// stops with the code 1. A store with no object gives the first run: each case, then the loop of range commits. A
+// stops with `Failed`. A store with no object gives the first run: each case, then the loop of range commits. A
 // store with objects gives the second run: it reads back the small object, the object of the cut and the object
-// of the loop, and writes the object of 1 MiB under a third name. It writes "ranges: done, N wrong" and stops with the code 0, or 2 when a case is wrong.
+// of the loop, and writes the object of 1 MiB under a third name. It writes "ranges: done, N wrong" and stops with
+// `Done`, or `Failed` when a case is wrong.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ok: bool
 	if client, ok = storage.open(ctx); !ok {
 		system.log(.Error, "ranges: WRONG: no store")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	counts, status := storage.usage(&client)
 	if status != .Ok {
 		system.log(.Error, "ranges: WRONG: no usage")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if counts.objects == 0 {
 		system.log(.Info, "ranges: a new store: the first run")
@@ -489,5 +490,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		second_run()
 	}
 	system.log(.Info, "ranges: done, ", u64(wrong_cases), " wrong")
-	system.stop(wrong_cases == 0 ? 0 : 2)
+	if wrong_cases != 0 {
+		system.stop(.Failed)
+	}
+	system.stop(.Done)
 }

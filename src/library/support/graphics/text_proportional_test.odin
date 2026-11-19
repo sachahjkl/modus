@@ -92,8 +92,8 @@ a_text_of_a_face_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	for each in ([2][]text_rendering.Placed_Glyph{placed[:count], fallback[:count]}) {
 		clear(built, DARK_CARD_BOTTOM)
 		clear(drawn, DARK_CARD_BOTTOM)
-		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, built, 0, 0, replaced[:count], 1, DARK_TEXT)
-		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, each, 1, DARK_TEXT)
+		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, built, 0, 0, replaced[:count], text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
+		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, each, text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
 		testing.expect(t, built_pixels == drawn_pixels)
 	}
 	// A character that no font has, Ж, as a fallback glyph: the
@@ -104,8 +104,8 @@ a_text_of_a_face_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	no_glyph := [1]text_rendering.Placed_Glyph{{glyph = text_rendering.REPLACEMENT_GLYPH}}
 	clear(built, DARK_CARD_BOTTOM)
 	clear(drawn, DARK_CARD_BOTTOM)
-	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, built, 0, 0, no_glyph[:], 1, DARK_TEXT)
-	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, no_font[:], 1, DARK_TEXT)
+	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, built, 0, 0, no_glyph[:], text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
+	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, no_font[:], text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
 	testing.expect(t, built_pixels == drawn_pixels)
 	// The face: the pixels of the glyph cache, at each third of a pixel.
 	text_rendering.frame_begin()
@@ -116,7 +116,7 @@ a_text_of_a_face_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 			clear(built, DARK_CARD_BOTTOM)
 			clear(drawn, DARK_CARD_BOTTOM)
 			cache_text_draw(&cache, &square_root, tables, built, 2 * glyph_cache.SUBPIXEL + fraction, 0, placed[:count])
-			text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, drawn, 2 * glyph_cache.SUBPIXEL + fraction, 0, each, 1, DARK_TEXT)
+			text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, drawn, 2 * glyph_cache.SUBPIXEL + fraction, 0, each, text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
 			testing.expectf(t, built_pixels == drawn_pixels, "the place %v/64: the pixels of the glyph cache", fraction)
 		}
 	}
@@ -188,7 +188,7 @@ the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 			pixel = DARK_CARD_BOTTOM
 		}
 		text_rendering.frame_begin()
-		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, place, LINE_TOP, placed[:count], 1, DARK_TEXT)
+		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, place, LINE_TOP, placed[:count], text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
 		// The box in whole pixels: from the pixel of the origin to the pixel
 		// of the end, widened by the margin.
 		left := int(place / 64) - PROPORTIONAL_INK_MARGIN
@@ -207,9 +207,10 @@ the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 	testing.expectf(t, outside == 0, "%v pixels of ink are outside the measured box and its margin", outside)
 }
 
-// A text far outside the canvas, the scales 0 and one past TEXT_SCALE_LIMIT,
-// a face of cells and the face None, an alpha of 0, and a glyph past the
-// character indices draw nothing, and do not fault.
+// A text far outside the canvas, the sizes 0, 1, one under
+// TEXT_SIZE_MINIMUM, one past TEXT_SIZE_LIMIT and a negative size, a face
+// of cells and the face None, an alpha of 0, and a glyph past the character
+// indices draw nothing, and do not fault.
 @(test)
 a_proportional_text_outside_its_limits :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
@@ -226,18 +227,18 @@ a_proportional_text_outside_its_limits :: proc(t: ^testing.T) {
 	placed := [3]text_rendering.Placed_Glyph{{glyph = 'A' - glyph_cache.ASCII_FIRST, x = 0}, {glyph = glyph_cache.CHARACTER_COUNT, x = 640}, {glyph = 'W' - glyph_cache.ASCII_FIRST, x = max(i32)}}
 	places := [?]i64{-(1 << 40), 1 << 40, -64 * 70, 64 * 70}
 	for place in places {
-		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, place, 0, placed[:], 1, DARK_TEXT)
+		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, place, 0, placed[:], text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
 	}
-	for scale in ([2]int{0, TEXT_SCALE_LIMIT + 1}) {
-		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], scale, DARK_TEXT)
+	for size in ([5]int{0, 1, text_rendering.TEXT_SIZE_MINIMUM - 1, text_rendering.TEXT_SIZE_LIMIT + 1, -text_rendering.TEXT_SIZE_OF_SCALE_ONE}) {
+		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], size, DARK_TEXT)
 	}
 	for face in ([2]text_rendering.Face{.Cells, .None}) {
-		text_proportional_with(face, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], 1, DARK_TEXT)
+		text_proportional_with(face, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
 	}
-	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], 1, DARK_TEXT, 0)
-	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, -1000, placed[:], 1, DARK_TEXT)
+	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT, 0)
+	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, -1000, placed[:], text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
 	past := [1]text_rendering.Placed_Glyph{{glyph = glyph_cache.CHARACTER_COUNT, x = 0}}
-	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, past[:], 1, DARK_TEXT)
+	text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, past[:], text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
 	for pixel in pixels {
 		testing.expect_value(t, pixel, Color(0))
 	}

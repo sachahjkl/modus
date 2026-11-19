@@ -144,7 +144,12 @@ oracle_sequence :: proc(steps: ..operation_sequence.Sequence_Step) -> operation_
 @(private = "file")
 oracle_header :: proc() -> operation_sequence.Mailbox_Header {
 	header: operation_sequence.Mailbox_Header
-	header.outcome = u64(operation_sequence.Execution_Outcome.Ran)
+	// A runner that a step stopped: a stop of itself with no end written,
+	// which agrees with results whose end word is 0. A test of the outcome
+	// Ran writes the end Ran too.
+	header.outcome = u64(operation_sequence.Execution_Outcome.Stopped)
+	header.stop_cause = u64(operation.Stop_Cause.Itself)
+	header.stop_outcome = u64(operation.Stop_Outcome.Done)
 	header.budget_before = {pages = 100, processes = 2, threads = 3}
 	header.budget_after = header.budget_before
 	return header
@@ -200,10 +205,32 @@ the_oracles_of_the_outcome_and_of_the_budget :: proc(t: ^testing.T) {
 	}
 	header = oracle_header()
 	header.outcome = u64(operation_sequence.Execution_Outcome.Stopped)
-	for code in ([]u64{operation_sequence.RUNNER_SEQUENCE_REFUSED_CODE, operation_sequence.RUNNER_BATCH_REFUSED_CODE}) {
-		header.stop_code = code
-		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "a runner that stopped with the code %x is taken", code)
+	for end in ([]operation_sequence.Runner_End{.Sequence_Refused, .Batch_Refused}) {
+		results.end = u64(end)
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "a runner that ended with %v is taken", end)
 	}
+	// A word of the memory of the machine that names no end, no cause or no
+	// outcome is a finding, never an end, a cause or an outcome.
+	for word in ([]u64{u64(max(operation_sequence.Runner_End)) + 1, max(u64)}) {
+		results.end = word
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the end word %d is taken", word)
+	}
+	results.end = u64(operation_sequence.Runner_End.Ran)
+	for word in ([]u64{u64(max(operation.Stop_Cause)) + 1, max(u64)}) {
+		header.stop_cause = word
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the stop cause word %d is taken", word)
+	}
+	header = oracle_header()
+	for word in ([]u64{u64(operation.Stop_Outcome.None), u64(max(operation.Stop_Outcome)) + 1, max(u64)}) {
+		header.stop_outcome = word
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the stop outcome word %d with the cause Itself is taken", word)
+	}
+	// An outcome with a cause other than Itself: a holder cannot say what
+	// the work of the runner gave.
+	header = oracle_header()
+	header.stop_cause = u64(operation.Stop_Cause.Holder)
+	testing.expect(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "a stop outcome with the cause Holder is taken")
+	results.end = 0
 	header = oracle_header()
 	results.steps_run = 1
 	testing.expect(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "more steps than the sequence are taken")
@@ -216,6 +243,85 @@ the_oracles_of_the_outcome_and_of_the_budget :: proc(t: ^testing.T) {
 	header = oracle_header()
 	header.outcome = u64(operation_sequence.Execution_Outcome.Stopped)
 	testing.expect_value(t, len(operation_findings(&sequence, &header, &results, &grammar)), 0)
+	header.outcome = u64(operation_sequence.Execution_Outcome.Ran)
+	results.end = u64(operation_sequence.Runner_End.Ran)
+	testing.expect_value(t, len(operation_findings(&sequence, &header, &results, &grammar)), 0)
+	results.end = 0
+}
+
+// The outcome, the stop cause, the stop outcome and the end tell one
+// story, or the tool takes the execution: each group that cannot come from
+// the runner and the service is a finding, and the groups that can are the
+// last cases.
+@(test)
+the_words_of_a_stop_tell_one_story :: proc(t: ^testing.T) {
+	grammar, ok := operation_grammar_read()
+	testing.expect(t, ok, "the grammar is not read")
+	sequence := oracle_sequence()
+	results: operation_sequence.Runner_Results
+	Group :: struct {
+		outcome:      operation_sequence.Execution_Outcome,
+		cause:        operation.Stop_Cause,
+		stop_outcome: operation.Stop_Outcome,
+		end:          operation_sequence.Runner_End,
+	}
+	refused := [?]Group {
+		{.Ran, .Holder, .None, .Ran}, // Ran with a cause other than Itself.
+		{.Ran, .Fault, .None, .Ran},
+		{.Ran, .Itself, .Failed, .Ran}, // Ran with a stop that says the work failed.
+		{.Ran, .Itself, .Done, .None}, // Ran with no end written.
+		{.Stopped, .None, .None, .None}, // Stopped with no cause.
+		{.Ran, .None, .None, .Ran},
+		{.Stopped, .Holder, .None, .Ran}, // The end Ran with a stop by a holder.
+		{.Stopped, .Fault, .None, .Ran},
+		{.Stopped, .Itself, .Refused, .Ran}, // The end Ran with an outcome other than Done.
+		{.Stopped, .Holder, .Done, .None}, // An outcome from a holder.
+		{.Stopped, .Itself, .None, .None}, // A stop of itself with no outcome.
+	}
+	for group in refused {
+		header := oracle_header()
+		header.outcome = u64(group.outcome)
+		header.stop_cause = u64(group.cause)
+		header.stop_outcome = u64(group.stop_outcome)
+		results.end = u64(group.end)
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the group %v is taken", group)
+	}
+	accepted := [?]Group {
+		{.Ran, .Itself, .Done, .Ran},
+		{.Stopped, .Itself, .Done, .None}, // A step stopped the runner, with any outcome that it named.
+		{.Stopped, .Itself, .Stopped_On_Request, .None},
+		{.Stopped, .Holder, .None, .None},
+		{.Stopped, .Fault, .None, .None},
+	}
+	for group in accepted {
+		header := oracle_header()
+		header.outcome = u64(group.outcome)
+		header.stop_cause = u64(group.cause)
+		header.stop_outcome = u64(group.stop_outcome)
+		results.end = u64(group.end)
+		testing.expectf(t, !oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the group %v is refused", group)
+		testing.expectf(t, operation_stop_pair_problem(group.outcome, group.stop_outcome, group.end) == "", "the group %v has a problem", group)
+	}
+	results.end = 0
+}
+
+// A mailbox of another format, or with another magic, is refused: its
+// fields are at other places or mean other things. The format of this tool
+// is the last case.
+@(test)
+a_mailbox_of_another_format_is_refused :: proc(t: ^testing.T) {
+	header := operation_sequence.Mailbox_Header{magic = operation_sequence.MAILBOX_MAGIC}
+	for format in ([]u64{0, 1, operation_sequence.MAILBOX_FORMAT - 1, operation_sequence.MAILBOX_FORMAT + 1, max(u64)}) {
+		header.format = format
+		testing.expectf(t, !operation_mailbox_header_known(&header), "the format %d is refused", format)
+	}
+	header.format = operation_sequence.MAILBOX_FORMAT
+	header.magic = operation_sequence.MAILBOX_MAGIC + 1
+	testing.expect(t, !operation_mailbox_header_known(&header), "another magic is refused")
+	header.magic = 0
+	testing.expect(t, !operation_mailbox_header_known(&header), "the magic 0 is refused")
+	header.magic = operation_sequence.MAILBOX_MAGIC
+	testing.expect(t, operation_mailbox_header_known(&header), "the magic and the format of this tool are known")
 }
 
 // The oracles of a status: a word that names no status, an unknown
@@ -410,21 +516,38 @@ a_release_refuses_the_modules_of_a_test_image :: proc(t: ^testing.T) {
 	testing.expect_value(t, build.release_test_module_problem(build.boot_image_encode(files, len(files)), "an image"), "")
 }
 
-// The two modules of the operation sequences, and shortage, are in no
-// image but their own: the boot image of the build, and so a release, does
-// not hold them.
+// The two modules of the operation sequences, shortage, and the two
+// modules of the restarts of the rescue list are in no image but their
+// own: the boot image of the build, and so a release, does not hold them.
 @(test)
 the_modules_of_the_operation_sequences_are_in_their_image_only :: proc(t: ^testing.T) {
+	Only_In_Image :: struct {
+		name:  string,
+		image: string,
+	}
+	expected := [?]Only_In_Image {
+		{foundation.OPERATION_FUZZING_MODULE, foundation.BOOT_IMAGE_OPERATION_SEQUENCES},
+		{foundation.OPERATION_SEQUENCE_RUNNER_MODULE, foundation.BOOT_IMAGE_OPERATION_SEQUENCES},
+		{"shortage", foundation.BOOT_IMAGE_SHORTAGE},
+		{"stops_refused", foundation.BOOT_IMAGE_MISSING_CONSOLE},
+		{"stops_failed", foundation.BOOT_IMAGE_MISSING_CONSOLE},
+	}
 	found := 0
 	for build in foundation.module_builds {
 		if build.only_in_image == "" {
 			continue
 		}
 		found += 1
-		testing.expectf(t, build.name == foundation.OPERATION_FUZZING_MODULE || build.name == foundation.OPERATION_SEQUENCE_RUNNER_MODULE || build.name == "shortage", "%s is in one image only", build.name)
-		testing.expect_value(t, build.only_in_image, build.name == "shortage" ? foundation.BOOT_IMAGE_SHORTAGE : foundation.BOOT_IMAGE_OPERATION_SEQUENCES)
+		image, named := "", false
+		for row in expected {
+			if row.name == build.name {
+				image, named = row.image, true
+			}
+		}
+		testing.expectf(t, named, "%s is in one image only", build.name)
+		testing.expect_value(t, build.only_in_image, image)
 		testing.expect(t, !foundation.module_in_boot_image(build), "a module of one image is in the boot image")
 		testing.expect(t, foundation.module_in_a_boot_image(build), "a module of one image is in no image")
 	}
-	testing.expect_value(t, found, 3)
+	testing.expect_value(t, found, len(expected))
 }

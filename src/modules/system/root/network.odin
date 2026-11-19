@@ -4,6 +4,7 @@ import "modus:contract/datagram"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/remote"
+import "modus:contract/remote_display"
 import "modus:contract/ring"
 import "modus:support/system"
 
@@ -29,6 +30,8 @@ QUIC_ECHO_PORT :: 4433 // The UDP port of quic_echo: the port of the examples of
 //           remote.LISTEN_PORT, and only the remotes of the address of the
 //           host (10.0.2.2) that send a datagram of 1200 bytes to it: QUIC
 //           in the process (docs/QUIC.md, section 7).
+//   remote_display  the same, on the UDP port remote_display.LISTEN_PORT
+//           (docs/QUIC.md, "8. The remote display").
 //   server  a segment endpoint with a listen grant: the TCP port 80, and the
 //           remotes that send a segment to it.
 //   fetch   a segment endpoint with a client grant: 10.0.2.100 port 80, the
@@ -43,6 +46,8 @@ endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
 		return {address = 0x0A000202, port = 7}
 	case "remote":
 		return {address = remote.HOST_ADDRESS, port = remote.LISTEN_PORT, listen = true}
+	case "remote_display":
+		return {address = remote.HOST_ADDRESS, port = remote_display.LISTEN_PORT, listen = true}
 	case "server":
 		return {port = 80, tcp = true, listen = true}
 	case "fetch", "module_files":

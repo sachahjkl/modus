@@ -623,9 +623,16 @@ the_words_of_a_choice :: proc(t: ^testing.T) {
 // exception still names a family.
 @(test)
 choice_constants_of_the_repository :: proc(t: ^testing.T) {
-	families, casts, file_count, ok := choice_families_of_tree("")
+	families, casts, stop_faults, file_count, ok := choice_families_of_tree("")
 	testing.expect(t, ok)
 	testing.expect(t, file_count > 100)
+	refused_stop_words, stop_word_exception_faults := stop_words_judged(stop_faults, STOP_WORD_EXCEPTIONS[:])
+	for fault in refused_stop_words {
+		testing.expectf(t, false, "%s:%d: %s %s", fault.file, fault.line, stop_word_fault_words[fault.kind], fault.name)
+	}
+	for fault in stop_word_exception_faults {
+		testing.expectf(t, false, "the exception %s of %s holds %d faults, and the file has %d", stop_word_fault_words[fault.exception.kind], fault.exception.file, fault.exception.count, fault.found)
+	}
 	refused_casts, exception_faults := enum_casts_judged(casts, ENUM_CAST_EXCEPTIONS[:])
 	for cast_of_word in refused_casts {
 		testing.expectf(t, false, "%s:%d: a cast of a word to the enum %s is %s", cast_of_word.file, cast_of_word.line, cast_of_word.type_name, enum_cast_form_words[cast_of_word.form])

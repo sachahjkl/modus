@@ -274,6 +274,12 @@ process_roles := [?]Process_Role_Row {
 	// call from the host"; docs/PRINCIPALS.md, "The client keys of
 	// remote").
 	{name = "remote", grants = {.Connect, .Network, .Acts_For_Principal, .Remote_Clients}, terms = {callable = {"compositor", "date", "debugger", "inspect", "log", "manual", "monitor", "settings", "storage"}}},
+	// The remote display: a listen grant of UDP that admits the address of
+	// the host only, the client table, which names the uses of the key of
+	// each viewer that a principal allowed, and the capture face and the
+	// input face of the compositor on the ring of its window
+	// (src/md/features/remote_display.md). It calls no service.
+	{name = "remote_display", grants = {.Network, .Remote_Clients, .Screen_Capture}},
 	// It reads the size of the code of interface_module.
 	{name = "interface_through_module", grants = {.Image}},
 	// The window of the debugger: a connection to the service debugger and
@@ -364,6 +370,11 @@ process_roles := [?]Process_Role_Row {
 	{name = "interface_font"},
 	// An arena that grows until its own budget refuses a commit.
 	{name = "arena"},
+	// The two rows of the test of the restarts of a start policy, which only
+	// the image of the test of the rescue holds: each stops itself at once,
+	// and needs no grant.
+	{name = "stops_refused"},
+	{name = "stops_failed"},
 }
 
 // The processes that this service starts itself, each in its own way and

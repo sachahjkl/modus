@@ -32,7 +32,7 @@ Do not use: lazy allocation, demand paging, demand-zero page.
 
 An uncommitted object is a memory object made with the flag `Uncommitted`: its budget pays only its frame list, and each page is paid when it is committed.
 
-An uncommitted object reserves a range of addresses with no memory behind it: its mapping is the reservation. A process commits the pages that it needs with `Memory_Commit`, and gives them back with a decommit. An access to a page that is not committed is a fault: with no fault handler it stops the process with `STOP_CODE_NOT_COMMITTED`; with one, the handler can commit the page and answer Resume. A process builds arenas, stacks that grow and sparse tables this way.
+An uncommitted object reserves a range of addresses with no memory behind it: its mapping is the reservation. A process commits the pages that it needs with `Memory_Commit`, and gives them back with a decommit. An access to a page that is not committed is a fault: with no fault handler it stops the process with the stop cause `Not_Committed`; with one, the handler can commit the page and answer Resume. A process builds arenas, stacks that grow and sparse tables this way.
 
 The design: `docs/ARCHITECTURE.md`, "The virtual memory of a process".
 
@@ -716,9 +716,9 @@ Do not use: superuser, privileged, person.
 
 ### Client key
 
-A client key is the Ed25519 public key that a client of the remote service proves in the QUIC handshake, and that a principal allows so that each call of that client acts for it.
+A client key is the Ed25519 public key that a client of the remote service or a viewer of the remote display proves in the QUIC handshake, and that a principal allows for its uses.
 
-The client sends it as a raw public key, with a CertificateVerify signed by its private key (mutual TLS 1.3). A principal allows it from a console that acts for it, with `remote_allow(key)`, and ends the grant with `remote_disallow(key)`. One key belongs to one principal, and the disk grant table of the principal keeps it across a restart. A key that no principal allowed is refused in the handshake, before any call. It is not the key of the server of `remote`.
+The client sends it as a raw public key, with a CertificateVerify signed by its private key (mutual TLS 1.3). A principal allows it from a console that acts for it, with `remote_allow(key)` or `remote_display_allow(key, use)`, and ends the grant with `remote_disallow(key)`. One key belongs to one principal, and the disk grant table of the principal keeps it across a restart. A key that no principal allowed is refused in the handshake, before any call. It is not the key of the server of `remote`.
 
 The design: `docs/PRINCIPALS.md`, "The client keys of remote".
 
@@ -733,6 +733,16 @@ Each row is one grant (`remote.Client`), and its serial names that grant: a new 
 The design: `docs/PRINCIPALS.md`, "The client keys of remote".
 
 Do not use: allow list, access list, key ring.
+
+### Use of a client key
+
+A use of a client key is one of the three things that its row allows: Calls through `remote`, View of the screen through `remote_display`, and Input of keys and of the pointer.
+
+A row holds a set of uses (`remote.Client_Uses`), carried as a word that one border reads; it refuses an unknown bit, no use, and Input without View. `remote_allow` gives Calls; `remote_display_allow` gives View, or View and Input. An allow adds uses and keeps the serial; `remote_disallow` ends them all. Only Calls lasts across a restart.
+
+The design: `src/md/features/remote_display.md`, "The authority".
+
+Do not use: scope, permission, role.
 
 ### Input
 

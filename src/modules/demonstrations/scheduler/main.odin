@@ -1473,8 +1473,10 @@ write :: proc "contextless" (area: interface.Area, x, y: int, characters: string
 	return interface.draw_text(frame_table, area.x + x, area.y + y, characters, color) - area.x
 }
 
-large :: proc "contextless" (area: interface.Area, x, y: int, characters: string, scale: int, color: graphics.Color) -> int {
-	return interface.draw_text(frame_table, area.x + x, area.y + y, characters, color, {scale = u8(scale)}) - area.x
+// large draws a text in the font of the cells at the large text size: the
+// one strategy that the head of the window is about.
+large :: proc "contextless" (area: interface.Area, x, y: int, characters: string, color: graphics.Color) -> int {
+	return interface.draw_text(frame_table, area.x + x, area.y + y, characters, color, interface.FONT_LARGE) - area.x
 }
 
 card :: proc "contextless" (frame: ^interface.Frame, x, y, width, height: int, title, caption: string) -> interface.Area {
@@ -1656,7 +1658,7 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		}
 	}
 	name := op.STRATEGY_NAMES[report.strategy]
-	after := large(head, 0, 0, name, 2, in_use >= 0 ? strategy_color(in_use) : graphics.colors.dim)
+	after := large(head, 0, 0, name, in_use >= 0 ? strategy_color(in_use) : graphics.colors.dim)
 	write(head, after + 16, 0, "in use", graphics.colors.dim)
 	write(head, after + 16, 16, system.format(line[:], u64(report.strategy_changes), " changes since boot"), graphics.colors.dim)
 	write(WHOLE, TILE_X, MARGIN + 12, "Strategy_Set: a key 1 2 3; the key S: the shares", graphics.colors.dim)
@@ -1962,7 +1964,7 @@ choose :: proc "contextless" (index: int) {
 // each strategy, the stress of the changes, then a window where a key or a
 // click chooses the strategy.
 //
-// With no window it stops with the code 1. A failed check does not stop
+// With no window it stops with `Failed`. A failed check does not stop
 // it: `fail` keeps the first problem, and the result line says it. After
 // the measures it gives the machine back the strategy of its start. Then it
 // draws every 500 ms; the keys 1, 2 and 3, or a click on a tile, change the
@@ -1981,7 +1983,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "scheduler")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	// The boot image holds the file of this process, for the processes of

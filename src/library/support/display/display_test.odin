@@ -68,6 +68,28 @@ event_of_record_refuses_a_kind_that_names_no_event :: proc(t: ^testing.T) {
 	}
 }
 
+// The records of the capture face go to the service of the remote display,
+// which reads them itself: a window refuses them, whatever their values.
+@(test)
+event_of_record_refuses_the_records_of_the_capture_face :: proc(t: ^testing.T) {
+	for kind in ([2]Event_Kind{.Capture_Size, .Capture_Frame}) {
+		for value in ([3]u64{0, 1, max(u64)}) {
+			record := ring.Record{kind = u32(kind)}
+			for &word in record.values {
+				word = value
+			}
+			event, ok := event_of_record(record)
+			testing.expectf(t, !ok, "a window takes the record %v", kind)
+			testing.expect_value(t, event, Event{})
+		}
+	}
+	// The header of the two pictures fits its page, and the memory of the
+	// largest screen holds both pictures after it.
+	testing.expect(t, size_of(Capture_Header) <= CAPTURE_HEADER_PAGES * 4096)
+	testing.expect_value(t, capture_pages(1, 1), u64(CAPTURE_HEADER_PAGES + 1))
+	testing.expect(t, capture_pages(1920, 1080) * 4096 >= CAPTURE_HEADER_PAGES * 4096 + PICTURE_COUNT * 1920 * 1080 * 4)
+}
+
 // The serial of a key reaches its event, the largest word too: it is a
 // number of the compositor that the process only names back. key_shown
 // keeps the newest serial: 0 and an older serial change nothing.

@@ -45,7 +45,7 @@
 //
 // **What it does not prove**: the client is the peer of the modus tool,
 // not a QUIC stack of another project. 0-RTT and the migration of a
-// connection are not built (docs/QUIC.md, section 9).
+// connection are not built (docs/QUIC.md, section 10).
 //
 // main.odin: the endpoint, the server and the loop. draw.odin: the window.
 package quic_echo
@@ -188,7 +188,7 @@ counters_second: u64
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log(.Info, "quic_echo: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 now_microseconds :: proc "contextless" () -> u64 {
@@ -571,7 +571,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "quic_echo")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	configuration := quic.Connection_Configuration{idle_timeout_milliseconds = IDLE_TIMEOUT_MILLISECONDS}
 	configuration.tls = {role = .Server, least_seed_strength = .Processor}

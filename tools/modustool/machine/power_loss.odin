@@ -479,7 +479,7 @@ power_loss_sequence :: proc(part: ^Test_Part_Run, what: string, steps: []Step, o
 scenario_power_loss_settings_first := [?]Step {
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
-	{kind = .Wait, text = "root: settings stopped with code 0"},
+	{kind = .Wait, text = "root: settings stopped: itself, done"},
 	{kind = .Launch, text = "settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
 	{kind = .Wait, text = "settings: ok, "},
@@ -571,7 +571,7 @@ power_loss_settings_run :: proc(part: ^Test_Part_Run) -> bool {
 	second := [?]Step {
 		{kind = .Wait, text = "compositor: surface console", any_order = true},
 		{kind = .Wait, text = fmt.aprintf("settings: the boot pass: the settings kept in the store: %s; in ", durable_text), any_order = true},
-		{kind = .Wait, text = "root: settings stopped with code 0"},
+		{kind = .Wait, text = "root: settings stopped: itself, done"},
 		{kind = .Quit},
 	}
 	return machine_test(part, second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, 4), exit_status = 0, data_disk = TEST_POWER_LOSS_DISK})
