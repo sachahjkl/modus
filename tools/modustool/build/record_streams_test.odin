@@ -90,14 +90,19 @@ a_record_stream_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		{"a record with padding inside", "requests: system.Record_Output(Padded)", ""},
 		{"a record with padding at its end", "orders: system.Record_Input(Tail)", ""},
 		{"a record with a Handle", "requests: system.Record_Output(Lent_Record)", ""},
-		{"terms that are Any_Record", "orders: system.Record_Input(Access, .One, system.Any_Record)", ""},
-		{"terms with padding", "orders: system.Record_Input(Access, .One, Padded)", ""},
-		{"terms with a Handle", "orders: system.Record_Input(Access, Terms_Type = Lent_Record)", ""},
+		{"terms that are Any_Record", "orders: system.Record_Input_With_Terms(Access, system.Any_Record)", ""},
+		{"terms with padding", "orders: system.Record_Input_With_Terms(Access, Padded, .One)", ""},
+		{"terms with a Handle", "orders: system.Record_Input_With_Terms(Access, Terms_Type = Lent_Record)", ""},
+		{"no terms on a record input with terms", "orders: system.Record_Input_With_Terms(Access)", ""},
+		{"no terms by name on a record input with terms", "orders: system.Record_Input_With_Terms(Access, wirings = .Many)", ""},
+		{"terms on a record input with no terms", "orders: system.Record_Input(Access, .One, Terms)", ""},
+		{"terms by name on a record input with no terms", "orders: system.Record_Input(Access, Terms_Type = Terms)", ""},
 		// The form of the arguments.
 		{"no argument", "requests: system.Record_Output()", ""},
 		{"no record, by name", "orders: system.Record_Input(wirings = .Many)", ""},
 		{"an argument past the parameters of an output", "requests: system.Record_Output(Access, .Unpaired, Terms)", ""},
-		{"an argument past the parameters of an input", "orders: system.Record_Input(Access, .One, Terms, Terms)", ""},
+		{"an argument past the parameters of an input with terms", "orders: system.Record_Input_With_Terms(Access, Terms, .One, Terms)", ""},
+		{"the count in the place of the terms", "orders: system.Record_Input_With_Terms(Access, .Many, Terms)", ""},
 		{"a name that is no parameter", "orders: system.Record_Input(Access, count = .Many)", ""},
 		{"a parameter given two times", "orders: system.Record_Input(Access, Record_Type = Access)", ""},
 		{"a pairing that names no member", "forward: system.Record_Output(system.Any_Record, .Twice)\n" + generic_input, ""},
@@ -106,6 +111,7 @@ a_record_stream_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		// Paired and Many_Types on a typed stream.
 		{"Paired on a typed record output", "requests: system.Record_Output(Access, .Paired)\n" + generic_input, ""},
 		{"Many_Types on a typed record input", "orders: system.Record_Input(Access, .Many_Types)", ""},
+		{"Many_Types on a typed record input with terms", "orders: system.Record_Input_With_Terms(Access, Terms, .Many_Types)", ""},
 		// The rules of the whole tables.
 		{"two record outputs with one name", "requests: system.Record_Output(Access)\nrequests: system.Record_Output(Terms)", ""},
 		{"two record inputs with one name", "orders: system.Record_Input(Access)\norders: system.Record_Input(Access, .Many)", ""},
@@ -183,7 +189,7 @@ the_record_streams_of_a_module_are_read :: proc(t: ^testing.T) {
 requests: system.Record_Output(Access)
 
 // The streams to keep, each with the terms of its space.
-sources: system.Record_Input(system.Any_Record, .Many_Types, Terms)
+sources: system.Record_Input_With_Terms(system.Any_Record, Terms, .Many_Types)
 
 // The kept records, forwarded.
 forward: system.Record_Output(system.Any_Record, .Paired)
@@ -191,8 +197,8 @@ forward: system.Record_Output(system.Any_Record, .Paired)
 // The orders to serve.
 orders: system.Record_Input(Access, wirings = .Many)
 
-// No terms, by the name of the default.
-plain: system.Record_Input(Terms, .One, system.No_Terms)
+// The count by name, and its default written.
+plain: system.Record_Input(Terms, wirings = .One)
 
 write_one :: proc(output: ^system.Record_Output(Access)) {}`
 	description, ok := stream_test_streams(stream_test_source(declarations, ""))

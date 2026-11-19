@@ -6,7 +6,8 @@ package module
 // A record output is a stream of records of one record type that the
 // module writes while it works; a record input is a stream that it reads.
 // The source declares each one as a package variable of
-// `system.Record_Output(T)` or `system.Record_Input(T)`, and the build
+// `system.Record_Output(T)`, `system.Record_Input(T)` or
+// `system.Record_Input_With_Terms(T, Terms)`, and the build
 // writes one row for each in the tables Record_Outputs and Record_Inputs.
 // The record of a row is a record description of the table Records, the one
 // form that the exports and the log facts use. A file is hostile input:
@@ -55,9 +56,9 @@ Record_Output :: struct {
 // declares. The rows are sorted by name, no two rows have one name, and no
 // row has the name of a record output.
 //
-// Example: `sources: system.Record_Input(system.Any_Record, .Many_Types,
-// Space_Terms)` is the row with the name "sources", the record 0, the
-// terms the index of "Space_Terms", and the count Many_Types.
+// Example: `sources: system.Record_Input_With_Terms(system.Any_Record,
+// Space_Terms, .Many_Types)` is the row with the name "sources", the record
+// 0, the terms the index of "Space_Terms", and the count Many_Types.
 Record_Input :: struct {
 	name_offset:  u32, // The name of the package variable, in the string table.
 	name_count:   u32, // Its bytes: at least 1.
@@ -132,7 +133,7 @@ record_output :: proc "contextless" (file: []u8, index: u32) -> (value: Record_O
 		return {}, {}, {}, false
 	}
 	value = record(file, .Record_Outputs, index, Record_Output) or_return
-	if value.reserved != [3]u8{} || !record_stream_texts_valid(file, value.name_offset, value.name_count, value.about_offset, value.about_count, value.text_offset, value.text_count) {
+	if (value.reserved != [3]u8{}) || !record_stream_texts_valid(file, value.name_offset, value.name_count, value.about_offset, value.about_count, value.text_offset, value.text_count) {
 		return {}, {}, {}, false
 	}
 	pairing = record_output_pairing_of_word(value.pairing) or_return
@@ -155,7 +156,7 @@ record_input :: proc "contextless" (file: []u8, index: u32) -> (value: Record_In
 		return {}, {}, {}, {}, false
 	}
 	value = record(file, .Record_Inputs, index, Record_Input) or_return
-	if value.reserved != [3]u8{} || !record_stream_texts_valid(file, value.name_offset, value.name_count, value.about_offset, value.about_count, value.text_offset, value.text_count) {
+	if (value.reserved != [3]u8{}) || !record_stream_texts_valid(file, value.name_offset, value.name_count, value.about_offset, value.about_count, value.text_offset, value.text_count) {
 		return {}, {}, {}, {}, false
 	}
 	wirings = wiring_count_of_word(value.wirings) or_return

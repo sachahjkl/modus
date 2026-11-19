@@ -374,10 +374,18 @@ requests: system.Record_Output(Access_Record)
 orders: system.Record_Input(Order, .Many)
 
 // The streams to keep, each with the terms of its space.
-sources: system.Record_Input(system.Any_Record, .Many_Types, Space_Terms)
+sources: system.Record_Input_With_Terms(system.Any_Record, Space_Terms, .Many_Types)
 ```
 
-The generic types of `src/library/support/system` take the record type, then for a record output its pairing (`.Unpaired` by default, or `.Paired`), and for a record input its count of wirings (`.One` by default, `.Many` or `.Many_Types`) and the record type of its wiring terms (`system.No_Terms` by default). `system.Any_Record` declares a generic record output or record input, whose type a wiring fixes. A declaration costs nothing while no wiring names it. Two tables hold them:
+The generic types of `src/library/support/system` take the record type first:
+
+| Type | Then |
+|---|---|
+| `system.Record_Output(Record_Type, pairing)` | `.Unpaired` by default, or `.Paired` |
+| `system.Record_Input(Record_Type, wirings)` | the count of wirings: `.One` by default, `.Many` or `.Many_Types` |
+| `system.Record_Input_With_Terms(Record_Type, Terms_Type, wirings)` | the record type of the wiring terms, which it always names, then the count of wirings |
+
+A record input with wiring terms has a type of its own because Odin gives no default to a type parameter of a generic type: a record input with no terms, the frequent case, then names no terms, and a record input with terms names them second, before its count. `system.Any_Record` declares a generic record output or record input, whose type a wiring fixes. A declaration costs nothing while no wiring names it. Two tables hold them:
 
 | Table | One record describes |
 |---|---|
@@ -413,6 +421,22 @@ offset  size  field         type
 
 - **The record of a row** is a record description of the table `Records`, as the record of an export or of a log fact is: a record that an export takes and a record output writes has one row. A record of a record stream goes into memory that another process reads, so it has no Handle field, and each of its bytes is a byte of one field (`module.record_stream_type`).
 - **The checks of a reader**: `module.record_output` and `module.record_input` refuse a row index of 0 or past `module.RECORD_STREAM_INDEX_MOST` (65 535: a wiring names a row in 16 bits), a reserved byte that is not 0, a name that is not a name of the source or is outside the string table, a help or a text outside it, a record or terms that `record_stream_type` refuses, a pairing or a count that names no member, `Paired` on a typed record output, and `Many_Types` on a typed record input. `module.record_streams_check` checks a whole file: each row, the names of each table sorted with no name two times, no name in both tables, and a generic record output only beside one generic record input. The build writes the rows sorted by name, and checks each file that it writes with it.
+
+**The output ring** of a wiring carries the records of one record output to one reader (`glossary/communication.md`, "Output ring"). Its command queue holds one compartment for each record: the compartment word, then the record, rounded up to a multiple of 64 bytes (`output.compartment_size`). Its head page holds the end words that the root service writes when a side stops. The contract is `src/library/contract/output`, and the ring of compartments `ring.compartment_open`.
+
+```byte-layout output.Compartment_Word output.End_Words
+output.Compartment_Word, 8 bytes: the start of each compartment of an output ring
+offset  size  field   type
+     0     4  kind    u32
+     4     4  serial  u32
+
+output.End_Words, 64 bytes: the end words in the head page of an output ring
+offset  size  field         type
+     0     4  end           u32
+     4     4  stop_cause    u32
+     8     4  stop_outcome  u32
+    12    52  reserved      [13]u32
+```
 
 What the build checks: `TOOLS.md`, "The record outputs and the record inputs of the build". The wiring, the output ring and the design: `src/md/features/module_outputs.md`.
 

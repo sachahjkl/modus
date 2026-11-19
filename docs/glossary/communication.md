@@ -584,27 +584,37 @@ Do not use: input (alone, except after "record input" in the same passage), chan
 
 ### Output ring
 
-An output ring is the ring that carries the records of one record output to one reader: places of the size of the record in its command queue, and completions of 64 bytes.
+An output ring is the ring that carries the records of one record output to one reader: compartments of the size of the record in its command queue, and completions of 64 bytes.
 
-The root service makes it from the budget of the asker of the wiring, and gives one end to the writer and one to the reader. Each side computes the size of a place and the capacity from the record description and the size of the memory, never from the shared bytes. Its first place is a joined record. The completion queue carries the refusals of the reader and the acknowledgement of the end, not one answer for each record.
+The root service makes it from the budget of the asker of the wiring, and gives one end to the writer and one to the reader. Each side computes the size of a compartment and the capacity from the record description and the size of the memory, never from the shared bytes. Its first compartment is a joined record. The completion queue carries the refusals of the reader and the acknowledgement of the end, not one answer for each record.
 
 The design: `src/md/features/module_outputs.md`, "The ring and its records".
 
 Do not use: pipe, stream buffer, channel.
 
-### Place word
+### Compartment
 
-A place word is the first 8 bytes of each place of an output ring: the kind of the place (a record, a gap record, an end record or a joined record) and the serial of the record.
+A compartment is the part of the command queue of an output ring that holds one record: the compartment word, then the record, rounded up to a multiple of 64 bytes.
+
+Both sides compute its size from the record description: a record of 72 bytes takes a compartment of 128 bytes, a log record of 256 bytes one of 320. The writer copies a whole compartment in, and the reader copies it out into private memory before it checks it (`output.record_of_compartment`). A compartment is not a place of the storage service ("Place") and not a slot of a module ("Slot").
+
+The design: `src/md/features/module_outputs.md`, "The ring and its records".
+
+Do not use: place (for this), slot (for this), cell (for this), frame (for this), entry (for this).
+
+### Compartment word
+
+A compartment word is the first 8 bytes of each compartment of an output ring: the kind of the compartment (a record, a gap record, an end record or a joined record) and the serial of the record.
 
 The serial counts the records of the record output from 0, so a copy of one record has one serial in each ring. The reader takes the kind through one border, which refuses a word that names no kind, and refuses a serial that does not follow: the serials of a ring jump only by the count of a joined record or a gap record. All-zero bytes are a record with the serial 0.
 
 The design: `src/md/features/module_outputs.md`, "The ring and its records".
 
-Do not use: frame header, envelope.
+Do not use: frame header, envelope, place word, slot word.
 
 ### Gap record
 
-A gap record is the place of an output ring that says how many records the writer refused there because the ring was full.
+A gap record is the compartment of an output ring that says how many records the writer refused there because the ring was full.
 
 A writer that does not wait gets `Full` and counts each refused record, and a ring of the pace `Never_Holds_Writer` refuses for its reader alone. When the ring has room again, the library writes one gap record with the count before the next record. So the reader knows where records are missing and how many, and the console draws it as one dim row.
 
@@ -614,7 +624,7 @@ Do not use: drop marker, overflow record.
 
 ### End record
 
-An end record is the last place of an output ring that the writer writes: the end of its stream, with an error record that is zero for a clean end.
+An end record is the last compartment of an output ring that the writer writes: the end of its stream, with an error record that is zero for a clean end.
 
 The reader reads each record before it, acknowledges it in the completion queue, and closes its end. A writer that stops with no end record gets an end word from the root service in place of it, with its stop cause and its stop outcome.
 
@@ -664,7 +674,7 @@ Do not use: payload buffer, shared buffer, blob.
 
 ### Joined record
 
-A joined record is the first place of each output ring: it says how many records of the record output the writer wrote before this reader joined.
+A joined record is the first compartment of each output ring: it says how many records of the record output the writer wrote before this reader joined.
 
 The writer writes it when it takes the new end, before its next record. A joined record of 0 says that the reader has the whole stream: each wiring of the wiring list of a start gets one, because the root service applies the list before the first instruction of the child. A wiring that comes while the writer runs gets the records from that point only. The console draws it as the first row of a stream, "joined after 5 000 records".
 
@@ -706,7 +716,7 @@ Do not use: manifest, wiring plan, pipeline, redirection.
 
 The wiring terms are the record that the asker of a wiring gives for the record input, and that the reader receives with its end.
 
-A record input declares their record type in its row of the table `Record_Inputs`. The root service checks their size against that description and copies them once; the reader checks their fields. Examples: the condition of `filter` (a field, an operator and a value), the kind, the bound and the forward of a collector space. A free text is never a term.
+A source declares them with the record input, `system.Record_Input_With_Terms(system.Any_Record, Condition)`, and the module file holds their record type in its row of the table `Record_Inputs`. The root service checks their size against that description and copies them once; the reader checks their fields. Examples: the condition of `filter` (a field, an operator and a value), the kind, the bound and the forward of a collector space. A free text is never a term.
 
 The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
 

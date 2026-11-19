@@ -8,7 +8,7 @@ An export answers one call with one result. A record output gives records for as
 
 **The log is lossy diagnostics. It is not a record output, and a record output is never the log.** The log of the kernel evicts, refuses past a budget and drops lines on the serial port, and a reader reaches it through its log scope ([log_reader_scope.md](log_reader_scope.md)). A record output loses no record that it wrote into a ring, has flow control, is reached through a handle that someone gave, and is part of the contract of its module. The log design is [log_facts.md](log_facts.md), "What the log is, and what it is not". The two designs share the record description, and the record type of the record output `log` is the log record of that design ("The record output `log`").
 
-The terms are in [`docs/glossary/communication.md`](../../../docs/glossary/communication.md): "Record output", "Record input", "Generic record input", "Generic record output", "Output ring", "Place word", "Joined record", "Gap record", "End record", "Wiring", "Wiring list", "Wiring terms", "Wiring ring", "Record stream", "Body region", "Collector", "Collector space" and "Audit space". A record input is not the Input of the group Access, which is the keys and the pointer.
+The terms are in [`docs/glossary/communication.md`](../../../docs/glossary/communication.md): "Record output", "Record input", "Generic record input", "Generic record output", "Output ring", "Compartment", "Compartment word", "Joined record", "Gap record", "End record", "Wiring", "Wiring list", "Wiring terms", "Wiring ring", "Record stream", "Body region", "Collector", "Collector space" and "Audit space". A record input is not the Input of the group Access, which is the keys and the pointer.
 
 ## Constraints
 
@@ -22,7 +22,7 @@ The terms are in [`docs/glossary/communication.md`](../../../docs/glossary/commu
 - **The process that asks for the work pays for its memory** ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "14. Memory is supplied by the caller").
 - **Module metadata is flat tables** ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "12. Module metadata in flat tables, read through functions").
 - **The policy is outside the root service** ([start_policy.md](start_policy.md)). The root service keeps the mechanism of a wiring, and a process chooses which wiring to ask for.
-- **No contract depends on one language** (property 19). The ring, the place word, the wiring list and the tables are memory layouts and numbers.
+- **No contract depends on one language** (property 19). The ring, the compartment word, the wiring list and the tables are memory layouts and numbers.
 - **The general form first, and short forms over it for the frequent tasks.** A frequent task has an expression that reads as its intent. A short form is a wrapper over the general form, never a second mechanism beside it.
 - **No backward compatibility.** A changed record type is a changed contract, checked at the wiring.
 
@@ -73,17 +73,19 @@ requests: system.Record_Output(Access_Record)
 orders: system.Record_Input(Order)
 ```
 
-The count of wirings, the wiring terms and the mark `Paired` are parameters of the two generic types, with defaults, so a declaration that takes the defaults is the short form above:
+The count of wirings and the mark `Paired` are parameters with defaults, so a declaration that takes the defaults is the short form above. A record input with wiring terms is a third type, which names its terms second:
 
 ```odin
 // The streams to keep, each with the terms of its space.
-sources: system.Record_Input(system.Any_Record, .Many_Types, Space_Terms)
+sources: system.Record_Input_With_Terms(system.Any_Record, Space_Terms, .Many_Types)
 
 // The kept records, one ring for each source that asks to forward.
 forward: system.Record_Output(system.Any_Record, .Paired)
 ```
 
-`system.Record_Output($Record_Type, $pairing = .Unpaired)` and `system.Record_Input($Record_Type, $wirings = .One, $Terms_Type = system.No_Terms)` hold no state yet: the state of the writer and of the reader comes with the wiring. The arguments go by place or by name. A parameter of a procedure that takes a record stream by its address declares none; the tool reads no other form of the two types.
+`system.Record_Output($Record_Type, $pairing = .Unpaired)`, `system.Record_Input($Record_Type, $wirings = .One)` and `system.Record_Input_With_Terms($Record_Type, $Terms_Type, $wirings = .One)` hold no state yet: the state of the writer and of the reader comes with the wiring. The arguments go by place or by name. A parameter of a procedure that takes a record stream by its address declares none; the tool reads no other form of the three types.
+
+**Why a third type for the terms.** Odin gives a value parameter of a generic type a default, and a type parameter none. One type with the terms as a parameter would then make each record input name its terms, `system.Record_Input(Order, .One, system.No_Terms)`, the frequent case too: two words that say nothing of the stream, an incantation by the test of "The frequent tasks". With two types, the frequent declaration is `system.Record_Input(Order)`, and only a record input that takes terms, `filter` and the collector, names them, in the second place, where they read as what sets the stream apart: `system.Record_Input_With_Terms(system.Any_Record, Condition)`. A record input with no terms has no type of terms to name, so no `No_Terms` type exists.
 
 The tool reads these declarations, as it reads the signature of an export (`describe.odin`), and writes two tables of the module file:
 
@@ -92,7 +94,7 @@ The tool reads these declarations, as it reads the signature of an export (`desc
 | `Record_Outputs` | One record output: its name, its line of help and its documentation text in the string table; the index of its record description in the table `Records`, or 0 for a generic record output; and the mark `Paired` for a generic record output that has one ring for each wiring of the generic record input of its module. |
 | `Record_Inputs` | One record input: the same name, help and text; the index of its record description, or 0 for a generic record input; the index of the record description of its wiring terms, or 0 for none; and its count of wirings: `One`, `Many` (several wirings of one type) or `Many_Types` (several wirings, each of its own type, for a generic record input only). |
 
-A module declares as many record outputs and record inputs as it needs. The only bound is the field of the format: the index of a record output or a record input is 16 bits in a wiring, so 65 535 of each. A declaration costs its row and its strings in the module file, and nothing while it is not wired. The tool refuses two record outputs or two record inputs with one name, a record output and a record input with one name (`server.name` names one stream in the console), a declaration that is not a package variable of the package of the module (a local variable, a constant, a type, a field of a record, a declaration inside a `when`, a parameter by value, a variable of another package that the module compiles in), a generic record output in a module that has no generic record input or two, `Many_Types` on a record input that is not generic, and `Paired` on a record output that is not generic. The tables change the hash of the module, as each byte of the metadata does.
+A module declares as many record outputs and record inputs as it needs. The only bound is the field of the format: the index of a record output or a record input is 16 bits in a wiring, so 65 535 of each. A declaration costs its row and its strings in the module file, and nothing while it is not wired. The tool refuses two record outputs or two record inputs with one name, a record output and a record input with one name (`server.name` names one stream in the console), a declaration that is not a package variable of the package of the module (a local variable, a constant, a type, a field of a record, a declaration inside a `when`, a parameter by value, a variable of another package that the module compiles in), `Record_Input_With_Terms` with no terms and `Record_Input` with terms, a generic record output in a module that has no generic record input or two, `Many_Types` on a record input that is not generic, and `Paired` on a record output that is not generic. The tables change the hash of the module, as each byte of the metadata does.
 
 The rows of each table are sorted by name, as the rows of `Facts` are sorted by key. The contract reader `module.record_streams_check` then checks a whole file in one walk of each table and one walk of the two: each row (`module.record_output`, `module.record_input`), the order of the names, no name in both tables, and the rule of a generic record output. The root service checks a module file with it before a wiring; the tool checks each file that it writes with it. A sort by name also makes the index of a row stable when a source moves a declaration to another file.
 
@@ -117,28 +119,28 @@ The refusals of the log design for a record type, and which ones hold for the re
 An output ring is a ring ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "K4. Rings and wait") whose command queue holds records of the size of the record description, and whose completion queue holds the records of 64 bytes of each ring. One memory object holds:
 
 1. The head page: the counters of the two queues, as in each ring, and the end words of the root service ("The end of a stream").
-2. The command queue: one place for each record. A place is the place word (8 bytes), then the record, rounded up to a multiple of 64 bytes: a record of 72 bytes takes a place of 128 bytes, and a log record of 256 bytes a place of 320 bytes.
+2. The command queue: one compartment for each record. A compartment is the compartment word (8 bytes), then the record, rounded up to a multiple of 64 bytes: a record of 72 bytes takes a compartment of 128 bytes, and a log record of 256 bytes a compartment of 320 bytes.
 3. The completion queue: records of 64 bytes, the same capacity.
 
-**The place word** is a kind (`Place_Kind`, an enum with explicit values: `Record = 0`, `Gap = 1`, `End = 2`, `Joined = 3`) and the serial of the record (32 bits): `output.Place_Word`, the word of the kind then the serial. The serial counts the records of the record output, not of the ring: the writer gives the same serial to the copy of a record in each ring. A zero place word is a record, so a zero place is a valid record of zero fields. The serial wraps at the top of its 32 bits, as the counters of a ring do.
+**The compartment word** is a kind (`Compartment_Kind`, an enum with explicit values: `Record = 0`, `Gap = 1`, `End = 2`, `Joined = 3`) and the serial of the record (32 bits): `output.Compartment_Word`, the word of the kind then the serial. The serial counts the records of the record output, not of the ring: the writer gives the same serial to the copy of a record in each ring. A zero compartment word is a record, so a zero compartment is a valid record of zero fields. The serial wraps at the top of its 32 bits, as the counters of a ring do.
 
-What each kind holds after its word, at offset 8: a record, its bytes; a gap record, its count as 32 bits, and its serial is the serial of the first refused record; an end record, its error record of 56 bytes, and its serial is the count of the records; a joined record, nothing, and its serial is the serial of the next record. So each place of an output ring is at least 64 bytes, and each byte after what the kind names is 0, the bytes between the end of a record and the end of its place too.
+What each kind holds after its word, at offset 8: a record, its bytes; a gap record, its count as 32 bits, and its serial is the serial of the first refused record; an end record, its error record of 56 bytes, and its serial is the count of the records; a joined record, nothing, and its serial is the serial of the next record. So each compartment of an output ring is at least 64 bytes, and each byte after what the kind names is 0, the bytes between the end of a record and the end of its compartment too.
 
-**Each side computes the size of a place and the capacity itself**, from the record description and the size of the memory that the kernel gives. Neither side reads them from the shared memory. The ring contract gains one form of `open` that takes the size of a command record, `ring.place_open(memory, page_count, place_size)`, with its host tests: the memory is the head page, then the places, then the completions with no gap between them, so a ring of `1 + ceil(capacity × (place_size + 64) / 4096)` pages; with places of 64 bytes it is the ring of `ring.open` at each capacity, the case of today. The writer and the reader copy a whole place in and out (`ring.place_push`, `ring.place_pop`), and the reader checks its copy only.
+**Each side computes the size of a compartment and the capacity itself**, from the record description and the size of the memory that the kernel gives. Neither side reads them from the shared memory. The ring contract gains one form of `open` that takes the size of a command record, `ring.compartment_open(memory, page_count, compartment_size)`, with its host tests: the memory is the head page, then the compartments, then the completions with no gap between them, so a ring of `1 + ceil(capacity × (compartment_size + 64) / 4096)` pages; with compartments of 64 bytes it is the ring of `ring.open` at each capacity, the case of today. The writer and the reader copy a whole compartment in and out (`ring.compartment_push`, `ring.compartment_pop`), and the reader checks its copy only.
 
-**The reader checks each record** at one border, `output.record_of_place`, a pure procedure of a contract package with host tests. It copies the place once into private memory, then checks it against its record description: its own, from its module file, for a declared record input; the one that the root service read from the module file of the writer, for a generic record input or for the console. Never one that the writer sends.
+**The reader checks each record** at one border, `output.record_of_compartment`, a pure procedure of a contract package with host tests. It copies the compartment once into private memory, then checks it against its record description: its own, from its module file, for a declared record input; the one that the root service read from the module file of the writer, for a generic record input or for the console. Never one that the writer sends.
 
-- the place word: a kind that names no member is a damaged place;
-- the first place of a ring: it must be a joined record, and no later place can be one;
-- the serial: the serial that the joined record names, then each next serial in order; after a gap record of the count N, the next serial is N more. Any other serial is a damaged place;
+- the compartment word: a kind that names no member is a damaged compartment;
+- the first compartment of a ring: it must be a joined record, and no later compartment can be one;
+- the serial: the serial that the joined record names, then each next serial in order; after a gap record of the count N, the next serial is N more. Any other serial is a damaged compartment;
 - each Text field: UTF-8 with no control character, then zero bytes to the end of the field ([text_encoding.md](../data/text_encoding.md));
 - each status field of a contract enum: a value that names no member;
 - each body place: inside the body region, with no overflow;
-- a joined record, a gap record or an end record: the bytes after the place word that its kind does not name are zero;
-- a record: the bytes of its place after the record are zero, as the padding of a record is refused;
-- a gap record of 0 records, and any place after the end record.
+- a joined record, a gap record or an end record: the bytes after the compartment word that its kind does not name are zero;
+- a record: the bytes of its compartment after the record are zero, as the padding of a record is refused;
+- a gap record of 0 records, and any compartment after the end record.
 
-The border gives the fault, an enum `output.Place_Fault`, and the error record: its `value` is the wrong value (the kind word, the serial, the place of the byte), its `limit` what the border expected, and its `found` the part, 0 for the place word and the bytes of its kind, the number of a field from 1, or the count of the fields + 1 for the bytes after the record. On a refusal the state of the reader, `output.Read_State` in its private memory, does not change. A description with a Handle field, or a field that the border cannot read, is refused as `Bad_Field`: the reader takes its description through `module.record_stream_type`, which refuses both, and the border does not trust that.
+The border gives the fault, an enum `output.Compartment_Fault`, and the error record: its `value` is the wrong value (the kind word, the serial, the offset of the byte), its `limit` what the border expected, and its `found` the part, 0 for the compartment word and the bytes of its kind, the number of a field from 1, or the count of the fields + 1 for the bytes after the record. On a refusal the state of the reader, `output.Read_State` in its private memory, does not change. A description with a Handle field, or a field that the border cannot read, is refused as `Bad_Field`: the reader takes its description through `module.record_stream_type`, which refuses both, and the border does not trust that.
 
 A refused record does not reach the reader of the record input. The reader writes one completion with the status `Bad_Record`, the serial of the record as the tag, and the error record that names the field. It writes no completion for a record that it takes: the counter `read` of the queue says that it took it. The kind of a completion is `output.Completion_Kind` (`End_Taken = 0`, `Bad_Record = 1`); the writer takes it through `output.completion_of_record`, which refuses a kind that names no member and an `End_Taken` with values.
 
@@ -148,11 +150,11 @@ A refused record does not reach the reader of the record input. The reader write
 
 A wiring can come while the writer runs: the console reads `server.requests` an hour after `server` started. The records that the writer wrote before the wiring are not in the new ring, and no one keeps them for it: a reader joins a stream in the middle, as a radio picked up in the middle of a song.
 
-So **the first place of each output ring is a joined record**. The writer writes it when it takes the new end, before its next record. It holds the serial of the next record of the record output: the count of the records that the writer wrote before this reader joined. A joined record of 0 says that the reader has the whole stream. A joined record of 5 000 says that it lacks the first 5 000 records, and that its first record has the serial 5 000.
+So **the first compartment of each output ring is a joined record**. The writer writes it when it takes the new end, before its next record. It holds the serial of the next record of the record output: the count of the records that the writer wrote before this reader joined. A joined record of 0 says that the reader has the whole stream. A joined record of 5 000 says that it lacks the first 5 000 records, and that its first record has the serial 5 000.
 
 The reader takes the joined record through its border, and gives it to its code as the first record of the record input: the console draws it as one dim row, "joined after 5 000 records". A reader that needs the start of a stream is wired in the wiring list of the start of the writer ("The wiring list of a start"): its joined record is then 0, by construction.
 
-The test, with the refusals first: a ring whose first place is a record and not a joined record; a second joined record; a serial after a joined record that is not its serial; then a wiring in the start (joined at 0, also when the writer writes in its first instruction), and a wiring after N writes (joined at N, first serial N), with N at 1 and past the capacity of the ring, so that the serial is no place of the ring.
+The test, with the refusals first: a ring whose first compartment is a record and not a joined record; a second joined record; a serial after a joined record that is not its serial; then a wiring in the start (joined at 0, also when the writer writes in its first instruction), and a wiring after N writes (joined at N, first serial N), with N at 1 and past the capacity of the ring, so that the serial is no compartment of the ring.
 
 ### A large body
 
@@ -206,7 +208,7 @@ sequenceDiagram
     root->>collector: the end of each stream: Writer_Stopped, the stop cause and the stop outcome
 ```
 
-A starter that starts a process can give the wiring of the child in the `Start` command itself: a **wiring list**, a table of wiring records. The root service applies the whole list **before the first instruction of the child**: it makes each ring, writes each end into the wiring ring of the child, and only then starts its first thread. So no record of the child is lost, and the first place of each ring of a record output of the child is a joined record of 0.
+A starter that starts a process can give the wiring of the child in the `Start` command itself: a **wiring list**, a table of wiring records. The root service applies the whole list **before the first instruction of the child**: it makes each ring, writes each end into the wiring ring of the child, and only then starts its first thread. So no record of the child is lost, and the first compartment of each ring of a record output of the child is a joined record of 0.
 
 **The wiring record** (`Wiring`, a contract record of fixed size, all-zero bytes refused):
 
@@ -218,7 +220,7 @@ A starter that starts a process can give the wiring of the child in the `Start` 
 | `other_handle` | The place, in the list of handles lent with the `Start`, of the process handle (`Started`) or the connection (`Connected`); 0 for `Asker`. |
 | `other_kind`, `other_index` | The record output or the record input of the other end, and its index. |
 | `pace` | A `Wiring_Pace`. |
-| `capacity` | The places of the ring, a power of two from 32 to 4096; 0 is the default of 256. |
+| `capacity` | The compartments of the ring, a power of two from 32 to 4096; 0 is the default of 256. |
 | `terms_offset`, `terms_count` | The wiring terms in the lent memory object, or 0 and 0. |
 
 A record output of the child that no row names has no reader: its records are discarded with a count, as each record output with no reader. So "the record output `requests` and the log to a collector, and the rest to nothing" is two rows, and nothing more.
@@ -245,13 +247,13 @@ The start list of the default start policy gets a table of wiring rows beside it
 
 ### The record output `log`
 
-Each process has one record output that its module does not declare: `log`. It carries the log records of the process, text records and log facts, as records of the contract record `Log_Output_Record` of [log_facts.md](log_facts.md), "The record output `log`": 256 bytes, the body of a log record (the level, the form, the time that the writer reads in its time page, the module hash, the fact key, the count of the bytes, `more`, and the bytes of the text or of the values), with no process slot, no process serial, no own number and no name, because the wiring names the writer and the serial of the place numbers the record. The contract describes it, in `Records` of no module file, so the type check of a wiring of `log` compares the description of the contract on both sides. A reader reads its body through the border of the form, as each reader of the log does.
+Each process has one record output that its module does not declare: `log`. It carries the log records of the process, text records and log facts, as records of the contract record `Log_Output_Record` of [log_facts.md](log_facts.md), "The record output `log`": 256 bytes, the body of a log record (the level, the form, the time that the writer reads in its time page, the module hash, the fact key, the count of the bytes, `more`, and the bytes of the text or of the values), with no process slot, no process serial, no own number and no name, because the wiring names the writer and the serial of the compartment numbers the record. The contract describes it, in `Records` of no module file, so the type check of a wiring of `log` compares the description of the contract on both sides. A reader reads its body through the border of the form, as each reader of the log does.
 
 **The log of the kernel does not change.** It stays lossy diagnostics: each log record still goes to the whole log and to the own log ring, with the budget of each second and the serial port ([log_side_channels.md](log_side_channels.md)). The record output `log` does not read the log of the kernel and does not make it a data path: it is a second copy, which the process writes into a ring, with the guarantees of a record output.
 
 **Only the starter wires it, at the start, to one reader.** `log` is named only in the wiring list of a start: no wiring of `log` comes while the process runs, so a process whose log is wired has each of its records from its first one, after a joined record of 0. `log` takes one wiring: a second row that names `log` of the child is refused with `Bad_Wiring`. A second reader of the same log reads it from the first one, as the collector forwards.
 
-**How its end reaches the child: one handle slot of the context.** The context of a process has one handle slot for the end of `log`, beside the log handle (`docs/MODULE_CONTRACT.md`, "6. The context"). The root service writes there, before the first instruction, the handle of the output ring with the rights Read and Write, only when the wiring list of the start wires `log`. The library maps the ring at the first write of the log, and computes its places from the size of the memory and the description of `Log_Output_Record`. The end of `log` never goes through the wiring ring, so a process whose only wiring is `log` gets no wiring ring.
+**How its end reaches the child: one handle slot of the context.** The context of a process has one handle slot for the end of `log`, beside the log handle (`docs/MODULE_CONTRACT.md`, "6. The context"). The root service writes there, before the first instruction, the handle of the output ring with the rights Read and Write, only when the wiring list of the start wires `log`. The library maps the ring at the first write of the log, and computes its compartments from the size of the memory and the description of `Log_Output_Record`. The end of `log` never goes through the wiring ring, so a process whose only wiring is `log` gets no wiring ring.
 
 **The writer path when `log` is wired**, in the order of [log_facts.md](log_facts.md), "The record output `log`". `system.log` and `system.log_fact` write each record twice:
 
@@ -281,7 +283,7 @@ This is a discard on purpose, not a loss: no reader asked for the records, and t
 
 A ring of the pace `Never_Holds_Writer` that is full refuses the record for its reader alone, and the write goes on to the others.
 
-**The gap record.** When a ring that refused records has room again, the library writes a gap record into it, with the count of the records that it refused, before the next record. So the reader knows the place and the count of what is missing, and the stream is never cut in silence.
+**The gap record.** When a ring that refused records has room again, the library writes a gap record into it, with the count of the records that it refused, before the next record. So the reader knows where records are missing and how many, and the stream is never cut in silence.
 
 A ring of the pace `Always_Holds_Writer` that is full makes the write wait, also a write with `wait = false`, until its deadline; past the deadline the write gives `Full` and writes nothing, so the record is not lost: the writer keeps it.
 
@@ -345,7 +347,7 @@ The collector is a module that reads the record outputs that a wiring list gives
 
 The guide is a server: each record that enters or leaves `server` goes to an audit space of its principal, in the store of the collector.
 
-**What leaves.** The wiring list of the start of `server` names each record output of `server` and its `log`, each to the record input `sources` of the collector, with the terms `Audit` and the pace `Always_Holds_Writer`. The rings exist before the first instruction of `server`, so the first place of each is a joined record of 0, and the writer waits when an audit space is full. The forward of what enters is wired with the same pace.
+**What leaves.** The wiring list of the start of `server` names each record output of `server` and its `log`, each to the record input `sources` of the collector, with the terms `Audit` and the pace `Always_Holds_Writer`. The rings exist before the first instruction of `server`, so the first compartment of each is a joined record of 0, and the writer waits when an audit space is full. The forward of what enters is wired with the same pace.
 
 **What enters.** A record input of `server`, `orders`, has a writer, `shop`. For an audit of what enters, the starter places the collector between them: `shop.orders` to the collector, with terms that say `Audit` and forward, and the record output `forward` of the collector to `server.orders`. The collector commits the segment that holds a record, then forwards it: `server` never reads a record that the audit space lacks. This is the collector with its record output `forward`, not a new module.
 
@@ -401,7 +403,7 @@ Each frequent task has one expression that reads as its intent. Each short form 
 
 A declaration costs nothing at run time. Each wiring costs memory, and **the asker of a wiring pays it**: the console for a stream that it reads, the starter or the start policy for the wirings that it asks for. A wiring has two costs, both counted in the budget of the asker:
 
-- **The ring.** The root service makes the memory object of the ring from the budget of the asker, with the budget handle that it holds for each process that it started. Its pages: the head page, the places and the completions. The capacity is the choice of the asker, a power of two from 32 to 4096 places, 256 by default. With a record of up to 56 bytes, a place is 64 bytes, and the default ring is 1 + 4 + 4 = 9 pages: 36 KiB. With a record of up to 120 bytes, it is 1 + 8 + 4 = 13 pages: 52 KiB. The ring of `log`, with places of 320 bytes, is 1 + 20 + 4 = 25 pages: 100 KiB.
+- **The ring.** The root service makes the memory object of the ring from the budget of the asker, with the budget handle that it holds for each process that it started. Its pages: the head page, the compartments and the completions. The capacity is the choice of the asker, a power of two from 32 to 4096 compartments, 256 by default. With a record of up to 56 bytes, a compartment is 64 bytes, and the default ring is 1 + 4 + 4 = 9 pages: 36 KiB. With a record of up to 120 bytes, it is 1 + 8 + 4 = 13 pages: 52 KiB. The ring of `log`, with compartments of 320 bytes, is 1 + 20 + 4 = 25 pages: 100 KiB.
 - **The place of the wiring in the root service.** The root service keeps the record of each wiring (its two ends, its pace, the handle of its ring) in a wiring page of the asker: a page that the root service makes from the budget of the asker and maps in itself alone, as the kernel keeps the own log ring of a process from the budget of that process ([own_log_ring.md](own_log_ring.md)). A page holds 64 wiring records of 64 bytes. The first wiring of an asker makes its first page, its 65th wiring a second page, and the page goes back to the budget when its last wiring ends. So the root service has no table of a fixed size and no bound of the machine: each wiring is one record in a page that its asker pays.
 
 A start policy that wires has a larger budget: the tool adds the pages of the rings and of the wiring pages of each wiring row of the start list to the budget that the role of the start policy asks for ([module_budget_request.md](module_budget_request.md)).
@@ -414,9 +416,9 @@ The record description is the version. A wiring needs two equal descriptions: no
 
 ### How a test waits on a record output
 
-A test waits on a record output by reading it as a record input, never by a delay. A test module declares the record input, its starter wires it in the wiring list of the start, and the test reads with `system.input_read(&input, deadline)` where the deadline is the hang bound (`system.TEST_HANG_BOUND_MILLISECONDS`). The test checks a condition on the records: a count, a field, an order. The tool waits for the verdict of the test module, as it waits today. The refusals come first: a wiring of two record types that differ, a damaged place, a first place that is not a joined record, a serial that does not follow, a record with a bad Text field, a write with no reader, a read with no writer, a full ring with `wait = false` and its gap record, a full ring of the pace `Never_Holds_Writer` that does not hold the writer, each refusal of a wiring list with nothing changed, a second source of `merge` of another type, a generic record output wired before its type is fixed, a condition of `filter` on a field that does not exist, a wiring of a process to itself, a `Wire` of a process that the asker did not start, the stop of the writer with no end record, the stop of the asker, a full audit space that holds its writer, a read of an audit space by its source, a broken chain of segments.
+A test waits on a record output by reading it as a record input, never by a delay. A test module declares the record input, its starter wires it in the wiring list of the start, and the test reads with `system.input_read(&input, deadline)` where the deadline is the hang bound (`system.TEST_HANG_BOUND_MILLISECONDS`). The test checks a condition on the records: a count, a field, an order. The tool waits for the verdict of the test module, as it waits today. The refusals come first: a wiring of two record types that differ, a damaged compartment, a first compartment that is not a joined record, a serial that does not follow, a record with a bad Text field, a write with no reader, a read with no writer, a full ring with `wait = false` and its gap record, a full ring of the pace `Never_Holds_Writer` that does not hold the writer, each refusal of a wiring list with nothing changed, a second source of `merge` of another type, a generic record output wired before its type is fixed, a condition of `filter` on a field that does not exist, a wiring of a process to itself, a `Wire` of a process that the asker did not start, the stop of the writer with no end record, the stop of the asker, a full audit space that holds its writer, a read of an audit space by its source, a broken chain of segments.
 
-The reader border `output.record_of_place`, the type check of a wiring, the border of a wiring list and the check of the wiring terms are pure procedures: their host tests try each refusal at its edges, and a fuzz target reads random places and random wiring lists.
+The reader border `output.record_of_compartment`, the type check of a wiring, the border of a wiring list and the check of the wiring terms are pure procedures: their host tests try each refusal at its edges, and a fuzz target reads random compartments and random wiring lists.
 
 ## The steps
 
@@ -425,7 +427,7 @@ Each step is a commit on `master` that leaves a working system, with its tests.
 ### The steps of the mechanism
 
 1. **The declarations.** The tables `Record_Outputs` and `Record_Inputs` of the module file, generic declarations, counts and wiring terms included, their extraction by the tool with the refusals, and the version of the module format. No process writes a record output yet.
-2. **The output ring.** The form of `open` with the size of a command record, the place word with the joined record, the end words and the border `output.record_of_place`, in contract packages with host tests.
+2. **The output ring.** The form of `open` with the size of a command record, the compartment word with the joined record, the end words and the border `output.record_of_compartment`, in contract packages with host tests.
 3. **The wiring.** The wiring ring, the command `Wire` of the root ring with its three ends and the rule of the asker, the wiring list of `Start` applied before the first instruction, the type check, the wiring terms, the pace, the wiring pages and the rings from the budget of the asker, the end words at each stop, the recorded grant and its revocation, and `system.output_write`, `output_end`, `input_read`. The test modules `output_writer` and `output_reader` and their machine test, with each refusal of the list above and the joined record at 0 and at N.
 4. **The console.** The kind Stream, the typed names of record outputs and record inputs with their completion, the fields of a description as names inside `where` and `columns`, a Stream on the left of `|>` (the operator itself is built), `+` on two tables of one description, the comparison form of `where` in place of the old form, `first` and `table` on a Stream, the draw of a Stream with its joined record and Escape, `wire`, `start` with a wiring list, `record_outputs()`.
 
@@ -456,12 +458,13 @@ Each step is a commit on `master` that leaves a working system, with its tests.
 - **A wiring ring for each process, for `log`.** Every process would pay a ring and its pages for a wiring that most never get. The end of `log` comes in one handle slot of the context, which holds 0 when nothing is wired.
 - **A broadcast ring by default** (one ring, several readers with a counter each). The slowest reader holds every reader, a reader can see how far the others read, and a reader that writes a false counter harms the others. One ring for each reader keeps each queue at one writer and one reader, and its cost is one copy for each reader, which the writer pays.
 - **Reaching a record output by a name** (a global topic, a path of the system). Property 20, row 11: no global name exists. The console names `server.requests` inside a connection that it holds, or a module that it starts: the name is local to that handle.
+- **One type of record input that always names its terms, with `system.No_Terms` for none.** Each frequent declaration would write two words that say nothing of its stream. A third type, `system.Record_Input_With_Terms`, names terms only where they exist.
 - **A static bound of the declarations.** A count of record outputs that a module declares costs nothing until a wiring; a constant bound refuses a module for no cost, and a fixed table in the root service is a bound of the machine that no budget pays.
 - **A wiring list applied after the start of the child.** The child would run before its readers, and its first records would go to nothing. The root service applies the list before the first instruction.
 - **A wiring list applied in part.** A child that runs with half of its audit is worse than a child that does not run. The list is whole or refused.
 - **A replay of the records before a wiring.** The writer would keep each record for a reader that may come: a buffer with no reader, paid by the writer, of a size that nobody chooses. A reader that needs the start is wired in the start; a reader that needs the past reads the collector.
-- **A joined record only for a wiring while the writer runs.** The reader could not tell "I have the whole stream" from "no joined record came". The first place of each ring is a joined record.
-- **The command record of 64 bytes with the record in a separate slot region.** Two writes and two places for each record, and a second index that both sides must agree on.
+- **A joined record only for a wiring while the writer runs.** The reader could not tell "I have the whole stream" from "no joined record came". The first compartment of each ring is a joined record.
+- **The command record of 64 bytes with the record in a separate slot region.** Two writes and two compartments for each record, and a second index that both sides must agree on.
 - **An acknowledgement for each record.** The counter `read` already says it. A completion for each record doubles the writes and fills the completion queue that the writer must read.
 - **A prefix rule for a changed record.** It keeps two versions alive, which the system refuses, and the zero of a missing field reads as a value.
 - **The description sent by the writer in the ring.** The reader then checks against what the writer claims.
@@ -483,12 +486,13 @@ Each step is a commit on `master` that leaves a working system, with its tests.
 
 ## Subtle points
 
+- **The part of the command queue that holds one record is a compartment.** "Place" is a term of the storage service, and "slot" the 8 bytes of a module that hold the address of an import: the compartment word would read as the word of either.
 - **One writing thread for each record output.** Each queue has one writer. A process that writes one record output from several threads holds its own lock around the write; `system.log` already serializes its writes to `log`.
 - **A record that the reader refuses is lost to the reader.** It is not lost in silence: the writer reads its serial and its field in a completion.
 - **The reader checks the record against a description that the writer does not send.** A status field is checked against the enum that the reader compiles in: an enum of the module itself has no description of its members, so a reader that needs the members converts it at its own border ([log_facts.md](log_facts.md), "Open questions", the enum of a module). A generic reader cannot check a status field of an enum that it does not compile in, and passes it as an Integer.
 - **The slowest reader that holds the writer sets its speed.** An audit is such a reader: a full audit space or a slow disk slows `server`. That is the price of an audit with no loss, and the principal sees it in the counts of the collector.
 - **An end word is read after the queue is empty.** A reader that reads the end word first can miss the last records.
-- **A gap record needs a place.** The writer writes it only when the ring that refused has room again, before the next record.
+- **A gap record needs a compartment.** The writer writes it only when the ring that refused has room again, before the next record.
 - **The serial is the count of the record output.** The serials of one ring jump only after a joined record or a gap record, by its count. Any other jump is a damaged ring.
 - **A wiring ends with its asker.** A starter that stops ends the streams that it wired between its children, and the audit of its children. A child whose audit must outlive its starter is started by a start policy.
 - **The record output `log` is a second copy, not a move.** Each log record of a wired process is in the log of the kernel and in its ring. The log of the kernel keeps its readers and its losses; the ring keeps the audit.
@@ -502,11 +506,11 @@ Each step is a commit on `master` that leaves a working system, with its tests.
 
 Each measure is printed, never asserted ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The bounds of the tests"). Each runs on the test machine under KVM, in cycles, the least and the median of 1 000 records, with the access record of `server` as the record.
 
-1. **One record through a record output, against a call of an export, against a log fact.** The time of `system.output_write` with a reader that reads on another processor; the time of an isolated call of an export that takes the same record; the time of `system.log_fact` of the same record. The claim to prove: a write with no wake costs less than one kernel entry. If the record output costs more than the log fact, the place layout changes before step 5.
+1. **One record through a record output, against a call of an export, against a log fact.** The time of `system.output_write` with a reader that reads on another processor; the time of an isolated call of an export that takes the same record; the time of `system.log_fact` of the same record. The claim to prove: a write with no wake costs less than one kernel entry. If the record output costs more than the log fact, the compartment layout changes before step 5.
 2. **The wake.** The time from a write to the read when the reader waits, and the count of records for each wake in a burst of 1 000. It decides whether the writer wakes the reader at each record or at each half of the queue.
-3. **The check of the reader.** The time of `output.record_of_place` for one access record, against a check compiled for the type. It decides whether the generic check stays.
+3. **The check of the reader.** The time of `output.record_of_compartment` for one access record, against a check compiled for the type. It decides whether the generic check stays.
 4. **The fan-out.** The time of a write with 1, 2, 4 and 16 readers.
-5. **The memory of one wiring.** The pages of an output ring at 32, 256 and 4096 places, and the count of refused records of `server` under a load of 10 000 requests with the console as its reader. It chooses the default capacity.
+5. **The memory of one wiring.** The pages of an output ring at 32, 256 and 4096 compartments, and the count of refused records of `server` under a load of 10 000 requests with the console as its reader. It chooses the default capacity.
 6. **The server.** The requests of `server` in one second with no reader, with the record output read by the console, with an audit of `requests` and `log`, and with the log fact of today.
 7. **A utility module.** The time of one record through `filter` from `server` to the console, against `where` in the console.
 8. **The collector.** The records in one second that the collector keeps for one space before a gap or a wait, and the blocks of the store for 100 000 access records. It chooses the size of a segment.
@@ -523,6 +527,6 @@ Each measure is printed, never asserted ([`docs/TOOLS.md`](../../../docs/TOOLS.m
 
 ## State
 
-Built: the declarations and the output ring as contracts. The tables `Record_Outputs` and `Record_Inputs` of the module format, version 4, with their readers and `module.record_streams_check`; the generic types `system.Record_Output`, `system.Record_Input`, `system.Any_Record` and `system.No_Terms`; their extraction by the tool with each refusal, the check of each file that it writes, and the comparison of `modustool test descriptions`; the fuzz target of the module file over the two tables. The form of `open` with the size of a place (`ring.place_open`); the contract package `output` with the place word, the places of each kind, the border `output.record_of_place`, the end words and the completions. Each with its host tests.
+Built: the declarations and the output ring as contracts. The tables `Record_Outputs` and `Record_Inputs` of the module format, version 4, with their readers and `module.record_streams_check`; the generic types `system.Record_Output`, `system.Record_Input`, `system.Record_Input_With_Terms` and `system.Any_Record`; their extraction by the tool with each refusal, the check of each file that it writes, and the comparison of `modustool test descriptions`; the fuzz target of the module file over the two tables. The form of `open` with the size of a compartment (`ring.compartment_open`); the contract package `output` with the compartment word, the compartments of each kind, the border `output.record_of_compartment`, the end words and the completions. Each with its host tests.
 
 Left: no module declares a record output or a record input yet, no process writes one, and no output ring exists in a machine. The wiring and each step after it are left, and `server` writes its access records on the log.

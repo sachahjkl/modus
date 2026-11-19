@@ -559,11 +559,11 @@ The documentation of the kernel operations is the model: for each operation, one
 
 ## The record outputs and the record inputs of the build
 
-The tool reads each declaration of `system.Record_Output(...)` and `system.Record_Input(...)` in the sources that the compiler read for a module, and writes the tables `Record_Outputs` and `Record_Inputs` of the module file, sorted by name, with the record of each one in the table `Records` (`docs/MODULE_CONTRACT.md`, "The record outputs and the record inputs"). The comment before a declaration gives its line of help and its text. It has no type checker, so it refuses, with a message that names the source and the line:
+The tool reads each declaration of `system.Record_Output(...)`, `system.Record_Input(...)` and `system.Record_Input_With_Terms(...)` in the sources that the compiler read for a module, and writes the tables `Record_Outputs` and `Record_Inputs` of the module file, sorted by name, with the record of each one in the table `Records` (`docs/MODULE_CONTRACT.md`, "The record outputs and the record inputs"). The comment before a declaration gives its line of help and its text. It has no type checker, so it refuses, with a message that names the source and the line:
 
 - a declaration of one of the two types that is not a package variable of the package of the module: a local variable, a constant, a type, a field of a record, a composite literal, a parameter by value, a declaration inside a `when`, a variable of another package that the module compiles in. A parameter that takes a stream by its address declares none;
 - a record or terms type that is not a record type of the package or of an imported package of the library, `system.Any_Record` as the terms, a record with padding or a Handle field;
-- arguments past the parameters, a name that names no parameter, a parameter given two times, no record type, and a pairing or a count that is not a member written `.Member`;
+- arguments past the parameters, a name that names no parameter, a parameter given two times, no record type, no terms type in `Record_Input_With_Terms`, terms in `Record_Input`, and a pairing or a count that is not a member written `.Member`;
 - `.Paired` on a record output that is not generic, and `.Many_Types` on a record input that is not generic;
 - two record outputs, two record inputs, or a record output and a record input with one name;
 - a generic record output in a module with no generic record input, or with two;

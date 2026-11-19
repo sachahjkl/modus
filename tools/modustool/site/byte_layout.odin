@@ -18,6 +18,7 @@ import "core:os"
 import "core:strings"
 import "modus:contract/draw_record"
 import module "modus:contract/module"
+import "modus:contract/output"
 import "modustool:foundation"
 import "modustool:build"
 import "modustool:checks"
@@ -31,6 +32,7 @@ BYTE_LAYOUT_FENCE_LANGUAGE :: "byte-layout"
 BYTE_LAYOUT_FORMAT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/format.odin"
 BYTE_LAYOUT_FACTS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/facts.odin"
 BYTE_LAYOUT_RECORD_STREAMS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/record_streams.odin"
+BYTE_LAYOUT_OUTPUT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/output/output.odin"
 BYTE_LAYOUT_DRAW_RECORD_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/draw_record/draw_record.odin"
 // The folder whose Markdown files the check and the command read: the
 // guides that the site shows.
@@ -150,7 +152,25 @@ byte_layout_sources :: proc() -> []Byte_Layout_Source {
 	for source in byte_layout_draw_record_sources() {
 		append(&list, source)
 	}
+	for source in byte_layout_output_ring_sources() {
+		append(&list, source)
+	}
 	return list[:]
+}
+
+// byte_layout_output_ring_sources gives the layouts of the shared memory of
+// an output ring (src/md/features/module_outputs.md, "The ring and its
+// records"): the word at the start of each compartment, and the end words
+// of the head page.
+byte_layout_output_ring_sources :: proc() -> []Byte_Layout_Source {
+	file :: BYTE_LAYOUT_OUTPUT_FILE
+	sources := [?]Byte_Layout_Source {
+		{key = "output.Compartment_Word", file = file, declaration = "Compartment_Word", info = type_info_of(output.Compartment_Word), what = "the start of each compartment of an output ring"},
+		{key = "output.End_Words", file = file, declaration = "End_Words", info = type_info_of(output.End_Words), what = "the end words in the head page of an output ring"},
+	}
+	list := make([]Byte_Layout_Source, len(sources), context.temp_allocator)
+	copy(list, sources[:])
+	return list
 }
 
 // byte_layout_source_size gives the bytes of one record or word of a source.

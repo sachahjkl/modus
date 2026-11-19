@@ -12,8 +12,9 @@ import "modustool:foundation"
 // The record outputs and the record inputs of a module
 // (src/md/features/module_outputs.md, "The declaration in the module"). The
 // source declares each one as a package variable of the package of the
-// module, of the generic type `system.Record_Output(T)` or
-// `system.Record_Input(T)`. The tool reads each such declaration in the
+// module, of the generic type `system.Record_Output(T)`,
+// `system.Record_Input(T)` or `system.Record_Input_With_Terms(T, Terms)`.
+// The tool reads each such declaration in the
 // sources that the compiler read for the module, describes its record in
 // the table Records, and writes the tables Record_Outputs and
 // Record_Inputs. It has no type checker: it reads the type as the source
@@ -43,11 +44,11 @@ import "modustool:foundation"
 // (src/library/support/system/record_streams.odin).
 RECORD_OUTPUT_TYPE_NAME :: "Record_Output"
 RECORD_INPUT_TYPE_NAME :: "Record_Input"
+RECORD_INPUT_WITH_TERMS_TYPE_NAME :: "Record_Input_With_Terms"
 ANY_RECORD_TYPE_NAME :: "Any_Record"
-NO_TERMS_TYPE_NAME :: "No_Terms"
 
-// The names of the parameters of the two generic types, for an argument
-// that the source names.
+// The names of the parameters of the generic types, for an argument that
+// the source names.
 RECORD_STREAM_RECORD_PARAMETER :: "Record_Type"
 RECORD_OUTPUT_PAIRING_PARAMETER :: "pairing"
 RECORD_INPUT_WIRINGS_PARAMETER :: "wirings"
@@ -57,6 +58,21 @@ RECORD_INPUT_TERMS_PARAMETER :: "Terms_Type"
 Record_Stream_Direction :: enum {
 	Output, // A record output: the module writes it.
 	Input, // A record input: the module reads it.
+}
+
+// Which of the three generic types a declaration names.
+Record_Stream_Form :: enum {
+	Output, // system.Record_Output: a record output.
+	Input, // system.Record_Input: a record input with no wiring terms.
+	Input_With_Terms, // system.Record_Input_With_Terms: a record input with wiring terms.
+}
+
+// The name of each generic type in the support package system.
+@(rodata)
+record_stream_type_names := [Record_Stream_Form]string {
+	.Output           = RECORD_OUTPUT_TYPE_NAME,
+	.Input            = RECORD_INPUT_TYPE_NAME,
+	.Input_With_Terms = RECORD_INPUT_WITH_TERMS_TYPE_NAME,
 }
 
 // One record output or one record input that a module declares: one row of
@@ -92,7 +108,7 @@ record_stream_fail :: proc(path: string, line: int, format: string, args: ..any)
 // ok is false at the first refusal, which it prints.
 record_streams_of_sources :: proc(module_folder: string, sources: []Fact_Source) -> (outputs, inputs: []Record_Stream_Description, ok: bool) {
 	context.allocator = context.temp_allocator
-	folder := filepath.clean(module_folder)
+	folder, _ := filepath.clean(module_folder)
 	// The module package: one state for all its files, so that a record
 	// type of one file serves a declaration of another.
 	module_state: Describe_State
@@ -146,7 +162,7 @@ record_streams_of_sources :: proc(module_folder: string, sources: []Fact_Source)
 				if found.type == nil || !found.is_mutable || !walk_state.of_module || !declaration_at_package_scope(walk_state.file, found) {
 					return visitor
 				}
-				call, direction, is_stream := record_stream_call(walk_state.state, walk_state.file, found.type)
+				call, form, is_stream := record_stream_call(walk_state.state, walk_state.file, found.type)
 				if !is_stream {
 					return visitor
 				}
@@ -156,12 +172,12 @@ record_streams_of_sources :: proc(module_folder: string, sources: []Fact_Source)
 						walk_state.failed = !record_stream_fail(walk_state.file.fullpath, found.pos.line, "a record stream has a name")
 						return nil
 					}
-					stream, described := record_stream_describe(walk_state.state, walk_state.file, found, call, direction, name.name)
+					stream, described := record_stream_describe(walk_state.state, walk_state.file, found, call, form, name.name)
 					if !described {
 						walk_state.failed = true
 						return nil
 					}
-					append(direction == .Output ? walk_state.outputs : walk_state.inputs, stream)
+					append(form == .Output ? walk_state.outputs : walk_state.inputs, stream)
 				}
 				// The type of the declaration is read: its call is not a
 				// misplaced declaration.
@@ -173,8 +189,8 @@ record_streams_of_sources :: proc(module_folder: string, sources: []Fact_Source)
 					return nil
 				}
 			case ^ast.Call_Expr:
-				if direction, is_stream := record_stream_call_direction(walk_state.state, walk_state.file, found); is_stream {
-					type_name := direction == .Output ? RECORD_OUTPUT_TYPE_NAME : RECORD_INPUT_TYPE_NAME
+				if form, is_stream := record_stream_call_form(walk_state.state, walk_state.file, found); is_stream {
+					type_name := record_stream_type_names[form]
 					walk_state.failed = !record_stream_fail(walk_state.file.fullpath, found.pos.line, "a %s that is not a package variable of the package of the module (%s): a local variable, a constant, a field of a record, a declaration inside a `when` or a variable of another package declares a stream that no row of the module names; declare it as `name: system.%s(Record)` at the top level of a file of the module", type_name, walk_state.of_module ? walk_state.file.pkg_name : "another package", type_name)
 					return nil
 				}
@@ -192,12 +208,13 @@ record_streams_of_sources :: proc(module_folder: string, sources: []Fact_Source)
 	return found_outputs[:], found_inputs[:], true
 }
 
-// record_stream_call gives the call of a type `system.Record_Output(...)`
-// or `system.Record_Input(...)`: through an import of the support package
-// system under any name, or by its own name in a file of that package.
-// is_stream is false for another expression.
+// record_stream_call gives the call of a type `system.Record_Output(...)`,
+// `system.Record_Input(...)` or `system.Record_Input_With_Terms(...)`:
+// through an import of the support package system under any name, or by
+// its own name in a file of that package. is_stream is false for another
+// expression.
 @(private = "file")
-record_stream_call :: proc(state: ^Describe_State, file: ^ast.File, type: ^ast.Expr) -> (call: ^ast.Call_Expr, direction: Record_Stream_Direction, is_stream: bool) {
+record_stream_call :: proc(state: ^Describe_State, file: ^ast.File, type: ^ast.Expr) -> (call: ^ast.Call_Expr, form: Record_Stream_Form, is_stream: bool) {
 	if type == nil {
 		return nil, {}, false
 	}
@@ -205,23 +222,22 @@ record_stream_call :: proc(state: ^Describe_State, file: ^ast.File, type: ^ast.E
 	if !is_call {
 		return nil, {}, false
 	}
-	direction, is_stream = record_stream_call_direction(state, file, found)
-	return found, direction, is_stream
+	form, is_stream = record_stream_call_form(state, file, found)
+	return found, form, is_stream
 }
 
-// record_stream_call_direction says if a call is one of the two types, and
+// record_stream_call_form says if a call is one of the three types, and
 // which.
 @(private = "file")
-record_stream_call_direction :: proc(state: ^Describe_State, file: ^ast.File, call: ^ast.Call_Expr) -> (direction: Record_Stream_Direction, is_stream: bool) {
+record_stream_call_form :: proc(state: ^Describe_State, file: ^ast.File, call: ^ast.Call_Expr) -> (form: Record_Stream_Form, is_stream: bool) {
 	name, of_system := system_type_name(state, file, call.expr)
 	if !of_system {
 		return {}, false
 	}
-	switch name {
-	case RECORD_OUTPUT_TYPE_NAME:
-		return .Output, true
-	case RECORD_INPUT_TYPE_NAME:
-		return .Input, true
+	for candidate in Record_Stream_Form {
+		if record_stream_type_names[candidate] == name {
+			return candidate, true
+		}
 	}
 	return {}, false
 }
@@ -275,15 +291,26 @@ record_stream_arguments :: proc(call: ^ast.Call_Expr, parameters: []string) -> (
 // record_stream_describe reads one declaration: its record, its pairing or
 // its count and terms, and its comment, and checks each record.
 @(private = "file")
-record_stream_describe :: proc(state: ^Describe_State, file: ^ast.File, declaration: ^ast.Value_Decl, call: ^ast.Call_Expr, direction: Record_Stream_Direction, name: string) -> (stream: Record_Stream_Description, ok: bool) {
+record_stream_describe :: proc(state: ^Describe_State, file: ^ast.File, declaration: ^ast.Value_Decl, call: ^ast.Call_Expr, form: Record_Stream_Form, name: string) -> (stream: Record_Stream_Description, ok: bool) {
 	path, line := file.fullpath, declaration.pos.line
+	direction := form == .Output ? Record_Stream_Direction.Output : Record_Stream_Direction.Input
 	stream = {direction = direction, name = name, file = path, line = line}
 	stream.text = markdown_of(declaration.docs)
 	stream.about = about_of(documentation_text_of_markdown(stream.text), name)
+	// The parameters of each type, in their order.
 	output_parameters := [?]string{RECORD_STREAM_RECORD_PARAMETER, RECORD_OUTPUT_PAIRING_PARAMETER}
-	input_parameters := [?]string{RECORD_STREAM_RECORD_PARAMETER, RECORD_INPUT_WIRINGS_PARAMETER, RECORD_INPUT_TERMS_PARAMETER}
-	parameters := direction == .Output ? output_parameters[:] : input_parameters[:]
-	type_name := direction == .Output ? RECORD_OUTPUT_TYPE_NAME : RECORD_INPUT_TYPE_NAME
+	input_parameters := [?]string{RECORD_STREAM_RECORD_PARAMETER, RECORD_INPUT_WIRINGS_PARAMETER}
+	terms_parameters := [?]string{RECORD_STREAM_RECORD_PARAMETER, RECORD_INPUT_TERMS_PARAMETER, RECORD_INPUT_WIRINGS_PARAMETER}
+	parameters: []string
+	switch form {
+	case .Output:
+		parameters = output_parameters[:]
+	case .Input:
+		parameters = input_parameters[:]
+	case .Input_With_Terms:
+		parameters = terms_parameters[:]
+	}
+	type_name := record_stream_type_names[form]
 	arguments, arguments_ok := record_stream_arguments(call, parameters)
 	if !arguments_ok {
 		parameter_list, _ := strings.join(parameters, ", ", context.temp_allocator)
@@ -313,16 +340,16 @@ record_stream_describe :: proc(state: ^Describe_State, file: ^ast.File, declarat
 		if stream.wirings == .Many_Types && !stream.generic {
 			return {}, record_stream_fail(path, line, "%s: Many_Types on a record input of the record %s: each wiring of Many_Types keeps its own type, and a record input with a record has one; write .Many, or declare it system.Record_Input(system.Any_Record, .Many_Types)", name, stream.record.name)
 		}
-		if expression, given := arguments[RECORD_INPUT_TERMS_PARAMETER]; given {
-			terms_name, is_system := system_type_name(state, file, expression)
-			switch {
-			case is_system && terms_name == NO_TERMS_TYPE_NAME:
-			case is_system && terms_name == ANY_RECORD_TYPE_NAME:
-				return {}, record_stream_fail(path, line, "%s: the wiring terms are system.Any_Record: the reader checks the terms against their description, so the terms have a record type", name)
-			case:
-				stream.terms = record_stream_record(state, path, line, name, expression, "terms") or_return
-				stream.has_terms = true
+		if form == .Input_With_Terms {
+			terms_expression, given := arguments[RECORD_INPUT_TERMS_PARAMETER]
+			if !given {
+				return {}, record_stream_fail(path, line, "%s: system.%s names the record type of its wiring terms second; a record input with no terms is system.%s", name, type_name, RECORD_INPUT_TYPE_NAME)
 			}
+			if terms_name, is_system := system_type_name(state, file, terms_expression); is_system && terms_name == ANY_RECORD_TYPE_NAME {
+				return {}, record_stream_fail(path, line, "%s: the wiring terms are system.Any_Record: the reader checks the terms against their description, so the terms have a record type", name)
+			}
+			stream.terms = record_stream_record(state, path, line, name, terms_expression, "terms") or_return
+			stream.has_terms = true
 		}
 	}
 	return stream, true

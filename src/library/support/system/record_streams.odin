@@ -36,22 +36,26 @@ import module "modus:contract/module"
 // ```
 Any_Record :: struct {}
 
-// The terms type of a record input that takes no wiring terms: the default.
-No_Terms :: struct {}
-
 // A record output: a stream of records of the record type Record_Type that
 // the module writes, with no known end. With Any_Record, it takes the type
 // of the one generic record input of its module; with pairing Paired, one
 // ring for each wiring of that record input, of the type of that wiring.
 Record_Output :: struct($Record_Type: typeid, $pairing: module.Record_Output_Pairing = module.Record_Output_Pairing.Unpaired) where intrinsics.type_is_struct(Record_Type) {}
 
-// A record input: a stream of records of the record type Record_Type that
-// the module reads. wirings says how many wirings it takes: One, Many of
-// one type, or Many_Types for a generic record input. Terms_Type is the
-// record of the wiring terms that the asker of each wiring gives.
+// A record input with no wiring terms: a stream of records of the record
+// type Record_Type that the module reads. wirings says how many wirings it
+// takes: One, Many of one type, or Many_Types for a generic record input.
+Record_Input :: struct($Record_Type: typeid, $wirings: module.Wiring_Count = module.Wiring_Count.One) where intrinsics.type_is_struct(Record_Type) {}
+
+// A record input whose asker gives wiring terms of the record type
+// Terms_Type with each wiring, which the reader receives with its end. The
+// terms come second: they are what sets this record input apart.
 //
 // ```odin
 // // The records to keep, each source with the terms of its space.
-// sources: system.Record_Input(system.Any_Record, .Many_Types, Space_Terms)
+// sources: system.Record_Input_With_Terms(system.Any_Record, Space_Terms, .Many_Types)
+//
+// // The records that pass a condition.
+// source: system.Record_Input_With_Terms(system.Any_Record, Condition)
 // ```
-Record_Input :: struct($Record_Type: typeid, $wirings: module.Wiring_Count = module.Wiring_Count.One, $Terms_Type: typeid = No_Terms) where intrinsics.type_is_struct(Record_Type) && intrinsics.type_is_struct(Terms_Type) {}
+Record_Input_With_Terms :: struct($Record_Type: typeid, $Terms_Type: typeid, $wirings: module.Wiring_Count = module.Wiring_Count.One) where intrinsics.type_is_struct(Record_Type) && intrinsics.type_is_struct(Terms_Type) {}
