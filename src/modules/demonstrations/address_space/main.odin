@@ -954,7 +954,7 @@ stop_word_refusals :: proc "contextless" (child: system.Handle) -> bool {
 			continue
 		}
 		record := transmute(errors.Error_Record)completions[0].values
-		if completions[0].kind != u32(system.Status.Bad_Operation) || record.kind != i64(errors.Kind.Bad_Value) || record.argument != 2 || record.value != transmute(i64)item.word || record.limit != item.limit {
+		if completions[0].kind != u32(system.Status.Bad_Operation) || record.kind != i64(errors.Kind.Bad_Value) || record.argument != 2 || record.value != i64(item.word) || record.limit != item.limit {
 			system.log("address_space: WRONG: Process_Stop of ", item.target == 0 ? string("this process") : string("a child"), " with the word ", item.word, " gave the status word ", u64(completions[0].kind), ", the error kind ", record.kind, ", the argument ", record.argument, " and the limit ", record.limit)
 			wrong += 1
 		}
