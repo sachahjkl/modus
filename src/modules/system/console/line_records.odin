@@ -2,6 +2,7 @@ package console
 
 import "modus:contract/isolated"
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:support/system"
@@ -39,6 +40,8 @@ Line_Records :: struct {
 	records_export: u32,
 	value_runs:  module.Function,
 	value_runs_export: u32,
+	fact_records: module.Function,
+	fact_records_export: u32,
 	next:        u64, // The number of the first log record that the console did not read.
 	marked:      bool, // The line called a process: next is the first record of the line.
 	unavailable: bool, // The service gave no answer for this line.
@@ -50,6 +53,19 @@ Line_Records :: struct {
 	head_process: [32]u8,
 	head_drawn:   bool,
 	rows:        [LINE_RECORD_BATCH * module.RECORD_SIZE_LIMIT]u8, // The rows of one answer that the console draws.
+	// The facts of the rows of one answer, out of the call region: the call
+	// of value_runs writes over it.
+	facts:       [LINE_RECORD_BATCH]Line_Fact,
+	fact_count:  int,
+}
+
+// One fact of the rows that the console draws: what the render needs.
+Line_Fact :: struct {
+	number: i64,
+	hash:   [32]u8,
+	key:    u64,
+	count:  int, // The value bytes.
+	values: [op.LOG_FACT_VALUE_CAPACITY]u8,
 }
 
 line_records: Line_Records
@@ -123,14 +139,20 @@ line_records_connect :: proc "contextless" () -> bool {
 		}
 		records_export := module.export_find(file, "records")
 		value_runs_export := module.export_find(file, "value_runs")
+		fact_records_export := module.export_find(file, "fact_records")
 		records, has_records := module.function(file, records_export)
 		value_runs, has_value_runs := module.function(file, value_runs_export)
-		if records_export == 0 || value_runs_export == 0 || !has_records || !has_value_runs || records.parameter_count != 1 || value_runs.parameter_count != 1 || records.result != u8(module.Type.Table) || value_runs.result != u8(module.Type.Table) {
+		fact_records, has_fact_records := module.function(file, fact_records_export)
+		if records_export == 0 || value_runs_export == 0 || fact_records_export == 0 || !has_records || !has_value_runs || !has_fact_records {
+			return false
+		}
+		if records.parameter_count != 1 || value_runs.parameter_count != 1 || fact_records.parameter_count != 1 || records.result != u8(module.Type.Table) || value_runs.result != u8(module.Type.Table) || fact_records.result != u8(module.Type.Table) {
 			return false
 		}
 		line_records.file, line_records.file_hash = file, sandbox.hash
 		line_records.records, line_records.records_export = records, records_export
 		line_records.value_runs, line_records.value_runs_export = value_runs, value_runs_export
+		line_records.fact_records, line_records.fact_records_export = fact_records, fact_records_export
 	}
 	return true
 }
@@ -308,19 +330,100 @@ line_records_show :: proc "contextless" () {
 	}
 }
 
+// line_records_facts_read keeps the facts of the rows that the console
+// draws: it asks the service for the facts from the first such row on,
+// and keeps the facts whose numbers the rows have, out of the call region.
+line_records_facts_read :: proc "contextless" (table: Table, kept_rows: Value, kept: int, number, form: module.Field) {
+	line_records.fact_count = 0
+	first, last := i64(-1), i64(-1)
+	for index in 0 ..< kept {
+		row := table_row(table, kept_rows, index)
+		if module.field_integer(row, form) != i64(op.Log_Record_Form.Fact) {
+			continue
+		}
+		row_number := module.field_integer(row, number)
+		first = first < 0 ? row_number : min(first, row_number)
+		last = max(last, row_number)
+	}
+	if first < 0 {
+		return
+	}
+	after := u64(first)
+	for _ in 0 ..< LINE_RECORD_ANSWERS {
+		answer, total, ok := line_records_ask(line_records.fact_records, line_records.fact_records_export, after)
+		answer_table, valid := table_of(answer)
+		if !ok || !valid || answer_table.rows == 0 {
+			return
+		}
+		fields, fields_ok := fact_row_fields(answer_table)
+		if !fields_ok {
+			return
+		}
+		reached := i64(after)
+		for index in 0 ..< answer_table.rows {
+			row := table_row(answer_table, answer, index)
+			fact_number := module.field_integer(row, fields.number)
+			reached = max(reached, fact_number)
+			if fact_number > last || line_records.fact_count == LINE_RECORD_BATCH || !line_records_has_number(table, kept_rows, kept, number, fact_number) {
+				continue
+			}
+			hash := module.field_bytes(row, fields.module_hash)
+			values := module.field_bytes(row, fields.values)
+			count := module.field_integer(row, fields.value_count)
+			if len(hash) != 32 || values == nil || count < 0 || count > i64(len(values)) {
+				continue
+			}
+			item := &line_records.facts[line_records.fact_count]
+			item.number, item.key, item.count = fact_number, u64(module.field_integer(row, fields.key)), int(count)
+			copy(item.hash[:], hash)
+			copy(item.values[:], values)
+			line_records.fact_count += 1
+		}
+		if reached >= last || u64(answer_table.rows) >= total {
+			return
+		}
+		after = u64(max(reached, 0)) + 1
+	}
+}
+
+// line_records_has_number says if the rows that the console draws hold a
+// record of a number.
+line_records_has_number :: proc "contextless" (table: Table, kept_rows: Value, kept: int, number: module.Field, wanted: i64) -> bool {
+	for index in 0 ..< kept {
+		if module.field_integer(table_row(table, kept_rows, index), number) == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+// line_records_fact gives the fact of a record that the console keeps, or
+// nil when the service did not give it.
+line_records_fact :: proc "contextless" (record_number: i64) -> ^Line_Fact {
+	for &item in line_records.facts[:line_records.fact_count] {
+		if item.number == record_number {
+			return &item
+		}
+	}
+	return nil
+}
+
 // line_records_draw draws records of one answer: for each process, in the
-// order of its first record, one head line and its records. With runs, the
-// console asks the service for the value runs of the records from the first
-// one on.
+// order of its first record, one head line and its records. A fact is its
+// sentence, or its raw form (facts.odin). With runs, the console asks the
+// service for the value runs of the records from the first one on, after
+// the facts: each answer writes over the call region.
 line_records_draw :: proc "contextless" (table: Table, kept_rows: Value, kept: int, with_runs: bool) {
 	number, _ := table_field(table, "number")
 	process, _ := table_field(table, "process")
 	level, has_level := table_field(table, "level")
+	form, has_form := table_field(table, "form")
 	text, has_text := table_field(table, "text")
 	continues, has_continues := table_field(table, "continues")
-	if !has_level || !has_text || !has_continues {
+	if !has_level || !has_form || !has_text || !has_continues {
 		return
 	}
+	line_records_facts_read(table, kept_rows, kept, number, form)
 	run_rows: Value
 	run_table: Table
 	has_run_table := false
@@ -361,12 +464,23 @@ line_records_draw :: proc "contextless" (table: Table, kept_rows: Value, kept: i
 			}
 			drawn[index] = true
 			plain: terminal.Style
-			if module.field_text(row, level) == "error" {
+			if module.field_integer(row, level) == i64(op.Log_Level.Error) {
 				plain.tone = u8(terminal.Tone.Bad)
 			}
 			output_continuation = LINE_RECORD_INDENT
 			if !open {
 				emit("    ", {})
+			}
+			if module.field_integer(row, form) == i64(op.Log_Record_Form.Fact) {
+				// A fact is one record: its sentence, and the line ends.
+				if fact := line_records_fact(module.field_integer(row, number)); fact != nil {
+					fact_emit(fact.hash, fact.key, fact.values[:fact.count], plain)
+				} else {
+					emit("a log fact whose values the service log did not give", {tone = u8(terminal.Tone.Dim)})
+				}
+				open = false
+				emit_end()
+				continue
 			}
 			record_text := module.field_text(row, text)
 			place := 0

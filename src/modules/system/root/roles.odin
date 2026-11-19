@@ -127,8 +127,11 @@ process_roles := [?]Process_Role_Row {
 	// It reads the pointer themes in the resource table of the boot image.
 	{name = "pointers", grants = {.Image}},
 	// It serves records(): the whole log to a caller that acts for the
-	// principal, its own records to each other caller.
-	{name = "log", grants = {.Log_Records, .Serve}},
+	// principal, its own records to each other caller. The boot image is
+	// the catalog in which its window finds the module file of a log fact,
+	// to write the sentence of the fact (src/md/features/log_facts.md, "The
+	// reader path").
+	{name = "log", grants = {.Log_Records, .Serve, .Image}},
 	// The test of the own records and of the records of its children: a
 	// connection to the log service and to no other service, with no
 	// grant to act for the principal, and the boot image for the
@@ -271,6 +274,12 @@ process_roles := [?]Process_Role_Row {
 	// call from the host"; docs/PRINCIPALS.md, "The client keys of
 	// remote").
 	{name = "remote", grants = {.Connect, .Network, .Acts_For_Principal, .Remote_Clients}, terms = {callable = {"compositor", "date", "debugger", "inspect", "log", "manual", "monitor", "settings", "storage"}}},
+	// The remote display: a listen grant of UDP that admits the address of
+	// the host only, the client table, which names the uses of the key of
+	// each viewer that a principal allowed, and the capture face and the
+	// input face of the compositor on the ring of its window
+	// (src/md/features/remote_display.md). It calls no service.
+	{name = "remote_display", grants = {.Network, .Remote_Clients, .Screen_Capture}},
 	// It reads the size of the code of interface_module.
 	{name = "interface_through_module", grants = {.Image}},
 	// The window of the debugger: a connection to the service debugger and

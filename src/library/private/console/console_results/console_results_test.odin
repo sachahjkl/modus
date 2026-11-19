@@ -478,6 +478,55 @@ table_cells_have_the_part_of_their_field_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, drawn.parts[Part.Label], len("level") + len("check") + len("writer") + len("module"))
 }
 
+// A cell of the values of a log fact is its raw form: two digits for each
+// byte up to the last byte that is not zero, the part Number, at the left.
+// Values of zeros only are an empty cell; values with no zero byte are the
+// whole 288 digits, never cut. A field of fact values of another size is
+// refused, as the contract refuses it.
+@(test)
+a_cell_of_fact_values_is_its_raw_form :: proc(t: ^testing.T) {
+	columns := [2]Column{{name = "number", type = .Integer, detail = 8}, {name = "values", type = .Bytes, detail = value_kinds.FACT_VALUES_FIELD_BYTES, kind = .Fact_Values}}
+	buffer: [1024]u8
+	file, size, written := description_write(buffer[:], "Fact_Row", columns[:])
+	if !testing.expect(t, written, "the description is written") {
+		return
+	}
+	described, valid := module.record_type(file, 1)
+	if !testing.expect(t, valid, "the contract takes a field of fact values") {
+		return
+	}
+	item, _ := module.field(file, described, 1)
+	rows: [3 * 152]u8
+	row_size := int(size)
+	testing.expect_value(t, row_size, 152)
+	// Row 1: 0c 00 23 then zeros; row 2: zeros only; row 3: no zero byte.
+	rows[columns[1].offset] = 0x0c
+	rows[columns[1].offset + 2] = 0x23
+	for index in 0 ..< value_kinds.FACT_VALUES_FIELD_BYTES {
+		rows[2 * row_size + int(columns[1].offset) + index] = 0xab
+	}
+	cell_buffer: [CELL_TEXT_CAPACITY]u8
+	first := cell_of(rows[:row_size], item, cell_buffer[:])
+	testing.expect(t, first.text == "0c0023" && first.part == .Number && !first.number)
+	second := cell_of(rows[row_size:][:row_size], item, cell_buffer[:])
+	testing.expect(t, second.text == "" && second.part == .Number)
+	third := cell_of(rows[2 * row_size:][:row_size], item, cell_buffer[:])
+	testing.expect_value(t, len(third.text), 2 * value_kinds.FACT_VALUES_FIELD_BYTES)
+	refused := [?]Column {
+		{name = "values", type = .Bytes, detail = value_kinds.FACT_VALUES_FIELD_BYTES - 1, kind = .Fact_Values},
+		{name = "values", type = .Bytes, detail = 1, kind = .Fact_Values},
+		{name = "values", type = .Integer, detail = 8, kind = .Fact_Values},
+	}
+	for column in refused {
+		one := [1]Column{column}
+		refused_buffer: [1024]u8
+		refused_file, _, refused_written := description_write(refused_buffer[:], "Refused", one[:])
+		testing.expect(t, refused_written)
+		_, refused_valid := module.record_type(refused_file, 1)
+		testing.expectf(t, !refused_valid, "fact values of %d bytes of the type %v are taken", column.detail, column.type)
+	}
+}
+
 // A record writes each field by its kind, in the part of the kind.
 @(test)
 record_fields_are_written_by_their_kind :: proc(t: ^testing.T) {

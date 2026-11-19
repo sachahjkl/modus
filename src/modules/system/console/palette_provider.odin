@@ -121,6 +121,14 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 			return {}, false
 		}
 	}
+	// A parameter that the parser reads as a name (a condition, a fact
+	// name) has no field of the form of the panel: the console line calls
+	// that command.
+	for form in item.parameter_forms[:item.parameter_count] {
+		if form != .Expression {
+			return {}, false
+		}
+	}
 	entry.kind = u8(palette_table.Entry_Kind.Export)
 	if item.run != nil {
 		entry.kind = u8(palette_table.Entry_Kind.Command)

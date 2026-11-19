@@ -85,7 +85,7 @@ window_event_send :: proc "contextless" (client: ^Client, kind: display.Event_Ki
 		class = .Pointer
 	case .Key:
 		class = .Key
-	case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted:
+	case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
 		// The other events wait in order behind the keys; None is never
 		// sent, and the reader refuses it.
 		class = .Other

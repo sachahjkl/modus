@@ -24,7 +24,7 @@ SITE_FIXED_ADDRESSES_FILE :: checks.FIXED_ADDRESSES_FOLDER + "/fixed_addresses.o
 SITE_ROOT_BUDGETS_FILE :: foundation.SYSTEM_MODULE_SOURCES + "root/budgets.odin"
 SITE_START_GRANT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/start_grant/start_grant.odin"
 SITE_MODULES_FILE :: foundation.TOOL_SOURCE_FOLDER + "/foundation/module_table.odin"
-SITE_CONSOLE_COMMAND_FILES :: [?]string{foundation.SYSTEM_MODULE_SOURCES + "console/commands.odin", foundation.SYSTEM_MODULE_SOURCES + "console/debugger_commands.odin", foundation.SYSTEM_MODULE_SOURCES + "console/tables.odin"}
+SITE_CONSOLE_COMMAND_FILES :: [?]string{foundation.SYSTEM_MODULE_SOURCES + "console/commands.odin", foundation.SYSTEM_MODULE_SOURCES + "console/debugger_commands.odin", foundation.SYSTEM_MODULE_SOURCES + "console/tables.odin", foundation.SYSTEM_MODULE_SOURCES + "console/facts.odin"}
 
 // The folder of each page of a generated table: site_page_file gives its file.
 SITE_OPERATIONS_FOLDER :: SITE_REFERENCE_FOLDER + "/operations"

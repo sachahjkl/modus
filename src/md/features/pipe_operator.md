@@ -4,7 +4,7 @@
 
 ## Purpose
 
-A frequent task of the console is a chain of calls: a table, then a filter, then the columns. With calls in calls, the reader reads it from the inside out, and the name of the last call is the first word of the line. With `|>`, the line reads in the order in which its calls run, which property 22 asks for: `processes() |> where("name", "server") |> columns("name slot")`. The designs of the log facts and of the record outputs write their frequent tasks with it ([log_facts.md](log_facts.md), [module_outputs.md](module_outputs.md)).
+A frequent task of the console is a chain of calls: a table, then a filter, then the columns. With calls in calls, the reader reads it from the inside out, and the name of the last call is the first word of the line. With `|>`, the line reads in the order in which its calls run, which property 22 asks for: `processes() |> where(name = "server") |> columns("name slot")`. The designs of the log facts and of the record outputs write their frequent tasks with it ([log_facts.md](log_facts.md), [module_outputs.md](module_outputs.md)).
 
 ## Constraints
 
@@ -14,7 +14,7 @@ A frequent task of the console is a chain of calls: a table, then a filter, then
 
 ## The chosen form
 
-**The lowest priority, from the left.** The whole expression on the left is the value: `1 + 2 |> text` is `text(1 + 2)`. A `,` and the parentheses that hold it end it, so `|>` works inside an argument: `where(x |> f, "a", 1)`. On the right: the name of a command, alone or with its arguments.
+**The lowest priority, from the left.** The whole expression on the left is the value: `1 + 2 |> text` is `text(1 + 2)`. A `,` and the parentheses that hold it end it, so `|>` works inside an argument: `where(x |> f, a = 1)`. On the right: the name of a command, alone or with its arguments.
 
 **The nested form before the parser.** `pipe_nested_form` (`src/library/private/console/console_language/pipe.odin`) writes the line with calls in calls, before any call, and the parser of the console reads that line. So the parser, the check of the arguments and the calls are those of every line, and the equivalence holds by construction: a host test compares the nested form of each line with the line with calls in calls. The procedure is pure: it reads the text and writes into memory of the caller. A nested form is never longer than its line: each `|>` of 2 bytes becomes `, ` or `()`.
 

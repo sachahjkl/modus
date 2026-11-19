@@ -273,6 +273,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"module", "Record_Output", type_info_of(module.Record_Output)},
 		{"module", "Record_Input", type_info_of(module.Record_Input)},
 		{"module", "Record_Stream_Fault", type_info_of(module.Record_Stream_Fault)},
+		{"module", "Fact_Render_Refusal", type_info_of(module.Fact_Render_Refusal)},
 		{"module", "Error", type_info_of(module.Error)},
 		{"module", "Bound_Import", type_info_of(module.Bound_Import)},
 		{"module", "Replacement", type_info_of(module.Replacement)},
@@ -807,6 +808,8 @@ site_record_field_type_text :: proc(field: build.Field_Description, size: int) -
 		return fmt.tprintf("Module_Name(%d)", field.detail)
 	case .Hash:
 		return fmt.tprintf("Hash(%d)", field.detail)
+	case .Fact_Values:
+		return fmt.tprintf("Fact_Values(%d)", field.detail)
 	case .Plain:
 	}
 	switch field.type {

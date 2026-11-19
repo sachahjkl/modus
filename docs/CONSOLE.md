@@ -41,7 +41,7 @@ The console owns the line that the input edits: its bytes, the caret, the line h
 
 A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No process receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between processes").
 
-The code is `src/modules/system/console/language.odin` (the parser and the values), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line) and `src/library/private/console/console_results` (the drawers).
+The code is `src/modules/system/console/language.odin` (the parser and the values), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line), `src/modules/system/console/facts.odin` (the log facts), `src/library/private/console/console_results` (the drawers) and `src/library/private/console/console_condition` (the conditions of `where`).
 
 ### The form of a line
 
@@ -117,7 +117,7 @@ Here `columns` made a table of another record, with fewer fields, so the export 
 
 ```
 > t = readings(4)
-> sum_values(where(t, "sensor", 2))
+> sum_values(where(t, sensor = 2))
 210
 > r = row(t, 1)
 > r.value
@@ -143,7 +143,7 @@ A table is the records of one description, one after the other. An export with a
 
 | Command | Gives |
 |---|---|
-| `where(table, field, value)` | The rows whose field has the value: an `Integer` for an integer or handle field, a `Text` for a text field |
+| `where(table, field = value)` | The rows whose field passes a condition ("Conditions") |
 | `sort(table, field)` | The rows in the increasing order of a field: integers by value, texts byte by byte. Rows with one value keep their order, so two sorts give an order by two fields |
 | `join(left, right, field)` | One row for each pair of rows with one value of the field. The new record has the fields of the left record, then the fields of the right one that the left one does not have, at most 40; its name is `<left>_<right>` |
 | `columns(table, "a b c")` | The rows with only the fields that the text names, in its order. The record keeps its name |
@@ -158,13 +158,66 @@ The tables of one line share 256 KiB (`TABLE_ARENA`). The console draws a table 
 
 ![Tables as parameters: one description, three ways to call](screenshots/tables.png)
 
+### Conditions
+
+The argument of `where` after the table is a condition: a field of the record of the table, an operator and a value. The parser reads it as a condition, not as an expression, so the field is a name of the record, never a variable.
+
+```
+> where(processes(), name = "console")
+> where(compositor.windows(), pictures_drawn_again != 0)
+> log.records(0) |> where(level = Warning)
+> log.records(0) |> where(number >= 100) |> where(number < 200)
+```
+
+| Field | Value | Operators |
+|---|---|---|
+| Integer, hexadecimal Integer, handle | An `Integer` expression | `=`, `!=`, `<`, `<=`, `>`, `>=` |
+| Text, module name | A `Text` expression | `=`, `!=` |
+| Status of a contract enum (`level`) | The name of a member: `Info`, `Debug`, `Warning`, `Error` | `=`, `!=` |
+| Hash, values of a fact | None: the console has no such value | None |
+
+A status takes `=` and `!=` only: the numbers of the members are no order of weight (`Debug` is 1, `Warning` is 2). The name of a member is the name that the console draws in a cell, with its capital letter; a text (`"Warning"`) or a number (`2`) is no member. An unsigned field compares as unsigned: `where(key > 0)` keeps a key of 2^63 and the largest key. `where`, `sort` and `join` compare the values of fields so.
+
+**What is refused before a row is read.** No field before the operator (`where(t, = 3)`), a field with no operator (`where(t, level)`), a `!` alone, `==`, no value after the operator, a field that the record does not have (the error lists the fields), a value of another kind than the field, a negative value for an unsigned field, a value that the bytes of the field cannot hold, a text, a number or a name of no member after the operator of a status (the error lists the members), an order on a Text or a status, and a hash. A table argument that is no table is refused with its kind (`where(5, a = 1)`). When the console knows the record of the table before the run, in a line with `|>`, it refuses these before any call, and the kind and the range of a value that is one literal too: the result of an export, the table of `facts(...)`, and the table of a `where`, `sort`, `first` or `skip` after one of them. The reading and the checks are the private package `src/library/private/console/console_condition`, whose host tests give each refused input.
+
+```
+> log.records(0) |> where(levle = Warning)
+error: where: the records Record have no field levle; their fields are number, time, process, slot, level, form, lost, continues, runs, text
+> log.records(0) |> where(level = warning)
+error: where: the field level holds a member of Log_Level: Info, Debug, Warning, Error; "warning" names none
+> log.records(0) |> where(level >= Warning)
+error: where: the field level is Status(Log_Level): it takes = and != only, because the order of the members is no order of weight
+> log.records(0) |> where(level = "Warning")
+error: where: the field level holds a member of Log_Level, and a member is a name, not a text or a number: "Warning" is none; the members are Info, Debug, Warning, Error
+```
+
+**The completion.** In a line with `|>`, inside `where(` after a table whose record the console knows, the completion list offers the fields, and after the operator of a status field the members of its enum.
+
+### Log facts as a table
+
+`facts(table, package.Type)` gives the facts of one fact type ([log fact](glossary/running_code.md)) among the rows of `log.records`: one row for each fact, with the number, the time, the process and the level of its record, then each field of the fact type, in the order of its record.
+
+```
+> connect("log")
+> log.records(0) |> facts(log_reader.Fact_Probe)
+> log.records(0) |> facts(log_reader.Fact_Probe) |> where(probe_number = 7)
+```
+
+- **The fact name is a name**, the package that declares the record type, a dot, and the record type, as the writer declares it. The console finds it in the fact tables of the module files of the boot image, and refuses before any call a name that none holds, with the fact names of the same package, or each fact name when the package has none. The completion list offers the fact names inside `facts(`, and the record types of a package after its dot.
+- **The values** come from `log.fact_records`, which the console calls itself: a fact record has no text, and its row of `log.records` has an empty text.
+- **One description.** Each module of the boot image that writes the fact type is read. The first one gives the description of the table; a row of another description of the same fact name is left out.
+- **The table** is a table as any other: `where` takes its fields, and `columns`, `sort`, `first` and `rows` take it.
+- **No field of a fact type has the name of a column of the head** (`number`, `time`, `process`, `level`): `where` would not know which of the two values a name means, so `facts` refuses such a fact type.
+
+Errors: a name that names no fact type; a fact type with a field named as a column of the head; a table that is not rows of `log.records`; no connection to the service `log`.
+
 ### How a line composes
 
 A line composes by calls in calls. The console evaluates each argument before its call, from left to right, and the innermost call runs first. Each step takes a typed value and gives one:
 
 ```
 > connect("manual")
-> columns(where(manual.running(), "module", "calendar_fixed"), "process slot module replaces")
+> columns(where(manual.running(), module = "calendar_fixed"), "process slot module replaces")
 > join(columns(manual.running(), "process hash"), columns(manual.modules(), "hash name code exports"), "hash")
 > rows(manual.exports("")) - rows(manual.exporters("show"))
 ```
@@ -174,10 +227,10 @@ The first line lists the processes that run a module, keeps the rows of one modu
 **The built-in commands compose too.** A built-in command that lists things gives a table, so a line filters, sorts and counts it as it does the table of an export:
 
 ```
-> where(grants("notes"), "state", "held")
-> sort(where(processes(), "state", "waiting"), "name")
-> rows(where(help(), "name", "repeat"))
-> columns(where(loaded(), "call", "direct"), "module imported_by in_place_of")
+> where(grants("notes"), state = "held")
+> sort(where(processes(), state = "waiting"), "name")
+> rows(where(help(), name = "repeat"))
+> columns(where(loaded(), call = "direct"), "module imported_by in_place_of")
 ```
 
 ### The pipe operator
@@ -185,14 +238,14 @@ The first line lists the processes that run a module, keeps the rows of one modu
 `a |> f(b, c)` is `f(a, b, c)`: the value on the left of `|>` is the first argument of the call on its right. `a |> f` is `f(a)`, and `a |> f()` too. So a line reads in the order in which its calls run:
 
 ```
-> processes() |> where("name", "server")
-> processes() |> where("name", "server") |> columns("name slot")
+> processes() |> where(name = "server")
+> processes() |> where(name = "server") |> columns("name slot")
 > rows(help() |> first(3)) |> text
 ```
 
-They are `where(processes(), "name", "server")`, `columns(where(processes(), "name", "server"), "name slot")` and `text(rows(first(help(), 3)))`.
+They are `where(processes(), name = "server")`, `columns(where(processes(), name = "server"), "name slot")` and `text(rows(first(help(), 3)))`.
 
-- **The lowest priority.** The whole expression on the left is the value: `1 + 2 |> text` is `text(1 + 2)`. A `,` and the parentheses around it end it: `where(x |> f, "a", 1)` is `where(f(x), "a", 1)`, and `(x |> f) + 1` is `(f(x)) + 1`.
+- **The lowest priority.** The whole expression on the left is the value: `1 + 2 |> text` is `text(1 + 2)`. A `,` and the parentheses around it end it: `where(x |> f, a = 1)` is `where(f(x), a = 1)`, and `(x |> f) + 1` is `(f(x)) + 1`.
 - **From the left.** `x |> h |> g(1) |> f` is `f(g(h(x), 1))`.
 - **A variable** keeps the value of the whole line: `t = processes() |> rows` is `t = rows(processes())`.
 - **On the right**: the name of a command, alone or with its arguments. The call takes one argument more than the arguments in its parentheses, at most 12 in all.
@@ -257,7 +310,7 @@ One drawer exists for each kind of result. A drawer knows no command: it reads t
 | An error | "The drawer of an error", below |
 
 ```
-> where(grants("notes"), "state", "held")
+> where(grants("notes"), state = "held")
 process  grant  state  principal  principal_name
 notes    log    held           0  machine
 notes    store  held           0  machine
@@ -267,7 +320,7 @@ Memory
   memory                256 MiB
   free                  201 MiB
   ...
-> columns(where(processes(), "name", "console"), "name slot threads resident time started")
+> columns(where(processes(), name = "console"), "name slot threads resident time started")
 name     slot  threads  resident (pages)  time (ms)  started (us)
 console     4        3               412         38       1830211
 1 row of Process
@@ -325,7 +378,7 @@ When the export has a table of error details and wrote more than one detail, one
 |---|---|---|
 | `help()` | Table of `Command` | One row for each command: `name`, `signature`, `about` |
 | `describe(name)` | Text | The signature and the whole help of one command |
-| `processes()` | Table of `Process` | The export `monitor.processes()` ("The built-in commands and the services"). A disk process has its nickname as its `name` and the hash of its file in `hash`: `columns(where(processes(), "name", "visitor"), "name hash")` |
+| `processes()` | Table of `Process` | The export `monitor.processes()` ("The built-in commands and the services"). A disk process has its nickname as its `name` and the hash of its file in `hash`: `columns(where(processes(), name = "visitor"), "name hash")` |
 | `debug(process)`, `detach()` | Table | One row: the exports `debugger.attach()` and `debugger.detach()` ("The commands of the debugger") |
 | `threads()`, `hold(thread)`, `resume(thread)`, `continue_all()`, `step(thread)`, `step_line(thread)`, `step_over(thread)` | Table of `Thread_Row` | The threads of the debugged process: `thread`, `state`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
 | `registers(thread)` | Table of `Register_Row` | `name`, `value`, `about` |
@@ -350,6 +403,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `nickname_move(nickname, hash)` | none | Points a nickname to another file; its grants and its store follow |
 | `disk_persistence(nickname, setting)` | none | How long a row lasts across a restart: `persist`, `forget`, or `global`; an empty nickname sets the global setting, `persist` or `forget` |
 | `remote_allow(key)` | none | Each call of the client of `remote` with this Ed25519 public key, 64 hexadecimal digits, acts for the principal of this console. The disk grant table of the principal keeps the key across a restart, as it keeps its other grants (`PRINCIPALS.md`, "The client keys of remote") |
+| `remote_display_allow(key, use)` | none | The viewer of `remote_display` with this Ed25519 public key sees the screen (`use` is `"view"`), or sees it and types (`"view_and_input"`), for the principal of this console. A key that the principal holds gets the use added. The use lasts until the machine stops (`QUIC.md`, "8. The remote display") |
 | `remote_disallow(key)` | Text | The grant of the key ends, and the key leaves the disk grant table: `remote` ends the open connection of the client and refuses the key in the next handshake. A sentence with the count of the connections to services that ended, which also says when the disk grant table did not take the revocation and the key can come back at the next start |
 | `remote_clients()` | Table of `Remote_Client` | The client keys that the principal of this console allowed: `key`, `principal`, `state` (`holds`, `locked`, or `contested` when another principal allowed the key too: it acts for neither until one of them revokes it) |
 | `grants(name)` | Table of `Grant` | One row for each grant that the process has or lost: `process`, `grant`, `state` (`held` or `lost`), `principal`, `principal_name` |
@@ -380,6 +434,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `history_clear()` | Integer | The lines that the history forgot |
 | `measure_completion()` | Table of `Completion_Measure` | Two rows: `names_of`, `names`, and the times `collect`, `rank`, `rows`, `colors` in nanoseconds; the same measure goes to the log in microseconds |
 | `where`, `sort`, `join`, `columns`, `first`, `skip` | Table | "Tables as values" |
+| `facts(table, package.Type)` | Table | "Log facts as a table" |
 | `rows(table)` | Integer | |
 | `row(table, number)` | Record | |
 
@@ -400,11 +455,12 @@ While a line calls an export, the console shows under the line the log records t
 
 - **Which records.** The records that a process called by the line wrote, from the first call of the line on: a service, a sandboxed process of `isolate`, and the console itself for a module that `load` put in it. A line follows 4 processes at most. A process that `start` starts is not followed: the line ends before the process writes.
 - **By process.** The records of one process follow one head line: the name of the process, in the color of a module. A record of another process starts a new group.
-- **The value runs.** Each value run of a record is in the color of its value kind, as in the window of the log (`docs/TOOLS.md`, "The log"). A record of the level error is in the color of a failure.
+- **The value runs.** Each value run of a record is in the color of its value kind, as in the window of the log (`docs/TOOLS.md`, "The log"). A record of the level `Error` is in the color of a failure.
+- **A log fact** is the sentence of its fact template, each value in the color of its kind: the console finds the module file that the fact names by its hash in the boot image, and writes the sentence with the one render of the contract (`module.fact_sentence_write`), which the window of the log and the tool call too. A fact whose module the boot image does not hold, the module of a disk process among them, is its raw form, the line of the serial port: `#`, the first 8 bytes of the module hash, `:`, the fact key, and the value bytes in hexadecimal.
 - **While the line runs.** During an isolated call or a call of a service, the console reads the new records each 100 ms (`STATUS_INTERVAL`), and once more when the line ends, before it draws the result. During a direct call the console waits in the module: the records show when the call returns.
 - **To the terminal only.** These lines do not go to the log: the records are in the log already.
 
-**How the console reads the records.** The console has no grant to read the memory of the log (the grant `log_records`), and gets none. It reads the records as any caller that acts for the principal: it calls the exports `records(after)` and `value_runs(after)` of the service `log`, through a connection that the root service gives. Its log scope is the whole log; after `revoke("console", "acts_for_principal")` it is the own records of the console, and a line shows no record of another process (`docs/TOOLS.md`, "Who reads which records"). The console asks for that connection itself, at the first line that calls a process; the connection adds no command, until `connect("log")` asks for the commands. The console reads the rows with the description of their record, by the names of the fields, and trusts no count of the service.
+**How the console reads the records.** The console has no grant to read the memory of the log (the grant `log_records`), and gets none. It reads the records as any caller that acts for the principal: it calls the exports `records(after)`, `value_runs(after)` and `fact_records(after)` of the service `log`, through a connection that the root service gives. Its log scope is the whole log; after `revoke("console", "acts_for_principal")` it is the own records of the console, and a line shows no record of another process (`docs/TOOLS.md`, "Who reads which records"). The console asks for that connection itself, at the first line that calls a process; the connection adds no command, until `connect("log")` asks for the commands. The console reads the rows with the description of their record, by the names of the fields, and trusts no count of the service.
 
 **When there is no record.** With no service `log`, or when the root service refuses the connection, a line shows no record; the console asks again after a line with `start` or `connect`. A service that does not answer in one second (`LINE_RECORD_ANSWER_LIMIT`) is not asked again in that line. A line that calls the service `log` itself shows no record: the console does not use a connection while a call runs on it.
 
@@ -419,7 +475,7 @@ A fact that a service holds is an export of that service, and the console calls 
 | `processes()` | The export `monitor.processes()`. The root service starts `monitor` at its first connection, in each start policy, the rescue included. When `monitor` cannot start, or lost its grant, the line fails with the error of the connection or of the export |
 | `setting(name, value)`, `manual_page(name)`, `strategy(name)` | The exports `settings.set`, `manual.show` and `scheduler.strategy_set`. The palette runs them ("8. The palette provider"). Each process must run: the command starts none. `strategy("eevdf")` sets the scheduling strategy of the machine, with `round_robin`, `fair` or `eevdf`: the console holds no right to change it, and the process `scheduler` holds it (`SCHEDULING.md`, "The change at run time") |
 | `debug`, `detach`, `threads`, `hold`, `resume`, `continue_all`, `registers`, `stack`, `locals`, `value`, `source`, `break_at`, `watch`, `breaks`, `break_remove`, `step`, `step_line`, `step_over`, `debug_memory`, `events`, `wait_stop`, `stop_report` | The exports of the service `debugger`, which the root service starts when the console connects to it ("The commands of the debugger") |
-| `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `machine_passphrase`, `machine_seal`, `replace`, `connect`, `remote_allow`, `remote_disallow`, `remote_clients` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |
+| `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `machine_passphrase`, `machine_seal`, `replace`, `connect`, `remote_allow`, `remote_display_allow`, `remote_disallow`, `remote_clients` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |
 | `modules()` | The boot image that the root service granted to the console. `manual.modules()` gives the same modules with more fields, when the process `manual` runs |
 | `replacements()` | The replacement table that the root service granted to the console, read-only. `manual.replacements()` gives it too, when `manual` runs |
 | `process_modules()`, `memory()`, `locks()` | The reports of the kernel, with the grant of the console to inspect the machine. `manual.running()` gives the modules of the processes, and `monitor.counts()` the counts, when those processes run |
@@ -430,7 +486,7 @@ A fact that a service holds is an export of that service, and the console calls 
 
 ### The commands of the debugger
 
-The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console holds no state of a debugging and has no code that draws one: each command of the debugger is a short name of one export of the service, and the drawers draw the table that the export gives. So a table of the debugger composes as each other table: `columns(stack(0), "frame procedure line")`, `where(locals(0, 1), "name", "total")`.
+The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console holds no state of a debugging and has no code that draws one: each command of the debugger is a short name of one export of the service, and the drawers draw the table that the export gives. So a table of the debugger composes as each other table: `columns(stack(0), "frame procedure line")`, `where(locals(0, 1), name = "total")`.
 
 | Command | Export of `debugger` |
 |---|---|
@@ -511,6 +567,9 @@ The console completes the name at the caret from what it knows at that moment: i
 | Inside the quotes of the first argument of `load`, `isolate`, `start`, `replace` | The modules of the boot image | The image that the root service granted |
 | Inside the quotes of `connect`, `stop`, `grants`, `revoke` | The processes that run | `Inspect` on the machine, with the grant that the console holds. The root service has no command that lists its services: the console asks for none, and gets no new grant. With no grant to inspect, the list names the services whose exports are commands of the console |
 | Inside the quotes of `unload` | The modules that `load` and `isolate` added | The table of the console |
+| The fact name of `facts(`, with or without `\|>` before it | The fact names, `package.Type`; after a package and a dot, its record types | The fact tables of the module files of the boot image, read once at the start of the console |
+| A field of a condition of `where(`, just after `\|>` | The fields of the record on the left, when the console knows it before the run ("Conditions") | The description of an export, or of the table of `facts(...)` |
+| After the operator of a condition on a status field | The members of its enum: `Info`, `Debug`, `Warning`, `Error` | The names of the contract enums |
 
 Not completed: the second argument of a call (the grant names of `revoke`), the fields of a record variable (`r.x`), the common start of several names (the list replaces it). After `|>`, the hint line marks the parameter by the count of the arguments in the parentheses: one place before the parameter that takes the argument at the caret.
 
@@ -621,10 +680,10 @@ The edit line, the line that the console writes back when Enter is pressed, and 
 | Function | The name of a command or an export, in a call or at the start of a row | Name | `0x58D878` | 10.45 | 8.90 |
 | Module | A module or a service, before the dot of its export | none: the text color | | | |
 | Type | `Integer`, `Text`, `Table`, `Bytes`, `Handle`, a record, and what the parentheses of a type hold | Type | `0x9E8FCB` | 6.58 | 5.60 |
-| Parameter | The name of a parameter, before its `:` | none | | | |
+| Parameter | The name of a parameter, before its `:`; a field of a condition and a member after its operator (`level = Warning`) | none | | | |
 | Variable | A variable, also before `=` and before `.field` | none | | | |
 | Number, Text, Text_Unfinished | A number; a text in quotes; a text with no end quote yet | Literal | `0x38C0B0` | 8.47 | 7.22 |
-| Operator, Arrow | `+ - * / % = ( ) , : . { }`, `\|>`, and `->` | Punctuation | `0xB0B8C1` | 9.51 | 8.10 |
+| Operator, Arrow | `+ - * / % = ( ) , : . { } < > !`, `\|>`, and `->` | Punctuation | `0xB0B8C1` | 9.51 | 8.10 |
 | Words | The words of a row that are not code: "export of", "command", "3 lines ago" | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 | Unknown | A name that is no command, module or variable; a byte that the language does not take | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 
@@ -636,6 +695,8 @@ A part with no class has the color of the text around it: the tone of the line, 
 - A name that the console does not know is Unknown only when a byte follows it. A name that ends at the caret or at the end of the line is still being typed: it has no run, and the color of the line. So a name does not change to the quiet mark and back at each key.
 - A text with no end quote is Text_Unfinished. It has the color of a text, not the color of an error: it is still being typed. The error comes when the line runs ("the text has no end quote").
 - `name = ...` at the start of a line names a variable: the name is a Variable before it exists.
+- In a condition, a name that the console does not know before an operator (`=`, `!=`, `<`, `<=`, `>`, `>=`) is a field, and after it a member: both are Parameters. A name that the console knows keeps its kind.
+- A fact name (`storage.Bad_Block`) is a Type, after its package and its dot.
 - An Unknown part is quiet (the dim class), never red: the line is not run yet. A `|` alone is Unknown; `|>` is an Operator.
 
 **The rows of the list.** The name has the kind of what it is: a command or an export is a Function, with its module and its dot when its name has one (`monitor.count`); a record is a Type; a service is a Module; a module or a process in quotes is a Text; a line of the history is read as a line of code. What the name is, at the right, is read as a signature: the words before the parentheses are Words, the word after "of" is the Module; in the parentheses a name before `:` is a Parameter; after `:` or `->` each name is a Type, also in the parentheses of the type (`Table(Count_Name, Read)`). The alignment of the rows does not change: the runs give colors, never places.

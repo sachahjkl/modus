@@ -1,3 +1,0 @@
-type: Fixed
-
-**A start of the kernel without a part.** A machine with no 8254 no longer hangs its first processor: the kernel takes the frequency of the cycle counter that CPUID states on a processor of Intel, or writes its line and stops with the code 1 when the processor states none. An IOMMU unit that does not finish its first invalidation leaves the machine with no IOMMU in place of a stop, a missing table of the APIC writes `kernel: the firmware lists no APIC table: one processor`, and a failed proof of xsaveopt makes the kernel save with fxsave. A serial port that takes no byte and an interrupt that the controller does not send no longer hang a processor: each wait has a bound, and the log counts what was dropped.

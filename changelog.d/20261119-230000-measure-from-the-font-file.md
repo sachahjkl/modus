@@ -1,3 +1,0 @@
-type: Changed
-
-**The measure of every character from its font file**: a text is measured at any text size from the advances and the pairs of its font file, not from the tables of a glyph cache, with the same numbers at the sizes of the glyph caches; an advance is kept within one line and a pair within half a line at each size, in place of 64 pixels. The library module `text_shaping` becomes `text_rendering`: its exports `shape_text`, `measure_texts` and the new `break_text` take the font outlines as bytes, a face and a text size, and refuse a face that names no member and a size out of 256 to 16 384.

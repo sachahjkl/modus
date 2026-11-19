@@ -600,7 +600,7 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 	remote.client_table_read(client_table, &rows)
 	proven := key^
 	row := remote.client_find(&rows, proven)
-	if row >= 0 && remote.client_grant_holds(&rows, row, rows[row].serial) {
+	if row >= 0 && remote.client_grant_holds(&rows, row, rows[row].serial, .Calls) {
 		return true
 	}
 	counts.keys_refused += 1
@@ -608,6 +608,8 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 		text: [64]u8
 		if row >= 0 && rows[row].contested != 0 {
 			system.log(.Info, "remote: refused the client key ", hex_text(text[:], proven[:]), ": it is contested: principal ", rows[row].principal, " and principal ", rows[row].contested - 1, " both allowed it, and it acts for neither until one of them revokes it; the handshake ends before any call")
+		} else if row >= 0 && rows[row].session_locked == 0 {
+			system.log(.Info, "remote: refused the client key ", hex_text(text[:], proven[:]), ": principal ", rows[row].principal, " allowed it for the remote display, and not for calls; the handshake ends before any call")
 		} else if row >= 0 {
 			system.log(.Info, "remote: refused the client key ", hex_text(text[:], proven[:]), ": the session of its principal ", rows[row].principal, " is locked; the handshake ends before any call")
 		} else {
@@ -625,7 +627,7 @@ client_bind :: proc "contextless" (connection: ^quic.Connection, client: ^Record
 	row := remote.client_find(&client_rows, key)
 	text: [40]u8
 	head: [16]u8
-	if row < 0 || !remote.client_grant_holds(&client_rows, row, client_rows[row].serial) {
+	if row < 0 || !remote.client_grant_holds(&client_rows, row, client_rows[row].serial, .Calls) {
 		client.ended = true
 		quic.connection_close(connection, u64(remote.Stream_Error.Revoked), now_microseconds())
 		counts.revoked += 1
@@ -644,7 +646,7 @@ client_bind :: proc "contextless" (connection: ^quic.Connection, client: ^Record
 // ended: the principal revoked the key, or locked its session. Its
 // connections to services end in service_connections_of_ended_grants.
 client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: ^Record_Client, peer: quic.Remote) {
-	if remote.client_grant_holds(&client_rows, client.row, client.serial) {
+	if remote.client_grant_holds(&client_rows, client.row, client.serial, .Calls) {
 		return
 	}
 	client.bound = false
@@ -676,7 +678,7 @@ service_connections_of_ended_grants :: proc "contextless" () {
 		if item.name[0] == 0 {
 			continue
 		}
-		if remote.client_grant_holds(&client_rows, item.row, item.serial) {
+		if remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls) {
 			in_use += 1
 			continue
 		}
