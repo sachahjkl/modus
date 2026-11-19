@@ -17,6 +17,7 @@ A developer tool (`glossary/network.md`) shows how the system runs. It reads rep
 | Section | What it says |
 |---|---|
 | "What each tool reads" | Each tool, its grant, and the reports that it reads |
+| "The window of `monitor`" | The graphs of the last minute and the colors of the bars |
 | "The log" | The log of the kernel: its records, its channels and levels, and who reads it |
 | "The process `inspect`" | The window that shows one process live |
 | "Names and lines" | How an address becomes a procedure and a source line |
@@ -45,6 +46,31 @@ A tool with no grant to inspect the machine reads nothing. It says so in its win
 | `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)`, to each caller in its log scope, and `process_records(process, after)` and `process_value_runs(process, after)`, the records of a process whose handle the caller lends ("Who reads which records") |
 | `debugger` | machine, Inspect; boot image; debug image; the commands `Debug` and `Debug_Store` of the root ring | `Process_Report`, `Module_Report` and `Thread_Table_Report` of the process that it debugs; the registers and the memory of that process through its handle with `Debug` ("The debugger"). It serves the exports of the debugger |
 | `inspect` | machine, Inspect; boot image; debug image | `Process_Report`, `Module_Report`, and the four reports below, of the process that the principal chooses. It serves `mappings()`, `threads()` and `modules()` |
+
+## The window of `monitor`
+
+![The window of monitor in the light appearance: the memory and its bar, the counts of the kernel, three graphs of the last minute over the grid of points, and the rows of the processes](screenshots/monitor_light.png)
+
+The monitor takes one sample each 500 ms and draws its window after each sample. From the top:
+
+1. The memory in use, of all the memory, and the reserved memory, with a bar of the memory in use.
+2. The kernel entries and the interrupts since the start of the machine, and the waits of the locks of the kernel.
+3. Three sample graphs of the last minute: the last 120 samples, the newest at the right edge.
+4. One row for each process: its name, its pages, and its share of the processor in the last 500 ms, as a bar and in percent. The rows that do not fit are counted on the last line; `monitor.processes()` gives them all.
+
+| Graph | What one sample shows | Color | Scale |
+|---|---|---|---|
+| memory in use | The pages in use | Memory | From 0 to all the memory, in MiB |
+| processor time | The processor time of all the processes since the sample before, over that time on every processor | Process | From 0 to 100 % |
+| kernel entries | The kernel entries since the sample before, for one second | Kernel | From 0 to the largest value of the minute, rounded up to 1, 2 or 5 times a power of ten; 10 000 and more with k, M, G, T, P or E |
+
+- Each graph is drawn over the grid of points of the desktop, the same points at the same places. Its name and its scale are at its left.
+- The first sample has no sample before it: its processor time and its rate are the means since the start of the machine.
+- A step of the graph is one sample, not a time: a call that the monitor runs between two samples can make one step longer than 500 ms.
+
+**The colors of the bars.** Each bar takes the color of its intensity step (`DESIGN.md`, "The intensity of a gauge"): the color of what it measures under 60 %, the warning color from 60 %, and the color of a measure near its limit from 85 %. The number beside the bar gives the same fact.
+
+The design: `src/md/features/monitor_window.md`.
 
 ## The log
 
@@ -1577,6 +1603,7 @@ The hang bound ends a wait for a screen that never settles. The test fails, and 
 | `desktop` | The bar and the console; the start menu; two processes started from it; a window moved, a window resized by its corner; the menu of the windows; a window closed; the palette that starts a module and brings a window to the front | `scenario_desktop_film` (`desktop_film_scenario.odin`) |
 | `console` | An expression and its value; a variable and a command; an argument of the wrong kind and its error; the completion list; a record; a table; the history search | `scenario_console_film` (`console_film_scenario.odin`) |
 | `program` | `start("plasma")` in the console: the module opens its window; the window moved; its row in the table of the processes; `stop("plasma")` | `scenario_program_film` (`program_film_scenario.odin`) |
+| `monitor` | monitor at the right of the screen, its graphs on a quiet machine; scheduler, whose tests run spinners, as a load, then closed: the curves and the gauges rise, then come down | `scenario_monitor_film` (`monitor_film_scenario.odin`) |
 
 The films differ by their scenario only. The worker, the list of the encoder and the encoders are the same code.
 
