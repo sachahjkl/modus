@@ -1,7 +1,8 @@
 package root
 
 // The wirings of this service (src/md/features/module_outputs.md, "The
-// wiring and its rights", "The wiring list of a start" and "The budget"):
+// wiring and its rights"; src/md/features/module_outputs.md, "The wiring
+// list of a start"; src/md/features/module_outputs.md, "The budget"):
 // the command Wire, the wiring list of a Start, the wiring pages of each
 // asker, and the end of each wiring at a stop and at a revocation.
 //
