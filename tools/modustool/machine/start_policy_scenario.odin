@@ -59,14 +59,18 @@ scenario_start_policy_key := [?]Step {
 	// after the line of the start policy: two processes, no fixed order.
 	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},
 	{kind = .Wait, text = RESCUE_USABLE_TEXT},
-	// The console of the rescue looks as the console of each start: the
-	// table of the processes is what shows the short rescue list. The
-	// call starts monitor on demand, so the table holds its row too, and
-	// the picture waits for that row.
+	// The picture shows what the rescue gives: the console, the window of
+	// remote when the machine has a network card, and the table of the few
+	// processes that run, which starts monitor on demand. The picture waits
+	// for the first frame of remote and for the row of monitor.
 	{kind = .Front, text = "console"},
+	{kind = .Wait, text = "compositor: measure: the start of the window remote, from Process_Start to its first frame", any_order = true},
 	{kind = .Type, text = "processes()"},
 	{kind = .Wait, text = "[console] slot  name"},
 	{kind = .Wait, text = "monitor  "},
+	// monitor opens its window over the console: it goes to the right of
+	// the console, so that both tables show whole.
+	{kind = .Move, text = "monitor", to_x = 904, to_y = 56},
 	{kind = .Shot, text = "rescue"},
 	{kind = .Quit},
 }
