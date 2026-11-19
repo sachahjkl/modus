@@ -133,19 +133,22 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 
 // start_wiring_keep keeps what the start of a process gave this service:
 // its module file, the budget handle of a process with a root ring, and
-// its wiring ring, mapped to write its commands.
+// the handle of its wiring ring.
 start_wiring_keep :: proc "contextless" (work: ^Start_Work) {
 	slot := work.slot
 	slot.file = work.file
 	slot.budget = work.wiring.budget
 	slot.wiring_memory = work.wiring.wiring_memory
-	if slot.wiring_memory != 0 {
+	// The ring is mapped only for a child that took ends in its start: their
+	// answers come there. A child with no end costs this service no
+	// mapping until a Wire gives it one (wiring_ring_hold).
+	if slot.wiring_memory != 0 && len(work.wiring.ends) != 0 {
 		mapped, status := system.ring_open(slot.wiring_memory)
 		if status == .Ok {
 			slot.wiring = mapped
 		} else {
-			// A wiring ring that this service cannot map takes no later
-			// end: a wiring that names the process is refused.
+			// The answers of the ends of the start are then not read; a
+			// later Wire maps the ring again (wiring_ring_hold).
 			system.log(.Warning, "root: cannot map the wiring ring of ", system.Module_Name{work.name}, ": status ", status)
 		}
 	}
@@ -614,6 +617,12 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": ", system.written(&writer))
 	} else {
 		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": status ", status)
+	}
+	// No_Slot is a full table, of the child or of this service, which
+	// prepares the module: the line of the tables of this service tells
+	// which.
+	if status == .No_Slot {
+		own_tables_log(name)
 	}
 	return status
 }

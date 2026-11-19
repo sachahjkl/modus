@@ -1052,6 +1052,10 @@ root_loop_pass :: proc "contextless" () {
 			wiring_completions_read(&item)
 		}
 	}
+	// A wiring ring whose process holds no end is unmapped: this service
+	// holds one mapping for each process with an end, and the wait below
+	// skips a ring that no answer can come in.
+	wiring_rings_let_go()
 	// Before reap: an entropy service that answered and stopped still has
 	// its answers in the ring.
 	entropy_answers(&wait)

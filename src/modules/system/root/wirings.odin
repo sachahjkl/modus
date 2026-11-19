@@ -18,7 +18,8 @@ package root
 // 3. The rows: each end, the rule of the asker, the indexes in the module
 //    files, the type check, the terms, the count One, the limits of the
 //    asker and of each process, the room of each wiring ring. No step
-//    before this one changes anything.
+//    before this one changes anything but the mapping of a wiring ring
+//    for its room, which the end of the pass ends if no end comes.
 // 4. The making: each ring, each end page, each terms page, each
 //    description file and each wiring record, from the budget of the asker.
 //    A refusal ends what this step made.
@@ -32,12 +33,13 @@ package root
 // - each wiring that runs: one handle, of its end page, and no mapping. It
 //   maps the end page only to write the end words.
 // - each asker that took a list page, LIST_PAGE_ASKERS_MOST of them: the
-//   handles of its budget, its list page and its wiring ring, and the
-//   mapping of its wiring ring; while it has a wiring that runs, the
-//   handle and the mapping of its wiring page too. That is 4 handles and
-//   2 mappings for each asker.
-// - each process with a record stream: the handle and the mapping of its
-//   wiring ring.
+//   handles of its budget, its list page and its wiring ring; while it
+//   has a wiring that runs, the handle and the mapping of its wiring page
+//   too. That is 4 handles and 1 mapping for each asker, beside its ring.
+// - each process with a record stream: the handle of its wiring ring, and
+//   its mapping only while the process holds an end (wiring_ring_hold,
+//   wiring_rings_let_go). The rings are queues of the wait of the loop,
+//   so root_ring.ROOT_WAITED_QUEUES_MOST bounds them.
 // - one command: at most output.WIRING_LIST_HANDLE_LIMIT lent handles,
 //   closed before the command ends.
 //
@@ -277,23 +279,20 @@ list_page_give :: proc "contextless" (asker: ^Started, values: ^[7]u64) -> syste
 		made_page = true
 	}
 	ring_given: system.Handle
-	if asker.wiring.head == nil {
+	if asker.wiring_memory == 0 {
 		// The wiring ring is one more queue of the wait of the loop.
 		if refusal, refused := waited_queues_refusal(.Wire, 1); refused {
 			list_page_unmake(asker, made_page, false)
 			values^ = refusal
 			return .No_Slot
 		}
+		// This service maps the ring only while the asker holds an end
+		// (wiring_ring_hold): a ring of no end costs it no mapping.
 		memory, status := system.memory_create(ring.pages(output.WIRING_RING_CAPACITY), asker.budget, error = &error)
 		if status == .Ok {
-			asker.wiring, status = system.ring_open(memory)
-			if status != .Ok {
-				system.close(memory)
-			} else {
-				asker.wiring_memory = memory
-				made_ring = true
-				ring_given, status = system.give(asker.requests_memory, memory, {.Read, .Write})
-			}
+			asker.wiring_memory = memory
+			made_ring = true
+			ring_given, status = system.give(asker.requests_memory, memory, {.Read, .Write})
 		}
 		if status != .Ok {
 			list_page_unmake(asker, made_page, made_ring)
@@ -586,8 +585,14 @@ wiring_limits_check :: proc "contextless" (work: ^Wiring_Work) -> system.Status 
 			if process == work.child {
 				continue
 			}
-			if process.wiring.head == nil {
+			if process.wiring_memory == 0 {
 				return wiring_refuse(work, .Bad_State, .Absent, .Wirings, 0, 0, 0, i64(number))
+			}
+			// The ring is mapped for the room of its commands, and stays
+			// mapped for the delivery; the end of the pass unmaps it if
+			// the list is refused (wiring_rings_let_go).
+			if status := wiring_ring_hold(process); status != .Ok {
+				return wiring_refuse(work, status, .Refused, .Mappings, 0, 0, 0, i64(status))
 			}
 			commands := &process.wiring.commands
 			if ring.capacity(commands) - ring.count(commands) < needed {
@@ -837,6 +842,41 @@ wiring_child_ends :: proc "contextless" (work: ^Wiring_Work) -> []output.Given_E
 		}
 	}
 	return work.child_ends[:work.child_end_count]
+}
+
+// wiring_ring_hold maps the wiring ring of a process when this service
+// needs it: to count the room of its commands and to write an end. The
+// mapping stays while the process holds an end, whose answers come in the
+// ring; the end of each pass of the loop unmaps a ring of no end
+// (wiring_rings_let_go). A ring that is mapped again holds only words for
+// ends that ended while it was not mapped, as no command went out since:
+// they are dropped with no line.
+wiring_ring_hold :: proc "contextless" (item: ^Started) -> system.Status {
+	if item.wiring.head != nil {
+		return .Ok
+	}
+	if item.wiring_memory == 0 {
+		return .Bad_State
+	}
+	item.wiring = system.ring_open(item.wiring_memory) or_return
+	for _ in 0 ..< ring.capacity(&item.wiring.completions) {
+		if _, received := system.receive(&item.wiring.completions); !received {
+			break
+		}
+	}
+	return .Ok
+}
+
+// wiring_rings_let_go unmaps the wiring ring of each process that holds no
+// end: this service then holds one mapping for each process with an end,
+// not for each process that declares a record stream. The loop calls it
+// after it read the answers of each process, never inside that read.
+wiring_rings_let_go :: proc "contextless" () {
+	for &item in started {
+		if item.wiring.head != nil && item.ends_given == 0 {
+			system.ring_close(&item.wiring)
+		}
+	}
 }
 
 // wiring_end_give gives one end to a running process through its wiring
