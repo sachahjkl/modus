@@ -257,6 +257,8 @@ Check :: struct {
 	level:       contract.Log_Level,
 	small:       value_kinds.Hexadecimal_8,
 	wide:        value_kinds.Hexadecimal_16,
+	form:        contract.Log_Record_Form,
+	values:      value_kinds.Fact_Values_Field,
 }
 
 // checks gives the rows of a sample, in the memory of the caller.
@@ -280,7 +282,7 @@ describe_reads_the_kind_of_a_field :: proc(t: ^testing.T) {
 		return
 	}
 	check := records[0]
-	testing.expect_value(t, check.size, 88)
+	testing.expect_value(t, check.size, 232)
 	expected := [?]Field_Description {
 		{"module_hash", 0, .Bytes, value_kinds.HASH_FIELD_BYTES, false, {}, .Hash, .None},
 		{"name", 32, .Text, value_kinds.MODULE_NAME_FIELD_BYTES, false, {}, .Module_Name, .None},
@@ -290,6 +292,8 @@ describe_reads_the_kind_of_a_field :: proc(t: ^testing.T) {
 		{"level", 80, .Integer, u32(size_of(op.Log_Level)), true, {}, .Status, .Log_Level},
 		{"small", 81, .Integer, 1, true, {}, .Hexadecimal, .None},
 		{"wide", 82, .Integer, 2, true, {}, .Hexadecimal, .None},
+		{"form", 84, .Integer, u32(size_of(op.Log_Record_Form)), true, {}, .Status, .Log_Record_Form},
+		{"values", 85, .Bytes, value_kinds.FACT_VALUES_FIELD_BYTES, false, {}, .Fact_Values, .None},
 	}
 	testing.expect_value(t, len(check.fields), len(expected))
 	for item, index in expected[:min(len(expected), len(check.fields))] {
@@ -320,6 +324,13 @@ field_value_writes_each_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, field_value(row[:], unknown), "4")
 	hash := module.Field{type = u8(module.Type.Bytes), offset = 8, detail = 3, kind = u8(value_kinds.Field_Kind.Hash)}
 	testing.expect_value(t, field_value(row[:], hash), "0a00ff")
+	// The values of a fact up to their last byte that is not zero, as the
+	// raw form; values of zeros only are empty.
+	values_row: [value_kinds.FACT_VALUES_FIELD_BYTES]u8
+	values := module.Field{type = u8(module.Type.Bytes), offset = 0, detail = value_kinds.FACT_VALUES_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Fact_Values)}
+	testing.expect_value(t, field_value(values_row[:], values), "")
+	values_row[0], values_row[2] = 0x0C, 0x23
+	testing.expect_value(t, field_value(values_row[:], values), "0c0023")
 	broken := hexadecimal
 	broken.kind = u8(max(value_kinds.Field_Kind)) + 1
 	testing.expect_value(t, field_value(row[:], broken), "?")

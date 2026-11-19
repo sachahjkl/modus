@@ -130,6 +130,38 @@ line_runs_of_a_name_being_typed :: proc(t: ^testing.T) {
 	expect_runs(t, "foo", runs[:count], []Expected_Run{{"foo", .Unknown}})
 }
 
+// A condition: a name that the console does not know before an operator
+// is a field, and after an operator a member, both in the color of a
+// parameter; each byte of an operator of two bytes is an operator. A name
+// that the console knows keeps its own kind, a variable on the right too.
+// The '=' after the name of a variable at the start of the line is no
+// condition: the name after it is unknown. A '!' with no '=' after it is
+// an operator, and the name before it is no field.
+@(test)
+line_runs_of_a_condition :: proc(t: ^testing.T) {
+	runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
+	Case :: struct {
+		text:     string,
+		expected: []Expected_Run,
+	}
+	cases := [?]Case {
+		{"where(x, level = Warning)", {{"where", .Unknown}, {"(", .Operator}, {"x", .Variable}, {",", .Operator}, {"level", .Parameter}, {"=", .Operator}, {"Warning", .Parameter}, {")", .Operator}}},
+		{"f(block >= 12)", {{"f", .Unknown}, {"(", .Operator}, {"block", .Parameter}, {">", .Operator}, {"=", .Operator}, {"12", .Number}, {")", .Operator}}},
+		{"f(name != r)", {{"f", .Unknown}, {"(", .Operator}, {"name", .Parameter}, {"!", .Operator}, {"=", .Operator}, {"r", .Variable}, {")", .Operator}}},
+		{"f(a < b)", {{"f", .Unknown}, {"(", .Operator}, {"a", .Parameter}, {"<", .Operator}, {"b", .Parameter}, {")", .Operator}}},
+		{"y = z", {{"y", .Variable}, {"=", .Operator}, {"z", .Unknown}}},
+		{"f(a ! b)", {{"f", .Unknown}, {"(", .Operator}, {"a", .Unknown}, {"!", .Operator}, {"b", .Unknown}, {")", .Operator}}},
+	}
+	for item in cases {
+		count := line_runs(item.text, 0, NO_CARET, test_names, runs[:])
+		expect_runs(t, item.text, runs[:count], item.expected)
+		expect_cover(t, item.text, runs[:count])
+	}
+	// A field that the input still types has no run yet.
+	count := line_runs("> f(lev", 2, 7, test_names, runs[:])
+	expect_runs(t, "> f(lev", runs[:count], []Expected_Run{{"f", .Unknown}, {"(", .Operator}})
+}
+
 // A text with no end quote is a text that is still being typed: its own
 // kind, which the terminal draws as a text.
 @(test)

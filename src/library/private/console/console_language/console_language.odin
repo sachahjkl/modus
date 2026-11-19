@@ -23,7 +23,7 @@ Token_Kind :: enum u8 {
 	Number          = 2, // Digits.
 	Text            = 3, // A text in double quotes, with its two quotes.
 	Text_Unfinished = 4, // A quote and the rest of the line: no end quote yet.
-	Operator        = 5, // One byte of OPERATOR_BYTES.
+	Operator        = 5, // One byte of OPERATOR_BYTES: an operator of two bytes, as "<=", is two tokens.
 	Arrow           = 6, // '->'.
 	Unknown         = 7, // One byte of no other token. A '|' with no '>' after it is one.
 	Pipe            = 8, // '|>': the value on its left is the first argument of the call on its right.
@@ -36,7 +36,7 @@ Token :: struct {
 	end:   int, // The byte after the last.
 }
 
-OPERATOR_BYTES :: "+-*/%=(),:.{}" // The bytes that are an operator alone.
+OPERATOR_BYTES :: "+-*/%=(),:.{}<>!" // The bytes that are an operator alone. "<", ">" and "!" are the parts of the operators of a condition: <, <=, >, >=, !=.
 
 // A line that is finished: no name is still being typed.
 NO_CARET :: -1
@@ -176,6 +176,21 @@ run_add :: proc "contextless" (runs: []terminal.Code_Run, count: int, start, end
 	return written
 }
 
+// comparison_starts says if a token is the first byte of an operator of a
+// condition: "=", "<", ">", or "!" before "=".
+comparison_starts :: proc "contextless" (text: string, token: Token) -> bool {
+	if token.kind != .Operator {
+		return false
+	}
+	switch text[token.start] {
+	case '=', '<', '>':
+		return true
+	case '!':
+		return token.end < len(text) && text[token.end] == '='
+	}
+	return false
+}
+
 // line_runs writes the runs of an expression of the console: text[first:]
 // is the expression (text[:first] is a prompt, with no run). caret is the
 // place of the caret in text, or NO_CARET for a line that is finished. It
@@ -187,24 +202,54 @@ run_add :: proc "contextless" (runs: []terminal.Code_Run, count: int, start, end
 // Unknown only after the input typed a byte after it: a name that ends at
 // the caret or at the end of the line is still being typed, and has no
 // run. A text with no end quote is Text_Unfinished, not an error.
+//
+// In a condition (`level = Warning`), a name that the console does not
+// know before an operator is a field, and after an operator a member of
+// the enum of a status: both are names of a description, which the
+// console checks when the line runs, and have the color of a parameter.
 line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: Name_Lookup, runs: []terminal.Code_Run) -> int {
 	count := 0
 	position := clamp(first, 0, len(text))
 	first_token := true
+	assignment_operator := -1 // The '=' after the name of a variable, at the start of the line.
+	after_comparison := false // The token before is the last byte of an operator of a condition.
 	for count < len(runs) {
 		token := token_next(text, position)
 		if token.kind == .None {
 			break
 		}
 		position = token.end
+		comparison_before := after_comparison
+		// The last byte of an operator of a condition: "=" ends "=", "!=",
+		// "<=" and ">="; "<" and ">" end themselves when no "=" follows.
+		after_comparison = false
+		if token.kind == .Operator && token.start != assignment_operator {
+			switch text[token.start] {
+			case '=':
+				after_comparison = true
+			case '<', '>':
+				after_comparison = token.end >= len(text) || text[token.end] != '='
+			}
+		}
 		switch token.kind {
 		case .None:
 		case .Name:
 			being_typed := caret != NO_CARET && (token.end == caret || token.end == len(text))
 			assigned := false
+			next := token_next(text, token.end)
 			if first_token {
-				next := token_next(text, token.end)
 				assigned = next.kind == .Operator && text[next.start] == '='
+				if assigned {
+					assignment_operator = next.start
+				}
+			}
+			name := text[token.start:token.end]
+			in_condition := !assigned && (comparison_before || (next.start != assignment_operator && comparison_starts(text, next)))
+			if in_condition && role_of(lookup, name) == .Unknown {
+				if !being_typed {
+					count = run_add(runs, count, token.start, token.end, .Parameter)
+				}
+				break
 			}
 			count = name_runs(text, token, being_typed, assigned, lookup, runs, count)
 		case .Number:

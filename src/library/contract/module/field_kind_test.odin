@@ -65,14 +65,17 @@ a_field_kind_that_names_no_member_is_refused :: proc(t: ^testing.T) {
 // A kind on a field of a type that it does not fit is refused: each kind
 // on each other type, a unit beside a kind, a Status with a sign or with
 // no enum, an enum beside a kind that is not a Status, a Bytes field that
-// is not a Hash, and a hash of 0 bytes or one byte past the hash of a
-// module. Each refused field makes its record refused.
+// is not a Hash or the values of a fact, a hash of 0 bytes or one byte past
+// the hash of a module, and fact values of 0, 1, one byte less or one byte
+// more than the values of one fact. Each refused field makes its record
+// refused.
 @(test)
 a_field_kind_on_the_wrong_field_is_refused :: proc(t: ^testing.T) {
 	HEXADECIMAL :: u8(value_kinds.Field_Kind.Hexadecimal)
 	STATUS :: u8(value_kinds.Field_Kind.Status)
 	MODULE_NAME :: u8(value_kinds.Field_Kind.Module_Name)
 	HASH :: u8(value_kinds.Field_Kind.Hash)
+	FACT_VALUES :: u8(value_kinds.Field_Kind.Fact_Values)
 	LEVEL :: u8(value_kinds.Contract_Enum.Log_Level)
 	INTEGER :: u8(Type.Integer)
 	TEXT :: u8(Type.Text)
@@ -104,6 +107,14 @@ a_field_kind_on_the_wrong_field_is_refused :: proc(t: ^testing.T) {
 		{type = BYTES, detail = value_kinds.HASH_FIELD_BYTES + 1, kind = HASH},
 		{type = BYTES, detail = RECORD_SIZE_LIMIT, kind = HASH},
 		{type = BYTES, detail = 8, kind = HASH, contract_enum = LEVEL},
+		// Fact_Values: Bytes of the values of one whole fact only.
+		{type = TEXT, detail = value_kinds.FACT_VALUES_FIELD_BYTES, kind = FACT_VALUES},
+		{type = INTEGER, detail = 8, kind = FACT_VALUES},
+		{type = BYTES, detail = 0, kind = FACT_VALUES},
+		{type = BYTES, detail = 1, kind = FACT_VALUES},
+		{type = BYTES, detail = value_kinds.FACT_VALUES_FIELD_BYTES - 1, kind = FACT_VALUES},
+		{type = BYTES, detail = value_kinds.FACT_VALUES_FIELD_BYTES + 1, kind = FACT_VALUES},
+		{type = BYTES, detail = value_kinds.FACT_VALUES_FIELD_BYTES, kind = FACT_VALUES, contract_enum = LEVEL},
 		// Bytes with no kind: a reader has no form for them.
 		{type = BYTES, detail = 8},
 	}
@@ -179,6 +190,8 @@ each_field_kind_on_its_type_is_taken :: proc(t: ^testing.T) {
 		{type = u8(Type.Text), detail = value_kinds.MODULE_NAME_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Module_Name)},
 		{type = u8(Type.Bytes), detail = 1, kind = u8(value_kinds.Field_Kind.Hash)},
 		{type = u8(Type.Bytes), detail = value_kinds.HASH_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Hash)},
+		{type = u8(Type.Bytes), detail = value_kinds.FACT_VALUES_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Fact_Values)},
+		{type = u8(Type.Integer), detail = 1, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Log_Record_Form)},
 	}
 	for item in accepted {
 		testing.expectf(t, field_kind_valid(item), "the field %v is refused", item)

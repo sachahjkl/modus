@@ -108,7 +108,7 @@ process_find :: proc "contextless" (name: ^string, error: ^errors.Error_Record) 
 //
 // ```
 // connect("inspect")
-// where(inspect.mappings("console"), "kind", "shared")
+// where(inspect.mappings("console"), kind = "shared")
 // ```
 @(export, link_name = "mappings")
 mappings :: proc "c" (process: ^string, result: ^[]Mapping, error: ^errors.Error_Record) -> i64 {

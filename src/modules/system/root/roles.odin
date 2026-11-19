@@ -127,8 +127,11 @@ process_roles := [?]Process_Role_Row {
 	// It reads the pointer themes in the resource table of the boot image.
 	{name = "pointers", grants = {.Image}},
 	// It serves records(): the whole log to a caller that acts for the
-	// principal, its own records to each other caller.
-	{name = "log", grants = {.Log_Records, .Serve}},
+	// principal, its own records to each other caller. The boot image is
+	// the catalog in which its window finds the module file of a log fact,
+	// to write the sentence of the fact (src/md/features/log_facts.md, "The
+	// reader path").
+	{name = "log", grants = {.Log_Records, .Serve, .Image}},
 	// The test of the own records and of the records of its children: a
 	// connection to the log service and to no other service, with no
 	// grant to act for the principal, and the boot image for the

@@ -406,7 +406,7 @@ Each step is a commit on `master` that leaves a working system, with its tests.
 1. **The declarations.** The tables `Record_Outputs` and `Record_Inputs` of the module file, generic declarations, counts and wiring terms included, their extraction by the tool with the refusals, and the version of the module format. No process writes a record output yet.
 2. **The output ring.** The form of `open` with the size of a command record, the place word with the joined record, the end words and the border `output.record_of_place`, in contract packages with host tests.
 3. **The wiring.** The wiring ring, the command `Wire` of the root ring with its three ends and the rule of the asker, the wiring list of `Start` applied before the first instruction, the type check, the wiring terms, the pace, the wiring pages and the rings from the budget of the asker, the end words at each stop, the recorded grant and its revocation, and `system.output_write`, `output_end`, `input_read`. The test modules `output_writer` and `output_reader` and their machine test, with each refusal of the list above and the joined record at 0 and at N.
-4. **The console.** The kind Stream, the typed names of record outputs and record inputs with their completion, the fields of a description as names inside `where` and `columns`, a Stream on the left of `|>` (the operator itself is built), `+` on two tables of one description, the comparison form of `where` in place of the old form, `first` and `table` on a Stream, the draw of a Stream with its joined record and Escape, `wire`, `start` with a wiring list, `record_outputs()`.
+4. **The console.** The kind Stream, the typed names of record outputs and record inputs with their completion, the fields of a description as names inside `where` and `columns`, a Stream on the left of `|>` (the operator itself is built), `+` on two tables of one description, the comparison form of `where` on a Stream (on a table it is built), `columns` with field names, `first` and `table` on a Stream, the draw of a Stream with its joined record and Escape, `wire`, `start` with a wiring list, `record_outputs()`.
 
 ### The migration
 
@@ -502,4 +502,4 @@ Each measure is printed, never asserted ([`docs/TOOLS.md`](../../../docs/TOOLS.m
 
 ## State
 
-Designed, not built. No module declares a record output or a record input, no output ring exists, and `server` writes its access records on the log.
+Designed, not built. No module declares a record output or a record input, no output ring exists, and `server` writes its access records on the log. Of the console form, the pipe operator and the comparison form of `where` on a table are built, the second with the readers of the log facts ([log_facts.md](log_facts.md), "Filters of a reader: one form"); `columns` still takes one text of names.

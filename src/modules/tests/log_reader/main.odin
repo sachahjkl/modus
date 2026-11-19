@@ -180,7 +180,8 @@ Record :: struct {
 	time:      i64,
 	process:   [32]u8,
 	slot:      i64,
-	level:     [8]u8,
+	level:     op.Log_Level,
+	form:      op.Log_Record_Form,
 	lost:      i64,
 	continues: i64,
 	runs:      i64,
@@ -192,16 +193,19 @@ Record :: struct {
 // src/modules/system/log/exports.odin.
 Fact_Row :: struct {
 	number:      i64,
-	form:        i64,
+	form:        op.Log_Record_Form,
 	continues:   i64,
 	key:         u64,
 	module_hash: [32]u8,
 	value_count: i64,
 	reserved:    u64,
-	values_head: u64,
+	values:      [op.LOG_FACT_VALUE_CAPACITY]u8,
 }
-#assert(size_of(Fact_Row) == 88)
+#assert(size_of(Fact_Row) == 224)
 fact_rows: [ROWS]Fact_Row
+// The three rows that fact_rows_check expects. Not on the stack, which is
+// small.
+expected_fact_rows: [3]Fact_Row
 
 // One row of log.value_runs(): the form of `Value_Run` in
 // src/modules/system/log/exports.odin.
@@ -433,12 +437,15 @@ LOG_ARGUMENT_FORM :: 6
 // The log fact of this process. The machine test waits for its sentence,
 // which the tool writes on the host from the fields of the record, with
 // the template of the fact table of this module
-// (src/md/features/log_facts.md, "The serial port").
-@(log_fact = "log_reader: a log fact with the value {value}, the mark {mark} and the number {number}")
+// (src/md/features/log_facts.md, "The serial port"). A step of the machine
+// test also waits for the fact by its fields, and the console reads it with
+// facts(): no field has the name of a column of the head of a row of facts()
+// (number, time, process, level), which facts() refuses.
+@(log_fact = "log_reader: a log fact with the value {value}, the mark {mark} and the number {probe_number}")
 Fact_Probe :: struct {
-	value:  u64,
-	mark:   value_kinds.Hexadecimal_32,
-	number: u32,
+	value:        u64,
+	mark:         value_kinds.Hexadecimal_32,
+	probe_number: u32,
 }
 FACT_VALUE :: 42
 FACT_MARK :: 0x4C4F_4746 // "LOGF" in ASCII: a hexadecimal field shows it as 0x4c4f4746.
@@ -557,7 +564,7 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 			return "the operation Log refused a fact at an edge that it takes"
 		}
 	}
-	system.log_fact(.Info, Fact_Probe{value = FACT_VALUE, mark = FACT_MARK, number = FACT_NUMBER})
+	system.log_fact(.Info, Fact_Probe{value = FACT_VALUE, mark = FACT_MARK, probe_number = FACT_NUMBER})
 	written, read_written := own_record_count(connection, file, records_export)
 	amounts_written, amounts_read_written := system.budget_read()
 	_, refused_written := system.budget_used()
@@ -587,10 +594,11 @@ FACT_BODY_RESERVED_BYTE :: 0xA5
 // head only, the whole fact, and the fact of system.log_fact, in this
 // order, and no other fact. For each: the form Fact, no next record, the
 // reserved bytes 0 and the key of its writer; the count of the value bytes
-// from the length that Log received; the first value bytes; and for the
-// fact of system.log_fact, the hash of the module of this process, which
-// its loader wrote at its own-hash place. It gives the reason of the first
-// check that fails, or "".
+// from the length that Log received; the value bytes whole, with 0 past
+// that count, also where the body that this process gave had other bytes;
+// and for the fact of system.log_fact, the hash of the module of this
+// process, which its loader wrote at its own-hash place. It gives the
+// reason of the first check that fails, or "".
 fact_rows_check :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, fact_records_export: u32, own_module_hash: [32]u8) -> string {
 	arguments := [1]isolated.Argument{{integer = 0}}
 	count, status := system.call_isolated(connection, file, fact_records_export, arguments[:], nil, false, bytes_of(fact_rows[:]))
@@ -601,23 +609,26 @@ fact_rows_check :: proc "contextless" (connection: ^system.Call_Connection, file
 		system.log(.Error, "log_reader: WRONG: log.fact_records gave ", count, " facts of this process, not 3")
 		return "log.fact_records gave another count of facts than the three of this process"
 	}
-	head_values: u64
-	for index in 0 ..< 8 {
-		head_values |= u64(fact_body.values[index]) << (8 * u64(index))
+	expected := &expected_fact_rows
+	expected^ = {
+		{form = .Fact, key = FACT_BODY_KEY, value_count = 0},
+		{form = .Fact, key = FACT_BODY_KEY, value_count = op.LOG_FACT_VALUE_CAPACITY, values = fact_body.values},
+		{form = .Fact, key = transmute(u64)typeid_of(Fact_Probe), module_hash = own_module_hash, value_count = size_of(Fact_Probe)},
 	}
-	expected := [3]Fact_Row {
-		{form = i64(op.Log_Record_Form.Fact), key = FACT_BODY_KEY, value_count = 0, values_head = 0},
-		{form = i64(op.Log_Record_Form.Fact), key = FACT_BODY_KEY, value_count = op.LOG_FACT_VALUE_CAPACITY, values_head = head_values},
-		{form = i64(op.Log_Record_Form.Fact), key = transmute(u64)typeid_of(Fact_Probe), module_hash = own_module_hash, value_count = size_of(Fact_Probe), values_head = FACT_VALUE},
-	}
+	probe := Fact_Probe{value = FACT_VALUE, mark = FACT_MARK, probe_number = FACT_NUMBER}
+	copy(expected[2].values[:], ([^]u8)(&probe)[:size_of(Fact_Probe)])
 	zero_hash: [32]u8
 	if own_module_hash == zero_hash {
 		return "the hash of the module of this process is zero"
 	}
 	for &row, index in fact_rows[:3] {
-		wanted := expected[index]
-		if row.form != wanted.form || row.continues != 0 || row.reserved != 0 || row.key != wanted.key || row.value_count != wanted.value_count || row.values_head != wanted.values_head || row.module_hash != wanted.module_hash {
-			system.log(.Error, "log_reader: WRONG: the fact ", u64(index), " has the form ", row.form, ", more ", row.continues, ", the reserved bytes ", system.Hex(row.reserved), ", the key ", system.Hex(row.key), ", ", row.value_count, " value bytes and the first ", system.Hex(row.values_head))
+		wanted := &expected[index]
+		if row.form != wanted.form || row.continues != 0 || row.reserved != 0 || row.key != wanted.key || row.value_count != wanted.value_count || row.values != wanted.values || row.module_hash != wanted.module_hash {
+			first_values: u64
+			for place in 0 ..< 8 {
+				first_values |= u64(row.values[place]) << (8 * u64(place))
+			}
+			system.log(.Error, "log_reader: WRONG: the fact ", u64(index), " has the form ", u64(row.form), ", more ", row.continues, ", the reserved bytes ", system.Hex(row.reserved), ", the key ", system.Hex(row.key), ", ", row.value_count, " value bytes, the first ", system.Hex(first_values), " and the last ", u64(row.values[len(row.values) - 1]))
 			return "a fact record does not hold what the kernel must write"
 		}
 	}

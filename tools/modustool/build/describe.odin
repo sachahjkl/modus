@@ -365,6 +365,8 @@ field_kind_field :: proc(state: ^Describe_State, type: ^ast.Expr) -> (item: Fiel
 			return {type = .Text, detail = row.size, kind = .Module_Name}, row.size, 1, true
 		case .Hash:
 			return {type = .Bytes, detail = row.size, kind = .Hash}, row.size, 1, true
+		case .Fact_Values:
+			return {type = .Bytes, detail = row.size, kind = .Fact_Values}, row.size, 1, true
 		case .Plain, .Status:
 			// No type of the table has these kinds: a test of value_kinds
 			// checks it.
@@ -1122,7 +1124,8 @@ about_of :: proc(documentation: string, name: string) -> string {
 // field_value gives the text of one field of a record, by its field kind:
 // a hexadecimal Integer after "0x" with two digits for each byte, a status
 // by the name of its member (its number when it names none), a hash in
-// hexadecimal.
+// hexadecimal, the values of a fact in hexadecimal up to their last byte
+// that is not zero, as the raw form of a fact.
 field_value :: proc(record: []u8, item: module.Field) -> string {
 	// A byte that names no type or no kind has no value: "?", as a field
 	// of no value.
@@ -1138,6 +1141,11 @@ field_value :: proc(record: []u8, item: module.Field) -> string {
 		bytes := module.field_bytes(record, item)
 		if bytes == nil {
 			return "?"
+		}
+		if kind == .Fact_Values {
+			for len(bytes) > 0 && bytes[len(bytes) - 1] == 0 {
+				bytes = bytes[:len(bytes) - 1]
+			}
 		}
 		digits := strings.builder_make(context.temp_allocator)
 		for value in bytes {
@@ -1163,9 +1171,9 @@ field_value :: proc(record: []u8, item: module.Field) -> string {
 				if name, named := op.contract_enum_member_name(which, u64(value)); which_ok && named {
 					return name
 				}
-			case .Plain, .Module_Name, .Hash:
-				// A decimal number: record_type refuses the two last on an
-				// Integer.
+			case .Plain, .Module_Name, .Hash, .Fact_Values:
+				// A decimal number: record_type refuses the three last on
+				// an Integer.
 			}
 			return fmt.tprintf("%d", value)
 		}

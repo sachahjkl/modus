@@ -31,14 +31,15 @@
 // load("math")
 // connect("log")
 // log.records(0)
-// where(log.records(0), "level", "error")
+// log.records(0) |> where(level = Error)
+// log.records(0) |> facts(log_reader.Fact_Probe)
 // start("life")
-// where(grants("remote"), "state", "held")
-// sort(where(processes(), "state", "waiting"), "name")
+// where(grants("remote"), state = "held")
+// sort(where(processes(), state = "waiting"), "name")
 // ```
 //
 // **The commands of the console itself** (`commands.odin`, `tables.odin`,
-// `debugger_commands.odin`):
+// `debugger_commands.odin`, `facts.odin`):
 //
 // - Modules: `modules()`, `load(name)` (a direct call: the module runs with
 //   the memory and the handles of the console), `isolate(name)` (an
@@ -56,15 +57,18 @@
 // - Principals: `principal_create(name)`, `lock()`, `principals()`.
 // - Replacements: `replace(module, other)`, `replacements()`.
 // - Tables: `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`,
-//   `row`.
+//   `row`. `where` takes a condition on a field: `where(t, block = 12)`.
+// - Log facts: `facts(table, package.Type)`, the fields of one fact type
+//   of the rows of `log.records` as columns.
 // - Others: `help()`, `describe(name)`, `memory()`, `locks()`, `time()`,
 //   `hash(text)`, `buffer(pages)`, `bytes(memory, first, count)`,
 //   `variables()`, `clear()`, `shutdown()`, `history_clear()`.
 //
 // **The log records of a line.** While a line calls an export, the console
 // shows under the line the log records that the called process writes, by
-// process, with each value in the color of its value kind. It reads them
-// as any caller does: from the service `log`
+// process, with each value in the color of its value kind; a
+// [log fact](term:log-fact) is the sentence of its fact template. It reads
+// them as any caller does: from the service `log`
 // (docs/CONSOLE.md, "The log records of a line").
 //
 // **The keys** (docs/CONSOLE.md, "1. The keys"): Enter runs the line; Tab

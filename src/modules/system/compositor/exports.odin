@@ -206,7 +206,7 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 //
 // ```
 // connect("compositor")
-// where(compositor.windows(), "focus", 1)
+// where(compositor.windows(), focus = 1)
 // ```
 @(export, link_name = "windows")
 windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {

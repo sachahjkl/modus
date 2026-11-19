@@ -33,7 +33,12 @@
 //   hold; the others count together in the last card;
 // - the newest records, in 30 lines: the time in seconds, the process and
 //   the text, with the legend of the value kinds over the column of the
-//   text. A text is whole, on the lines that it needs.
+//   text. A text is whole, on the lines that it needs. A
+//   [log fact](term:log-fact) is the sentence of its fact template with
+//   its values, which the window writes from the module file of the boot
+//   image that the fact names; a fact whose module the image does not hold
+//   is its raw form: `#`, the head of the module hash, `:`, the fact key
+//   and the value bytes in hexadecimal.
 //
 // At its start it writes two records: `log: the memory of the log: <count>
 // records in <size>` and `log: ok, <count> records, <count> gone before its
@@ -47,23 +52,27 @@
 // this process counts them as lost since, in red when the count is not 0.
 //
 // **Its grants**: **Log_Records**, the memory of the log records with the
-// right Read, and **Serve**, its exports. The process writes no record in
-// the name of another process: the kernel sets the process, the thread and
-// the time of each record.
+// right Read; **Serve**, its exports; **Image**, the boot image read-only,
+// in which it finds the module file of a fact. The process writes no
+// record in the name of another process: the kernel sets the process, the
+// thread and the time of each record.
 //
-// **Its exports** (`exports.odin`): `records` and `value_runs`: the whole
-// log to a caller that [acts for the principal](term:acts-for-the-principal),
-// and its [own records](term:own-records) to each other caller.
+// **Its exports** (`exports.odin`): `records`, `value_runs` and
+// `fact_records`: the whole log to a caller that
+// [acts for the principal](term:acts-for-the-principal), and its
+// [own records](term:own-records) to each other caller.
 // `process_records` and `process_value_runs`: the records of one process
 // whose process handle the caller lends, such as a child of the caller.
 //
 // ```
 // connect("log")
 // log.records(0)
-// where(log.records(0), "level", "error")
+// log.records(0) |> where(level = Error)
 // ```
 package log
 
+import "modus:contract/enum_word"
+import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:support/display"
@@ -182,12 +191,139 @@ record_shown :: proc "contextless" (place: int) -> ^system.Log_Record {
 	return &rows[(row_count - held + u64(place)) % ROWS]
 }
 
+// The boot image: the catalog in which the window finds the module file of
+// a log fact. Empty with no grant: each fact then shows its raw form.
+image: []u8
+
+// The last modules that the window found by their hash, and the last
+// hashes that no module of the image has: the facts of one writer cost one
+// search of the image, and a fact of a disk process costs one search too.
+FACT_MODULE_CACHE :: 8
+Fact_Module :: struct {
+	hash: [32]u8,
+	file: []u8,
+}
+fact_modules: [FACT_MODULE_CACHE]Fact_Module
+fact_module_next: int
+fact_hashes_missing: [FACT_MODULE_CACHE][32]u8
+fact_hash_missing_next: int
+
+// fact_module_of_hash gives the module file of the boot image with a hash,
+// checked, or nil: no module, a hash of zero, or a file that the checks of
+// the module format refuse. The entry of the image states the hash, and the
+// boot program hashed each file of the image against the signed system
+// description before the kernel ran (src/boot/trust.odin, trust_check,
+// which calls system_description.image_check: it compares the hash of the
+// bytes of each module with its entry). The image is granted read-only, so
+// the bytes at an entry still have its hash: the window does not hash them
+// again.
+fact_module_of_hash :: proc "contextless" (hash: [32]u8) -> []u8 {
+	zero: [32]u8
+	if hash == zero {
+		return nil
+	}
+	for item in fact_modules {
+		if item.file != nil && item.hash == hash {
+			return item.file
+		}
+	}
+	for missing in fact_hashes_missing {
+		if missing == hash {
+			return nil
+		}
+	}
+	file: []u8
+	if entry := system.image_entry_of(image, hash); entry != nil {
+		file = image[entry.offset:][:entry.size]
+		if module.validate(file) != .None {
+			file = nil
+		}
+	}
+	if file == nil {
+		fact_hashes_missing[fact_hash_missing_next % FACT_MODULE_CACHE] = hash
+		fact_hash_missing_next += 1
+		return nil
+	}
+	fact_modules[fact_module_next % FACT_MODULE_CACHE] = {hash = hash, file = file}
+	fact_module_next += 1
+	return file
+}
+
+// The sentence of a fact, rendered once when the window takes its record:
+// a frame draws it and renders nothing. The bytes are as many as a joined
+// text holds, so a sentence that fits here fits in the text of its group.
+FACT_RUN_CAPACITY :: 16 // The value runs of one sentence that keep their color; a run past them is plain.
+Rendered_Fact :: struct {
+	bytes:     [JOIN_CAPACITY]u8,
+	count:     int,
+	runs:      [FACT_RUN_CAPACITY]Joined_Run,
+	run_count: int,
+}
+rendered_facts: [ROWS]Rendered_Fact // rendered_facts[n % ROWS] is the fact of record n of this reader, when it is one.
+
+// fact_render writes the sentence of a fact, each value with its value
+// run, or the raw form of the fact, the line of the serial port, when the
+// image has no module or no valid description for it. A sentence longer
+// than the room of a joined text is no sentence: its raw form fits, and no
+// text is cut.
+fact_render :: proc "contextless" (rendered: ^Rendered_Fact, record: ^system.Log_Record) {
+	rendered.count, rendered.run_count = 0, 0
+	fact := op.log_record_fact(record)
+	value_count := min(int(fact.value_count), len(fact.values))
+	if file := fact_module_of_hash(fact.module_hash); file != nil {
+		runs: [module.FACT_SENTENCE_RUNS_MOST]value_kinds.Value_Run_In_Call
+		written, run_count, refusal := module.fact_sentence_write(file, fact.key, fact.values[:value_count], rendered.bytes[:], runs[:])
+		if refusal == .None {
+			for run in runs[:run_count] {
+				kind, kind_ok := value_kinds.value_kind_of(run.kind)
+				if kind_ok && kind != .None && rendered.run_count < FACT_RUN_CAPACITY {
+					rendered.runs[rendered.run_count] = {int(run.start), int(run.start) + int(run.length), kind}
+					rendered.run_count += 1
+				}
+			}
+			rendered.count = written
+			return
+		}
+	}
+	raw: [op.LOG_FACT_LINE_BYTES_MOST]u8
+	rendered.count = copy(rendered.bytes[:], raw[:op.log_fact_line(fact, &raw)])
+}
+
+// fact_join adds the sentence that take() rendered for the record at a
+// place of the window to a joined text: a copy, with no render.
+fact_join :: proc "contextless" (joined: ^Joined, place: int) {
+	held := min(row_count, ROWS)
+	rendered := &rendered_facts[(row_count - held + u64(place)) % ROWS]
+	base := joined.count
+	written := copy(joined.bytes[base:], rendered.bytes[:rendered.count])
+	for run in rendered.runs[:rendered.run_count] {
+		if run.end <= written && joined.run_count < JOIN_RUN_CAPACITY {
+			joined.runs[joined.run_count] = {base + run.start, base + run.end, run.kind}
+			joined.run_count += 1
+		}
+	}
+	joined.count += written
+}
+
 // join makes the text of a group: the texts of its records, one after the
-// other, and their value runs at their places in the joined text.
+// other, and their value runs at their places in the joined text. A fact
+// is its sentence; a record of a form that the window does not know shows
+// that, with no body.
 join :: proc "contextless" (joined: ^Joined, group: Group) {
 	joined.count, joined.run_count = 0, 0
 	for part in 0 ..< group.count {
 		record := record_shown(group.first + part)
+		form, known := op.log_record_form(record)
+		if !known {
+			joined.count += copy(joined.bytes[joined.count:], "a record of an unknown form")
+			continue
+		}
+		switch form {
+		case .Text:
+		case .Fact:
+			fact_join(joined, group.first + part)
+			continue
+		}
 		text_count := min(int(record.text_count), len(record.text))
 		base := joined.count
 		for index in 0 ..< min(int(record.run_count), len(record.runs)) {
@@ -249,23 +385,34 @@ joined_text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, join
 
 // take keeps one new record: it is the newest of the last 30 rows, and it
 // counts for its level and for its process. A process that finds no free
-// place counts in `other_processes`.
-take :: proc "contextless" (record: ^system.Log_Record) {
+// place counts in `other_processes`. The sentence of a fact is rendered
+// here, once. The record is in memory that the kernel writes: its level
+// byte becomes the enum at this one place, and a byte that names no level
+// gives false: the caller counts the record as lost.
+take :: proc "contextless" (record: ^system.Log_Record) -> bool {
+	level, level_ok := enum_word.member_of_word(op.Log_Level, u64(transmute(u8)record.level))
+	if !level_ok {
+		return false
+	}
+	if form, form_known := op.log_record_form(record); form_known && form == .Fact {
+		fact_render(&rendered_facts[row_count % ROWS], record)
+	}
 	rows[row_count % ROWS] = record^
 	row_count += 1
-	level_counts[record.level] += 1
+	level_counts[level] += 1
 	for &counted in process_counts[:process_count] {
 		if counted.slot == record.process && counted.serial == record.process_serial {
 			counted.count += 1
-			return
+			return true
 		}
 	}
 	if process_count == COUNTED_PROCESSES {
 		other_processes += 1
-		return
+		return true
 	}
 	process_counts[process_count] = {slot = record.process, serial = record.process_serial, name = record.name, count = 1}
 	process_count += 1
+	return true
 }
 
 // card_width gives the width of the card of a count: its name, a space, the
@@ -449,6 +596,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// also reads the own log ring of a caller (Log_Read).
 	reader_head, reader_records = reader.head, reader.records
 	log_memory = ctx.handles[system.GRANT_LOG_RECORDS]
+	// The catalog of the facts: with no image, each fact shows raw.
+	if address, mapped := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); mapped == .Ok {
+		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	}
 	service, _ = system.service_open(ctx)
 	logged := false
 	picture_owed := true // The window does not show each record that was taken.
@@ -466,7 +617,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if !has {
 				break
 			}
-			take(&record)
+			if !take(&record) {
+				// A level byte that names no member: no reader can read
+				// the record, so it counts as a record that this reader
+				// did not read.
+				if row_count == 0 {
+					gone_before_start += 1
+				} else {
+					lost += 1
+				}
+				continue
+			}
 			picture_owed = true
 		}
 		for event in display.next_event(&window) {

@@ -140,7 +140,7 @@ Each case is a fault of the kernel. `system.process_state` stops its process thr
 | A test waits for a clean stop | `_, outcome, stopped := system.process_stop_wait(child, system.TEST_HANG_BOUND_MILLISECONDS)`, then `stopped && outcome == .Done` |
 | A test waits for a fault | `cause, _, stopped := system.process_stop_wait(child, ...)`, then `cause == .Fault && system.process_stop_report(child).vector == u32(op.Fault_Kind.Page_Fault)` |
 | A machine test waits for a clean stop | the step on the fact `root.Process_Stopped` with `name = unlock` and `outcome = Done`; until log facts, the line "root: unlock stopped: itself, done" |
-| The console shows the processes that failed | `where(monitor.processes(), "outcome", "failed")` |
+| The console shows the processes that failed | `where(monitor.processes(), outcome = "failed")` |
 
 No expression names a number. The check `outcome == .Done` is enough, because the border refuses an outcome with a cause other than `Itself`.
 

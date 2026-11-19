@@ -262,8 +262,9 @@ a_byte_that_names_no_field_kind_is_refused :: proc(t: ^testing.T) {
 }
 
 // Plain has no value kind of its own, and each other field kind has the
-// value kind that its color shows: no two kinds share one, so a reader
-// that does not see colors still tells them apart by the sign of each.
+// value kind that its color shows. Hexadecimal and the values of a fact
+// share Number: a reader that does not see colors tells them apart by the
+// "0x" that only a hexadecimal Integer has.
 @(test)
 each_field_kind_has_its_value_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, field_kind_value_kind(.Plain), Value_Kind.None)
@@ -271,6 +272,7 @@ each_field_kind_has_its_value_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, field_kind_value_kind(.Status), Value_Kind.Status)
 	testing.expect_value(t, field_kind_value_kind(.Module_Name), Value_Kind.Module)
 	testing.expect_value(t, field_kind_value_kind(.Hash), Value_Kind.Version)
+	testing.expect_value(t, field_kind_value_kind(.Fact_Values), Value_Kind.Number)
 }
 
 // The table of the types of a field kind gives each name once, with the
@@ -289,6 +291,7 @@ each_field_kind_type_has_its_size :: proc(t: ^testing.T) {
 		{"Hexadecimal_64", size_of(Hexadecimal_64)},
 		{"Module_Name_Field", size_of(Module_Name_Field)},
 		{"Hash_Field", size_of(Hash_Field)},
+		{"Fact_Values_Field", size_of(Fact_Values_Field)},
 	}
 	testing.expect_value(t, len(FIELD_KIND_TYPES), len(sizes))
 	for item, index in FIELD_KIND_TYPES {
@@ -314,6 +317,7 @@ each_field_kind_type_has_its_size :: proc(t: ^testing.T) {
 	// A hash field holds at most the hash of a module, so a reader writes
 	// it in a fixed buffer of two digits for each byte.
 	testing.expect_value(t, size_of(Hash_Field), HASH_FIELD_BYTES)
+	testing.expect_value(t, size_of(Fact_Values_Field), FACT_VALUES_FIELD_BYTES)
 }
 
 // Each contract enum but None names a type of the contract, and no two

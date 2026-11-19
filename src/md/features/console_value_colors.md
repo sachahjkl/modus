@@ -28,10 +28,13 @@ The log facts ([log_facts.md](log_facts.md)) need four more kinds that a line of
 | `Status` | Unsigned Integer, no unit | a contract enum of `value_kinds.CONTRACT_ENUM_TYPES`: `operation.Status`, `operation.Log_Level` | The name of the member |
 | `Module_Name` | Text | `value_kinds.Module_Name_Field`, 32 bytes | The text |
 | `Hash` | Bytes, 1 to 32 bytes | `value_kinds.Hash_Field`, 32 bytes | Two hexadecimal digits for each byte |
+| `Fact_Values` | Bytes, 144 bytes | `value_kinds.Fact_Values_Field`, 144 bytes | Two hexadecimal digits for each byte, up to the last byte that is not zero |
 
-`module.field_kind_valid` and `information.check` refuse each other pair: a kind on a field of another type, a unit beside a kind, a Status with no enum or with a sign, an enum on a field that is not a Status, a Bytes field that is not a Hash, and a reserved byte that is not 0. A field of the type Bytes exists only for a hash: a byte string with no kind has no form for a reader. Two records whose field differs by its kind or its enum are not equal.
+`module.field_kind_valid` and `information.check` refuse each other pair: a kind on a field of another type, a unit beside a kind, a Status with no enum or with a sign, an enum on a field that is not a Status, a Bytes field that is not a Hash or the values of a fact, a field of fact values of another size than `op.LOG_FACT_VALUE_CAPACITY`, and a reserved byte that is not 0. A field of the type Bytes exists only for a hash and for the values of a log fact: a byte string with no kind has no form for a reader. Two records whose field differs by its kind or its enum are not equal.
 
-**The contract enums.** A status is written by name because each reader compiles the contract in: `operation.contract_enum_member_name` gives the name of a member, and refuses a word that names no member of that enum. A reader then writes the number in decimal, as a Number, never a name of another member. The list is closed: an enum that a fact needs is a new member of `Contract_Enum`, with its names in the contract. An enum of a module has no names in the module file, so its field stays a plain Integer ([log_facts.md](log_facts.md), "Open questions").
+**The values of a fact.** `log.fact_records` gives the value bytes of each fact whole, so that a reader renders it ([log_facts.md](log_facts.md), "The reader path"). The bytes have a description: the record of the fact type that the module hash and the fact key of the same row name. So they are not bytes of any content, and their kind says what they are. A reader that has the description writes the sentence; the drawer of a table has only the row, so it writes the raw form: the bytes in hexadecimal up to the last byte that is not zero, as the serial line of a fact. The zeros after it are not written, so a cell of a small fact is short.
+
+**The contract enums.** A status is written by name because each reader compiles the contract in: `operation.contract_enum_member_name` gives the name of a member, and refuses a word that names no member of that enum. `Log_Record_Form` is a member of the list, so a row of `log.records` says `Text` or `Fact`. A reader then writes the number in decimal, as a Number, never a name of another member. The list is closed: an enum that a fact needs is a new member of `Contract_Enum`, with its names in the contract. An enum of a module has no names in the module file, so its field stays a plain Integer ([log_facts.md](log_facts.md), "Open questions").
 
 **The value kind of a field**, for the drawer (`console_results.cell_of`):
 
@@ -47,6 +50,7 @@ The log facts ([log_facts.md](log_facts.md)) need four more kinds that a line of
 | Text | None | The color of the text | It is at the left of its column |
 | Text, Module_Name | Module | The color of a module | `Module_Name(32)` in `describe` |
 | Bytes, Hash | Version | The color of a version | Hexadecimal digits at the left, `Hash(32)` in `describe` |
+| Bytes, Fact_Values | Number | Memory | Hexadecimal digits at the left, `Fact_Values(144)` in `describe` |
 
 A plain Text field has no kind: a text is not classified by its look.
 
@@ -66,7 +70,9 @@ A plain Text field has no kind: a text is not classified by its look.
 - **A new field of four bytes for the kind.** The two reserved bytes hold an integer unit exactly, and the parameter already uses that form. A field does not change size, and no reader of a description changes but to read the two bytes.
 - **The field kind in the integer unit.** A hash and a module name are not a unit of an Integer, and a Status needs its enum beside it. The four other reserved bytes hold the kind, the enum and two reserved bytes, so the field keeps its 24 bytes.
 - **A hash as a Text field.** A Text ends at its first zero byte and is UTF-8; a hash has zero bytes and is not text. It is a Bytes field.
-- **A Bytes field of any content.** A reader has no form for bytes that say nothing of what they are. A Bytes field is a hash until a design gives another kind.
+- **A Bytes field of any content.** A reader has no form for bytes that say nothing of what they are. A Bytes field is a hash or the values of a log fact, whose description the same row names, until a design gives another kind.
+- **The values of a fact as a Hash.** A hash has at most 32 bytes and the color of a version; the values have 144 bytes and are no version. One kind for two meanings is the guess that this file refuses.
+- **The values of a fact as 18 Integer fields.** A reader then joins 18 columns again into one byte string, and a table of the rows draws 18 numbers that mean nothing alone.
 - **The names of a status from the runtime type information.** Its tables hold addresses that the loader rebases, and they describe the types of one language. The contract holds a table of names for each enum of the list.
 - **A Status with a sign.** A member of a contract enum is never negative, and an unsigned field gives each word one meaning.
 
@@ -75,10 +81,10 @@ A plain Text field has no kind: a text is not classified by its look.
 - The unit of a Size column of a built-in table is in its head, so a built-in column has no unit in its name: `memory()` gives `used` in pages, not `used_pages`, and `modules()` gives `size` in bytes.
 - `columns` and `join` copy the unit and the kind of each field into the new description: a column keeps its kind after the command.
 - A record that another party wrote is checked before the drawer reads its unit and its kind. The drawer still treats a unit that is not valid as a plain number, and a Status word that names no member as a number.
-- `where`, `sort` and `join` compare an Integer or a Text. A Hash field is neither, and the console refuses it there with the type of the field. `variable.field` of a Hash field gives its bytes, which the console draws as Bytes. A record with a Hash field gets no command that makes it: the console has no value of a hash to type.
+- `where`, `sort` and `join` compare an Integer or a Text. A Hash field and a field of fact values are neither, and the console refuses them there with the type of the field. `variable.field` of a Hash field gives its bytes, which the console draws as Bytes. A record with a Hash field gets no command that makes it: the console has no value of a hash to type.
 - The log of the console has the text only, with no value run: a machine test reads the head with its unit (`time (ms)`), and the host tests of the drawer check the kind of each cell.
 - The format version of a module does not change for the kinds: the bytes were reserved and zero, and zero keeps its meaning. The version changes with the table `Facts` of the log facts.
 
 ## State
 
-Built: the unit of an Integer field in the module contract, its checks, the describe tool, the drawers of a record and a table, the built-in tables `memory()`, `modules()`, `measure_completion()`, and the record `Process` of the monitor. The field kinds `Hexadecimal`, `Status`, `Module_Name` and `Hash`, their source types, their borders and checks, the describe tool, the drawers of the console and of the palette, and the pages of the types of the site. Left: the unit of a field in the palette and in the manual; a module of the system that takes a field of a new kind in an export.
+Built: the unit of an Integer field in the module contract, its checks, the describe tool, the drawers of a record and a table, the built-in tables `memory()`, `modules()`, `measure_completion()`, and the record `Process` of the monitor. The field kinds `Hexadecimal`, `Status`, `Module_Name`, `Hash` and `Fact_Values`, the contract enums `Status`, `Log_Level` and `Log_Record_Form`, their source types, their borders and checks, the describe tool, the drawers of the console and of the palette, and the pages of the types of the site. Left: the unit of a field in the palette and in the manual; a module of the system that takes a field of a new kind in an export.

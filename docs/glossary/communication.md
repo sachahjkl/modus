@@ -556,11 +556,21 @@ Do not use: alias, shortcut, wrapper command.
 
 The pipe operator `|>` of a line of the console gives the value on its left as the first argument of the call on its right: `a |> f(b)` is `f(a, b)`.
 
-A line then reads in the order in which its calls run: `processes() |> where("name", "server") |> rows` is `rows(where(processes(), "name", "server"))`. The operator has the lowest priority and adds no meaning: the console writes the line with calls in calls before it runs it, and a fault of the operator fails the line before any call. It is not a pipe between processes: no text goes from one process to another. `|` alone is no operator.
+A line then reads in the order in which its calls run: `processes() |> where(name = "server") |> rows` is `rows(where(processes(), name = "server"))`. The operator has the lowest priority and adds no meaning: the console writes the line with calls in calls before it runs it, and a fault of the operator fails the line before any call. It is not a pipe between processes: no text goes from one process to another. `|` alone is no operator.
 
 The design: `docs/CONSOLE.md`, "The pipe operator".
 
 Do not use: pipe (alone), pipeline, bar, forward operator.
+
+### Condition
+
+A condition is the argument of `where` in the console: a field of the record of a table, an operator and a value, as `block = 12` or `level = Warning`.
+
+The parser reads it as a condition, never as an expression, so the field is a name of the record description and not a variable. The operators are `=`, `!=`, `<`, `<=`, `>` and `>=`; a Text and a status take `=` and `!=` only, and a status takes the name of a member of its contract enum. The console refuses a field that the record lacks and a value of another kind before a row is read, and before any call when it knows the record. It is no text that a process parses.
+
+The design: `docs/CONSOLE.md`, "Conditions".
+
+Do not use: filter expression, where clause.
 
 ### Record output
 

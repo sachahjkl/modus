@@ -1,14 +1,16 @@
 package console
 
 import module "modus:contract/module"
+import "modus:private/console/console_condition"
 import "modus:private/console/console_results"
+import "modus:support/sentence"
 
 // Tables: a value that holds records of one record description, one after
 // the other (module.Type.Table). A Table result of an export gives one, and
 // a few generic commands combine them. They know no table: each one reads
 // the description of the records, as the module contract writes it.
 //
-//   where(table, field, value)   the rows whose field has the value
+//   where(table, field = value)  the rows whose field passes a condition
 //   sort(table, field)           the rows in the order of a field
 //   join(left, right, field)     each pair of rows with the same value of a field
 //   columns(table, "a b c")      the rows with some fields only
@@ -97,38 +99,13 @@ field_names :: proc "contextless" (table: Table) -> string {
 	return string(scratch[start:scratch_count])
 }
 
-// row_value gives one field of a row as a value: an Integer, a Text or a Handle.
-row_value :: proc "contextless" (row: []u8, item: module.Field) -> Value {
-	// A byte that names no type gives no value, as a field of no value.
-	type, type_ok := module.field_type(item)
-	if !type_ok {
-		return {}
-	}
-	switch type {
-	case .Integer:
-		return {kind = .Integer, integer = module.field_integer(row, item)}
-	case .Handle:
-		return {kind = .Handle, integer = i64((^u32)(&row[item.offset])^)}
-	case .Text:
-		return {kind = .Text, text = module.field_text(row, item)}
-	case .None, .Record, .Table, .Bytes:
-		// A field of a row holds no such value: the field gives none. A
-		// hash is a Bytes field, which table_argument refuses before.
-	}
-	return {}
-}
-
-// compare gives -1, 0 or 1: Integers by value, Texts byte by byte.
-compare :: proc "contextless" (a, b: Value) -> int {
-	if a.kind == .Text {
-		for i in 0 ..< min(len(a.text), len(b.text)) {
-			if a.text[i] != b.text[i] {
-				return a.text[i] < b.text[i] ? -1 : 1
-			}
-		}
-		return len(a.text) < len(b.text) ? -1 : len(a.text) > len(b.text) ? 1 : 0
-	}
-	return a.integer < b.integer ? -1 : a.integer > b.integer ? 1 : 0
+// row_field gives one field of a row as the value that where, sort and
+// join compare (console_condition.values_compare): an Integer with its
+// sign, a handle, or a Text. A field with no such value gives a zero
+// value: table_argument refused a Bytes field before.
+row_field :: proc "contextless" (row: []u8, item: module.Field) -> console_condition.Field_Value {
+	value, _ := console_condition.field_value_of(row, item)
+	return value
 }
 
 // table_argument reads the table argument of a command, and one of its
@@ -162,23 +139,31 @@ table_argument :: proc "contextless" (command: string, value: Value, name: strin
 // line for each row, and the count: "2 rows of Import"
 // (docs/CONSOLE.md, "Results and their drawers").
 tables_start :: proc "contextless" () {
-	// Gives the rows of a table whose field has a value, in their order.
+	// Gives the rows of a table whose field passes a condition, in their
+	// order.
 	//
 	// - `table`: a table of any record.
-	// - `field`: the name of a field of its record.
-	// - `value`: an `Integer` for an integer or a handle field, a `Text`
-	//   for a text field. The rows match on equality.
+	// - `condition`: a field of its record, an operator and a value, as
+	//   `block = 12`. The field is a name of the record, never a variable.
+	//   The operators are `=`, `!=`, `<`, `<=`, `>` and `>=`. An Integer or
+	//   a handle field takes an Integer and each operator. A Text field
+	//   takes a Text, and a status field the name of a member of its enum
+	//   (`level = Warning`), with `=` and `!=` only: the order of the
+	//   members is no order of weight.
 	//
 	// The result has the record of the table.
 	//
 	// ```
-	// > columns(where(manual.running(), "module", "calendar_fixed"), "process slot module replaces")
+	// > columns(where(manual.running(), module = "calendar_fixed"), "process slot module replaces")
+	// > log.records(0) |> where(level = Warning) |> where(process = "storage")
 	// ```
 	//
-	// Errors: the records have no such field (the error lists their
-	// fields); the kind of the value is not the kind of the field: "error:
-	// where: the field code is Integer, the value is Text".
-	command("where", {.Table, .Text, .None}, .Table, "the rows of a table whose field has a value", table_where)
+	// Errors, before any row is read: the records have no such field (the
+	// error lists their fields); the kind of the value is not the kind of
+	// the field: "error: where: the field code is Integer, the value is
+	// Text"; a name that names no member of the enum of a status (the error
+	// lists the members); an order on a Text or a status; a hash.
+	command("where", {.Table, .None}, .Table, "the rows of a table whose field passes a condition: where(t, block = 12)", table_where, forms = {.Expression, .Condition})
 	// Gives the rows of a table in the increasing order of a field.
 	//
 	// - `table`: a table of any record.
@@ -250,21 +235,22 @@ tables_start :: proc "contextless" () {
 	command("row", {.Table, .Integer}, .Record, "one row of a table, from 1", table_one)
 }
 
-// table_where gives the rows of a table whose field has the value: an
-// Integer for an Integer or Handle field, a Text for a Text field.
+// table_where gives the rows of a table whose field passes the condition
+// that the parser read (condition_read).
 table_where :: proc "contextless" (arguments: []Value) -> Value {
-	table, item, ok := table_argument("where", arguments[0], arguments[1].text)
+	// The parser gives each argument of the form Condition one; a value of
+	// another source has none.
+	if arguments[1].condition == nil {
+		return fail("where takes a condition: a field, an operator and a value, as where(t, block = 12)")
+	}
+	condition := arguments[1].condition^
+	table, item, ok := table_argument("where", arguments[0], condition.field)
 	if !ok {
 		return {}
 	}
-	wanted := arguments[2]
-	expected: Kind = item.type == u8(module.Type.Text) ? .Text : .Integer
-	if wanted.kind != expected {
-		return fail("where: the field ", arguments[1].text, " is ", type_text_of_word(table.file, item.type, item.detail), ", the value is ", kind_names[wanted.kind])
-	}
 	count := 0
 	for index in 0 ..< table.rows {
-		count += int(compare(row_value(table_row(table, arguments[0], index), item), wanted) == 0)
+		count += int(console_condition.condition_holds(row_field(table_row(table, arguments[0], index), item), condition))
 	}
 	bytes := table_bytes(count * table.size)
 	if bytes == nil && count > 0 {
@@ -273,12 +259,87 @@ table_where :: proc "contextless" (arguments: []Value) -> Value {
 	place := 0
 	for index in 0 ..< table.rows {
 		row := table_row(table, arguments[0], index)
-		if compare(row_value(row, item), wanted) == 0 {
+		if console_condition.condition_holds(row_field(row, item), condition) {
 			copy(bytes[place:], row)
 			place += table.size
 		}
 	}
 	return {kind = .Table, record = bytes, file = arguments[0].file, detail = arguments[0].detail}
+}
+
+// condition_fail fails the line with the sentence of a refusal of a
+// condition, which console_condition writes.
+condition_fail :: proc "contextless" (refusal: console_condition.Refusal, details: console_condition.Refusal_Details) -> Value {
+	writer := sentence.Writer {
+		buffer = scratch[scratch_count:],
+	}
+	console_condition.refusal_write(&writer, refusal, details)
+	text := sentence.written(&writer)
+	scratch_count += len(text)
+	return fail(text)
+}
+
+// condition_read reads the argument of a parameter of the form Condition:
+// a field of the table of the first argument, an operator, and a value
+// (console_condition). A status field takes the name of a member, which
+// becomes its word there, at one place; another field takes an expression
+// of its kind, in the range of the field. Each fault fails the line before
+// the command runs.
+condition_read :: proc "contextless" (command_name: string, before: []Value) -> Value {
+	if len(before) == 0 {
+		return fail(command_name, ": a condition comes after a table: ", command_name, "(t, block = 12)")
+	}
+	if before[0].kind != .Table {
+		return fail(command_name, ": argument 1 is ", kind_names[before[0].kind], ", not a Table: a condition names a field of the record of a table")
+	}
+	table, table_ok := table_of(before[0])
+	if !table_ok {
+		return fail(command_name, ": the table has no valid description")
+	}
+	details := console_condition.Refusal_Details {
+		command = command_name,
+		file    = table.file,
+		record  = table.record,
+	}
+	head, refusal := console_condition.head_read(source, position)
+	details.field, details.comparison = head.field, head.comparison
+	if refusal != .None {
+		return condition_fail(refusal, details)
+	}
+	position = head.value_start
+	found: bool
+	if details.item, found = console_condition.field_find(table.file, table.record, head.field); !found {
+		return condition_fail(.Unknown_Field, details)
+	}
+	if refusal = console_condition.field_check(details.item, head.comparison); refusal != .None {
+		return condition_fail(refusal, details)
+	}
+	condition := Condition{field = head.field, comparison = head.comparison}
+	if which, status := console_condition.field_is_status(details.item); status {
+		word: u64
+		end: int
+		word, details.member, end, refusal = console_condition.member_read(source, position, which)
+		if refusal != .None {
+			return condition_fail(refusal, details)
+		}
+		position = end
+		condition.compared = i64(word)
+	} else {
+		value := expression()
+		if failed {
+			return {}
+		}
+		details.value_type = type_of_kind(value.kind)
+		if refusal = console_condition.value_check(details.item, details.value_type, value.integer); refusal != .None {
+			return condition_fail(refusal, details)
+		}
+		condition.compared, condition.text = value.integer, value.text
+	}
+	kept: ^Condition
+	if kept, refusal = console_condition.condition_keep(&line_conditions, condition); refusal != .None {
+		return condition_fail(refusal, details)
+	}
+	return {condition = kept}
 }
 
 // table_sort gives the rows of a table in the increasing order of a field.
@@ -297,9 +358,9 @@ table_sort :: proc "contextless" (arguments: []Value) -> Value {
 	held: [module.RECORD_SIZE_LIMIT]u8
 	for index in 1 ..< table.rows {
 		copy(held[:], table_row(table, sorted, index))
-		key := row_value(held[:table.size], item)
+		key := row_field(held[:table.size], item)
 		place := index
-		for place > 0 && compare(row_value(table_row(table, sorted, place - 1), item), key) > 0 {
+		for place > 0 && console_condition.values_compare(row_field(table_row(table, sorted, place - 1), item), key) > 0 {
 			copy(table_row(table, sorted, place), table_row(table, sorted, place - 1))
 			place -= 1
 		}
@@ -377,9 +438,9 @@ table_join :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	rows := 0
 	for a in 0 ..< left.rows {
-		key := row_value(table_row(left, arguments[0], a), left_item)
+		key := row_field(table_row(left, arguments[0], a), left_item)
 		for b in 0 ..< right.rows {
-			rows += int(compare(key, row_value(table_row(right, arguments[1], b), right_item)) == 0)
+			rows += int(console_condition.values_compare(key, row_field(table_row(right, arguments[1], b), right_item)) == 0)
 		}
 	}
 	bytes := table_bytes(rows * int(size))
@@ -389,10 +450,10 @@ table_join :: proc "contextless" (arguments: []Value) -> Value {
 	place := 0
 	for a in 0 ..< left.rows {
 		row_left := table_row(left, arguments[0], a)
-		key := row_value(row_left, left_item)
+		key := row_field(row_left, left_item)
 		for b in 0 ..< right.rows {
 			row_right := table_row(right, arguments[1], b)
-			if compare(key, row_value(row_right, right_item)) != 0 {
+			if console_condition.values_compare(key, row_field(row_right, right_item)) != 0 {
 				continue
 			}
 			for column in columns[:count] {

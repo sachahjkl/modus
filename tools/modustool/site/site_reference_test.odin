@@ -166,7 +166,8 @@ site_console_commands_of_the_repository :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, signatures["help"], "help() -> Table")
 	testing.expect_value(t, signatures["repeat"], "repeat(Text, Integer) -> Text")
-	testing.expect_value(t, signatures["where"], "where(Table, Text, Value) -> Table")
+	testing.expect_value(t, signatures["where"], "where(Table, Condition) -> Table")
+	testing.expect_value(t, signatures["facts"], "facts(Table, Fact_Type) -> Table")
 	// Each built-in command has its documentation above its line: the help
 	// alone is one line, too short for a reader of the site.
 	for command in all {

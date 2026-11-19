@@ -163,6 +163,9 @@ Candidate_Kind :: enum u8 {
 	Process      = 5, // A process that runs.
 	Variable     = 6, // A variable of the process.
 	History_Line = 7, // A line of the history.
+	Fact_Type    = 8, // The name of a fact type of a log fact: "package.Type".
+	Field        = 9, // A field of the record of a table, in a condition.
+	Member       = 10, // A member of a contract enum, after the operator of a condition on a status.
 }
 
 // A name that can complete what the input typed. The caller fills a

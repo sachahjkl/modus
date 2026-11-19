@@ -321,6 +321,7 @@ Field_Kind :: enum u8 {
 	Status      = 2, // An unsigned Integer with no unit that holds a member of a contract enum: the reader writes the name of the member. The value kind is Status.
 	Module_Name = 3, // A Text: the name of a module or of a process. The value kind is Module.
 	Hash        = 4, // A field of the type Bytes: a hash, or its head, written as two hexadecimal digits for each byte. The value kind is Version.
+	Fact_Values = 5, // A field of the type Bytes of FACT_VALUES_FIELD_BYTES: the values of a log fact, whose description the module hash and the fact key of the same record name. A reader with no description writes two hexadecimal digits for each byte up to the last byte that is not zero. The value kind is Number.
 }
 
 // field_kind_of_word is the border of the byte of a field kind in a module
@@ -344,6 +345,8 @@ field_kind_value_kind :: proc "contextless" (kind: Field_Kind) -> Value_Kind {
 		return .Module
 	case .Hash:
 		return .Version
+	case .Fact_Values:
+		return .Number
 	}
 	return .None
 }
@@ -358,6 +361,7 @@ Contract_Enum :: enum u8 {
 	None      = 0, // No enum: a field that is not a Status.
 	Status    = 1, // operation.Status: the status of a kernel operation.
 	Log_Level = 2, // operation.Log_Level: the level of a log record.
+	Log_Record_Form = 3, // operation.Log_Record_Form: what a log record holds, a text or a fact.
 }
 
 // contract_enum_of_word is the border of the byte of a contract enum in a
@@ -380,6 +384,7 @@ CONTRACT_ENUM_TYPES := [Contract_Enum]Contract_Enum_Type {
 	.None      = {},
 	.Status    = {package_name = "operation", name = "Status"},
 	.Log_Level = {package_name = "operation", name = "Log_Level"},
+	.Log_Record_Form = {package_name = "operation", name = "Log_Record_Form"},
 }
 
 // The types that a field of a record takes to state its field kind, in
@@ -411,6 +416,14 @@ HASH_FIELD_BYTES :: 32
 // A field of the type Bytes that holds a BLAKE3 hash.
 Hash_Field :: distinct [HASH_FIELD_BYTES]u8
 
+// The bytes of the values of one log fact: operation.LOG_FACT_VALUE_CAPACITY,
+// which module checks, because this package imports no other.
+FACT_VALUES_FIELD_BYTES :: 144
+// A field of the type Bytes that holds the values of a log fact, whose
+// description the module hash and the fact key of the same record name
+// (src/md/features/log_facts.md, "The reader path").
+Fact_Values_Field :: distinct [FACT_VALUES_FIELD_BYTES]u8
+
 // The name of a type of a field with a field kind, its kind, and its size
 // in bytes.
 Field_Kind_Type :: struct {
@@ -429,6 +442,7 @@ FIELD_KIND_TYPES := [?]Field_Kind_Type {
 	{"Hexadecimal_64", .Hexadecimal, 8},
 	{"Module_Name_Field", .Module_Name, MODULE_NAME_FIELD_BYTES},
 	{"Hash_Field", .Hash, HASH_FIELD_BYTES},
+	{"Fact_Values_Field", .Fact_Values, FACT_VALUES_FIELD_BYTES},
 }
 
 // field_kind_of_type_name gives the row of FIELD_KIND_TYPES of the name of
