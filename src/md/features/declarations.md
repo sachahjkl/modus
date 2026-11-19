@@ -2,7 +2,7 @@
 
 A principal describes a system, a session, a project or an environment as one lazy value of the language of the console, in the manner of Nix. The evaluation of that value has no effect: it gives a typed record, the plan. An explicit command applies the plan, and the root service writes it as one applied plan, which a rollback can select again. The root service and the services never read the text of a declaration.
 
-The terms are in [`docs/glossary/code.md`](../../../docs/glossary/code.md), "Plan", "Applied plan", "Declaration", "Catalog declaration", "Declaration input", "Pin", "Release pointer", "Project", and [`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md), "Environment", "Evaluation budget". The recipes that a plan names, the cache and the substitution policy are in [recipes.md](recipes.md).
+The terms Plan, Applied plan, Declaration, Catalog declaration, Declaration input, Pin, Release pointer and Project are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Environment and Evaluation budget are in [`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md). The recipes that a plan names, the cache and the substitution policy are in [recipes.md](recipes.md).
 
 ## Purpose
 

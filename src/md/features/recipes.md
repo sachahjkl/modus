@@ -2,7 +2,7 @@
 
 A recipe names how an output is made: a builder, its inputs and its arguments, each by hash or as a typed record. The root service realises a recipe in a sandbox, or a machine takes its realisation from a cache: a signed record that says which output the recipe gave. One rule, the substitution policy, chooses between the two, with no hidden configuration.
 
-The terms are in [`docs/glossary/code.md`](../../../docs/glossary/code.md), "Recipe", "Realisation", "Builder", "Guest builder", "Fetcher", "Substitution policy", "Object cache", and [`docs/glossary/storage.md`](../../../docs/glossary/storage.md), "Tree hash". The declarations that name the recipes are in [declarations.md](declarations.md).
+The terms Recipe, Realisation, Builder, Guest builder, Fetcher, Substitution policy and Object cache are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Tree hash is in [`docs/glossary/storage.md`](../../../docs/glossary/storage.md). The declarations that name the recipes are in [declarations.md](declarations.md).
 
 ## Purpose
 

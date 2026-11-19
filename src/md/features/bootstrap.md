@@ -2,7 +2,7 @@
 
 Each module of the system is the output of a recipe ([recipes.md](recipes.md)). Each recipe names a builder, and each builder is the output of another recipe. The bootstrap is where that chain ends: the first builder, which no recipe made. This file states where the chain of modus ends today, where it is to end, and how a machine proves each step.
 
-The terms are in [`docs/glossary/code.md`](../../../docs/glossary/code.md), "Bootstrap seed", "Self-hosting".
+The terms Bootstrap seed and Self-hosting are in [`docs/glossary/code.md`](../../../docs/glossary/code.md).
 
 ## Purpose
 

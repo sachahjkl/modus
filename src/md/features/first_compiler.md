@@ -2,7 +2,7 @@
 
 No program of modus writes a module file today: the modus tool writes each one, on the host. This file states the path to the first programs of modus that write modules, in five steps. Each step is also a stage of the native tier of the bootstrap ([bootstrap.md](bootstrap.md), "Three tiers").
 
-The terms are in [`docs/glossary/code.md`](../../../docs/glossary/code.md), "Module file writer", "Builder".
+The terms Module file writer and Builder are in [`docs/glossary/code.md`](../../../docs/glossary/code.md).
 
 ## Purpose
 
