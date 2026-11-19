@@ -160,7 +160,7 @@ Each end names its record output or record input by its index in the tables of i
 
 **A record output of a process to a record input of the same process** is refused at the wiring with `Bad_State`. A thread that waits for room in a queue that it alone reads never wakes, and a queue inside one process crosses no border: it needs no check and no ring of the root service.
 
-**Who can end a wiring.** The wiring belongs to its asker: it is in the wiring page of the asker ("The budget"), and only the asker, or the principal with `revoke` from a console that acts for it, ends it. The process at an end of a wiring has no command that ends it. It can stop writing, or close its own end: that is silence in the stream, never a removal of a record that it wrote. At its stop, the root service writes `Writer_Stopped` with its stop code in each of its rings.
+**Who can end a wiring.** The wiring belongs to its asker: it is in the wiring page of the asker ("The budget"), and only the asker, or the principal with `revoke` from a console that acts for it, ends it. The process at an end of a wiring has no command that ends it. It can stop writing, or close its own end: that is silence in the stream, never a removal of a record that it wrote. At its stop, the root service writes `Writer_Stopped` with its stop cause and its stop outcome in each of its rings ([../api/process_stop.md](../api/process_stop.md)).
 
 ### The wiring list of a start
 
@@ -183,7 +183,7 @@ sequenceDiagram
     collector->>collector: commit the audit segment, with the hash of the one before
     collector->>server: forward, to server.orders
     server->>collector: server.requests and server.log
-    root->>collector: the end of each stream: Writer_Stopped and the stop code
+    root->>collector: the end of each stream: Writer_Stopped, the stop cause and the stop outcome
 ```
 
 A starter that starts a process can give the wiring of the child in the `Start` command itself: a **wiring list**, a table of wiring records. The root service applies the whole list **before the first instruction of the child**: it makes each ring, writes each end into the wiring ring of the child, and only then starts its first thread. So no record of the child is lost, and the first place of each ring of a record output of the child is a joined record of 0.
@@ -242,7 +242,7 @@ The kernel does not write the ring: the kernel keeps no table of rings and stays
 
 **What a process with no wiring of `log` pays: nothing more than today.** Its slot holds 0. Each write of its log reads that one word, in the line of the context that the log path already reads for the log handle, and goes on to `Log`, as today: no ring, no page, no wiring ring. Measure 9 proves it.
 
-**What the record output `log` does not hold.** The records that another process writes about this process (the line of the root service at its start, the report of the kernel at a fault) are not its own records, and are not in its `log`. Its stop comes with the end word `Writer_Stopped` and its stop code.
+**What the record output `log` does not hold.** The records that another process writes about this process (the line of the root service at its start, the report of the kernel at a fault) are not its own records, and are not in its `log`. Its stop comes with the end word `Writer_Stopped`, its stop cause and its stop outcome.
 
 ### A declared record output with no reader
 
@@ -270,14 +270,14 @@ A writer that serves the network, as `server` does, does not wait for a reader o
 ### The end of a stream
 
 - **The writer ends its stream** with `system.output_end(&output, error)`: an end record with an error record, zero for a clean end, then the close of its handle. The reader reads each record before the end, takes the end, writes its acknowledgement in the completion queue, and closes its end.
-- **The writer stops with no end record.** When the root service reaps the writer, it maps the head page of each ring of the writer, writes the end word `Writer_Stopped` with the stop code, and wakes the reader. Only the root service writes an end word, and only after the writer stopped, so the one-writer rule of each queue holds. The reader reads the end word only when the queue is empty: each record that the writer published before its stop reaches it.
+- **The writer stops with no end record.** When the root service reaps the writer, it maps the head page of each ring of the writer, writes the end word `Writer_Stopped` with the stop cause and the stop outcome of the writer, and wakes the reader. The reader takes the two words through the border of [../api/process_stop.md](../api/process_stop.md); later, the error record of a failed stop comes in the place where an end record holds its error record. Only the root service writes an end word, and only after the writer stopped, so the one-writer rule of each queue holds. The reader reads the end word only when the queue is empty: each record that the writer published before its stop reaches it.
 - **The reader stops, or closes its end.** The root service writes the end word `Reader_Stopped` and wakes the writer, which waits on the counter `read`. The library of the writer removes that ring from the record output at its next write, and closes its handle. A writer with no reader left gets `No_Reader`.
 - **The asker stops.** Its budget pays the wiring, so the wiring ends with it: the root service writes the end word `Asker_Stopped` in each of its rings, as for a revocation. A start policy outlives the processes that it starts; a console that reads a stream is its own asker.
 - **A revocation** writes the end word `Revoked` in the ring and wakes both sides. Each library closes its end at its next operation. The root service revokes the handles after both sides closed, or after the hang bound: a process that touches the ring after it then stops on a page fault, as an export that keeps a lent mapping does.
 
 ### Errors
 
-Each failure of a record output or a record input gives a status and an error record ([../api/export_error_records.md](../api/export_error_records.md)): `No_Reader`, `No_Writer`, `Full`, `Ended` (the other side ended or stopped, with its end word and its stop code), `Bad_Record` (with the field), and the refusals of a wiring: `Bad_Type` (the first field that differs, or a generic end whose type is not fixed), `Bad_State` (the same process), `No_Right` (a process that the asker did not start, a connection whose role does not name the end), `Bad_Terms` (wiring terms of another size than their description), `Bad_Wiring` (a damaged row of a wiring list, with the row and the field), `No_Budget` (the budget of the asker refuses the ring or the place of the wiring).
+Each failure of a record output or a record input gives a status and an error record ([../api/export_error_records.md](../api/export_error_records.md)): `No_Reader`, `No_Writer`, `Full`, `Ended` (the other side ended or stopped, with its end word, and with the stop cause and the stop outcome of a writer that stopped), `Bad_Record` (with the field), and the refusals of a wiring: `Bad_Type` (the first field that differs, or a generic end whose type is not fixed), `Bad_State` (the same process), `No_Right` (a process that the asker did not start, a connection whose role does not name the end), `Bad_Terms` (wiring terms of another size than their description), `Bad_Wiring` (a damaged row of a wiring list, with the row and the field), `No_Budget` (the budget of the asker refuses the ring or the place of the wiring).
 
 ### Generic record inputs and the utility modules
 
@@ -348,7 +348,7 @@ The guide is a server: each record that enters or leaves `server` goes to an aud
 
 The console holds the reader end of a wiring as a value of the kind Stream: `Stream(Access_Record)`, beside `Table(Access_Record)`.
 
-**The pipe operator.** `a | f(b, c)` is `f(a, b, c)`: the value on the left is the first argument of the call on the right. It adds no meaning to a call, so a line with `|` checks and runs as the same line with calls in calls.
+**The pipe operator.** `a |> f(b, c)` is `f(a, b, c)`: the value on the left is the first argument of the call on the right. It adds no meaning to a call, so a line with `|>` checks and runs as the same line with calls in calls. A Stream is one more kind of value on its left. Why `|>` and not `|`: `|>` is never ambiguous, and `|` stays free for a union of sets; the arrow reads as "goes to"; Elixir, Gleam and R give the same sign this meaning, and F#, where it comes from, the same with the value last. The operator is built for the calls of today ([pipe_operator.md](pipe_operator.md)).
 
 **The comparison form of `where`.** `where(t, status >= 500)` keeps the rows whose field `status` passes the comparison. The operators are `=`, `!=`, `<`, `<=`, `>` and `>=`; an Integer field takes an Integer, a Text field takes a Text with `=` and `!=`. This form replaces `where(t, "status", 500)` in the same step, for tables and for streams: the console keeps one form. `columns(t, remote, target, status)` names its fields the same way, in place of one text of names. On a record output of a module that is not started yet, `where` gives the same record output with a condition, which a wiring takes as its terms.
 
@@ -367,10 +367,10 @@ Each frequent task has one expression that reads as its intent. Each short form 
 | Task | Expression | What it expands to |
 |---|---|---|
 | Audit everything that a server receives and sends | `start(server, audit(server) + audited(wire(shop.orders, server.orders)))` | `audit(server)`: one row for each record output of `server` and for `server.log`, to `collector.sources` with the terms `Audit` and the pace `Always_Holds_Writer`. `audited(row)`: two rows, the source to `collector.sources` with the terms `Audit` and forward, and `collector.forward` to the record input of the row. |
-| Keep the errors of a server | `start(server, keep(server.requests \| where(status >= 500)))` | One row: `server.requests` to `collector.sources`, with the terms `Keep`, the default bound and the condition, and the pace `Never_Holds_Writer`. |
+| Keep the errors of a server | `start(server, keep(server.requests \|> where(status >= 500)))` | One row: `server.requests` to `collector.sources`, with the terms `Keep`, the default bound and the condition, and the pace `Never_Holds_Writer`. |
 | Watch one record output live | `server.requests` | `Wire` from the record output `requests` of the connected service to the console (`Connected` to `Asker`), drawn as a Stream. |
-| Join two record outputs into one stream | `merge(alpha.requests, beta.requests) \| where(status >= 500)` | `start(merge, ...)`: the rows from the two record outputs to `merge.sources`, then a wiring of `merge.merged` to the console. |
-| Read an audit space later | `collector.records(server.requests) \| where(status >= 500)`, `collector.verify(server.log)` | Calls of exports of the collector; the console resolves `server.requests` among the spaces that `collector.spaces()` lists, by its completion. |
+| Join two record outputs into one stream | `merge(alpha.requests, beta.requests) \|> where(status >= 500)` | `start(merge, ...)`: the rows from the two record outputs to `merge.sources`, then a wiring of `merge.merged` to the console. |
+| Read an audit space later | `collector.records(server.requests) \|> where(status >= 500)`, `collector.verify(server.log)` | Calls of exports of the collector; the console resolves `server.requests` among the spaces that `collector.spaces()` lists, by its completion. |
 
 **The check for an incantation.** An expression is an incantation when its reader must know a mechanism to read its intent: a number of a kind, an order of positional flags, a name in a text, two commands that must come in one order. Each expression above names the task (`audit`, `keep`, `merge`, `records`, `verify`), the source and the record output by their typed names, and a condition in the form of `where`. None names a ring, a capacity, a pace or a handle: each short form chooses them, and the general form `wire` is there for a reader that wants to choose them.
 
@@ -406,11 +406,11 @@ Each step is a commit on `master` that leaves a working system, with its tests.
 1. **The declarations.** The tables `Record_Outputs` and `Record_Inputs` of the module file, generic declarations, counts and wiring terms included, their extraction by the tool with the refusals, and the version of the module format. No process writes a record output yet.
 2. **The output ring.** The form of `open` with the size of a command record, the place word with the joined record, the end words and the border `output.record_of_place`, in contract packages with host tests.
 3. **The wiring.** The wiring ring, the command `Wire` of the root ring with its three ends and the rule of the asker, the wiring list of `Start` applied before the first instruction, the type check, the wiring terms, the pace, the wiring pages and the rings from the budget of the asker, the end words at each stop, the recorded grant and its revocation, and `system.output_write`, `output_end`, `input_read`. The test modules `output_writer` and `output_reader` and their machine test, with each refusal of the list above and the joined record at 0 and at N.
-4. **The console.** The kind Stream, the typed names of record outputs and record inputs with their completion, the fields of a description as names inside `where` and `columns`, the operator `|`, `+` on two tables of one description, the comparison form of `where` in place of the old form, `first` and `table` on a Stream, the draw of a Stream with its joined record and Escape, `wire`, `start` with a wiring list, `record_outputs()`.
+4. **The console.** The kind Stream, the typed names of record outputs and record inputs with their completion, the fields of a description as names inside `where` and `columns`, a Stream on the left of `|>` (the operator itself is built), `+` on two tables of one description, the comparison form of `where` in place of the old form, `first` and `table` on a Stream, the draw of a Stream with its joined record and Escape, `wire`, `start` with a wiring list, `record_outputs()`.
 
 ### The migration
 
-5. **The access records of `server`: from a log fact to a record output.** This is the first migration step. Until record outputs exist, `server` writes its access records as the log fact `server.Access_Record` ([log_facts.md](log_facts.md), "Each channel of today, sorted"). In this step the record output `requests` takes them, with `wait = false`, and the log fact leaves in the same commit: a fact has one place. The limit of its log lines in each second leaves too, because a record output refuses with a count in place of a drop. The record loses its padding and its separate length of the target: the target becomes a Text field. Its window keeps its last records. The machine test of `server` reads the records through the console, `server.requests | where(status = 404) | first(1)`, in place of a wait on the log, and a second read after 10 requests checks the joined record at 10.
+5. **The access records of `server`: from a log fact to a record output.** This is the first migration step. Until record outputs exist, `server` writes its access records as the log fact `server.Access_Record` ([log_facts.md](log_facts.md), "Each channel of today, sorted"). In this step the record output `requests` takes them, with `wait = false`, and the log fact leaves in the same commit: a fact has one place. The limit of its log lines in each second leaves too, because a record output refuses with a count in place of a drop. The record loses its padding and its separate length of the target: the target becomes a Text field. Its window keeps its last records. The machine test of `server` reads the records through the console, `server.requests |> where(status = 404) |> first(1)`, in place of a wait on the log, and a second read after 10 requests checks the joined record at 10.
 
 ### The steps after the first migration
 

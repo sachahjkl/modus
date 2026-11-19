@@ -1675,6 +1675,16 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 1 row of Process"},
 	{kind = .Shot, text = "console_value_kinds"},
 
+	// The pipe operator: the value on its left is the first argument of the
+	// call on its right, so this line is the line with calls in calls
+	// columns(where(processes(), "name", "console"), "name slot"). A '|'
+	// alone is no operator: its line fails before any call.
+	{kind = .Type, text = "processes() |> where(\"name\", \"console\") |> columns(\"name slot\")"},
+	{kind = .Wait, text = "[console] name     slot"},
+	{kind = .Wait, text = "[console] 1 row of Process"},
+	{kind = .Type, text = "processes() | rows"},
+	{kind = .Wait, text = "[console] error: \"|\" is no operator: the pipe operator is \"|>\""},
+
 	// Revocation. The console revokes what it lent at the end of each
 	// call: the mapping that the module kept is gone, and the next read
 	// stops the process of the module on a page fault.
@@ -3731,6 +3741,8 @@ key_name :: proc(character: u8) -> string {
 		return "shift-6"
 	case '>':
 		return "shift-dot"
+	case '|':
+		return "shift-backslash"
 	case '<':
 		return "shift-comma"
 	case '?':
