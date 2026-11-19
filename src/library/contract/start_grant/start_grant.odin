@@ -64,6 +64,7 @@ Grant :: enum i64 {
 	Remote_Clients     = 29, // The client table, read-only (modus:contract/remote, Client_Table), and a Connect for one of its rows that acts for the principal of that row: the process that takes calls from another machine (docs/PRINCIPALS.md, "The client keys of remote").
 	Sound_Device       = 30, // The sound service of the sound device, with the right Read, and its stream ring (modus:contract/timed_stream): the one process that plays sound (docs/SOUND.md).
 	Start_Policy       = 31, // A root ring for Start, Stop and Machine_Usable, and the machine parts page, read-only: the one process that starts the machine (src/md/features/start_policy.md). It has no window and nothing else.
+	Screen_Capture     = 32, // The capture face and the input face of the compositor on the ring of its window: a copy of the screen, and keys and a pointer that go to the desktop, while the bar shows the mark of a viewer (src/md/features/remote_display.md).
 }
 
 // The name of each start grant, as the log of the root service and the
@@ -102,6 +103,7 @@ GRANT_NAMES := [Grant]string {
 	.Remote_Clients     = "Remote_Clients",
 	.Sound_Device       = "Sound_Device",
 	.Start_Policy       = "Start_Policy",
+	.Screen_Capture     = "Screen_Capture",
 }
 
 // grant_name gives the name of the start grant with a number, and says if

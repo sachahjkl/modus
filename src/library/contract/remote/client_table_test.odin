@@ -10,8 +10,8 @@ import "core:testing"
 @(test)
 client_table_round_trip :: proc(t: ^testing.T) {
 	table := new(Client_Table, context.temp_allocator)
-	first := Client{key = {0 = 0x11, 31 = 0x22}, principal = 0, serial = 1}
-	second := Client{key = {0 = 0x33}, principal = 1, serial = 2}
+	first := Client{key = {0 = 0x11, 31 = 0x22}, principal = 0, serial = 1, uses = client_uses_word({.Calls})}
+	second := Client{key = {0 = 0x33}, principal = 1, serial = 2, uses = client_uses_word({.Calls})}
 	client_table_write(table, 0, first)
 	client_table_write(table, CLIENT_CAPACITY - 1, second)
 	testing.expect_value(t, table.version & 1, 0)
@@ -25,24 +25,24 @@ client_table_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, client_find(&copied, [32]u8{0 = 0x44}), -1)
 	// A key of zeros names no row, though each free row has zeros.
 	testing.expect_value(t, client_find(&copied, [32]u8{}), -1)
-	testing.expect(t, client_grant_holds(&copied, 0, first.serial))
-	testing.expect(t, !client_grant_holds(&copied, 0, first.serial + 1), "another serial is another grant")
-	testing.expect(t, !client_grant_holds(&copied, 1, 0), "a free row holds no grant")
-	testing.expect(t, !client_grant_holds(&copied, -1, first.serial))
-	testing.expect(t, !client_grant_holds(&copied, CLIENT_CAPACITY, first.serial))
+	testing.expect(t, client_grant_holds(&copied, 0, first.serial, .Calls))
+	testing.expect(t, !client_grant_holds(&copied, 0, first.serial + 1, .Calls), "another serial is another grant")
+	testing.expect(t, !client_grant_holds(&copied, 1, 0, .Calls), "a free row holds no grant")
+	testing.expect(t, !client_grant_holds(&copied, -1, first.serial, .Calls))
+	testing.expect(t, !client_grant_holds(&copied, CLIENT_CAPACITY, first.serial, .Calls))
 	// The session of principal 1 locked: its row holds no grant, and its
 	// key is still found, so the refusal names the principal.
 	locked := second
 	locked.session_locked = 1
 	client_table_write(table, CLIENT_CAPACITY - 1, locked)
 	client_table_read(table, &copied)
-	testing.expect(t, !client_grant_holds(&copied, CLIENT_CAPACITY - 1, second.serial))
+	testing.expect(t, !client_grant_holds(&copied, CLIENT_CAPACITY - 1, second.serial, .Calls))
 	testing.expect_value(t, client_find(&copied, second.key), CLIENT_CAPACITY - 1)
 	// A revocation frees the row.
 	client_table_write(table, 0, {})
 	client_table_read(table, &copied)
 	testing.expect_value(t, client_find(&copied, first.key), -1)
-	testing.expect(t, !client_grant_holds(&copied, 0, first.serial))
+	testing.expect(t, !client_grant_holds(&copied, 0, first.serial, .Calls))
 	// A place out of the table changes nothing.
 	version := table.version
 	client_table_write(table, CLIENT_CAPACITY, first)
@@ -59,7 +59,7 @@ client_restore_decides_one_key_for_one_principal :: proc(t: ^testing.T) {
 	other := [32]u8{0 = 0x22}
 	fresh := [32]u8{0 = 0x33}
 	clients[1] = {key = own, principal = 1, serial = 5}
-	clients[2] = {key = other, principal = 0, serial = 6}
+	clients[2] = {key = other, principal = 0, serial = 6, uses = client_uses_word({.Calls})}
 	action, place := client_restore_decision(&clients, own, 1)
 	testing.expect(t, action == .Holds && place == 1)
 	action, place = client_restore_decision(&clients, fresh, 1)
@@ -70,7 +70,7 @@ client_restore_decides_one_key_for_one_principal :: proc(t: ^testing.T) {
 	testing.expect(t, action == .Contest && place == 2)
 	clients[2].contested = 1 + 1
 	clients[2].serial = 7
-	testing.expect(t, !client_grant_holds(&clients, 2, 7), "a contested row holds no grant")
+	testing.expect(t, !client_grant_holds(&clients, 2, 7, .Calls), "a contested row holds no grant")
 	action, place = client_restore_decision(&clients, other, 1)
 	testing.expect(t, action == .Contested && place == 2)
 	// The holder too finds its row contested: its own row, with no grant.
@@ -83,6 +83,34 @@ client_restore_decides_one_key_for_one_principal :: proc(t: ^testing.T) {
 	}
 	action, place = client_restore_decision(&clients, fresh, 1)
 	testing.expect(t, action == .No_Free_Row && place == -1)
+}
+
+// The word of the uses: a bit that names no use, no use at all, and Input
+// without View are refused; a row holds a grant only for a use of its word,
+// and for no use when its word is refused.
+@(test)
+client_uses_refuse_each_word_that_names_no_set :: proc(t: ^testing.T) {
+	refused := [?]u64{0, 1 << 3, 1 << 63, max(u64), client_uses_word({.Input}), client_uses_word({.Calls, .Input})}
+	for word in refused {
+		_, ok := client_uses_of_word(word)
+		testing.expectf(t, !ok, "the word of uses %x is taken", word)
+	}
+	clients: [CLIENT_CAPACITY]Client
+	clients[0] = {key = {0 = 1}, principal = 0, serial = 3, uses = client_uses_word({.View})}
+	testing.expect(t, !client_grant_holds(&clients, 0, 3, .Calls), "a key of the view makes no call")
+	testing.expect(t, !client_grant_holds(&clients, 0, 3, .Input), "a key of the view sends no input")
+	clients[0].uses = client_uses_word({.Input}) | 1 << 9
+	testing.expect(t, !client_grant_holds(&clients, 0, 3, .Input), "a refused word holds no use")
+	clients[0].uses = 0
+	testing.expect(t, !client_grant_holds(&clients, 0, 3, .View), "a row with no use holds nothing")
+	// The sets that hold come last.
+	accepted := [?]Client_Uses{{.Calls}, {.View}, {.View, .Input}, {.Calls, .View, .Input}}
+	for uses in accepted {
+		taken, ok := client_uses_of_word(client_uses_word(uses))
+		testing.expectf(t, ok && taken == uses, "the uses %v were refused", uses)
+	}
+	clients[0].uses = client_uses_word({.View, .Input})
+	testing.expect(t, client_grant_holds(&clients, 0, 3, .View) && client_grant_holds(&clients, 0, 3, .Input))
 }
 
 // The code of the end of a connection whose grant ended has its name.

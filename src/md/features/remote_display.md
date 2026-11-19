@@ -18,14 +18,24 @@ A principal sees and drives the desktop of a machine from another machine. The m
 
 The remote display service, `remote_display`, is a process of the boot image, outside the kernel. Its role holds:
 
-- an endpoint of the network, for its QUIC port;
-- the client table, with the right Read, by the start grant `Remote_Clients`, as `remote` reads it;
-- a capture face of the compositor: a ring, and the two pictures of a copy of the screen;
-- an input face of the compositor: a ring of input records.
+- an endpoint of the network: a listen grant of UDP on its own port, `remote_display.LISTEN_PORT`, for the address of the host only, as `remote` has;
+- the client table, with the right Read, by the start grant `Remote_Clients`, as `remote` reads it. It has no grant `Connect`: it calls no service;
+- the start grant `Screen_Capture`: the capture face and the input face of the compositor.
 
-The capture face works as the surface of a window, in the other direction. The service makes the memory of two pictures of the size of the screen, with its own budget, and gives them to the compositor. After each whole frame that it presents, the compositor copies its damage rectangles into the picture that the service does not read, and sends one record with the rectangles. It keeps the debt of each picture as the window layer does ([../infrastructure/whole_frame.md](../infrastructure/whole_frame.md)). If the service still reads the other picture, the compositor adds the rectangles to the debt of the picture and does not wait. With no viewer connected, the service closes the capture face, and the compositor copies nothing.
+**The two faces ride the window ring.** Each process that the root service starts with a window already has a ring to the compositor (`modus:support/display`). The service does not get a second ring: the root service tells the compositor, in the record `Client_Add` of the service, that this client holds `Screen_Capture`. The compositor takes the commands of the capture face and of the input face only from such a client, and counts and drops them from any other. A new ring would be a second path from the root service to the compositor for the same process; the flag is one value of a record that exists. The service opens no surface: it has no window, and it is never in front.
 
-The input face carries the records of the keys and of the pointer, in the form of the records of the input service. The compositor sends them along the path of each key ([key_path.md](key_path.md)): to the window that has the focus, never to the bar or to a trusted surface of the system. The key combination that always goes to the system works from a viewer too. The ring has a stated capacity, and a full ring stops the writer, so no key is dropped in silence.
+**The capture face** works as the surface of a window, in the other direction:
+
+1. The service asks for the size of the screen (`Capture_Size_Ask`). The compositor answers with the event `Capture_Size`.
+2. The service makes one memory object with its own budget: a header page, then two pictures of the size of the screen. It gives it through the ring with `Capture_Open`, as a window gives its surface. The compositor checks the handle, the size and the rights, maps it, and owes the whole screen to both pictures.
+3. After each frame, before it draws the pointer, the compositor copies into the picture that the service does not hold the rectangles that the picture owes. It writes the rectangles that changed since its last record into the header of that picture, then sends the event `Capture_Frame`. The service holds that picture until `Capture_Taken`. While it holds it, the compositor adds the damage of each frame to the debt of each picture and to the rectangles of the next record, and does not wait.
+4. `Capture_Close`, or the stop of the service, ends the face: the compositor unmaps the memory and copies nothing more.
+
+The service copies the rectangles of each record into its own copy of the screen, then gives the picture back. Each viewer codes the tiles of its frame from that copy as its stream takes them, so the service holds no coded frame: a frame of a whole screen can be megabytes, a tile is at most 32 KiB. The service copies a picture only while no viewer is in the middle of a frame, so each frame shows one moment of the screen. A slow viewer delays the copy, never the compositor, which merges the damage while the service holds the picture; a viewer that does not take its frame in its bound ends with the code `Timeout`. The cost is a third copy of the screen in the budget of the service.
+
+**The pointer stays out of the pixels.** The compositor draws the pointer into its frame after the windows. The copy runs before the pointer phase, so the rectangles of this frame hold no pointer. A rectangle that a picture owes from an earlier frame can hold the pointer of now: before such a copy, the compositor adds the rectangle of the pointer to the damage of the frame, so that the frame draws it again without the pointer first. The header of each picture gives the place of the pointer and the rectangle that its picture covers; the viewer draws it.
+
+**The input face** carries the records of the keys and of the pointer, in the form of the records of the input service (`Remote_Key`, `Remote_Pointer`, the pointer at a place of the screen). The compositor sends them along the path of each key ([key_path.md](key_path.md)): to the palette, to the clipboard, or to the window that has the focus, never to the bar or to a trusted surface of the system. The key super works from a viewer too. The window ring has a stated capacity, and a full ring stops the writer, the service, so no key is dropped in silence. The compositor takes input only while the capture face is open: the input face is part of a session that the bar shows.
 
 ### The transport: a protocol of modus over QUIC
 
@@ -39,13 +49,27 @@ The system has QUIC with TLS 1.3, and the client keys of `remote` with mutual TL
 | VNC (RFB) | Small, but its authentication is weak and needs a tunnel | A gateway, later |
 | RDP | Large: its security layers, its channels and its codecs | A gateway, after VNC |
 
-The protocol has five kinds of record: a pixel update, the pointer, the input, the size, and the clipboard. Each is a fixed record of a contract package, `modus:contract/remote_display`, read through one border that refuses a word that names no member, as each other contract. The streams:
+Each record is a header (its kind and the length of its body) and a body of a fixed form, in a contract package, `modus:contract/remote_display`, with the values of each enum written. One border for each direction refuses a kind that names no member, a kind of the other direction, a length that is not the length of the kind, a length past its bound before any byte of the body is read, a rectangle outside the screen, and a field out of its range. The records:
 
-- **One stream of the screen, from the service.** One whole frame at a time: its pixel updates, then its end. The service sends the next frame only after the viewer took the last one.
-- **One stream of the input, from the viewer.** The keys never wait behind the pixels.
-- **One stream of control, in both directions:** the size, the pointer shape and its hot spot, the clipboard.
+| Direction | Kind | Body |
+|---|---|---|
+| Service to viewer | `Screen_Size` | the width and the height of the screen; the first record |
+| Service to viewer | `Frame_Start` | the serial of the frame, its count of tiles, the bytes of its tiles |
+| Service to viewer | `Tile` | a rectangle of at most 128 × 64 pixels, then its pixels in the tile coder |
+| Service to viewer | `Frame_End` | the serial of the frame |
+| Service to viewer | `Pointer_Place` | the place of the pointer, and the rectangle that its picture covers |
+| Viewer to service | `Frame_Taken` | the serial of the frame that the viewer took whole |
+| Viewer to service | `Tile_Request` | a rectangle of the screen that the viewer asks again |
+| Viewer to service | `Key` | the code, the character, pressed, the modifiers |
+| Viewer to service | `Pointer` | the place on the screen, the buttons, the wheel notches |
 
-A pixel update is a damage rectangle with its pixels in a lossless coder in the manner of QOI: a run of one color, an index of the recent colors, a small difference from the last pixel. The screen is opaque `0x00RRGGBB`, and the desktop of the system has large areas of one color, so this coder fits it. Its rate and its size are estimates to measure. The pointer is not in the pixels: the viewer draws it at the place that the service sends, so a move of the pointer costs one record.
+**One bidirectional stream, which the viewer opens.** The screen goes in the direction of the service, the input and `Frame_Taken` in the direction of the viewer. QUIC controls the flow of each direction alone, so a key never waits behind the pixels. The first form had a stream of the screen that the service opens, a stream of input and a stream of control: three streams give the same order with two more streams to open, to bound and to end, and the server of `modus:support/quic` opens no stream. The control records of a later layer (a size that a viewer asks, the clipboard) go in the two directions of the same stream.
+
+**One frame in flight.** The service sends a frame only after `Frame_Taken` of the last one. Each viewer has its own damage set of 8 rectangles; past it, the rectangles merge, and the service counts the merges. The first frame of a viewer is the whole screen.
+
+**The tile coder** codes each tile alone, in the manner of QOI: a run of the last color, an index of 64 recent colors, a small difference from the last pixel in two forms, and a whole color. The screen is opaque `0x00RRGGBB`, and the desktop has large areas of one color, so this coder fits it. A tile alone decodes in any order, and a damaged tile spoils no other. The decoder refuses a code past the pixels of its tile, a code that ends before them, a byte after the last pixel, and the reserved tag of a color with alpha. The bytes of a full screen and of a frame with a small damage are measure lines of the machine test.
+
+**The pointer is not in the pixels**: the viewer draws it at the place that the service sends, so a move of the pointer costs one record.
 
 ### The viewer, a program of its own
 
@@ -59,10 +83,12 @@ The socket of each system is a part of the viewer, in the files of each system.
 
 ### The authority
 
-- **A grant of a principal to a client key.** The client table holds the uses of each key: calls of `remote`, the view of the screen, the view and the input. A principal allows a key with its uses, from a console that acts for it: `remote_allow(key, view)` or `remote_allow(key, view_and_input)`. The disk grant table keeps the uses with the key, so they last as the key lasts. One table of client keys serves `remote` and `remote_display`, because the key, the principal, the serial and the revocation are the same concept for both.
-- **The session in front.** A viewer sees the screen only while the session in front is the session of the principal of its row. Else the service sends one picture of one color, with the line of the cause. This matters at layer 4 of [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "1. The layers, and what is built", where two principals share one screen.
-- **A visible indicator.** While a viewer is connected, the bar of the compositor shows a mark that no process can draw: the hash prefix of each key, and whether it has the input. A press on the mark lists the viewers. The compositor draws it, so the service cannot hide it.
-- **The revocation.** `remote_disallow(key)` ends the grant as it does for `remote`: a new serial, the end of the connection with the code `Revoked`. The lock of the session ends the view of its viewers too. The list of the indicator can end one connection, but only the revocation ends the grant.
+- **A grant of a principal to a client key.** Each row of the client table holds the uses of its key, a set of three: `Calls` (the calls of `remote`), `View` (the view of the screen) and `Input` (the keys and the pointer). `Input` never comes without `View`: the border of the word of the uses refuses that set, and an unknown bit. `remote_allow(key)` gives `Calls`, as before. `remote_display_allow(key, "view")` gives `View`, and `remote_display_allow(key, "view_and_input")` gives `View` and `Input`. An allow of a key that the principal holds already adds the uses to its row and keeps its serial: a grant that grows ends no connection. `remote` takes only a key whose row holds `Calls`, and `remote_display` only a key whose row holds `View`; a key with `View` alone makes no call. One table of client keys serves `remote` and `remote_display`, because the key, the principal, the serial and the revocation are the same concept for both.
+- **The uses on the disk, a later step.** The disk grant table keeps the key of `Calls` across a restart. The uses `View` and `Input` last until the machine stops: a key allowed for the view alone goes into no disk grant table, and a row that holds `Calls` keeps only `Calls` after a restart. A grant that lasts less than its principal asked is the safe side of this gap; a key that came back with more uses than its principal gave would be the unsafe one. The disk format with the uses is in `ROADMAP.md`.
+- **The session in front.** A viewer sees the screen only while the session in front is the session of the principal of its row. Else the service sends one picture of one color, with the line of the cause. This matters at layer 4 of [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "1. The layers, and what is built", where two principals share one screen. Until that layer, the lock of the session is the case: a locked session holds no grant, and its viewers end.
+- **A visible indicator.** While the capture face is open, the bar of the compositor shows a mark: the word `viewer`, the hash prefix of each key that the service names, and `input` for a key with the input. The compositor draws it from its own state: the mark shows while the face is open, whatever the service says, so the service cannot hide it. The service names the keys; a fault of the service can name them wrong, never hide the mark. A text that does not fit the room between the buttons and the hint of the palette becomes the count of the viewers, then a mark with no text: no text is cut. A press on the mark that lists the viewers is a later step.
+- **The revocation.** `remote_disallow(key)` ends the grant as it does for `remote`: the row is free, and `remote_display` ends the connection with the code `Revoked`, in the middle of a frame too. The lock of the session ends the view of its viewers too. Only the revocation ends the grant.
+- **Input from a key of the view alone.** The service ends the connection with the code `Input_Not_Allowed`, writes one line, and gives the compositor nothing: a viewer that sends a key it was not given has a fault or an attacker behind it.
 - **The trust in the service.** A fault of `remote_display` can show the screen to each key whose row holds the use `view`. It cannot act for a key with no row, and it cannot read the windows of a session that is not in front: it reads only the copy of the screen that the compositor writes.
 
 ### The screen of memory
@@ -140,9 +166,11 @@ The token is the one exception to "a client is a public key" ([remote_client_key
 
 ## State
 
-Designed, not built. The layers, in their order:
+The first layer is built on the side of the system: the service `remote_display`, the capture face and the input face of the compositor, the protocol and the tile coder in `modus:contract/remote_display` with their host tests and the fuzz target `remote_display_records`, the uses of a client key, `remote_display_allow`, and the mark in the bar. The peer of the tool is the first viewer: the machine test part `remote_display` connects with an allowed key, rebuilds the screen from the tiles, compares it with a picture of QEMU of the same moment outside the rectangle of the pointer, sends the key super and waits for the palette, and tries each refusal first: a key that no principal allowed, a damaged request, a record past its bound, input from a key of the view alone, and a revocation in the middle of a session.
 
-1. The service, the capture face and the input face of the compositor, the protocol of modus with lossless pixel updates, the uses of a client key, the indicator, and the viewer, a program of its own that uses `gui_toolkit`.
+Left of the first layer: the native viewer, a program of its own that uses `gui_toolkit`; the uses on the disk; a press on the mark that lists the viewers; the session in front of layer 4. The layers, in their order:
+
+1. The viewer, a program of its own that uses `gui_toolkit`, and the rest of the first layer above.
 2. The screen of memory, with its size from the start row and from a viewer.
 3. The interface for agents.
 4. A gateway to a browser by WebTransport, with the display token.

@@ -169,6 +169,15 @@ fuzz_target_table := [?]Fuzz_Target {
 		seeds = fuzz_remote_client_table_seeds,
 	},
 	{
+		name = "remote_display_records",
+		kind = .Raw,
+		about = "contract/remote_display: a record of each direction that its border takes writes again to its bytes and stays in its ranges, and a tile that decodes codes and decodes to the same pixels",
+		packages = {foundation.SOURCE_FOLDER_CONTRACT + "/remote_display"},
+		input_limit = FUZZ_REMOTE_DISPLAY_INPUT_LIMIT,
+		execute = fuzz_remote_display_execute,
+		seeds = fuzz_remote_display_seeds,
+	},
+	{
 		name = "isolated_call",
 		kind = .Raw,
 		about = "contract/isolated: decode of a description and a call region gives only slices inside the call region",

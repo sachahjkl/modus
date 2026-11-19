@@ -237,6 +237,10 @@ Client :: struct {
 	key_serial_sent: u64,
 	clipboard: clipboard_rules.Window_State, // What waits for an answer of the process to a key of the clipboard (clipboard.odin).
 	clipboard_refused: u64, // The Copy, Copy_Declined and Paste_Taken records that the compositor refused.
+	// The process holds the start grant Screen_Capture, as its Client_Add
+	// says: the compositor takes the commands of the capture face and of
+	// the input face from it (capture.odin).
+	capture_allowed: bool,
 }
 
 // A rectangle of the screen. right and bottom are not in the rectangle.
@@ -883,6 +887,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					clipboard_answer_take(index, .Copy_Declined, record)
 				case .Paste_Taken:
 					clipboard_answer_take(index, .Paste_Taken, record)
+				case .Capture_Size_Ask, .Capture_Open, .Capture_Taken, .Capture_Close, .Capture_Viewers, .Remote_Key, .Remote_Pointer:
+					capture_command(index, command, record) // capture.odin
 				}
 			}
 			// The process can wait until this loop took its last picture
@@ -980,6 +986,7 @@ client_add :: proc "contextless" (record: ring.Record) {
 			break
 		}
 		client = {ring_memory = memory, ring = opened}
+		client.capture_allowed = record.values[display.CLIENT_ADD_CAPTURE] == display.CLIENT_CAPTURE
 		nickname := process_page.nickname_of({record.values[1], record.values[2], record.values[3]})
 		if nickname.length > 0 {
 			client.from_disk = true
@@ -1022,6 +1029,9 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 			system.log("compositor: window ", system.name_of(client.title[:]), " closed after ", client.commands_refused, " records whose word names no command")
 		}
 		clipboard_client_remove(index) // clipboard.odin
+		if capture.client == index {
+			capture_end("its service stopped") // capture.odin
+		}
 		quality_window_gone(index) // quality_measures.odin
 		window_queue_close(index) // window_events.odin
 		system.ring_close(&client.ring)
@@ -1270,6 +1280,7 @@ pointer_leaves_front :: proc "contextless" () {
 draw :: proc "contextless" (now: u64) {
 	start := system.nanoseconds()
 	quality_frame_start() // quality_measures.odin
+	capture_before_frame() // capture.odin: before the frame takes its areas.
 	screen_build(now, display.interface_font_of())
 	draw_areas(damage[:damage_count])
 	// The frame is on the screen: the copy and the page flip are done.
@@ -1336,6 +1347,9 @@ draw_areas :: proc "contextless" (areas: []Rectangle) {
 		count := rectangles_of_areas(areas, rectangles[:])
 		screen_draw_part(&palette_now, 0, palette_now.record_count, nil, frame, rectangles[:count])
 	}
+
+	// The copy of the screen holds no pointer: it runs before the pointer.
+	capture_after_draw(areas) // capture.odin
 
 	for area in areas {
 		canvas := graphics.view(frame, area.left, area.top, area.right - area.left, area.bottom - area.top)
@@ -1766,6 +1780,8 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	hint_width := interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_NAME) + interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_KEY)
 	hint_x := width - CLOCK_WIDTH - 32 - hint_width
 	interface.draw_text(table, interface.draw_text(table, hint_x, 8, PALETTE_HINT_NAME, graphics.colors.dim, interface.FONT_INTERFACE), 8, PALETTE_HINT_KEY, graphics.colors.text, interface.FONT_INTERFACE)
+	// The mark of a viewer of the remote display, at the left of the hint.
+	capture_mark_records(table, hint_x) // capture.odin
 	seconds := now / 1000
 	x := width - CLOCK_WIDTH - 16
 	if milliseconds, known := date.milliseconds_now(date_page, now); known {

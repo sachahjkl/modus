@@ -140,6 +140,46 @@ The design: `src/md/features/clipboard.md`.
 
 Do not use: pasteboard, selection buffer, primary selection.
 
+### Remote display
+
+The remote display is the service `remote_display`, which shows the screen to a viewer on another machine over QUIC, and gives the compositor the keys and the pointer of a viewer allowed for the input.
+
+It holds the capture face and the input face of the compositor, the client table read-only, and a listen grant of UDP for the host only. It copies the screen once for all its viewers, and codes the tiles of each frame from that copy. It is not a part of the compositor, and not of the kernel.
+
+The design: `src/md/features/remote_display.md`.
+
+Do not use: screen sharing, remote desktop, VNC server.
+
+### Viewer
+
+A viewer is a program on another machine that proves a client key whose row holds the use View, and rebuilds the screen from the frames of the remote display.
+
+It sees what the screen shows, in the session in front, and sends keys and a pointer only when the row also holds Input. Two viewers at one time. The first viewer is the peer of the tool, in the machine test; the native viewer is a program of its own. A viewer is not a window of the machine.
+
+The design: `src/md/features/remote_display.md`.
+
+Do not use: remote client, spectator, observer.
+
+### Capture face
+
+The capture face is the part of the ring of the window of the remote display through which the compositor writes a copy of the screen into two pictures that the remote display gives.
+
+The compositor takes it only from a client whose Client_Add holds the start grant Screen_Capture. After each frame, before the pointer, it copies the rectangles that a picture owes into the picture that the remote display does not hold, and never waits. The input face rides the same ring.
+
+The design: `src/md/features/remote_display.md`, "The service".
+
+Do not use: screen grab, framebuffer read.
+
+### Mark of a viewer
+
+The mark of a viewer is the box of the bar that shows, while the capture face is open, the word viewer, the start of the key of each viewer, and which ones have the input.
+
+The compositor draws it from its own state, so the remote display cannot hide it. A text that does not fit becomes the count of the viewers, then a square with no text. It is the visible indicator that property 20 asks of a capture of the screen.
+
+The design: `docs/DESIGN.md`, "Background and bar".
+
+Do not use: recording light, share indicator.
+
 ### Bar
 
 The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the clock.

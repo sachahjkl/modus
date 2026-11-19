@@ -50,7 +50,7 @@ A property is a promise of the system. A promise counts only when a test makes t
 3. Property 14: a check of the tool that a `support` package calls no allocator.
 4. Property 17: a remote attestation of the measure, and a start on a real machine with the keys of the publisher.
 5. Property 18: the rationalised draw record, with alpha, paths and the clip stack (`ROADMAP.md`). WebGPU for a GPU comes after it (`ROADMAP.md`, "Later").
-6. Property 20: a key of the client of `remote`, given to `remote` as a grant of the principal (`docs/QUIC.md`, "8. The next layers (designed, not built)").
+6. Property 20: a key of the client of `remote`, given to `remote` as a grant of the principal (`docs/QUIC.md`, "9. The next layers (designed, not built)").
 7. Property 21: the research on identity across machines.
 8. Properties 3, 8, 16 are absences. A test shows them only by a refusal of the nearest wrong use; each row names the one that exists.
 9. Property 1: a check that compares the count of `op.Operation` with the number written in `PROPERTIES.md`.

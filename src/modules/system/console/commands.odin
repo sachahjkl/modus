@@ -506,6 +506,30 @@ commands_start :: proc "contextless" () {
 	// keys, or the table is full; the disk grant table of the principal
 	// takes no change now (the log says why).
 	command("remote_allow", {.Text}, .None, "let a client of remote call for the principal of this console, by its key", remote_allow)
+	// Allows the key of a viewer of the process `remote_display` for the
+	// principal of this console: the viewer sees the screen, and with the
+	// input its keys and its pointer go to the desktop as the keys of this
+	// principal (src/md/features/remote_display.md). While a viewer is
+	// connected, the bar shows the mark `viewer`. It gives nothing.
+	//
+	// - `key`: the Ed25519 public key of the viewer, 64 hexadecimal digits.
+	// - `use`: `view`, or `view_and_input`.
+	//
+	// ```
+	// > remote_display_allow("6a1f...", "view")
+	// ```
+	//
+	// An allow of a key that the principal allowed already adds the use to
+	// it. The grant lasts until `remote_disallow`, which ends every use of
+	// the key, and holds nothing while the session of the principal is
+	// locked. The view and the input last until the machine stops: no disk
+	// grant table keeps them.
+	//
+	// Errors: the use is not `view` or `view_and_input`; this console does
+	// not act for its principal; the key has a wrong form; another
+	// principal allowed the key; the principal has 4 keys, or the table is
+	// full.
+	command("remote_display_allow", {.Text, .Text}, .None, "let a viewer of remote_display see the screen, or see it and type, for the principal of this console", remote_display_allow)
 	// Revokes the key of a client of `remote` that the principal of this
 	// console allowed. `remote` ends the open connection of the client, and
 	// refuses the key in its next handshake. It gives a sentence with the
@@ -527,12 +551,13 @@ commands_start :: proc "contextless" () {
 	// client acts for the principal), `locked` (the session of the
 	// principal is locked), or `contested` (another principal allowed the
 	// key too, one in this run and one in its disk grant table: it acts for
-	// neither until one of them revokes it).
+	// neither until one of them revokes it), and its uses: `calls` (of
+	// `remote`), `view` and `view and input` (of `remote_display`), or both.
 	//
 	// ```
 	// > remote_clients()
-	// key                                                               principal  state
-	// 6a1f...                                                                   0  holds
+	// key                                                               principal  state      uses
+	// 6a1f...                                                                   0  holds      calls
 	// 1 row of Remote_Client
 	// ```
 	command("remote_clients", {}, .Table, "the client keys of remote that the principal of this console allowed", remote_clients)
@@ -2648,7 +2673,7 @@ disallow :: proc "contextless" (arguments: []Value) -> Value {
 // remote_client_request sends Remote_Client with a key of 64 hexadecimal
 // digits and an action, and waits for its completion. A key of another form
 // is refused here: the record carries 32 bytes.
-remote_client_request :: proc "contextless" (command_name: string, text: string, action: root_ring.Remote_Client_Action) -> (completion: ring.Record, refusal: Value, refused: bool) {
+remote_client_request :: proc "contextless" (command_name: string, text: string, action: root_ring.Remote_Client_Action, uses: remote.Client_Uses = {}) -> (completion: ring.Record, refusal: Value, refused: bool) {
 	// A key and a hash of BLAKE3 have the same form: 32 bytes in 64
 	// hexadecimal digits.
 	key, parsed := disk_process.hash_parse(text)
@@ -2657,12 +2682,19 @@ remote_client_request :: proc "contextless" (command_name: string, text: string,
 	}
 	key_values := transmute([4]u64)key
 	answered: bool
-	completion, answered = disk_request(.Remote_Client, {0 = key_values[0], 1 = key_values[1], 2 = key_values[2], 3 = key_values[3], 4 = u64(action)}, 3000)
+	completion, answered = disk_request(.Remote_Client, {0 = key_values[0], 1 = key_values[1], 2 = key_values[2], 3 = key_values[3], 4 = u64(action), 5 = remote.client_uses_word(uses)}, 3000)
 	if !answered {
 		return {}, fail_no_answer(), true
 	}
 	if system.Status(completion.kind) != .Ok {
-		return completion, fail_root(command_name == "remote_allow" ? "remote_allow: " : "remote_disallow: ", completion), true
+		prefix := "remote_disallow: "
+		switch command_name {
+		case "remote_allow":
+			prefix = "remote_allow: "
+		case "remote_display_allow":
+			prefix = "remote_display_allow: "
+		}
+		return completion, fail_root(prefix, completion), true
 	}
 	return completion, {}, false
 }
@@ -2670,7 +2702,28 @@ remote_client_request :: proc "contextless" (command_name: string, text: string,
 // remote_allow asks the root service to allow the key of a client of
 // `remote` for the principal of this console.
 remote_allow :: proc "contextless" (arguments: []Value) -> Value {
-	_, refusal, refused := remote_client_request("remote_allow", arguments[0].text, root_ring.Remote_Client_Action.Allow)
+	_, refusal, refused := remote_client_request("remote_allow", arguments[0].text, root_ring.Remote_Client_Action.Allow, {.Calls})
+	if refused {
+		return refusal
+	}
+	return {}
+}
+
+// remote_display_allow asks the root service to allow the key of a viewer
+// of `remote_display` for the principal of this console: the view of the
+// screen, or the view and the input. A text that names no such use is
+// refused here, before any record.
+remote_display_allow :: proc "contextless" (arguments: []Value) -> Value {
+	uses: remote.Client_Uses
+	switch arguments[1].text {
+	case "view":
+		uses = {.View}
+	case "view_and_input":
+		uses = {.View, .Input}
+	case:
+		return fail("remote_display_allow: the use must be \"view\" or \"view_and_input\"")
+	}
+	_, refusal, refused := remote_client_request("remote_display_allow", arguments[0].text, root_ring.Remote_Client_Action.Allow, uses)
 	if refused {
 		return refusal
 	}
@@ -2694,7 +2747,7 @@ remote_disallow :: proc "contextless" (arguments: []Value) -> Value {
 // the principal of this console allowed: the root service gives a caller
 // the rows of its own principal only.
 remote_clients :: proc "contextless" (arguments: []Value) -> Value {
-	columns := [3]Column{text_column("key", 64), integer_column("principal"), text_column("state", 9)}
+	columns := [4]Column{text_column("key", 64), integer_column("principal"), text_column("state", 9), text_column("uses", 21)}
 	table, made := made_table("Remote_Client", columns[:])
 	if !made {
 		return fail("remote_clients: the line has no room for the description")
@@ -2738,6 +2791,24 @@ remote_clients :: proc "contextless" (arguments: []Value) -> Value {
 			state_text = "contested"
 		}
 		made_text(&table, row, 2, state_text)
+		// The uses come through their border too: a word that names no set
+		// is refused, not shown as some use.
+		uses, uses_ok := remote.client_uses_of_word(completion.values[5])
+		if !uses_ok {
+			return fail("remote_clients: the root service gave the uses ", completion.values[5], ", which name no set of uses")
+		}
+		uses_text := "calls"
+		switch {
+		case uses >= {.Calls, .View, .Input}:
+			uses_text = "calls, view and input"
+		case uses >= {.Calls, .View}:
+			uses_text = "calls and view"
+		case uses >= {.View, .Input}:
+			uses_text = "view and input"
+		case .View in uses:
+			uses_text = "view"
+		}
+		made_text(&table, row, 3, uses_text)
 	}
 	return made_value(&table, "remote_clients")
 }

@@ -1,6 +1,7 @@
 package machine
 
 import "modus:contract/remote"
+import "modus:contract/remote_display"
 import "core:fmt"
 import "core:net"
 import "core:sync"
@@ -71,6 +72,7 @@ Peer :: struct {
 	call_socket:  string, // The path of the Unix socket where the tool gives the calls.
 	lock:         sync.Mutex, // machine and hardware: two threads read them.
 	remote:       ^Peer_Remote, // The peer as the QUIC client of `remote` (peer_remote.odin).
+	display_viewer: ^Peer_Remote_Display, // The peer as the viewer of `remote_display` (peer_remote_display.odin).
 	tcp:          ^Peer_Tcp, // The peer as a TCP client (peer_tcp.odin).
 	quic:         ^Peer_Quic, // The peer as QUIC clients (peer_quic.odin).
 	relay:        Peer_Relay, // UDP of programs of the host to the machine (peer_relay.odin).
@@ -139,6 +141,7 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 		return false
 	}
 	peer.call_socket = peer.remote.socket_path
+	peer.display_viewer = peer_display_make()
 	peer.tcp = peer_tcp_make()
 	peer.quic = peer_quic_make()
 	if !peer_relay_start(&peer.relay) {
@@ -146,7 +149,8 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 		peer_quic_free(peer.quic)
 		peer_remote_socket_stop(peer.remote)
 		peer_remote_free(peer.remote)
-		peer.tcp, peer.quic, peer.remote = nil, nil, nil
+		peer_display_free(peer.display_viewer)
+		peer.tcp, peer.quic, peer.remote, peer.display_viewer = nil, nil, nil, nil
 		net.close(machine_socket)
 		net.close(socket)
 		return false
@@ -211,6 +215,8 @@ peer_stop :: proc(peer: ^Peer) {
 	peer_remote_report(peer.remote)
 	peer_remote_free(peer.remote)
 	peer.remote = nil
+	peer_display_free(peer.display_viewer)
+	peer.display_viewer = nil
 }
 
 // peer_check says if the peer saw only correct frames, and if the network
@@ -276,6 +282,8 @@ peer_run :: proc(peer: ^Peer) {
 			peer_quic_tick(peer)
 			// The calls of the host to `remote`.
 			peer_remote_tick(peer)
+			// The viewer of `remote_display`, if a case runs it.
+			peer_display_tick(peer)
 			// The datagrams of programs of the host for the machine.
 			peer_relay_tick(peer)
 			last_tick = time.tick_now()
@@ -418,6 +426,11 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 			}
 			if be16(payload, 0) == remote.LISTEN_PORT {
 				peer_remote_datagram(peer, address_at(ip, 16), u16(be16(payload, 2)), payload[8:])
+				free_all(context.temp_allocator)
+				return
+			}
+			if be16(payload, 0) == remote_display.LISTEN_PORT {
+				peer_display_datagram(peer, address_at(ip, 16), u16(be16(payload, 2)), payload[8:])
 				free_all(context.temp_allocator)
 				return
 			}

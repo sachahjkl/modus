@@ -45,7 +45,7 @@
 //
 // **What it does not prove**: the client is the peer of the modus tool,
 // not a QUIC stack of another project. 0-RTT and the migration of a
-// connection are not built (docs/QUIC.md, section 9).
+// connection are not built (docs/QUIC.md, section 10).
 //
 // main.odin: the endpoint, the server and the loop. draw.odin: the window.
 package quic_echo

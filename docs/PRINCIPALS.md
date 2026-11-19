@@ -315,6 +315,13 @@ remote: 10.0.2.2 port 43000 proved the client key 6a1f0c2d9e8b7a65: its calls ac
 root: connected remote to the service monitor, acting for principal 0, for the client key 6a1f0c2d9e8b7a65
 ```
 
+**The uses of a key.** Each row holds the uses of its key: `Calls` (the calls of `remote`), `View` (the screen, through `remote_display`) and `Input` (the keys and the pointer of the viewer, never without `View`). `remote_allow(key)` gives `Calls`. `remote_display_allow(key, "view")` gives `View`, and `remote_display_allow(key, "view_and_input")` gives `View` and `Input` (`QUIC.md`, "8. The remote display"). An allow of a key that the principal holds adds the uses to its row and keeps its serial. `remote` refuses a key with no `Calls`, and `remote_display` a key with no `View`; the root service refuses a connection to a service for a row with no `Calls`. `remote_disallow(key)` ends every use of the key. `remote_clients()` gives the uses of each key in its column `uses`. `View` and `Input` last until the machine stops: no disk grant table keeps them (see "Across a restart").
+
+```
+root: principal 0 allowed the client key 6a1f0c2d9e8b7a65 for the remote display: view; the uses of the remote display last until the machine stops
+root: principal 0 gave the client key 6a1f0c2d9e8b7a65 more uses: view and input
+```
+
 **A call.** `remote` binds each QUIC connection to the row of the key that its client proved, and asks the root service for each connection to a service for that row (`Connect` with the row and its serial). The root service gives that connection the principal of the row, with the flag to act for it. So two clients of two principals see each one the stores and the processes of its own principal.
 
 **A key with no row.** The handshake ends with access_denied, before any stream, and `remote` writes one line: "remote: refused the client key ...: no principal allowed it; the handshake ends before any call". The check comes after the signature of the client verified: a peer that does not hold the private key learns nothing.
@@ -322,14 +329,14 @@ root: connected remote to the service monitor, acting for principal 0, for the c
 **The end of a grant.** `remote_disallow("<key>")` frees the row. A lock of the session of the principal gives each row of that principal a new serial and marks it locked; the unlock gives it a new serial again. At each end of a grant the root service ends each connection to a service that it made for the row, and wakes `remote`, which ends the open QUIC connection of the client with the application code Revoked:
 
 ```
-root: principal 0 revoked the client key 6a1f0c2d9e8b7a65 of remote: connections to services ended: 4
+root: principal 0 revoked the client key 6a1f0c2d9e8b7a65 (calls): connections to services ended: 4
 remote: the grant of the client key 6a1f0c2d9e8b7a65 of principal 0 ended (a revocation, or a lock of its session): the connection from 10.0.2.2 port 43000 ends with the code Revoked
 remote: the grants of 4 connections to services ended (a revocation, or a lock or an unlock of a session): their slots are free; 0 of 24 slots in use
 ```
 
 `remote` frees the slots of the connections of an ended grant at each pass, also when no client of the key is connected.
 
-**Across a restart.** Each allowed key is also a client key of the disk grant table of its principal, under the tag of that table (`MODULE_CONTRACT.md`, "The grants of a disk process"). The table keeps 4 keys at most. So a key lasts as the other grants of its principal do: across a restart for a named principal, and for principal 0 with a machine passphrase or a machine key sealed by the TPM; until the machine stops for principal 0 with neither, and when the global setting of the table is to forget (`disk_persistence("", "forget")`). The end of the line of an allow says which. After the read of the table, at the first unlock of a named principal or when principal 0 gets its machine key, each key holds again with a new serial:
+**Across a restart.** Each key allowed for `Calls` is also a client key of the disk grant table of its principal, and comes back with `Calls` alone; a key allowed for the view alone goes into no table. Each such key is a client key of the disk grant table of its principal, under the tag of that table (`MODULE_CONTRACT.md`, "The grants of a disk process"). The table keeps 4 keys at most. So a key lasts as the other grants of its principal do: across a restart for a named principal, and for principal 0 with a machine passphrase or a machine key sealed by the TPM; until the machine stops for principal 0 with neither, and when the global setting of the table is to forget (`disk_persistence("", "forget")`). The end of the line of an allow says which. After the read of the table, at the first unlock of a named principal or when principal 0 gets its machine key, each key holds again with a new serial:
 
 ```
 root: read the disk grant table of principal 1 from the store module_files: 1 rows, with the tag of the key of the principal; 1 client keys of remote
@@ -602,7 +609,7 @@ So two principals that run one module have two stores, and the stores of the sys
 
 A refusal is an error record with the unit `Principals`: a second named principal ("no free place: the table has its 1 named principals"), a lock with no session, a number with no record, a second record of the machine key (`Exists`), a machine key sealed by the TPM on a machine with no TPM service (`Unsupported`).
 
-**The console:** `principal_create("name")`, `lock()`, `principals()`, `grants("name")`, `machine_passphrase()`, `machine_seal()`, `start_policy_choose("nickname", "hash")`, `start_policy_default()`, `remote_allow("key")`, `remote_disallow("key")`, `remote_clients()`, and, in a console of the session of a named principal, `passphrase_change()` and `recovery_key_change()`.
+**The console:** `principal_create("name")`, `lock()`, `principals()`, `grants("name")`, `machine_passphrase()`, `machine_seal()`, `start_policy_choose("nickname", "hash")`, `start_policy_default()`, `remote_allow("key")`, `remote_display_allow("key", "view")`, `remote_disallow("key")`, `remote_clients()`, and, in a console of the session of a named principal, `passphrase_change()` and `recovery_key_change()`.
 
 ## 8. The tests
 
