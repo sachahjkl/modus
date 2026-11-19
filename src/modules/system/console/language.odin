@@ -13,7 +13,16 @@ import "modus:support/system"
 //   expression = term { ("+" | "-") term }
 //   term       = factor { ("*" | "/" | "%") factor }
 //   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" pipeline ")"
-//   arguments  = pipeline { "," pipeline }
+//   arguments  = argument { "," argument }
+//   argument   = pipeline | condition | name
+//   condition  = name ("=" | "!=" | "<" | "<=" | ">" | ">=") (pipeline | name)
+//
+// The form of each parameter of a command (Parameter_Form) says which
+// argument the parser reads there: a pipeline, a condition on a field of
+// the table of the first argument (`where(t, block = 12)`), or the name of
+// a fact type (`facts(t, storage.Bad_Block)`). In a condition, a name is a
+// field and, after the operator of a status field, a member of its enum:
+// never a variable.
 //
 // The pipe operator has the lowest priority: `a |> f(b)` is `f(a, b)`, and
 // `a |> f` is `f(a)`. The parser below reads no "|>": before any call,
@@ -49,12 +58,72 @@ Kind :: enum u8 {
 // A parameter of a command of the console with the kind None takes a value
 // of any kind: the command checks it.
 Value :: struct {
-	kind:    Kind,
-	integer: i64, // An Integer. A Handle: the handle.
-	text:    string,
-	record:  []u8, // A Record: its bytes. A Table: the bytes of its records.
-	file:    []u8, // A Record or a Table: the module that has the description of the record.
-	detail:  u32, // A Record or a Table: the index of the description of the record in the module.
+	kind:      Kind,
+	integer:   i64, // An Integer. A Handle: the handle.
+	text:      string,
+	record:    []u8, // A Record: its bytes. A Table: the bytes of its records.
+	file:      []u8, // A Record or a Table: the module that has the description of the record.
+	detail:    u32, // A Record or a Table: the index of the description of the record in the module.
+	condition: ^Condition, // The argument of a parameter of the form Condition, in line_conditions: the parser read it, not an expression.
+}
+
+// The conditions of the line that runs. A value names one by its address,
+// so that a value stays small: a call keeps 12 of them on the stack.
+CONDITION_CAPACITY :: 32
+line_conditions: [CONDITION_CAPACITY]Condition
+line_condition_count: int
+
+// condition_keep keeps a condition for the line that runs, and gives its
+// address; nil, with the line failed, when the line holds too many.
+condition_keep :: proc "contextless" (condition: Condition) -> ^Condition {
+	if line_condition_count == CONDITION_CAPACITY {
+		fail("a line holds at most ", i64(CONDITION_CAPACITY), " conditions")
+		return nil
+	}
+	line_conditions[line_condition_count] = condition
+	line_condition_count += 1
+	return &line_conditions[line_condition_count - 1]
+}
+
+// What the parser reads for a parameter of a command. Most parameters take
+// an expression; a few take a name that the console checks against a
+// description, never a variable (src/md/features/log_facts.md, "Filters
+// of a reader: one form").
+Parameter_Form :: enum u8 {
+	Expression = 0, // An expression, whose value has the kind of the parameter.
+	Fact_Name  = 1, // The name of a fact type, "package.Type": a Text value with the name.
+	Condition  = 2, // A field of the table of the first argument, an operator and a value.
+}
+
+// The operators of a condition.
+Comparison :: enum u8 {
+	Equal            = 0, // =
+	Not_Equal        = 1, // !=
+	Less             = 2, // <
+	Less_Or_Equal    = 3, // <=
+	Greater          = 4, // >
+	Greater_Or_Equal = 5, // >=
+}
+
+@(rodata)
+comparison_texts := [Comparison]string {
+	.Equal            = "=",
+	.Not_Equal        = "!=",
+	.Less             = "<",
+	.Less_Or_Equal    = "<=",
+	.Greater          = ">",
+	.Greater_Or_Equal = ">=",
+}
+
+// A condition on one field of the rows of a table: `block = 12`,
+// `level = Warning`, `name != "console"`. The value is an Integer for an
+// Integer or a Handle field and for a Status field (the number of its
+// member), a Text for a Text field.
+Condition :: struct {
+	field:      string, // The name of the field, as the line has it.
+	comparison: Comparison,
+	compared:   i64, // An Integer, a Handle, or the word of a member.
+	text:       string, // A Text.
 }
 
 // kind_of_type gives the kind of a type of the module contract.
@@ -264,7 +333,7 @@ read_name :: proc "contextless" () -> string {
 // its failure, or the value of an expression. A line that keeps its value
 // in a variable draws nothing.
 run_line :: proc "contextless" (text: string) {
-	source, position, failed, scratch_count, table_used = text, 0, false, 0, 0
+	source, position, failed, scratch_count, table_used, line_condition_count = text, 0, false, 0, 0, 0
 	failure_reset()
 	line_records_start()
 
@@ -524,6 +593,11 @@ command_find :: proc "contextless" (name: string) -> (found: ^Command) {
 // the check of a call before it runs, and of the value on the left of a
 // "|>" when the console knows it before the run.
 argument_accepted :: proc "contextless" (found: ^Command, index: int, argument: Value) -> bool {
+	// A fact name and a condition are read by the parser, which checked
+	// them against the image and against the table: no value comes there.
+	if found.parameter_forms[index] != .Expression {
+		return true
+	}
 	kind := found.parameters[index]
 	// A parameter None of a command of the console takes any value.
 	if kind == .None && found.run != nil {
@@ -555,12 +629,23 @@ call :: proc "contextless" (name: string) -> Value {
 	count := 0
 	if !accept(')') {
 		for {
-			value := expression()
-			if failed {
-				return {}
-			}
 			if count == ARGUMENT_CAPACITY {
 				return fail("too many arguments")
+			}
+			// A fact name and a condition are names that the console
+			// checks, never an expression: `block` is a field, not a
+			// variable.
+			value: Value
+			switch found.parameter_forms[count] {
+			case .Expression:
+				value = expression()
+			case .Fact_Name:
+				value = fact_name_read(name)
+			case .Condition:
+				value = condition_read(name, arguments[:count])
+			}
+			if failed {
+				return {}
 			}
 			arguments[count] = value
 			count += 1
@@ -656,8 +741,109 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 			fail(name, ": argument ", i64(1), " is ", parameter_text(found, 0), ", not ", type_text(left.file, left.kind, left.detail))
 			return text
 		}
+		if !pipe_stage_names_check(text, stages, index, found, left, knowledge) {
+			return text
+		}
 	}
 	return form.nested
+}
+
+// pipe_stage_names_check checks, before any call, the argument of a stage
+// that the parser reads as names: a fact name against the fact names of
+// the image, and the field of a condition against the record on the left
+// of the stage when the console knows it (pipe_left_record). A form that
+// it does not read, it leaves to the parser, which fails on it when the
+// line runs.
+pipe_stage_names_check :: proc "contextless" (text: string, stages: []console_language.Pipe_Stage, index: int, found: ^Command, left: Value, knowledge: Left_Knowledge) -> bool {
+	stage := stages[index]
+	name := text[stage.name_start:stage.name_end]
+	if stage.argument_count != 1 || found.parameter_count != 2 {
+		return true
+	}
+	argument := text[stage.arguments_start:stage.arguments_end]
+	first := console_language.token_next(argument, 0)
+	if first.kind != .Name {
+		return true
+	}
+	first_name := argument[first.start:first.end]
+	switch found.parameter_forms[1] {
+	case .Expression:
+	case .Fact_Name:
+		if !fact_name_known(first_name) {
+			fact_name_fail(name, first_name)
+			return false
+		}
+	case .Condition:
+		file, detail, known := pipe_left_record(text, stages, index, left, knowledge)
+		if !known {
+			return true
+		}
+		table := Table{file = file}
+		table.record, known = module.record_type(file, detail)
+		if !known {
+			return true
+		}
+		comparison, comparison_end, has_comparison := comparison_at(argument, console_language.space_end(argument, first.end))
+		if !has_comparison {
+			fail(name, ": after the field ", first_name, " comes an operator: =, !=, <, <=, > or >=")
+			return false
+		}
+		item, has_field := table_field(table, first_name)
+		if !has_field {
+			fail(name, ": the records ", type_text(file, .Record, detail), " have no field ", first_name, "; their fields are ", field_names(table))
+			return false
+		}
+		if !condition_check(name, file, item, first_name, comparison) {
+			return false
+		}
+		if kind, _ := module.field_kind(item); kind == .Status {
+			member := console_language.token_next(argument, comparison_end)
+			which, _ := module.field_contract_enum(item)
+			if member.kind == .Name {
+				if _, named := status_member_word(name, first_name, which, argument[member.start:member.end]); !named {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// pipe_left_record gives the record of the table on the left of a stage,
+// when the console knows it before the run: the result of an export, the
+// table of a stage `facts(...)`, whose record the console makes from the
+// fact type, and the table of a stage that keeps the record of its own
+// left (where, sort, first, skip). description_buffer: where the
+// description of a table of facts() goes; nil puts it in the memory of the
+// line.
+pipe_left_record :: proc "contextless" (text: string, stages: []console_language.Pipe_Stage, index: int, left: Value, knowledge: Left_Knowledge, description_buffer: []u8 = nil) -> (file: []u8, detail: u32, known: bool) {
+	if knowledge == .Whole && left.kind == .Table && left.file != nil {
+		return left.file, left.detail, true
+	}
+	stage := stages[index]
+	if stage.left != .Stage || stage.stage_before < 0 || stage.stage_before >= index {
+		return nil, 0, false
+	}
+	before := stages[stage.stage_before]
+	before_name := text[before.name_start:before.name_end]
+	before_command := command_find(before_name)
+	if before_command == nil || before_command.run == nil {
+		return nil, 0, false
+	}
+	switch before_name {
+	case "where", "sort", "first", "skip":
+		before_left, before_knowledge := pipe_left_value(text, stages, stage.stage_before)
+		return pipe_left_record(text, stages, stage.stage_before, before_left, before_knowledge, description_buffer)
+	}
+	if before_command.parameter_forms[1] != .Fact_Name || before.argument_count != 1 {
+		return nil, 0, false
+	}
+	argument := text[before.arguments_start:before.arguments_end]
+	token := console_language.token_next(argument, 0)
+	if token.kind != .Name {
+		return nil, 0, false
+	}
+	return facts_description(argument[token.start:token.end], description_buffer)
 }
 
 // pipe_refusal_fail fails the line with the sentence of a fault of the

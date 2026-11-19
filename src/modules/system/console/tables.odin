@@ -1,6 +1,8 @@
 package console
 
 import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:private/console/console_results"
 
 // Tables: a value that holds records of one record description, one after
@@ -8,7 +10,7 @@ import "modus:private/console/console_results"
 // a few generic commands combine them. They know no table: each one reads
 // the description of the records, as the module contract writes it.
 //
-//   where(table, field, value)   the rows whose field has the value
+//   where(table, field = value)  the rows whose field passes a condition
 //   sort(table, field)           the rows in the order of a field
 //   join(left, right, field)     each pair of rows with the same value of a field
 //   columns(table, "a b c")      the rows with some fields only
@@ -162,23 +164,31 @@ table_argument :: proc "contextless" (command: string, value: Value, name: strin
 // line for each row, and the count: "2 rows of Import"
 // (docs/CONSOLE.md, "Results and their drawers").
 tables_start :: proc "contextless" () {
-	// Gives the rows of a table whose field has a value, in their order.
+	// Gives the rows of a table whose field passes a condition, in their
+	// order.
 	//
 	// - `table`: a table of any record.
-	// - `field`: the name of a field of its record.
-	// - `value`: an `Integer` for an integer or a handle field, a `Text`
-	//   for a text field. The rows match on equality.
+	// - `condition`: a field of its record, an operator and a value, as
+	//   `block = 12`. The field is a name of the record, never a variable.
+	//   The operators are `=`, `!=`, `<`, `<=`, `>` and `>=`. An Integer or
+	//   a handle field takes an Integer and each operator. A Text field
+	//   takes a Text, and a status field the name of a member of its enum
+	//   (`level = Warning`), with `=` and `!=` only: the order of the
+	//   members is no order of weight.
 	//
 	// The result has the record of the table.
 	//
 	// ```
-	// > columns(where(manual.running(), "module", "calendar_fixed"), "process slot module replaces")
+	// > columns(where(manual.running(), module = "calendar_fixed"), "process slot module replaces")
+	// > log.records(0) |> where(level = Warning) |> where(process = "storage")
 	// ```
 	//
-	// Errors: the records have no such field (the error lists their
-	// fields); the kind of the value is not the kind of the field: "error:
-	// where: the field code is Integer, the value is Text".
-	command("where", {.Table, .Text, .None}, .Table, "the rows of a table whose field has a value", table_where)
+	// Errors, before any row is read: the records have no such field (the
+	// error lists their fields); the kind of the value is not the kind of
+	// the field: "error: where: the field code is Integer, the value is
+	// Text"; a name that names no member of the enum of a status (the error
+	// lists the members); an order on a Text or a status; a hash.
+	command("where", {.Table, .None}, .Table, "the rows of a table whose field passes a condition: where(t, block = 12)", table_where, forms = {.Expression, .Condition})
 	// Gives the rows of a table in the increasing order of a field.
 	//
 	// - `table`: a table of any record.
@@ -250,21 +260,22 @@ tables_start :: proc "contextless" () {
 	command("row", {.Table, .Integer}, .Record, "one row of a table, from 1", table_one)
 }
 
-// table_where gives the rows of a table whose field has the value: an
-// Integer for an Integer or Handle field, a Text for a Text field.
+// table_where gives the rows of a table whose field passes the condition
+// that the parser read (condition_read).
 table_where :: proc "contextless" (arguments: []Value) -> Value {
-	table, item, ok := table_argument("where", arguments[0], arguments[1].text)
+	// The parser gives each argument of the form Condition one; a value of
+	// another source has none.
+	if arguments[1].condition == nil {
+		return fail("where takes a condition: a field, an operator and a value, as where(t, block = 12)")
+	}
+	condition := arguments[1].condition^
+	table, item, ok := table_argument("where", arguments[0], condition.field)
 	if !ok {
 		return {}
 	}
-	wanted := arguments[2]
-	expected: Kind = item.type == u8(module.Type.Text) ? .Text : .Integer
-	if wanted.kind != expected {
-		return fail("where: the field ", arguments[1].text, " is ", type_text_of_word(table.file, item.type, item.detail), ", the value is ", kind_names[wanted.kind])
-	}
 	count := 0
 	for index in 0 ..< table.rows {
-		count += int(compare(row_value(table_row(table, arguments[0], index), item), wanted) == 0)
+		count += int(condition_holds(row_value(table_row(table, arguments[0], index), item), condition))
 	}
 	bytes := table_bytes(count * table.size)
 	if bytes == nil && count > 0 {
@@ -273,12 +284,187 @@ table_where :: proc "contextless" (arguments: []Value) -> Value {
 	place := 0
 	for index in 0 ..< table.rows {
 		row := table_row(table, arguments[0], index)
-		if compare(row_value(row, item), wanted) == 0 {
+		if condition_holds(row_value(row, item), condition) {
 			copy(bytes[place:], row)
 			place += table.size
 		}
 	}
 	return {kind = .Table, record = bytes, file = arguments[0].file, detail = arguments[0].detail}
+}
+
+// condition_holds says if the value of a field passes a condition: Texts
+// byte by byte, Integers, handles and the words of a status by value.
+condition_holds :: proc "contextless" (value: Value, condition: Condition) -> bool {
+	compared := Value{kind = .Integer, integer = condition.compared}
+	if value.kind == .Text {
+		compared = {kind = .Text, text = condition.text}
+	}
+	order := compare(value, compared)
+	switch condition.comparison {
+	case .Equal:
+		return order == 0
+	case .Not_Equal:
+		return order != 0
+	case .Less:
+		return order < 0
+	case .Less_Or_Equal:
+		return order <= 0
+	case .Greater:
+		return order > 0
+	case .Greater_Or_Equal:
+		return order >= 0
+	}
+	return false
+}
+
+// comparison_at reads the operator of a condition at the byte place of a
+// text, and gives the byte after it. ok is false when no operator is
+// there. "!" alone is no operator.
+comparison_at :: proc "contextless" (text: string, place: int) -> (comparison: Comparison, end: int, ok: bool) {
+	if place < 0 || place >= len(text) {
+		return .Equal, place, false
+	}
+	second := place + 1 < len(text) ? text[place + 1] : 0
+	switch text[place] {
+	case '=':
+		return .Equal, place + 1, true
+	case '!':
+		if second == '=' {
+			return .Not_Equal, place + 2, true
+		}
+	case '<':
+		if second == '=' {
+			return .Less_Or_Equal, place + 2, true
+		}
+		return .Less, place + 1, true
+	case '>':
+		if second == '=' {
+			return .Greater_Or_Equal, place + 2, true
+		}
+		return .Greater, place + 1, true
+	}
+	return .Equal, place, false
+}
+
+// comparison_read reads the operator of a condition at the place of the
+// parser. ok is false, with nothing read, when no operator is there.
+comparison_read :: proc "contextless" () -> (comparison: Comparison, ok: bool) {
+	skip_spaces()
+	end: int
+	comparison, end, ok = comparison_at(source, position)
+	if ok {
+		position = end
+	}
+	return comparison, ok
+}
+
+// status_member_word gives the word of the member of the contract enum of
+// a status field that a name names, and fails the line with the members
+// when it names none. It is the one place where a name of a member becomes
+// its word.
+status_member_word :: proc "contextless" (command_name, field_name: string, which: value_kinds.Contract_Enum, member: string) -> (word: u64, ok: bool) {
+	if word, ok = op.contract_enum_member_of_name(which, member); ok {
+		return word, true
+	}
+	fail(command_name, ": the field ", field_name, " holds a member of ", value_kinds.CONTRACT_ENUM_TYPES[which].name, ": ", status_members_text(which), "; \"", member, "\" names none")
+	return 0, false
+}
+
+// condition_check says if a field of a record takes an operator, and fails
+// the line when it does not: a Bytes field has no value that the console
+// compares, and a Text or a status has no order. It runs before any row is
+// read: when the line runs, and before the run when the console knows the
+// record (pipe_condition_check).
+condition_check :: proc "contextless" (command_name: string, file: []u8, item: module.Field, field_name: string, comparison: Comparison) -> bool {
+	type, type_ok := module.field_type(item)
+	kind, kind_ok := module.field_kind(item)
+	if !type_ok || !kind_ok {
+		fail(command_name, ": the field ", field_name, " has a type or a kind that names nothing")
+		return false
+	}
+	switch type {
+	case .Integer:
+		if kind != .Status || comparison == .Equal || comparison == .Not_Equal {
+			return true
+		}
+		fail(command_name, ": the field ", field_name, " is ", type_text_of_field(file, item), ": it takes = and != only, because the order of the members is no order of weight")
+		return false
+	case .Text:
+		if comparison == .Equal || comparison == .Not_Equal {
+			return true
+		}
+		fail(command_name, ": the field ", field_name, " is ", type_text_of_field(file, item), ": a Text takes = and != only")
+		return false
+	case .Handle:
+		return true
+	case .Bytes, .None, .Record, .Table:
+	}
+	fail(command_name, ": the field ", field_name, " is ", type_text_of_field(file, item), "; ", command_name, " compares an Integer, a Text or a status")
+	return false
+}
+
+// status_members_text writes the names of the members of a contract enum,
+// for an error.
+status_members_text :: proc "contextless" (which: value_kinds.Contract_Enum) -> string {
+	start := scratch_count
+	written := 0
+	for word in 0 ..< op.contract_enum_member_count(which) {
+		if name, named := op.contract_enum_member_name(which, word); named {
+			scratch_text(written > 0 ? ", " : "", name)
+			written += 1
+		}
+	}
+	return string(scratch[start:scratch_count])
+}
+
+// condition_read reads the argument of a parameter of the form Condition:
+// a field of the table of the first argument, an operator, and a value. A
+// status field takes the name of a member, which becomes its word here, at
+// one place; another field takes an expression of its kind. Each fault
+// fails the line before the command runs.
+condition_read :: proc "contextless" (command_name: string, before: []Value) -> Value {
+	if len(before) == 0 {
+		return fail(command_name, ": a condition comes after a table: ", command_name, "(t, block = 12)")
+	}
+	table, table_ok := table_of(before[0])
+	if !table_ok {
+		return fail(command_name, ": the table has no valid description")
+	}
+	field_name := read_name()
+	if field_name == "" {
+		return fail(command_name, " takes a condition: a field, an operator and a value, as ", command_name, "(t, block = 12); the fields are ", field_names(table))
+	}
+	comparison, comparison_ok := comparison_read()
+	if !comparison_ok {
+		return fail(command_name, ": after the field ", field_name, " comes an operator: =, !=, <, <=, > or >=")
+	}
+	item, found := table_field(table, field_name)
+	if !found {
+		return fail(command_name, ": the records ", type_text(table.file, .Record, before[0].detail), " have no field ", field_name, "; their fields are ", field_names(table))
+	}
+	if !condition_check(command_name, table.file, item, field_name, comparison) {
+		return {}
+	}
+	condition := Condition{field = field_name, comparison = comparison}
+	if kind, _ := module.field_kind(item); kind == .Status {
+		which, _ := module.field_contract_enum(item)
+		word, named := status_member_word(command_name, field_name, which, read_name())
+		if !named {
+			return {}
+		}
+		condition.compared = i64(word)
+		return {condition = condition_keep(condition)}
+	}
+	value := expression()
+	if failed {
+		return {}
+	}
+	expected: Kind = item.type == u8(module.Type.Text) ? .Text : .Integer
+	if value.kind != expected {
+		return fail(command_name, ": the field ", field_name, " is ", type_text_of_field(table.file, item), ", the value is ", kind_names[value.kind])
+	}
+	condition.compared, condition.text = value.integer, value.text
+	return {condition = condition_keep(condition)}
 }
 
 // table_sort gives the rows of a table in the increasing order of a field.

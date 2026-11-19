@@ -164,7 +164,7 @@ scenario_debugger_commands := [?]Step {
 	// A second breakpoint: the first call of add_step of that round. The
 	// chain of the known procedures, and a local variable of the caller,
 	// which is in memory at its frame pointer.
-	{kind = .Type, text = "columns(where(break_at(\"debug_target::add_step\"), \"number\", 1), \"number kind place\")"},
+	{kind = .Type, text = "columns(where(break_at(\"debug_target::add_step\"), number = 1), \"number kind place\")"},
 	{kind = .Wait, text = "[console]      1  execute  debug_target::add_step"},
 	{kind = .Type, text = "columns(resume(0), \"thread\")"},
 	{kind = .Wait, text = "[console]      0", any_order = true},
@@ -175,7 +175,7 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "[console]     0  debug_target::add_step"},
 	{kind = .Wait, text = "[console]     1  debug_target::count_rounds"},
 	{kind = .Wait, text = "[console]     2  debug_target::run_rounds"},
-	{kind = .Type, text = "columns(where(locals(0, 1), \"name\", \"total\"), \"name role value type\")"},
+	{kind = .Type, text = "columns(where(locals(0, 1), name = \"total\"), \"name role value type\")"},
 	{kind = .Wait, text = "[console] total  local  0      u64"},
 
 	// One step: the first instruction of the procedure, one byte. Then one
@@ -191,7 +191,7 @@ scenario_debugger_commands := [?]Step {
 	// A breakpoint by a file and a line, in the place of the second one.
 	{kind = .Type, text = "columns(break_remove(1), \"number place\")"},
 	{kind = .Wait, text = "[console]      0  debug_target::count_rounds"},
-	{kind = .Type, text = "columns(where(break_at(\"" + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_STORE + "\"), \"number\", 1), \"number kind\")"},
+	{kind = .Type, text = "columns(where(break_at(\"" + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_STORE + "\"), number = 1), \"number kind\")"},
 	{kind = .Wait, text = "[console]      1  execute"},
 	{kind = .Type, text = "columns(resume(0), \"thread\")"},
 	{kind = .Wait, text = "[console]      0", any_order = true},

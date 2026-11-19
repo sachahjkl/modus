@@ -586,8 +586,11 @@ odin_string_at :: proc(text: string, start: int) -> (value: string, end: int, fo
 
 // console_commands_read reads the built-in commands of the console.
 // The form: each line whose code starts with "command(\"" is
-// `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`.
-// The kind None of a parameter is any value: the console prints "Value".
+// `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`,
+// with `forms = {...}` after it for a parameter that the parser reads as
+// names. The kind None of a parameter is any value: the console prints
+// "Value". The form Fact_Name prints "Fact_Type", the form Condition
+// "Condition".
 // The comment lines just above a command, up to a line that is not a
 // comment, are its documentation.
 console_commands_read :: proc(content, file: string) -> (commands: []Console_Command_Entry, problem: string) {
@@ -632,6 +635,29 @@ console_commands_read :: proc(content, file: string) -> (commands: []Console_Com
 		about, after_about, has_about := odin_string_at(rest, comma + len(", "))
 		if !has_about || !strings.has_prefix(rest[after_about:], ", ") || !strings.has_suffix(rest, ")") {
 			return nil, wrong
+		}
+		// `forms = {...}`: a parameter that the parser reads as names has
+		// the name of its form in the signature, as the console writes it.
+		if forms_at := strings.index(rest[after_about:], "forms = {"); forms_at >= 0 {
+			forms_text := rest[after_about + forms_at + len("forms = {"):]
+			forms_end := strings.index_byte(forms_text, '}')
+			if forms_end < 0 {
+				return nil, wrong
+			}
+			for part, form_index in strings.split(forms_text[:forms_end], ",", context.temp_allocator) {
+				if form_index >= len(parameters) {
+					return nil, wrong
+				}
+				switch strings.trim_space(part) {
+				case ".Expression":
+				case ".Fact_Name":
+					parameters[form_index] = "Fact_Type"
+				case ".Condition":
+					parameters[form_index] = "Condition"
+				case:
+					return nil, wrong
+				}
+			}
 		}
 		above := index
 		for above > 0 && strings.has_prefix(strings.trim_space(lines[above - 1]), "//") {

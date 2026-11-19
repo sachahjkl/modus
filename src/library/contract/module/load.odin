@@ -500,6 +500,10 @@ field_kind_valid :: proc "contextless" (item: Field) -> bool {
 		return type == .Text
 	case .Hash:
 		return type == .Bytes && item.detail >= 1 && item.detail <= value_kinds.HASH_FIELD_BYTES
+	case .Fact_Values:
+		// The values of one fact, whole: a reader renders them with the
+		// description of the fact type, which needs every byte.
+		return type == .Bytes && item.detail == value_kinds.FACT_VALUES_FIELD_BYTES
 	}
 	return false
 }

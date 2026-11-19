@@ -185,6 +185,11 @@ write_field_type :: proc "contextless" (writer: ^Writer, file: []u8, item: modul
 		write_part(writer, u64(item.detail))
 		write_part(writer, ")")
 		return
+	case .Fact_Values:
+		write_part(writer, "Fact_Values(")
+		write_part(writer, u64(item.detail))
+		write_part(writer, ")")
+		return
 	}
 	if item.type != u8(module.Type.Integer) {
 		write_type_word(writer, file, item.type, item.detail)

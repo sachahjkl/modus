@@ -17,13 +17,39 @@ LOG_LEVEL_NAMES := [Log_Level]string {
 	.Error   = "Error",
 }
 
+// The name of each record form, as `Log_Record_Form` names it.
+@(rodata)
+LOG_RECORD_FORM_NAMES := [Log_Record_Form]string {
+	.Text = "Text",
+	.Fact = "Fact",
+}
+
 // The bytes of each contract enum: the size of a field of the kind Status
 // that holds it. None has no field.
 @(rodata)
 CONTRACT_ENUM_SIZES := [value_kinds.Contract_Enum]u32 {
-	.None      = 0,
-	.Status    = size_of(Status),
-	.Log_Level = size_of(Log_Level),
+	.None            = 0,
+	.Status          = size_of(Status),
+	.Log_Level       = size_of(Log_Level),
+	.Log_Record_Form = size_of(Log_Record_Form),
+}
+
+// contract_enum_member_count gives the count of the members of a contract
+// enum, whose words are 0 up to the count: a reader that lists the members
+// (the completion of a condition of the console) reads each one by
+// contract_enum_member_name. None has no member.
+contract_enum_member_count :: proc "contextless" (which: value_kinds.Contract_Enum) -> u64 {
+	switch which {
+	case .None:
+		return 0
+	case .Status:
+		return u64(max(Status)) + 1
+	case .Log_Level:
+		return u64(max(Log_Level)) + 1
+	case .Log_Record_Form:
+		return u64(max(Log_Record_Form)) + 1
+	}
+	return 0
 }
 
 // contract_enum_member_name gives the name of the member of a contract enum
@@ -43,6 +69,26 @@ contract_enum_member_name :: proc "contextless" (which: value_kinds.Contract_Enu
 	case .Log_Level:
 		level := enum_word.member_of_word(Log_Level, word) or_return
 		return LOG_LEVEL_NAMES[level], true
+	case .Log_Record_Form:
+		form := enum_word.member_of_word(Log_Record_Form, word) or_return
+		return LOG_RECORD_FORM_NAMES[form], true
 	}
 	return "", false
+}
+
+// contract_enum_member_of_name gives the word of the member of a contract
+// enum that a name names, as contract_enum_member_name writes it. The name
+// comes from a principal: ok is false for a name that names no member of
+// that enum, for another case of the letters, and for None.
+//
+// Example: `contract_enum_member_of_name(.Log_Level, "Warning")` is `2,
+// true`, and `contract_enum_member_of_name(.Log_Level, "warning")` is `0,
+// false`.
+contract_enum_member_of_name :: proc "contextless" (which: value_kinds.Contract_Enum, name: string) -> (word: u64, ok: bool) {
+	for candidate in 0 ..< contract_enum_member_count(which) {
+		if member, named := contract_enum_member_name(which, candidate); named && member == name {
+			return candidate, true
+		}
+	}
+	return 0, false
 }

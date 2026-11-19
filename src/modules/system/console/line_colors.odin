@@ -39,6 +39,10 @@ console_name_role :: proc "contextless" (data: rawptr, name: string) -> console_
 			return .Module
 		}
 	}
+	// A fact name is the name of a record type: storage.Bad_Block.
+	if fact_name_known(name) {
+		return .Record
+	}
 	return .Unknown
 }
 
@@ -111,6 +115,11 @@ row_runs :: proc "contextless" (row: string, name_length: int, kind: line_editor
 		name_kind = .Variable
 	case .History_Line:
 		count = console_language.line_runs(row[:name_length], 0, console_language.NO_CARET, console_names, runs)
+	case .Fact_Type:
+		// package.Type: the package, the dot and the record type.
+		name_kind = .Type
+	case .Field, .Member:
+		name_kind = .Parameter
 	}
 	if name_kind != .None {
 		last_dot := -1

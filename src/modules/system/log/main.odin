@@ -33,7 +33,12 @@
 //   hold; the others count together in the last card;
 // - the newest records, in 30 lines: the time in seconds, the process and
 //   the text, with the legend of the value kinds over the column of the
-//   text. A text is whole, on the lines that it needs.
+//   text. A text is whole, on the lines that it needs. A
+//   [log fact](term:log-fact) is the sentence of its fact template with
+//   its values, which the window writes from the module file of the boot
+//   image that the fact names; a fact whose module the image does not hold
+//   is its raw form: `#`, the head of the module hash, `:`, the fact key
+//   and the value bytes in hexadecimal.
 //
 // At its start it writes two records: `log: the memory of the log: <count>
 // records in <size>` and `log: ok, <count> records, <count> gone before its
@@ -47,23 +52,26 @@
 // this process counts them as lost since, in red when the count is not 0.
 //
 // **Its grants**: **Log_Records**, the memory of the log records with the
-// right Read, and **Serve**, its exports. The process writes no record in
-// the name of another process: the kernel sets the process, the thread and
-// the time of each record.
+// right Read; **Serve**, its exports; **Image**, the boot image read-only,
+// in which it finds the module file of a fact. The process writes no
+// record in the name of another process: the kernel sets the process, the
+// thread and the time of each record.
 //
-// **Its exports** (`exports.odin`): `records` and `value_runs`: the whole
-// log to a caller that [acts for the principal](term:acts-for-the-principal),
-// and its [own records](term:own-records) to each other caller.
+// **Its exports** (`exports.odin`): `records`, `value_runs` and
+// `fact_records`: the whole log to a caller that
+// [acts for the principal](term:acts-for-the-principal), and its
+// [own records](term:own-records) to each other caller.
 // `process_records` and `process_value_runs`: the records of one process
 // whose process handle the caller lends, such as a child of the caller.
 //
 // ```
 // connect("log")
 // log.records(0)
-// where(log.records(0), "level", "error")
+// log.records(0) |> where(level = Error)
 // ```
 package log
 
+import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:support/display"
@@ -182,12 +190,93 @@ record_shown :: proc "contextless" (place: int) -> ^system.Log_Record {
 	return &rows[(row_count - held + u64(place)) % ROWS]
 }
 
+// The boot image: the catalog in which the window finds the module file of
+// a log fact. Empty with no grant: each fact then shows its raw form.
+image: []u8
+
+// The last modules that the window found by their hash: the facts of one
+// writer cost one search of the image.
+FACT_MODULE_CACHE :: 8
+Fact_Module :: struct {
+	hash: [32]u8,
+	file: []u8,
+}
+fact_modules: [FACT_MODULE_CACHE]Fact_Module
+fact_module_next: int
+
+// fact_module_of_hash gives the module file of the boot image with a hash,
+// checked, or nil: no module, a hash of zero, or a file that the checks of
+// the module format refuse.
+fact_module_of_hash :: proc "contextless" (hash: [32]u8) -> []u8 {
+	zero: [32]u8
+	if hash == zero {
+		return nil
+	}
+	for item in fact_modules {
+		if item.file != nil && item.hash == hash {
+			return item.file
+		}
+	}
+	entry := system.image_entry_of(image, hash)
+	if entry == nil {
+		return nil
+	}
+	file := image[entry.offset:][:entry.size]
+	if module.validate(file) != .None {
+		return nil
+	}
+	fact_modules[fact_module_next % FACT_MODULE_CACHE] = {hash = hash, file = file}
+	fact_module_next += 1
+	return file
+}
+
+// fact_join adds the sentence of a fact to a joined text, each value with
+// its value run, or the raw form of the fact, the line of the serial port,
+// when the image has no module or no valid description for it. A sentence
+// longer than the room of the joined text is no sentence: its raw form
+// fits, and no text is cut.
+fact_join :: proc "contextless" (joined: ^Joined, record: ^system.Log_Record) {
+	fact := op.log_record_fact(record)
+	value_count := min(int(fact.value_count), len(fact.values))
+	base := joined.count
+	if file := fact_module_of_hash(fact.module_hash); file != nil {
+		runs: [module.FACT_SENTENCE_RUNS_MOST]value_kinds.Value_Run_In_Call
+		written, run_count, refusal := module.fact_sentence_write(file, fact.key, fact.values[:value_count], joined.bytes[base:], runs[:])
+		if refusal == .None {
+			for run in runs[:run_count] {
+				kind, kind_ok := value_kinds.value_kind_of(run.kind)
+				if kind_ok && kind != .None && joined.run_count < JOIN_RUN_CAPACITY {
+					joined.runs[joined.run_count] = {base + int(run.start), base + int(run.start) + int(run.length), kind}
+					joined.run_count += 1
+				}
+			}
+			joined.count += written
+			return
+		}
+	}
+	raw: [op.LOG_FACT_LINE_BYTES_MOST]u8
+	joined.count += copy(joined.bytes[base:], raw[:op.log_fact_line(fact, &raw)])
+}
+
 // join makes the text of a group: the texts of its records, one after the
-// other, and their value runs at their places in the joined text.
+// other, and their value runs at their places in the joined text. A fact
+// is its sentence; a record of a form that the window does not know shows
+// that, with no body.
 join :: proc "contextless" (joined: ^Joined, group: Group) {
 	joined.count, joined.run_count = 0, 0
 	for part in 0 ..< group.count {
 		record := record_shown(group.first + part)
+		form, known := op.log_record_form(record)
+		if !known {
+			joined.count += copy(joined.bytes[joined.count:], "a record of an unknown form")
+			continue
+		}
+		switch form {
+		case .Text:
+		case .Fact:
+			fact_join(joined, record)
+			continue
+		}
 		text_count := min(int(record.text_count), len(record.text))
 		base := joined.count
 		for index in 0 ..< min(int(record.run_count), len(record.runs)) {
@@ -449,6 +538,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// also reads the own log ring of a caller (Log_Read).
 	reader_head, reader_records = reader.head, reader.records
 	log_memory = ctx.handles[system.GRANT_LOG_RECORDS]
+	// The catalog of the facts: with no image, each fact shows raw.
+	if address, mapped := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); mapped == .Ok {
+		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	}
 	service, _ = system.service_open(ctx)
 	logged := false
 	picture_owed := true // The window does not show each record that was taken.

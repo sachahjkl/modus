@@ -51,7 +51,7 @@ import "base:intrinsics"
 // a `Handle`, a `Table` or `Bytes`. A command whose result is `None` does
 // something and gives nothing. A command that lists things gives a `Table`,
 // so `where`, `sort` and `columns` take it as they take the table of an
-// export: `where(grants("notes"), "state", "held")`. A parameter of the
+// export: `where(grants("notes"), state = "held")`. A parameter of the
 // kind `Value` takes any kind, and the command checks it.
 //
 // **Tables compose.** A `Table` is the records of one description, one
@@ -61,11 +61,11 @@ import "base:intrinsics"
 // they work on each table of each service. Example:
 //
 // ```
-// > columns(where(manual.running(), "module", "calendar_fixed"), "process slot module replaces")
+// > columns(where(manual.running(), module = "calendar_fixed"), "process slot module replaces")
 // ```
 //
 // **A variable keeps a value** for the lines after it: `t = readings(4)`,
-// then `sum_values(where(t, "sensor", 2))`. The console keeps 16 variables.
+// then `sum_values(where(t, sensor = 2))`. The console keeps 16 variables.
 // `variables()` lists them.
 //
 // **Errors.** A command that fails gives no value, and the line has an
@@ -83,6 +83,7 @@ Command :: struct {
 	parameter_names: [ARGUMENT_CAPACITY]string, // From the description of an export. "": no name.
 	parameter_units: [ARGUMENT_CAPACITY]value_kinds.Integer_Unit, // What the Integer of each parameter counts, as a built-in command or the description of an export states it. {}: a plain number.
 	parameter_count: int,
+	parameter_forms: [ARGUMENT_CAPACITY]Parameter_Form, // What the parser reads for each parameter: an expression, but for a few built-in commands.
 	result:          Kind,
 	about:           string,
 	run:             proc "contextless" (arguments: []Value) -> Value, // A command of the console itself.
@@ -196,12 +197,14 @@ names: [8192]u8
 names_count: int
 
 // units: what the Integer of each parameter counts, in the order of the
-// parameters; a command whose numbers are plain counts gives none.
-command :: proc "contextless" (name: string, parameters: []Kind, result: Kind, about: string, run: proc "contextless" (arguments: []Value) -> Value, units: []value_kinds.Integer_Unit = nil) {
+// parameters; a command whose numbers are plain counts gives none. forms:
+// what the parser reads for each parameter; none is an expression each.
+command :: proc "contextless" (name: string, parameters: []Kind, result: Kind, about: string, run: proc "contextless" (arguments: []Value) -> Value, units: []value_kinds.Integer_Unit = nil, forms: []Parameter_Form = nil) {
 	item := &commands[command_count]
 	item^ = {name = name, parameter_count = len(parameters), result = result, about = about, run = run}
 	copy(item.parameters[:], parameters)
 	copy(item.parameter_units[:], units)
+	copy(item.parameter_forms[:], forms)
 	command_count += 1
 }
 
@@ -235,7 +238,7 @@ commands_start :: proc "contextless" () {
 	// `describe(name)` gives it whole.
 	//
 	// ```
-	// > where(help(), "name", "repeat")
+	// > where(help(), name = "repeat")
 	// name    signature                      about
 	// repeat  repeat(Text, Integer) -> Text  a text, several times
 	// 1 row of Command
@@ -259,8 +262,8 @@ commands_start :: proc "contextless" () {
 	// nickname.
 	//
 	// ```
-	// > columns(where(processes(), "state", "waiting"), "slot name threads")
-	// > columns(where(processes(), "name", "visitor"), "name hash")
+	// > columns(where(processes(), state = "waiting"), "slot name threads")
+	// > columns(where(processes(), name = "visitor"), "name hash")
 	// ```
 	//
 	// Errors: those of `connect("monitor")` when the service does not run,
@@ -384,7 +387,7 @@ commands_start :: proc "contextless" () {
 	// names; the head of its hash.
 	//
 	// ```
-	// > where(loaded(), "in_place_of", "calendar")
+	// > where(loaded(), in_place_of = "calendar")
 	// ```
 	command("loaded", {}, .Table, "the modules and the services whose exports are commands", list_loaded)
 	// Asks the root service for a connection to a service that runs, and
@@ -844,6 +847,7 @@ commands_start :: proc "contextless" () {
 	command("measure_completion", {}, .Table, "measure one key of the completion list", measure_completion)
 	debugger_commands_start()
 	tables_start()
+	facts_start() // facts.odin
 }
 
 help :: proc "contextless" (arguments: []Value) -> Value {

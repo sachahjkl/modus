@@ -107,8 +107,8 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   when the grant **Inspect** of the monitor was revoked.
 //
 // Example, in the console after `connect("monitor")`: `monitor.processes()`, or
-// `where(monitor.processes(), "threads", 2)` to keep the rows of a column value, or
-// `columns(where(monitor.processes(), "name", "visitor"), "name hash")` for the file of a disk process.
+// `where(monitor.processes(), threads = 2)` to keep the rows of a column value, or
+// `columns(where(monitor.processes(), name = "visitor"), "name hash")` for the file of a disk process.
 @(export, link_name = "processes")
 processes :: proc "c" (result: ^[]Process, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {

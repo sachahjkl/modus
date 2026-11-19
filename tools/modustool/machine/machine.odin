@@ -202,7 +202,7 @@ Step :: struct {
 	lose:       int, // For Call: the peer drops this many datagrams of `remote` to the host; QUIC sends them again, and monitor.served() shows that the call ran one time.
 	wrong_hash: bool, // For Call: the request names another hash of the module.
 	process:    string, // For Record: the process that wrote the record.
-	level:      string, // For Record: info, debug, warning or error.
+	level:      string, // For Record: Info, Debug, Warning or Error, the member of Log_Level that the row of log.records gives.
 	pointer:    bool, // For Call: when the call has its result, the tool confirms each place of the pointer from now on (pointer_confirm).
 	repeat:     int, // For Call: the calls of the measure of the round trip.
 	least_answer_bytes: int, // For Call: the least bytes of the answer on its stream.
@@ -1090,7 +1090,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "error: 55296 is no character of a text"},
 	{kind = .Type, text = "length(5)"},
 	{kind = .Wait, text = "error: length: argument 1 is Text, not Integer"},
-	{kind = .Type, text = "where(modules(), \"name\", \"compositor\")"},
+	{kind = .Type, text = "where(modules(), name = \"compositor\")"},
 	{kind = .Wait, text = "[console] compositor  "},
 	{kind = .Type, text = "start(\"life\")"},
 	{kind = .Wait, text = "life: ok", any_order = true},
@@ -1525,7 +1525,7 @@ scenario := [?]Step {
 	// Back to the console: the system tools, then stop the machine.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "clear()"},
-	{kind = .Type, text = "where(processes(), \"name\", \"paint\")"},
+	{kind = .Type, text = "where(processes(), name = \"paint\")"},
 	{kind = .Wait, text = "[console] slot  name"},
 	{kind = .Wait, text = "paint  "},
 	{kind = .Type, text = "memory()"},
@@ -1558,9 +1558,9 @@ scenario := [?]Step {
 	// A Text result: the console gives a buffer, the export writes in it.
 	{kind = .Type, text = "reverse(roman(2026)) + roman(length(roman(3888)))"},
 	{kind = .Wait, text = "[console] IVXXMMXV"},
-	{kind = .Type, text = "where(help(), \"name\", \"shutdown\")"},
+	{kind = .Type, text = "where(help(), name = \"shutdown\")"},
 	{kind = .Wait, text = "[console] shutdown  shutdown()  stop the machine"},
-	{kind = .Type, text = "where(help(), \"name\", \"number\")"},
+	{kind = .Type, text = "where(help(), name = \"number\")"},
 	{kind = .Wait, text = "[console] number  number(text: Text) -> Integer"},
 	{kind = .Shot, text = "tools"},
 
@@ -1629,7 +1629,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "count()"},
 	{kind = .Wait, text = "[probe] host: ready"},
 	{kind = .Wait, text = "[console] 1"},
-	{kind = .Type, text = "where(processes(), \"name\", \"probe\")"},
+	{kind = .Type, text = "where(processes(), name = \"probe\")"},
 	{kind = .Wait, text = "probe  "},
 	{kind = .Shot, text = "isolated"},
 
@@ -1682,7 +1682,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "Span(b, 96, 10)"},
 	{kind = .Wait, text = "[console]   count   10"},
-	{kind = .Type, text = "columns(where(processes(), \"name\", \"console\"), \"name slot threads resident time started\")"},
+	{kind = .Type, text = "columns(where(processes(), name = \"console\"), \"name slot threads resident time started\")"},
 	{kind = .Wait, text = "[console] name     slot  threads  resident (pages)  time (ms)  started (us)"},
 	{kind = .Wait, text = "[console] console  "},
 	{kind = .Wait, text = "[console] 1 row of Process"},
@@ -1690,9 +1690,9 @@ scenario := [?]Step {
 
 	// The pipe operator: the value on its left is the first argument of the
 	// call on its right, so this line is the line with calls in calls
-	// columns(where(processes(), "name", "console"), "name slot"). A '|'
+	// columns(where(processes(), name = "console"), "name slot"). A '|'
 	// alone is no operator: its line fails before any call.
-	{kind = .Type, text = "processes() |> where(\"name\", \"console\") |> columns(\"name slot\")"},
+	{kind = .Type, text = "processes() |> where(name = \"console\") |> columns(\"name slot\")"},
 	{kind = .Wait, text = "[console] name     slot"},
 	{kind = .Wait, text = "[console] 1 row of Process"},
 	{kind = .Type, text = "processes() | rows"},
@@ -2157,7 +2157,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "monitor.count(\"processors\")"},
 	{kind = .Wait, text = "[console] error: monitor.count: refused with the status "},
-	{kind = .Type, text = "where(help(), \"name\", \"paint.write\")"},
+	{kind = .Type, text = "where(help(), name = \"paint.write\")"},
 	{kind = .Wait, text = "paint.write(x: Integer, y: Integer, text: Text, color: Integer)"},
 	// One line for three calls: each result is a line of the log, and the
 	// check of the log below needs each record since the boot.
@@ -2339,7 +2339,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   module     agenda"},
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       direct"},
-	{kind = .Type, text = "where(loaded(), \"imported_by\", \"agenda\")"},
+	{kind = .Type, text = "where(loaded(), imported_by = \"agenda\")"},
 	{kind = .Wait, text = "[console] calendar  direct  agenda"},
 	// calendar has a fault: 2000 has 365 days, and February 28.
 	{kind = .Type, text = "year_days(2000) + month_days(2, 2000)"},
@@ -2400,7 +2400,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   module     agenda"},
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       direct"},
-	{kind = .Type, text = "where(loaded(), \"in_place_of\", \"calendar\")"},
+	{kind = .Type, text = "where(loaded(), in_place_of = \"calendar\")"},
 	{kind = .Wait, text = "calendar_fixed  direct  agenda       calendar  "},
 	{kind = .Type, text = "year_days(2000) + month_days(2, 2000)"},
 	{kind = .Wait, text = "[console] 395"},
@@ -2422,7 +2422,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "imports"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "clear()"},
-	{kind = .Type, text = "where(process_modules(), \"replaces\", \"calendar\")"},
+	{kind = .Type, text = "where(process_modules(), replaces = \"calendar\")"},
 	{kind = .Wait, text = "calendar_fixed  calendar  "},
 	// A fault in the module of the replacement: the kernel names
 	// calendar_fixed, not calendar.
@@ -2431,7 +2431,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   module     agenda"},
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       isolated"},
-	{kind = .Type, text = "where(loaded(), \"imported_by\", \"agenda\")"},
+	{kind = .Type, text = "where(loaded(), imported_by = \"agenda\")"},
 	{kind = .Wait, text = "[console] calendar_fixed  isolated  agenda"},
 	{kind = .Type, text = "year_days(2000)"},
 	{kind = .Wait, text = "[console] 366"},
@@ -2456,13 +2456,13 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] agenda "},
 	{kind = .Wait, text = "[console] imports "},
 	{kind = .Wait, text = "[console] 2 rows of Import"},
-	{kind = .Type, text = "columns(where(manual.running(), \"module\", \"calendar_fixed\"), \"process slot module replaces\")"},
+	{kind = .Type, text = "columns(where(manual.running(), module = \"calendar_fixed\"), \"process slot module replaces\")"},
 	{kind = .Wait, text = "[console] imports "},
 	{kind = .Wait, text = " of Running"},
 	// The graph of the modules as it runs: in the process imports, the
 	// module imports imports calendar_fixed, which a replacement put in
 	// place of calendar. The first column is the importer.
-	{kind = .Type, text = "columns(where(manual.edges(), \"replaces\", \"calendar\"), \"imported_by module replaces process\")"},
+	{kind = .Type, text = "columns(where(manual.edges(), replaces = \"calendar\"), \"imported_by module replaces process\")"},
 	{kind = .Wait, text = "[console] imports      calendar_fixed  calendar  imports"},
 	{kind = .Wait, text = " of Edge"},
 	{kind = .Type, text = "sort(columns(manual.handles(\"Write\"), \"module name rights\"), \"name\")"},
@@ -2474,7 +2474,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] "},
 	{kind = .Type, text = "manual.exports(\"nothing\")"},
 	{kind = .Wait, text = "[console] error: manual.exports: the argument name names none of the modules (-1)"},
-	{kind = .Type, text = "where(manual.modules(), \"code\", \"large\")"},
+	{kind = .Type, text = "where(manual.modules(), code = \"large\")"},
 	{kind = .Wait, text = "[console] error: where: the field code is Integer, the value is Text"},
 	{kind = .Type, text = "manual.overview()"},
 	{kind = .Wait, text = "manual: overview: "},
@@ -2518,7 +2518,7 @@ scenario := [?]Step {
 	// writes the size of the memory of the log as a size. The value runs
 	// are read from the number of that record: the records of the boot can
 	// be gone from the ring by now.
-	{kind = .Record, process = "log", level = "info", text = "log: the memory of the log: "},
+	{kind = .Record, process = "log", level = "Info", text = "log: the memory of the log: "},
 	{kind = .Call, text = "log.value_runs({record})", expected = "  size"},
 	{kind = .Front, text = "console"},
 	// The kernel writes a record of its own, and the log keeps it: a
@@ -2527,7 +2527,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "start(\"fault\")"},
 	{kind = .Wait, text = "stopped: page fault"},
 	{kind = .Wait, text = "root: fault stopped"},
-	{kind = .Record, process = "kernel", level = "warning", text = "kernel: process fault stopped: page fault"},
+	{kind = .Record, process = "kernel", level = "Warning", text = "kernel: process fault stopped: page fault"},
 	// The log scope: log_reader has a connection to the log service that
 	// does not act for the principal. It reads the log from the own number
 	// 0 and receives its own records only: the records of its process slot
@@ -2588,9 +2588,9 @@ scenario := [?]Step {
 	// log in order: the last record of the storm child, then the line of
 	// log_reader after it, then the stop that the root service writes. The
 	// earlier records of the run are gone from the whole log.
-	{kind = .Record, process = "log_reader storm", level = "info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
-	{kind = .Record, process = "log_reader", level = "info", text = "log_reader: ok"},
-	{kind = .Record, process = "root", level = "info", text = "root: log_reader stopped with code 0"},
+	{kind = .Record, process = "log_reader storm", level = "Info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
+	{kind = .Record, process = "log_reader", level = "Info", text = "log_reader: ok"},
+	{kind = .Record, process = "root", level = "Info", text = "root: log_reader stopped with code 0"},
 	{kind = .Type, text = "start(\"log_reader\")"},
 	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
@@ -2617,9 +2617,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	{kind = .Wait, text = "root: log_reader stopped with code 0"},
-	{kind = .Record, process = "log_reader storm", level = "info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
-	{kind = .Record, process = "log_reader", level = "info", text = "log_reader: ok"},
-	{kind = .Record, process = "root", level = "info", text = "root: log_reader stopped with code 0"},
+	{kind = .Record, process = "log_reader storm", level = "Info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
+	{kind = .Record, process = "log_reader", level = "Info", text = "log_reader: ok"},
+	{kind = .Record, process = "root", level = "Info", text = "root: log_reader stopped with code 0"},
 	// An arena grows one page at a time until its budget refuses the
 	// commit: the refusal is a value that the process reads, the arena
 	// keeps its state, a reset takes the same pages again with no commit,
@@ -2640,12 +2640,12 @@ scenario := [?]Step {
 	// counts cover each picture since the start of each window.
 	{kind = .Type, text = "connect(\"compositor\")"},
 	{kind = .Wait, text = "[console]   module     compositor"},
-	{kind = .Type, text = "rows(compositor.windows()) - rows(where(compositor.windows(), \"pictures_drawn_again\", 0))"},
+	{kind = .Type, text = "rows(compositor.windows()) - rows(where(compositor.windows(), pictures_drawn_again = 0))"},
 	{kind = .Wait, text = "[console] 0"},
 	// The screen showed each frame of the compositor whole: the compositor
 	// wrote no frame into the screen page that the display showed. The
 	// line gives the count of the rows of screen() whose count is not 0.
-	{kind = .Type, text = "rows(compositor.screen()) - rows(where(compositor.screen(), \"frames_on_the_shown_page\", 0))"},
+	{kind = .Type, text = "rows(compositor.screen()) - rows(where(compositor.screen(), frames_on_the_shown_page = 0))"},
 	{kind = .Wait, text = "[console] 0"},
 	{kind = .Type, text = "start(\"nothing\")"},
 	{kind = .Wait, text = "[console] error: root.Start: the argument name names none of the modules"},
@@ -2707,7 +2707,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "scale_values(t, 7)"},
 	{kind = .Type, text = "t"},
 	{kind = .Wait, text = "4 rows of Reading"},
-	{kind = .Type, text = "sum_values(where(t, \"sensor\", 2))"},
+	{kind = .Type, text = "sum_values(where(t, sensor = 2))"},
 	{kind = .Wait, text = "[console] 210"},
 	{kind = .Type, text = "sum_values(columns(t, \"sensor value\"))"},
 	{kind = .Wait, text = "[console] error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)"},
@@ -2840,15 +2840,15 @@ scenario := [?]Step {
 	// block service, and the block ring to its client. The device reads and
 	// writes the memory of the client.
 	{kind = .Launch, text = "disk"},
-	{kind = .Record, process = "root", level = "info", text = "root: started block for the device at the place 17 of the bus"},
-	{kind = .Record, process = "block", level = "info", text = "block: ok, 8192 blocks of 4096 bytes, a queue of ", any_order = true},
+	{kind = .Record, process = "root", level = "Info", text = "root: started block for the device at the place 17 of the bus"},
+	{kind = .Record, process = "block", level = "Info", text = "block: ok, 8192 blocks of 4096 bytes, a queue of ", any_order = true},
 	{kind = .Wait, text = "disk: ok, the disk has 8192 blocks"},
 	{kind = .Wait, text = "disk: read, 1 block in each request, 1 in flight: "},
 	{kind = .Wait, text = "disk: read, 1 block in each request, 32 in flight: "},
 	{kind = .Wait, text = "disk: write, 1 block in each request, 1 in flight: "},
 	{kind = .Wait, text = "disk: write, 1 block in each request, 32 in flight: "},
 	{kind = .Wait, text = "disk: read, 16 blocks in each request, 8 in flight: "},
-	{kind = .Record, process = "disk", level = "info", text = "disk: ok, 5 runs, 0 errors, write then read back: 0 wrong"},
+	{kind = .Record, process = "disk", level = "Info", text = "disk: ok, 5 runs, 0 errors, write then read back: 0 wrong"},
 	{kind = .Wait, text = "disk: a read of 2 blocks from the last block: block.Read: the argument first reaches 8193 blocks, past the end: there are 8192 blocks"},
 	// The words of a command record that name no command: None, one past
 	// the last command, the largest word. The block service answers what
@@ -2868,15 +2868,15 @@ scenario := [?]Step {
 	// using memory.
 	{kind = .Close, text = "disk"},
 	{kind = .Wait, text = "compositor: window disk closed after 3 records whose word names no command"},
-	{kind = .Record, process = "root", level = "info", text = "root: disk stopped with code 0"},
-	{kind = .Record, process = "root", level = "info", text = "root: block stopped with code 0"},
+	{kind = .Record, process = "root", level = "Info", text = "root: disk stopped with code 0"},
+	{kind = .Record, process = "root", level = "Info", text = "root: block stopped with code 0"},
 	// The storage service runs since the boot (the boot pass of settings
 	// needs it), with the block service of the data disk. The console has a
 	// private store of 3 blocks, by its name; it acts for the principal, so it
 	// also sees all the stores.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
-	{kind = .Record, process = "root", level = "info", text = "root: connected console to the service storage"},
+	{kind = .Record, process = "root", level = "Info", text = "root: connected console to the service storage"},
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"kept on the disk\")"},
 	// The generation of this commit is the base: the console committed its
 	// line history after each line before this one.
@@ -2895,7 +2895,7 @@ scenario := [?]Step {
 	// this write is the commit 4.
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed at the limit\")"},
 	{kind = .Wait, text = "[console] {generation+4}"},
-	{kind = .Record, process = "storage", level = "info", text = "storage: the store console is at its limit of 3 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
+	{kind = .Record, process = "storage", level = "Info", text = "storage: the store console is at its limit of 3 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
 	// An error of a service is a record: the console writes it as a sentence.
 	{kind = .Type, text = "storage.write(0, \"\", \"x\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 64 bytes (-3)"},
@@ -2914,12 +2914,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] console  store               held"},
 	{kind = .Wait, text = "[console] console  acts_for_principal  held"},
 	{kind = .Type, text = "revoke(\"console\", \"store\")"},
-	{kind = .Record, process = "root", level = "info", text = "root: revoked the grant store of console, connections changed: 1"},
+	{kind = .Record, process = "root", level = "Info", text = "root: revoked the grant store of console, connections changed: 1"},
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
 	{kind = .Type, text = "storage.stores()"},
 	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 0 connections"},
-	{kind = .Type, text = "where(grants(\"console\"), \"state\", \"lost\")"},
+	{kind = .Type, text = "where(grants(\"console\"), state = \"lost\")"},
 	// The grant palette was revoked before: the column has its width.
 	{kind = .Wait, text = "[console] console  store    lost"},
 	{kind = .Shot, text = "storage"},
@@ -3021,7 +3021,7 @@ scenario := [?]Step {
 	// A text longer than one row of log.records (one log record,
 	// op.LOG_TEXT_CAPACITY bytes) by construction: no one row holds it, so
 	// the step finds it only when it joins the rows.
-	{kind = .Record, process = "errors", level = "info", text = ERRORS_JOINED_LINE, any_order = true},
+	{kind = .Record, process = "errors", level = "Info", text = ERRORS_JOINED_LINE, any_order = true},
 	{kind = .Wait, text = " handles; 0 records contradict their status, "},
 	{kind = .Wait, text = "errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", any_order = true},
 	// The child of errors stops on a kernel ring that holds records
@@ -3047,9 +3047,9 @@ scenario := [?]Step {
 	// again, so that the test compares two tools on two reports.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"monitor\")"},
-	{kind = .Record, process = "root", level = "info", text = "root: monitor stopped with code"},
+	{kind = .Record, process = "root", level = "Info", text = "root: monitor stopped with code"},
 	{kind = .Type, text = "start(\"monitor\")"},
-	{kind = .Record, process = "monitor", level = "info", text = "monitor: ok"},
+	{kind = .Record, process = "monitor", level = "Info", text = "monitor: ok"},
 	{kind = .Launch, text = "inspect"},
 	{kind = .Wait, text = "inspect: ok, "},
 	{kind = .Type, text = "threads"},
@@ -3106,7 +3106,7 @@ scenario := [?]Step {
 	{kind = .Call, text = "sample.sum_values([(0, 0, 10, 10, 10)])", outcome = .Refused, expected = "no grant"},
 	{kind = .Close, text = "inspect"},
 	{kind = .Close, text = "errors"},
-	{kind = .Record, process = "root", level = "info", text = "root: errors stopped with code 0"},
+	{kind = .Record, process = "root", level = "Info", text = "root: errors stopped with code 0"},
 	// The interface package: each element live, the draw table of the last
 	// frame, the damage by difference. The keyboard is a first path: Tab
 	// moves the focus, Enter presses, the arrows move the choice.

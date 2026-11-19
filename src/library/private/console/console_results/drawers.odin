@@ -68,9 +68,10 @@ COLUMN_LIMIT :: 40 // The most columns of a drawn table: the fields of a record 
 CONTINUATION_MOST :: 48 // A line goes on under its last column only when that column starts at or before this one.
 COLUMN_GAP :: 2 // The spaces between two columns.
 BYTES_IN_A_ROW :: 16 // The bytes of one row of a view of bytes.
-// The bytes of the text of one cell: a hash in hexadecimal, two digits for
-// each byte, is the longest; a number takes at most 20.
-CELL_TEXT_CAPACITY :: 2 * value_kinds.HASH_FIELD_BYTES
+// The bytes of the text of one cell: the values of a log fact in
+// hexadecimal, two digits for each byte, are the longest; a hash takes 64,
+// a number at most 20.
+CELL_TEXT_CAPACITY :: 2 * value_kinds.FACT_VALUES_FIELD_BYTES
 
 BLANKS :: "                                                                "
 
@@ -175,12 +176,27 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 	case .None, .Record, .Table:
 		// A record holds no such field (module.field_size): an empty cell.
 	case .Bytes:
-		// A Bytes field is a hash (module.field_kind_valid).
+		// A Bytes field is a hash or the values of a log fact
+		// (module.field_kind_valid).
 		bytes := module.field_bytes(row, item)
-		if kind != .Hash || bytes == nil {
+		if bytes == nil {
 			return {}
 		}
-		return {text = hash_text(buffer, bytes), part = .Version}
+		switch kind {
+		case .Hash:
+			return {text = hash_text(buffer, bytes), part = .Version}
+		case .Fact_Values:
+			// The raw form of the values: the zeros after the last byte
+			// that is not zero say nothing, as on the serial line.
+			last := len(bytes)
+			for last > 0 && bytes[last - 1] == 0 {
+				last -= 1
+			}
+			return {text = hash_text(buffer, bytes[:last]), part = .Number}
+		case .Plain, .Hexadecimal, .Status, .Module_Name:
+			// module.field_kind_valid refuses these kinds on Bytes.
+		}
+		return {}
 	case .Integer:
 		value := module.field_integer(row, item)
 		switch kind {
@@ -194,8 +210,8 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 			// A word that names no member: its number, never the name of
 			// another member.
 			return {text = sentence.format(buffer, u64(value)), part = .Number}
-		case .Plain, .Module_Name, .Hash:
-			// module.field_kind_valid refuses the two last on an Integer.
+		case .Plain, .Module_Name, .Hash, .Fact_Values:
+			// module.field_kind_valid refuses the three last on an Integer.
 		}
 		part, unit := integer_part(item)
 		if item.unsigned && module.field_size(item) == 8 {

@@ -58,7 +58,7 @@ scenario_program_film := [?]Step {
 
 	// Scene 4: the process in the table of the processes.
 	{kind = .Front, text = "console"},
-	{kind = .Film_Type, text = "where(processes(), \"name\", \"plasma\")"},
+	{kind = .Film_Type, text = "where(processes(), name = \"plasma\")"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] slot  name"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ + FILM_HOLD_LOOK, text = "program.process"},

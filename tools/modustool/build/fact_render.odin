@@ -4,7 +4,6 @@ import "base:runtime"
 import "modus:contract/blake3"
 import module "modus:contract/module"
 import op "modus:contract/operation"
-import "modus:contract/text_encoding"
 import "core:fmt"
 import "core:strings"
 import "modustool:foundation"
@@ -162,66 +161,28 @@ fact_line_parse :: proc(text: string) -> (line: Fact_Line, ok: bool) {
 
 // fact_line_render gives the sentence of the line of a fact after its
 // head: the fact template of its module file, with the value of each
-// field, written by its kind (field_value). rendered is false when the
-// text is not the line of a fact, or when the catalog has no module, no
-// fact type or no valid description for it: the line stays raw.
+// field, written by its kind, by the one render of the contract that the
+// readers of the system call too (module.fact_sentence_write). rendered is
+// false when the text is not the line of a fact, or when the catalog has no
+// module, no fact type or no valid description for it: the line stays raw.
+// The line holds the values up to their last byte that is not zero: the
+// bytes after them up to the size of the record are zero.
 fact_line_render :: proc(catalog: ^Fact_Catalog, text: string) -> (sentence: string, rendered: bool) {
 	line := fact_line_parse(text) or_return
 	file := fact_catalog_file(catalog, line.hash_prefix)
 	if file == nil {
 		return "", false
 	}
-	_, fact, description := module.fact_find(file, line.key) or_return
-	if line.value_count > int(description.size) || module.fact_template_valid(file, fact, description) != .None {
+	_, _, description := module.fact_find(file, line.key) or_return
+	if line.value_count > int(description.size) {
 		return "", false
 	}
-	values := line.values[:description.size]
-	// A Text value is bytes of the writer that nobody checked: the kernel
-	// filters no byte of a fact. Its text, up to its first zero byte, takes
-	// the rule of the filter of the kernel, so a fact cannot put a line end
-	// or an escape sequence in a line that the tool writes.
-	for number in 0 ..< description.field_count {
-		item, item_ok := module.field(file, description, number)
-		if !item_ok || item.type != u8(module.Type.Text) {
-			continue
-		}
-		text_bytes := values[item.offset:][:item.detail]
-		end := 0
-		for end < len(text_bytes) && text_bytes[end] != 0 {
-			end += 1
-		}
-		text_encoding.invalid_sequences_replace(text_bytes[:end])
+	written: [module.FACT_SENTENCE_BYTES_MOST]u8
+	count, _, refusal := module.fact_sentence_write(file, line.key, line.values[:description.size], written[:], nil)
+	if refusal != .None {
+		return "", false
 	}
-	template := module.string_at(file, fact.template_offset, fact.template_count)
-	builder := strings.builder_make(context.temp_allocator)
-	for at := 0; at < len(template); {
-		switch template[at] {
-		case '{':
-			if template[at + 1] == '{' {
-				strings.write_byte(&builder, '{')
-				at += 2
-				continue
-			}
-			closing := at + 1 + strings.index_byte(template[at + 1:], '}')
-			name := template[at + 1:closing]
-			for number in 0 ..< description.field_count {
-				item, _ := module.field(file, description, number)
-				if module.string_at(file, item.name_offset, item.name_count) == name {
-					strings.write_string(&builder, field_value(values, item))
-					break
-				}
-			}
-			at = closing + 1
-		case '}':
-			// fact_template_valid accepts a closing brace only as "}}".
-			strings.write_byte(&builder, '}')
-			at += 2
-		case:
-			strings.write_byte(&builder, template[at])
-			at += 1
-		}
-	}
-	return strings.to_string(builder), true
+	return strings.clone(string(written[:count]), context.temp_allocator), true
 }
 
 // The text in a line of the serial port between the head of a process and
