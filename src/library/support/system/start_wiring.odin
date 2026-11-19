@@ -11,14 +11,22 @@ import "modus:contract/ring"
 // child takes from its wiring ring before it runs. process_start makes the
 // wiring ring from the budget of the child, gives it at the handle
 // op.CONTEXT_WIRING_RING, gives each end through the memory of that ring,
-// writes each command, and only then starts the first thread. It is a
-// list of ends, not a callback: the starter checked the list, made the
-// output rings and gave the other ends before the call.
+// writes each command, and only then starts the first thread. The
+// starter checked the list before the call. It makes the objects of the
+// ends in ends_make, which process_start calls after the load of the
+// modules of the child: the loader then prepares each module with no
+// handle of the list in the handle table of the starter, whose margin is
+// the bound of a start (src/md/features/module_outputs.md, "The budget").
 Start_Wiring :: struct {
 	// In: each end of the child. ring and terms are handles of the starter;
 	// process_start gives them through the wiring ring, and the command
-	// names the handles of the child.
+	// names the handles of the child. ends_make, when it is set, gives them.
 	ends:          []output.Given_End,
+	// In: makes the objects of the ends and gives the ends, after the load
+	// of the modules. A refusal stops the start; the starter ends what it
+	// made. nil: ends is the list.
+	ends_make:     proc "contextless" (data: rawptr) -> (ends: []output.Given_End, status: Status),
+	ends_data:     rawptr,
 	// In: the starter keeps a handle of the budget of the child, because
 	// the child can ask for wirings, which its budget pays.
 	keep_budget:   bool,

@@ -991,6 +991,12 @@ process_fill :: proc "contextless" (process: Handle, budget: Handle, grants: [op
 	}
 	record.handles[op.CONTEXT_BUDGET] = give(process, budget, {.Give, .Read, .Spend}) or_return
 	if wiring != nil {
+		// The objects of the ends come after the load of the modules: the
+		// loader prepared each module with the table of the starter free
+		// of them.
+		if wiring.ends_make != nil {
+			wiring.ends = wiring.ends_make(wiring.ends_data) or_return
+		}
 		start_wiring_give(process, budget, record, file, wiring) or_return
 	}
 	record.values = values

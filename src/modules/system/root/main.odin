@@ -319,7 +319,7 @@ Started :: struct {
 	// names it.
 	file:            []u8,
 	// A handle of the budget of the process with Read and Spend, for a
-	// process with a root ring, the one kind of asker: the wirings that
+	// process that can send Wire, the one kind of asker: the wirings that
 	// the process asks for are paid from it. Closed at the stop of the
 	// process (src/md/features/module_outputs.md, "The budget").
 	budget:          system.Handle,
@@ -2057,7 +2057,18 @@ reap :: proc "contextless" () {
 			// A compositor that this service stopped for the rescue is
 			// started again by the rescue: it is no absence of the screen.
 			stopped_for_the_rescue := item.stop_asked_by_root_service
+			// The stop of an asker of wirings: the tables of this service,
+			// after the wirings of the asker ended, as a measure of its
+			// margin (own_tables.odin).
+			asker_name: system.Name
+			asker_measured := root_ring.sender_allowed(.Wire, item.role.grants)
+			if asker_measured {
+				asker_name = item.name
+			}
 			release(&item)
+			if asker_measured {
+				own_tables_measure(system.name_of(asker_name[:]))
+			}
 			// A later start gets no window and a start with a terminal is
 			// refused (start_view_give), and nothing starts here.
 			if compositor_reaped {

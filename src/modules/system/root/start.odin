@@ -8,6 +8,7 @@ import info "modus:contract/boot_info"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/settings"
@@ -92,15 +93,16 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 	status := start_context_build(&work)
 	if status == .Ok && wiring_work != nil {
 		// The list is resolved against the file and the place of the
-		// child, and its rings are made, before the child exists.
+		// child before the child exists. Its rings and its pages are made
+		// in process_start, after the load of the modules of the child
+		// (wiring_child_ends_make): the loader prepares each module with
+		// none of them in the handle table of this service.
 		wiring_work.child = work.slot
 		wiring_work.child_file = work.file
 		status = wiring_list_resolve(wiring_work)
 		if status == .Ok {
-			status = wiring_list_make(wiring_work)
-		}
-		if status == .Ok {
-			work.wiring.ends = wiring_child_ends(wiring_work)
+			work.wiring.ends_make = wiring_child_ends_make
+			work.wiring.ends_data = wiring_work
 		}
 	}
 	if status == .Ok {
@@ -132,7 +134,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 }
 
 // start_wiring_keep keeps what the start of a process gave this service:
-// its module file, the budget handle of a process with a root ring, and
+// its module file, the budget handle of a process that can send Wire, and
 // the handle of its wiring ring.
 start_wiring_keep :: proc "contextless" (work: ^Start_Work) {
 	slot := work.slot
@@ -236,6 +238,16 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		work.driver, work.device_ring, status = driver_start(place, DRIVER_SOUND)
 	}
 	return status
+}
+
+// wiring_child_ends_make makes the rings and the pages of the wiring list
+// of a start, and gives the ends of the child: process_start calls it
+// after the load of the modules of the child. A refusal keeps its error
+// record in the list; start then ends what it made (wiring_list_unmake).
+wiring_child_ends_make :: proc "contextless" (data: rawptr) -> (ends: []output.Given_End, status: system.Status) {
+	wiring_work := (^Wiring_Work)(data)
+	wiring_list_make(wiring_work) or_return
+	return wiring_child_ends(wiring_work), .Ok
 }
 
 // start_refusal_keep writes the error record of a refusal that names its
@@ -591,9 +603,12 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	// module, its hash and Process_Start are in it
 	// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
 	started_at := system.nanoseconds()
-	// Only a process with a root ring asks for a wiring, which its budget
-	// pays: this service keeps a handle of that budget for it alone.
-	work.wiring.keep_budget = root_ring.root_ring_given(work.role.grants)
+	// Only a process that can send Wire asks for a wiring, which its budget
+	// pays: this service keeps a handle of that budget for it alone. Each
+	// other process with a root ring (Connect, Principals, Debugger) holds
+	// no handle of this service for its budget: the handle table of this
+	// service holds one handle for each process that it keeps one for.
+	work.wiring.keep_budget = root_ring.sender_allowed(.Wire, work.role.grants)
 	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring)
 	if status == .Ok {
 		// A process with a window of its own: the compositor ties the time
@@ -606,6 +621,12 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 			}
 		}
 		return .Ok
+	}
+	// The wiring list refused in process_start, with the record of its
+	// cause, which goes to the asker: the budget that refused is the
+	// budget of the asker, not of the child, and no line names the child.
+	if work.wiring_work != nil && work.wiring_work.refusal != ([7]u64{}) {
+		return status
 	}
 	// A budget of no page: the start failed before process_start.
 	if status == .No_Budget && process_budget.pages != 0 {

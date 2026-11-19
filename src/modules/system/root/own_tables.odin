@@ -46,6 +46,22 @@ own_tables :: proc "contextless" () -> (mappings, handles: u64, ok: bool) {
 	return own_mappings_report.count, report.handle_count, true
 }
 
+// The start of the line of own_tables_measure: the measure record reads it
+// (tools/modustool/checks/measure_record.odin).
+OWN_TABLES_MEASURE_LINE :: "root: the tables of this service after the stop of "
+
+// own_tables_measure writes the tables of this service after the stop of
+// a process that can ask for wirings: its wirings, its list page and its
+// budget handle ended with it, so each run shows the margin of the handle
+// table of this service at a known point of the main test.
+own_tables_measure :: proc "contextless" (name: string) {
+	mappings, handles, ok := own_tables()
+	if !ok {
+		return
+	}
+	system.log(.Info, OWN_TABLES_MEASURE_LINE, system.Module_Name{name}, ": ", handles, " handles and ", mappings, " mappings, of ", u64(op.MAPPING_REPORT_CAPACITY), " each")
+}
+
 // own_tables_log writes the line of the tables of this service after a
 // start that a table refused.
 own_tables_log :: proc "contextless" (name: string) {
