@@ -28,6 +28,39 @@ The terms are in [`docs/glossary/communication.md`](../../../docs/glossary/commu
 
 ## The chosen form
 
+The whole design on one picture: one record description serves the exports, the log facts and the record outputs; the kernel log and the rings of the record outputs are two paths that share nothing else; the record output `log` joins them only when a starter wires it.
+
+```mermaid
+flowchart LR
+    subgraph module_file["The module file of server"]
+        records["Records: the record descriptions"]
+        facts["Facts: the template and the key of each fact type"]
+        declarations["Record outputs and record inputs: requests, of Access_Record"]
+    end
+    subgraph process["The process server"]
+        fact_write["system.log_fact with a record value"]
+        requests["The record output requests"]
+        log_output["The record output log, which each process has"]
+    end
+    kernel_log["The kernel log: lossy diagnostics"]
+    log_service["The log service: log.records and log.follow"]
+    console["The console: facts, where, and server.requests"]
+    reader["Another module, through a record input"]
+    subgraph collector["The collector of the principal"]
+        keep["A Keep space, which drops its oldest records"]
+        audit["An Audit space, append-only, with a chain of hashes"]
+    end
+    fact_write -- "always" --> kernel_log
+    kernel_log --> log_service
+    log_service --> console
+    requests -- "a ring for each reader, with no loss" --> reader
+    requests -- "a ring, with no loss" --> console
+    requests -. "wired at the start, the errors only" .-> keep
+    requests -. "wired at the start" .-> audit
+    log_output -. "only when the starter wires it" .-> audit
+    module_file -. "each record checked against its description" .-> console
+```
+
 ### The declaration in the module
 
 The source declares each record output and each record input as a package variable of a generic type of `modus:support/system`, with a documented comment:
@@ -130,6 +163,28 @@ Each end names its record output or record input by its index in the tables of i
 **Who can end a wiring.** The wiring belongs to its asker: it is in the wiring page of the asker ("The budget"), and only the asker, or the principal with `revoke` from a console that acts for it, ends it. The process at an end of a wiring has no command that ends it. It can stop writing, or close its own end: that is silence in the stream, never a removal of a record that it wrote. At its stop, the root service writes `Writer_Stopped` with its stop code in each of its rings.
 
 ### The wiring list of a start
+
+The start of an audited server, from the start command to the end of its streams: the root service applies the whole list before the first instruction of the child, so the audit misses no record.
+
+```mermaid
+sequenceDiagram
+    participant starter as Starter
+    participant root as Root service
+    participant collector as Collector
+    participant server as server
+    participant shop as shop
+    starter->>root: Start of server, with its wiring list
+    root->>root: check each row: equal types, the budget, a start that the starter asked for
+    root->>root: make the rings, paid by the starter
+    root->>collector: the ends sources and forward
+    root->>server: the ends requests, log and orders, in its context
+    server->>server: its first instruction, after the wiring: a joined record of 0
+    shop->>collector: a record of shop.orders
+    collector->>collector: commit the audit segment, with the hash of the one before
+    collector->>server: forward, to server.orders
+    server->>collector: server.requests and server.log
+    root->>collector: the end of each stream: Writer_Stopped and the stop code
+```
 
 A starter that starts a process can give the wiring of the child in the `Start` command itself: a **wiring list**, a table of wiring records. The root service applies the whole list **before the first instruction of the child**: it makes each ring, writes each end into the wiring ring of the child, and only then starts its first thread. So no record of the child is lost, and the first place of each ring of a record output of the child is a joined record of 0.
 
