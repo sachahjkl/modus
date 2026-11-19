@@ -1,7 +1,9 @@
 #+build !freestanding
 package interface
 
+import "base:runtime"
 import "modus:contract/draw_record"
+import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "core:slice"
 import "core:sync"
@@ -21,8 +23,42 @@ Test_Interface_Font :: struct {
 	bold_memory:    []u64,
 }
 
+// The font outlines of the tests, opened once in the state of the text
+// rendering of the process: a text in the interface font is measured from
+// its font file. No test of this package changes that state; the words
+// stay for the run, as the open fonts read them.
+@(private = "file")
+interface_outlines_lock: sync.Mutex
+@(private = "file")
+interface_outlines_words: []u64
+
+@(private = "file")
+interface_outlines_open :: proc(t: ^testing.T) {
+	sync.mutex_lock(&interface_outlines_lock)
+	defer sync.mutex_unlock(&interface_outlines_lock)
+	if interface_outlines_words != nil {
+		return
+	}
+	fonts := [4]font_outlines.Font_Input {
+		{"b612", #load("../../../../resources/fonts/b612.ttf")},
+		{"b612_bold", #load("../../../../resources/fonts/b612_bold.ttf")},
+		{"paper_mono", #load("../../../../resources/fonts/paper_mono.ttf")},
+		{"paper_mono_semibold", #load("../../../../resources/fonts/paper_mono_semibold.ttf")},
+	}
+	size := font_outlines.resource_size(fonts[:])
+	interface_outlines_words = make([]u64, (size + 7) / 8, runtime.heap_allocator())
+	bytes := ([^]u8)(raw_data(interface_outlines_words))[:size]
+	_, written := font_outlines.resource_write(fonts[:], bytes)
+	testing.expect(t, written)
+	outlines, problem := font_outlines.validate(bytes)
+	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
+	missing := text_rendering.open(&outlines)
+	testing.expect_value(t, missing, text_rendering.Outline_Fonts{})
+}
+
 @(private = "file")
 test_interface_font :: proc(t: ^testing.T) -> (result: Test_Interface_Font) {
+	interface_outlines_open(t)
 	Weight :: struct {
 		bytes:     []u8,
 		name:      string,
@@ -424,7 +460,7 @@ TEXT_PARTS :: [4]Rectangle{{0, 0, 37, 64}, {37, 0, 151, 30}, {37, 30, 151, 64}, 
 interface_text_reference :: proc(canvas: graphics.Canvas, caches: ^display.Interface_Font, box: Rectangle, origin: i64, text: string, font: Font, color: graphics.Color) {
 	view := graphics.view(canvas, box.left, box.top, box.right - box.left, box.bottom - box.top)
 	cache := interface_cache_of(caches, font)
-	spacing, ok := text_rendering.spacing_of(cache, font_scale(font))
+	spacing, ok := interface_spacing_of(font)
 	if !ok {
 		return
 	}

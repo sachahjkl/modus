@@ -186,12 +186,36 @@ validate_refuses_a_damaged_resource :: proc(t: ^testing.T) {
 	outlines: Outlines
 	outlines, problem = validate_at(uintptr(raw_data(bytes)), u64(len(bytes)))
 	testing.expect_value(t, problem.kind, Problem_Kind.None)
-	testing.expect_value(t, len(outlines.records), 2)
+	testing.expect_value(t, outlines.count, 2)
 	testing.expect_value(t, name_of(&outlines.records[0]), "first")
 	testing.expect_value(t, name_of(&outlines.records[1]), "second")
 	testing.expect(t, string(font_bytes(&outlines, 0)) == string(first_file[:]))
 	testing.expect(t, string(font_bytes(&outlines, 1)) == string(second_file[:]))
 	testing.expect_value(t, outlines.records[1].offset % FONT_ALIGNMENT, u64(0))
+}
+
+// The bytes of a resource can change after validate, as a call region that
+// another thread writes: the span of each font stays the span that validate
+// checked. A record whose offset and size are changed to pass the end of
+// the resource, and a header whose count grows past the limit, change
+// neither the count nor any span.
+@(test)
+a_change_after_validate_changes_no_span :: proc(t: ^testing.T) {
+	words, bytes := resource_make(t)
+	defer delete(words)
+	outlines, problem := validate(bytes)
+	testing.expect_value(t, problem.kind, Problem_Kind.None)
+	header := (^Header)(raw_data(bytes))
+	records := ([^]Font_Record)(&bytes[RECORDS_OFFSET])
+	header.font_count = FONT_LIMIT + 1
+	records[1].offset = max(u64)
+	records[1].size = max(u64)
+	records[0].name = {}
+	testing.expect_value(t, outlines.count, 2)
+	testing.expect_value(t, outlines.header.font_count, u32(2))
+	testing.expect_value(t, name_of(&outlines.records[0]), "first")
+	testing.expect(t, string(font_bytes(&outlines, 0)) == string(first_file[:]))
+	testing.expect(t, string(font_bytes(&outlines, 1)) == string(second_file[:]))
 }
 
 // The lists of the characters past the glyph cache: each run is in order

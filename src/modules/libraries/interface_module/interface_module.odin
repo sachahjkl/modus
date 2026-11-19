@@ -133,6 +133,15 @@ interface_font_of_process :: proc "contextless" () -> ^display.Interface_Font {
 				state = 2
 			}
 		}
+		// The places of a text in the interface font come from its font
+		// files: this copy of the text rendering opens the outlines that
+		// the starter of the process mapped beside the caches.
+		if state == 1 {
+			_, _ = display.fallback_load(context_record)
+			if !display.interface_faces_opened(&caches[0], &caches[1]) {
+				state = 2
+			}
+		}
 		if state == 1 {
 			module_interface_font = {regular = caches[0], bold = caches[1]}
 		}

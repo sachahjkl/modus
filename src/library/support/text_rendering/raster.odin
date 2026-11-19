@@ -92,8 +92,9 @@ Small_Band :: struct {
 
 small_band: Small_Band
 
-// outline_of gives an outline over the points of an outline memory.
-@(private)
+// outline_of gives an outline over the points of an outline memory: the
+// library module text_rendering opens the fonts of a call with one on its
+// stack.
 outline_of :: proc "contextless" (memory: ^Outline_Memory) -> vector_font.Outline {
 	return {points = memory.points[:], contour_ends = memory.contours[:]}
 }

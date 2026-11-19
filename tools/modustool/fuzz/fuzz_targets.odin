@@ -381,7 +381,7 @@ fuzz_target_table := [?]Fuzz_Target {
 	{
 		name = "text_shaping",
 		kind = .Raw,
-		about = "support/text_rendering: one placed glyph for each character, at its byte, with the advance of its table and its pair",
+		about = "support/text_rendering: one placed glyph for each character, at its byte, with the advance and the pair of its font file at any size, each in its bound",
 		packages = {foundation.SOURCE_FOLDER_SUPPORT + "/text_rendering"},
 		input_limit = FUZZ_SHAPING_INPUT_LIMIT,
 		execute = fuzz_text_shaping_execute,

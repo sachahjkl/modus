@@ -96,6 +96,7 @@ import "modus:contract/date"
 import "modus:support/calendar"
 import "modus:support/graphics"
 import "modus:support/interface"
+import "modus:support/text_rendering"
 import "modus:private/compositor/bar"
 import "modus:support/mark"
 import "modus:support/screen_presence"
@@ -403,7 +404,7 @@ bar_measure :: proc "contextless" () {
 		if measured == 1 && (font == nil || graphics.text_state.font != .Vector) {
 			break
 		}
-		bar_layout = bar.layout_of(measured_font != nil ? &measured_font.regular : nil)
+		bar_layout = bar.layout_of(measured_font != nil ? text_rendering.Face.Interface : text_rendering.Face.None)
 		_, menu_top, _, menu_height := bar.menu(bar_layout)
 		areas := [1]Rectangle{{0, 0, frame.width, max(BAR_HEIGHT, menu_top + menu_height)}}
 		for _ in 0 ..< ROUNDS {
@@ -429,7 +430,7 @@ bar_measure :: proc "contextless" () {
 bar_layout_update :: proc "contextless" () {
 	font := display.interface_font_of()
 	in_interface_font := font != nil && graphics.text_state.font == .Vector
-	layout := bar.layout_of(in_interface_font ? &font.regular : nil)
+	layout := bar.layout_of(in_interface_font ? text_rendering.Face.Interface : text_rendering.Face.None)
 	if bar_layout_known && layout == bar_layout && in_interface_font == bar_in_interface_font {
 		return
 	}

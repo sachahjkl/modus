@@ -505,8 +505,10 @@ interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_reco
 		text_draw(view, int(origin >> draw_record.UNIT_SHIFT), y, string(text), color, scale, font.weight, alpha)
 		return
 	}
+	// The places from the font file, as the measure of the writer; the
+	// pixels of the 192 characters from the glyph cache.
 	cache := interface_cache_of(table.interface_font, font)
-	spacing, ok := text_rendering.spacing_of(cache, scale)
+	spacing, ok := interface_spacing_of(font)
 	if !ok {
 		return
 	}

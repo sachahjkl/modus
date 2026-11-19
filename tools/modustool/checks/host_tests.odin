@@ -268,7 +268,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/entropy_service",
 	foundation.SOURCE_FOLDER_CONTRACT + "/fixed_addresses",
 	foundation.SOURCE_FOLDER_CONTRACT + "/settings",
-	foundation.LIBRARY_MODULE_SOURCES + "text_shaping",
+	foundation.LIBRARY_MODULE_SOURCES + "text_rendering",
 	foundation.SOURCE_FOLDER_SUPPORT + "/text_rendering",
 	foundation.SOURCE_FOLDER_SUPPORT + "/mark",
 	foundation.SOURCE_FOLDER_SUPPORT + "/terminal",

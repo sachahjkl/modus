@@ -20,6 +20,7 @@
 // See [font outlines](term:font-outlines).
 package font_outlines
 
+import "base:intrinsics"
 import "modus:contract/blake3"
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
@@ -128,10 +129,14 @@ Problem :: struct {
 	limit: u64, // The value that the reader needs.
 }
 
-// Outlines: a resource that validate accepted.
+// Outlines: a resource that validate accepted, with a copy of its header
+// and of its records. The bytes of the resource can be memory that another
+// thread changes, as a call region is: each span of a font comes from the
+// copy that validate checked, never from a second read of the bytes.
 Outlines :: struct {
-	header:  ^Header,
-	records: []Font_Record,
+	header:  Header,
+	records: [FONT_LIMIT]Font_Record, // The first count records.
+	count:   int, // The records: 1 to FONT_LIMIT.
 	bytes:   []u8, // The whole resource: file_size bytes.
 }
 
@@ -167,12 +172,15 @@ name_valid :: proc "contextless" (name: [NAME_SIZE]u8) -> bool {
 }
 
 // validate checks a resource: its header, then each record: its name, and
-// its font file inside the resource. It reads each field once.
+// its font file inside the resource. It copies the header and each record
+// once, with one read, and checks the copies: a byte that changes after
+// that read changes no span that it gives.
 validate :: proc "contextless" (bytes: []u8) -> (outlines: Outlines, problem: Problem) {
 	if len(bytes) < HEADER_SIZE || uintptr(raw_data(bytes)) % 8 != 0 {
 		return {}, {kind = .Too_Short, value = u64(len(bytes)), limit = HEADER_SIZE}
 	}
-	header := (^Header)(raw_data(bytes))
+	outlines.header = intrinsics.volatile_load((^Header)(raw_data(bytes)))
+	header := &outlines.header
 	if header.magic != MAGIC {
 		return {}, {kind = .Bad_Magic, value = header.magic, limit = MAGIC}
 	}
@@ -190,12 +198,14 @@ validate :: proc "contextless" (bytes: []u8) -> (outlines: Outlines, problem: Pr
 	if records_end > u64(len(bytes)) {
 		return {}, {kind = .Too_Short, value = u64(len(bytes)), limit = records_end}
 	}
-	records := ([^]Font_Record)(&bytes[RECORDS_OFFSET])[:count]
-	for &record, index in records {
+	in_bytes := ([^]Font_Record)(&bytes[RECORDS_OFFSET])
+	for index in 0 ..< int(count) {
+		outlines.records[index] = intrinsics.volatile_load(&in_bytes[index])
+		record := &outlines.records[index]
 		if !name_valid(record.name) {
 			return {}, {kind = .Bad_Name, index = u32(index)}
 		}
-		for &before in records[:index] {
+		for &before in outlines.records[:index] {
 			if before.name == record.name {
 				return {}, {kind = .Bad_Name, index = u32(index)}
 			}
@@ -205,7 +215,9 @@ validate :: proc "contextless" (bytes: []u8) -> (outlines: Outlines, problem: Pr
 			return {}, {kind = .Font_Outside, index = u32(index), value = record.offset, limit = u64(len(bytes))}
 		}
 	}
-	return {header = header, records = records, bytes = bytes}, {}
+	outlines.count = int(count)
+	outlines.bytes = bytes
+	return outlines, {}
 }
 
 // validate_at checks the resource that a starter mapped at an address: the
@@ -233,7 +245,8 @@ open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (outlines: Outli
 	return validate_at(uintptr(place.address), place.span)
 }
 
-// font_bytes gives the font file of a record of a valid resource.
+// font_bytes gives the font file of a record of a valid resource, from the
+// copy of the record that validate checked.
 font_bytes :: proc "contextless" (outlines: ^Outlines, index: int) -> []u8 {
 	record := &outlines.records[index]
 	return outlines.bytes[record.offset:][:record.size]

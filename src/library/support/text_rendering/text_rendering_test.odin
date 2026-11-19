@@ -961,6 +961,91 @@ the_raster_time_of_one_glyph :: proc(t: ^testing.T) {
 	}
 }
 
+// The time of the measure of 100 lines of the interface font at a line of
+// 16 pixels: from the font file (measure_ranges, as each process measures
+// now), and from the tables of advances and pairs of a glyph cache, as the
+// shaper measured before. The least of 200 rounds; the two give the same
+// widths. A measure, never a test of a speed.
+@(test)
+the_measure_time_of_a_hundred_lines :: proc(t: ^testing.T) {
+	test_state_take()
+	fonts := repository_fonts()
+	_, words := outlines_open(t, fonts[:])
+	defer delete(words)
+	render := new(vector_font.Render_Memory)
+	defer free(render)
+	out := make([]u64, vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT / 8)
+	defer delete(out)
+	file := ([^]u8)(raw_data(out))[:vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT]
+	font, problem := vector_font.font_open(b612_file)
+	testing.expect_value(t, problem, vector_font.Font_Problem.None)
+	positions := [3]int{3, 1, 1}
+	size: int
+	size, problem = vector_font.glyph_cache_build_proportional(&font, b612_file, "b612", true, render, file, positions[:])
+	testing.expect_value(t, problem, vector_font.Font_Problem.None)
+	cache, refused := glyph_cache.validate(file[:size])
+	testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
+	advances := glyph_cache.advances_of(&cache, 1)
+	pairs := glyph_cache.pairs_of(&cache, 1)
+	// The width of a text from the tables of the cache: the advance of
+	// each character and the pair with the next, each from its table.
+	table_width :: proc(advances: []i32, pairs: []glyph_cache.Pair_Entry, text: []u8) -> (width: i64) {
+		for index in 0 ..< len(text) {
+			left, _ := glyph_cache.character_index(rune(text[index]))
+			width += i64(advances[left])
+			if index + 1 < len(text) {
+				right, _ := glyph_cache.character_index(rune(text[index + 1]))
+				key := u32(left) << 8 | u32(right)
+				low, high := 0, len(pairs)
+				for low < high {
+					middle := low + (high - low) / 2
+					pair_key := u32(pairs[middle].left) << 8 | u32(pairs[middle].right)
+					switch {
+					case pair_key == key:
+						width += i64(pairs[middle].adjustment)
+						low = high
+					case pair_key < key:
+						low = middle + 1
+					case:
+						high = middle
+					}
+				}
+			}
+		}
+		return width
+	}
+	LINES :: 100
+	sample := [?]string{"Settings", "To AVATAR", "The interface takes it for titles, labels and buttons", "LT Wave", "processor_frame", "42 windows"}
+	bytes := make([dynamic]u8)
+	defer delete(bytes)
+	ranges := make([]Text_Range, LINES)
+	defer delete(ranges)
+	for index in 0 ..< LINES {
+		line := sample[index % len(sample)]
+		ranges[index] = {start = u32(len(bytes)), count = u32(len(line))}
+		append(&bytes, ..transmute([]u8)line)
+	}
+	spacing, ok := spacing_of(.Interface, TEXT_SIZE_OF_SCALE_ONE)
+	testing.expect(t, ok)
+	least_file, least_tables := max(i64), max(i64)
+	for _ in 0 ..< 200 {
+		start := time.tick_now()
+		_, _, _ = measure_ranges(&spacing, bytes[:], ranges)
+		least_file = min(least_file, i64(time.tick_since(start)))
+		start = time.tick_now()
+		sum: i64
+		for range in ranges {
+			sum += table_width(advances, pairs, bytes[range.start:][:range.count])
+		}
+		least_tables = min(least_tables, i64(time.tick_since(start)))
+		testing.expect(t, sum > 0)
+	}
+	for range in ranges {
+		testing.expect_value(t, range.width, table_width(advances, pairs, bytes[range.start:][:range.count]))
+	}
+	fmt.printfln("text_rendering: the measure of %v lines of B612 at a line of 16 pixels, the least of 200: %v ns from the font file, %v ns from the tables of a glyph cache", LINES, least_file, least_tables)
+}
+
 // A change of a setting in the middle of a frame: the grid fit and the
 // size are in the key, so a glyph of the other grid fit or of another size
 // is another entry, and the words of the glyph drawn before stay as they

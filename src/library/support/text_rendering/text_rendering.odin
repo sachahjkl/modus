@@ -255,24 +255,43 @@ Font :: struct {
 	hash:   [32]u8, // The hash that its record names.
 	own:    vector_font.Font_Measures, // From its outlines: the frame of a font of cells.
 	stated: vector_font.Font_Measures, // With the heights that its table OS/2 states and the units of one cell from its cap height: the frame of a proportional font.
+	// The pair adjustments of its table kern. Empty for a font with no such
+	// table, and for a table that the reader refuses: the font still draws
+	// and measures, with no pair.
+	pairs:  vector_font.Pair_Table,
+}
+
+// Font_Set: the fonts of one resource of outlines, opened. A process has
+// one in its state (open); a call of the library module text_rendering
+// opens one from the bytes of its caller, for that call only.
+Font_Set :: struct {
+	opened: bool,
+	fonts:  [Outline_Font]Font,
 }
 
 // State: the state of this copy of the package. All zero: nothing is
 // opened, and each character past the glyph cache draws the replacement
 // glyph.
 State :: struct {
-	opened: bool,
-	fonts:  [Outline_Font]Font,
-	frame:  u64, // The number of the frame: frame_begin adds one.
+	using font_set: Font_Set,
+	frame:          u64, // The number of the frame: frame_begin adds one.
 }
 
 state: State
 
-// open opens the fonts of the outlines. It gives the fonts that the
-// outlines do not hold or that the parser refuses: a chain skips them. A
-// second open does nothing: the outlines never change.
+// open opens the fonts of the outlines into the state of this copy
+// (fonts_open). A second open does nothing: the outlines never change.
 open :: proc "contextless" (outlines: ^font_outlines.Outlines) -> (missing: Outline_Fonts) {
-	if state.opened {
+	outline := outline_of(&outline_memory)
+	return fonts_open(&state.font_set, outlines, &outline)
+}
+
+// fonts_open opens the fonts of the outlines into a set, with the memory of
+// one outline for the measures of each font. It gives the fonts that the
+// outlines do not hold or that the parser refuses: a chain skips them. A
+// set that is open stays as it is.
+fonts_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outlines, outline: ^vector_font.Outline) -> (missing: Outline_Fonts) {
+	if set.opened {
 		return {}
 	}
 	for font in Outline_Font {
@@ -281,28 +300,33 @@ open :: proc "contextless" (outlines: ^font_outlines.Outlines) -> (missing: Outl
 		}
 		missing += {font}
 		name := outline_font_name(font)
-		for &record, index in outlines.records {
-			if font_outlines.name_of(&record) != name {
+		for index in 0 ..< min(outlines.count, font_outlines.FONT_LIMIT) {
+			record := &outlines.records[index]
+			if font_outlines.name_of(record) != name {
 				continue
 			}
-			opened := &state.fonts[font]
+			opened := &set.fonts[font]
 			problem: vector_font.Font_Problem
 			opened.file, problem = vector_font.font_open(font_outlines.font_bytes(outlines, index))
 			if problem == .None {
-				outline := outline_of(&outline_memory)
-				opened.own, problem = vector_font.font_measures_of_outline(&opened.file, &outline)
+				opened.own, problem = vector_font.font_measures_of_outline(&opened.file, outline)
 			}
 			if problem == .None {
 				opened.stated, problem = vector_font.proportional_measures(&opened.file, opened.own)
 			}
 			if problem == .None {
+				pair_problem: vector_font.Font_Problem
+				opened.pairs, pair_problem = vector_font.pair_table_open(&opened.file)
+				if pair_problem != .None {
+					opened.pairs = {}
+				}
 				opened.hash = record.hash
 				opened.opened = true
 				missing -= {font}
 			}
 		}
 	}
-	state.opened = true
+	set.opened = true
 	return missing
 }
 
@@ -396,7 +420,12 @@ chain_fonts :: proc "contextless" (face: Face) -> (fonts: Outline_Fonts) {
 // a text, before open, and for a face whose first font the outlines lack:
 // its frame places each glyph of the face.
 font_glyph_of :: proc "contextless" (face: Face, character: rune) -> (font: Outline_Font, glyph_index: int) {
-	if face == .None || !state.opened || !character_valid(character) || !state.fonts[face_forms[face].primary].opened {
+	return font_glyph_in(&state.font_set, face, character)
+}
+
+// font_glyph_in is font_glyph_of over a set of fonts.
+font_glyph_in :: proc "contextless" (set: ^Font_Set, face: Face, character: rune) -> (font: Outline_Font, glyph_index: int) {
+	if face == .None || !set.opened || !character_valid(character) || !set.fonts[face_forms[face].primary].opened {
 		return .None, 0
 	}
 	chain := chain_of(face, character)
@@ -404,7 +433,7 @@ font_glyph_of :: proc "contextless" (face: Face, character: rune) -> (font: Outl
 		if each == .None {
 			break
 		}
-		opened := &state.fonts[each]
+		opened := &set.fonts[each]
 		if !opened.opened {
 			continue
 		}
@@ -433,13 +462,19 @@ has :: proc "contextless" (face: Face, character: rune) -> bool {
 // first font.
 @(private)
 measures_in_frame :: proc "contextless" (face: Face, font: Outline_Font) -> vector_font.Font_Measures {
+	return measures_in_frame_of(&state.font_set, face, font)
+}
+
+// measures_in_frame_of is measures_in_frame over a set of fonts.
+@(private)
+measures_in_frame_of :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_Font) -> vector_font.Font_Measures {
 	form := face_forms[face]
-	first := &state.fonts[form.primary]
+	first := &set.fonts[form.primary]
 	primary := form.proportional ? first.stated : first.own
 	if font == form.primary {
 		return primary
 	}
-	measures := state.fonts[font].stated
+	measures := set.fonts[font].stated
 	// The open accepted each font only with a cap height above 0, so the
 	// divisor is not 0; the units of a cell stay above 0, as they divide an
 	// advance.
@@ -456,11 +491,19 @@ units_at_size :: #force_inline proc "contextless" (units, size, units_per_cell: 
 	return vector_font.divide_rounded(i64(units) * i64(size), 2 * i64(max(units_per_cell, 1)))
 }
 
-// advance_limit_of_size gives the bound of an advance at a size: four
-// lines. A font that states more is hostile; its advance is kept in that
-// bound, so no sum along a text wraps.
+// advance_limit_of_size gives the bound of an advance at a size: one line.
+// The widest advance of the fonts of the system is under it (B612: 2 000
+// units, a line is 2 400). A font that states more is hostile; its advance
+// is kept in that bound, so no sum along a text wraps (shaping.odin).
 advance_limit_of_size :: #force_inline proc "contextless" (size: int) -> i64 {
-	return 4 * i64(size)
+	return i64(size)
+}
+
+// pair_limit_of_size gives the bound of a pair adjustment at a size, on
+// each side of 0: half a line. The largest pair of the fonts of the system
+// is 200 units, a twelfth of a line of B612.
+pair_limit_of_size :: #force_inline proc "contextless" (size: int) -> i64 {
+	return i64(size) / 2
 }
 
 // advance gives the advance of a character of a face at a text size, in
@@ -469,18 +512,41 @@ advance_limit_of_size :: #force_inline proc "contextless" (size: int) -> i64 {
 // advance of a cell, half the line. found is false for a character that no
 // font of the chain has, and for a size that size_check refuses.
 advance :: proc "contextless" (face: Face, character: rune, size: int) -> (value: i32, found: bool) {
-	if size_check(size) != .None {
-		return 0, false
-	}
-	font := font_of(face, character)
-	if font == .None {
+	font, glyph_index := font_glyph_of(face, character)
+	return glyph_advance_in(&state.font_set, face, font, glyph_index, size)
+}
+
+// glyph_advance_in gives the advance of a glyph of a font of the chain of
+// a face, in a set of fonts, at a text size, in 1/64 of a pixel: the
+// advance of its table hmtx, scaled to the frame of the face, rounded once,
+// and kept from 0 to one line. found is false for the font None and for a
+// size that size_check refuses.
+glyph_advance_in :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_Font, glyph_index, size: int) -> (value: i32, found: bool) {
+	if size_check(size) != .None || font == .None || face == .None {
 		return 0, false
 	}
 	if !face_forms[face].proportional {
 		return i32(vector_font.divide_rounded(i64(size), 2)), true
 	}
-	units := vector_font.character_advance(&state.fonts[font].file, character)
-	return i32(clamp(units_at_size(units, size, measures_in_frame(face, font).advance), 0, advance_limit_of_size(size))), true
+	units := vector_font.glyph_advance(&set.fonts[font].file, glyph_index)
+	return i32(clamp(units_at_size(units, size, measures_in_frame_of(set, face, font).advance), 0, advance_limit_of_size(size))), true
+}
+
+// glyph_pair_in gives the pair adjustment of two glyphs of one font of the
+// chain of a proportional face, in a set of fonts, at a text size, in 1/64
+// of a pixel: the pair of its table kern, scaled and rounded as an advance,
+// and kept within half a line on each side. 0 for two fonts, for a face of
+// cells (each character is one cell), and for a pair that the table lacks.
+glyph_pair_in :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_Font, left_index, right_index, size: int) -> i32 {
+	if font == .None || face == .None || !face_forms[face].proportional || size_check(size) != .None {
+		return 0
+	}
+	units := vector_font.pair_adjustment(&set.fonts[font].pairs, left_index, right_index)
+	if units == 0 {
+		return 0
+	}
+	limit := pair_limit_of_size(size)
+	return i32(clamp(units_at_size(units, size, measures_in_frame_of(set, face, font).advance), -limit, limit))
 }
 
 // coverage counts the characters of a script that the chain of a face
