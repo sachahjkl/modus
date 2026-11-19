@@ -191,7 +191,7 @@ site_first_sentences :: proc(t: ^testing.T) {
 
 @(test)
 site_lines_of_a_log :: proc(t: ^testing.T) {
-	log := "[a] a: one 1\r\n[b:channel] b: frame 2 us\n[b] b: frame 3 us\nplain frame 4 us\n"
+	log := "[a] a: one 1\r\n[b] b: frame 2 us\n[b] b: frame 3 us\nplain frame 4 us\n"
 	text, line_number, count := site_line_choose(log, "frame", .Last)
 	testing.expect_value(t, text, "plain frame 4 us")
 	testing.expect_value(t, line_number, 4)

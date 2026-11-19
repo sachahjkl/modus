@@ -41,28 +41,18 @@ error_detail_number_text :: sentence.error_detail_number_text
 export_error_detail_text :: sentence.export_error_detail_text
 error_details_rest_text :: sentence.error_details_rest_text
 
-// log writes one line on the log of the kernel. A process with no handle to
-// the log writes nothing.
-//
-// The line has the level `Info` and no channel. Each part is a text or a
-// value: a number, a `Hex`, a `Size`, a `Duration`, a `Hash`, a
-// `Module_Name` or a status; a reader of the log shows each value in the
-// color of its kind.
-//
-// ```odin
-// system.log("console: loaded ", system.Module_Name{"manual"}, " in ", system.Duration{spent, .Microseconds})
-// ```
-log :: proc "contextless" (parts: ..Part) {
-	log_in("", .Info, ..parts)
-}
-
-// The bytes of the buffer of `log_in`: the longest line that it gives to
-// the kernel in one `Log` call.
+// The bytes of the buffer of `log`: the longest line that it gives to the
+// kernel in one `Log` call.
 LOG_PART_SIZE :: 512
 
-// log_in writes one text on the log, in a channel and with a level. The
-// channel is a short name with no space: at most 16 characters. The kernel
-// sets the time, the process and the thread of the record. A text of any
+// log writes one line on the log of the kernel, with a level. A process
+// with no handle to the log writes nothing. Each part is a text or a value:
+// a number, a `Hex`, a `Size`, a `Duration`, a `Hash`, a `Module_Name` or a
+// status; a reader of the log shows each value in the color of its kind.
+// The line names no group: a reader chooses its rows by process and by
+// level (src/md/features/log_facts.md).
+//
+// The kernel sets the time, the process and the thread of the record. A text of any
 // length goes whole: the parts are written in a buffer of LOG_PART_SIZE
 // bytes, and each time the buffer is full it goes to the kernel as one line
 // of the log, ended after a whole character; the text continues on the next
@@ -74,21 +64,18 @@ LOG_PART_SIZE :: 512
 //
 // The text is UTF-8: the kernel writes "?" in place of each byte of an invalid sequence
 // of it, a control character included (src/library/contract/text_encoding). A
-// process with no log handle writes nothing. A line above the log records
-// of each second of the budget is dropped and counted, and one record says
-// the count before the next line (log_call): it never waits.
+// line above the log records of each second of the budget is dropped and
+// counted, and one record says the count before the next line (log_call):
+// it never waits.
 //
 // ```odin
-// system.log_in("storage", .Warning, "storage: the block ", block, " has a wrong check")
+// system.log(.Warning, "storage: the block ", block, " has a wrong check")
 // ```
-log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Part) {
+log :: proc "contextless" (level: op.Log_Level, parts: ..Part) {
 	handle := context_record().handles[op.CONTEXT_LOG]
 	if handle == 0 {
 		return
 	}
-	name: [op.LOG_CHANNEL_CAPACITY]u8
-	copy(name[:], channel)
-	packed := transmute([2]u64)name
 	buffer: [LOG_PART_SIZE]u8
 	count := 0
 	runs: [op.LOG_CALL_RUN_LIMIT]value_kinds.Value_Run_In_Call
@@ -125,7 +112,7 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Par
 				if part_start < line {
 					value_kinds.value_run_add(sent[:], &sent_count, part_start, line, kind)
 				}
-				log_send(handle, buffer[:line], sent[:sent_count], level, packed)
+				log_send(handle, buffer[:line], sent[:sent_count], level)
 				run_count = value_kinds.value_runs_after(runs[:], run_count, line)
 				part_start = max(part_start - line, 0)
 				count = copy(buffer[:], buffer[line:count])
@@ -133,13 +120,13 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Par
 		}
 		value_kinds.value_run_add(runs[:], &run_count, part_start, count, kind)
 	}
-	log_send(handle, buffer[:count], runs[:run_count], level, packed)
+	log_send(handle, buffer[:count], runs[:run_count], level)
 }
 
 // log_send gives one line to the kernel: its text, then its value runs right
 // after it, as the operation Log takes them.
 @(private = "file")
-log_send :: proc "contextless" (handle: Handle, text: []u8, runs: []value_kinds.Value_Run_In_Call, level: op.Log_Level, packed: [2]u64) {
+log_send :: proc "contextless" (handle: Handle, text: []u8, runs: []value_kinds.Value_Run_In_Call, level: op.Log_Level) {
 	RUN_SIZE :: size_of(value_kinds.Value_Run_In_Call)
 	area: [LOG_PART_SIZE + op.LOG_CALL_RUN_LIMIT * RUN_SIZE]u8
 	count := copy(area[:], text)
@@ -147,7 +134,7 @@ log_send :: proc "contextless" (handle: Handle, text: []u8, runs: []value_kinds.
 	if run_count > 0 {
 		copy(area[count:], ([^]u8)(raw_data(runs))[:run_count * RUN_SIZE])
 	}
-	log_call(handle, &area[0], count, level, packed, run_count)
+	log_call(handle, &area[0], count, level, run_count)
 }
 
 // The lines of this process that the kernel refused for its log limit, and
@@ -164,17 +151,17 @@ log_lines_refused: u64
 // way; the kernel counts each refused record in the budget too
 // (`budget_used`), which the starter reads.
 @(private = "file")
-log_call :: proc "contextless" (handle: Handle, text: ^u8, count: int, level: op.Log_Level, packed: [2]u64, run_count: int) {
+log_call :: proc "contextless" (handle: Handle, text: ^u8, count: int, level: op.Log_Level, run_count: int) {
 	if refused := intrinsics.atomic_load(&log_lines_refused); refused != 0 {
 		note: [64]u8
 		digits: [20]u8
 		note_count := copy(note[:], format_decimal(digits[:], refused))
 		note_count += copy(note[note_count:], " lines of this process were refused by its log limit")
-		if _, status := call(.Log, u64(handle), u64(uintptr(&note[0])), u64(note_count), u64(op.Log_Level.Warning), 0, 0, 0); status == .Ok {
+		if _, status := call(.Log, u64(handle), u64(uintptr(&note[0])), u64(note_count), u64(op.Log_Level.Warning), 0); status == .Ok {
 			intrinsics.atomic_sub(&log_lines_refused, refused)
 		}
 	}
-	if _, status := call(.Log, u64(handle), u64(uintptr(text)), u64(count), u64(level), packed[0], packed[1], u64(run_count)); status == .No_Budget {
+	if _, status := call(.Log, u64(handle), u64(uintptr(text)), u64(count), u64(level), u64(run_count)); status == .No_Budget {
 		intrinsics.atomic_add(&log_lines_refused, 1)
 	}
 }
@@ -222,7 +209,7 @@ log_text :: proc "contextless" (text: string) {
 		// slice with no address.
 		copied: [LOG_CALL_LIMIT]u8
 		count := copy(copied[:], part)
-		log_call(handle, &copied[0], count, .Info, {}, 0)
+		log_call(handle, &copied[0], count, .Info, 0)
 		if len(rest) == 0 {
 			break
 		}

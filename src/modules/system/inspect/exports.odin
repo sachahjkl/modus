@@ -268,7 +268,7 @@ modules :: proc "c" (process: ^string, result: ^[]Module, error: ^errors.Error_R
 		if module_writer, module_writer_ok := op.module_writer_of_word(item.writer); module_writer_ok {
 			copy(row.writer[:], op.module_writer_name(module_writer))
 		} else {
-			system.log("inspect: the module record at ", item.base, " has the writer word ", item.writer, ", which names no writer")
+			system.log(.Info, "inspect: the module record at ", item.base, " has the writer word ", item.writer, ", which names no writer")
 		}
 	}
 	return i64(count)

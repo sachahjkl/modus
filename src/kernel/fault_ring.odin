@@ -135,7 +135,7 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> Fault_D
 			// the next line.
 			if !process.debug_full_logged {
 				process.debug_full_logged = true
-				log_in("fault", .Warning, "kernel: process ", Module_Name{process_name(process)}, ": the ring of its debugger is full (", u64(process.debug_full), " times): the debugger does not see the fault")
+				log_with_level(.Warning, "kernel: process ", Module_Name{process_name(process)}, ": the ring of its debugger is full (", u64(process.debug_full), " times): the debugger does not see the fault")
 			}
 			// A breakpoint, or a single step that the debugger asked for,
 			// that finds no place is lost for the debugger, and is no
@@ -184,7 +184,7 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> Fault_D
 		if process.fault_written - read >= op.FAULT_RECORD_CAPACITY {
 			process.fault_full += 1
 			intrinsics.volatile_store(&record.fault_full, process.fault_full)
-			log_in("fault", .Warning, "kernel: process ", Module_Name{process_name(process)}, ": the fault ring is full (", u64(process.fault_full), " times): the fault stops the process")
+			log_with_level(.Warning, "kernel: process ", Module_Name{process_name(process)}, ": the fault ring is full (", u64(process.fault_full), " times): the fault stops the process")
 			return .Stops_The_Process
 		}
 	}

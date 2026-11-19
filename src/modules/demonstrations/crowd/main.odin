@@ -302,10 +302,10 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 	measure.done = true
 	if measured {
 		measure.rate = read * 1000 / max(end - begin, 1)
-		system.log("crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", written, " written, ", read, " read, ", measure.wrong, " wrong")
+		system.log(.Info, "crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", written, " written, ", read, " read, ", measure.wrong, " wrong")
 		return read != 0 && written == read && measure.together == u64(count)
 	}
-	system.log("crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", written, " written, ", read, " read, ", measure.wrong, " wrong, ", measure.entries, " kernel entries for one million records")
+	system.log(.Info, "crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", written, " written, ", read, " read, ", measure.wrong, " wrong, ", measure.entries, " kernel entries for one million records")
 	return written == u64(measure.writers) * RECORDS_CHECKED && written == read && measure.together == u64(count)
 }
 
@@ -391,9 +391,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		draw(&window)
 	}
 	if wrong || total_wrong != 0 {
-		system.log("crowd: wrong: ", total_wrong, " records lost, in disorder or read two times")
+		system.log(.Info, "crowd: wrong: ", total_wrong, " records lost, in disorder or read two times")
 	} else {
-		system.log("crowd: ok, ", u64(len(measures)), " runs, each record written is read one time, each event started all the threads")
+		system.log(.Info, "crowd: ok, ", u64(len(measures)), " runs, each record written is read one time, each event started all the threads")
 	}
 	for {
 		draw(&window)

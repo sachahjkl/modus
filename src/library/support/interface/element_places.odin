@@ -106,19 +106,19 @@ element_place_changed :: proc "contextless" (written: ^Element_Places, place: ^E
 // the frame no longer has writes "<prefix><owner>: the element <name> is
 // gone". A set with no change writes nothing, so a window that does not
 // move its elements adds no line to the log.
-element_places_publish :: proc "contextless" (written, now: ^Element_Places, channel, prefix, owner: string) {
+element_places_publish :: proc "contextless" (written, now: ^Element_Places, prefix, owner: string) {
 	for &place in now.places[:now.count] {
 		name := element_place_name(&place)
 		if !element_place_changed(written, &place) {
 			continue
 		}
 		area := place.area
-		system.log_in(channel, .Info, prefix, owner, ": the element ", name, " at ", i64(area.x), ",", i64(area.y), ",", i64(area.width), ",", i64(area.height))
+		system.log(.Info, prefix, owner, ": the element ", name, " at ", i64(area.x), ",", i64(area.y), ",", i64(area.width), ",", i64(area.height))
 	}
 	for &place in written.places[:written.count] {
 		name := element_place_name(&place)
 		if element_places_find(now, name) == nil {
-			system.log_in(channel, .Info, prefix, owner, ": the element ", name, " is gone")
+			system.log(.Info, prefix, owner, ": the element ", name, " is gone")
 		}
 	}
 	written.places = now.places

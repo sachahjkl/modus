@@ -72,7 +72,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if !logged {
 			logged = true
-			system.log("boot: ok, ", data.boot.stage_count, " stages, ", data.boot.range_count, " memory ranges, ", u64(data.process_total), " processes")
+			system.log(.Info, "boot: ok, ", data.boot.stage_count, " stages, ", data.boot.range_count, " memory ranges, ", u64(data.process_total), " processes")
 		}
 		for _ in display.next_event(&window) {}
 		system.sleep(system.time() + INTERVAL)

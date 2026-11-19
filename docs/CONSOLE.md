@@ -394,7 +394,7 @@ While a line calls an export, the console shows under the line the log records t
 ```
 
 - **Which records.** The records that a process called by the line wrote, from the first call of the line on: a service, a sandboxed process of `isolate`, and the console itself for a module that `load` put in it. A line follows 4 processes at most. A process that `start` starts is not followed: the line ends before the process writes.
-- **By channel.** The records of one process and one channel follow one head line: the name of the process, in the color of a module, and the channel. A record of another channel starts a new group.
+- **By process.** The records of one process follow one head line: the name of the process, in the color of a module. A record of another process starts a new group.
 - **The value runs.** Each value run of a record is in the color of its value kind, as in the window of the log (`docs/TOOLS.md`, "The log"). A record of the level error is in the color of a failure.
 - **While the line runs.** During an isolated call or a call of a service, the console reads the new records each 100 ms (`STATUS_INTERVAL`), and once more when the line ends, before it draws the result. During a direct call the console waits in the module: the records show when the call returns.
 - **To the terminal only.** These lines do not go to the log: the records are in the log already.

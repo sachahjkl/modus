@@ -99,7 +99,7 @@ status: ^u8
 requests: u64 // The physical address of the page of the request.
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log_in("iommu", .Error, "iommu_device: ", text)
+	system.log(.Error, "iommu_device: ", text)
 	system.stop(1)
 }
 
@@ -233,7 +233,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if written != .Used || read != .Used || status^ != 0 || !page_holds(([^]u8)(uintptr(data_address) + block.BLOCK_SIZE), PATTERN_WRITTEN) {
 		fail("a block written from a declared page and read into another declared page did not arrive")
 	}
-	system.log("iommu_device: a block written from a declared page and read into another declared page: the 4096 bytes arrived: as it must")
+	system.log(.Info, "iommu_device: a block written from a declared page and read into another declared page: the 4096 bytes arrived: as it must")
 	// The message interrupt of each request: through its entry, which names
 	// this device. Each interrupt wakes the wait; the hang bound only ends a
 	// hang.
@@ -252,7 +252,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if interrupts == 0 {
 		fail("the device ended its requests, and no message interrupt arrived before the hang bound")
 	}
-	system.log("iommu_device: the message interrupt of the device arrived through its entry: as it must")
+	system.log(.Info, "iommu_device: the message interrupt of the device arrived through its entry: as it must")
 
 	// 2. Messages that no entry gives this device: a read of a block of
 	// zeros into the interrupt addresses, so each message has the value 0.
@@ -266,7 +266,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if zeroed != .Used || forged != .Used {
 		fail("a read into the interrupt addresses: the device did not give the request back")
 	}
-	system.log("iommu_device: a read into the interrupt addresses, to entries that the kernel did not give this device: the device gave the request back: as it must")
+	system.log(.Info, "iommu_device: a read into the interrupt addresses, to entries that the kernel did not give this device: the device gave the request back: as it must")
 
 	// 3. A page that this service declares, then no longer holds: it closes
 	// its handle and keeps its mapping, so it can still read the page. The
@@ -294,13 +294,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	kept := page_holds(page_bytes, PATTERN_KEPT)
 	switch {
 	case !kept:
-		system.log("iommu_device: a read into a page that was not declared: the device wrote the page: no IOMMU keeps the device in the memory of its service on this machine")
+		system.log(.Info, "iommu_device: a read into a page that was not declared: the device wrote the page: no IOMMU keeps the device in the memory of its service on this machine")
 	case outcome == .Needs_Reset:
-		system.log("iommu_device: a read into a page that was not declared: the device needs a reset, and the page keeps its 4096 bytes: as it must")
+		system.log(.Info, "iommu_device: a read into a page that was not declared: the device needs a reset, and the page keeps its 4096 bytes: as it must")
 	case outcome == .Used:
-		system.log("iommu_device: a read into a page that was not declared: the device gave the request back with the status ", u64(status^), ", and the page keeps its 4096 bytes: as it must")
+		system.log(.Info, "iommu_device: a read into a page that was not declared: the device gave the request back with the status ", u64(status^), ", and the page keeps its 4096 bytes: as it must")
 	case:
-		system.log("iommu_device: a read into a page that was not declared: the device did not end the request before the hang bound")
+		system.log(.Info, "iommu_device: a read into a page that was not declared: the device did not end the request before the hang bound")
 	}
 
 	// 6. Behind a conventional bridge only: the devices there share one
@@ -329,7 +329,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			fail("without the registers of the other device behind the conventional bridge, a declaration was not refused")
 		}
 		system.close(refused)
-		system.log("iommu_device: without the registers of the other device behind the conventional bridge, a declaration is refused: as it must")
+		system.log(.Info, "iommu_device: without the registers of the other device behind the conventional bridge, a declaration is refused: as it must")
 		// The domain ended: a read into the second page of the data, which
 		// this service declared in step 1 and still holds, does not arrive.
 		second_page := ([^]u8)(uintptr(data_address) + block.BLOCK_SIZE)
@@ -349,7 +349,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// again (src/md/infrastructure/iommu.md, "The proof"). The disk
 		// has no ioevent file here, so QEMU took or refused the request
 		// before the notify returned, and before this line.
-		system.log("iommu_device: a read given to the device after the end of its domain: the service waits for the new size of the disk")
+		system.log(.Info, "iommu_device: a read given to the device after the end of its domain: the service waits for the new size of the disk")
 		if !capacity_changed(capacity_before) {
 			fail("after the end of its domain, the device did not get a new size before the hang bound")
 		}
@@ -364,7 +364,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if after_end[0] != 0 {
 			fail("after the end of its domain, the device sent an interrupt that arrived")
 		}
-		system.log("iommu_device: after the end of its domain, a read of the device into a page that this service declared before does not end, the page keeps its 4096 bytes, and no interrupt of the device arrives, also for its new size: as it must")
+		system.log(.Info, "iommu_device: after the end of its domain, a read of the device into a page that this service declared before does not end, the page keeps its 4096 bytes, and no interrupt of the device arrives, also for its new size: as it must")
 	}
 
 	// Then it answers its client: the machine goes on.

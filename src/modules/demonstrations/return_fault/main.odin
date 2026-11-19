@@ -169,7 +169,7 @@ case_run :: proc "contextless" (item: ^Case) {
 	error: module.Load_Error
 	process, status := system.process_start(system.image_find(image, "return_fault"), "return_fault child", grants, random.values_with_seed(&process_generator, values), {pages = 256, processes = 1, threads = 1, processor = 200_000, log_records = 10}, nil, nil, {image = image}, &error)
 	if status != .Ok {
-		system.log("return_fault: ", item.name, ": the child did not start")
+		system.log(.Info, "return_fault: ", item.name, ": the child did not start")
 		return
 	}
 	defer system.close(process)
@@ -199,7 +199,7 @@ case_run :: proc "contextless" (item: ^Case) {
 		item.right = state == .Stopped && code == op.STOP_CODE_RETURN && report.address == 0x8000_0000_0000_0000
 	case .Parent:
 	}
-	system.log("return_fault: ", item.name, ": the child stopped with the code ", system.Hex(u64(code)), ", the address ", system.Hex(item.address), item.right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "return_fault: ", item.name, ": the child stopped with the code ", system.Hex(u64(code)), ", the address ", system.Hex(item.address), item.right ? string(": as it must") : string(": WRONG"))
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
@@ -243,7 +243,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	role, role_ok := enum_word.member_of_word(Role, ctx.values[VALUE_ROLE])
 	if !role_ok {
-		system.log("return_fault: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
+		system.log(.Info, "return_fault: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
 		system.stop(1)
 	}
 	switch role {
@@ -261,7 +261,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case .Parent:
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("return_fault: no random seed in the context")
+		system.log(.Info, "return_fault: no random seed in the context")
 		system.stop(1)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "return_fault")
@@ -270,7 +270,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		system.log("return_fault: no boot image")
+		system.log(.Info, "return_fault: no boot image")
 		system.stop(1)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -285,9 +285,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		draw(&window)
 	}
 	if right == len(cases) {
-		system.log("return_fault: ok, ", u64(len(cases)), " cases: each child stopped as its own fault or returned with the flags of a process, and the machine goes on")
+		system.log(.Info, "return_fault: ok, ", u64(len(cases)), " cases: each child stopped as its own fault or returned with the flags of a process, and the machine goes on")
 	} else {
-		system.log("return_fault: failed: ", u64(len(cases) - right), " cases of ", u64(len(cases)))
+		system.log(.Info, "return_fault: failed: ", u64(len(cases) - right), " cases of ", u64(len(cases)))
 	}
 	for {
 		draw(&window)

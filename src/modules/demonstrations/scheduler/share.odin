@@ -441,10 +441,10 @@ policy_run :: proc "c" (parameter: rawptr) -> ! {
 		on := intrinsics.atomic_load(&policy_wanted) != 0
 		if was_on && !on {
 			policy_weights_give_back()
-			system.log("scheduler: the share policy is off: each thread has the weight that its process asked and the full weight limit")
+			system.log(.Info, "scheduler: the share policy is off: each thread has the weight that its process asked and the full weight limit")
 		}
 		if on && !was_on {
-			system.log("scheduler: the share policy is on: each process has its process weight, divided between its threads that count, one round each ", u64(POLICY_PERIOD), " ms")
+			system.log(.Info, "scheduler: the share policy is on: each process has its process weight, divided between its threads that count, one round each ", u64(POLICY_PERIOD), " ms")
 		}
 		policy_round(on)
 		was_on = on
@@ -722,7 +722,7 @@ case_processes_start :: proc "contextless" (processes: []Share_Process, describe
 			lines := system.Writer{buffer = buffer[:]}
 			system.load_error_text(&lines, &error)
 			own, _ := system.budget_read()
-			system.log("scheduler: the process ", described[index].name, " did not start: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this process can give pages ", own.pages, ", processes ", own.processes, ", threads ", own.threads, "; the process asks pages ", amounts.pages, ", threads ", amounts.threads)
+			system.log(.Info, "scheduler: the process ", described[index].name, " did not start: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this process can give pages ", own.pages, ", processes ", own.processes, ", threads ", own.threads, "; the process asks pages ", amounts.pages, ", threads ", amounts.threads)
 			return false
 		}
 	}
@@ -903,7 +903,7 @@ shares_part :: proc "contextless" (writer: ^system.Writer, parts: [SHARE_PROCESS
 // weights.
 share_case :: proc "contextless" () -> bool {
 	if image == nil || self_slot == 0 {
-		system.log("scheduler: the share policy is not checked: no boot image, or the process did not find its own threads")
+		system.log(.Info, "scheduler: the share policy is not checked: no boot image, or the process did not find its own threads")
 		return false
 	}
 	before, set_status := system.strategy_set(machine, .Eevdf)
@@ -913,7 +913,7 @@ share_case :: proc "contextless" () -> bool {
 	defer system.strategy_set(machine, before)
 	defer case_processes_stop(share_processes[:])
 	if !share_processes_start() {
-		system.log("scheduler: the share policy is not checked: a process with spinning threads did not start, or its threads did not become ready")
+		system.log(.Info, "scheduler: the share policy is not checked: a process with spinning threads did not start, or its threads did not become ready")
 		return false
 	}
 
@@ -947,7 +947,7 @@ share_case :: proc "contextless" () -> bool {
 		weights_right &&= weights[index].limit_least == part && weights[index].limit_most == part && weights[index].sum <= op.WEIGHT_FULL
 		weights_right &&= weights[index].new_thread_limit_least == new_part && weights[index].new_thread_limit_most == new_part
 	}
-	system.log("scheduler: the share policy, three rounds: each thread of the processes with 1, 2, 4 and 8 spinning threads has the weight and the weight limit ", u64(weights[0].most), ", ", u64(weights[1].most), ", ", u64(weights[2].most), " and ", u64(weights[3].most), ", and the new-thread weight limit ", u64(weights[3].new_thread_limit_most), "; the weights of each process sum to ", weights[0].sum, ", ", weights[1].sum, ", ", weights[2].sum, " and ", weights[3].sum, "; the third round wrote none of their threads: ", u64(steady), weights_right && steady ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "scheduler: the share policy, three rounds: each thread of the processes with 1, 2, 4 and 8 spinning threads has the weight and the weight limit ", u64(weights[0].most), ", ", u64(weights[1].most), ", ", u64(weights[2].most), " and ", u64(weights[3].most), ", and the new-thread weight limit ", u64(weights[3].new_thread_limit_most), "; the weights of each process sum to ", weights[0].sum, ", ", weights[1].sum, ", ", weights[2].sum, " and ", weights[3].sum, "; the third round wrote none of their threads: ", u64(steady), weights_right && steady ? string(": as it must") : string(": WRONG"))
 	with, with_ran := case_processes_interval(share_processes[:], true)
 
 	// A process that asks less keeps it, and a process that starts threads
@@ -970,7 +970,7 @@ share_case :: proc "contextless" () -> bool {
 		kept_right &&= own.threads == SHARE_THREADS_MORE + 2 && own.least == SHARE_WEIGHT_LOWERED && own.most == part
 		kept_right &&= own.sum == u64(part) * (SHARE_THREADS_MORE + 1) + SHARE_WEIGHT_LOWERED && own.sum <= op.WEIGHT_FULL
 	}
-	system.log("scheduler: under the share policy, a thread of this process created with the weight ", u64(SHARE_WEIGHT_ASKED), " has the weight ", u64(asked.weight), ", and the weight ", u64(lowered.weight), " after it lowered itself to ", u64(SHARE_WEIGHT_LOWERED), "; after this process started ", u64(SHARE_THREADS_MORE), " threads more, its ", own.threads, " threads have the weights ", u64(own.least), " to ", u64(own.most), ", which sum to ", own.sum, " of 1024", kept_right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "scheduler: under the share policy, a thread of this process created with the weight ", u64(SHARE_WEIGHT_ASKED), " has the weight ", u64(asked.weight), ", and the weight ", u64(lowered.weight), " after it lowered itself to ", u64(SHARE_WEIGHT_LOWERED), "; after this process started ", u64(SHARE_THREADS_MORE), " threads more, its ", own.threads, " threads have the weights ", u64(own.least), " to ", u64(own.most), ", which sum to ", own.sum, " of 1024", kept_right ? string(": as it must") : string(": WRONG"))
 
 	// The policy goes off: each thread has the weight that its process
 	// asked, and the full weight limit.
@@ -985,14 +985,14 @@ share_case :: proc "contextless" () -> bool {
 		back_right &&= after.threads == share_thread_counts[index] && after.least == op.WEIGHT_FULL && after.limit_least == op.WEIGHT_FULL && after.new_thread_limit_least == op.WEIGHT_FULL
 	}
 	spinners_stop(0, SHARE_THREADS_MORE + 1)
-	system.log("scheduler: the share policy off: each thread of the 4 processes and the first thread of this process have the weight 1024 and the two full weight limits again, the thread that lowered itself has the weight ", u64(lowered_after.weight), " and the two full weight limits, and no write of the policy was refused: ", u64(policy_refused == 0), back_right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "scheduler: the share policy off: each thread of the 4 processes and the first thread of this process have the weight 1024 and the two full weight limits again, the thread that lowered itself has the weight ", u64(lowered_after.weight), " and the two full weight limits, and no write of the policy was refused: ", u64(policy_refused == 0), back_right ? string(": as it must") : string(": WRONG"))
 
 	// The order: the part of the process with 8 threads against the process
 	// with 1, with the policy and without it. Each part is a count of
 	// ticks of the kernel over one interval.
 	last :: SHARE_PROCESS_COUNT - 1
 	order_right := without_ran && with_ran && with[last] * without[0] < without[last] * with[0]
-	system.log("scheduler: the process with 8 spinning threads against the process with 1, by the ticks of the kernel over one interval: its part is smaller under the share policy than without it", order_right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "scheduler: the process with 8 spinning threads against the process with 1, by the ticks of the kernel over one interval: its part is smaller under the share policy than without it", order_right ? string(": as it must") : string(": WRONG"))
 
 	buffer: [800]u8
 	writer := system.Writer{buffer = buffer[:]}
@@ -1014,7 +1014,7 @@ share_case :: proc "contextless" () -> bool {
 			sorted[back - 1], sorted[back] = sorted[back], sorted[back - 1]
 		}
 	}
-	system.log("scheduler: one round of the share policy, over ", u64(round_now.count), " processes and ", round_now.threads, " threads: ", sorted[rounds / 2], " ns in the middle of ", u64(rounds), " rounds; ", policy_writes, " writes of a schedule in all, ", policy_raises, " of them raised a weight; the period of the rounds is ", u64(POLICY_PERIOD), " ms (measures)")
+	system.log(.Info, "scheduler: one round of the share policy, over ", u64(round_now.count), " processes and ", round_now.threads, " threads: ", sorted[rounds / 2], " ns in the middle of ", u64(rounds), " rounds; ", policy_writes, " writes of a schedule in all, ", policy_raises, " of them raised a weight; the period of the rounds is ", u64(POLICY_PERIOD), " ms (measures)")
 	return weights_right && steady && kept_right && back_right && order_right
 }
 
@@ -1103,7 +1103,7 @@ unseen_threads_check :: proc "contextless" (process: Share_Process, new_part: u3
 // threads.
 short_threads_case :: proc "contextless" () -> bool {
 	if image == nil || self_slot == 0 {
-		system.log("scheduler: the share policy is not checked against short threads: no boot image, or the process did not find its own threads")
+		system.log(.Info, "scheduler: the share policy is not checked against short threads: no boot image, or the process did not find its own threads")
 		return false
 	}
 	described := [SHORT_CASE_PROCESS_COUNT]Case_Process {
@@ -1136,7 +1136,7 @@ short_threads_case :: proc "contextless" () -> bool {
 	defer case_processes_stop(short_case_processes[:])
 	defer case_processes_stop(started_under_policy[:])
 	if !case_processes_start(short_case_processes[:], described[:]) {
-		system.log("scheduler: the share policy is not checked against short threads: a process did not start, or its threads did not become ready")
+		system.log(.Info, "scheduler: the share policy is not checked against short threads: a process did not start, or its threads did not become ready")
 		return false
 	}
 
@@ -1150,7 +1150,7 @@ short_threads_case :: proc "contextless" () -> bool {
 	new_part := new_thread_part(op.WEIGHT_FULL)
 	unseen := unseen_threads_check(short_case_processes[0], new_part)
 	unseen_right := unseen.checked >= SHORT_THREADS_CHECKED && unseen.wrong == 0 && unseen.sum_most < op.WEIGHT_FULL
-	system.log("scheduler: the share policy and a process that keeps ", u64(SHORT_THREADS_ALIVE), " short threads alive, after one round: ", min(unseen.checked, SHORT_THREADS_CHECKED), " of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit ", u64(new_part), ": ", u64(unseen.wrong == 0), ", and those of one read summed to under 1024: ", u64(unseen.sum_most < op.WEIGHT_FULL), unseen_right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "scheduler: the share policy and a process that keeps ", u64(SHORT_THREADS_ALIVE), " short threads alive, after one round: ", min(unseen.checked, SHORT_THREADS_CHECKED), " of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit ", u64(new_part), ": ", u64(unseen.wrong == 0), ", and those of one read summed to under 1024: ", u64(unseen.sum_most < op.WEIGHT_FULL), unseen_right ? string(": as it must") : string(": WRONG"))
 
 	// The value of the process alone. The round gave the first thread of
 	// this process the small value too, so a creation by it holds by the
@@ -1184,7 +1184,7 @@ short_threads_case :: proc "contextless" () -> bool {
 	child_right := child_status == .Ok && limited_child.read == .Ok && child_schedule.weight == new_part && child_schedule.weight_limit == new_part && child_schedule.new_thread_weight_limit == new_part
 	refused_right := first_open && own_process_status == .Ok && own_process.new_thread_weight_limit == new_part
 	refused_right &&= between_status == .Bad_Operation && error.limit == i64(new_part) && child_right
-	system.log("scheduler: under the share policy the first thread of this process got through the machine handle a new-thread weight limit of its own above ", u64(new_part) + 1, ": ", u64(first_open), ", and the process has the new-thread weight limit ", u64(own_process.new_thread_weight_limit), "; a new thread with the weight ", u64(new_part) + 1, " ", op.STATUS_NAMES[between_status], ", and the error record names ", u64(error.limit), "; a new thread with the weight 0 has the weight, the weight limit and the new-thread weight limit ", u64(child_schedule.weight), ", ", u64(child_schedule.weight_limit), " and ", u64(child_schedule.new_thread_weight_limit), refused_right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "scheduler: under the share policy the first thread of this process got through the machine handle a new-thread weight limit of its own above ", u64(new_part) + 1, ": ", u64(first_open), ", and the process has the new-thread weight limit ", u64(own_process.new_thread_weight_limit), "; a new thread with the weight ", u64(new_part) + 1, " ", op.STATUS_NAMES[between_status], ", and the error record names ", u64(error.limit), "; a new thread with the weight 0 has the weight, the weight limit and the new-thread weight limit ", u64(child_schedule.weight), ", ", u64(child_schedule.weight_limit), " and ", u64(child_schedule.new_thread_weight_limit), refused_right ? string(": as it must") : string(": WRONG"))
 
 	// A process that this process starts under the policy, from the first
 	// thread whose own value is above the small value: its first thread
@@ -1197,10 +1197,10 @@ short_threads_case :: proc "contextless" () -> bool {
 		started_right = started_weights.threads == 1 && started_weights.most == new_part && started_weights.limit_most == new_part && started_weights.new_thread_limit_most == new_part
 	}
 	case_processes_stop(started_under_policy[:])
-	system.log("scheduler: the first thread of a process started under the share policy, by a thread whose own new-thread weight limit is above ", u64(new_part) + 1, ", has the weight, the weight limit and the new-thread weight limit ", u64(started_weights.most), ", ", u64(started_weights.limit_most), " and ", u64(started_weights.new_thread_limit_most), started_right && first_open ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "scheduler: the first thread of a process started under the share policy, by a thread whose own new-thread weight limit is above ", u64(new_part) + 1, ", has the weight, the weight limit and the new-thread weight limit ", u64(started_weights.most), ", ", u64(started_weights.limit_most), " and ", u64(started_weights.new_thread_limit_most), started_right && first_open ? string(": as it must") : string(": WRONG"))
 	with, with_ran := case_processes_interval(short_case_processes[:], true)
 	if !policy_weights_give_back() {
-		system.log("scheduler: after the case of the short threads, a write that gives the full weight limits back was refused")
+		system.log(.Info, "scheduler: after the case of the short threads, a write that gives the full weight limits back was refused")
 		return false
 	}
 
@@ -1208,6 +1208,6 @@ short_threads_case :: proc "contextless" () -> bool {
 	// weight orders the share only between threads of one queue, and the
 	// balance places the threads, so no order of the two intervals follows
 	// from the weights.
-	system.log("scheduler: the process of short threads got ", without[0] * 100 / max(without[1], 1), " % of the process of one long thread without the share policy, and ", with[0] * 100 / max(with[1], 1), " % with it; each interval ended on its count of ticks: ", u64(without_ran), " and ", u64(with_ran), " (measures)")
+	system.log(.Info, "scheduler: the process of short threads got ", without[0] * 100 / max(without[1], 1), " % of the process of one long thread without the share policy, and ", with[0] * 100 / max(with[1], 1), " % with it; each interval ended on its count of ticks: ", u64(without_ran), " and ", u64(with_ran), " (measures)")
 	return unseen_right && refused_right && started_right && first_open
 }

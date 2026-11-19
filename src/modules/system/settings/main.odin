@@ -143,7 +143,7 @@ keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
 		storage.error_text(&writer, &store, &error)
-		system.log_in("processes", .Warning, "settings: the store did not keep the settings: ", system.written(&writer))
+		system.log(.Warning, "settings: the store did not keep the settings: ", system.written(&writer))
 		return false
 	}
 	return true
@@ -171,7 +171,7 @@ page_write :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: 
 	sentence_buffer: [192]u8
 	in_force, sentence := in_force_now(choice, sentence_buffer[:])
 	if always || !before_ok || before.appearance != choice.appearance || before.appearance_in_force != in_force {
-		system.log("settings: ", sentence)
+		system.log(.Info, "settings: ", sentence)
 	}
 	settings.write(page, choice, zone_offset_minutes, in_force)
 	system.word_wake(&page.change_count, 64)
@@ -183,7 +183,7 @@ page_write :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: 
 page_choice :: proc "contextless" () -> (choice: settings.Choice, ok: bool) {
 	choice, ok = settings.read(page)
 	if !ok && choice.change_count & 1 == 0 {
-		system.log_in("processes", .Warning, "settings: the settings page holds a value that its setting does not have, or was never stable: the defaults")
+		system.log(.Warning, "settings: the settings page holds a value that its setting does not have, or was never stable: the defaults")
 	}
 	return choice, ok
 }
@@ -202,11 +202,11 @@ change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32)
 	if !values_same {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
-		system.log("settings: ", values_text(&writer, choice), kept_text)
+		system.log(.Info, "settings: ", values_text(&writer, choice), kept_text)
 	}
 	if current.zone_offset_minutes != zone {
 		zone_buffer: [settings.ZONE_TEXT_SIZE]u8
-		system.log("settings: ", settings.TIME_ZONE_TITLE, " ", settings.zone_text(zone_buffer[:], zone), kept_text)
+		system.log(.Info, "settings: ", settings.TIME_ZONE_TITLE, " ", settings.zone_text(zone_buffer[:], zone), kept_text)
 	}
 	page_write(choice, zone)
 	return kept
@@ -385,7 +385,7 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 		}
 	}
 	page_write(choice, choice.zone_offset_minutes)
-	system.log("settings: kept ", u64(count), " records, one commit each")
+	system.log(.Info, "settings: kept ", u64(count), " records, one commit each")
 	return count
 }
 
@@ -428,7 +428,7 @@ boot_pass :: proc "contextless" () -> ! {
 	page_write(choice, zone_offset_minutes, always = true)
 	text: [256]u8
 	writer := system.Writer{buffer = text[:]}
-	system.log("settings: the boot pass: ", what, ": ", values_text(&writer, choice), "; in ", (system.nanoseconds() - start) / 1000, " us")
+	system.log(.Info, "settings: the boot pass: ", what, ": ", values_text(&writer, choice), "; in ", (system.nanoseconds() - start) / 1000, " us")
 	system.stop(0)
 }
 
@@ -553,7 +553,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	if choice.change_count != drawn_change && drawn_change != 1 {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
-		system.log("settings: drawn with ", values_text(&writer, choice))
+		system.log(.Info, "settings: drawn with ", values_text(&writer, choice))
 	}
 	drawn_change = choice.change_count
 	return bar_result
@@ -588,7 +588,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	page_handle := ctx.handles[settings.GRANT_PAGE]
 	address, status := system.memory_map(page_handle)
 	if status != .Ok {
-		system.log("settings: no settings page: status ", u64(status))
+		system.log(.Info, "settings: no settings page: status ", u64(status))
 		system.stop(1)
 	}
 	page = (^settings.Page)(address)
@@ -606,7 +606,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	buffer: [256]u8
 	writer := system.Writer{buffer = buffer[:]}
 	started, _ := settings.read(page)
-	system.log("settings: ok, ", values_text(&writer, started))
+	system.log(.Info, "settings: ok, ", values_text(&writer, started))
 	for {
 		wait := system.wait_begin()
 		display.wait_events(&wait, &window)

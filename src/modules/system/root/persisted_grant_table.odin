@@ -162,18 +162,18 @@ machine_key_held :: proc "contextless" () -> bool {
 machine_passphrase_ask :: proc "contextless" () -> system.Status {
 	state := persisted_tables[principals.MACHINE].state
 	if state == .Record_Unreadable {
-		system.log_in("processes", .Warning, "root: refused a machine passphrase: the record of the machine passphrase cannot be read, and a new one would replace a key that can be good")
+		system.log(.Warning, "root: refused a machine passphrase: the record of the machine passphrase cannot be read, and a new one would replace a key that can be good")
 		return .Bad_State
 	}
 	if state != .No_Passphrase {
-		system.log_in("processes", .Warning, "root: refused a machine passphrase: the machine has one, and a change is not built")
+		system.log(.Warning, "root: refused a machine passphrase: the machine has one, and a change is not built")
 		return .Bad_State
 	}
 	if find("unlock") != nil {
-		system.log_in("processes", .Warning, "root: refused a machine passphrase: unlock runs; it is set when unlock stopped")
+		system.log(.Warning, "root: refused a machine passphrase: unlock runs; it is set when unlock stopped")
 		return .No_Slot
 	}
-	system.log_in("processes", .Info, "root: the machine passphrase is set in the window of unlock")
+	system.log(.Info, "root: the machine passphrase is set in the window of unlock")
 	return unlock_start(.Set_Machine_Passphrase, "")
 }
 
@@ -185,23 +185,23 @@ machine_passphrase_ask :: proc "contextless" () -> system.Status {
 // good, and the table that it signed.
 machine_seal_ask :: proc "contextless" () -> system.Status {
 	if tpm_ring == 0 {
-		system.log_in("processes", .Warning, "root: refused a machine key sealed by the TPM: no TPM service runs, as the system is not measured into a TPM")
+		system.log(.Warning, "root: refused a machine key sealed by the TPM: no TPM service runs, as the system is not measured into a TPM")
 		return .Bad_Handle
 	}
 	if !tpm_seal_allowed() {
-		system.log_in("processes", .Warning, "root: refused a machine key sealed by the TPM: the firmware did not verify the boot program (Secure Boot is off), so a seal would trust a boot program that nothing verified")
+		system.log(.Warning, "root: refused a machine key sealed by the TPM: the firmware did not verify the boot program (Secure Boot is off), so a seal would trust a boot program that nothing verified")
 		return .No_Right
 	}
 	state := persisted_tables[principals.MACHINE].state
 	if state != .No_Passphrase {
-		system.log_in("processes", .Warning, "root: refused a machine key sealed by the TPM: the machine has a record of its machine key, and a change is not built")
+		system.log(.Warning, "root: refused a machine key sealed by the TPM: the machine has a record of its machine key, and a change is not built")
 		return .Bad_State
 	}
 	if find("unlock") != nil {
-		system.log_in("processes", .Warning, "root: refused a machine key sealed by the TPM: unlock runs; it is made when unlock stopped")
+		system.log(.Warning, "root: refused a machine key sealed by the TPM: unlock runs; it is made when unlock stopped")
 		return .No_Slot
 	}
-	system.log_in("processes", .Info, "root: the machine key is sealed by the TPM in the window of unlock")
+	system.log(.Info, "root: the machine key is sealed by the TPM in the window of unlock")
 	return unlock_start(.Seal_Machine_Key, "")
 }
 
@@ -229,10 +229,10 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 		switch report.form {
 		case .Sealed_By_The_Tpm:
 			machine_key_without_passphrase = true
-			system.log_in("processes", .Info, "root: the machine key is sealed by the TPM: the disk grants of principal 0 wait for the unseal, and the machine runs")
+			system.log(.Info, "root: the machine key is sealed by the TPM: the disk grants of principal 0 wait for the unseal, and the machine runs")
 		case .Passphrase:
 			machine_key_without_passphrase = false
-			system.log_in("processes", .Info, "root: the machine has a passphrase: the disk grants of principal 0 wait for it, and the machine runs")
+			system.log(.Info, "root: the machine has a passphrase: the disk grants of principal 0 wait for it, and the machine runs")
 		}
 		return .Ok
 	case .Unreadable:
@@ -240,7 +240,7 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 			return .Bad_State
 		}
 		table.state = .Record_Unreadable
-		system.log_in("processes", .Warning, "root: the record of the machine passphrase cannot be read: the disk grants of principal 0 stay absent, and no change and no new passphrase is taken")
+		system.log(.Warning, "root: the record of the machine passphrase cannot be read: the disk grants of principal 0 stay absent, and no change and no new passphrase is taken")
 		return .Ok
 	case .Opened, .New:
 		key_new := reported == .New
@@ -291,12 +291,12 @@ principal_key_take :: proc "contextless" (number: u64, values: [7]u64) -> system
 		return .Bad_Operation
 	}
 	if origin == .New && !principal_created_in_this_run[number] {
-		system.log_in("processes", .Warning, "root: refused the unlock of principal ", number, ": its key comes as the key of a new principal, and its record was not created since the machine started")
+		system.log(.Warning, "root: refused the unlock of principal ", number, ": its key comes as the key of a new principal, and its record was not created since the machine started")
 		return .Bad_State
 	}
 	if table.state != .Awaited {
 		if !keys_equal(&table.key, &key) {
-			system.log_in("processes", .Warning, "root: refused the unlock of principal ", number, ": the key of its disk grant table differs from the key of its first unlock since the machine started")
+			system.log(.Warning, "root: refused the unlock of principal ", number, ": the key of its disk grant table differs from the key of its first unlock since the machine started")
 			return .Bad_State
 		}
 		// The read at an earlier unlock failed: this unlock tries it again.
@@ -356,7 +356,7 @@ persisted_table_refusal :: proc "contextless" (principal: u64) -> bool {
 	// A record of a process of a session that the lock stopped can still be
 	// in its ring: no change comes from a session that is not unlocked.
 	if principal != principals.MACHINE && principal_records[principal].state != .Unlocked {
-		system.log_in("processes", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": its session is locked")
+		system.log(.Warning, "root: refused a change of the disk grant table of principal ", principal, ": its session is locked")
 		return true
 	}
 	switch persisted_tables[principal].state {
@@ -364,24 +364,24 @@ persisted_table_refusal :: proc "contextless" (principal: u64) -> bool {
 		return false
 	case .Awaited:
 		if principal == principals.MACHINE {
-			system.log_in("processes", .Warning, "root: refused a change of the disk grant table of principal 0: the machine passphrase is not typed; type it in the window of unlock")
+			system.log(.Warning, "root: refused a change of the disk grant table of principal 0: the machine passphrase is not typed; type it in the window of unlock")
 		} else {
-			system.log_in("processes", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": unlock gave no key for it")
+			system.log(.Warning, "root: refused a change of the disk grant table of principal ", principal, ": unlock gave no key for it")
 		}
 	case .Record_Unreadable:
-		system.log_in("processes", .Warning, "root: refused a change of the disk grant table of principal 0: the record of the machine passphrase cannot be read, so nothing is written over the table on the disk")
+		system.log(.Warning, "root: refused a change of the disk grant table of principal 0: the record of the machine passphrase cannot be read, so nothing is written over the table on the disk")
 	case .Reading:
-		system.log_in("processes", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": its read from the store module_files runs")
+		system.log(.Warning, "root: refused a change of the disk grant table of principal ", principal, ": its read from the store module_files runs")
 	case .Unread:
-		system.log_in("processes", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": the store module_files did not give it, so a write could lose it")
+		system.log(.Warning, "root: refused a change of the disk grant table of principal ", principal, ": the store module_files did not give it, so a write could lose it")
 	case .Refused:
 		if disk_process.table_problem_is_format(persisted_tables[principal].refused_problem) {
-			system.log_in("processes", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": the table on the disk has a format that this system does not read, and it is kept; do not restore a version of it, as no version has a format that this system reads")
+			system.log(.Warning, "root: refused a change of the disk grant table of principal ", principal, ": the table on the disk has a format that this system does not read, and it is kept; do not restore a version of it, as no version has a format that this system reads")
 		} else {
-			system.log_in("processes", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": the table on the disk does not verify under ", key_words(principal), ", and it is kept; restore a version of it that verifies, then start the machine again")
+			system.log(.Warning, "root: refused a change of the disk grant table of principal ", principal, ": the table on the disk does not verify under ", key_words(principal), ", and it is kept; restore a version of it that verifies, then start the machine again")
 		}
 	case .Unwritten:
-		system.log_in("processes", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": its last change is not on the disk; start the machine again")
+		system.log(.Warning, "root: refused a change of the disk grant table of principal ", principal, ": its last change is not on the disk; start the machine again")
 	}
 	return true
 }
@@ -427,7 +427,7 @@ persisted_table_revocation :: proc "contextless" (principal: u64, key: [disk_pro
 		table.state = .Kept
 		table.write_failures = 0
 		table.write_again = false
-		system.log_in("processes", .Warning, "root: a revocation of a client key of remote starts the writes of the disk grant table of principal ", principal, " again")
+		system.log(.Warning, "root: a revocation of a client key of remote starts the writes of the disk grant table of principal ", principal, " again")
 		persisted_table_write_begin(principal)
 		return false
 	case .Reading, .Awaited, .Unread:
@@ -447,7 +447,7 @@ persisted_table_revocation :: proc "contextless" (principal: u64, key: [disk_pro
 	}
 	if can_come_back {
 		head: [16]u8
-		system.log_in("calls", .Warning, "root: the revocation of the client key ", key_head_text(&head, key), " of remote is not written in the disk grant table of principal ", principal, ", which takes no change now: the key can come back at the next start of the machine")
+		system.log(.Warning, "root: the revocation of the client key ", key_head_text(&head, key), " of remote is not written in the disk grant table of principal ", principal, ", which takes no change now: the key can come back at the next start of the machine")
 	}
 	return can_come_back
 }
@@ -581,7 +581,7 @@ persisted_table_end :: proc "contextless" (principal: u64) {
 // service can use: the table stays unread.
 persisted_table_read_failed :: proc "contextless" (principal: u64, reason: string) {
 	persisted_tables[principal].state = .Unread
-	system.log_in("processes", .Warning, "root: the disk grant table of principal ", principal, " is not read: ", reason, "; the disk grants of principal ", principal, " stay absent until the machine starts again")
+	system.log(.Warning, "root: the disk grant table of principal ", principal, " is not read: ", reason, "; the disk grants of principal ", principal, " stay absent until the machine starts again")
 }
 
 // persisted_table_write_failed counts a failed try of a write, and tries
@@ -592,13 +592,13 @@ persisted_table_write_failed :: proc "contextless" (principal: u64, reason: stri
 	table := &persisted_tables[principal]
 	table.write_failures += 1
 	if table.write_failures < WRITE_TRY_LIMIT {
-		system.log_in("processes", .Warning, "root: the disk grant table of principal ", principal, " is not written: ", reason, "; try ", u64(table.write_failures + 1), " of ", u64(WRITE_TRY_LIMIT))
+		system.log(.Warning, "root: the disk grant table of principal ", principal, " is not written: ", reason, "; try ", u64(table.write_failures + 1), " of ", u64(WRITE_TRY_LIMIT))
 		persisted_table_write_begin(principal)
 		return
 	}
 	table.state = .Unwritten
 	table.write_again = false
-	system.log_in("processes", .Warning, "root: the disk grant table of principal ", principal, " is not written after ", u64(WRITE_TRY_LIMIT), " tries: ", reason, "; the disk keeps an older table, so a grant taken since can come back at the next start, and no change is taken")
+	system.log(.Warning, "root: the disk grant table of principal ", principal, " is not written after ", u64(WRITE_TRY_LIMIT), " tries: ", reason, "; the disk keeps an older table, so a grant taken since can come back at the next start, and no change is taken")
 }
 
 // persisted_table_failed ends a call that got no answer that this service
@@ -680,33 +680,33 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 		case .Write_Over:
 			table.state = .Kept
 			if absent {
-				system.log_in("processes", .Info, "root: the store module_files holds no disk grant table of principal ", principal, ": the table of this machine is written there")
+				system.log(.Info, "root: the store module_files holds no disk grant table of principal ", principal, ": the table of this machine is written there")
 			} else {
 				new_record := principal == principals.MACHINE ? "the new machine passphrase" : "the new principal"
-				system.log_in("processes", .Warning, "root: refused the disk grant table of principal ", principal, " from the store module_files: ", disk_process.table_problem_sentences[problem], "; it gives no grant, and the table of ", new_record, " is written over it")
+				system.log(.Warning, "root: refused the disk grant table of principal ", principal, " from the store module_files: ", disk_process.table_problem_sentences[problem], "; it gives no grant, and the table of ", new_record, " is written over it")
 			}
 			persisted_table_write_begin(principal)
 			return
 		case .Keep:
 			table.state = .Refused
 			table.refused_problem = problem
-			system.log_in("processes", .Warning, "root: refused the disk grant table of principal ", principal, " from the store module_files: ", disk_process.table_problem_sentences[problem], "; it gives no grant, and it is kept: no change is written over it")
+			system.log(.Warning, "root: refused the disk grant table of principal ", principal, " from the store module_files: ", disk_process.table_problem_sentences[problem], "; it gives no grant, and it is kept: no change is written over it")
 			return
 		case .Take:
 		}
 		table.state = .Kept
 		replaced := disk_grant_tables[principal].count
 		if replaced > 0 {
-			system.log_in("processes", .Info, "root: read the disk grant table of principal ", principal, " from the store module_files: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal), "; ", u64(from_disk.client_key_count), " client keys of remote; it replaces ", u64(replaced), " rows made before the key came")
+			system.log(.Info, "root: read the disk grant table of principal ", principal, " from the store module_files: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal), "; ", u64(from_disk.client_key_count), " client keys of remote; it replaces ", u64(replaced), " rows made before the key came")
 		} else {
-			system.log_in("processes", .Info, "root: read the disk grant table of principal ", principal, " from the store module_files: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal), "; ", u64(from_disk.client_key_count), " client keys of remote")
+			system.log(.Info, "root: read the disk grant table of principal ", principal, " from the store module_files: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal), "; ", u64(from_disk.client_key_count), " client keys of remote")
 		}
 		// A key revoked before the read stays revoked: the disk still held
 		// it, and it is written there no more.
 		revoked := persisted_table_revoked_keys_take(table, &from_disk)
 		disk_grant_tables[principal] = from_disk
 		if revoked > 0 {
-			system.log_in("calls", .Info, "root: the disk grant table of principal ", principal, " held ", u64(revoked), " client keys of remote revoked before its read: they stay revoked, and the table is written again")
+			system.log(.Info, "root: the disk grant table of principal ", principal, " held ", u64(revoked), " client keys of remote revoked before its read: they stay revoked, and the table is written again")
 			table.write_failures = 0
 			persisted_table_write_begin(principal)
 		}
@@ -725,7 +725,7 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 		table.write_failures = 0
 		// The rows of the bytes that went to the disk: a row that lasts
 		// until the machine stops is not among them.
-		system.log_in("processes", .Info, "root: the disk grant table of principal ", principal, " is written in the store module_files: ", u64(table.bytes[disk_process.TABLE_OFFSET_COUNT]), " rows, with the tag of ", key_words(principal), "; ", u64(table.bytes[disk_process.TABLE_OFFSET_CLIENT_KEY_COUNT]), " client keys of remote")
+		system.log(.Info, "root: the disk grant table of principal ", principal, " is written in the store module_files: ", u64(table.bytes[disk_process.TABLE_OFFSET_COUNT]), " rows, with the tag of ", key_words(principal), "; ", u64(table.bytes[disk_process.TABLE_OFFSET_CLIENT_KEY_COUNT]), " client keys of remote")
 		if table.write_again {
 			table.write_again = false
 			persisted_table_write_begin(principal)

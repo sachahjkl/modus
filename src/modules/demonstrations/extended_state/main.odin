@@ -326,7 +326,7 @@ wrong_note :: proc "contextless" (worker: ^Worker, kind: Register_Kind, index: i
 	}
 	if intrinsics.atomic_add(&wrong_lines, 1) < LOG_WRONG_LIMIT {
 		name: interface.Text_Builder
-		system.log("extended_state: WRONG: thread ", u64(worker.number), ", ", register_name(&name, kind, index), ", ", what, " ", pass, ": expected ", system.Hex(expected), ", found ", system.Hex(found))
+		system.log(.Info, "extended_state: WRONG: thread ", u64(worker.number), ", ", register_name(&name, kind, index), ", ", what, " ", pass, ": expected ", system.Hex(expected), ", found ", system.Hex(found))
 	}
 }
 
@@ -755,10 +755,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		held_level = .Avx_512_With_Wide_Opmasks
 	}
 	builder, second_builder, third_builder: interface.Text_Builder
-	system.log("extended_state: the kernel saves ", components_text(&builder, sets.saved_components(facts)))
-	system.log("extended_state: the usable instruction sets: ", sets_text(&builder, usable, .Sse, .Pclmulqdq), "; ", sets_text(&second_builder, usable, .Avx, .Avx512_Vl), "; ", sets_text(&third_builder, usable, .Popcnt, .Bmi2))
+	system.log(.Info, "extended_state: the kernel saves ", components_text(&builder, sets.saved_components(facts)))
+	system.log(.Info, "extended_state: the usable instruction sets: ", sets_text(&builder, usable, .Sse, .Pclmulqdq), "; ", sets_text(&second_builder, usable, .Avx, .Avx512_Vl), "; ", sets_text(&third_builder, usable, .Popcnt, .Bmi2))
 	if held_level == .Sse {
-		system.log("extended_state: AVX is not usable: the processor does not have it or the kernel does not save it; the test holds xmm0 to xmm15")
+		system.log(.Info, "extended_state: AVX is not usable: the processor does not have it or the kernel does not save it; the test holds xmm0 to xmm15")
 	}
 
 	processor_count = max(system.thread_record().processors, 1)
@@ -766,7 +766,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if worker_count < int(processor_count) + 2 {
 		// A process has 32 threads: on a larger machine some processors run
 		// no thread of the test, and the threads still move at each wait.
-		system.log("extended_state: ", u64(processor_count), " processors: ", u64(worker_count), " threads, the most that a process can have, fewer than the processors plus two")
+		system.log(.Info, "extended_state: ", u64(processor_count), " processors: ", u64(worker_count), " threads, the most that a process can have, fewer than the processors plus two")
 	}
 	start_time = system.time()
 	for index in 0 ..< worker_count {
@@ -775,7 +775,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		status: system.Status
 		worker.thread, status = system.thread_start(worker_run, worker)
 		if status != .Ok {
-			system.log("extended_state: cannot start thread ", u64(index + 1))
+			system.log(.Info, "extended_state: cannot start thread ", u64(index + 1))
 			system.stop(1)
 		}
 	}
@@ -807,16 +807,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			hand_over_counts[1], hand_over_nanoseconds[1] = hand_over_measure(true)
 		}
 		first_part, second_part, third_part: interface.Text_Builder
-		system.log("extended_state: the parts of a save and a restore, each alone in this process, cycles of the cycle counter for one loop (ns): ", part_text(&first_part, .Loop_Alone, .Fxsave_And_Fxrstor), "; ", part_text(&second_part, .Xsaveopt_And_Xrstor, .Xsaveopt_Vzeroupper_And_Xrstor), "; ", part_text(&third_part, .Xsaveopt_Vzeroupper_And_Xrstor_With_Avx, .Xsave_And_Xrstor))
-		system.log("extended_state: each instruction alone, cycles of the cycle counter for one loop (ns), the loop included: ", part_text(&first_part, .Fxsave, .Fxrstor), "; ", part_text(&second_part, .Xsaveopt, .Xrstor), "; ", part_text(&third_part, .Vzeroupper, .Vzeroupper))
-		system.log("extended_state: a hand-over between two threads by the word wait (a wake, a wait, and the save and restore of the thread that waits and of the thread that runs): ", hand_over_nanoseconds[0], " ns with x87 and SSE in use, ", hand_over_nanoseconds[1], " ns with the ymm high halves in use (0: not usable); ", hand_over_counts[0], " and ", hand_over_counts[1], " hand-overs in ", u64(HAND_OVER_MILLISECONDS), " ms each")
-		system.log("extended_state: an empty kernel entry, ", u64(MEASURE_ENTRIES), " times: ", entry_nanoseconds[.Sse], " ns with xmm in use, ", entry_nanoseconds[.Avx], " ns with ymm in use, ", entry_nanoseconds[.Avx_512], " ns with zmm in use (0: not usable)")
+		system.log(.Info, "extended_state: the parts of a save and a restore, each alone in this process, cycles of the cycle counter for one loop (ns): ", part_text(&first_part, .Loop_Alone, .Fxsave_And_Fxrstor), "; ", part_text(&second_part, .Xsaveopt_And_Xrstor, .Xsaveopt_Vzeroupper_And_Xrstor), "; ", part_text(&third_part, .Xsaveopt_Vzeroupper_And_Xrstor_With_Avx, .Xsave_And_Xrstor))
+		system.log(.Info, "extended_state: each instruction alone, cycles of the cycle counter for one loop (ns), the loop included: ", part_text(&first_part, .Fxsave, .Fxrstor), "; ", part_text(&second_part, .Xsaveopt, .Xrstor), "; ", part_text(&third_part, .Vzeroupper, .Vzeroupper))
+		system.log(.Info, "extended_state: a hand-over between two threads by the word wait (a wake, a wait, and the save and restore of the thread that waits and of the thread that runs): ", hand_over_nanoseconds[0], " ns with x87 and SSE in use, ", hand_over_nanoseconds[1], " ns with the ymm high halves in use (0: not usable); ", hand_over_counts[0], " and ", hand_over_counts[1], " hand-overs in ", u64(HAND_OVER_MILLISECONDS), " ms each")
+		system.log(.Info, "extended_state: an empty kernel entry, ", u64(MEASURE_ENTRIES), " times: ", entry_nanoseconds[.Sse], " ns with xmm in use, ", entry_nanoseconds[.Avx], " ns with ymm in use, ", entry_nanoseconds[.Avx_512], " ns with zmm in use (0: not usable)")
 		passed = wrong == 0 && start_wrong == 0
 		finished = true
 		if passed {
-			system.log("extended_state: ok, ", u64(worker_count), " threads on ", u64(processor_count), " processors, ", passes, " passes, ", entries, " kernel entries in the passes: each thread kept ", level_names[held_level], ", the x87 stack, the x87 control word and MXCSR, and started with the start state")
+			system.log(.Info, "extended_state: ok, ", u64(worker_count), " threads on ", u64(processor_count), " processors, ", passes, " passes, ", entries, " kernel entries in the passes: each thread kept ", level_names[held_level], ", the x87 stack, the x87 control word and MXCSR, and started with the start state")
 		} else {
-			system.log("extended_state: failed: ", wrong, " wrong registers after a pass, ", start_wrong, " parts of a start state wrong")
+			system.log(.Info, "extended_state: failed: ", wrong, " wrong registers after a pass, ", start_wrong, " parts of a start state wrong")
 		}
 	}
 	for {

@@ -128,37 +128,43 @@ the_places_of_an_own_log_ring :: proc(t: ^testing.T) {
 	testing.expect_value(t, wrap_offset, 0)
 }
 
-// The head of a line of the serial port: the name and the channel of a
-// process in brackets, the name alone with no channel, nothing for the
-// kernel and for a record that continues a line. A name and a channel that
-// fill their whole fields have no zero after them, and still fit.
+// The head of a line of the serial port is the name of the process in
+// brackets, and nothing more: the bytes after the name (the runs, the text)
+// never enter it. The edges come first: the kernel and a record that
+// continues a line have no head, an empty name, a name of one byte, and a
+// name that fills its whole field with no zero after it.
 @(test)
 the_head_of_a_line_of_the_serial_port :: proc(t: ^testing.T) {
 	head: [LOG_LINE_HEAD_CAPACITY]u8
-	record := Log_Record{process = 3}
-	copy(record.name[:], "console")
-	copy(record.channel[:], "shell")
-	count := log_line_head(&record, false, &head)
-	testing.expect_value(t, string(head[:count]), "[console:shell] ")
-	testing.expect_value(t, log_line_head(&record, true, &head), 0)
-
-	record.channel = {}
-	count = log_line_head(&record, false, &head)
-	testing.expect_value(t, string(head[:count]), "[console] ")
 
 	kernel := Log_Record{}
 	copy(kernel.name[:], "kernel")
-	copy(kernel.channel[:], "boot")
 	testing.expect_value(t, log_line_head(&kernel, false, &head), 0)
+	testing.expect_value(t, log_line_head(&kernel, true, &head), 0)
+
+	record := Log_Record{process = 3}
+	copy(record.text[:], "text")
+	record.runs[0] = {start = 1, length = 2, kind = 3}
+	testing.expect_value(t, log_line_head(&record, true, &head), 0)
+	count := log_line_head(&record, false, &head)
+	testing.expect_value(t, string(head[:count]), "[] ")
+
+	record.name[0] = 'n'
+	count = log_line_head(&record, false, &head)
+	testing.expect_value(t, string(head[:count]), "[n] ")
+
+	record.name = {}
+	copy(record.name[:], "console")
+	count = log_line_head(&record, false, &head)
+	testing.expect_value(t, string(head[:count]), "[console] ")
+	testing.expect_value(t, log_line_head(&record, true, &head), 0)
 
 	for &byte_value in record.name {
 		byte_value = 'n'
 	}
-	for &byte_value in record.channel {
-		byte_value = 'c'
-	}
 	count = log_line_head(&record, false, &head)
 	testing.expect_value(t, count, LOG_LINE_HEAD_CAPACITY)
-	testing.expect_value(t, head[1 + LOG_NAME_BYTES], u8(':'))
-	testing.expect_value(t, head[LOG_LINE_HEAD_CAPACITY - 2], u8(']'))
+	testing.expect_value(t, head[1 + LOG_NAME_BYTES - 1], u8('n'))
+	testing.expect_value(t, head[1 + LOG_NAME_BYTES], u8(']'))
+	testing.expect_value(t, head[LOG_LINE_HEAD_CAPACITY - 1], u8(' '))
 }

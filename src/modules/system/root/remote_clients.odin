@@ -206,7 +206,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			// It fits: the count of the keys of the table is under the
 			// bound of one principal, and the key is not zero bytes.
 			_ = disk_process.table_client_key_add(table, key)
-			system.log_in("calls", .Info, "root: principal ", principal, " allowed the client key ", key_head_text(&head, key), " of remote: each call of that client acts for it", client_key_lasts(principal))
+			system.log(.Info, "root: principal ", principal, " allowed the client key ", key_head_text(&head, key), " of remote: each call of that client acts for it", client_key_lasts(principal))
 			persisted_table_changed(principal)
 			return .Ok
 		}
@@ -219,7 +219,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			// out of the table, and the key holds again for the other.
 			if disk_process.table_client_key_remove(table, key) == .None {
 				values[0] = 0
-				system.log_in("calls", .Info, "root: principal ", principal, " revoked the client key ", key_head_text(&head, key), " of remote, which was contested: connections to services ended: 0")
+				system.log(.Info, "root: principal ", principal, " revoked the client key ", key_head_text(&head, key), " of remote, which was contested: connections to services ended: 0")
 				values[1] = persisted_table_revocation(principal, key) ? root_ring.REMOTE_CLIENT_KEY_CAN_COME_BACK : 0
 				client_contest_end(principal, key)
 				return .Ok
@@ -230,7 +230,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		client_row_write(place, {})
 		count := client_connections_end(place)
 		values[0] = count
-		system.log_in("calls", .Info, "root: principal ", principal, " revoked the client key ", key_head_text(&head, key), " of remote: connections to services ended: ", count)
+		system.log(.Info, "root: principal ", principal, " revoked the client key ", key_head_text(&head, key), " of remote: connections to services ended: ", count)
 		_ = disk_process.table_client_key_remove(table, key)
 		values[1] = persisted_table_revocation(principal, key) ? root_ring.REMOTE_CLIENT_KEY_CAN_COME_BACK : 0
 		// The key has no row now: a principal whose disk grant table holds
@@ -294,7 +294,7 @@ client_keys_restore :: proc "contextless" () {
 				locked: u64 = principal_records[principal].state == .Locked ? 1 : 0
 				client_serial_last += 1
 				client_row_write(place, {key = key, principal = principal, serial = client_serial_last, session_locked = locked})
-				system.log_in("calls", .Info, "root: the client key ", key_head_text(&head, key), " of remote holds again for principal ", principal, ", from its disk grant table: each call of that client acts for it")
+				system.log(.Info, "root: the client key ", key_head_text(&head, key), " of remote holds again for principal ", principal, ", from its disk grant table: each call of that client acts for it")
 			case .Contest:
 				changed := client_table.clients[place]
 				client_serial_last += 1
@@ -302,11 +302,11 @@ client_keys_restore :: proc "contextless" () {
 				changed.contested = principal + 1
 				client_row_write(place, changed)
 				count := client_connections_end(place)
-				system.log_in("calls", .Warning, "root: the client key ", key_head_text(&head, key), " of remote is contested: principal ", changed.principal, " allowed it since the machine started, and the disk grant table of principal ", principal, " holds it; it acts for neither until one of them revokes it; connections to services ended: ", count)
+				system.log(.Warning, "root: the client key ", key_head_text(&head, key), " of remote is contested: principal ", changed.principal, " allowed it since the machine started, and the disk grant table of principal ", principal, " holds it; it acts for neither until one of them revokes it; connections to services ended: ", count)
 			case .No_Free_Row:
 				// The rows of every principal fit (the assertion at the top
 				// of this file), so this is a fault; it is said, not hidden.
-				system.log_in("calls", .Warning, "root: the client table of remote has no free row for the client key ", key_head_text(&head, key), " of principal ", principal, ": the key holds for no principal")
+				system.log(.Warning, "root: the client table of remote has no free row for the client key ", key_head_text(&head, key), " of principal ", principal, ": the key holds for no principal")
 			}
 		}
 	}
@@ -326,7 +326,7 @@ client_contest_end :: proc "contextless" (revoking_principal: u64, key: [32]u8) 
 	changed.contested = 0
 	client_row_write(place, changed)
 	head: [16]u8
-	system.log_in("calls", .Info, "root: the client key ", key_head_text(&head, key), " of remote holds again for principal ", changed.principal, ": principal ", revoking_principal, " revoked it, so it is no longer contested")
+	system.log(.Info, "root: the client key ", key_head_text(&head, key), " of remote holds again for principal ", changed.principal, ": principal ", revoking_principal, " revoked it, so it is no longer contested")
 }
 
 // client_keys_after_read makes the client table hold the keys of the disk
@@ -346,7 +346,7 @@ client_keys_after_read :: proc "contextless" (principal: u64) {
 		}
 		client_row_write(place, {})
 		count := client_connections_end(place)
-		system.log_in("calls", .Warning, "root: the client key ", key_head_text(&head, row.key), " of remote, which principal ", principal, " allowed before its disk grant table was read, is not in that table: its grant ends; connections to services ended: ", count)
+		system.log(.Warning, "root: the client key ", key_head_text(&head, row.key), " of remote, which principal ", principal, " allowed before its disk grant table was read, is not in that table: its grant ends; connections to services ended: ", count)
 	}
 	client_keys_restore()
 }
@@ -407,7 +407,7 @@ client_grant_of :: proc "contextless" (caller: ^Started, row_number: u64, serial
 		// to a contested row; the check holds the rule here too, as this
 		// service does not trust remote with it.
 		head: [16]u8
-		system.log_in("calls", .Warning, "root: refused a connection of remote for the client key ", key_head_text(&head, row.key), ": it is contested between principal ", row.principal, " and principal ", row.contested - 1, ", and acts for neither")
+		system.log(.Warning, "root: refused a connection of remote for the client key ", key_head_text(&head, row.key), ": it is contested between principal ", row.principal, " and principal ", row.contested - 1, ", and acts for neither")
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return {}, .Bad_State
 	}

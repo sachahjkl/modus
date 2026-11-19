@@ -123,9 +123,9 @@ principals_start :: proc "contextless" () {
 		machine_record.measured = true
 		machine_record.measure = trust.measure_value
 		digits := system_description.hexadecimal(trust.measure_value)
-		system.log("root: principal 0 is the machine: the system is measured, PCR ", trust.measure_register, " = ", string(digits[:]), "; its key, the attestation key of the TPM, is not built")
+		system.log(.Info, "root: principal 0 is the machine: the system is measured, PCR ", trust.measure_register, " = ", string(digits[:]), "; its key, the attestation key of the TPM, is not built")
 	} else {
-		system.log("root: principal 0 is the machine: the system is not measured; its key, the attestation key of the TPM, is not built")
+		system.log(.Info, "root: principal 0 is the machine: the system is not measured; its key, the attestation key of the TPM, is not built")
 	}
 }
 
@@ -145,7 +145,7 @@ unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string) 
 		unlock_run.stage = status == .Ok ? .Running : .Stopped
 	}
 	if status != .Ok {
-		system.log_in("processes", .Warning, "root: unlock did not start (status ", status, "): no named principal can be created or unlocked")
+		system.log(.Warning, "root: unlock did not start (status ", status, "): no named principal can be created or unlocked")
 	}
 	return status
 }
@@ -209,7 +209,7 @@ principal_create :: proc "contextless" (name: string) -> system.Status {
 	if principal_records[1].state != .Absent || find("unlock") != nil {
 		return .Bad_State
 	}
-	system.log_in("processes", .Info, "root: the principal \"", name, "\" is created in the window of unlock")
+	system.log(.Info, "root: the principal \"", name, "\" is created in the window of unlock")
 	return unlock_start(.Create_Principal, name)
 }
 
@@ -238,7 +238,7 @@ principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 	principal_created_in_this_run[1] = unlock_creating()
 	completion^[0] = 1
 	digits := system_description.hexadecimal(public_key)
-	system.log_in("processes", .Info, "root: principal 1 \"", principal_name(1), "\" is recorded, its public key ", string(digits[:16]), "...; its session is locked")
+	system.log(.Info, "root: principal 1 \"", principal_name(1), "\" is recorded, its public key ", string(digits[:16]), "...; its session is locked")
 	return .Ok
 }
 
@@ -268,7 +268,7 @@ principal_unlock :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 	// The client keys that the principal allowed take calls again.
 	remote_clients_session_changed(number, false)
 	unlock_run.failed_stops = 0
-	system.log_in("processes", .Info, "root: the session of principal ", number, " \"", principal_name(number), "\" starts: the desktop starts each process in it")
+	system.log(.Info, "root: the session of principal ", number, " \"", principal_name(number), "\" starts: the desktop starts each process in it")
 	return .Ok
 }
 
@@ -295,7 +295,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	// locked: the connections of its client keys end.
 	remote_clients_session_changed(number, true)
 	completion^[0] = count
-	system.log_in("processes", .Info, "root: the session of principal ", number, " \"", principal_name(number), "\" ends: ", count, " processes stopped")
+	system.log(.Info, "root: the session of principal ", number, " \"", principal_name(number), "\" ends: ", count, " processes stopped")
 	unlock_run.failed_stops = 0
 	// One `unlock` runs at a time. During a session only the session can
 	// have asked for it (a change, a machine passphrase, a seal of the
@@ -309,7 +309,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	if running := find("unlock"); running != nil {
 		unlock_stop_ask()
 		system.call(.Process_Stop, u64(running.process), 0)
-		system.log_in("processes", .Info, "root: the lock stops the window of unlock, which ran for ", principals.mode_words(unlock_run.mode), "; unlock asks for the passphrase when it stopped")
+		system.log(.Info, "root: the lock stops the window of unlock, which ran for ", principals.mode_words(unlock_run.mode), "; unlock asks for the passphrase when it stopped")
 		return .Ok
 	}
 	unlock_start(.Unlock, "")
@@ -331,7 +331,7 @@ unlock_stopped :: proc "contextless" () {
 	}
 	unlock_run.failed_stops += 1
 	if unlock_run.failed_stops == UNLOCK_RESTART_LIMIT {
-		system.log_in("processes", .Warning, "root: unlock stopped ", u64(UNLOCK_RESTART_LIMIT), " times while a principal is locked, with no stop that the root service asked: it starts no more until the machine starts again")
+		system.log(.Warning, "root: unlock stopped ", u64(UNLOCK_RESTART_LIMIT), " times while a principal is locked, with no stop that the root service asked: it starts no more until the machine starts again")
 	}
 }
 
@@ -393,12 +393,12 @@ principal_change_end :: proc "contextless" (values: [7]u64, completion: ^[7]u64)
 // it still runs, and ends the change.
 principal_change_finish :: proc "contextless" (end: principals.Change_End, problem: principals.Change_Problem) {
 	principal_change_waiting = false
-	system.log_in("processes", .Info, "root: the change in the window of unlock ends: ", principals.change_end_sentences[end])
+	system.log(.Info, "root: the change in the window of unlock ends: ", principals.change_end_sentences[end])
 	asker := principal_change_asker
 	principal_change_asker = nil
 	if asker != nil && asker.process != 0 && asker.requests.head != nil {
 		if !system.send(&asker.requests.completions, ring.Record{kind = u32(system.Status.Ok), tag = principal_change_tag, values = {0 = u64(end), 1 = u64(problem)}}) {
-			system.log_in("processes", .Warning, "root: the completion ring of ", system.Module_Name{system.name_of(asker.name[:])}, " is full: the end of the change does not reach it, and its line waits until Escape")
+			system.log(.Warning, "root: the completion ring of ", system.Module_Name{system.name_of(asker.name[:])}, " is full: the end of the change does not reach it, and its line waits until Escape")
 		}
 	}
 }
@@ -456,21 +456,21 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 	}
 	number := caller.principal
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state != .Unlocked {
-		system.log_in("processes", .Warning, "root: refused a change of the passphrase: the caller runs in no session of a named principal")
+		system.log(.Warning, "root: refused a change of the passphrase: the caller runs in no session of a named principal")
 		values^ = errors.ring_fail(kind, .Absent, .Principals)
 		return .Bad_State, false
 	}
 	// A change that waits for its end is a change whose `unlock` runs, or
 	// is not reaped yet: one at a time.
 	if find("unlock") != nil || principal_change_waiting {
-		system.log_in("processes", .Warning, "root: refused a change of the passphrase: unlock runs; it is made when unlock stopped")
+		system.log(.Warning, "root: refused a change of the passphrase: unlock runs; it is made when unlock stopped")
 		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
 		return .No_Slot, false
 	}
 	if mode == .Change_Passphrase {
-		system.log_in("processes", .Info, "root: the passphrase of principal ", number, " \"", principal_name(number), "\" changes in the window of unlock")
+		system.log(.Info, "root: the passphrase of principal ", number, " \"", principal_name(number), "\" changes in the window of unlock")
 	} else {
-		system.log_in("processes", .Info, "root: a new recovery key of principal ", number, " \"", principal_name(number), "\" is made in the window of unlock")
+		system.log(.Info, "root: a new recovery key of principal ", number, " \"", principal_name(number), "\" is made in the window of unlock")
 	}
 	started_status := unlock_start(mode, "")
 	if started_status != .Ok {

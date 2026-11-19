@@ -46,7 +46,7 @@ trust_check :: proc "contextless" () {
 		found_digits := system_description.hexadecimal(result.found_hash)
 		buffer: [256]u8
 		text := system.format(buffer[:], system_description.name_of(&result.name), ": ", system_description.fault_sentences[result.fault])
-		system.log_in("processes", .Error, "root: ", text, ": expected ", string(expected[:]), ", found ", string(found_digits[:]))
+		system.log(.Error, "root: ", text, ": expected ", string(expected[:]), ", found ", string(found_digits[:]))
 		switch result.fault {
 		case .Name_Differs, .Kind_Differs, .Outside_Image, .Size_Differs, .Hash_Differs, .Stated_Hash_Differs:
 			screen_data.failed_name = system_description.name_of(&result.name)
@@ -55,49 +55,49 @@ trust_check :: proc "contextless" () {
 		}
 		fail(text, .Bad_State)
 	}
-	system.log("root: the boot image agrees with the system description that the boot program verified: ", trust.entry_count - 1, " modules and resources checked in ", system.Duration{spent / 1000, .Microseconds}, "; the kernel was checked by the boot program only")
+	system.log(.Info, "root: the boot image agrees with the system description that the boot program verified: ", trust.entry_count - 1, " modules and resources checked in ", system.Duration{spent / 1000, .Microseconds}, "; the kernel was checked by the boot program only")
 	if report.cycle_frequency != 0 {
-		system.log("root: the boot program checked the signature and every hash in ", system.Duration{trust.check_cycles * 1_000_000 / report.cycle_frequency, .Microseconds})
+		system.log(.Info, "root: the boot program checked the signature and every hash in ", system.Duration{trust.check_cycles * 1_000_000 / report.cycle_frequency, .Microseconds})
 	}
 	if trust.key_kind == .Test {
-		system.log_in("processes", .Warning, "root: the system description is signed by the test signing key, whose private key is published: this system is not trusted")
+		system.log(.Warning, "root: the system description is signed by the test signing key, whose private key is published: this system is not trusted")
 	}
 	if trust.verifier == .Boot_Program {
-		system.log("root: verified by the boot program, which the firmware did not verify")
+		system.log(.Info, "root: verified by the boot program, which the firmware did not verify")
 	} else {
-		system.log("root: verified by the firmware (Secure Boot), then by the boot program")
+		system.log(.Info, "root: verified by the firmware (Secure Boot), then by the boot program")
 	}
 	switch trust.measure {
 	case .Measured:
 		digits := system_description.hexadecimal(trust.measure_value)
-		system.log("root: measured: PCR ", trust.measure_register, " = ", string(digits[:]), ", at try ", trust.measure_tries)
+		system.log(.Info, "root: measured: PCR ", trust.measure_register, " = ", string(digits[:]), ", at try ", trust.measure_tries)
 	case .No_Tpm:
-		system.log("root: the system description is not measured into the TPM: the firmware has no TPM")
+		system.log(.Info, "root: the system description is not measured into the TPM: the firmware has no TPM")
 	case .Refused:
-		system.log_in("processes", .Warning, "root: the TPM refused the measure of the system description: status ", system.Hex(trust.measure_status), ", after ", trust.measure_tries, " tries: PCR ", trust.measure_register, " does not hold it")
+		system.log(.Warning, "root: the TPM refused the measure of the system description: status ", system.Hex(trust.measure_status), ", after ", trust.measure_tries, " tries: PCR ", trust.measure_register, " does not hold it")
 	case .Not_Read:
-		system.log_in("processes", .Warning, "root: the system description is measured, but the read of PCR ", trust.measure_register, " failed: status ", system.Hex(trust.measure_status))
+		system.log(.Warning, "root: the system description is measured, but the read of PCR ", trust.measure_register, " failed: status ", system.Hex(trust.measure_status))
 	case .None:
-		system.log_in("processes", .Warning, "root: the boot program did not try the measure")
+		system.log(.Warning, "root: the boot program did not try the measure")
 	}
 	// The TPM floors that the boot program compared
 	// (src/md/features/rollback_floors.md).
-	system.log("root: the TPM floors before this start: the key floor ", trust.key_floor, " for the key number ", trust.key_number, ", the version floor of that key number ", trust.version_floor, " for the security version ", trust.security_version)
+	system.log(.Info, "root: the TPM floors before this start: the key floor ", trust.key_floor, " for the key number ", trust.key_number, ", the version floor of that key number ", trust.version_floor, " for the security version ", trust.security_version)
 	for word in ([2]u64{trust.key_floor_state, trust.version_floor_state}) {
 		// The trust record comes through the boot report of the kernel: a
 		// word that names no state is said, never read as a state.
 		state, state_known := info.floor_state_of_word(word)
 		if !state_known {
-			system.log_in("processes", .Warning, "root: the boot record names the floor state ", word, ", which names no state")
+			system.log(.Warning, "root: the boot record names the floor state ", word, ", which names no state")
 			continue
 		}
 		switch state {
 		case .None, .Absent, .Held:
 			// A floor that the boot program read or wrote: the line above says it.
 		case .Foreign, .Never_Written, .Read_Refused:
-			system.log_in("processes", .Warning, "root: an index of a TPM floor was not a floor that the boot program could read: another system defined or planted it, or PCR 7 changed; the boot program took it as 0, and replaced it with Secure Boot on")
+			system.log(.Warning, "root: an index of a TPM floor was not a floor that the boot program could read: another system defined or planted it, or PCR 7 changed; the boot program took it as 0, and replaced it with Secure Boot on")
 		case .Not_Read:
-			system.log_in("processes", .Warning, "root: the boot program could not read a TPM floor: status ", system.Hex(trust.floor_status), "; it took it as 0")
+			system.log(.Warning, "root: the boot program could not read a TPM floor: status ", system.Hex(trust.floor_status), "; it took it as 0")
 		}
 	}
 }

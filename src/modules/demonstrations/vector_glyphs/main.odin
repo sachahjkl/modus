@@ -93,7 +93,7 @@ with_font :: proc "contextless" (index: int) -> (ok: bool) {
 		size, problem = vector_font.glyph_cache_build(&font, candidates[index].bytes, candidates[index].name, true, &render_memory, out)
 	}
 	if problem != .None {
-		system.log("vector_glyphs: the font ", candidates[index].name, " is refused: ", vector_font.font_problem_names[problem])
+		system.log(.Info, "vector_glyphs: the font ", candidates[index].name, " is refused: ", vector_font.font_problem_names[problem])
 		return false
 	}
 	build_times[index] = system.nanoseconds() - start
@@ -101,7 +101,7 @@ with_font :: proc "contextless" (index: int) -> (ok: bool) {
 	refused: glyph_cache.Problem
 	candidate_cache, refused = glyph_cache.validate(out[:size])
 	if refused.kind != .None {
-		system.log("vector_glyphs: the cache of ", candidates[index].name, " is refused: ", glyph_cache.problem_sentences[refused.kind])
+		system.log(.Info, "vector_glyphs: the cache of ", candidates[index].name, " is refused: ", glyph_cache.problem_sentences[refused.kind])
 		return false
 	}
 	return true
@@ -262,13 +262,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	graphics.text_choice_set(.Spleen, saved.order)
 	spleen_time = least_of_batches(scratch_canvas, sample)
 	graphics.text_state = saved
-	system.log("vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 ", outline_times[0], " ns, scale 2 ", outline_times[1], " ns, scale 3 ", outline_times[2], " ns; from the private glyph cache: ", cache_time, " ns; Spleen 8x16: ", spleen_time, " ns")
+	system.log(.Info, "vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 ", outline_times[0], " ns, scale 2 ", outline_times[1], " ns, scale 3 ", outline_times[2], " ns; from the private glyph cache: ", cache_time, " ns; Spleen 8x16: ", spleen_time, " ns")
 
 	draw(&window)
 	for size, index in cache_sizes {
-		system.log("vector_glyphs: the cache of ", candidates[index].name, ": 95 characters at 3 scales built in ", build_times[index] / 1000, " us, ", u64(size), " bytes")
+		system.log(.Info, "vector_glyphs: the cache of ", candidates[index].name, ": 95 characters at 3 scales built in ", build_times[index] / 1000, " us, ", u64(size), " bytes")
 	}
-	system.log("vector_glyphs: ok, ", u64(len(candidates)), " candidates beside Spleen 8x16")
+	system.log(.Info, "vector_glyphs: ok, ", u64(len(candidates)), " candidates beside Spleen 8x16")
 	for {
 		display.wait(&window)
 		if interface.window_events(&window_memory.drawing, &window) {

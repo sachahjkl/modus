@@ -25,7 +25,7 @@ The line is written at the end of the first read of the ring. At that moment, th
 
 - **One count, required to be 0.** It held only while the boot wrote fewer than 2046 records before the process started. Each new line of a process broke the check, and a larger ring only moved the edge.
 - **Start the process `log` earlier.** A process started earlier still depends on the order of the start, and each new line before it moves the edge again. The check must not depend on what other processes write.
-- **Start the reader at the newest record.** The window then shows no record of the boot, and the counts of the levels and of the channels lose their meaning.
+- **Start the reader at the newest record.** The window then shows no record of the boot, and the counts of the levels and of the processes lose their meaning.
 
 ## Subtle points
 
@@ -34,8 +34,8 @@ The line is written at the end of the first read of the ring. At that moment, th
 
 A check that reads a record of the boot through the ring has the same fault as one count: it holds only while the boot is short. So each check of the log reads a fact that the ring still holds when it runs, or reads the boot where each line stays:
 
-- **The stages of the boot.** The kernel writes one record for each stage of the boot, on the channel `boot`. The test waits for the seven lines on the serial port, right after "kernel: ok": the serial port keeps each line. The window no longer writes its count of the records of the kernel in the channel `boot`: that count depended on the boot, and the window shows each channel with its count.
-- **A record of the kernel keeps its channel.** The test starts the process `fault` just before the check. The kernel writes "kernel: process fault stopped: page fault ..." on the channel `fault`, at the level warning, and the step `Record` reads it through `log.records`.
+- **The stages of the boot.** The kernel writes one record for each stage of the boot, "kernel: boot: ...". The test waits for the seven lines on the serial port, right after "kernel: ok": the serial port keeps each line. The window writes no count of the records of the boot: that count depends on the boot, and the window shows each process with its count.
+- **A record of the kernel keeps its process and its level.** The test starts the process `fault` just before the check. The kernel writes "kernel: process fault stopped: page fault ..." at the level warning, and the step `Record` reads it through `log.records` by the process `kernel` and that level.
 - **A record keeps the kind of each value.** At its start, the process `log` writes "log: the memory of the log: <count> records in <size>": the size is a value of the kind size. The step `Record` finds that record, and `log.value_runs({record})` reads the runs from its number. The tool writes the number of the record that the last step `Record` found in place of `{record}`: a scenario cannot know the number of a record before it runs.
 - **`log.records(0)`** gives the rows that the ring still holds, from the oldest one. The check needs any rows of `Record`, not a given record, so it does not depend on the boot.
 

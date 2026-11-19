@@ -35,7 +35,7 @@ the_table_of_the_address_parameters_has_one_row_for_each_address :: proc(t: ^tes
 the_result_kinds_come_from_the_reference_comments :: proc(t: ^testing.T) {
 	_, no_enumeration := fuzz_operation_results_read("package operation\n")
 	testing.expect(t, !no_enumeration, "a reference with no enumeration Operation is taken")
-	short := "Operation :: enum u32 {\n\tNone = 0,\n\tLog = 1, // (log, address, length, level, channel, channel, runs).\n}\n"
+	short := "Operation :: enum u32 {\n\tNone = 0,\n\tLog = 1, // (log, address, length, level, runs).\n}\n"
 	_, short_ok := fuzz_operation_results_read(short)
 	testing.expect(t, !short_ok, "a reference that names two operations is taken")
 	results, ok := fuzz_operation_results_read(fuzz_operation_reference)
