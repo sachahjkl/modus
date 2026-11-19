@@ -197,7 +197,7 @@ stopped_wait :: proc "contextless" (processes: []system.Handle) {
 		wait := system.wait_begin()
 		all := true
 		for process in processes {
-			if state, _ := system.process_state(process); state != .Stopped {
+			if state, _, _ := system.process_state(process); state != .Stopped {
 				all = false
 			}
 		}
@@ -440,7 +440,7 @@ WIRINGS_OF_AN_ASKER_MOST :: 8
 // asker_read; this process then stops, and the writer reads
 // Asker_Stopped.
 @(private = "file")
-asker_case :: proc "contextless" () {
+asker_case :: proc "contextless" () -> ! {
 	rows := [1]output.Wiring{row(.Child, 0, WRITER_ASKED, .Asker, 0, 0)}
 	list_write(rows[:], nil)
 	status, answer := start_listed("output_writer", true)
