@@ -706,11 +706,21 @@ Do not use: untyped output, passthrough type.
 
 A wiring list is the table of wiring records that a starter gives with `Start`, which the root service applies whole before the first instruction of the child.
 
-Each row joins a record output, a record input or the `log` of the child to a process that the starter started, to a service of a connection, or to the starter. A record output that no row names has no reader. The list is whole or refused: on a refusal, no process starts and the budget of the starter does not change. In the console it is a `Table(Wiring)`, and `+` joins two lists. Example: `start(server, audit(server))`.
+Each row names a writer and a reader: the child, a process that the starter started, a service of a connection, or the starter as the reader. `Wire` lends the same form with one row and no child. A record output that no row names has no reader. The list is whole or refused: on a refusal, no process starts and the budget of the starter does not change. In the console it is a `Table(Wiring)`, and `+` joins two lists. Example: `start(server, audit(server))`.
 
 The design: `src/md/features/module_outputs.md`, "The wiring list of a start".
 
 Do not use: manifest, wiring plan, pipeline, redirection.
+
+### Wiring page
+
+A wiring page is a page of the budget of an asker in which the root service keeps the records of the wirings that the asker asked for: a head and 63 wiring records.
+
+The root service makes the first page at the first wiring of the asker, chains a new page when the pages are full, and gives a page back to the budget when its last wiring ends. So the root service keeps no table of a fixed size for the wirings: each one is paid by its asker. The wirings of a page end when the asker stops.
+
+The design: `src/md/features/module_outputs.md`, "The budget".
+
+Do not use: subscription table, wiring table.
 
 ### Wiring terms
 

@@ -438,7 +438,7 @@ Do not use: capability set, permission, privilege.
 
 A recorded grant is a handle, or a connection, that the root service gave a process and can end while the process runs.
 
-The root service records it by the process and by one of ten names in lower case (`Root_Grant` and `root_grant_names` in `src/library/support/system/grants.odin`): `log`, `machine`, `image`, `store`, `debug`. `grants("notes")` in the console shows the recorded grants of a process, and `revoke("notes", "store")` ends one: the kernel ends each handle and each mapping that came from it.
+The root service records it by the process and by one of eleven names in lower case (`Root_Grant` and `root_grant_names` in `src/library/support/system/grants.odin`): `log`, `machine`, `image`, `store`, `debug`, `wirings`. `grants("notes")` in the console shows the recorded grants of a process, and `revoke("notes", "store")` ends one: the kernel ends each handle and each mapping that came from it.
 
 A recorded grant is not a start grant, which says what the root service gives a process by its name, and whose name has capital letters (`Store`).
 

@@ -48,6 +48,15 @@ Root_Command :: enum u32 {
 	// with `Exists` (unit `Processes`), and values[0] of the completion is a
 	// handle of the process with the right Read, whose stop ends a wait of
 	// the start policy.
+	//
+	// values[4]: 0, or the memory of a wiring list, given through the root
+	// ring (modus:contract/output, Wiring_List_Head): the root service
+	// applies it before the first instruction of the process, whole or not
+	// at all (src/md/features/module_outputs.md, "The wiring list of a
+	// start"). values[5]: a Start_Answer. With Process_Handle, values[0] of
+	// the completion is a handle of the process with the right Read, which
+	// a Wire names; values[1..6] are the rings of the rows whose reader is
+	// the sender, in the order of the rows. values[6] is 0.
 	Start      = 1,
 	// Stop the process with this name. The compositor and the terminal are
 	// refused with `Reserved`; a name that runs no process with `Absent`.
@@ -370,6 +379,31 @@ Root_Command :: enum u32 {
 	// grant store; with `Full` (unit `Grants`) for a full table; and with
 	// `Refused` while the table takes no change.
 	Start_Policy_Choice = 28,
+	// Wire joins one record output of one process to one record input of
+	// another, or to the sender (src/md/features/module_outputs.md, "The
+	// wiring and its rights"). values[0] is the memory of a wiring list of
+	// one row, given through the root ring (modus:contract/output,
+	// Wiring_List_Head); values[1..6] are 0. Its name is not read. An end
+	// Started names a process whose start the sender asked for, an end
+	// Connected a service to which it holds a connection and for which it
+	// acts for the principal; each by a process handle lent in the list.
+	// The completion: values[0] the output ring for a reader Asker, else 0;
+	// values[1] the number of the wiring; values[2] the index of the
+	// record description in the module file of the writer; values[3..6]
+	// the hash of that file. The refusals and their error records:
+	// src/md/features/module_outputs.md, "Errors".
+	Wire = 29,
+}
+
+// values[5] of a Start: what its completion gives.
+Start_Answer :: enum u64 {
+	Nothing        = 0, // No handle. values[0] of the completion is 0.
+	Process_Handle = 1, // values[0] of the completion: the process, with the right Read.
+}
+
+// start_answer_of_word is the border of values[5] of a Start.
+start_answer_of_word :: proc "contextless" (word: u64) -> (answer: Start_Answer, ok: bool) {
+	return enum_word.member_of_word(Start_Answer, word)
 }
 
 // The enumerations below are words of the root ring: each value is the
@@ -508,6 +542,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Remote_Client          = .Root_Ring,
 	.Machine_Usable         = .Start_Policy,
 	.Start_Policy_Choice    = .Root_Ring,
+	.Wire                   = .Root_Ring_Or_Start_Policy,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -683,6 +718,7 @@ ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
 	.Remote_Client          = .Command,
 	.Machine_Usable         = .Command,
 	.Start_Policy_Choice    = .Command,
+	.Wire                   = .Command,
 }
 
 // The step at which the dispatch of one record ends, in the order of the
@@ -855,6 +891,7 @@ root_command_names := [Root_Command]string {
 	.Remote_Client          = "Remote_Client",
 	.Machine_Usable         = "Machine_Usable",
 	.Start_Policy_Choice    = "Start_Policy_Choice",
+	.Wire                   = "Wire",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -890,6 +927,7 @@ root_first_argument_names := [Root_Command]string {
 	.Remote_Client          = "key",
 	.Machine_Usable         = "name",
 	.Start_Policy_Choice    = "nickname",
+	.Wire                   = "list",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -926,6 +964,7 @@ root_second_argument_names := [Root_Command]string {
 	.Remote_Client          = "action",
 	.Machine_Usable         = "",
 	.Start_Policy_Choice    = "hash",
+	.Wire                   = "",
 }
 
 // command_of_record reads the command that an error record names: the

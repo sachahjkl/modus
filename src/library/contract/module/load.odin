@@ -439,8 +439,8 @@ records_equal :: proc "contextless" (file: []u8, index: u32, other_file: []u8, o
 		a := field(file, first, number) or_return
 		b := field(other_file, second, number) or_return
 		// The kind and the enum are part of what the field means, as the
-		// unit is: a reader writes the value by them.
-		if a.offset != b.offset || a.type != b.type || a.detail != b.detail || a.integer_unit != b.integer_unit || a.kind != b.kind || a.contract_enum != b.contract_enum || string_at(file, a.name_offset, a.name_count) != string_at(other_file, b.name_offset, b.name_count) {
+		// unit and the sign are: a reader writes the value by them.
+		if a.offset != b.offset || a.type != b.type || a.unsigned != b.unsigned || a.detail != b.detail || a.integer_unit != b.integer_unit || a.kind != b.kind || a.contract_enum != b.contract_enum || string_at(file, a.name_offset, a.name_count) != string_at(other_file, b.name_offset, b.name_count) {
 			return false
 		}
 	}

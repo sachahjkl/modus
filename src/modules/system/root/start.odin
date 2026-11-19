@@ -52,14 +52,23 @@ Start_Work :: struct {
 	endpoint_region: system.Handle,
 	clock_ports:    system.Handle,
 	shared:         [2]system.Handle, // The ring to the compositor; or the terminal ring and the text region.
+	// The wiring of the child before its first instruction, and what the
+	// start gives back: its wiring ring and a handle of its budget.
+	wiring:         system.Start_Wiring,
+	// The wiring list of the Start, or nil (wirings.odin).
+	wiring_work:    ^Wiring_Work,
 }
 
 // start starts a process of the boot image that shows a surface or has a
-// terminal, in the session of a principal (principals.odin).
-start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) -> system.Status {
+// terminal, in the session of a principal (principals.odin). asker is the
+// process that asked for the start with Start, or nil; wiring_work its
+// wiring list, which a refusal of the start ends whole; place, when not
+// nil, receives the place of the process.
+start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, wiring_work: ^Wiring_Work = nil, place: ^^Started = nil) -> system.Status {
 	work := Start_Work {
-		name      = name,
-		principal = principal,
+		name        = name,
+		principal   = principal,
+		wiring_work = wiring_work,
 	}
 	defer start_handles_close(&work)
 	if status := start_prepare(&work); status != .Ok {
@@ -69,15 +78,59 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 		start_abandon(&work)
 		return status
 	}
+	work.slot.asker = asker
 	status := start_context_build(&work)
+	if status == .Ok && wiring_work != nil {
+		// The list is resolved against the file and the place of the
+		// child, and its rings are made, before the child exists.
+		wiring_work.child = work.slot
+		wiring_work.child_file = work.file
+		status = wiring_list_resolve(wiring_work)
+		if status == .Ok {
+			status = wiring_list_make(wiring_work)
+		}
+		if status == .Ok {
+			work.wiring.ends = wiring_child_ends(wiring_work)
+		}
+	}
 	if status == .Ok {
 		status = start_process_load(&work)
+		if status != .Ok && wiring_work != nil {
+			wiring_list_unmake(wiring_work)
+		}
 	}
 	if status != .Ok {
 		start_abandon(&work)
 		return status
 	}
+	start_wiring_keep(&work)
+	if place != nil {
+		place^ = work.slot
+	}
 	return start_finish(&work)
+}
+
+// start_wiring_keep keeps what the start of a process gave this service:
+// its module file, its budget handle and its wiring ring, mapped to write
+// its commands; then it gives the other ends of the wiring list.
+start_wiring_keep :: proc "contextless" (work: ^Start_Work) {
+	slot := work.slot
+	slot.file = work.file
+	slot.budget = work.wiring.budget
+	slot.wiring_memory = work.wiring.wiring_memory
+	if slot.wiring_memory != 0 {
+		mapped, status := system.ring_open(slot.wiring_memory)
+		if status == .Ok {
+			slot.wiring = mapped
+		} else {
+			// A wiring ring that this service cannot map takes no later
+			// end: a wiring that names the process is refused.
+			system.log(.Warning, "root: cannot map the wiring ring of ", system.Module_Name{work.name}, ": status ", status)
+		}
+	}
+	if work.wiring_work != nil {
+		wiring_list_deliver(work.wiring_work)
+	}
 }
 
 // start_prepare finds the file of the process, refuses a name that start()
@@ -493,7 +546,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	// module, its hash and Process_Start are in it
 	// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
 	started_at := system.nanoseconds()
-	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error)
+	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring)
 	if status == .Ok {
 		// A process with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.

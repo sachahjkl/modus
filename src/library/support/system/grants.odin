@@ -425,6 +425,7 @@ Root_Grant :: enum u32 {
 	History     = 7, // The store of the line history of the console in the storage service (Root_Command.Connect_History).
 	Debug       = 8, // The handle of another process with the right Debug, for each process that the command Debug named (Root_Command.Debug).
 	Palette     = 9, // The entry table and the ring of the palette provider (Root_Command.Palette_Provide): the commands of the process show in the palette of the desktop.
+	Wirings     = 10, // The wirings that the process asked for (Root_Command.Wire, and the wiring list of Start): their rings are paid from its budget. A revocation ends each of them with the end word Revoked.
 }
 // A set of grants: bit n is the grant n. The completion of `Grants` holds
 // two of them.
@@ -442,6 +443,7 @@ root_grant_names := [Root_Grant]string {
 	.History     = "history",
 	.Debug       = "debug",
 	.Palette     = "palette",
+	.Wirings     = "wirings",
 }
 
 // A name of a process in a command of the root ring: 31 bytes at most, zero

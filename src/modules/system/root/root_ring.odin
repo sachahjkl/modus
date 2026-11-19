@@ -88,11 +88,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		// The start policy starts the parts of the system too, and gets a
 		// handle of each process (start_policy.odin). A process that a
 		// process starts belongs to the session of the process that asks.
-		if .Start_Policy in item.role.grants {
-			answer.status = start_policy_start(item, name, &answer.values, &answer.written)
-		} else {
-			answer.status = start(name, item.principal)
-		}
+		answer.status = start_command(item, record, name, &answer.values, &answer.written)
 	case .Stop:
 		answer.status = .Bad_Handle
 		for &other in started {
@@ -193,8 +189,89 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.status = start_policy_usable(item, &answer.values)
 	case .Start_Policy_Choice:
 		answer.status = start_policy_choice_command(item, record, &answer.values)
+	case .Wire:
+		answer.status = wire(item, record, &answer.values)
 	}
 	return answer
+}
+
+// start_command runs Start: the border of values[4..6], the start with its
+// wiring list, and the answer that values[5] asks for. The start policy
+// starts the parts of the system too, and gets a handle of each process
+// (start_policy.odin); its start list wires no row before the step that
+// builds it, so its Start with a list is refused with Unsupported.
+start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64, written: ^bool) -> system.Status {
+	command := root_ring.Root_Command.Start
+	answer, answer_ok := root_ring.start_answer_of_word(record.values[5])
+	if !answer_ok {
+		values^ = root_ring.word_refusal(command, 3, record.values[5], u64(max(root_ring.Start_Answer)))
+		written^ = true
+		return .Bad_Operation
+	}
+	if record.values[6] != 0 {
+		values^ = root_ring.word_refusal(command, 4, record.values[6], 0)
+		written^ = true
+		return .Bad_Operation
+	}
+	if .Start_Policy in item.role.grants {
+		if record.values[4] != 0 {
+			values^ = errors.ring_fail(u32(command), .Unsupported, .Wiring_Rows, 2)
+			written^ = true
+			return .Bad_Operation
+		}
+		return start_policy_start(item, name, values, written)
+	}
+	// A process that a process starts belongs to the session of the
+	// process that asks, and the asker of its start is that process.
+	if record.values[4] == 0 {
+		started_place: ^Started
+		status := start(name, item.principal, item, nil, &started_place)
+		if status == .Ok && answer == .Process_Handle && started_place != nil {
+			values[0], _ = start_process_handle_give(item, started_place)
+		}
+		return status
+	}
+	work := &wire_work
+	work^ = {asker = item, command = command, form = .Start}
+	if status := wiring_list_take(work, record.values[4]); status != .Ok {
+		values^ = work.refusal
+		written^ = true
+		return status
+	}
+	started_place: ^Started
+	status := start(name, item.principal, item, work, &started_place)
+	if status != .Ok {
+		// A refusal of the list has its record; another refusal of the
+		// start has the record of the dispatch.
+		if work.refusal != ([7]u64{}) {
+			values^ = work.refusal
+			written^ = true
+		}
+		return status
+	}
+	asker_place := 1
+	for number in 1 ..= work.list.row_count {
+		plan := &work.plans[number - 1]
+		if plan.row.reader_end == .Asker && plan.kept != nil {
+			values[asker_place] = u64(plan.asker_ring)
+			asker_place += 1
+		}
+	}
+	if answer == .Process_Handle && started_place != nil {
+		values[0], _ = start_process_handle_give(item, started_place)
+	}
+	return .Ok
+}
+
+// start_process_handle_give gives the asker of a start the handle of the
+// process with the right Read only, through its root ring: the handle that
+// a Wire names, and whose stop ends a wait of the asker.
+start_process_handle_give :: proc "contextless" (asker: ^Started, process: ^Started) -> (u64, system.Status) {
+	given, status := system.give(asker.requests_memory, process.process, {.Read})
+	if status != .Ok {
+		return 0, status
+	}
+	return u64(given), .Ok
 }
 
 // root_connect runs Connect. The process of the client table connects for
@@ -230,7 +307,7 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 	// starts it: a Start of its name is refused as one.
 	of_the_system := name_is_a_system_part(name) || .Start_Policy in role_of(name).grants
 	switch command {
-	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable, .Start_Policy_Choice:
+	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable, .Start_Policy_Choice, .Wire:
 		// No cause that the state shows: the record Refused, with the status.
 	case .Connect_History, .Palette_Provide:
 		// A grant of the role that the command needs, and that the process

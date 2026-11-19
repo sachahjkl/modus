@@ -454,6 +454,31 @@ offset  size  field         type
 - **The border** `output.given_end_of_record` refuses a kind that names no command, a ring handle of 0 or past 32 bits, an index of 0 or past `module.RECORD_STREAM_INDEX_MOST`, a pace that names no member, a pace word beside a reader end, terms beside a writer end, and a reserved word that is not 0. Its error record is `Bad_Value` with the index of the word + 1 as the argument, 0 for the kind.
 - **The completion** has the status `Ok` when the process took the end, else the status of its refusal and its error record. The root service takes it through `output.wiring_completion_of_record`, which refuses a status that names no member and an `Ok` with values.
 - **No command ends an end.** The end words of the output ring say it.
+- **The wiring list** that `Wire` and `Start` lend: a head, the rows, the lent process handles of 32 bits, then the wiring terms. `output.wiring_list_check` takes a private copy of it, and `output.wiring_row_check` each row, with the error record of the unit `Wiring_Rows` that names the field and the row.
+
+```byte-layout output.Wiring_List_Head output.Wiring
+output.Wiring_List_Head, 64 bytes: the head of a wiring list
+offset  size  field         type
+     0     4  row_count     u32
+     4     4  handle_count  u32
+     8    56  reserved      [14]u32
+
+output.Wiring, 64 bytes: one row of a wiring list
+offset  size  field          type
+     0     4  writer_end     u32
+     4     4  writer_handle  u32
+     8     4  writer_stream  u32
+    12     4  writer_index   u32
+    16     4  reader_end     u32
+    20     4  reader_handle  u32
+    24     4  reader_index   u32
+    28     4  pace           u32
+    32     4  capacity       u32
+    36     4  terms_offset   u32
+    40     4  terms_count    u32
+    44    20  reserved       [5]u32
+```
+
 - **The type check** of a wiring is `output.record_descriptions_compare`: the name, the size and the count of the fields of the two records, then each field: its name, offset, type, sign, integer unit, detail, field kind and contract enum. It gives the first difference, with the number of the field from 1, and it refuses a description that `module.record_stream_type` refuses before any comparison.
 
 What the build checks: `TOOLS.md`, "The record outputs and the record inputs of the build". The wiring, the output ring and the design: `src/md/features/module_outputs.md`.

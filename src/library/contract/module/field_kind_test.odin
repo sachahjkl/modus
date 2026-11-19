@@ -140,6 +140,23 @@ a_field_of_another_kind_is_another_record :: proc(t: ^testing.T) {
 	}
 }
 
+// Two records whose one Integer field differs only by its sign are not
+// equal: a reader of the one would read a negative value of the other as a
+// large positive one. The equal record comes last.
+@(test)
+a_field_of_another_sign_is_another_record :: proc(t: ^testing.T) {
+	unsigned_field := Field{type = u8(Type.Integer), detail = 4, unsigned = true}
+	signed_field := unsigned_field
+	signed_field.unsigned = false
+	first := file_with_one_field(unsigned_field, 4)
+	defer delete(first)
+	second := file_with_one_field(signed_field, 4)
+	defer delete(second)
+	testing.expect(t, !records_equal(first[:], 1, second[:], 1))
+	testing.expect(t, !records_equal(second[:], 1, first[:], 1))
+	testing.expect(t, records_equal(second[:], 1, second[:], 1))
+}
+
 // field_bytes gives the bytes of a Bytes field, its zero bytes too, and
 // nothing for another type or a field past the record.
 @(test)

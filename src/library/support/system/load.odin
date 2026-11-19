@@ -877,10 +877,14 @@ source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[
 //   error:    when the load fails, the record of the failure.
 //   from_budget: the budget that pays `amounts`, with the right Spend; 0:
 //             the budget of this process.
+//   wiring:   not nil: the wiring ring of the process and the ends that it
+//             takes before its first instruction, and the handles that the
+//             starter keeps (Start_Wiring). Its handle slot
+//             CONTEXT_WIRING_RING must be 0. On a failure its outputs are 0.
 // The module is at PROCESS_BASE, its imports after it.
 // The process stops when the last handle to it closes.
-process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0) -> (process: Handle, status: Status) {
-	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 {
+process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0, wiring: ^Start_Wiring = nil) -> (process: Handle, status: Status) {
+	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 || grants[op.CONTEXT_WIRING_RING].handle != 0 {
 		return 0, .Bad_Operation
 	}
 	// Each process has a random seed from its starter (docs/RANDOMNESS.md):
@@ -931,8 +935,13 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	if error != nil {
 		error^ = loaded
 	}
+	if status == .Ok && wiring != nil {
+		// The starter keeps a handle of the budget, to pay what the child
+		// asks for from it.
+		wiring.budget, status = give(0, budget, {.Read, .Spend})
+	}
 	if status == .Ok {
-		status = process_fill(process, budget, grants, values, mappings)
+		status = process_fill(process, budget, grants, values, mappings, file, wiring)
 	}
 	if status == .Ok {
 		_, status = call(.Process_Start, u64(process), u64(entry), op.STACK_TOP, op.CONTEXT_ADDRESS)
@@ -940,13 +949,22 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	if status != .Ok {
 		call(.Process_Stop, u64(process), 0)
 		close(process)
+		if wiring != nil {
+			if wiring.budget != 0 {
+				close(wiring.budget)
+			}
+			if wiring.wiring_memory != 0 {
+				close(wiring.wiring_memory)
+			}
+			wiring.budget, wiring.wiring_memory = 0, 0
+		}
 		return 0, status
 	}
 	return process, .Ok
 }
 
 @(private)
-process_fill :: proc "contextless" (process: Handle, budget: Handle, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping) -> Status {
+process_fill :: proc "contextless" (process: Handle, budget: Handle, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping, file: []u8 = nil, wiring: ^Start_Wiring = nil) -> Status {
 	for mapping in mappings {
 		memory_map(mapping.memory, mapping.flags, process, mapping.address, mapping.first, mapping.page_count) or_return
 	}
@@ -965,6 +983,9 @@ process_fill :: proc "contextless" (process: Handle, budget: Handle, grants: [op
 		}
 	}
 	record.handles[op.CONTEXT_BUDGET] = give(process, budget, {.Give, .Read, .Spend}) or_return
+	if wiring != nil {
+		start_wiring_give(process, budget, record, file, wiring) or_return
+	}
 	record.values = values
 	memory_map(record_memory, {.Write}, process, op.CONTEXT_ADDRESS) or_return
 	return .Ok

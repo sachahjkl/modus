@@ -309,6 +309,25 @@ Started :: struct {
 	// is no fault of the process, and the stop of the compositor so is no
 	// absence of the screen, whatever the order of the reap.
 	stop_asked_by_root_service: bool,
+	// The process that asked for the start of this one with Start: the
+	// rule of an end Started of a wiring (wirings.odin). nil: this service
+	// started it by itself, or the asker stopped.
+	asker:           ^Started,
+	// The module file of the process, in the boot image: the record
+	// descriptions of its record outputs and record inputs. Empty for a
+	// process that this service did not start with start(): no wiring
+	// names it.
+	file:            []u8,
+	// A handle of the budget of the process with Read and Spend: the
+	// wirings that the process asks for are paid from it. Closed at the
+	// stop of the process (src/md/features/module_outputs.md, "The budget").
+	budget:          system.Handle,
+	// The wiring ring of a process that declares a record output or a
+	// record input, mapped in this service, which writes its commands.
+	wiring:          ring.Ring,
+	wiring_memory:   system.Handle,
+	// The wiring pages of the wirings that the process asked for.
+	wiring_pages:    ^Wiring_Page,
 }
 
 // place_is_free says if a place of the table of the processes holds no
@@ -1013,6 +1032,12 @@ root_loop_pass :: proc "contextless" () {
 		if item.process != 0 && item.requests.head != nil {
 			root_ring_serve(&item)
 		}
+		// The answers of the process to the ends of its wirings. They
+		// are not in the wait: an end that the process refused is read at
+		// the next pass, which any event starts.
+		if item.process != 0 && item.wiring.head != nil {
+			wiring_completions_read(&item)
+		}
 	}
 	// Before reap: an entropy service that answered and stopped still has
 	// its answers in the ring.
@@ -1500,6 +1525,15 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		values[0] = count
 		system.log(.Info, "root: revoked the grant palette of ", system.Module_Name{name}, ", holdings ended: ", count)
 		return .Ok
+	case .Wirings:
+		// Each wiring that the process asked for ends with the end word
+		// Revoked; the process can ask for new ones, as a revocation ends
+		// what was given and not the right to ask.
+		count := wirings_revoke(item)
+		item.granted -= {which}
+		values[0] = count
+		system.log(.Info, "root: revoked the grant wirings of ", system.Module_Name{name}, ", wirings ended: ", count)
+		return .Ok
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
 	case .Machine:
@@ -1875,12 +1909,18 @@ release :: proc "contextless" (item: ^Started) {
 	if item.debugger != nil {
 		debug_end(item)
 	}
+	// Each wiring that names the process ends, with the end word of its
+	// part, before its handle closes: the other side reads the end.
+	wirings_at_stop(item)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {
 			debug_end(&other)
 		}
 		if other.writer == item {
 			other.writer = nil
+		}
+		if other.asker == item {
+			other.asker = nil
 		}
 		if other.driver == item {
 			other.driver = nil

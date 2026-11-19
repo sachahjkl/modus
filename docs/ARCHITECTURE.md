@@ -244,6 +244,18 @@ The first process. The kernel gives it every handle that exists at boot.
 - Holds the records of the principals, and records for each process that it starts the principal of its session; it names that principal in each connection, in the name of each store and in the grants of the process (`docs/PRINCIPALS.md`).
 - Reads the role of a process one time, at its start, and keeps it with the process: each rule after the start reads that role, never the name. A process receives a root ring only with a start grant that sends a command, and each command of the root ring goes through one border, then the table of its senders, then its procedure (`src/library/contract/root_ring`; `src/md/api/root_ring.md`).
 - Holds no order of the start: it starts one start policy, which asks for each other start ("The start policy", below).
+- Joins a record output of one process to a record input of another, or to the asker, with the command `Wire` or with the wiring list of a `Start` ("The wirings", below).
+
+### The wirings
+
+A wiring joins one record output to one record input through one output ring (`src/md/features/module_outputs.md`). The root service keeps the mechanism; a process chooses which wiring to ask for.
+
+- **`Wire`** carries in values[0] one memory object, given through the root ring: a wiring list of one row (`output.Wiring_List_Head`, then `output.Wiring`, then the lent process handles, then the wiring terms). Each end is the child of a start, a process whose start the asker asked for, a service to which the asker holds a connection and for which it acts for the principal, or the asker itself as the reader. The completion gives the ring of a reader that is the asker, the number of the wiring, and the record description of the writer by its index and the hash of its module file.
+- **`Start`** carries the same memory in values[4], with the rows of the child, and a `root_ring.Start_Answer` in values[5]: with `Process_Handle`, values[0] of the completion is the process with the right Read, the handle that a later `Wire` names. The root service applies the whole list before the first instruction of the child, or refuses it whole. A start policy sends no list before its start list wires rows.
+- **The checks.** The border of the list and of each row (`output.wiring_list_check`), the proof that each lent handle came through the root ring, the rule of the asker, the indexes in the two module files, the equal record descriptions (`output.record_descriptions_compare`), the size of the wiring terms, one wiring for a record input of the count `One`, two different processes, and the room of each wiring ring. Each refusal is a status of the kernel and an error record of the unit `Wiring_Rows`, `Record_Types`, `Wiring_Terms`, `Wirings` or `Lent_Handles`.
+- **The cost.** The ring, a page of wiring terms and the wiring page that records the wiring come from the budget of the asker. The root service keeps a handle of the budget of each process that it starts, with Read and Spend, until its stop.
+- **The ends.** Each end reaches its process through the wiring ring at the handle 16 of its context; a reader that is the asker gets its end in the completion. The process answers each end in the completion queue of the wiring ring; a refused end ends its wiring with the end word `Refused`.
+- **The end of a wiring.** At the stop of the writer, of the reader or of the asker, the root service writes the end word `Writer_Stopped`, `Reader_Stopped` or `Asker_Stopped` in the ring and wakes both sides. The recorded grant `wirings` of the asker holds its wirings: `revoke(name, "wirings")` ends each of them with `Revoked`.
 
 ### The start policy
 

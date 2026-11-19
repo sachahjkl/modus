@@ -326,6 +326,21 @@ End_Word :: enum u32 {
 	Reader_Stopped = 2, // The reader stopped, or closed its end.
 	Asker_Stopped  = 3, // The asker of the wiring stopped: its budget paid the ring.
 	Revoked        = 4, // The asker or the principal revoked the wiring.
+	Refused        = 5, // A side refused its end in its wiring ring: the wiring ends before its first record.
+}
+
+// What a call of the library on a record output or a record input gives
+// its caller (system.output_write, system.output_end, system.input_read).
+// These are not kernel statuses: no kernel operation gives them. Each one
+// names what the caller learns.
+Stream_Status :: enum u32 {
+	Ok         = 0, // The call did its work.
+	No_Reader  = 1, // The record output has no ring: nothing was written, and the library counts the record.
+	No_Writer  = 2, // The record input has no ring: no record comes.
+	Full       = 3, // A ring that holds the writer has no room before the deadline: nothing was written.
+	Ended      = 4, // The other side ended or stopped: the end record or the end word says how.
+	Bad_Record = 5, // The reader refused a compartment, or the record to write has another size than its description.
+	No_Record  = 6, // The deadline of a read passed, and no compartment came.
 }
 
 // The end words: one line of the cache in the head page, in the half of

@@ -38,6 +38,8 @@ expected_fields :: proc() -> []Expected_Field {
 	record_input: module.Record_Input
 	compartment_word: output.Compartment_Word
 	end_words: output.End_Words
+	list_head: output.Wiring_List_Head
+	wiring: output.Wiring
 	draw: draw_record.Draw_Record
 	rectangle: draw_record.Rectangle_Fields
 	gradient: draw_record.Gradient_Fields
@@ -145,6 +147,21 @@ expected_fields :: proc() -> []Expected_Field {
 		{"output.End_Words", "stop_cause", offset_of(output.End_Words, stop_cause), size_of(end_words.stop_cause)},
 		{"output.End_Words", "stop_outcome", offset_of(output.End_Words, stop_outcome), size_of(end_words.stop_outcome)},
 		{"output.End_Words", "reserved", offset_of(output.End_Words, reserved), size_of(end_words.reserved)},
+		{"output.Wiring_List_Head", "row_count", offset_of(output.Wiring_List_Head, row_count), size_of(list_head.row_count)},
+		{"output.Wiring_List_Head", "handle_count", offset_of(output.Wiring_List_Head, handle_count), size_of(list_head.handle_count)},
+		{"output.Wiring_List_Head", "reserved", offset_of(output.Wiring_List_Head, reserved), size_of(list_head.reserved)},
+		{"output.Wiring", "writer_end", offset_of(output.Wiring, writer_end), size_of(wiring.writer_end)},
+		{"output.Wiring", "writer_handle", offset_of(output.Wiring, writer_handle), size_of(wiring.writer_handle)},
+		{"output.Wiring", "writer_stream", offset_of(output.Wiring, writer_stream), size_of(wiring.writer_stream)},
+		{"output.Wiring", "writer_index", offset_of(output.Wiring, writer_index), size_of(wiring.writer_index)},
+		{"output.Wiring", "reader_end", offset_of(output.Wiring, reader_end), size_of(wiring.reader_end)},
+		{"output.Wiring", "reader_handle", offset_of(output.Wiring, reader_handle), size_of(wiring.reader_handle)},
+		{"output.Wiring", "reader_index", offset_of(output.Wiring, reader_index), size_of(wiring.reader_index)},
+		{"output.Wiring", "pace", offset_of(output.Wiring, pace), size_of(wiring.pace)},
+		{"output.Wiring", "capacity", offset_of(output.Wiring, capacity), size_of(wiring.capacity)},
+		{"output.Wiring", "terms_offset", offset_of(output.Wiring, terms_offset), size_of(wiring.terms_offset)},
+		{"output.Wiring", "terms_count", offset_of(output.Wiring, terms_count), size_of(wiring.terms_count)},
+		{"output.Wiring", "reserved", offset_of(output.Wiring, reserved), size_of(wiring.reserved)},
 		{"draw_record.Draw_Record", "kind", offset_of(draw_record.Draw_Record, kind), size_of(draw.kind)},
 		{"draw_record.Draw_Record", "reserved", offset_of(draw_record.Draw_Record, reserved), size_of(draw.reserved)},
 		{"draw_record.Draw_Record", "element", offset_of(draw_record.Draw_Record, element), size_of(draw.element)},

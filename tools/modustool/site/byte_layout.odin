@@ -33,6 +33,7 @@ BYTE_LAYOUT_FORMAT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/format.o
 BYTE_LAYOUT_FACTS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/facts.odin"
 BYTE_LAYOUT_RECORD_STREAMS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/record_streams.odin"
 BYTE_LAYOUT_OUTPUT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/output/output.odin"
+BYTE_LAYOUT_WIRING_LIST_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/output/wiring_list.odin"
 BYTE_LAYOUT_DRAW_RECORD_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/draw_record/draw_record.odin"
 // The folder whose Markdown files the check and the command read: the
 // guides that the site shows.
@@ -167,6 +168,8 @@ byte_layout_output_ring_sources :: proc() -> []Byte_Layout_Source {
 	sources := [?]Byte_Layout_Source {
 		{key = "output.Compartment_Word", file = file, declaration = "Compartment_Word", info = type_info_of(output.Compartment_Word), what = "the start of each compartment of an output ring"},
 		{key = "output.End_Words", file = file, declaration = "End_Words", info = type_info_of(output.End_Words), what = "the end words in the head page of an output ring"},
+		{key = "output.Wiring_List_Head", file = BYTE_LAYOUT_WIRING_LIST_FILE, declaration = "Wiring_List_Head", info = type_info_of(output.Wiring_List_Head), what = "the head of a wiring list"},
+		{key = "output.Wiring", file = BYTE_LAYOUT_WIRING_LIST_FILE, declaration = "Wiring", info = type_info_of(output.Wiring), what = "one row of a wiring list"},
 	}
 	list := make([]Byte_Layout_Source, len(sources), context.temp_allocator)
 	copy(list, sources[:])
