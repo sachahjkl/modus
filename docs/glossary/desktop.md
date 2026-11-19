@@ -386,7 +386,7 @@ Do not use: window buffer, frame memory.
 
 A text grid is a grid of text cells of a process (a character, reverse, a color, or a fill), drawn by one draw record.
 
-A terminal changes many cells many times in one second, and one record for each cell makes a large table. So one text grid record names the whole grid, at its text size. A cell holds one code point. `draw_text_grid` copies the cells into the text table of the frame, so the record holds values only, and the difference compares the cells: in each row, the span of the changed cells is damaged. The console draws no pixels: the text grid of the terminal draws it. A text grid is not a screen buffer of a text mode.
+A terminal changes many cells many times a second, so one record names the whole grid, at its text size. A cell holds one code point. `draw_text_grid` copies the cells into the text table of the frame, so the record holds values only, and the difference compares the cells: in each row, the span of the changed cells is damaged. The console draws no pixels: the text grid of the terminal draws it. A text grid is not a screen buffer of a text mode.
 
 The design: `docs/INTERFACE.md`, "2.4 Text grid".
 

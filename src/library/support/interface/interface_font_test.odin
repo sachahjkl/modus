@@ -224,7 +224,7 @@ damage_of_interface_text_equals_the_whole_frame :: proc(t: ^testing.T) {
 measured_box :: proc(record: Draw_Record) -> Rectangle {
 	box := record_rectangle(record)
 	if view := record_view(record); view.kind == .Text && view.font == .Interface {
-		margin := ink_margin_of(view)
+		margin := ink_margin_of_view(view)
 		box.left += margin
 		box.right -= margin
 	}
@@ -234,7 +234,7 @@ measured_box :: proc(record: Draw_Record) -> Rectangle {
 // The ink margin of a text in the interface font: from the left edge of
 // its box to the pixel of its origin.
 @(private = "file")
-ink_margin_of :: proc(view: Record_View) -> int {
+ink_margin_of_view :: proc(view: Record_View) -> int {
 	return draw_record.pixels_floor(view.origin_x) - view.x
 }
 
@@ -331,7 +331,7 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 	first := record_view(table.records[0])
 	testing.expect(t, is_interface_text(table.records[0]), "a text in the interface font")
 	testing.expect_value(t, after, 10 + text_measured_width(&table, FONT_INTERFACE, "To LT"))
-	margin := ink_margin_of(first)
+	margin := ink_margin_of_view(first)
 	testing.expect_value(t, margin, graphics.PROPORTIONAL_INK_MARGIN)
 	testing.expect_value(t, first.x, 10 - margin)
 	testing.expect_value(t, first.origin_x, draw_record.units_of_pixels(10))
@@ -349,8 +349,8 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 	draw_text_right(&table, 100, 40, "Ty", graphics.colors.text, FONT_INTERFACE)
 	record := table.records[2]
 	view := record_view(record)
-	testing.expect(t, view.read && draw_record.origin_valid(view.origin_x, record.left))
-	testing.expect(t, view.x + view.width - ink_margin_of(view) <= 101)
+	testing.expect(t, view.read && draw_record.origin_valid(view.origin_x, record.left, u16(view.size)))
+	testing.expect(t, view.x + view.width - ink_margin_of_view(view) <= 101)
 	// The measure of many texts in one call gives the measures one by one.
 	texts := [?]string{"To", "LT", "palette", "", "W"}
 	widths: [len(texts)]int
