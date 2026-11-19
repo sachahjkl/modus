@@ -7,6 +7,7 @@ import "core:math"
 import "core:sync"
 import "core:testing"
 import "core:time"
+import "modus:support/text_rendering"
 import "modus:support/vector_font"
 
 // The blend in linear light with a gamma of 2 (blend_coverage_row) against
@@ -77,6 +78,32 @@ text_without_cache_is_spleen :: proc(t: ^testing.T) {
 	text_scaled(a, 0, 0, "g", DARK_TEXT, 3)
 	character_spleen_enlarged(b, 0, 0, 'g', DARK_TEXT, 3)
 	testing.expect(t, first == second)
+}
+
+// text_sized refuses each size that text_rendering.size_check refuses: 0, 1,
+// one unit under the smallest size, one past the largest, a negative size
+// and the largest int. Such a text draws nothing and gives back its x. Then
+// a size of the caption: cells of 7 pixels, and Spleen at its scale 1 one
+// row above the top of the cell, the middle of a line of 14.
+@(test)
+a_text_of_cells_at_its_sizes :: proc(t: ^testing.T) {
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
+	first, second: [48 * 32]Color
+	a := Canvas{pixels = raw_data(first[:]), width = 48, height = 32, stride = 48}
+	b := Canvas{pixels = raw_data(second[:]), width = 48, height = 32, stride = 48}
+	refused := [?]int{0, 1, text_rendering.TEXT_SIZE_MINIMUM - 1, text_rendering.TEXT_SIZE_LIMIT + 1, -text_rendering.TEXT_SIZE_OF_SCALE_ONE, max(int)}
+	for size in refused {
+		end := text_sized(a, 5, 2, "gM", DARK_TEXT, size)
+		testing.expectf(t, end == 5, "a text of size %d gives %d", size, end)
+		testing.expectf(t, first == second, "a text of size %d draws", size)
+	}
+	CAPTION :: 14 * text_rendering.SUBPIXEL
+	end := text_sized(a, 0, 8, "gM", DARK_TEXT, CAPTION)
+	testing.expect_value(t, end, 14)
+	character_spleen(b, 0, 7, 'g', DARK_TEXT)
+	character_spleen(b, 7, 7, 'M', DARK_TEXT)
+	testing.expect(t, first == second, "a caption in Spleen is not Spleen at its scale 1 in the middle of the line")
 }
 
 // A character of the Latin-1 Supplement and the euro sign draw their glyph

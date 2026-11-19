@@ -138,8 +138,12 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 	// The draw table of the last frame.
 	content = interface.card(frame, {ELEMENTS_CARD_WIDTH + 16 + offset, 8, WIDTH - ELEMENTS_CARD_WIDTH - 24, CARDS_HEIGHT}, "THE FRAME", "Draw_Table, Damage", graphics.colors.machine)
 	column = interface.column_of(content, 8)
-	interface.large_number(frame, content.x, interface.column_take(&column, 48).y, interface.number_text(&builder, number), graphics.colors.machine)
-	interface.cell_text(frame, interface.column_take(&column, 16), "frames", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
+	// The number, and its label as a caption under it with no gap: one
+	// area of the column holds the two.
+	number_height := interface.line_height(interface.FONT_LARGE)
+	number_area := interface.column_take(&column, number_height + interface.caption_height(frame.table, "frames", content.width))
+	interface.large_number(frame, number_area.x, number_area.y, interface.number_text(&builder, number), graphics.colors.machine)
+	interface.draw_caption(frame, number_area.x, number_area.y + number_height, number_area.width, "frames")
 	facts := [?]struct {
 		name:  string,
 		value: u64,
@@ -164,7 +168,10 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 		show_damage = !show_damage
 		system.log(.Info, "interface_elements: the damage is ", show_damage ? "shown" : "hidden")
 	}
-	interface.cell_text(frame, interface.column_take(&column, 16), "a frame draws only its damage", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
+	// The help line of the button: a caption.
+	help := "a frame draws only its damage"
+	help_area := interface.column_take(&column, interface.caption_height(frame.table, help, content.width))
+	interface.draw_caption(frame, help_area.x, help_area.y, help_area.width, help)
 	// The damage of the last frame, as outlines of 2 pixels over the window.
 	// They are records: when the damage stays the same, they do not damage.
 	if show_damage {

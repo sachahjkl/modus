@@ -50,7 +50,7 @@ The rules are in [`docs/DESIGN.md`](../../../docs/DESIGN.md), "6. Spacing".
 
 ## State
 
-Built. The spacing tokens are `GAP`, `MARGIN` and `TITLE` in `src/library/support/graphics/rules.odin`, which replaced the constant `GRID` and the card constants of the same lengths. The text size tokens are constants of the same file (`TEXT_CAPTION` to `TEXT_LARGEST`), which the elements read from the step of the draw record with sizes ([text_rendering.md](text_rendering.md), "State").
+Built. The spacing tokens are `GAP`, `MARGIN` and `TITLE` in `src/library/support/graphics/rules.odin`, which replaced the constant `GRID` and the card constants of the same lengths. The text size tokens are constants of the same file (`TEXT_CAPTION` to `TEXT_LARGEST`), which the elements read ([text_rendering.md](text_rendering.md), "The text size tokens"). A label under a value takes no gap: the line of the value holds its descent.
 
 - A dropped window, a new window and each edge of a resize go to the pixel; the part of the title kept on the screen is `bar.TITLE_KEPT`, one `gap`.
 - No measured width is rounded up: `interface.measured_size`, the columns of the start menu, the value buttons of a setting row and of a form of the palette.

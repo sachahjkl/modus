@@ -9,7 +9,7 @@
 // calls the kernel never. The parts:
 //
 // - `Canvas`, `Color`, `fill`, `line`, `outline`, `view`: shapes.
-// - `text`, `text_scaled`, `text_bold`, `character` (`text.odin`): the text of
+// - `text`, `text_sized`, `text_scaled`, `text_bold`, `character` (`text.odin`): the text of
 //   the system, from a glyph cache or from Spleen 8x16 (`font.odin`).
 // - `Blend_Tables` (`blend.odin`): the blend of a glyph over a color.
 // - The design rules (`rules.odin`): the grid, and the color tokens (the

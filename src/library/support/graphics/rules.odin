@@ -15,11 +15,11 @@ TITLE :: 40 // The height of the title of a card.
 
 // The text size tokens, in logical pixels (docs/DESIGN.md, "5. Text"): the
 // height of a line of text at each size that the desktop uses.
-TEXT_CAPTION :: 14 // The caption of a card, the detail of a row of a list.
+TEXT_CAPTION :: 14 // The caption of a card, a label under a value, a help line, a hash prefix after a nickname.
 TEXT_BODY :: 16 // Each other text.
-TEXT_HEADING :: 24 // A heading of a page, the heading of a group of a list.
+TEXT_HEADING :: 24 // The title of a page.
 TEXT_LARGE :: 32 // The one number of a card.
-TEXT_LARGEST :: 48 // The one number that a whole window is about.
+TEXT_LARGEST :: 48 // The one number that a whole window or panel is about.
 
 LINE_HEIGHT :: TEXT_BODY // One line of text.
 

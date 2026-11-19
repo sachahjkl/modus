@@ -1662,7 +1662,7 @@ screen_draw_part :: proc "contextless" (table: ^interface.Draw_Table, first, cou
 		return
 	}
 	screen_refusal_logged = true
-	system.log(.Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_17 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
+	system.log(.Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_18 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
 }
 
 // screen_draw draws the parts of the screen table into the frame, from the
@@ -1813,14 +1813,18 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			// the line: the nickname ends before it.
 			room := line_width - bar.WINDOWS_TITLE_X - bar.PADDING
 			if clients[index].from_disk {
-				room -= bar.WINDOWS_HASH_GAP + interface.text_measured_width(table, {}, string(clients[index].hash_prefix[:]))
+				room -= bar.WINDOWS_HASH_GAP + interface.text_measured_width(table, interface.FONT_CAPTION_CELLS, string(clients[index].hash_prefix[:]))
 			}
 			title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(clients[index].title[:]), room)
 			title_end := interface.draw_text(table, line_x + bar.WINDOWS_TITLE_X, line_y + 4, title, focus || line == menu_line ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 			if clients[index].from_disk {
-				// A value, in the font of the cells, faded: the name is the
-				// nickname, and the prefix only tells two files apart.
-				interface.draw_text(table, title_end + bar.WINDOWS_HASH_GAP, line_y + 4, string(clients[index].hash_prefix[:]), graphics.colors.dim)
+				// A value, in the font of the cells at the caption size,
+				// faded, on the baseline of the nickname: the name is the
+				// nickname, and the prefix only tells two files apart. On the
+				// chosen row it is white, as each text of that row: the dim
+				// color has no contrast on the chosen blue.
+				prefix_top := interface.text_top_on_baseline(table, interface.FONT_INTERFACE, line_y + 4, interface.FONT_CAPTION_CELLS)
+				interface.draw_text(table, title_end + bar.WINDOWS_HASH_GAP, prefix_top, string(clients[index].hash_prefix[:]), line == menu_line ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_CAPTION_CELLS)
 			}
 		}
 	}

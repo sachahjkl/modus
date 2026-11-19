@@ -224,21 +224,25 @@ The desktop lists four kinds of things that are not values (`kind_icons.Desktop_
 
 | Token | Text size | Use |
 |---|---|---|
-| `text_caption` | 14 | The caption of a card, the detail of a row of a list, the hash prefix after a nickname in the menu of the windows |
-| `text_body` | 16 | Each other text |
-| `text_heading` | 24 | A heading of a page of `manual`, the heading of a group of a list |
+| `text_caption` | 14 | A caption: the caption of a card, a label under a value, the help line of the chosen row of the palette, the hash prefix after a nickname in the menu of the windows and in `monitor` |
+| `text_body` | 16 | Each other text, the heading of a group of a list too |
+| `text_heading` | 24 | The page heading: the title of a page of `manual` |
 | `text_large` | 32 | The one number of a card |
-| `text_largest` | 48 | The one number that a whole window is about |
+| `text_largest` | 48 | The one number that a whole window or panel is about: the result of the palette |
 
 - A process can draw a text at any size from 4 to 256 pixels (`src/md/features/text_rendering.md`). The desktop and the elements of the interface package use the tokens only, so the texts of two windows line up.
 - 14 is the smallest size at which both fonts keep an x-height of 6 whole rows; 24 is a whole count of pixels at each scale factor.
-- The font of the cells is monospace: its advance is half the text size, the width of a cell, so a layout in cells holds with the vector font and with Spleen. A glyph of the font of the cells stays inside its cell.
+- **Each element is sized from the measure of its text at its size.** Its height is the line of its size times its lines, never a line of 16.
+- **Two sizes on one line share one baseline**: the caption of a card is on the baseline of its title, the hash prefix on the baseline of the nickname.
+- **A label under a value starts at the line of the value**, with no gap: the line holds its descent. A caption is in the dim color, and keeps 4.5 to 1 on each surface of a card; on a chosen row it is white.
+- **A page heading is over the content of the page** and stays when the content scrolls. A heading or a caption wider than its box goes on more lines.
+- The font of the cells is monospace: its advance is half the text size, a half up to a whole pixel, the width of a cell, so a layout in cells holds with the vector font and with Spleen. A line is two cells high: 16 at the body, 14 at the caption. A glyph of the font of the cells stays inside its cell.
 - The boot display takes no text size token and is not drawn by the text rendering module: its text is Spleen in cells of 8 x 16 logical pixels, at the size of Spleen of its scale (above).
 - An enlarged picture of the screen shows colored edges on each letter: the subpixel bands, not a fault. The setting `subpixel_order` `none` gives gray edges.
 - The title of a card is in capital letters, in the bold weight of the interface font, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
 - The system has no italic face. Where a text has italics (the documentation of a module in `manual`), the words have a line of 1 pixel under them, in the dim color, and keep their color. A link in such a text is a name in the color of a link; a link that a click opens also has a line of 1 pixel under it, in its color.
 - A name is in the dim color. A value is in the text color. A measure of a concept is in the color of that concept. Where values of mixed kinds follow one another, as in a line of the log or a table of the site, each value is in the color of its value kind (section 4, "The colors of values").
-- A card has at most one number in the large size: the number that the card is about.
+- A card has at most one number in the large size: the number that the card is about. What it counts is a caption under it.
 - Numbers of one column are aligned on the right, each with its unit.
 - A sentence follows the language rules of the project: short, exact, one term for one concept.
 
@@ -254,7 +258,8 @@ The spaces between the elements come from a few named lengths, the spacing token
 
 - The tokens are the constants `graphics.GAP`, `graphics.MARGIN` and `graphics.TITLE` of `src/library/support/graphics/rules.odin`, beside the text size tokens `graphics.TEXT_CAPTION` to `graphics.TEXT_LARGEST`.
 - A space between two elements of the desktop is a token, or a sum of tokens. A size that a content gives (the width of a text, of a picture, of a column of values) is that size, with no round up.
-- A line of text is its text size (section 5).
+- A line of text is its text size (section 5). The height of a text is its lines times its line: 14 for a caption, 24 for a page heading, 32 for the number of a card.
+- A label under its value takes no token: it starts at the line of the value. A space between two elements that say two things is a token.
 - The tokens are in logical pixels. At a scale factor in eighths, each token is a whole count of pixels of the screen (`docs/glossary/desktop.md`, "Scale factor").
 - A window is placed where the principal puts it, to the pixel, and a drag of an edge gives the size that the pointer gives, to the pixel. The compositor places a new window at steps of tokens (section 9).
 - The fixed sizes of an element are not tokens: the bar of 32 pixels, a button and a line of a list of 24, the scroll bar of 17.
@@ -295,7 +300,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 - A menu of the bar is a card under its button: a border of 1 pixel in the color of the kernel, a title in capital letters, the caption of its source and the count of its lines.
 - The start menu has two columns of lines. Its caption is `bar.names`, the table of the names in `src/library/private/compositor/bar`.
 - The menu of the windows has one line for each window, in the order of the client table. The window that has the focus has a square of 8 pixels before its title, and its title is white.
-- The line of a disk process has its nickname in the interface font, then, 8 pixels after it, the hash prefix of its file in the font of the cells and in `colors.dim`: a value, faded, beside the name. The menu is as wide as the longest nickname with its hash prefix in the font of the cells, so a nickname needs no cut in that font.
+- The line of a disk process has its nickname in the interface font, then, 8 pixels after it, the hash prefix of its file in the font of the cells at the caption size, on the baseline of the nickname, in `colors.dim`: a value, faded, beside the name. On the chosen line it is white. The menu is as wide as the longest nickname with its hash prefix in the font of the cells at the body, so a nickname needs no cut in that font.
 - A line is 24 pixels high. The line under the pointer is a chosen row: `colors.chosen`, with its text in white (section 10).
 
 ### Windows
@@ -338,7 +343,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 | Input band | 48 | The typed part at scale 2 (cells of 16 x 32), 16 pixels from the left edge. Its last 2 pixels are a line in `colors.title` |
 | List | 12 rows of 24 = 288 | The entries |
 | Gap | 8 | |
-| Detail line | 24 | One sentence in the dim color: what the choice of the chosen entry does |
+| Detail line | 24 | One sentence, a caption: what the choice of the chosen entry does. A command with parameters has its signature at the body, then its help sentence as a caption on the same baseline |
 | Footer | 24 | At the left, in the search only: the count of the entries that match, of all the entries, with the word for what is counted ("13 of 58 entries"; "entries, no commands" when the console gives none). At the right: the keys of the state, with what Enter does on the chosen entry ("enter: to the front   esc: close"); while nothing is typed, the prefixes ("> commands  @ windows  : settings  ? manual"). On a result and while a command runs, the footer has the keys only |
 | Margin | 8 | |
 
@@ -377,7 +382,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 - **No match**: one dim line, `nothing has "xyz" in its name`, and Enter runs nothing.
 - **An entry that destroys asks for a second Enter**: the close of a window, and the commands `shutdown`, `lock` and `history_clear`. Enter on it changes the chosen row: its fill is `colors.stop_process` and its text says the act in full ("stop plasma: its window closes", "shutdown(): stop the machine"); the footer says "enter: confirm   another key: back". A second Enter runs it. Each other key goes back to the search, with the typed part kept, and does nothing else. The compositor draws this question: a provider cannot skip it.
 - **A command with no parameter runs from the panel.** Enter sends the choice to the console, and the panel waits: the list makes room for the call, in the color of a name, and "runs in the console". The panel still takes its keys: Escape closes it, and the line goes on in the console. The panel sets no bound on a line: the console has none.
-- **A result** shows in the place of the list, under the call: an Integer as the one large number of the panel (scale 3), a Text of one line, the lines of a Record, "done" for a command with no value, an error in `colors.failed`. Each part has the color of what it is, as in the console. A Table, and each result of more than 12 lines or 76 cells, is not drawn in the panel: the panel closes and the window of the console comes to the front, with the line and its result. Escape closes the panel; each other key goes back to the search.
+- **A result** shows in the place of the list, under the call: an Integer as the one number of the panel, at `text_largest` (48), a Text of one line, the lines of a Record, "done" for a command with no value, an error in `colors.failed`. Each part has the color of what it is, as in the console. A Table, and each result of more than 12 lines or 76 cells, is not drawn in the panel: the panel closes and the window of the console comes to the front, with the line and its result. Escape closes the panel; each other key goes back to the search.
 - **A command with parameters has a form.** Enter turns the input band into the call, as code, at the scale of the typed part: the name of the command in the color of a name, then one field for each parameter, with its name: `revoke(name: plasma, grant: |)`. The caret is in one field; the name of that parameter is in the text color, the others are quiet. A call wider than the band shows the part that holds the caret.
   - **A field has the kind of its parameter.** An Integer field takes digits, and one `-` at its start. A Text field takes each character but a quote, 48 bytes of UTF-8 at most. A refused key changes nothing, and the detail line says why, in the color of a failure: "an Integer takes digits, and one - at its start".
   - **A number with its unit.** When the command, or the description of the export, says that an Integer counts a size or a time, its integer unit, the band shows the unit after the number, in the color of a size or of a time, also while the field is empty: `buffer(count: 4 pages)`, `wait_stop(milliseconds: 3000 ms)`. The prompt under the band says it: "type the value of count: an Integer, in pages". The input types the number in that unit, and the panel sends the number as it is. The text of each unit is the one of the log: `bytes`, `KiB`, `MiB`, `pages`, `blocks`, `ns`, `us`, `ms`, `s`.
@@ -437,7 +442,7 @@ The interface package (`src/library/support/interface`, `docs/INTERFACE.md`) dra
 | Element | The rule |
 |---|---|
 | Background | `colors.background` and the grid of points of section 3, at 12 + 24 n of the surface |
-| Card | A border of 1 pixel in its accent (28 % to 14 %), the surface of a card, a bar of 4 x 16 pixels and the title in the accent, the caption of its record in the dim color, a count at the right in the text color. Its content starts 40 pixels under its top and 16 pixels inside its sides |
+| Card | A border of 1 pixel in its accent (28 % to 14 %), the surface of a card, a bar of 4 x 16 pixels and the title in the accent, the caption of its record at the caption size in the dim color, on the baseline of the title, a count at the right in the text color. Its content starts 40 pixels under its top and 16 pixels inside its sides |
 | Line of a label and a value | The label in the dim color; the value in the text color (or in the color of its concept), at the right of its area for a number |
 | Table | The titles of the columns in the dim color; lines of 24 pixels; every second line, from the first, on a band of `colors.card_top`; numbers at the right of their column |
 | Bar | The track in `colors.track`; the full part from 125 % of its color at the top to 78 % at the bottom; 2 pixels at least for a value above 0 |
@@ -447,7 +452,9 @@ The interface package (`src/library/support/interface`, `docs/INTERFACE.md`) dra
 | Scroll bar | 17 pixels thick: an arrow button at each end, the track, and the thumb with its border, its gradient across, its inner line and its grip. See "The scroll bar" |
 | Text input | A field of the track with a line of 2 pixels at its bottom (`colors.title` with the focus, `colors.not_usable` without); the text in the strong text color (`colors.text_strong`), at scale 1 or 2; a caret of 2 x 16 pixels in `colors.title` with the focus (4 x 32 at scale 2), at any place of the text; the placeholder in the dim color |
 | Panel with a flush input | The input is the top band of the panel, from edge to edge, with no border on its three outer sides: its fill and the line of 2 pixels under it are its edge. The rest of the panel has a border of 1 pixel at the left, the right and the bottom |
-| Large number | The font at 3 times its size, drawn from its outline at 24 x 48: the one number of a card (section 5) |
+| Large number | The font of the cells at `text_large`, 32: the one number of a card (section 5), its label a caption under it |
+| Caption | `text_caption`, 14, in the dim color, on the lines that it needs: a label under a value, the help line under an element |
+| Page heading | `text_heading`, 24, over the content of a page, on the lines that it needs: the title of the page |
 | Action bar | A band of 24 pixels at the bottom of a window: the keycaps of each key combination, then the name of its action; a divider between two items; a button `more` and a list for the items that do not fit. See "The action bar" |
 
 ### The chosen row
@@ -768,8 +775,8 @@ With the boot image of the last build (77 modules and 9 resources), the card nam
 
 - The boot display follows all rules.
 - The desktop (the compositor: background, bar, menus, windows, pointer, palette) follows all rules. The pointer pictures of both pointer themes are the one exception of their own (section 9, "Pointer").
-- Section 5 is not built yet: the text draws at the three sizes 16, 32 and 48 only, with no caption and no heading size. The text size tokens are constants of `src/library/support/graphics/rules.odin` that no element reads yet. The steps that build it are in `ROADMAP.md`.
+- Section 5 is built: the elements draw at the text size tokens. The caption of a card is at 14, the one number of a card at 32 with its caption under it, the page heading of `manual` at 24, the result of the palette at 48.
 - `clock`, the window of `remote`, the palette of the compositor, `interface_elements`, `vector_glyphs`, `settings` and `hall_of_fame` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `src/library/support/graphics`.
 - Each other process takes each of its colors from `src/library/support/graphics`, by its meaning (`src/md/features/appearance.md`, "The colors of the processes"): an expected answer and a failure, the kernel entries in the kernel blue, the pages in the color of memory, the levels of the log, the states of `rings` and `threads`, the members of a series. The terminal has its tones in both appearances.
 - The appearances (section 4, "The appearances"): the desktop, the palette, each window of a process, the terminal with its tones, the console and its results follow the light appearance. The paper of `paint` is light in both. The boot display, the process `boot` that shows it, and the stage of `heron` are dark in both.
-- The windows below the level of the boot display, `remote` and `scheduler`, from the farthest: `paint` (a light paper), `manual` (headings in the dim color, no cards), `monitor` (one list and three sample graphs, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.
+- The windows below the level of the boot display, `remote` and `scheduler`, from the farthest: `paint` (a light paper), `manual` (a page heading, the headings of its sections in the dim color, no cards), `monitor` (one list and three sample graphs, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.

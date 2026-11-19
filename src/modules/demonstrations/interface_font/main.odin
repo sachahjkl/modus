@@ -114,7 +114,7 @@ line_draw :: proc "contextless" (canvas: graphics.Canvas, place: i64, y: int, te
 	placed: [LINE_LIMIT]text_rendering.Placed_Glyph
 	count := min(len(text), LINE_LIMIT)
 	_, width, _ = text_rendering.shape(spacing, transmute([]u8)(text[:count]), placed[:count])
-	graphics.text_proportional(canvas, place, y, placed[:count], spacing.face, scale, color)
+	graphics.text_proportional(canvas, place, y, placed[:count], spacing.face, text_rendering.size_of_scale(scale), color)
 	return width
 }
 
@@ -311,7 +311,7 @@ measure :: proc "contextless" () {
 		start := system.nanoseconds()
 		count, _, _ := text_rendering.shape(&regular_spacing, text, placed[:])
 		shaped := system.nanoseconds()
-		graphics.text_proportional(canvas, 0, 0, placed[:count], interface_faces.regular, 1, graphics.colors.text)
+		graphics.text_proportional(canvas, 0, 0, placed[:count], interface_faces.regular, text_rendering.TEXT_SIZE_OF_SCALE_ONE, graphics.colors.text)
 		drawn := system.nanoseconds()
 		shaping_time = min(shaping_time, shaped - start)
 		if batch == 0 {

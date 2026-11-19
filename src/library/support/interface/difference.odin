@@ -1,7 +1,6 @@
 package interface
 
 import "modus:contract/draw_record"
-import "modus:support/graphics"
 
 DAMAGE_CAPACITY :: 8 // The rectangles that one frame keeps, as the compositor does.
 
@@ -271,6 +270,9 @@ grid_damage :: proc "contextless" (before: ^Draw_Table, old_record: Draw_Record,
 	}
 	place := record_rectangle(record)
 	x, y := place.left, place.top
+	// The two records are equal but their places, so they have one size,
+	// and the cells of the draw.
+	cell_width, cell_height := cell_width_of(grid_font(new)), line_height(grid_font(new))
 	for row in 0 ..< new.rows {
 		old_row := old.cells[row * old.stride:][:new.columns]
 		new_row := new.cells[row * new.stride:][:new.columns]
@@ -284,8 +286,8 @@ grid_damage :: proc "contextless" (before: ^Draw_Table, old_record: Draw_Record,
 			}
 		}
 		if first >= 0 {
-			top := y + row * graphics.CELL_HEIGHT
-			damage_add(damage, {x + first * graphics.CELL_WIDTH, top, x + (last + 1) * graphics.CELL_WIDTH, top + graphics.CELL_HEIGHT})
+			top := y + row * cell_height
+			damage_add(damage, {x + first * cell_width, top, x + (last + 1) * cell_width, top + cell_height})
 		}
 	}
 }

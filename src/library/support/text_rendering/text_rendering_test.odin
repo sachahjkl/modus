@@ -147,6 +147,52 @@ a_size_out_of_its_range_is_refused :: proc(t: ^testing.T) {
 	}
 }
 
+// The baseline of a face: no baseline before the open, for the face None,
+// and for each size that the measure refuses. At each size that it gives,
+// it is inside the line, it does not go up when the size grows (a caption
+// and a title on one baseline need that order), and it is the row of the
+// baseline of a glyph that the rasterizer places, last.
+@(test)
+the_baseline_of_a_face :: proc(t: ^testing.T) {
+	test_state_take()
+	for face in Face {
+		_, found := baseline_row(face, TEXT_SIZE_OF_SCALE_ONE)
+		testing.expectf(t, !found, "%v before the open: no baseline", face)
+	}
+	fonts := repository_fonts()
+	_, words := outlines_open(t, fonts[:])
+	defer delete(words)
+	_, none_found := baseline_row(.None, TEXT_SIZE_OF_SCALE_ONE)
+	testing.expect(t, !none_found, "the face None: no baseline")
+	for size in ([?]int{0, 1, TEXT_SIZE_MINIMUM - 1, -1, min(int), TEXT_SIZE_LIMIT + 1, max(int)}) {
+		for face in Face {
+			_, found := baseline_row(face, size)
+			testing.expectf(t, !found, "%v at the size %v: no baseline", face, size)
+		}
+	}
+	for face in Face {
+		if face == .None {
+			continue
+		}
+		previous := 0
+		for size := TEXT_SIZE_MINIMUM; size <= TEXT_SIZE_LIMIT; size += SUBPIXEL {
+			row, found := baseline_row(face, size)
+			testing.expectf(t, found, "%v at the size %v: a baseline", face, size)
+			testing.expectf(t, row >= 1 && row <= line_rows(size), "%v at the size %v: the row %v is inside the line of %v rows", face, size, row, line_rows(size))
+			testing.expectf(t, row >= previous, "%v at the size %v: the row %v is above the row %v of a smaller size", face, size, row, previous)
+			previous = row
+		}
+		primary := face_forms[face].primary
+		for line in ([?]int{14, 16, 24, 32, 48}) {
+			size := line * SUBPIXEL
+			row, _ := baseline_row(face, size)
+			job, problem := raster_begin(face, primary, glyph_index_of(primary, 'x'), size, 0)
+			testing.expectf(t, problem == .None, "%v at a line of %v: the glyph x is placed", face, line)
+			testing.expectf(t, row == job.baseline, "%v at a line of %v: the row %v is the baseline %v of the rasterizer", face, line, row, job.baseline)
+		}
+	}
+}
+
 // A position that a face does not have gives no glyph: a negative
 // position, one past the bound, the largest value; a second position for
 // a face of cells; the face None. Nothing is drawn.

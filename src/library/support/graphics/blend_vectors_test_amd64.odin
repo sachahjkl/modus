@@ -858,7 +858,7 @@ proportional_text_gives_the_same_bytes_in_each_blend :: proc(t: ^testing.T) {
 						glyph_in_form(.Scalar, cache, &table, order, canvases[0], int(pixel), 8, value, DARK_TEXT, 1, position)
 						glyph_in_form(.Sse2, cache, &table, order, canvases[1], int(pixel), 8, value, DARK_TEXT, 1, position)
 					}
-					text_proportional_with(.Interface, &table, tables, order, canvases[2], place, 8, placed[:count], 1, DARK_TEXT)
+					text_proportional_with(.Interface, &table, tables, order, canvases[2], place, 8, placed[:count], text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
 					for pixel, index in drawn[0] {
 						if drawn[2][index] != pixel {
 							differences[0] += 1

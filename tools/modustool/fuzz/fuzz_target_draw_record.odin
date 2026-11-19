@@ -13,7 +13,7 @@ import "modus:contract/draw_record"
 // fuzz_draw_record_execute: the border gives a problem of its enumeration;
 // a record that it reads has a box that is not inverted, inside the limit,
 // and on whole pixels but for a rectangle with no pattern and a gradient,
-// a gradient with valid points, a path with valid fields, keeps the
+// a gradient with valid points, a path with valid fields, a text and a grid with a size in its bounds, keeps the
 // canonical rule of its colors (draw_color_problem),
 // writes back to its own bytes, and keeps its bytes
 // when its range moves to its own first byte; a record that it refuses
@@ -66,7 +66,15 @@ fuzz_draw_record_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			if record.left != 0 || record.top != 0 || record.right != 0 || record.bottom != 0 {
 				return fuzz_broken(.Contract, "the record %d: read takes a pop of a clip whose box is not 0", index)
 			}
-		case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Text, draw_record.Draw_Picture, draw_record.Draw_Text_Grid:
+		case draw_record.Draw_Text:
+			if int(value.size) < draw_record.TEXT_SIZE_MINIMUM || int(value.size) > draw_record.TEXT_SIZE_LIMIT {
+				return fuzz_broken(.Contract, "the record %d: read takes a text of size %d, out of its bounds", index, value.size)
+			}
+		case draw_record.Draw_Text_Grid:
+			if int(value.size) < draw_record.TEXT_SIZE_MINIMUM || int(value.size) > draw_record.TEXT_SIZE_LIMIT {
+				return fuzz_broken(.Contract, "the record %d: read takes a grid of size %d, out of its bounds", index, value.size)
+			}
+		case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Picture:
 		}
 		edges := [4]i32{record.left, record.top, record.right, record.bottom}
 		for edge in edges {
@@ -283,16 +291,16 @@ fuzz_draw_record_seeds :: proc(seeds: ^[dynamic][]u8) {
 		draw_record.Draw_Gradient{start_x = pixel(0), start_y = pixel(0) + half, end_x = pixel(0), end_y = pixel(15) + half, start_color = opaque(1), end_color = opaque(2)},
 		draw_record.Draw_Gradient{start_x = pixel(0) + half, start_y = pixel(0), end_x = pixel(15) + half, end_y = pixel(0), start_color = opaque(3), end_color = opaque(4)},
 		draw_record.Draw_Gradient{start_x = pixel(1), start_y = pixel(2) + 5, end_x = pixel(14) + 17, end_y = pixel(13), start_color = opaque(3), end_color = draw_record.with_alpha(4, 60)},
-		draw_record.Draw_Text{first = 0, count = 4, color = draw_record.with_alpha(5, 128), scale = 1},
-		draw_record.Draw_Text{first = 0, count = 4, color = opaque(5), scale = 1},
+		draw_record.Draw_Text{first = 0, count = 4, color = draw_record.with_alpha(5, 128), size = 16 * draw_record.UNITS_PER_PIXEL},
+		draw_record.Draw_Text{first = 0, count = 4, color = opaque(5), size = 16 * draw_record.UNITS_PER_PIXEL},
 		draw_record.Draw_Clip_Push{},
 		// The grid of points: a pattern of cells of 2 pixels each 24 pixels.
 		draw_record.Draw_Rectangle{color = opaque(6), repetition = {cell_x = pixel(12), cell_y = pixel(12), cell_width = 2 * draw_record.UNITS_PER_PIXEL, cell_height = 2 * draw_record.UNITS_PER_PIXEL, step_x = 24 * draw_record.UNITS_PER_PIXEL, step_y = 24 * draw_record.UNITS_PER_PIXEL}},
 		draw_record.Draw_Picture{first = 0, stride = 16, generation = 1},
-		draw_record.Draw_Text_Grid{first = 0, count = 32, columns = 2},
+		draw_record.Draw_Text_Grid{first = 0, count = 32, columns = 2, size = 16 * draw_record.UNITS_PER_PIXEL},
 		draw_record.Draw_Path{first = 0, count = 5 * draw_record.PATH_POINT_SIZE, fill_color = draw_record.with_alpha(9, 128), stroke_color = opaque(9), stroke_width = 2 * draw_record.UNITS_PER_PIXEL},
 		draw_record.Draw_Path{first = 4, count = 2 * draw_record.PATH_POINT_SIZE, fill_color = opaque(11)},
-		draw_record.Draw_Text{first = 0, count = 4, color = opaque(10), origin_x = pixel(2) + draw_record.UNITS_PER_PIXEL / 3, font = .Interface, scale = 1, weight = .Bold},
+		draw_record.Draw_Text{first = 0, count = 4, color = opaque(10), origin_x = pixel(2) + draw_record.UNITS_PER_PIXEL / 3, font = .Interface, size = 16 * draw_record.UNITS_PER_PIXEL, weight = .Bold},
 		draw_record.Draw_Rectangle{color = draw_record.with_alpha(0x00102030, 128)},
 		draw_record.Draw_Gradient{start_x = pixel(0), start_y = pixel(0) + half, end_x = pixel(0), end_y = pixel(15) + half, start_color = draw_record.Draw_Color(0x00405060), end_color = opaque(0x00405060)},
 		draw_record.Draw_Picture{format = .Straight_Alpha, first = 0, stride = 16, generation = 1},
