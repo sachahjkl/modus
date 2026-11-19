@@ -138,6 +138,8 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 // cells refuses it and draws with Spleen, and the bold weight refuses it.
 @(test)
 a_proportional_cache_is_not_a_font_of_cells :: proc(t: ^testing.T) {
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
 	cache, memory := b612_cache_of(t)
 	defer delete(memory)
 	saved := text_state
@@ -159,6 +161,8 @@ a_proportional_cache_is_not_a_font_of_cells :: proc(t: ^testing.T) {
 // changed.
 @(test)
 the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
 	cache, memory := b612_cache_of(t)
 	defer delete(memory)
 	spacing, spacing_ok := text_rendering.spacing_of(&cache, 1)
@@ -215,6 +219,8 @@ the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 // a glyph past the characters of the cache draw nothing, and do not fault.
 @(test)
 a_proportional_text_outside_its_limits :: proc(t: ^testing.T) {
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
 	cache, memory := b612_cache_of(t)
 	defer delete(memory)
 	square_root: [4096]u8

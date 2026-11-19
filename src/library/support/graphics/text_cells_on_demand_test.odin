@@ -7,12 +7,17 @@ import "core:testing"
 import "modus:contract/demand_cache"
 import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
+import "base:runtime"
 import "modus:support/text_rendering"
 import "modus:support/vector_font"
 
-// The tests of this package that open the fallback state run one at a
-// time: the state is one for the package, and the runner runs tests on
-// several threads. Each one sets the state back to zero at its end.
+// The tests of this package that read or write the text state of the
+// process (text_state, and the state and the private glyph cache of
+// text_rendering) run one at a time: each state is one for the process, and
+// the runner runs tests on several threads. A test that only reads it takes
+// the lock too: a test that writes it would change it under the reader, and
+// two drawers in one private cache break its lists of runs. Each test that
+// opens the outlines sets the state back to zero at its end.
 fallback_test_lock: sync.Mutex
 
 // fallback_open_for_test opens the four font files of the resource of the
@@ -37,9 +42,12 @@ fallback_open_for_test :: proc(t: ^testing.T, demand_base: uintptr) -> (words: [
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	text_rendering.state = {}
 	// The glyph memory that a process reserves at its first glyph past the
-	// glyph caches: memory of the test here, all zero at each open.
+	// glyph caches: all zero at each open. It comes from the heap of the
+	// process, not from the allocator of the test: the runner frees all that
+	// a test allocated at its end, and the next test would get the same
+	// bytes while the package still draws into them.
 	if test_glyph_memory == nil {
-		test_glyph_memory = new(text_rendering.Glyph_Memory)
+		test_glyph_memory = new(text_rendering.Glyph_Memory, runtime.heap_allocator())
 	}
 	mem.zero(test_glyph_memory, size_of(text_rendering.Glyph_Memory))
 	text_rendering.cache_state = {}

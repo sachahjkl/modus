@@ -1129,8 +1129,8 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 		// from another process: a word that names no status is written as
 		// its number.
 		write_part(writer, ": status ")
-		if u64(error.status) <= u64(max(op.Status)) {
-			write_part(writer, op.STATUS_NAMES[op.Status(error.status)])
+		if status, known := op.status_of_word(u64(error.status)); known {
+			write_part(writer, op.STATUS_NAMES[status])
 		} else {
 			write_part(writer, u64(error.status))
 		}

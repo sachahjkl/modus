@@ -3662,6 +3662,19 @@ seed_strength_of_word :: proc "contextless" (word: u64) -> (strength: Seed_Stren
 	}
 	return {}, false
 }
+
+// status_of_word reads the word of a status that a record of another
+// process holds. A word that names no status is refused: a reader that
+// named it with a known status would state a fact that the record does
+// not hold.
+status_of_word :: proc "contextless" (word: u64) -> (status: Status, ok: bool) {
+	for member in Status {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
 // The value 17: the process `settings` runs its boot pass (1): it reads the
 // settings kept in its store, writes the settings page, and stops, with no
 // window (modus:contract/settings).

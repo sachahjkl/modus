@@ -3,6 +3,7 @@ package graphics
 
 import "modus:contract/glyph_cache"
 import "core:fmt"
+import "core:sync"
 import "core:testing"
 import "core:time"
 import "modus:support/text_rendering"
@@ -808,6 +809,8 @@ text_speed_of_each_blend :: proc(t: ^testing.T) {
 // backgrounds.
 @(test)
 proportional_text_gives_the_same_bytes_in_each_blend :: proc(t: ^testing.T) {
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
 	caches := test_caches_build(t)
 	defer for item in caches {
 		delete(item.words)

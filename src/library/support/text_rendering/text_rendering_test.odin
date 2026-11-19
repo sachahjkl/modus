@@ -2,6 +2,7 @@
 package text_rendering
 
 import "core:fmt"
+import "base:runtime"
 import "core:mem"
 import "core:sync"
 import "core:testing"
@@ -70,10 +71,13 @@ outlines_open :: proc(t: ^testing.T, fonts: []font_outlines.Font_Input, demand_b
 test_glyph_memory: ^Glyph_Memory
 
 // memory_reset_for_test empties the cache and gives the package its glyph
-// memory again, all zero.
+// memory again, all zero. The memory comes from the heap of the process,
+// not from the allocator of the test: the runner frees all that a test
+// allocated at its end, and the next test would get the same bytes while
+// the package still draws into them.
 memory_reset_for_test :: proc() {
 	if test_glyph_memory == nil {
-		test_glyph_memory = new(Glyph_Memory)
+		test_glyph_memory = new(Glyph_Memory, runtime.heap_allocator())
 	}
 	mem.zero(test_glyph_memory, size_of(Glyph_Memory))
 	cache_state = {}
