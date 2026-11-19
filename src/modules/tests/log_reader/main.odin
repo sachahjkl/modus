@@ -454,7 +454,8 @@ log_operation_check :: proc "contextless" (connection: ^system.Call_Connection, 
 	for refusal in refusals {
 		record: errors.Error_Record
 		_, status := system.call_with_error(&record, .Log, log, refusal.address, refusal.length, refusal.level, refusal.runs)
-		if status != refusal.status || errors.Kind(record.kind) != refusal.kind || record.argument != refusal.argument || record.value != transmute(i64)refusal.value {
+		kind, kind_named := errors.kind_of_word(record.kind)
+		if status != refusal.status || !kind_named || kind != refusal.kind || record.argument != refusal.argument || record.value != i64(refusal.value) {
 			system.log(.Error, "log_reader: WRONG: Log with ", refusal.name, " gave ", op.STATUS_NAMES[status], ", the error kind ", record.kind, " for the argument ", record.argument, " with the value ", record.value)
 			return "the operation Log did not refuse a wrong call with its status and its error record"
 		}
