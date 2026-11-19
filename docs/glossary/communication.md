@@ -342,7 +342,7 @@ Do not use: color code, severity (for text).
 
 ### Token
 
-A token is the smallest part of a line of the console: a name, a number, a text, an operator, the arrow `->`, or one byte of no other token.
+A token is the smallest part of a line of the console: a name, a number, a text, an operator, the arrow `->`, the pipe operator `|>`, or one byte of no other token.
 
 One scanner (`src/library/private/console/console_language`) gives them to the parser of the console and to its colors, so the colors never disagree with the parser.
 
@@ -551,6 +551,16 @@ The fact that the command gives is a fact of the service, and the console holds 
 The design: `docs/CONSOLE.md`, "The built-in commands and the services".
 
 Do not use: alias, shortcut, wrapper command.
+
+### Pipe operator
+
+The pipe operator `|>` of a line of the console gives the value on its left as the first argument of the call on its right: `a |> f(b)` is `f(a, b)`.
+
+A line then reads in the order in which its calls run: `processes() |> where("name", "server") |> rows` is `rows(where(processes(), "name", "server"))`. The operator has the lowest priority and adds no meaning: the console writes the line with calls in calls before it runs it, and a fault of the operator fails the line before any call. It is not a pipe between processes: no text goes from one process to another. `|` alone is no operator.
+
+The design: `docs/CONSOLE.md`, "The pipe operator".
+
+Do not use: pipe (alone), pipeline, bar, forward operator.
 
 ### Record output
 
