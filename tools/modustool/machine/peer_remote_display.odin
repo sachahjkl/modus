@@ -1,5 +1,6 @@
 package machine
 
+import "core:encoding/endian"
 import "core:encoding/hex"
 import "core:fmt"
 import "core:slice"
@@ -565,9 +566,13 @@ peer_display_record_bytes :: proc(kind: protocol.Record_Kind, body: $T) -> []u8 
 // kind word and any length, in the temporary memory.
 @(private = "file")
 peer_display_header_bytes :: proc(kind_word: u32, length: u32) -> []u8 {
+	// The words go into the bytes as a viewer sends them: a kind word that
+	// names no member is the case that the service must refuse, so it never
+	// becomes a Record_Kind here.
+	#assert(protocol.RECORD_HEADER_SIZE == 8 && offset_of(protocol.Record_Header, kind) == 0 && offset_of(protocol.Record_Header, length) == 4)
 	out := make([]u8, protocol.RECORD_HEADER_SIZE + int(min(length, 64)), context.temp_allocator)
-	header := protocol.Record_Header{kind = protocol.Record_Kind(kind_word), length = length}
-	copy(out, (cast([^]u8)&header)[:protocol.RECORD_HEADER_SIZE])
+	endian.unchecked_put_u32le(out[0:4], kind_word)
+	endian.unchecked_put_u32le(out[4:8], length)
 	return out
 }
 
