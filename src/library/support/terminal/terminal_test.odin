@@ -34,7 +34,7 @@ the_context_of_a_terminal_takes_each_place_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, grants.grants[GRANT_TEXT], system.Grant{handle = 13, rights = {.Read}})
 	testing.expect_value(t, grants.grants[GRANT_PROCESS], system.Grant{handle = 14, rights = {.Read}})
 	testing.expect_value(t, grants.grants[op.CONTEXT_LOG], handles.log)
-	testing.expect_value(t, grants.taken, bit_set[0 ..< op.CONTEXT_HANDLES; u16]{system.GRANT_DISPLAY, GRANT_RING, GRANT_TEXT, GRANT_PROCESS, op.CONTEXT_LOG})
+	testing.expect_value(t, grants.taken, bit_set[0 ..< op.CONTEXT_HANDLES; u32]{system.GRANT_DISPLAY, GRANT_RING, GRANT_TEXT, GRANT_PROCESS, op.CONTEXT_LOG})
 	for word, index in name {
 		testing.expect_value(t, values.values[VALUE_NAME + index], word)
 	}

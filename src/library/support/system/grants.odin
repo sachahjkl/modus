@@ -10,7 +10,7 @@ import "modus:contract/start_grant"
 // The context slots of a process that the root service starts: the one
 // table of the handles 0 to 13 and of the values 0 to 8 and 13, whose roles
 // the root service and its process agree on (docs/MODULE_CONTRACT.md,
-// "6. The context"). The handles 14 and 15 and the other values have the
+// "6. The context"). The handles from 14 and the other values have the
 // roles that src/library/contract/operation fixes for each process.
 //
 // A handle that the process was not granted is 0. Two roles share one slot
@@ -220,7 +220,7 @@ context_refusal_note :: proc "contextless" (refusal: ^Context_Refusal, place: in
 // handle in silence.
 Context_Grants :: struct {
 	grants:  [op.CONTEXT_HANDLES]Grant,
-	taken:   bit_set[0 ..< op.CONTEXT_HANDLES; u16],
+	taken:   bit_set[0 ..< op.CONTEXT_HANDLES; u32],
 	refusal: Context_Refusal,
 }
 

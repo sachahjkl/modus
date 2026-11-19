@@ -438,6 +438,24 @@ offset  size  field         type
     12    52  reserved      [13]u32
 ```
 
+**The wiring ring** gives a process each end of a wiring (`glossary/communication.md`, "Wiring ring"). A process whose module declares a record output or a record input receives it at the handle 16 of its context, `op.CONTEXT_WIRING_RING`: a ring of records of 64 bytes, 32 records or the next power of two of the ends of the wiring list of its start. The root service writes one command for each end, and the process answers each with one completion (`src/library/contract/output/wiring.odin`):
+
+| Word | `Writer_End` (1): the process writes the output ring | `Reader_End` (2): the process reads it |
+|---|---|---|
+| `kind` | 1 | 2 |
+| `tag` | The number of the wiring; the completion carries it back | The same |
+| `values[0]` | The handle of the output ring, with Read and Write | The same |
+| `values[1]` | The index of the record output, from 1 | The index of the record input, from 1 |
+| `values[2]` | The word of its `output.Wiring_Pace`: `Writer_Chooses` (0), `Never_Holds_Writer` (1), `Always_Holds_Writer` (2) | 0 |
+| `values[3]` | 0 | The memory of its wiring terms, with Read only, or 0 |
+| `values[4..6]` | 0 | 0 |
+
+- **Each handle comes through the ring.** The root service gives the handles with `Handle_Give` and the memory of the wiring ring as the target, and the process proves each one with `Handle_State` before it maps it.
+- **The border** `output.given_end_of_record` refuses a kind that names no command, a ring handle of 0 or past 32 bits, an index of 0 or past `module.RECORD_STREAM_INDEX_MOST`, a pace that names no member, a pace word beside a reader end, terms beside a writer end, and a reserved word that is not 0. Its error record is `Bad_Value` with the index of the word + 1 as the argument, 0 for the kind.
+- **The completion** has the status `Ok` when the process took the end, else the status of its refusal and its error record. The root service takes it through `output.wiring_completion_of_record`, which refuses a status that names no member and an `Ok` with values.
+- **No command ends an end.** The end words of the output ring say it.
+- **The type check** of a wiring is `output.record_descriptions_compare`: the name, the size and the count of the fields of the two records, then each field: its name, offset, type, sign, integer unit, detail, field kind and contract enum. It gives the first difference, with the number of the field from 1, and it refuses a description that `module.record_stream_type` refuses before any comparison.
+
 What the build checks: `TOOLS.md`, "The record outputs and the record inputs of the build". The wiring, the output ring and the design: `src/md/features/module_outputs.md`.
 
 ## 2. Loading
@@ -1266,11 +1284,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 `system.log` writes with the handle `ctx.handles[CONTEXT_LOG]`; `system.context_record()` gives the same record anywhere in the process.
 
-**The record.** The first design had a header, a table of handles with a role and an argument each, the kernel ring, a caller ring and an argument record. The implemented record is smaller (`op.Context` in `src/library/contract/operation/operation.odin`): 16 handles and 24 values, 256 bytes.
+**The record.** The first design had a header, a table of handles with a role and an argument each, the kernel ring, a caller ring and an argument record. The implemented record is smaller (`op.Context` in `src/library/contract/operation/operation.odin`): 18 handles and 24 values, 264 bytes.
 
 | Part | Content |
 |---|---|
-| `handles` | 16 handles (`CONTEXT_HANDLES`). The index of a handle is its role. The handles 0 to 13 have the roles that the starter and its process agree on. Two roles are the same for every process: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the process (`CONTEXT_BUDGET`). A role that the process was not granted holds 0 |
+| `handles` | 18 handles (`CONTEXT_HANDLES`). The index of a handle is its role. The handles 0 to 13 have the roles that the starter and its process agree on. From 14 the roles are the same for every process: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the process (`CONTEXT_BUDGET`), 16 the wiring ring of a process whose module declares a record output or a record input (`CONTEXT_WIRING_RING`; "The record outputs and the record inputs", above). The handle 17 has no role yet. A new role of the system takes a handle from 16. A role that the process was not granted holds 0 |
 | `values` | 24 values of 64 bits (`CONTEXT_VALUES`): sizes, addresses, flags. The values 0 to 8 and 13 have the roles that the starter and its process agree on. The other values have the roles of the table below |
 
 The values that the system names:

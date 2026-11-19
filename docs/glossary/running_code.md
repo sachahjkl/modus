@@ -1006,9 +1006,9 @@ Do not use: init, PID 1, system manager.
 
 ### Context
 
-The context is the one typed record that a process receives when it starts: 16 handles and 24 values of 64 bits (`op.Context`).
+The context is the one typed record that a process receives when it starts: 18 handles and 24 values of 64 bits (`op.Context`).
 
-The context replaces `argv`, the environment and inherited files. The index of each handle is its role, which the starter fixes; the system fixes the roles of the log handle and of some values (the seed of the process, the mapped ranges). It holds no text: a process has nothing to parse. A process with an all-zero context has no handle: it can compute and stop, and reach nothing. Example: a call host receives its call ring at role 0.
+The context replaces `argv`, the environment and inherited files. The index of each handle is its role, which the starter fixes; the system fixes the roles of the log handle, the budget, the wiring ring and of some values (the seed of the process, the mapped ranges). It holds no text: a process has nothing to parse. A process with an all-zero context has no handle: it can compute and stop, and reach nothing. Example: a call host receives its call ring at role 0.
 
 The design: `docs/MODULE_CONTRACT.md`, "6. The context", and `docs/PROPERTIES.md`, "19. A command is a function: no text between processes".
 

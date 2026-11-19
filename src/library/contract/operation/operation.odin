@@ -3590,7 +3590,7 @@ Process_Report :: struct {
 // place of text arguments that it must parse. The address of the record is
 // the parameter of the entry.
 //
-// The record has 16 handles and 24 values of 64 bits. Its starter writes
+// The record has 18 handles and 24 values of 64 bits. Its starter writes
 // it and maps it read-write at `CONTEXT_ADDRESS` before the first thread
 // runs (the kernel does both for the root service, which has no starter). A process finds each thing at a **fixed place**: the
 // index of a handle or of a value is its role. So a process needs no name,
@@ -3602,8 +3602,8 @@ Process_Report :: struct {
 // Three groups of places exist:
 //
 // - **The places that the system fixes for every process**: the log, the
-//   budget, the seed, the fixed ranges that the starter mapped. Every
-//   starter writes them in the same way.
+//   budget, the wiring ring, the seed, the fixed ranges that the starter
+//   mapped. Every starter writes them in the same way.
 // - **The places of the first process**, the root service: the kernel
 //   writes them at boot, with every handle that exists then (the machine,
 //   the framebuffer, the boot image, the records of the log).
@@ -3616,7 +3616,12 @@ Process_Report :: struct {
 // more than the starter holds. Who starts a process decides what it can
 // reach: the context is the whole of its authority at its start. The
 // design: (docs/MODULE_CONTRACT.md, "The context").
-CONTEXT_HANDLES :: 16
+//
+// The handles 0 to 13 are the places of a starter and its process, and
+// each is taken by some role. A new role of the system takes a handle from
+// 16, never under 14. The handle 17 has no role yet: it keeps the values
+// that follow at a multiple of 8 bytes.
+CONTEXT_HANDLES :: 18
 // The values 0 to 15 began as free values, and the roles of the system
 // took 9 to 15 one after the other until two roles wanted one number. The
 // values 16 to 23 are for the roles that the system fixes for every
@@ -3638,13 +3643,13 @@ CONTEXT_VALUES :: 24
 // the process `handles[CONTEXT_BUDGET]`, and the random seed the four values
 // from `values[CONTEXT_VALUE_SEED]`.
 Context :: struct {
-	handles: [CONTEXT_HANDLES]Handle, // The granted handles. The role of each index is fixed by who starts the process,
-	// except the last two.
+	handles: [CONTEXT_HANDLES]Handle, // The granted handles. The role of each index below 14 is fixed by who starts the process,
+	// from 14 by the system.
 	values:  [CONTEXT_VALUES]u64, // Numbers that the starter gives: sizes, addresses, flags. The role of each index is fixed by who starts the process, from 16 by the system.
 }
 
-// The two roles that the system fixes for each process. A handle that the
-// process was not granted is 0.
+// The roles of the handles that the system fixes for each process. A
+// handle that the process was not granted is 0.
 //
 // The handle 14: the log of the kernel, with the right **Write**. A process
 // writes its lines with the kernel operation `Log` on it (`system.log`
@@ -3771,6 +3776,13 @@ CONTEXT_VALUE_MEASURE_RUN :: 22
 // service receives the root budget with **Commit** too. When the process
 // stops, what the budget still holds returns to the budget of its starter.
 CONTEXT_BUDGET :: 15 // The budget of the process.
+// The handle 16: the wiring ring, a memory object with **Read** and
+// **Write**, for a process whose module declares a record output or a
+// record input; 0 for each other process. The root service gives each end
+// of a wiring of the process on it (modus:contract/output, Wiring_Command),
+// and gives the handle of each end through its memory, so the process
+// proves that the handle came through it. See [wiring ring](term:wiring-ring).
+CONTEXT_WIRING_RING :: 16 // The wiring ring.
 // The values 13 and 15 have no role: the settings page and the date page
 // are fixed ranges, mapped when their bit of the value 20 is set. A new
 // role of the system takes a number from 16, never 13 or 15, so that an

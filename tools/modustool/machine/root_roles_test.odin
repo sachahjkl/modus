@@ -121,7 +121,7 @@ the_layout_of_a_device_service_takes_each_slot_once :: proc(t: ^testing.T) {
 	for ring_slot in rings {
 		trial := pci.service_context_trial(ring_slot)
 		testing.expectf(t, !trial.refusal.refused, "the ring of a contract at the slot %d is refused at %d", ring_slot, trial.refusal.place)
-		expected: bit_set[0 ..< op.CONTEXT_HANDLES; u16]
+		expected: bit_set[0 ..< op.CONTEXT_HANDLES; u32]
 		expected += {ring_slot, op.CONTEXT_LOG, pci.GRANT_MACHINE, pci.GRANT_INTERRUPT, pci.GRANT_CONFIGURATION, pci.GRANT_QUEUES}
 		for index in 0 ..< pci.BAR_COUNT {
 			expected += {pci.GRANT_BAR + index}
