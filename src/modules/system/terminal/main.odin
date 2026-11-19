@@ -58,6 +58,9 @@
 //   view starts at line L of N", or "... the view follows the last lines";
 // - "terminal: a drag of the thumb of the scroll bar of console: ...";
 // - "terminal: console stopped with code C after L lines and R records";
+// - "terminal: console draws its interface text in the interface font", or
+//   "... in the font of the cells", at its first frame and at each change
+//   of the setting `font`;
 // - "terminal: console shows the character N in its cells, drawn by this
 //   process from the font F of its fallback chain", once for each font F,
 //   for the first or the last character of the view past the 192
@@ -1039,10 +1042,33 @@ tile :: proc "contextless" (table: ^interface.Draw_Table, x: int, label: string,
 	interface.draw_text(table, x, 28, number(&buffer, value), color, interface.FONT_MEDIUM)
 }
 
+// The font of the interface text of the window in the last frame, once
+// known: the log names each change, so that a machine test knows which
+// font a picture shows before it takes it.
+interface_text_font_told: interface.Font_Kind
+interface_text_font_known: bool
+
+// interface_text_font_tell writes one line when the font that draws the
+// interface text of the window changes: the interface font, or the font of
+// the cells (the setting `spleen`, or no interface font).
+interface_text_font_tell :: proc "contextless" (table: ^interface.Draw_Table) {
+	used := interface.font_in_use(table, interface.FONT_INTERFACE, 0).kind
+	if interface_text_font_known && used == interface_text_font_told {
+		return
+	}
+	interface_text_font_told, interface_text_font_known = used, true
+	if used == .Interface {
+		system.log("terminal: ", process_name, " draws its interface text in the interface font")
+	} else {
+		system.log("terminal: ", process_name, " draws its interface text in the font of the cells")
+	}
+}
+
 draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	buffer: [27]u8
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
+	interface_text_font_tell(table)
 	// While the list of the action bar is open, a press is the bar's: the
 	// scroll bars under the list do not take it.
 	interface.action_bar_input_take(&frame, &bar)
@@ -1403,6 +1429,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// A record during this wait needs no wake: the picture is due
 			// already, and the next picture takes it.
 			now = display.wait(&window, next_frame)
+		}
+		// The choice of the settings page, read at each turn: the
+		// compositor tells only a window with a surface, and this window
+		// can read the page before the boot pass of `settings` and make its
+		// surface after it. A change then draws the whole window, as the
+		// event does.
+		if display.text_settings_apply() {
+			interface.draw_whole_window_next(&drawing)
+			dirty = true
 		}
 		for event in display.next_event(&window) {
 			// A new font: each record of the frame is the same, each pixel

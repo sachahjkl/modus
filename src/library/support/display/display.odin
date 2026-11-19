@@ -881,7 +881,7 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 			continue
 		}
 		if read.kind == .Settings_Changed {
-			text_settings_apply()
+			_ = text_settings_apply()
 		}
 		if read.kind == .Resized {
 			window.resize_asked = true
@@ -1044,7 +1044,7 @@ text_settings_load :: proc "contextless" (ctx: ^system.Context) -> (problems: Te
 	}
 	settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
 	problems.outlines, problems.fonts_missing = fallback_load(ctx)
-	text_settings_apply()
+	_ = text_settings_apply()
 	return problems, true
 }
 
@@ -1105,20 +1105,6 @@ interface_font_of :: proc "contextless" () -> ^Interface_Font {
 	return process_interface_font_given ? &process_interface_font : nil
 }
 
-// appearance_apply gives the appearance in force of the settings page to
-// src/library/support/graphics. It gives true when the appearance changed:
-// the caller then draws its whole window, so that no picture shows two
-// appearances. With no page the process keeps the dark appearance.
-appearance_apply :: proc "contextless" () -> (changed: bool) {
-	if settings_page == nil {
-		return false
-	}
-	// A refused page gives the defaults: the process draws with them, as
-	// with a page that never stays stable.
-	choice, _ := settings.read(settings_page)
-	return appearance_of_choice_use(choice)
-}
-
 // appearance_of_choice_use makes the appearance in force of a choice the
 // appearance of the graphics package, and gives true when it changed.
 @(private)
@@ -1144,14 +1130,25 @@ cell_faces := [settings.Grid_Fit]text_rendering.Face {
 // private glyph cache keeps its glyphs: its key holds the face and the
 // size, and its words do not depend on the order of the stripes. A face
 // that the outlines lack draws nothing, and graphics draws in Spleen.
-text_settings_apply :: proc "contextless" () {
+//
+// It gives true when the font, the order of the stripes, a face or the
+// appearance changed: the caller then draws its whole window.
+// interface.window_frame_begin calls it at each frame, as the drawing
+// module does at each draw. The event Settings_Changed alone is not
+// enough: the compositor tells only the windows that have a surface, and a
+// window that read the page before the boot pass of `settings` and made
+// its surface after it gets no event, while its cells, which the drawing
+// module draws, follow the page.
+text_settings_apply :: proc "contextless" () -> (changed: bool) {
 	if settings_page == nil {
-		return
+		return false
 	}
 	// A refused page gives the defaults: the process draws with them, as
 	// with a page that never stays stable.
 	choice, _ := settings.read(settings_page)
-	_ = appearance_of_choice_use(choice)
+	state := &graphics.text_state
+	font_before, order_before, cells_before, bold_before := state.font, state.order, state.cell_face, state.bold_face
+	changed = appearance_of_choice_use(choice)
 	font := choice.font == .Spleen ? graphics.Text_Font.Spleen : graphics.Text_Font.Vector
 	graphics.text_faces_use(cell_faces[choice.grid_fit], .Cells_Bold)
 	order: graphics.Subpixel_Order
@@ -1164,4 +1161,6 @@ text_settings_apply :: proc "contextless" () {
 		order = .None
 	}
 	graphics.text_choice_set(font, order)
+	changed = changed || state.font != font_before || state.order != order_before || state.cell_face != cells_before || state.bold_face != bold_before
+	return changed
 }

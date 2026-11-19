@@ -5,6 +5,7 @@ import "base:runtime"
 import "modus:contract/draw_record"
 import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
+import "modus:contract/settings"
 import "core:slice"
 import "core:sync"
 import "core:testing"
@@ -536,4 +537,66 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 	view := graphics.view(canvas_of(expected), box.left, box.top, box.right - box.left, box.bottom - box.top)
 	text_draw(view, 20 - box.left, 0, "To LT", color, 1, .Regular)
 	testing.expect(t, slice.equal(drawn, expected), "a text in the interface font with no font draws other pixels than the font of the cells")
+}
+
+// The font of an interface text follows the settings page at each read,
+// with no event Settings_Changed between two reads: the case of a window
+// that read the page before the boot pass of `settings` and made its
+// surface after it, so that the compositor never told it. The setting
+// `spleen` gives a text in the font of the cells, in Spleen; `vector`
+// gives the interface font again; each change is told, and a read with no
+// change is not. A page left in the middle of a change is refused and
+// gives the defaults: the vector font. The record that draw_text appends
+// is the record of the font in use, last.
+@(test)
+the_interface_text_follows_the_setting_of_the_font :: proc(t: ^testing.T) {
+	interface_text_drawing_begin()
+	font := test_interface_font(t)
+	saved_page := display.settings_page
+	saved_font, saved_order := graphics.text_state.font, graphics.text_state.order
+	saved_cells, saved_bold := graphics.text_state.cell_face, graphics.text_state.bold_face
+	saved_appearance := graphics.appearance
+	defer {
+		display.settings_page = saved_page
+		graphics.text_choice_set(saved_font, saved_order)
+		graphics.text_state.cell_face, graphics.text_state.bold_face = saved_cells, saved_bold
+		graphics.appearance_use(saved_appearance)
+	}
+	page := new(settings.Page)
+	defer free(page)
+	display.settings_page = page
+	memory := new(Font_Tables)
+	defer free(memory)
+	table := font_table_of(memory, &font.font)
+	// The state before the first read: the other font, so that the first
+	// read is a change.
+	graphics.text_choice_set(.Vector, .Red_Green_Blue)
+	Case :: struct {
+		font: settings.Font,
+		kind: Font_Kind,
+	}
+	cases := [?]Case{{.Spleen, .Cells_8x16}, {.Vector, .Interface}, {.Spleen, .Cells_8x16}}
+	for each in cases {
+		settings.write(page, settings.Choice{font = each.font}, 0, .Dark)
+		testing.expectf(t, display.text_settings_apply(), "%v: the change of the font is told", each.font)
+		testing.expectf(t, !display.text_settings_apply(), "%v: a read with no change tells a change", each.font)
+		testing.expect_value(t, font_in_use(&table, FONT_INTERFACE, 5).kind, each.kind)
+		testing.expect_value(t, graphics.text_state.cell_face, text_rendering.Face.Cells)
+	}
+	// A page left in a change: the defaults, the vector font.
+	page.change_count += 1
+	testing.expect(t, display.text_settings_apply(), "a page left in a change: the defaults are a change from spleen")
+	testing.expect_value(t, graphics.text_state.font, graphics.Text_Font.Vector)
+	testing.expect_value(t, font_in_use(&table, FONT_INTERFACE, 5).kind, Font_Kind.Interface)
+	// The record of a text: in the font of the cells with spleen, in the
+	// interface font with vector.
+	for each in cases[:2] {
+		page.change_count = 0
+		settings.write(page, settings.Choice{font = each.font}, 0, .Dark)
+		_ = display.text_settings_apply()
+		memory^ = {}
+		table = font_table_of(memory, &font.font)
+		draw_text(&table, 8, 8, "To LT", graphics.colors.text, FONT_INTERFACE)
+		testing.expectf(t, table.record_count == 1 && is_interface_text(table.records[0]) == (each.kind == .Interface), "%v: the record of the text is not in the font in use", each.font)
+	}
 }

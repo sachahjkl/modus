@@ -919,7 +919,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // whole screen again, and tells each window: its process draws again
 // (src/library/support/display gives it the new font before the event).
 settings_changed :: proc "contextless" (choice: settings.Choice) {
-	display.text_settings_apply()
+	_ = display.text_settings_apply()
 	// A new appearance: the background and the mark of the bar are pixels
 	// that the compositor keeps, so it draws them again; each record of the
 	// screen reads the tokens at its next frame.

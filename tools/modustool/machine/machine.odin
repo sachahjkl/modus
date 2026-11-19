@@ -375,6 +375,10 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; in ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; "},
+	// The console read the page before the boot pass, and may have made its
+	// surface after the compositor told the windows: it reads the setting
+	// itself, and draws its interface text in Spleen cells.
+	{kind = .Wait, text = "terminal: console draws its interface text in the font of the cells", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
@@ -3220,11 +3224,14 @@ scenario := [?]Step {
 	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
+	// The interface text of the console follows the setting: Spleen cells.
+	{kind = .Wait, text = "terminal: console draws its interface text in the font of the cells", any_order = true},
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "font_spleen"},
 	{kind = .Call, text = "settings.get(\"font\")", expected = "spleen"},
 	{kind = .Call, text = "settings.set(\"font\", \"vector\")", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; "},
+	{kind = .Wait, text = "terminal: console draws its interface text in the interface font"},
 	{kind = .Call, text = "settings.set(\"grid_fit\", \"off\")", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us, appearance auto; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us"},
