@@ -564,7 +564,7 @@ viewer_record_take :: proc "contextless" (connection: ^quic.Connection, viewer: 
 			compositor_send({kind = u32(display.Command.Remote_Key), values = {0 = u64(key.code), 1 = u64(key.character), 2 = u64(key.pressed), 3 = u64(key.modifiers)}})
 		} else {
 			pointer := record.pointer
-			compositor_send({kind = u32(display.Command.Remote_Pointer), values = {0 = u64(pointer.x), 1 = u64(pointer.y), 2 = u64(pointer.buttons), 3 = transmute(u64)i64(pointer.wheel)}})
+			compositor_send({kind = u32(display.Command.Remote_Pointer), values = {0 = u64(pointer.x), 1 = u64(pointer.y), 2 = u64(pointer.buttons), 3 = u64(i64(pointer.wheel))}})
 		}
 	}
 }

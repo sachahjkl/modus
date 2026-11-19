@@ -248,7 +248,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						toggle(index)
 					}
 				}
-			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted:
+			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

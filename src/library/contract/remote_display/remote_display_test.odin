@@ -58,7 +58,12 @@ record_length_problem_refuses_each_header_that_breaks_a_rule :: proc(t: ^testing
 	for length in past {
 		testing.expectf(t, record_length_problem({kind = .Key, length = length}, .To_Service) == .Past_Bound, "a key of %d bytes was not past its bound", length)
 	}
-	testing.expect_value(t, record_length_problem({kind = .Key, length = BODY_SIZES[.Key] + 1}, .To_Service), Record_Problem.Wrong_Length)
+	// The body of Key is the largest of the viewer, at the bound: one byte
+	// more is past the bound. A body under the bound with one byte more has a
+	// wrong length.
+	#assert(size_of(Key_Body) == VIEWER_BODY_LIMIT && size_of(Frame_Taken_Body) < VIEWER_BODY_LIMIT)
+	testing.expect_value(t, record_length_problem({kind = .Key, length = BODY_SIZES[.Key] + 1}, .To_Service), Record_Problem.Past_Bound)
+	testing.expect_value(t, record_length_problem({kind = .Frame_Taken, length = BODY_SIZES[.Frame_Taken] + 1}, .To_Service), Record_Problem.Wrong_Length)
 	testing.expect_value(t, record_length_problem({kind = .Tile, length = SERVICE_BODY_LIMIT + 1}, .To_Viewer), Record_Problem.Past_Bound)
 	testing.expect_value(t, record_length_problem({kind = .Tile, length = max(u32)}, .To_Viewer), Record_Problem.Past_Bound)
 	testing.expect_value(t, record_length_problem({kind = .Tile, length = size_of(Tile_Header) - 1}, .To_Viewer), Record_Problem.Wrong_Length)
