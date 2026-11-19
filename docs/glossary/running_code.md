@@ -1012,7 +1012,7 @@ The context replaces `argv`, the environment and inherited files. The index of e
 
 The design: `docs/MODULE_CONTRACT.md`, "6. The context", and `docs/PROPERTIES.md`, "19. A command is a function: no text between processes".
 
-Do not use: argv, argc, environment, arguments.
+Do not use: argv, argc, environment (for this), arguments.
 
 ### Context slot
 

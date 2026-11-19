@@ -776,7 +776,7 @@ The manifest keeps the choices about a theme in text that a reader can review, w
 
 The design: `docs/POINTERS.md`, "4. The manifest".
 
-Do not use: config, recipe, index.theme.
+Do not use: config, recipe (for this), index.theme.
 
 ### Premultiplied alpha
 
@@ -891,3 +891,23 @@ Its shaders are compiled from WGSL to SPIR-V by the build, so the system holds n
 The design: `src/md/features/gpu_access.md`.
 
 Do not use: WebGPU implementation, software WebGPU.
+
+### Environment
+
+An environment is a record of names and grants that a child console starts with: the modules of its tools, by hash, and stores of the principal with their rights.
+
+`enter(e)` starts the child console with the exports of `e.tools` in its command table and a connection to each store of `e.stores`; `exit()` stops it. Nothing is installed, and no other console sees these names. It is not a set of environment variables, which the system does not have, and not the context of a process.
+
+The design: `src/md/features/declarations.md`, "Environments".
+
+Do not use: shell environment, virtualenv, dev shell.
+
+### Evaluation budget
+
+The evaluation budget is the count of the steps that one evaluation of a declaration can take.
+
+An evaluation past it stops with an error record that names the declaration, its line and column, and the chain of fields that it forced. The budget counts steps, never a time, so one declaration gives the same error on every machine. It is not the budget of a process, which bounds its memory and its processor time.
+
+The design: `src/md/features/declarations.md`.
+
+Do not use: fuel, timeout, recursion limit.

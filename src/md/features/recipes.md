@@ -1,0 +1,217 @@
+# Recipes, builders and the cache
+
+A recipe names how an output is made: a builder, its inputs and its arguments, each by hash or as a typed record. The root service realises a recipe in a sandbox, or a machine takes its realisation from a cache: a signed record that says which output the recipe gave. One rule, the substitution policy, chooses between the two, with no hidden configuration.
+
+The terms Recipe, Realisation, Builder, Guest builder, Fetcher, Substitution policy and Object cache are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Tree hash is in [`docs/glossary/storage.md`](../../../docs/glossary/storage.md). The declarations that name the recipes are in [declarations.md](declarations.md).
+
+## Purpose
+
+A system is a list of hashes (property 11). A hash says which bytes run. It does not say how the bytes were made, so a reader cannot make them again, and a machine cannot check a module that it received. A recipe gives each output its cause. A realisation lets a machine skip a build that another machine made, and trust only the signature of the realisation.
+
+## Constraints
+
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "2. Sandbox by default": a builder holds only what it was given.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "10. One code module": a builder is a plain module.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "11. Reproducible system": the build is deterministic, and the identity of a module is its hash.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "19. A command is a function: no text between processes": a recipe and a realisation are records, and the cache protocol carries records.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "20. No ambient access: the other holes to close": no network at start, a grant names the hosts.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "21. Principals: who acts, without users": a key that one principal trusts is no grant for another.
+- **The kernel gets no operation.** A builder is a process; its sandbox is the sandbox of every process.
+
+## The chosen form
+
+### The recipe
+
+A recipe is three things:
+
+- the hash of a builder module;
+- an input table: a name and a hash for each input, sorted by name, with no name twice;
+- an argument record: a typed record of the builder, which its module describes.
+
+The recipe hash is the BLAKE3 hash of the builder hash, then of each input name and hash in the order of the table, then of the bytes of the argument record. The recipe hash is the identity of the recipe: two recipes with one hash are one recipe.
+
+In the language, `recipe(builder, arguments)` is a lazy value. Its inputs are the hashes that the evaluation of its arguments gives. Forcing it gives its recipe hash; it builds nothing.
+
+### Trees
+
+The output of a recipe is a tree, never one file: one module, several modules, a module and its debug object, a boot image, data. A tree here is the tree of the storage service, with a hash: the tree hash is the BLAKE3 hash of the list of its entries, each the name, the kind and the hash of the entry, sorted by name. A tree that never changes after its commit has one tree hash.
+
+The output hash of a recipe is the tree hash of its output. `recipe(...).server` names the entry `server` of the output.
+
+### The builder
+
+A builder is a plain module that exports one function with a fixed contract:
+
+```
+build(inputs: Table(Build_Input, Read), arguments: Build_Arguments) -> Build_Status
+```
+
+- `Build_Input` is a record: the name of an input and its place in the input store.
+- `Build_Arguments` is a record that the builder declares under that name, so its module file describes it. The console checks the argument record of `recipe(builder, {…})` against that description before any build.
+- `Build_Status` is an enum, with an error record when it is not `Done` ([api/export_error_records.md](../api/export_error_records.md)).
+- The output is not a parameter. It is the store "out" of the context of the builder.
+
+The root service starts a builder in a sandbox:
+
+- an input store: a clone of each input tree under its name, with the right Read only (a clone shares its blocks, so no byte is copied);
+- an empty store "out", with Write and a limit of blocks that the recipe states;
+- no network, no root ring, no other grant;
+- a random seed equal to the recipe hash;
+- a frozen date page: the root service gives the builder a date page with the date of its recipe, never the clock. The date of a recipe is the field `source_date` of its argument record when the builder declares one, and 0 when it does not. The frozen date page is new: today the date page of every process is the one page that the process `date` writes.
+
+The sandbox of modus removes the ambient causes of a different output already: no global file system, no `PATH`, no environment variables, no network without a grant. When the builder returns `Done`, the root service commits the store "out", computes its tree hash, and writes the realisation.
+
+### The realisation
+
+A realisation is a signed record:
+
+- the recipe hash;
+- the output hash;
+- the hash of the builder;
+- the public key of the signer and its signature over the three hashes.
+
+A machine signs the realisations of its own builds with the key of the principal that asked, and keeps them in `module_files`. A realisation is trusted when the key of a publisher that the substitution policy names signed it.
+
+### The three kinds of builder
+
+1. **A native builder**, such as `catalog.odin_build`, which wraps a compiler that is itself a module.
+2. **The guest builder**, `catalog.linux_build`, which uses the guest of [guest.md](guest.md). It runs a minimal Linux whose image is an object by hash. The inputs enter as a read-only disk, and the output leaves as a blank disk, which the guest builder reads into the store "out". Its argument record holds the command to run in the guest: `run = ["cargo", "build", "--release", "--offline"]`. The text of `run` goes into the guest, a foreign world, and not between two modus processes, so property 19 holds. It builds with any existing tool at once.
+3. **A builder of your own**: a small module that exports `build`.
+
+### The fetcher
+
+The fetcher is the one builder with the network. Its argument record holds an address and the hash of the output, given in advance. Its network grant names the host of the address and nothing else. It refuses an output whose tree hash is not the hash given in advance: the root service discards the store "out" and writes no realisation.
+
+Its realisation needs no signature: the recipe holds the output hash, so each machine checks it.
+
+**Git enters through the fetcher.** `git_fetch(address, commit, tree)` reads a git repository, takes the tree of the commit, writes it as a modus tree, and checks that its tree hash is `tree`. Git is an import format and an export format, never a dependency of the system ([declarations.md](declarations.md), "Sources and the identity of a source").
+
+### The substitution policy
+
+The order of the realisation is a rule with no hidden configuration. For each recipe R that a command needs, in order:
+
+1. The store `module_files` holds a realisation R → H and the objects of H: use it.
+2. Else, ask each source of the policy, in its order, for `Realisation(R)` signed by a key that the policy trusts, then fetch H by `Object`, which checks itself.
+3. Else, build R in the sandbox.
+
+The policy is a typed record, `Substitution`:
+
+- `sources`: the endpoints of the object caches, each with its key;
+- `trusted_signers`: the keys whose realisations it trusts;
+- `mode`, a member of `Substitution_Mode`.
+
+The modes:
+
+- `Prefer_Cache`, the default: the order above.
+- `Build_Only`: no realisation of another machine is used. It is the mode of a bootstrap and of a verifier.
+- `Cache_Only`: never build. A small device refuses a recipe that no source has, with an error record that names the recipe.
+- `Verify`: use the cache, build too, and compare. A disagreement is the log fact `Realisation_Disagreement`, with the recipe, the two output hashes and the signer.
+
+The policy has one place, never a global file:
+
+- The plan of each principal holds its `Substitution`. The plan of principal 0 holds the policy of the system plan.
+- A value of the language changes it for one evaluation: `build(kernel) with substitution = { mode = .Verify }`.
+- The plan records, for each realisation that it uses, its source and its signer, so an audit reads where each output came from.
+- A key that a principal trusts is valid for that principal only. The system plan trusts the publisher of the system alone.
+
+### The object cache and its protocol
+
+An object cache serves two things:
+
+- **objects by hash**, which check themselves, so any transport works, also one that nobody trusts;
+- **realisations and release pointers**, the only things that are signed.
+
+The protocol runs over QUIC, as `remote` does, with records and no text. The client pins the key of the endpoint that the policy names. Each request is one record, and each answer is one record and its bytes:
+
+| Request | Answer |
+|---|---|
+| `Object(hash, offset, count)` | the bytes of the range, or `Absent` |
+| `References(hash)` | the hashes that the object names: the imports of a module, the entries of a tree, the output of a realisation |
+| `Realisation(recipe)` | the signed record, or `Absent` |
+| `Release_Pointer(publisher, name)` | the newest signed release pointer, or `Absent` |
+| `Has(hashes[64])` | a bitset of 64 bits |
+
+An object cache can be a mirror that nobody trusts, a peer on the local network, or a removable disk. The trust never comes from the source: it comes from a hash, or from the key that signed a record. Two machines exchange their stores with the same protocol, as an object cache of each other.
+
+### Two machines compare
+
+A machine in the mode `Verify` builds a recipe that it also fetched. The same recipe with two output hashes is the log fact `Realisation_Disagreement`. A disagreement is a fault of the recipe or of a builder, which a developer reads to its cause, as a distinct result of the build is today ([`docs/REPRODUCIBLE_BUILD.md`](../../../docs/REPRODUCIBLE_BUILD.md), "6. What is proved, and what is not").
+
+### A proposed change of property 11
+
+This is a proposal, not a rule. Property 11 keeps its text until a change of [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md) takes it.
+
+> **Rule (proposed)**: each module of the list of a system has a recipe, and its realisation can be built again. The system description names, beside the hash of each module, its recipe hash. A module with no recipe is a module that no machine can check.
+
+## What this takes from Nix and what it does not
+
+Nix has:
+
+- `nix.conf`, global, which root edits;
+- a daemon that runs as root;
+- a trust of a whole store, in place of a trust of each realisation;
+- derivations as text files (ATerm);
+- a fixed place, `/nix/store`;
+- a sandbox to build, on Linux;
+- a separate language.
+
+modus has:
+
+- a typed policy in the plan of each principal;
+- no daemon with authority: a builder is a process with handles;
+- a trust of each signed realisation;
+- a recipe as a typed record whose hash is its identity;
+- no place;
+- the sandbox as the default of every process;
+- the language of the console.
+
+The ideas taken from Nix are the closure, the content address and the substitution. The design is not a copy.
+
+## The frequent tasks
+
+| Task | Expression |
+|---|---|
+| Build an output | `build(kernel)` |
+| Build with no cache | `build(kernel) with substitution = { mode = .Build_Only }` |
+| Check a cache against a local build | `build(kernel) with substitution = { mode = .Verify }` |
+| See where each output of the system came from | `provenance(system)` |
+| Fetch a git repository at one commit | `git_fetch("https://…", commit = "…", tree = blake3:…)` |
+| Name the output of a guest build | `catalog.linux_build({ inputs = { source = here() }, run = ["cargo", "build", "--release", "--offline"] })` |
+| Name one entry of an output | `recipe(…).server` |
+
+## The refused forms
+
+- **A recipe as a text file.** A reader parses it, and two writers print it in two ways. A recipe is a typed record, and its hash is over its bytes.
+- **A trust of a whole store or of a whole cache.** One bad source then gives every output. A realisation is trusted one at a time, by its signer.
+- **A signature on each object.** A hash checks itself.
+- **A daemon with authority that builds for everyone.** A builder is a process with the handles of one recipe.
+- **A builder with the network.** Its output then depends on the network at the time of the build. Only the fetcher has it, and its output hash is given in advance.
+- **A fetch with no hash given in advance.** Its output is what the network gave that day.
+- **A global configuration of the cache.** The policy is in the plan of each principal.
+- **The output as one file.** A build that gives a module and its debug object, or several modules, then needs several recipes.
+- **A key that one principal trusts, valid for the machine.** A principal then grants its trust to the others.
+- **The clock in a builder.** The date in the output then changes at each build.
+- **Git inside the system as the identity of a source.** Two identities for one source.
+- **Text in the cache protocol.** Each side then parses the text of the other (property 19).
+
+## Subtle points and hazards
+
+- **The builder contract keeps the border rule.** An export takes no slice by value and no address in a record ([api/library_modules.md](../api/library_modules.md), and [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "Tables and bytes as parameters"). So the inputs are a table parameter, the arguments a record, and the output a store of the context.
+- **The bytes of an argument record are canonical.** A record of the system holds no padding and no handle, and a Text field is filled with zeros past its length. So one argument value gives one recipe hash.
+- **The sandbox does not make a builder deterministic.** A builder can read the cycle counter, the order in which its threads run, and `rdrand`. The kernel does not hide them. A recipe is checked by comparison (`Verify`, two machines), not by a proof.
+- **The seed of a builder is public.** It is the recipe hash. A builder that needs a secret is a fault: an output must not depend on a secret.
+- **A fetch is the only realisation that needs no signer.** Its recipe holds its output hash.
+- **`Has` tells a source which objects a machine wants.** A machine that does not want to tell asks only the sources that it trusts with that fact.
+- **A realisation of a builder that has a fault is still signed.** The signature says who built it, not that it is right. `Verify` finds a disagreement; it does not say which side is right.
+- **The guest builder trusts its Linux image.** The image is an object by hash, so the recipe names it; its own build is a recipe of the bootstrap ([bootstrap.md](bootstrap.md)).
+
+## Open questions
+
+- **The date of a recipe**: a field of the argument record, as above, or a fourth part of the recipe.
+- **The key that signs the realisations of the publisher of the system**: the release signing key, or a key of its own.
+- **Whether the garbage collector keeps the inputs of a realisation** when a plan keeps its output.
+- **The bound of the blocks of the store "out"**: stated in the recipe, or from the budget of the builder module.
+
+## State
+
+Designed, not built.
