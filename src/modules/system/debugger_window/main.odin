@@ -50,8 +50,11 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
 
-// The draw tables of the interface, and the tables of the rows.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2536, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The draw tables of the interface, and the tables of the rows: 2536
+// pages. And the glyph memory of the copy of the text rendering of the
+// drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 2536 + 354 = 2890.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2890, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 1000
 HEIGHT :: 704

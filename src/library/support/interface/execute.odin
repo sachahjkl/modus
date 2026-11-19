@@ -505,14 +505,16 @@ interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_reco
 		text_draw(view, int(origin >> draw_record.UNIT_SHIFT), y, string(text), color, scale, font.weight, alpha)
 		return
 	}
-	cache := interface_cache_of(table.interface_font, font)
-	spacing, ok := text_rendering.spacing_of(cache, scale)
+	// The places from the font file, as the measure of the writer; the
+	// pixels from the private glyph cache of the process.
+	face := interface_face_of(font)
+	spacing, ok := interface_spacing_of(font)
 	if !ok {
 		return
 	}
 	placed: [INTERFACE_TEXT_LIMIT]text_rendering.Placed_Glyph
 	placed_count, _, _ := text_rendering.shape(&spacing, text, placed[:])
-	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], cache, scale, color, alpha)
+	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], face, scale, color, alpha)
 }
 
 // text_draw draws characters of the font of the system, each pixel of the

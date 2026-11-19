@@ -1,29 +1,42 @@
 #+build !freestanding
 package bar
 
-import "modus:contract/glyph_cache"
+import "base:runtime"
+import "core:sync"
 import "core:testing"
-import "modus:support/vector_font"
+import "modus:contract/font_outlines"
+import "modus:support/text_rendering"
 
-// The regular cache of B612 at scale 1, in memory that the caller frees:
-// the cache of the names of the bar.
+// The font outlines of B612, opened once for the tests of this package in
+// the state of the text rendering: the measure of the names of the bar. The
+// memory of the resource stays for the run.
 @(private = "file")
-b612_cache_of :: proc(t: ^testing.T) -> (cache: glyph_cache.Cache, memory: []u64) {
-	bytes := #load("../../../../../resources/fonts/b612.ttf")
-	font, problem := vector_font.font_open(bytes)
-	testing.expect_value(t, problem, vector_font.Font_Problem.None)
-	render := new(vector_font.Render_Memory)
-	defer free(render)
-	memory = make([]u64, vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT / 8)
-	out := ([^]u8)(raw_data(memory))[:vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT]
-	positions := [3]int{3, 1, 1}
-	size: int
-	size, problem = vector_font.glyph_cache_build_proportional(&font, bytes, "b612", true, render, out, positions[:])
-	testing.expect_value(t, problem, vector_font.Font_Problem.None)
-	refused: glyph_cache.Problem
-	cache, refused = glyph_cache.validate(out[:size])
-	testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
-	return cache, memory
+outlines_opened: bool
+@(private = "file")
+outlines_lock: sync.Mutex
+@(private = "file")
+outlines_words: []u64
+
+@(private = "file")
+b612_open :: proc(t: ^testing.T) {
+	sync.mutex_lock(&outlines_lock)
+	defer sync.mutex_unlock(&outlines_lock)
+	if outlines_opened {
+		return
+	}
+	fonts := [1]font_outlines.Font_Input{{"b612", #load("../../../../../resources/fonts/b612.ttf")}}
+	size := font_outlines.resource_size(fonts[:])
+	// The heap of the process, not the allocator of the test: the runner
+	// frees all that a test allocated at its end, and the open fonts of the
+	// state read these words in each later test.
+	outlines_words = make([]u64, (size + 7) / 8, runtime.heap_allocator())
+	bytes := ([^]u8)(raw_data(outlines_words))[:size]
+	_, written := font_outlines.resource_write(fonts[:], bytes)
+	testing.expect(t, written)
+	outlines, problem := font_outlines.validate(bytes)
+	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
+	_ = text_rendering.open(&outlines)
+	outlines_opened = true
 }
 
 // Each entry of the bar and of its menus, in one layout: the middle of each
@@ -61,12 +74,11 @@ entries_round_trip :: proc(t: ^testing.T, layout: Layout, name: string) {
 
 @(test)
 each_entry_maps_back_to_itself :: proc(t: ^testing.T) {
-	entries_round_trip(t, layout_of(nil), "the font of the cells")
+	entries_round_trip(t, layout_of(.None), "the font of the cells")
 	entries_round_trip(t, {label_width = 37, windows_label_width = 41, longest_name_width = 150}, "narrower")
 	entries_round_trip(t, {label_width = 91, windows_label_width = 77, longest_name_width = 260}, "wider")
-	cache, memory := b612_cache_of(t)
-	defer delete(memory)
-	entries_round_trip(t, layout_of(&cache), "B612")
+	b612_open(t)
+	entries_round_trip(t, layout_of(.Interface), "B612")
 }
 
 // The places follow the widths: a wider label moves the button windows to
@@ -85,16 +97,17 @@ places_follow_the_measured_widths :: proc(t: ^testing.T) {
 	testing.expect_value(t, column_width({longest_name_width = COLUMN_LEAST - 2 * PADDING + 1}), COLUMN_LEAST + 1) // One pixel past the least: one pixel wider, no round up.
 	testing.expect_value(t, column_width({label_width = 40, windows_label_width = 40, longest_name_width = 113}), 113 + 2 * PADDING)
 	testing.expect_value(t, column_width({}), COLUMN_LEAST) // No name: the least width.
-	cache, memory := b612_cache_of(t)
-	defer delete(memory)
-	layout := layout_of(&cache)
-	cells := layout_of(nil)
+	b612_open(t)
+	layout := layout_of(.Interface)
+	cells := layout_of(.None)
 	testing.expect(t, layout.label_width > 0 && layout.windows_label_width > 0)
 	testing.expect(t, layout != cells, "B612 measures the names of the bar in its own widths")
 	for process, index in names {
 		_, _, line_width, _ := line(layout, index)
-		testing.expectf(t, text_width_in(&cache, process) + 2 * PADDING <= line_width, "%s fits its line", process)
+		testing.expectf(t, text_width_in(.Interface, process) + 2 * PADDING <= line_width, "%s fits its line", process)
 	}
 	_, _, button_width, _ := button(layout)
-	testing.expect_value(t, button_width, text_width_in(&cache, LABEL) + 2 * PADDING)
+	testing.expect_value(t, button_width, text_width_in(.Interface, LABEL) + 2 * PADDING)
+	// A face that the outlines lack measures in the font of the cells.
+	testing.expect_value(t, layout_of(.Cells), cells)
 }

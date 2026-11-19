@@ -82,10 +82,10 @@ build_modules :: proc() -> bool {
 	pointer_themes := resources.build_pointer_themes(resources.pointer_theme_source_of_the_build(), false) or_return
 	build_measure_step("the pointer themes", step_started)
 	step_started = time.tick_now()
-	// The glyph caches of the default font and of the interface font, and
-	// the font outlines: six more resources (vector_fonts.odin).
-	glyph_caches := resources.build_glyph_caches() or_return
-	build_measure_step("the glyph caches", step_started)
+	// The font outlines: one more resource, from which each process draws
+	// each glyph of its text (vector_fonts.odin).
+	outlines_resource := resources.font_outlines_write() or_return
+	build_measure_step("the font outlines", step_started)
 	step_started = time.tick_now()
 	// The pages of the links of the documentation of the modules: one more
 	// resource, for the process manual (manual_link_pages.odin).
@@ -94,7 +94,7 @@ build_modules :: proc() -> bool {
 	step_started = time.tick_now()
 	all_resources := make([dynamic]resources.Resource_File, context.temp_allocator)
 	append(&all_resources, ..pointer_themes)
-	append(&all_resources, ..glyph_caches[:])
+	append(&all_resources, outlines_resource)
 	append(&all_resources, link_pages)
 	// The start policy reads a list and asks for the starts, and nothing
 	// more: its source is checked before any image holds it.

@@ -66,8 +66,10 @@ LARGEST_HEIGHT :: 640
 // pages. It also holds what clock used before it stated a budget: the
 // least budget of 2048 pages less its window of 816 x 336 (2 193 408
 // bytes, 536 pages), 1512 pages, for its module, its stack, the glyphs
-// that it draws itself and its tables. 1520 + 1512 = 3032.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3032, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// that it draws itself and its tables. And the glyph memory of the copy of
+// the text rendering of the drawing module, which draws its text: 354
+// pages (display.TEXT_MEMORY_PAGES). 1520 + 1512 + 354 = 3386.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3386, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 
 Measure :: struct {
 	name:    string,

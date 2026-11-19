@@ -1,9 +1,6 @@
 #+build !freestanding
 package settings
 
-import "modus:contract/fixed_addresses"
-import "modus:contract/glyph_cache"
-import op "modus:contract/operation"
 import "core:testing"
 
 // A writer that stops in a change (an odd count) does not stop a reader:
@@ -185,25 +182,6 @@ a_value_out_of_its_setting :: proc(t: ^testing.T) {
 			testing.expect(t, ok)
 			testing.expect_value(t, values_of(choice), values)
 		}
-	}
-}
-
-// A glyph cache whose range the starter did not state as mapped is not
-// read: each cache gives Not_Mapped with no bit, even with the bits of the
-// other ranges set. A set bit makes the process read the fixed address,
-// which is not mapped in a host test: that path is tested on the machine.
-@(test)
-a_glyph_cache_that_is_not_mapped :: proc(t: ^testing.T) {
-	values: [op.CONTEXT_VALUES]u64
-	for cache in Glyph_Cache {
-		_, problem := glyph_cache_open(&values, cache)
-		testing.expect_value(t, problem.kind, glyph_cache.Problem_Kind.Not_Mapped)
-	}
-	fixed_addresses.range_mapped_add(&values, .Settings_Page)
-	fixed_addresses.range_mapped_add(&values, .Date_Page)
-	for cache in Glyph_Cache {
-		_, problem := glyph_cache_open(&values, cache)
-		testing.expect_value(t, problem.kind, glyph_cache.Problem_Kind.Not_Mapped)
 	}
 }
 

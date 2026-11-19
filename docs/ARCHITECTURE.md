@@ -343,7 +343,7 @@ The terms are in `glossary/storage.md`.
 | Range | How the process knows that it is mapped |
 |---|---|
 | The settings page, the date page | Their bits |
-| The five glyph caches | Their bits; each cache states its size in its header (`glyph_cache.validate_at`, bounded by the span of the range) |
+| The font outlines | Its bit; the resource states its size in its header (`font_outlines.open`, bounded by the span of the range) |
 | The pointer themes | The values 6 and 7, 18 and 19 of the compositor: an address and a size each. A value, not a bit: the size is needed, and the theme file does not state it in a header that the reader trusts before its validation |
 | The storage file | The value 3 of the storage service: its size. A value, not a bit: the size is needed |
 | The files of a module | The values 0 to 3 of `modus:contract/isolated` (address, size, the replacements): values, not bits, because the sizes are needed |

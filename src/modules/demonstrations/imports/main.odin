@@ -58,8 +58,11 @@ import op "modus:contract/operation"
 import "modus:support/random"
 import "modus:support/system"
 
-// Itself and two processes that import calendar.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 808, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
+// Itself and two processes that import calendar: 808 pages. And the glyph
+// memory of the copy of the text rendering of the drawing module, which
+// draws its text: 354 pages (display.TEXT_MEMORY_PAGES). 808 + 354 =
+// 1162.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1162, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)

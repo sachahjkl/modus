@@ -460,11 +460,18 @@ draw_whole_window_next :: proc "contextless" (drawing: ^Window_Drawing) {
 // window_frame_begin starts a frame of the window.
 window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window = nil) -> Frame {
 	drawing.build_start = system.nanoseconds()
-	// The appearance in force, read at each frame: a change holds from this
-	// frame, also before the event Settings_Changed comes. Each picture
-	// then draws whole, so that no picture keeps a part of the other
-	// appearance (src/md/features/appearance.md).
-	if display.appearance_apply() {
+	// The choice of the settings page, read at each frame: the appearance
+	// in force, the font, the order of the stripes and the grid fit. A
+	// change holds from this frame, also before the event Settings_Changed
+	// comes, and also when it never comes: the compositor tells only a
+	// window with a surface, so a window that read the page before the boot
+	// pass of `settings` and made its surface after it gets none. The
+	// measure of a text decides its font here (font_in_use), so a stale
+	// font would measure an interface text in B612 over the setting
+	// `spleen`. Each picture then draws whole, so that no picture keeps a
+	// part of the other font or appearance
+	// (src/md/features/appearance.md).
+	if display.text_settings_apply() {
 		draw_whole_window_next(drawing)
 	}
 	if window != nil {

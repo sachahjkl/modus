@@ -20,6 +20,26 @@ A process slot is not a global number: no process names another process by it, a
 
 Do not use: process ID, PID, process number, program number.
 
+### Stop cause
+
+A stop cause is the fact that the kernel records of who or what stopped a process (`op.Stop_Cause`): the process itself, a holder of its process handle, a fault, the end of its last thread or the close of its last handle.
+
+No process can forge it: the kernel decides it at each stop, and the first stop keeps it. A holder with Read reads it with `Process_State`. It names no other process. For a fault, the vector and the stack trace are in the stop report. It is not the stop outcome, which the process chooses. Example: the console writes "the process calendar stopped: a fault, page fault".
+
+The design: `src/md/api/process_stop.md`.
+
+Do not use: exit reason, termination reason, signal.
+
+### Stop outcome
+
+A stop outcome is what a process says about its work when it stops itself (`op.Stop_Outcome`): done, failed, refused, or stopped on request.
+
+The process passes it to `system.stop`, as in `system.stop(.Done)`. The kernel records it only with the stop cause `Itself`, and refuses an outcome from a holder, so `outcome == .Done` alone checks a clean stop. It is a claim of the process about itself, not a proof of its work. A failed stop gives its reason in the log; later, in an error record.
+
+The design: `src/md/api/process_stop.md`.
+
+Do not use: exit code, exit status, return code.
+
 ### Thread
 
 A thread is one flow of execution inside a process: a register state, a thread record and a kernel ring.
@@ -1040,9 +1060,9 @@ Do not use: boot loader, bootloader.
 
 ### Fixed range
 
-A fixed range is an address and a span of the address space of a process where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the disk process page, the fresh bytes page, the files of a module.
+A fixed range is an address and a span of the address space of a process where the system places one mapping that it gives: the settings page, the font outlines, the date page, the disk process page, the fresh bytes page, the files of a module.
 
-Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. Each value is written: it is the slot and the bit of the range. The slot 13 names no member, and the border refuses its bit. A mapping that a process places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
+Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. Each written value is the slot and the bit of the range. The slots of the ranges that left name no member, and the border refuses their bits. A mapping that a process places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
 
 Do not use: well-known address, fixed mapping.
 

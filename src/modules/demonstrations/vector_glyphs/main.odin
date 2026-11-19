@@ -6,9 +6,10 @@
 // its process builds a glyph cache of each one in its own memory: the time of that
 // build is the measure of a cache made by each process at run time (the
 // first of the three places of docs/FONTS.md, "Where it lives: three places
-// weighed").
-// The text of the window itself is the text of the system: the glyph
-// cache that the root service maps, or Spleen, as the setting says.
+// weighed"). It draws the lines of each candidate from that cache.
+// The text of the window itself is the text of the system: the glyphs that
+// the process draws from the font outlines into its private glyph cache,
+// or Spleen, as the setting says.
 //
 // **What it is for.** It is the record of a choice: a reader sees the same
 // lines in each candidate font at the sizes of the system, and the cost of
@@ -22,9 +23,9 @@
 // 8x16. The log has:
 //
 // - "vector_glyphs: one glyph from its outline, ...": the time of one glyph
-//   at the scales 1, 2 and 3, from the glyph cache of the system, and from
-//   Spleen; each time is the least of 50 short batches, so that a batch that
-//   the host stopped does not count;
+//   at the scales 1, 2 and 3, from the private glyph cache of the process,
+//   and from Spleen; each time is the least of 50 short batches, so that a
+//   batch that the host stopped does not count;
 // - one line for each candidate: the time to build its cache of 95
 //   characters at 3 scales, and its bytes;
 // - "vector_glyphs: ok, 6 candidates beside Spleen 8x16".
@@ -40,8 +41,12 @@ import "modus:support/interface"
 import "modus:support/system"
 import "modus:support/vector_font"
 
-// The glyph caches that it builds.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1362, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The glyph caches that it builds: 1362 pages. And the glyph memory of its
+// two copies of the text rendering, its own, which draws the measure of
+// one glyph of the system, and the one of the drawing module, which draws
+// its labels: each reserves its memory at its first glyph, 2 x 354 pages
+// (display.TEXT_MEMORY_PAGES) = 708 pages. 1362 + 708 = 2070.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2070, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 1008
 HEIGHT :: 704
@@ -72,13 +77,14 @@ cache_memory: [vector_font.GLYPH_CACHE_LIMIT / 8 + 1]u64
 render_memory: vector_font.Render_Memory
 build_times: [len(candidates)]u64
 cache_sizes: [len(candidates)]int
+// The cache of the candidate that draws now, validated (with_font).
+candidate_cache: glyph_cache.Cache
 
 window_memory: interface.Window_Memory(256, 8192)
 
-// with_font draws with one candidate: it builds its cache, gives it to
-// src/library/support/graphics, and gives the state of the system to restore after.
-with_font :: proc "contextless" (index: int) -> (saved: graphics.Text_State, ok: bool) {
-	saved = graphics.text_state
+// with_font builds the cache of one candidate and makes it the cache that
+// candidate_text draws from.
+with_font :: proc "contextless" (index: int) -> (ok: bool) {
 	font, problem := vector_font.font_open(candidates[index].bytes)
 	out := ([^]u8)(raw_data(cache_memory[:]))[:vector_font.GLYPH_CACHE_LIMIT]
 	start := system.nanoseconds()
@@ -88,25 +94,44 @@ with_font :: proc "contextless" (index: int) -> (saved: graphics.Text_State, ok:
 	}
 	if problem != .None {
 		system.log(.Info, "vector_glyphs: the font ", candidates[index].name, " is refused: ", vector_font.font_problem_names[problem])
-		return saved, false
+		return false
 	}
 	build_times[index] = system.nanoseconds() - start
 	cache_sizes[index] = size
-	if refused := graphics.text_cache_set(out[:size]); refused.kind != .None {
+	refused: glyph_cache.Problem
+	candidate_cache, refused = glyph_cache.validate(out[:size])
+	if refused.kind != .None {
 		system.log(.Info, "vector_glyphs: the cache of ", candidates[index].name, " is refused: ", glyph_cache.problem_sentences[refused.kind])
-		return saved, false
+		return false
 	}
-	graphics.text_choice_set(.Vector, saved.order)
-	return saved, true
+	return true
+}
+
+// candidate_text draws a text of ASCII from the cache of the candidate, one
+// cell of 8 x 16 pixels times the scale for each character, in the order
+// of the stripes of the setting.
+candidate_text :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int) {
+	state := &graphics.text_state
+	for index in 0 ..< len(text) {
+		graphics.character_vector_with(&candidate_cache, &state.square_root, &state.blend_tables, state.order, canvas, x + index * graphics.CELL_WIDTH * scale, y, rune(text[index]), color, scale)
+	}
 }
 
 // enlarged draws a word at scale 1 into a small canvas, then each pixel as a
-// square: the coverage of each stripe shows.
-enlarged :: proc "contextless" (canvas: graphics.Canvas, x, y: int) {
+// square: the coverage of each stripe shows. candidate: from the cache of
+// the candidate; else Spleen.
+enlarged :: proc "contextless" (canvas: graphics.Canvas, x, y: int, candidate: bool) {
 	small: [8 * len(ENLARGED_WORD) * 16]graphics.Color
 	view := graphics.Canvas{pixels = raw_data(small[:]), width = 8 * len(ENLARGED_WORD), height = 16, stride = 8 * len(ENLARGED_WORD)}
 	graphics.clear(view, graphics.colors.card_bottom)
-	graphics.text(view, 0, 0, ENLARGED_WORD, graphics.colors.text)
+	if candidate {
+		candidate_text(view, 0, 0, ENLARGED_WORD, graphics.colors.text, 1)
+	} else {
+		word := ENLARGED_WORD
+		for index in 0 ..< len(word) {
+			graphics.character_spleen(view, index * graphics.CELL_WIDTH, 0, rune(word[index]), graphics.colors.text)
+		}
+	}
 	for row in 0 ..< 16 {
 		for column in 0 ..< view.width {
 			graphics.fill(canvas, x + column * ENLARGED, y + row * ENLARGED, ENLARGED, ENLARGED, small[row * view.width + column])
@@ -150,15 +175,23 @@ draw :: proc "contextless" (window: ^display.Window) {
 	for index in 0 ..= len(candidates) {
 		y := content.y + LIST_TOP - 8 + index * ROW_HEIGHT
 		x := content.x + 8
+		place := content.x + (index % 4) * 240
+		top := content.y + ENLARGED_TOP + (index / 4) * (16 * ENLARGED + 16)
 		if index == 0 {
+			// Spleen 8x16, whatever the setting of the font.
 			graphics.text_choice_set(.Spleen, system_state.order)
-		} else if _, built := with_font(index - 1); !built {
+			graphics.text(canvas, x, y, SAMPLE, graphics.colors.text)
+			graphics.text_scaled(canvas, x + 560, y - 16, "12 345", graphics.colors.process, 2)
+			graphics.text_state = system_state
+			enlarged(canvas, place, top, false)
 			continue
 		}
-		graphics.text(canvas, x, y, SAMPLE, graphics.colors.text)
-		graphics.text_scaled(canvas, x + 560, y - 16, "12 345", graphics.colors.process, 2)
-		enlarged(canvas, content.x + (index % 4) * 240, content.y + ENLARGED_TOP + (index / 4) * (16 * ENLARGED + 16))
-		graphics.text_state = system_state
+		if !with_font(index - 1) {
+			continue
+		}
+		candidate_text(canvas, x, y, SAMPLE, graphics.colors.text, 1)
+		candidate_text(canvas, x + 560, y - 16, "12 345", graphics.colors.process, 2)
+		enlarged(canvas, place, top, true)
 	}
 	display.present(window)
 }
@@ -178,8 +211,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	// The measures, before the window: one glyph from its outline, in fixed
-	// point, at each scale; one glyph from the glyph cache of the system;
-	// one glyph of Spleen. The scratch canvas is not the window.
+	// point, at each scale; one glyph of the system from the private glyph
+	// cache of this process, whose glyph memory comes first, so that no
+	// glyph of the measure is drawn band by band; one glyph of Spleen. The
+	// scratch canvas is not the window.
+	_ = display.text_memory_reserve()
 	scratch: [48 * 48]graphics.Color
 	scratch_canvas := graphics.Canvas{pixels = raw_data(scratch[:]), width = 48, height = 48, stride = 48}
 	font, problem := vector_font.font_open(candidates[0].bytes)
@@ -226,7 +262,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	graphics.text_choice_set(.Spleen, saved.order)
 	spleen_time = least_of_batches(scratch_canvas, sample)
 	graphics.text_state = saved
-	system.log(.Info, "vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 ", outline_times[0], " ns, scale 2 ", outline_times[1], " ns, scale 3 ", outline_times[2], " ns; from the glyph cache: ", cache_time, " ns; Spleen 8x16: ", spleen_time, " ns")
+	system.log(.Info, "vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 ", outline_times[0], " ns, scale 2 ", outline_times[1], " ns, scale 3 ", outline_times[2], " ns; from the private glyph cache: ", cache_time, " ns; Spleen 8x16: ", spleen_time, " ns")
 
 	draw(&window)
 	for size, index in cache_sizes {

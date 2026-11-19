@@ -132,8 +132,11 @@ import "modus:support/system"
 import "modus:support/tpm2"
 
 // The blocks of Argon2id, 19 MiB (4864 pages)
-// (src/library/support/principals, DERIVATION_MEMORY_PAGES).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 5765, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// (src/library/support/principals, DERIVATION_MEMORY_PAGES), and the rest:
+// 5765 pages. And the glyph memory of the copy of the text rendering of
+// the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 5765 + 354 = 6119.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6119, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 // The cost record of the export argon2id of the module cryptography: the
 // same fields, in the same order (src/modules/libraries/cryptography).

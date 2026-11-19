@@ -1,9 +1,10 @@
 #+build !freestanding
 package drawing
 
+import "base:runtime"
 import "modus:contract/draw_record"
 import "modus:contract/errors"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_outlines"
 import "core:log"
 import "core:sync"
 import "core:testing"
@@ -11,7 +12,7 @@ import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
-import "modus:support/vector_font"
+import "modus:support/text_rendering"
 
 // The text state of the graphics package and the text of the module are
 // one for the host process of the tests, and the tests run on several threads: each
@@ -510,58 +511,68 @@ build_proof_frame :: proc(table: ^interface.Draw_Table, seed: u32, changed: int)
 	interface.draw_text(table, 250, 204, third, color(colors[:], &state, &part, changed), {kind = .Interface, scale = 2})
 }
 
-// The glyph caches of the proof: the font of the cells (JetBrains Mono)
-// and the two weights of the interface font (B612), built from the font
-// files, in memory that the caller frees.
+// The fonts of the proof: the faces of the font outlines, the font of the
+// cells (Paper Mono) and the two weights of the interface font (B612).
 @(private = "file")
 Proof_Fonts :: struct {
-	cells:          glyph_cache.Cache,
 	interface_font: display.Interface_Font,
-	memory:         [3][]u64,
 }
 
+// The font outlines of the proof, opened once in the state of the text
+// rendering of the test process, which the package and the exports share,
+// with its glyph memory: a text is measured from its font file, and its
+// glyphs are drawn into the private glyph cache. The words and the memory
+// stay for the run, as the open fonts and the cache read them, so they
+// come from the heap of the process.
+@(private = "file")
+proof_outlines_lock: sync.Mutex
+@(private = "file")
+proof_outlines_words: []u64
+
+@(private = "file")
+proof_outlines_open :: proc(t: ^testing.T) {
+	sync.mutex_lock(&proof_outlines_lock)
+	defer sync.mutex_unlock(&proof_outlines_lock)
+	if proof_outlines_words != nil {
+		return
+	}
+	fonts := [4]font_outlines.Font_Input {
+		{"b612", #load("../../../../resources/fonts/b612.ttf")},
+		{"b612_bold", #load("../../../../resources/fonts/b612_bold.ttf")},
+		{"paper_mono", #load("../../../../resources/fonts/paper_mono.ttf")},
+		{"paper_mono_semibold", #load("../../../../resources/fonts/paper_mono_semibold.ttf")},
+	}
+	size := font_outlines.resource_size(fonts[:])
+	proof_outlines_words = make([]u64, (size + 7) / 8, runtime.heap_allocator())
+	bytes := ([^]u8)(raw_data(proof_outlines_words))[:size]
+	_, written := font_outlines.resource_write(fonts[:], bytes)
+	testing.expect(t, written)
+	outlines, problem := font_outlines.validate(bytes)
+	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
+	text_rendering.memory_give(new(text_rendering.Glyph_Memory, runtime.heap_allocator()))
+	_ = text_rendering.open(&outlines)
+}
+
+// proof_fonts_build opens the outlines once and gives the faces of the
+// cells and of the bold weight to the text state of the process; the
+// caller gives them back with proof_fonts_end.
 @(private = "file")
 proof_fonts_build :: proc(t: ^testing.T) -> (fonts: Proof_Fonts) {
-	render := new(vector_font.Render_Memory)
-	defer free(render)
-	{
-		bytes := #load("../../../../resources/fonts/jetbrains_mono.ttf")
-		file, problem := vector_font.font_open(bytes)
-		testing.expect_value(t, problem, vector_font.Font_Problem.None)
-		fonts.memory[0] = make([]u64, vector_font.GLYPH_CACHE_LIMIT / 8)
-		out := ([^]u8)(raw_data(fonts.memory[0]))[:vector_font.GLYPH_CACHE_LIMIT]
-		size: int
-		size, problem = vector_font.glyph_cache_build(&file, bytes, "jetbrains_mono", true, render, out)
-		testing.expect_value(t, problem, vector_font.Font_Problem.None)
-		refused: glyph_cache.Problem
-		fonts.cells, refused = glyph_cache.validate(out[:size])
-		testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
-	}
-	Weight :: struct {
-		bytes:     []u8,
-		name:      string,
-		positions: []int,
-	}
-	regular_positions := [3]int{3, 1, 1}
-	bold_positions := [1]int{3}
-	weights := [2]Weight{{#load("../../../../resources/fonts/b612.ttf"), "b612", regular_positions[:]}, {#load("../../../../resources/fonts/b612_bold.ttf"), "b612_bold", bold_positions[:]}}
-	for weight, index in weights {
-		file, problem := vector_font.font_open(weight.bytes)
-		testing.expect_value(t, problem, vector_font.Font_Problem.None)
-		fonts.memory[index + 1] = make([]u64, vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT / 8)
-		out := ([^]u8)(raw_data(fonts.memory[index + 1]))[:vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT]
-		size: int
-		size, problem = vector_font.glyph_cache_build_proportional(&file, weight.bytes, weight.name, true, render, out, weight.positions)
-		testing.expect_value(t, problem, vector_font.Font_Problem.None)
-		cache, refused := glyph_cache.validate(out[:size])
-		testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
-		if index == 0 {
-			fonts.interface_font.regular = cache
-		} else {
-			fonts.interface_font.bold = cache
-		}
-	}
-	return fonts
+	proof_outlines_open(t)
+	testing.expect(t, display.interface_faces_opened())
+	graphics.text_faces_use(.Cells, .Cells_Bold)
+	testing.expect_value(t, graphics.text_state.cell_face, text_rendering.Face.Cells)
+	testing.expect_value(t, graphics.text_state.bold_face, text_rendering.Face.Cells_Bold)
+	return {interface_font = display.INTERFACE_FONT}
+}
+
+// proof_fonts_end gives the text state of the process back as a test found
+// it: no face, the vector font, and no interface font in the module.
+@(private = "file")
+proof_fonts_end :: proc() {
+	process_text = {}
+	graphics.text_faces_use(.None, .None)
+	graphics.text_choice_set(.Vector, .Red_Green_Blue)
 }
 
 // One font state of a process: the setting of the font of the cells, the
@@ -621,20 +632,7 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 	sync.mutex_lock(&draw_lock)
 	defer sync.mutex_unlock(&draw_lock)
 	fonts := proof_fonts_build(t)
-	// The fonts end before their memory: no later draw reads a freed cache.
-	defer {
-		process_text = {}
-		graphics.text_state.has_cache = false
-		graphics.text_state.has_bold_cache = false
-		graphics.text_choice_set(.Vector, .Red_Green_Blue)
-		for memory in fonts.memory {
-			delete(memory)
-		}
-	}
-	testing.expect_value(t, graphics.text_cache_use(fonts.cells).kind, glyph_cache.Problem_Kind.None)
-	// The bold weight of the cells: the same cache serves, the proof is
-	// about the path of the bold draw.
-	testing.expect_value(t, graphics.text_bold_cache_use(fonts.cells).kind, glyph_cache.Problem_Kind.None)
+	defer proof_fonts_end()
 	configurations := [?]Proof_Configuration {
 		{"Spleen, no interface font", .Spleen, .Red_Green_Blue, false},
 		{"the vector font, red green blue", .Vector, .Red_Green_Blue, false},
@@ -765,17 +763,7 @@ one_call_with_the_rectangles_draws_as_one_call_for_each :: proc(t: ^testing.T) {
 	sync.mutex_lock(&draw_lock)
 	defer sync.mutex_unlock(&draw_lock)
 	fonts := proof_fonts_build(t)
-	defer {
-		process_text = {}
-		graphics.text_state.has_cache = false
-		graphics.text_state.has_bold_cache = false
-		graphics.text_choice_set(.Vector, .Red_Green_Blue)
-		for memory in fonts.memory {
-			delete(memory)
-		}
-	}
-	testing.expect_value(t, graphics.text_cache_use(fonts.cells).kind, glyph_cache.Problem_Kind.None)
-	testing.expect_value(t, graphics.text_bold_cache_use(fonts.cells).kind, glyph_cache.Problem_Kind.None)
+	defer proof_fonts_end()
 	configurations := [?]Proof_Configuration {
 		{"Spleen, no interface font", .Spleen, .Red_Green_Blue, false},
 		{"the interface font, red green blue", .Vector, .Red_Green_Blue, true},
@@ -929,18 +917,8 @@ build_grid_frame :: proc(table: ^interface.Draw_Table, cells: []interface.Text_G
 the_exports_draw_a_text_grid_as_the_package :: proc(t: ^testing.T) {
 	sync.mutex_lock(&draw_lock)
 	defer sync.mutex_unlock(&draw_lock)
-	fonts := proof_fonts_build(t)
-	defer {
-		process_text = {}
-		graphics.text_state.has_cache = false
-		graphics.text_state.has_bold_cache = false
-		graphics.text_choice_set(.Vector, .Red_Green_Blue)
-		for memory in fonts.memory {
-			delete(memory)
-		}
-	}
-	testing.expect_value(t, graphics.text_cache_use(fonts.cells).kind, glyph_cache.Problem_Kind.None)
-	testing.expect_value(t, graphics.text_bold_cache_use(fonts.cells).kind, glyph_cache.Problem_Kind.None)
+	_ = proof_fonts_build(t)
+	defer proof_fonts_end()
 	fonts_of_the_cells := [2]graphics.Text_Font{.Spleen, .Vector}
 	before_memory := new(Grid_Proof_Tables)
 	now_memory := new(Grid_Proof_Tables)

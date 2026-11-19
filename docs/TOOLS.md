@@ -17,6 +17,7 @@ A developer tool (`glossary/network.md`) shows how the system runs. It reads rep
 | Section | What it says |
 |---|---|
 | "What each tool reads" | Each tool, its grant, and the reports that it reads |
+| "The window of `monitor`" | The graphs of the last minute and the colors of the bars |
 | "The log" | The log of the kernel: its records, their processes and levels, and who reads them |
 | "The process `inspect`" | The window that shows one process live |
 | "Names and lines" | How an address becomes a procedure and a source line |
@@ -45,6 +46,31 @@ A tool with no grant to inspect the machine reads nothing. It says so in its win
 | `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)`, to each caller in its log scope, and `process_records(process, after)` and `process_value_runs(process, after)`, the records of a process whose handle the caller lends ("Who reads which records") |
 | `debugger` | machine, Inspect; boot image; debug image; the commands `Debug` and `Debug_Store` of the root ring | `Process_Report`, `Module_Report` and `Thread_Table_Report` of the process that it debugs; the registers and the memory of that process through its handle with `Debug` ("The debugger"). It serves the exports of the debugger |
 | `inspect` | machine, Inspect; boot image; debug image | `Process_Report`, `Module_Report`, and the four reports below, of the process that the principal chooses. It serves `mappings()`, `threads()` and `modules()` |
+
+## The window of `monitor`
+
+![The window of monitor in the light appearance: the memory and its bar, the counts of the kernel, three graphs of the last minute over the grid of points, and the rows of the processes](screenshots/monitor_light.png)
+
+The monitor takes one sample each 500 ms and draws its window after each sample. From the top:
+
+1. The memory in use, of all the memory, and the reserved memory, with a bar of the memory in use.
+2. The kernel entries and the interrupts since the start of the machine, and the waits of the locks of the kernel.
+3. Three sample graphs of the last minute: the last 120 samples, the newest at the right edge.
+4. One row for each process: its name, its pages, and its share of the processor in the last 500 ms, as a bar and in percent. The rows that do not fit are counted on the last line; `monitor.processes()` gives them all.
+
+| Graph | What one sample shows | Color | Scale |
+|---|---|---|---|
+| memory in use | The pages in use | Memory | From 0 to all the memory, in MiB |
+| processor time | The processor time of all the processes since the sample before, over that time on every processor | Process | From 0 to 100 % |
+| kernel entries | The kernel entries since the sample before, for one second | Kernel | From 0 to the largest value of the minute, rounded up to 1, 2 or 5 times a power of ten; 10 000 and more with k, M, G, T, P or E |
+
+- Each graph is drawn over the grid of points of the desktop, the same points at the same places. Its name and its scale are at its left.
+- The first sample has no sample before it: its processor time and its rate are the means since the start of the machine.
+- A step of the graph is one sample, not a time: a call that the monitor runs between two samples can make one step longer than 500 ms.
+
+**The colors of the bars.** Each bar takes the color of its intensity step (`DESIGN.md`, "The intensity of a gauge"): the color of what it measures under 60 %, the warning color from 60 %, and the color of a measure near its limit from 85 %. The number beside the bar gives the same fact.
+
+The design: `src/md/features/monitor_window.md`.
 
 ## The log
 
@@ -1079,7 +1105,7 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 | `kept_stop_reports` | generated | A hidden stop report names no hidden value, and the table of the kept reports follows its model |
 | `kept_settings` | raw | The kept record, the text of a zone and the settings page read as valid values, and write again to them |
 | `tpm_answers` | raw | Each reader of an answer of the TPM agrees with the check of its header, gives no value on a refusal, and gives slices inside the answer |
-| `text_shaping` | raw | One placed glyph for each character, at its first byte, with the advance of its table and its pair; a text or a range past its limit is refused |
+| `text_shaping` | raw | One placed glyph for each character, at its first byte, with the advance and the pair of its font file at the face and the size of the input, each in its bound, also over a font file that the input gives; a size out of its range, a text or a range past its limit is refused |
 | `operation_sequence`, `operation_sequence_generated` | raw, generated | An operation sequence that `check` accepts follows each rule of its format and writes again to its bytes, and a refusal names its step, its area or its argument; each sequence that the generator builds from the forms of `OPERATIONS` is one that `check` accepts and reads back whole |
 
 A raw target reads its input as the bytes that the system reads. A generated target reads its input as choices, and builds a whole value from them.
@@ -1434,7 +1460,7 @@ A volume that a command does not need is not built and not checked. It stays wit
 
 **The volume file.** A volume is 64 MiB, and its files fill its start. The tool writes the bytes up to the last byte that is not zero, then gives the file its whole size: the file system stores no block for the end, and a read of it gives zero bytes. QEMU reads the volume as a raw disk and sees the same bytes; the hash of the build record is the hash of the content, with the zero bytes.
 
-**What runs at each build.** The debug image, the pointer themes, the glyph caches, the link pages of the manual (`MODULE_CONTRACT.md`, "The links of a page of the manual") and the four boot images are built at each build: each one reads outputs of the modules or files of the repository, and its time is in the measure.
+**What runs at each build.** The debug image, the pointer themes, the font outlines, the link pages of the manual (`MODULE_CONTRACT.md`, "The links of a page of the manual") and the four boot images are built at each build: each one reads outputs of the modules or files of the repository, and its time is in the measure.
 
 **How to force a whole build.** `modustool build whole` ignores every record, builds each module and each boot volume, and writes new records. The commands that prove the build always build whole, with no option: `check` and `repeat`, and the two procedures of the second build set it themselves, so no caller can compare two builds of which one kept its outputs. `nix flake check` builds in an empty folder, with no record.
 
@@ -1612,6 +1638,7 @@ The hang bound ends a wait for a screen that never settles. The test fails, and 
 | `desktop` | The bar and the console; the start menu; two processes started from it; a window moved, a window resized by its corner; the menu of the windows; a window closed; the palette that starts a module and brings a window to the front | `scenario_desktop_film` (`desktop_film_scenario.odin`) |
 | `console` | An expression and its value; a variable and a command; an argument of the wrong kind and its error; the completion list; a record; a table; the history search | `scenario_console_film` (`console_film_scenario.odin`) |
 | `program` | `start("plasma")` in the console: the module opens its window; the window moved; its row in the table of the processes; `stop("plasma")` | `scenario_program_film` (`program_film_scenario.odin`) |
+| `monitor` | monitor at the right of the screen, its graphs on a quiet machine; scheduler, whose tests run spinners, as a load, then closed: the curves and the gauges rise, then come down | `scenario_monitor_film` (`monitor_film_scenario.odin`) |
 
 The films differ by their scenario only. The worker, the list of the encoder and the encoders are the same code.
 

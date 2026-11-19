@@ -160,7 +160,7 @@ Each end names its record output or record input by its index in the tables of i
 
 **A record output of a process to a record input of the same process** is refused at the wiring with `Bad_State`. A thread that waits for room in a queue that it alone reads never wakes, and a queue inside one process crosses no border: it needs no check and no ring of the root service.
 
-**Who can end a wiring.** The wiring belongs to its asker: it is in the wiring page of the asker ("The budget"), and only the asker, or the principal with `revoke` from a console that acts for it, ends it. The process at an end of a wiring has no command that ends it. It can stop writing, or close its own end: that is silence in the stream, never a removal of a record that it wrote. At its stop, the root service writes `Writer_Stopped` with its stop code in each of its rings.
+**Who can end a wiring.** The wiring belongs to its asker: it is in the wiring page of the asker ("The budget"), and only the asker, or the principal with `revoke` from a console that acts for it, ends it. The process at an end of a wiring has no command that ends it. It can stop writing, or close its own end: that is silence in the stream, never a removal of a record that it wrote. At its stop, the root service writes `Writer_Stopped` with its stop cause and its stop outcome in each of its rings ([../api/process_stop.md](../api/process_stop.md)).
 
 ### The wiring list of a start
 
@@ -183,7 +183,7 @@ sequenceDiagram
     collector->>collector: commit the audit segment, with the hash of the one before
     collector->>server: forward, to server.orders
     server->>collector: server.requests and server.log
-    root->>collector: the end of each stream: Writer_Stopped and the stop code
+    root->>collector: the end of each stream: Writer_Stopped, the stop cause and the stop outcome
 ```
 
 A starter that starts a process can give the wiring of the child in the `Start` command itself: a **wiring list**, a table of wiring records. The root service applies the whole list **before the first instruction of the child**: it makes each ring, writes each end into the wiring ring of the child, and only then starts its first thread. So no record of the child is lost, and the first place of each ring of a record output of the child is a joined record of 0.
@@ -242,7 +242,7 @@ The kernel does not write the ring: the kernel keeps no table of rings and stays
 
 **What a process with no wiring of `log` pays: nothing more than today.** Its slot holds 0. Each write of its log reads that one word, in the line of the context that the log path already reads for the log handle, and goes on to `Log`, as today: no ring, no page, no wiring ring. Measure 9 proves it.
 
-**What the record output `log` does not hold.** The records that another process writes about this process (the line of the root service at its start, the report of the kernel at a fault) are not its own records, and are not in its `log`. Its stop comes with the end word `Writer_Stopped` and its stop code.
+**What the record output `log` does not hold.** The records that another process writes about this process (the line of the root service at its start, the report of the kernel at a fault) are not its own records, and are not in its `log`. Its stop comes with the end word `Writer_Stopped`, its stop cause and its stop outcome.
 
 ### A declared record output with no reader
 
@@ -270,14 +270,14 @@ A writer that serves the network, as `server` does, does not wait for a reader o
 ### The end of a stream
 
 - **The writer ends its stream** with `system.output_end(&output, error)`: an end record with an error record, zero for a clean end, then the close of its handle. The reader reads each record before the end, takes the end, writes its acknowledgement in the completion queue, and closes its end.
-- **The writer stops with no end record.** When the root service reaps the writer, it maps the head page of each ring of the writer, writes the end word `Writer_Stopped` with the stop code, and wakes the reader. Only the root service writes an end word, and only after the writer stopped, so the one-writer rule of each queue holds. The reader reads the end word only when the queue is empty: each record that the writer published before its stop reaches it.
+- **The writer stops with no end record.** When the root service reaps the writer, it maps the head page of each ring of the writer, writes the end word `Writer_Stopped` with the stop cause and the stop outcome of the writer, and wakes the reader. The reader takes the two words through the border of [../api/process_stop.md](../api/process_stop.md); later, the error record of a failed stop comes in the place where an end record holds its error record. Only the root service writes an end word, and only after the writer stopped, so the one-writer rule of each queue holds. The reader reads the end word only when the queue is empty: each record that the writer published before its stop reaches it.
 - **The reader stops, or closes its end.** The root service writes the end word `Reader_Stopped` and wakes the writer, which waits on the counter `read`. The library of the writer removes that ring from the record output at its next write, and closes its handle. A writer with no reader left gets `No_Reader`.
 - **The asker stops.** Its budget pays the wiring, so the wiring ends with it: the root service writes the end word `Asker_Stopped` in each of its rings, as for a revocation. A start policy outlives the processes that it starts; a console that reads a stream is its own asker.
 - **A revocation** writes the end word `Revoked` in the ring and wakes both sides. Each library closes its end at its next operation. The root service revokes the handles after both sides closed, or after the hang bound: a process that touches the ring after it then stops on a page fault, as an export that keeps a lent mapping does.
 
 ### Errors
 
-Each failure of a record output or a record input gives a status and an error record ([../api/export_error_records.md](../api/export_error_records.md)): `No_Reader`, `No_Writer`, `Full`, `Ended` (the other side ended or stopped, with its end word and its stop code), `Bad_Record` (with the field), and the refusals of a wiring: `Bad_Type` (the first field that differs, or a generic end whose type is not fixed), `Bad_State` (the same process), `No_Right` (a process that the asker did not start, a connection whose role does not name the end), `Bad_Terms` (wiring terms of another size than their description), `Bad_Wiring` (a damaged row of a wiring list, with the row and the field), `No_Budget` (the budget of the asker refuses the ring or the place of the wiring).
+Each failure of a record output or a record input gives a status and an error record ([../api/export_error_records.md](../api/export_error_records.md)): `No_Reader`, `No_Writer`, `Full`, `Ended` (the other side ended or stopped, with its end word, and with the stop cause and the stop outcome of a writer that stopped), `Bad_Record` (with the field), and the refusals of a wiring: `Bad_Type` (the first field that differs, or a generic end whose type is not fixed), `Bad_State` (the same process), `No_Right` (a process that the asker did not start, a connection whose role does not name the end), `Bad_Terms` (wiring terms of another size than their description), `Bad_Wiring` (a damaged row of a wiring list, with the row and the field), `No_Budget` (the budget of the asker refuses the ring or the place of the wiring).
 
 ### Generic record inputs and the utility modules
 

@@ -1,10 +1,14 @@
-// The glyph cache file (docs/FONTS.md, "The glyph cache"): the glyphs of
-// one font, already drawn, for each size of the grid, with the advance of
-// each character and the pair adjustments of the font. The modus tool
-// makes it at build time from the font file; the boot image holds it as a
-// resource; the root service gives each process a read-only mapping of it.
-// A process draws a character with a copy and a blend of its words: no
-// outline is read at run time.
+// The glyph cache file (docs/FONTS.md, "5. The glyph cache"): the glyphs
+// of one font, already drawn, for each size of the grid, with the advance
+// of each character and the pair adjustments of the font. The boot image
+// holds none: each process draws its glyphs from the font outlines into
+// its private glyph cache (src/md/features/text_rendering.md). The file
+// stays for the candidate fonts of vector_glyphs and of the picture of the
+// tool, and as the reference of the tests of the blend.
+//
+// The character index (character_index) and its ranges are the numbers of
+// the characters of each font of the system, which the Spleen data, the
+// shaper and the subsets of the tool key by too.
 //
 // One format for a monospace font and for a proportional font. A monospace
 // cache (no FLAG_PROPORTIONAL) has one position, each glyph inside its cell
@@ -136,8 +140,7 @@ Glyph_Entry :: struct #packed {
 
 // A pair adjustment: the advance of left changes by adjustment when right
 // follows it. The pairs of one size are sorted by left, then right. The
-// layout of the C language, with no gap: the module text_shaping takes a
-// table of these records as a parameter.
+// layout of the C language, with no gap, as each record of a file.
 Pair_Entry :: struct {
 	left:       u8, // The character index of a character.
 	right:      u8, // The character index of the character that follows.

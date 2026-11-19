@@ -44,7 +44,7 @@ Do not use: tofu, missing glyph, question mark (for this).
 
 A font is a set of glyphs of one design, with the measures that place them side by side.
 
-The modus tool subsets each font file at the build and draws its characters into a glyph cache; a process draws a character past the cache from the font outlines of the boot image. The system has three fonts: Paper Mono, the monospace font of the cells; B612, the interface font; and Spleen 8x16, a bitmap font, the fallback with no valid glyph cache. A font here is one file of one weight: Paper Mono SemiBold is a font of its own, with its own cache.
+The modus tool subsets each font file, and the boot image holds the subsets as the font outlines; each process draws each glyph of its text from them. The system has three fonts: Paper Mono, the monospace font of the cells; B612, the interface font; and Spleen 8x16, a bitmap font, the fallback with no valid font outlines. A font here is one file of one weight: Paper Mono SemiBold is a font of its own.
 
 The design: `docs/FONTS.md`, "6. The font file".
 
@@ -54,9 +54,9 @@ Do not use: typeface (for this), font face.
 
 A glyph is the form of one character in one font.
 
-The character is the number (the byte 0x30 is the character `0`); the glyph is the drawing of it. One character can have several glyphs in one font: Paper Mono has a plain zero and a slashed zero, and a font feature chooses between them. A glyph has an outline and an advance; in a glyph cache it is a box of words of coverage. A character past the glyph cache takes the glyph of the first font of its fallback chain that has it, else the replacement glyph.
+The character is the number (the byte 0x30 is the character `0`); the glyph is the drawing of it. One character can have several glyphs in one font: Paper Mono has a plain zero and a slashed zero, and a font feature chooses between them. A glyph has an outline and an advance; drawn, in the private glyph cache, it is a box of words of coverage. A character takes the glyph of the first font of its fallback chain that has it, else the replacement glyph.
 
-The design: `docs/FONTS.md`, "5. The glyph cache".
+The design: `src/md/features/text_rendering.md`.
 
 Do not use: character (for the form), symbol.
 
@@ -74,7 +74,7 @@ Do not use: path, vector shape, Bézier.
 
 Coverage is the part of a pixel, or of a third of a pixel, that a glyph covers, from 0 (none) to 255 (all).
 
-The renderer computes the coverage of each third of each pixel from the outline. The glyph cache keeps one word for each pixel: the coverage of the red, green and blue subpixel band, and the coverage of the whole pixel for grayscale. The blend mixes the color of the text with the pixel under it, channel by channel, in linear light. Coverage is not an alpha of a picture: an alpha is one premultiplied value for the whole pixel, and coverage is one value for each band.
+The renderer computes the coverage of each third of each pixel from the outline. A drawn glyph keeps one word for each pixel: the coverage of the red, green and blue subpixel band, and the coverage of the whole pixel for grayscale. The blend mixes the color of the text with the pixel under it, channel by channel, in linear light. Coverage is not an alpha of a picture: an alpha is one premultiplied value for the whole pixel, and coverage is one value for each band.
 
 The design: `docs/FONTS.md`, "3. Subpixel bands".
 
@@ -104,7 +104,7 @@ Do not use: hinting (alone), autohint.
 
 A glyph cache is a file that holds the glyphs of one font already drawn, as words of coverage, for each character 32 to 126, each character U+00A0 to U+00FF and the euro sign at each scale of the grid.
 
-It moves all the work of a font out of the processes: the modus tool builds it, and the boot image holds it as a resource. The root service checks its hash once, and maps it read-only at a fixed range in each process with a surface. A process validates it once, then each draw reads the words of a glyph with no other check. No process writes it. It is not an atlas of a GPU and not a cache that fills on demand.
+Its format is `src/library/contract/glyph_cache`, and `vector_font.glyph_cache_build` draws it. The boot image holds none: each process draws its glyphs from the font outlines into its private glyph cache. The demonstration `vector_glyphs` and the picture of the candidate fonts draw each candidate from one, and the tests of the blend take their glyphs from one. It is not an atlas of a GPU and not a cache that fills on demand.
 
 The design: `docs/FONTS.md`, "5. The glyph cache".
 
@@ -134,7 +134,7 @@ Do not use: glyph id (for this), glyph number, character offset.
 
 A proportional cache is a glyph cache of a proportional font: each character has its own advance, each glyph is the box of its ink at each subpixel position, and the cache holds the pair adjustments.
 
-The header flag `FLAG_PROPORTIONAL` marks it. One format serves both kinds of font, and the flag says which rules `validate` applies. A proportional cache keeps three subpixel positions at scale 1, the box of the ink of each glyph, the advance of the font in 1/64 of a pixel, and the sorted pairs. A text of cells refuses it, because its glyphs pass their cells. The two caches of B612 are the resources `interface_glyph_cache` and `interface_glyph_cache_bold`.
+The header flag `FLAG_PROPORTIONAL` marks it. One format serves both kinds of font, and the flag says which rules `validate` applies. A proportional cache keeps three subpixel positions at scale 1, the box of the ink of each glyph, the advance of the font in 1/64 of a pixel, and the sorted pairs. The boot image holds none; the tests compare the text of the face `Interface` with the one that `vector_font.glyph_cache_build_proportional` draws from B612.
 
 The design: `docs/FONTS.md`, "12.4 The glyph cache with subpixel positions".
 
@@ -142,19 +142,19 @@ Do not use: proportional font cache.
 
 ### Font outlines
 
-The font outlines are one resource of the boot image that holds the font files of the system, from which each process draws the glyphs past its glyph caches.
+The font outlines are one resource of the boot image that holds the font files of the system, from which each process draws each glyph of its text.
 
-The resource is `font_outlines` (`src/library/contract/font_outlines`): a header, one record for each font with the BLAKE3 hash of its file, then the font files of the glyph caches. The root service checks its hash once and maps it read-only at the fixed range `Font_Outlines` in each process that gets the glyph caches. A process validates its header once. The font outlines are not a glyph cache: they hold outlines, not drawn words.
+The resource is `font_outlines` (`src/library/contract/font_outlines`): a header, one record for each font with the BLAKE3 hash of its file, then the font files of the faces. The root service checks its hash once and maps it read-only at the fixed range `Font_Outlines` in each process with a surface, each terminal and the compositor. A process validates its header once. The font outlines are not a glyph cache: they hold outlines, not drawn words.
 
-The design: `src/md/features/glyphs_on_demand.md`, "Layer 0: the outlines, shared and read-only".
+The design: `src/md/features/text_rendering.md`.
 
 Do not use: font bundle, font pack.
 
 ### Fallback chain
 
-A fallback chain is the list of fonts, in order, that give the glyph of a character past the glyph cache of a face: the first font of the list that has the character gives its glyph and its advance.
+A fallback chain is the list of fonts, in order, that give the glyph of a character of a face: the first font of the list that has the character gives its glyph and its advance.
 
-The chains are data, one row for each script (`text_rendering.scripts`): Greek, Cyrillic, the box-drawing characters and the block elements, and a default chain for each other character. The first font of each chain is the font of the glyph cache of the face, and a glyph of another font stands on its baseline, with its capitals as high. A character that no font of its chain has draws the replacement glyph. The chain of the interface is B612 then Paper Mono; the chain of the cells is Paper Mono then B612.
+The chains are data, one row for each script (`text_rendering.scripts`): Greek, Cyrillic, the box-drawing characters and the block elements, and a default chain for each other character. The first font of each chain is the first font of the face, and a glyph of another font stands on its baseline, with its capitals as high. A character that no font of its chain has draws the replacement glyph. The chain of the interface is B612 then Paper Mono; the chain of the cells is Paper Mono then B612.
 
 The design: `src/md/features/glyphs_on_demand.md`, "The fallback chain by script".
 
@@ -204,7 +204,7 @@ Do not use: Option, level-3 shift, compose key (for this).
 
 The settings page is the one page of memory that holds the current value of each setting, which each process with a surface reads.
 
-The root service creates the page. The process `settings` receives it with Write; each process with a surface, each terminal and the compositor map it read-only at the fixed range `Settings_Page`. The page holds the choices and the appearance in force only: no address, no size and no hash of a glyph cache, so its writer cannot point a process at memory that it controls. A reader reads again while the change count is odd. It is not a registry and not a file: a record in the store of `settings` survives a stop.
+The root service creates the page. The process `settings` receives it with Write; each process with a surface, each terminal and the compositor map it read-only at the fixed range `Settings_Page`. The page holds the choices and the appearance in force only: no address, no size and no hash of a font file, so its writer cannot point a process at memory that it controls. A reader reads again while the change count is odd. It is not a registry and not a file: a record in the store of `settings` survives a stop.
 
 The design: `docs/FONTS.md`, "7. The setting".
 
@@ -250,15 +250,35 @@ The design: `src/md/features/appearance.md`, "The colors of the processes".
 
 Do not use: identity color, tint, palette, hue (for this).
 
+### Intensity step
+
+An intensity step is one of the three ranges of the share that a gauge shows: normal, high from 60 %, and very high from 85 %.
+
+A gauge, as the memory bar and the processor bar of a process in `monitor`, takes the color of its step: the color of the concept that it measures, then `warning`, then `near_limit`. A share at a threshold is in the higher step. The number beside the gauge says the value, so the color is never the only sign. It is not a continuous hue: each color keeps one meaning. `graphics.intensity_of` gives the step, `graphics.intensity_color` its color.
+
+The design: `src/md/features/monitor_window.md`, "The intensity steps".
+
+Do not use: heat color, severity, load level, color scale.
+
 ### Warning color
 
 The warning color is the color token of a state that asks for attention and is not a failure.
 
-A record of the log of the level Warning and a ring of `rings` that is full have it (`graphics.colors.warning`). It is a yellow apart from the orange of the boot program, so that "starts" and "take care" are two colors; a failure has the color `failed`. A warning color is never the only sign: the level or a word says the state.
+A record of the log of the level Warning, a ring of `rings` that is full and a gauge at its high intensity step have it (`graphics.colors.warning`). It is a yellow apart from the orange of the boot program, so that "starts" and "take care" are two colors; a failure has the color `failed`. A warning color is never the only sign: the level or a word says the state.
 
 The design: `src/md/features/appearance.md`, "The colors of the processes".
 
 Do not use: caution color, alert color.
+
+### Near limit color
+
+The near limit color is the color token of a measure near its limit: the very high intensity step of a gauge.
+
+A gauge of `monitor` at 85 % or more has it (`graphics.colors.near_limit`). It is an orange between the yellow of the warning color and the coral of `failed`: a load near its limit asks for more attention than a warning, and it is not a failure, because the machine still does what it must. It is never the only sign: the number beside the gauge says the value.
+
+The design: `src/md/features/monitor_window.md`, "The intensity steps".
+
+Do not use: danger color, critical color, overload color.
 
 ### Link color
 
@@ -284,7 +304,7 @@ Do not use: fixed-width font (for this), terminal font.
 
 The interface font is the proportional font of the titles, the labels, the buttons, the menus and the bar: B612.
 
-B612 has 19 different advances in ASCII, and all its digits have one advance, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles. A process uses it through `src/library/support/interface`: an element that names or explains draws a `Text` record in the interface font, which text shaping places with a proportional cache. If its caches are absent or refused, or if the setting `font` is `spleen`, each element draws in the font of the cells.
+B612 has 19 different advances in ASCII, and all its digits have one advance, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles. A process uses it through `src/library/support/interface`: an element that names or explains draws a `Text` record in the interface font, which text shaping places and the faces `Interface` and `Interface_Bold` draw. If the font outlines lack B612, or if the setting `font` is `spleen`, each element draws in the font of the cells.
 
 The design: `docs/FONTS.md`, "12. The interface font and the text shaping module".
 
@@ -304,7 +324,7 @@ Do not use: proportional text record.
 
 The font in use is the font that actually draws a text of a draw table: the interface font when the table can draw it, else the font of the cells.
 
-A text asks for the interface font, but three things make it fall back: the table has no interface font (an isolated call: the call host maps no glyph cache), the setting `font` is `spleen`, or the text is longer than 256 bytes (`INTERFACE_TEXT_LIMIT`). `interface.font_in_use` decides, and both the measure and the draw call it. So a text is always measured in the font that draws it, and an element never passes its box in either font.
+A text asks for the interface font, but three things make it fall back: the table has no interface font (an isolated call: the call host maps no font outlines), the setting `font` is `spleen`, or the text is longer than 256 bytes (`INTERFACE_TEXT_LIMIT`). `interface.font_in_use` decides, and both the measure and the draw call it. So a text is always measured in the font that draws it, and an element never passes its box in either font.
 
 The design: `docs/FONTS.md`, "12.5 What changes in `src/library/support/interface`".
 
@@ -314,9 +334,9 @@ Do not use: effective font.
 
 The advance of a glyph is the distance from its origin to the origin of the next glyph, before any pair adjustment.
 
-In a monospace font the advance is one constant: 8 pixels at scale 1. In a proportional font each character has its own: in B612, `i` is 600 units and `M` 1800. The glyph cache keeps the advance of each character at each scale in 1/64 of a pixel. The advance is not the width of the ink: a glyph can have ink before its origin or past its advance, and the ink margin covers that difference.
+In a monospace font the advance is one constant: 8 pixels at scale 1. In a proportional font each character has its own: in B612, `i` is 600 units and `M` 1800. Text shaping reads it from the table `hmtx` of the font file at each measure, at the text size, in 1/64 of a pixel, from 0 to one line. The advance is not the width of the ink: a glyph can have ink before its origin or past its advance, and the ink margin covers that difference.
 
-The design: `docs/FONTS.md`, "12.4 The glyph cache with subpixel positions".
+The design: `docs/FONTS.md`, "14.7 The measure from the font file".
 
 Do not use: width (for this), pitch.
 
@@ -324,9 +344,9 @@ Do not use: width (for this), pitch.
 
 A pair adjustment is the change of the advance that a font gives for one pair of glyphs that follow each other.
 
-Some pairs look too far apart with their advances alone: `T` before `o` leaves a gap under the bar of the T, so the font states a negative adjustment for that pair. The tool reads the pairs from the table `kern` and writes them, sorted, in 1/64 of a pixel, into the proportional cache. Text shaping adds the rounded advance and the rounded adjustment. A monospace cache has no pairs.
+Some pairs look too far apart with their advances alone: `T` before `o` leaves a gap under the bar of the T, so the font states a negative adjustment for that pair. Text shaping reads the pair from the table `kern` of the font file when both glyphs come from one font, and adds the rounded advance and the rounded adjustment, within half a line. A face of cells has no pairs.
 
-The design: `docs/FONTS.md`, "12.1 What B612 has, read in its files".
+The design: `docs/FONTS.md`, "14.7 The measure from the font file".
 
 Do not use: kerning pair (for this).
 
@@ -364,7 +384,7 @@ Do not use: crossed zero, zero with a slash.
 
 Text shaping is the step that turns the characters of a text into placed glyphs, with the advances and the pair adjustments of one font.
 
-A proportional text needs it: the x of each glyph is the sum of the advances and adjustments before it. The package `src/library/support/text_rendering` does it for a direct call, and the module `text_shaping` exports the same work: `shape_text` gives the placed glyphs of one text, and `measure_texts` the width of many text ranges in one call. The module holds no font and no state: the caller passes the spacing. Text shaping here does advances and pairs only: no ligature, no other script, no line break.
+A proportional text needs it: the x of each glyph is the sum of the advances and adjustments before it. The package `src/library/support/text_rendering` does it for a direct call, and the library module `text_rendering` exports the same work over the font outlines of its caller: `shape_text` gives the placed glyphs of one text, `measure_texts` the width of many text ranges in one call, and `break_text` the lines of a text in a box. Text shaping here does advances and pairs only: no ligature, no other script.
 
 The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
@@ -374,7 +394,7 @@ Do not use: layout (for this), typesetting.
 
 A placed glyph is a record of 16 bytes that text shaping gives for one character: the glyph, its x from the origin of the run, and its advance.
 
-The fields of `text_shaping.Placed_Glyph` are `glyph` (the character index, a glyph of the fallback chain, or `REPLACEMENT_GLYPH`), `x` from the origin of the text and `advance` with the pair adjustment that follows it, both in 1/64 of a pixel, and `cluster`, the first byte of the character in the text. `graphics.text_proportional` draws a table of placed glyphs: it rounds each x to the nearest subpixel position. The x keeps the exact sum, so the rounding of one glyph never moves the next one.
+The fields of `text_rendering.Placed_Glyph` are `glyph` (the character index, a glyph of the fallback chain, or `REPLACEMENT_GLYPH`), `x` from the origin of the text and `advance` with the pair adjustment that follows it, both in 1/64 of a pixel, and `cluster`, the first byte of the character in the text. `graphics.text_proportional` draws a table of placed glyphs: it rounds each x to the nearest subpixel position. The x keeps the exact sum, so the rounding of one glyph never moves the next one.
 
 The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
@@ -392,21 +412,21 @@ Do not use: bleed, overhang (for this).
 
 ### Subpixel position
 
-A subpixel position is the fraction of a pixel where a glyph starts: 0, 1/3 or 2/3 of a pixel in the glyph cache of a proportional font.
+A subpixel position is the fraction of a pixel where a glyph starts: 0, 1/3 or 2/3 of a pixel for a glyph of a proportional face.
 
-A glyph of a proportional font rarely starts on a whole pixel. With subpixel bands, the finest step that the screen shows is one third of a pixel, so a proportional cache keeps each glyph at scale 1 drawn at three positions. The draw rounds the x of each placed glyph to the nearest third (`glyph_cache.position_of`): the error is at most 1/6 of a pixel and does not add up along a text. At the scales 2 and 3, and in a monospace cache, the cache keeps one position.
+A glyph of a proportional font rarely starts on a whole pixel. With subpixel bands, the finest step that the screen shows is one third of a pixel, so a proportional face draws each glyph at three positions, at each size. The draw rounds the x of each placed glyph to the nearest third (`glyph_cache.position_of`): the error is at most 1/6 of a pixel and does not add up along a text. A face of cells has one position.
 
-The design: `docs/FONTS.md`, "12.4 The glyph cache with subpixel positions".
+The design: `src/md/features/text_rendering.md`, "The rasterizer".
 
 Do not use: subpixel offset, bucket.
 
 ### Spacing
 
-The spacing is the two tables that text shaping reads for one font at one scale: the advances of the characters of a glyph cache and the pair adjustments, in 1/64 of a pixel.
+The spacing is what text shaping places a text with: a face at a text size over a set of opened fonts, or one advance for each character of a grid of cells.
 
-`text_shaping.spacing_of` takes them from a validated glyph cache: 192 advances by character index and the sorted pairs (`glyph_cache.Pair_Entry`). The caller then passes them to `shape_text` or `measure_texts` as tables. So the module of text shaping holds no font, and an isolated call receives the spacing in its call region like the text.
+`text_rendering.spacing_of(face, size)` gives the spacing of a face over the fonts that the process opened, and refuses the face `None`, a size out of its range, and a face whose first font is not open. The library module opens a set from the bytes of its caller for one call. A spacing holds no table of advances: each number comes from the font file at each measure. It is not the spacing tokens of a layout.
 
-The design: `docs/FONTS.md`, "12.3 The text shaping module".
+The design: `docs/FONTS.md`, "14.7 The measure from the font file".
 
 Do not use: metrics (for this), kerning data.
 
@@ -414,7 +434,7 @@ Do not use: metrics (for this), kerning data.
 
 A text range is a record that names one text in a table of bytes by its first byte and its count, with its width, which the measure writes.
 
-`text_shaping.Text_Range` has 16 bytes: `start`, `count` (at most `TEXT_LIMIT`) and `width` in 1/64 of a pixel. A window passes all its labels as one table of bytes and one table of ranges to `measure_texts`, which writes the width of each range: one call measures a whole frame (the direction Change of a table parameter). `interface.texts_measure` measures the lines of a list this way.
+`text_rendering.Text_Range` has 16 bytes: `start`, `count` (at most `TEXT_LIMIT`) and `width` in 1/64 of a pixel. A window passes all its labels as one table of bytes and one table of ranges to `measure_texts`, which writes the width of each range: one call measures a whole frame (the direction Change of a table parameter). `break_text` appends one text range for each line of a text.
 
 The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
@@ -504,7 +524,7 @@ Do not use: font metrics (for this), em box.
 
 A face is a first font with its frame, its weight and its grid fit, from which each glyph of a text comes.
 
-The faces are `Interface`, `Interface_Bold`, `Cells`, `Cells_Without_Grid_Fit` and `Cells_Bold` (`text_rendering.Face`), each with its fallback chain. A glyph of another font of the chain stands in the frame of the first font: in its cell for a face of cells. A process finds the face of a glyph cache by the hash of its font file and its flags. A face is not a font file: two faces can share one.
+The faces are `Interface`, `Interface_Bold`, `Cells`, `Cells_Without_Grid_Fit` and `Cells_Bold` (`text_rendering.Face`), each with its fallback chain. A glyph of another font of the chain stands in the frame of the first font: in its cell for a face of cells. A process draws a face once its font outlines hold its first font (`text_rendering.face_opened`). A face is not a font file: two faces can share one.
 
 The design: `src/md/features/text_rendering.md`, "The faces".
 
@@ -514,7 +534,7 @@ Do not use: font face (for this), font slot, typeface.
 
 The text rendering module is the support package `text_rendering` and its library module, which shape, measure, break, keep and draw a text at any text size.
 
-Each process compiles the measure in; the drawing module compiles the draw and the private glyph cache in. Its rasterizer draws any size with a work row as wide as the glyph, in bands of rows. A caller that compiles nothing calls the library module `text_shaping`, which takes the spacing of a glyph cache; the module with the font outlines as bytes is a coming step. It is not a service: no process asks another for a glyph.
+Each process compiles the measure in; the drawing module compiles the draw and the private glyph cache in. Its rasterizer draws any size with a work row as wide as the glyph, in bands of rows. A caller that compiles nothing calls the library module `text_rendering` with the font outlines as bytes, a face and a text size. It is not a service: no process asks another for a glyph.
 
 The design: `src/md/features/text_rendering.md`.
 

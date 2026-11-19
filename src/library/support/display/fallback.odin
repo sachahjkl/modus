@@ -6,21 +6,20 @@ import "modus:support/graphics"
 import "modus:support/system"
 import "modus:support/text_rendering"
 
-// The glyphs past the glyph caches (src/md/features/glyphs_on_demand.md):
-// the side of a process. The starter maps the font outlines read-only
-// beside the glyph caches; text_settings_load opens them, and then each
-// spacing and each draw of the process finds the fallback face of its
-// glyph cache with no other call. The process draws each such glyph
-// itself, into its private glyph cache. A frame starts with
+// Every glyph drawn by its process (src/md/features/text_rendering.md):
+// the side of a process. The starter maps the font outlines read-only;
+// text_settings_load opens them, and then each spacing and each draw of
+// the process finds its face with no other call. The process draws each
+// glyph itself, into its private glyph cache. A frame starts with
 // text_frame_begin: interface.window_frame_begin and the drawing module
 // call it, and a process that draws text by hand calls it at its frame.
 
 // fallback_load opens the font outlines that the starter mapped. The
-// problem is Not_Mapped when the starter gave no outlines: each character
-// past the glyph caches then draws the replacement glyph. missing names
-// the fonts of the chains that the outlines lack or that the renderer
-// refuses.
-@(private)
+// problem is Not_Mapped when the starter gave no outlines: the text of the
+// process is then Spleen. missing names the fonts of the chains that the
+// outlines lack or that the renderer refuses. A library module that
+// measures in the interface font with no window of its own
+// (interface_module) opens them with it too.
 fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_outlines.Problem, missing: text_rendering.Outline_Fonts) {
 	outlines: font_outlines.Outlines
 	outlines, problem = font_outlines.open(&ctx.values)
@@ -54,8 +53,8 @@ script_coverage_tell :: proc "contextless" (caller: string) {
 // (src/md/api/library_modules.md).
 //
 // After a frame whose glyph needed the glyph memory, it reserves that
-// memory (text_memory_reserve): a copy that never draws a glyph past its
-// glyph caches pays nothing for it.
+// memory (text_memory_reserve): a copy that only measures pays nothing for
+// it.
 text_frame_begin :: proc "contextless" () {
 	if text_rendering.memory_wanted() {
 		_ = text_memory_reserve()
@@ -65,9 +64,10 @@ text_frame_begin :: proc "contextless" () {
 
 // The pages of the glyph memory of one copy of text_rendering.
 TEXT_MEMORY_PAGES :: (size_of(text_rendering.Glyph_Memory) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-// The budgets of the terminal, the compositor and interface_font state two
-// glyph memories as integer literals, which the tool reads: a change of
-// the glyph memory fails here, so that their sums change with it.
+// The stated budget of each process that draws text holds one glyph memory
+// for each copy that draws, as an integer literal, which the tool reads: a
+// change of the glyph memory fails here, so that their sums change with
+// it.
 GLYPH_MEMORY_PAGES_IN_THE_BUDGETS :: 354
 #assert(TEXT_MEMORY_PAGES == GLYPH_MEMORY_PAGES_IN_THE_BUDGETS)
 
@@ -82,8 +82,8 @@ text_memory_told: bool // The line of a refused reservation is on the log.
 // a new memory object of TEXT_MEMORY_PAGES pages, which the budget of the
 // process pays, mapped with Write. Its pages start at zero, as the
 // package needs. It gives true when the copy has its memory. After a
-// refusal the copy draws each glyph past its glyph caches band by band,
-// with the right pixels, and never tries again.
+// refusal the copy draws each glyph band by band, with the right pixels,
+// and never tries again.
 text_memory_reserve :: proc "contextless" () -> bool {
 	if text_memory_given {
 		return true
@@ -119,12 +119,12 @@ text_not_kept_tell :: proc "contextless" () {
 	}
 	if text_memory_status != .Ok && !text_memory_told {
 		text_memory_told = true
-		system.log(.Info, "text_rendering: the glyph memory of ", u64(TEXT_MEMORY_PAGES), " pages is refused: ", op.STATUS_NAMES[text_memory_status], "; each glyph past the glyph caches is drawn band by band")
+		system.log(.Info, "text_rendering: the glyph memory of ", u64(TEXT_MEMORY_PAGES), " pages is refused: ", op.STATUS_NAMES[text_memory_status], "; each glyph is drawn band by band")
 	}
 }
 
-// Cell_Fallback: what the process draws for a character in a cell past the
-// glyph cache of cells, at scale 1.
+// Cell_Fallback: what the process draws for a character in a cell, at
+// scale 1.
 Cell_Fallback :: struct {
 	font:   text_rendering.Outline_Font, // The font of the chain of the cells that has it; None: the replacement glyph.
 	source: text_rendering.Glyph_Source, // Where its words are.

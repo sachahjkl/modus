@@ -2,36 +2,105 @@ package fuzz
 
 import "core:mem"
 import "core:slice"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_outlines"
 import "modus:contract/text_encoding"
 import "modus:support/text_rendering"
 
-// The fuzz target of the shaping tables of the fonts
-// (src/md/infrastructure/fuzzing.md, "The targets, in order of value"): the
-// module text_shaping places the characters of a text over the advances
-// and the pairs of its caller, in the call region, which another thread
-// can change. Each advance and each pair is kept in its limits when it is
-// read, and each place stays in the text.
-//
-// The face is None: a face reads the font files that a
-// process opened, a state outside the input, and the module has none.
+// The fuzz target of the text shaping (src/md/infrastructure/fuzzing.md,
+// "The targets, in order of value"): the package text_rendering places the
+// characters of a text in a face at a text size, from the font files of
+// the system, as the library module text_rendering does over the bytes of
+// its caller. The input chooses the face, the size, the pairs, the text and
+// its ranges; the fonts are the four of the boot image, opened once.
 
-// The head of an input: the counts of the parts that follow it, in this
-// order: the advances (CHARACTER_COUNT of them), the pairs, the text, the
-// ranges. A part cut by the end of the input is shorter.
+// The head of an input: the face, the text size, whether the pairs are
+// off, then the counts of the parts that follow it, in this order: the
+// text, the ranges. A part cut by the end of the input is shorter. With
+// font_from_input, the bytes after the ranges are the font file of B612,
+// which the input gives whole: a hostile font through the open of a set of
+// fonts and the shaper, as a caller of the library module gives it.
 Fuzz_Shaping_Head :: struct {
-	pair_count:  u16,
-	text_count:  u16,
-	range_count: u8,
-	reserved:    [3]u8,
+	face:            u8, // A text_rendering.Face; a word that names no member, or None, measures nothing.
+	without_pairs:   u8, // Not 0: the spacing has no pair.
+	size:            u16, // The text size in 1/64 of a pixel, any value: a size out of its range is refused.
+	text_count:      u16,
+	range_count:     u8,
+	font_from_input: u8, // Not 0: the rest of the input is the font file of B612.
 }
 #assert(size_of(Fuzz_Shaping_Head) == 8)
 
 @(private = "file")
-FUZZ_SHAPING_PAIR_LIMIT :: 1024
-@(private = "file")
 FUZZ_SHAPING_RANGE_LIMIT :: 32
-FUZZ_SHAPING_INPUT_LIMIT :: 16 << 10
+// Room for the subset of B612 (55 676 bytes), a text and its ranges.
+FUZZ_SHAPING_INPUT_LIMIT :: 96 << 10
+
+@(private = "file")
+fuzz_paper_mono := #load("../../../resources/fonts/paper_mono.ttf")
+@(private = "file")
+fuzz_b612 := #load("../../../resources/fonts/b612.ttf")
+
+// fuzz_shaping_font_from_input: a font file of the input, opened as the
+// B612 of a set beside the true Paper Mono, through fonts_open and shape.
+// Its numbers are not modelled; each one stays in its bound: one placed
+// glyph for each character at its first byte, each advance from minus half
+// a line to one line and a half, each x the sum of the advances before it,
+// the width their sum in an i32, and text_width the same width. A font
+// that the open refuses gives no spacing of the face Interface.
+@(private = "file")
+fuzz_shaping_font_from_input :: proc(face: text_rendering.Face, size: int, without_pairs: bool, text: []u8, font_bytes: []u8) -> Fuzz_Verdict {
+	if len(font_bytes) == 0 {
+		return FUZZ_PASSED
+	}
+	fonts := [2]font_outlines.Font_Input{{"b612", font_bytes}, {"paper_mono", fuzz_paper_mono}}
+	resource_size := font_outlines.resource_size(fonts[:])
+	words := make([]u64, (resource_size + 7) / 8, context.temp_allocator)
+	bytes := ([^]u8)(raw_data(words))[:resource_size]
+	if _, written := font_outlines.resource_write(fonts[:], bytes); !written {
+		return fuzz_broken(.Contract, "the resource of a font of %d bytes is not written", len(font_bytes))
+	}
+	outlines, problem := font_outlines.validate(bytes)
+	if problem.kind != .None {
+		return fuzz_broken(.Round_Trip, "the resource that resource_write wrote is refused: %v", problem.kind)
+	}
+	set := new(text_rendering.Font_Set, context.temp_allocator)
+	outline_memory := new(text_rendering.Outline_Memory, context.temp_allocator)
+	outline := text_rendering.outline_of(outline_memory)
+	_ = text_rendering.fonts_open(set, &outlines, &outline)
+	spacing, spacing_ok := text_rendering.spacing_in(set, face, size)
+	if !spacing_ok {
+		return FUZZ_PASSED
+	}
+	spacing.without_pairs = without_pairs
+	placed := make([]text_rendering.Placed_Glyph, len(text) + 1, context.temp_allocator)
+	count, width, ok := text_rendering.shape(&spacing, text, placed)
+	if !ok || count != text_encoding.character_count(text) {
+		return fuzz_broken(.Two_Readers, "shape over a font of the input gives %d glyphs, %v; the text has %d characters", count, ok, text_encoding.character_count(text))
+	}
+	x: i64
+	place := 0
+	for item, index in placed[:count] {
+		_, length, _ := text_encoding.character_decode(text, place)
+		if item.cluster != u32(place) || i64(item.x) != x || i64(item.advance) < -i64(size) / 2 || i64(item.advance) > i64(size) + i64(size) / 2 {
+			return fuzz_broken(.Contract, "over a font of the input, the glyph %d at %d is at %d with the advance %d, after %d", index, item.cluster, item.x, item.advance, x)
+		}
+		x += i64(item.advance)
+		place += length
+	}
+	if x != width || width >= 1 << 31 || width <= -(1 << 31) {
+		return fuzz_broken(.Contract, "over a font of the input, shape gives the width %d; its advances give %d", width, x)
+	}
+	if text_width, width_ok := text_rendering.text_width(&spacing, text); !width_ok || text_width != width {
+		return fuzz_broken(.Two_Readers, "over a font of the input, text_width gives %d, %v; shape gives %d", text_width, width_ok, width)
+	}
+	return FUZZ_PASSED
+}
+
+// The fonts of the target, opened at the start and only read after it: the
+// executions on several threads share them.
+@(private = "file")
+fuzz_shaping_fonts: ^text_rendering.Font_Set
+@(private = "file")
+fuzz_shaping_outlines_words: []u64
 
 // A text one byte past the limit of a text, for the refusal: the same for
 // each execution.
@@ -40,7 +109,28 @@ fuzz_shaping_long_text: []u8
 
 fuzz_text_shaping_start :: proc() -> bool {
 	fuzz_shaping_long_text = make([]u8, text_rendering.TEXT_LIMIT + 1)
-	return fuzz_shaping_long_text != nil
+	fonts := [4]font_outlines.Font_Input {
+		{"b612", fuzz_b612},
+		{"b612_bold", #load("../../../resources/fonts/b612_bold.ttf")},
+		{"paper_mono", fuzz_paper_mono},
+		{"paper_mono_semibold", #load("../../../resources/fonts/paper_mono_semibold.ttf")},
+	}
+	size := font_outlines.resource_size(fonts[:])
+	fuzz_shaping_outlines_words = make([]u64, (size + 7) / 8)
+	bytes := ([^]u8)(raw_data(fuzz_shaping_outlines_words))[:size]
+	if _, written := font_outlines.resource_write(fonts[:], bytes); !written {
+		return false
+	}
+	outlines, problem := font_outlines.validate(bytes)
+	if problem.kind != .None {
+		return false
+	}
+	fuzz_shaping_fonts = new(text_rendering.Font_Set)
+	outline_memory := new(text_rendering.Outline_Memory)
+	defer free(outline_memory)
+	outline := text_rendering.outline_of(outline_memory)
+	missing := text_rendering.fonts_open(fuzz_shaping_fonts, &outlines, &outline)
+	return fuzz_shaping_long_text != nil && missing == {}
 }
 
 // fuzz_shaping_part copies the next part of an input into memory of its
@@ -54,104 +144,117 @@ fuzz_shaping_part :: proc($T: typeid, rest: ^[]u8, count: int) -> []T {
 	return records
 }
 
-// The model of the pairs: the adjustment of each pair of glyphs, from the
-// first pair of the table that names it. It is filled by one walk of the
-// pairs, with no search, so the binary search of the reader must agree.
+// The model of one character: its font, its glyph in that font and its
+// advance, from the parts of the package that the shaper composes. A
+// character that no font has is the replacement glyph, with the advance of
+// "0".
 @(private = "file")
-Fuzz_Pair_Model :: [text_rendering.CHARACTER_COUNT][text_rendering.CHARACTER_COUNT]i32
+Fuzz_Character :: struct {
+	font:    text_rendering.Outline_Font,
+	index:   int,
+	advance: i32,
+	glyph:   u32,
+}
 
 @(private = "file")
-fuzz_pair_model_of :: proc(pairs: []glyph_cache.Pair_Entry) -> ^Fuzz_Pair_Model {
-	model := new(Fuzz_Pair_Model, context.temp_allocator)
-	named := new([text_rendering.CHARACTER_COUNT][text_rendering.CHARACTER_COUNT]bool, context.temp_allocator)
-	for pair in pairs {
-		if int(pair.left) >= text_rendering.CHARACTER_COUNT || int(pair.right) >= text_rendering.CHARACTER_COUNT || named[pair.left][pair.right] {
-			continue
-		}
-		named[pair.left][pair.right] = true
-		model[pair.left][pair.right] = clamp(pair.adjustment, -glyph_cache.ADVANCE_LIMIT, glyph_cache.ADVANCE_LIMIT)
+fuzz_character_model :: proc(face: text_rendering.Face, size: int, character: rune, valid: bool) -> (model: Fuzz_Character) {
+	if valid {
+		model.font, model.index = text_rendering.font_glyph_in(fuzz_shaping_fonts, face, character)
+	}
+	if model.font == .None {
+		zero_font, zero_index := text_rendering.font_glyph_in(fuzz_shaping_fonts, face, text_rendering.REPLACEMENT_ADVANCE_CHARACTER)
+		model.advance, _ = text_rendering.glyph_advance_in(fuzz_shaping_fonts, face, zero_font, zero_index, size)
+		model.glyph = text_rendering.REPLACEMENT_GLYPH
+		return model
+	}
+	model.advance, _ = text_rendering.glyph_advance_in(fuzz_shaping_fonts, face, model.font, model.index, size)
+	model.glyph = text_rendering.glyph_of(character)
+	if model.glyph == text_rendering.REPLACEMENT_GLYPH {
+		model.glyph = text_rendering.FALLBACK_GLYPH_FIRST + u32(character)
 	}
 	return model
 }
 
-// fuzz_pair_model gives the adjustment of two glyphs: 0 for the
-// replacement glyph, which has no pair.
-@(private = "file")
-fuzz_pair_model :: proc(model: ^Fuzz_Pair_Model, left, right: u32) -> i32 {
-	if left >= text_rendering.CHARACTER_COUNT || right >= text_rendering.CHARACTER_COUNT {
-		return 0
-	}
-	return model[left][right]
-}
-
-// fuzz_text_shaping_execute: a text gives one placed glyph for each
-// character and each invalid sequence, as the text encoding counts them,
-// at the place of its first byte; each glyph is a glyph of the cache or
-// the replacement glyph; each x is the sum of the advances before it, and
-// the width their sum. Over pairs in order, each advance is the advance of
-// the model with its pair. A shorter table of placed glyphs gives the same
-// answer and writes its first glyphs only. A text past the limit, and a
-// range past the text or the limit, are refused and change nothing. The
-// tables are read only.
+// fuzz_text_shaping_execute: a spacing is refused for a face that is not a
+// member or None and for a size out of its range, and given for each other.
+// A text gives one placed glyph for each character and each invalid
+// sequence, as the text encoding counts them, at the place of its first
+// byte; each advance is the advance of its character in the model, from 0
+// to one line, with the pair of its font and the next when both come from
+// one font, within half a line; each x is the sum of the advances before
+// it, and the width their sum, in an i32. A shorter table of placed glyphs
+// gives the same answer and writes its first glyphs only. A text past the
+// limit, and a range past the text or the limit, are refused and change
+// nothing. The text is read only.
 fuzz_text_shaping_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	head: Fuzz_Shaping_Head
 	copy(mem.ptr_to_bytes(&head), input)
 	rest := input[min(len(input), size_of(head)):]
-	advances := fuzz_shaping_part(i32, &rest, text_rendering.CHARACTER_COUNT)
-	if len(advances) < text_rendering.CHARACTER_COUNT {
-		// The spacing of a cache has an advance for each character.
-		whole := make([]i32, text_rendering.CHARACTER_COUNT, context.temp_allocator)
-		copy(whole, advances)
-		advances = whole
-	}
-	pairs := fuzz_shaping_part(glyph_cache.Pair_Entry, &rest, min(int(head.pair_count), FUZZ_SHAPING_PAIR_LIMIT))
 	text_count := min(int(head.text_count), len(rest))
 	text := slice.clone(rest[:text_count], context.temp_allocator)
 	rest = rest[text_count:]
 	ranges := fuzz_shaping_part(text_rendering.Text_Range, &rest, min(int(head.range_count), FUZZ_SHAPING_RANGE_LIMIT))
-	advances_before := slice.clone(advances, context.temp_allocator)
-	pairs_before := slice.clone(pairs, context.temp_allocator)
 	text_before := slice.clone(text, context.temp_allocator)
-	spacing := text_rendering.Spacing{advances = advances, pairs = pairs, face = .None, size = text_rendering.TEXT_SIZE_OF_SCALE_ONE}
-	pair_model := fuzz_pair_model_of(pairs)
+	size := int(head.size)
+
+	// The border of the face, as the library module has it: a byte that
+	// names no member never becomes a face.
+	face, face_ok := text_rendering.face_of_word(i64(head.face))
+	if !face_ok {
+		return FUZZ_PASSED
+	}
+	if head.font_from_input != 0 {
+		return fuzz_shaping_font_from_input(face, size, head.without_pairs != 0, text, rest)
+	}
+	spacing, spacing_ok := text_rendering.spacing_in(fuzz_shaping_fonts, face, size)
+	if spacing_ok != (text_rendering.size_check(size) == .None) {
+		return fuzz_broken(.Contract, "a spacing of the face %v at the size %d is %v", face, size, spacing_ok)
+	}
+	if !spacing_ok {
+		return FUZZ_PASSED
+	}
+	spacing.without_pairs = head.without_pairs != 0
 
 	placed := make([]text_rendering.Placed_Glyph, len(text) + 1, context.temp_allocator)
 	count, width, ok := text_rendering.shape(&spacing, text, placed)
 	if !ok || count != text_encoding.character_count(text) {
 		return fuzz_broken(.Two_Readers, "shape gives %d glyphs, %v; the text has %d characters", count, ok, text_encoding.character_count(text))
 	}
-	sorted := true
-	for index in 1 ..< len(pairs) {
-		if u32(pairs[index - 1].left) << 8 | u32(pairs[index - 1].right) >= u32(pairs[index].left) << 8 | u32(pairs[index].right) {
-			sorted = false
-			break
-		}
-	}
+	advance_limit := i64(size)
+	pair_limit := i64(size) / 2
 	x: i64
 	place := 0
 	for item, index in placed[:count] {
 		character, length, valid := text_encoding.character_decode(text, place)
-		glyph := text_rendering.glyph_of(character)
-		if item.cluster != u32(place) || item.glyph != glyph || glyph != text_rendering.REPLACEMENT_GLYPH && glyph >= text_rendering.CHARACTER_COUNT {
-			return fuzz_broken(.Contract, "the glyph %d is %d at %d; the text has %d at %d (valid %v)", index, item.glyph, item.cluster, glyph, place, valid)
+		model := fuzz_character_model(face, size, character, valid)
+		if item.cluster != u32(place) || item.glyph != model.glyph {
+			return fuzz_broken(.Model, "the glyph %d is %d at %d; the model has %d at %d (valid %v)", index, item.glyph, item.cluster, model.glyph, place, valid)
 		}
-		if i64(item.x) != x || item.advance < -glyph_cache.ADVANCE_LIMIT || item.advance > 2 * glyph_cache.ADVANCE_LIMIT {
-			return fuzz_broken(.Contract, "the glyph %d is at %d, after %d, with the advance %d", index, item.x, x, item.advance)
+		if i64(model.advance) < 0 || i64(model.advance) > advance_limit {
+			return fuzz_broken(.Contract, "the character at %d has the advance %d, past one line of %d", place, model.advance, size)
 		}
-		if sorted {
-			advance_glyph := glyph >= text_rendering.CHARACTER_COUNT ? text_rendering.glyph_of(text_rendering.REPLACEMENT_ADVANCE_CHARACTER) : glyph
-			expected := clamp(advances[advance_glyph], 0, glyph_cache.ADVANCE_LIMIT)
-			if index + 1 < count {
-				expected += fuzz_pair_model(pair_model, glyph, placed[index + 1].glyph)
+		expected := model.advance
+		if index + 1 < count {
+			next_character, _, next_valid := text_encoding.character_decode(text, place + length)
+			next := fuzz_character_model(face, size, next_character, next_valid)
+			if !spacing.without_pairs && model.font != .None && model.font == next.font {
+				pair := text_rendering.glyph_pair_in(fuzz_shaping_fonts, face, model.font, model.index, next.index, size)
+				if i64(pair) < -pair_limit || i64(pair) > pair_limit {
+					return fuzz_broken(.Contract, "the pair at %d is %d, past half a line of %d", place, pair, size)
+				}
+				expected += pair
 			}
-			if item.advance != expected {
-				return fuzz_broken(.Model, "the glyph %d has the advance %d; its advance and its pair give %d", index, item.advance, expected)
-			}
+		}
+		if item.advance != expected {
+			return fuzz_broken(.Model, "the glyph %d has the advance %d; its advance and its pair give %d", index, item.advance, expected)
+		}
+		if i64(item.x) != x {
+			return fuzz_broken(.Contract, "the glyph %d is at %d, after %d", index, item.x, x)
 		}
 		x += i64(item.advance)
 		place += length
 	}
-	if x != width {
+	if x != width || width >= 1 << 31 || width <= -(1 << 31) {
 		return fuzz_broken(.Contract, "shape gives the width %d; its advances give %d", width, x)
 	}
 	if text_width, width_ok := text_rendering.text_width(&spacing, text); !width_ok || text_width != width {
@@ -177,8 +280,8 @@ fuzz_text_shaping_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if verdict := fuzz_measure_ranges_check(&spacing, text, ranges); verdict.oracle != .None {
 		return verdict
 	}
-	if !slice.equal(advances, advances_before) || !slice.equal(pairs, pairs_before) || !slice.equal(text, text_before) {
-		return fuzz_broken(.Contract, "the shaping changed its tables or its text")
+	if !slice.equal(text, text_before) {
+		return fuzz_broken(.Contract, "the shaping changed its text")
 	}
 	return FUZZ_PASSED
 }
@@ -222,21 +325,13 @@ fuzz_measure_ranges_check :: proc(spacing: ^text_rendering.Spacing, text: []u8, 
 	return FUZZ_PASSED
 }
 
+// The seeds: each face at the sizes of the edges (0, one under the least,
+// the least, the size of a line of 16 pixels, the largest, one past it, the
+// largest u16), with and without pairs, over a text of pairs, of
+// characters past the glyph caches, of characters that no font has, and of
+// invalid sequences; and a face that names no member.
 fuzz_text_shaping_seeds :: proc(seeds: ^[dynamic][]u8) {
-	advances: [text_rendering.CHARACTER_COUNT]i32
-	for &advance, index in advances {
-		advance = i32(index * 37 % (glyph_cache.ADVANCE_LIMIT + 2)) - 1
-	}
-	advances[0] = max(i32)
-	advances[1] = min(i32)
-	a, _ := glyph_cache.character_index('A')
-	v, _ := glyph_cache.character_index('V')
-	pairs := [?]glyph_cache.Pair_Entry {
-		{left = 0, right = 0, adjustment = min(i32)},
-		{left = u8(a), right = u8(v), adjustment = -80},
-		{left = u8(v), right = u8(a), adjustment = max(i32)},
-	}
-	text := "AVA \xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80 \xFF\xC3 AV"
+	text := "To AVATAR LT Wave \xC3\xA9\xE2\x82\xAC \xCE\x94t \xE2\x94\x8C\xE2\x94\x80 \xD0\x96 \xF0\x9F\x98\x80 \xFF\xC3 AV"
 	ranges := [?]text_rendering.Text_Range {
 		{start = 0, count = 3},
 		{start = 4, count = u32(len(text) - 4)},
@@ -244,19 +339,31 @@ fuzz_text_shaping_seeds :: proc(seeds: ^[dynamic][]u8) {
 		{start = u32(len(text)), count = 1},
 		{start = 0, count = text_rendering.TEXT_LIMIT + 1},
 	}
-	for unsorted in ([2]bool{false, true}) {
-		head := Fuzz_Shaping_Head{pair_count = len(pairs), text_count = u16(len(text)), range_count = len(ranges)}
-		seed_pairs := pairs
-		if unsorted {
-			seed_pairs[0], seed_pairs[2] = seed_pairs[2], seed_pairs[0]
+	sizes := [?]u16{0, text_rendering.TEXT_SIZE_MINIMUM - 1, text_rendering.TEXT_SIZE_MINIMUM, text_rendering.TEXT_SIZE_OF_SCALE_ONE, text_rendering.TEXT_SIZE_LIMIT, text_rendering.TEXT_SIZE_LIMIT + 1, max(u16)}
+	faces := [?]u8{u8(text_rendering.Face.None), u8(text_rendering.Face.Interface), u8(text_rendering.Face.Interface_Bold), u8(text_rendering.Face.Cells), u8(text_rendering.Face.Cells_Bold), u8(max(text_rendering.Face)) + 1}
+	for face in faces {
+		for size in sizes {
+			for without_pairs in ([2]u8{0, 1}) {
+				head := Fuzz_Shaping_Head{face = face, without_pairs = without_pairs, size = size, text_count = u16(len(text)), range_count = len(ranges)}
+				seed := make([dynamic]u8)
+				append(&seed, ..mem.ptr_to_bytes(&head))
+				append(&seed, ..transmute([]u8)text)
+				append(&seed, ..slice.to_bytes(ranges[:]))
+				append(seeds, seed[:])
+			}
 		}
-		seed := make([dynamic]u8)
-		append(&seed, ..mem.ptr_to_bytes(&head))
-		append(&seed, ..slice.to_bytes(advances[:]))
-		append(&seed, ..slice.to_bytes(seed_pairs[:]))
-		append(&seed, ..transmute([]u8)text)
-		append(&seed, ..slice.to_bytes(ranges[:]))
-		append(seeds, seed[:])
+	}
+	// The font from the input: the true B612, at a size of the glyph
+	// caches and at the largest size, with and without pairs.
+	for size in ([2]u16{text_rendering.TEXT_SIZE_OF_SCALE_ONE, text_rendering.TEXT_SIZE_LIMIT}) {
+		for without_pairs in ([2]u8{0, 1}) {
+			head := Fuzz_Shaping_Head{face = u8(text_rendering.Face.Interface), without_pairs = without_pairs, size = size, text_count = u16(len(text)), range_count = 0, font_from_input = 1}
+			seed := make([dynamic]u8)
+			append(&seed, ..mem.ptr_to_bytes(&head))
+			append(&seed, ..transmute([]u8)text)
+			append(&seed, ..fuzz_b612)
+			append(seeds, seed[:])
+		}
 	}
 }
 
@@ -267,9 +374,9 @@ fuzz_text_shaping_regions :: proc(input: []u8, regions: ^[dynamic]Fuzz_Region) {
 	append(regions, Fuzz_Region{offset = 0, type = Fuzz_Shaping_Head, count = 1})
 	head: Fuzz_Shaping_Head
 	mem.copy(&head, raw_data(input), size_of(head))
-	pairs_offset := size_of(head) + text_rendering.CHARACTER_COUNT * size_of(i32)
-	count := min(int(head.pair_count), FUZZ_SHAPING_PAIR_LIMIT, max(len(input) - pairs_offset, 0) / size_of(glyph_cache.Pair_Entry))
+	ranges_offset := size_of(head) + int(head.text_count)
+	count := min(int(head.range_count), FUZZ_SHAPING_RANGE_LIMIT, max(len(input) - ranges_offset, 0) / size_of(text_rendering.Text_Range))
 	if count > 0 {
-		append(regions, Fuzz_Region{offset = pairs_offset, type = glyph_cache.Pair_Entry, count = count})
+		append(regions, Fuzz_Region{offset = ranges_offset, type = text_rendering.Text_Range, count = count})
 	}
 }

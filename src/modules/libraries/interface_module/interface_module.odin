@@ -29,8 +29,6 @@ package interface_module
 import "base:intrinsics"
 import "modus:contract/draw_record"
 import "modus:contract/errors"
-import "modus:contract/glyph_cache"
-import "modus:contract/settings"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -99,11 +97,11 @@ no_state: interface.Interface_State
 @(private)
 no_input: interface.Input
 
-// The interface font of the process that runs the module, validated once:
-// in a direct call the caller, whose starter maps the caches at their
-// fixed ranges; in an isolated call the call host, which has none, so its
+// The interface font of the process that runs the module, found once: in
+// a direct call the caller, whose starter maps the font outlines at their
+// fixed range; in an isolated call the call host, which has none, so its
 // elements draw in the font of the cells. The state: 0 not looked at yet,
-// 1 given, 2 none. Two threads that look at once validate the same caches
+// 1 given, 2 none. Two threads that look at once open the same outlines
 // and write the same values.
 @(private)
 module_interface_font: display.Interface_Font
@@ -123,18 +121,13 @@ interface_font_of_process :: proc "contextless" () -> ^display.Interface_Font {
 		when ODIN_OS == .Freestanding {
 			context_record = system.context_record()
 		}
-		weights := [2]settings.Glyph_Cache{.Interface, .Interface_Bold}
-		caches: [2]glyph_cache.Cache
-		state = 1
-		for weight, index in weights {
-			problem: glyph_cache.Problem
-			caches[index], problem = settings.glyph_cache_open(&context_record.values, weight)
-			if problem.kind != .None || caches[index].header.flags & glyph_cache.FLAG_PROPORTIONAL == 0 {
-				state = 2
-			}
-		}
-		if state == 1 {
-			module_interface_font = {regular = caches[0], bold = caches[1]}
+		// The places of a text in the interface font come from its font
+		// files: this copy of the text rendering opens the outlines that
+		// the starter of the process mapped.
+		state = 2
+		if outlines_problem, _ := display.fallback_load(context_record); outlines_problem.kind == .None && display.interface_faces_opened() {
+			module_interface_font = display.INTERFACE_FONT
+			state = 1
 		}
 		intrinsics.atomic_store_explicit(&module_interface_font_state, state, .Release)
 	}

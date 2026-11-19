@@ -62,7 +62,7 @@
 // to 3 are the width, the height, the pixels of a line and the pixel format
 // of the screen. The root service also maps its own file (for its exports),
 // two [pointer themes](term:pointer-theme), the
-// [settings page](term:settings-page), the glyph caches and the
+// [settings page](term:settings-page), the font outlines and the
 // [date page](term:date-page). Its row of `process_roles` has the grants
 // Serve and System_Part: the root service gives these handles by name.
 //
@@ -96,6 +96,7 @@ import "modus:contract/date"
 import "modus:support/calendar"
 import "modus:support/graphics"
 import "modus:support/interface"
+import "modus:support/text_rendering"
 import "modus:private/compositor/bar"
 import "modus:support/mark"
 import "modus:support/screen_presence"
@@ -131,9 +132,8 @@ import "base:intrinsics"
 //   32 x 19 = 608 pages;
 // - the glyph memory of its two copies of the text rendering, its own
 //   (its bar, its menus, its titles) and the one of the drawing module:
-//   each draws a glyph past the glyph caches, as a box-drawing character
-//   or a Greek letter of a title, into its own private glyph cache, and
-//   reserves its memory at the first such glyph: 2 x 354 pages
+//   each draws every glyph of its text into its own private glyph cache,
+//   and reserves its memory at its first glyph: 2 x 354 pages
 //   (display.TEXT_MEMORY_PAGES) = 708 pages.
 // 4050 + 10 + 9 + 3 + 2 + 2255 + 608 + 708 = 7645. A screen whose frame
 // and background the budget cannot pay is named on one line, and the
@@ -403,7 +403,7 @@ bar_measure :: proc "contextless" () {
 		if measured == 1 && (font == nil || graphics.text_state.font != .Vector) {
 			break
 		}
-		bar_layout = bar.layout_of(measured_font != nil ? &measured_font.regular : nil)
+		bar_layout = bar.layout_of(measured_font != nil ? text_rendering.Face.Interface : text_rendering.Face.None)
 		_, menu_top, _, menu_height := bar.menu(bar_layout)
 		areas := [1]Rectangle{{0, 0, frame.width, max(BAR_HEIGHT, menu_top + menu_height)}}
 		for _ in 0 ..< ROUNDS {
@@ -429,7 +429,7 @@ bar_measure :: proc "contextless" () {
 bar_layout_update :: proc "contextless" () {
 	font := display.interface_font_of()
 	in_interface_font := font != nil && graphics.text_state.font == .Vector
-	layout := bar.layout_of(in_interface_font ? &font.regular : nil)
+	layout := bar.layout_of(in_interface_font ? text_rendering.Face.Interface : text_rendering.Face.None)
 	if bar_layout_known && layout == bar_layout && in_interface_font == bar_in_interface_font {
 		return
 	}
@@ -653,11 +653,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log(.Info, "compositor: ok ", u64(width), "x", u64(height))
 	quality_profile_log() // quality_measures.odin
 	service_start(ctx) // exports.odin
-	// The text of the desktop: the settings of the principal and the glyph cache
-	// (modus:contract/settings); a change of the settings wakes this loop.
+	// The text of the desktop: the settings of the principal and the font
+	// outlines (modus:contract/settings); a change of the settings wakes
+	// this loop.
 	display.text_settings_open(ctx)
 	display.interface_font_load(ctx)
-	// What the fallback chains draw past the glyph caches, script by
+	// What the fallback chains draw past the Latin-1 Supplement, script by
 	// script, once at each boot: the log names what no font has.
 	display.script_coverage_tell("compositor")
 	palette_start() // palette.odin
@@ -918,7 +919,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // whole screen again, and tells each window: its process draws again
 // (src/library/support/display gives it the new font before the event).
 settings_changed :: proc "contextless" (choice: settings.Choice) {
-	display.text_settings_apply()
+	_ = display.text_settings_apply()
 	// A new appearance: the background and the mark of the bar are pixels
 	// that the compositor keeps, so it draws them again; each record of the
 	// screen reads the tokens at its next frame.
