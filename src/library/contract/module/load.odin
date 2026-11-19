@@ -21,6 +21,7 @@ Error :: enum u32 {
 	Bad_Slot        = 9, // No check gives it today: `bind` reports a slot that is not valid at the stage Bind.
 	Bad_Import      = 10, // No check gives it today.
 	Bad_Export      = 11, // `entry_export` is not an index of the export table.
+	Bad_Own_Hash_Place = 12, // The own-hash place is not `HASH_SIZE` bytes inside one segment that the loader can write.
 }
 
 // read copies a T from file at offset. It gives zero when the range is not in file.
@@ -136,6 +137,11 @@ validate :: proc "contextless" (file: []u8) -> Error {
 	if head.entry_export >= max(count(file, .Exports), 1) {
 		return .Bad_Export
 	}
+	// Each loader writes the hash there: a place outside writable data
+	// would let a file make the loader write into its code.
+	if place, present := own_hash_place(file); present && !writable_range(file, place, HASH_SIZE) {
+		return .Bad_Own_Hash_Place
+	}
 	return .None
 }
 
@@ -156,9 +162,16 @@ copy_segments :: proc "contextless" (file: []u8, memory: []u8) {
 // location is in a segment that has Write and not Execute.
 @(private)
 writable :: proc "contextless" (file: []u8, memory_offset: u64) -> bool {
+	return writable_range(file, memory_offset, 8)
+}
+
+// writable_range says if the loader can write size bytes at memory_offset:
+// the bytes are inside one segment that has Write and not Execute.
+@(private)
+writable_range :: proc "contextless" (file: []u8, memory_offset: u64, size: u64) -> bool {
 	for index in 1 ..< count(file, .Segments) {
 		segment, _ := record(file, .Segments, index, Segment)
-		if range_holds(segment.memory_offset, segment.memory_size, memory_offset, 8) {
+		if range_holds(segment.memory_offset, segment.memory_size, memory_offset, size) {
 			return .Write in segment.flags && .Execute not_in segment.flags
 		}
 	}
@@ -376,7 +389,7 @@ record_type :: proc "contextless" (file: []u8, index: u32) -> (value: Record, ok
 		if item.type == u8(Type.Integer) && item.offset % size != 0 {
 			return {}, false
 		}
-		if !field_integer_unit_valid(item) {
+		if !field_integer_unit_valid(item) || !field_kind_valid(item) {
 			return {}, false
 		}
 	}
@@ -400,11 +413,12 @@ record_has_handle :: proc "contextless" (file: []u8, of: Record) -> bool {
 }
 
 // record_alignment gives the alignment of a record: the largest size of
-// its Integer and Handle fields, at least 1.
+// its Integer and Handle fields, at least 1. A Text and Bytes are bytes,
+// with no alignment.
 record_alignment :: proc "contextless" (file: []u8, of: Record) -> (alignment: u32) {
 	alignment = 1
 	for number in 0 ..< of.field_count {
-		if item, ok := field(file, of, number); ok && item.type != u8(Type.Text) {
+		if item, ok := field(file, of, number); ok && (item.type == u8(Type.Integer) || item.type == u8(Type.Handle)) {
 			alignment = max(alignment, field_size(item))
 		}
 	}
@@ -424,7 +438,9 @@ records_equal :: proc "contextless" (file: []u8, index: u32, other_file: []u8, o
 	for number in 0 ..< first.field_count {
 		a := field(file, first, number) or_return
 		b := field(other_file, second, number) or_return
-		if a.offset != b.offset || a.type != b.type || a.detail != b.detail || a.integer_unit != b.integer_unit || string_at(file, a.name_offset, a.name_count) != string_at(other_file, b.name_offset, b.name_count) {
+		// The kind and the enum are part of what the field means, as the
+		// unit is: a reader writes the value by them.
+		if a.offset != b.offset || a.type != b.type || a.detail != b.detail || a.integer_unit != b.integer_unit || a.kind != b.kind || a.contract_enum != b.contract_enum || string_at(file, a.name_offset, a.name_count) != string_at(other_file, b.name_offset, b.name_count) {
 			return false
 		}
 	}
@@ -450,6 +466,44 @@ field_integer_unit_valid :: proc "contextless" (item: Field) -> bool {
 	return value_kinds.integer_unit_valid(item.integer_unit)
 }
 
+// field_kind_valid says if the field kind and the contract enum of a field
+// that another party wrote are one pair of the contract: each byte names a
+// member, the reserved bytes are 0, and the kind fits the type
+// (docs/MODULE_CONTRACT.md, "The kind of a field"):
+//
+// - Plain: an Integer, a Handle or a Text, with no enum.
+// - Hexadecimal: an Integer with no unit and no enum.
+// - Status: an unsigned Integer with no unit and an enum that is not None.
+// - Module_Name: a Text with no enum.
+// - Hash: Bytes of 1 to value_kinds.HASH_FIELD_BYTES bytes, with no enum.
+//
+// A Bytes field is a Hash and nothing else: a reader has no form for other
+// bytes.
+field_kind_valid :: proc "contextless" (item: Field) -> bool {
+	kind, kind_ok := field_kind(item)
+	which, which_ok := field_contract_enum(item)
+	type, type_ok := field_type(item)
+	if !kind_ok || !which_ok || !type_ok || item.reserved[0] != 0 || item.reserved[1] != 0 {
+		return false
+	}
+	if (kind == .Status) != (which != .None) {
+		return false
+	}
+	switch kind {
+	case .Plain:
+		return type == .Integer || type == .Handle || type == .Text
+	case .Hexadecimal:
+		return type == .Integer && item.integer_unit == {}
+	case .Status:
+		return type == .Integer && item.unsigned && item.integer_unit == {}
+	case .Module_Name:
+		return type == .Text
+	case .Hash:
+		return type == .Bytes && item.detail >= 1 && item.detail <= value_kinds.HASH_FIELD_BYTES
+	}
+	return false
+}
+
 // field_size gives the bytes of a field of a record, from its type and its
 // detail. 0: a record cannot have such a field, and a byte of the type that
 // names no type.
@@ -470,9 +524,9 @@ field_size :: proc "contextless" (item: Field) -> u32 {
 		return 0
 	case .Handle:
 		return 4
-	case .Text:
+	case .Text, .Bytes:
 		return detail <= RECORD_SIZE_LIMIT ? detail : 0
-	case .None, .Record, .Table, .Bytes:
+	case .None, .Record, .Table:
 		// A record holds values only: no record in a record, and no table.
 	}
 	return 0
@@ -536,6 +590,16 @@ field_text :: proc "contextless" (record: []u8, item: Field) -> string {
 		count += 1
 	}
 	return string(bytes[:count])
+}
+
+// field_bytes gives the bytes of a Bytes field of a record: each of them,
+// zero bytes too. record has the size of the description. nil for another
+// field, or a field outside the record.
+field_bytes :: proc "contextless" (record: []u8, item: Field) -> []u8 {
+	if item.type != u8(Type.Bytes) || u64(item.offset) > u64(len(record)) || u64(item.detail) > u64(len(record)) - u64(item.offset) {
+		return nil
+	}
+	return record[item.offset:][:item.detail]
 }
 
 // budget_request gives the budget that a module asks for: record 1 of the

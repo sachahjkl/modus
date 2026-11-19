@@ -167,7 +167,7 @@ process_text_load :: proc "contextless" () {
 		}
 		process_text.loaded = true
 	}
-	display.text_settings_apply()
+	_ = display.text_settings_apply()
 }
 
 // draw_table_of makes a draw table of the package over a Read table and

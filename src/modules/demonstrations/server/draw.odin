@@ -359,7 +359,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	display.present(window)
 	microseconds_taken := (system.nanoseconds() - started) / 1000
 	if draw_time == 0 {
-		system.log("server: one draw of the window: ", microseconds_taken, " us")
+		system.log(.Info, "server: one draw of the window: ", microseconds_taken, " us")
 	}
 	draw_time = microseconds_taken
 }

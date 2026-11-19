@@ -185,10 +185,10 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 	measure.done = true
 	if measured {
 		measure.rate = received * 1000 / max(end - start, 1)
-		system.log("flow: capacity ", u64(measure.capacity), measure.spin ? ", read the counters then wait: " : ", wait at once: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", lost, " lost")
+		system.log(.Info, "flow: capacity ", u64(measure.capacity), measure.spin ? ", read the counters then wait: " : ", wait at once: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", lost, " lost")
 		return received != 0
 	}
-	system.log("flow: capacity ", u64(measure.capacity), measure.spin ? ", read the counters then wait: " : ", wait at once: ", received, " records read in order, ", lost, " lost, ", measure.entries, " kernel entries for one million records")
+	system.log(.Info, "flow: capacity ", u64(measure.capacity), measure.spin ? ", read the counters then wait: " : ", wait at once: ", received, " records read in order, ", lost, " lost, ", measure.entries, " kernel entries for one million records")
 	return received == RECORDS_CHECKED
 }
 
@@ -246,7 +246,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "flow")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
@@ -270,9 +270,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		draw(&window)
 	}
 	if wrong || total_lost != 0 {
-		system.log("flow: wrong: ", total_lost, " records lost")
+		system.log(.Info, "flow: wrong: ", total_lost, " records lost")
 	} else {
-		system.log("flow: ok, ", u64(len(measures)), " rings, 0 records lost")
+		system.log(.Info, "flow: ok, ", u64(len(measures)), " rings, 0 records lost")
 	}
 	for {
 		draw(&window)

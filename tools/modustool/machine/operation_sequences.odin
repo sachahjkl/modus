@@ -189,8 +189,30 @@ operation_findings :: proc(sequence: ^operation_sequence.Sequence, header: ^oper
 		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the outcome is %v (problem %d, start status %d, step started %d)", outcome, header.refusal_problem, header.start_status, results.step_started)})
 		return findings[:]
 	}
-	if outcome == .Stopped && (header.stop_code == operation_sequence.RUNNER_SEQUENCE_REFUSED_CODE || header.stop_code == operation_sequence.RUNNER_BATCH_REFUSED_CODE) {
-		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the runner could not run its sequence: stop code %x", header.stop_code)})
+	// The stop cause, the stop outcome and the end are words of the memory
+	// of the machine: each becomes its member here, and a word that names
+	// none, or a cause and an outcome that cannot come together, is a
+	// finding. The runner stopped, so the state is Stopped.
+	_, cause, stop_outcome, stop_known := operation.stop_of_words(u64(operation.Process_State.Stopped), header.stop_cause, header.stop_outcome)
+	if !stop_known {
+		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the stop cause word %d and the stop outcome word %d of the runner name no stop", header.stop_cause, header.stop_outcome)})
+		return findings[:]
+	}
+	end, end_known := enum_word.member_of_word(operation_sequence.Runner_End, results.end)
+	if !end_known {
+		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the end word %d of the runner names no end", results.end)})
+		return findings[:]
+	}
+	switch end {
+	case .Sequence_Refused, .Batch_Refused:
+		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the runner could not run its sequence: its end is %v, its stop: %s, %s", end, operation.STOP_CAUSE_TEXTS[cause], operation.STOP_OUTCOME_TEXTS[stop_outcome])})
+		return findings[:]
+	case .None, .Ran:
+	}
+	// The words must tell one story: the end Ran and the outcome Ran come
+	// only from a stop of the runner itself with Done.
+	if problem := operation_stop_pair_problem(outcome, stop_outcome, end); problem != "" {
+		append(&findings, Operation_Finding{.Outcome, -1, problem})
 		return findings[:]
 	}
 	if header.budget_after != header.budget_before {
@@ -206,6 +228,23 @@ operation_findings :: proc(sequence: ^operation_sequence.Sequence, header: ^oper
 	}
 	operation_budget_read_findings(sequence, results, steps_run, &findings)
 	return findings[:]
+}
+
+// operation_stop_pair_problem says why an outcome of the service, a stop
+// outcome and an end of the runner cannot come together, or "". The
+// outcome is Ran or Stopped here: the other outcomes are findings before.
+// The stop outcome passed the border, so it is not None only with the
+// cause Itself.
+operation_stop_pair_problem :: proc(outcome: operation_sequence.Execution_Outcome, stop_outcome: operation.Stop_Outcome, end: operation_sequence.Runner_End) -> string {
+	switch {
+	case outcome == .Ran && stop_outcome != .Done:
+		return fmt.tprintf("the outcome Ran with the stop outcome %s: only a stop of the runner itself with Done ends a run", operation.STOP_OUTCOME_TEXTS[stop_outcome])
+	case outcome == .Ran && end != .Ran:
+		return fmt.tprintf("the outcome Ran with the end %v: the runner did not write that it ran each step", end)
+	case end == .Ran && stop_outcome != .Done:
+		return fmt.tprintf("the end Ran with the stop outcome %s: the runner stops itself with Done after it writes that end", operation.STOP_OUTCOME_TEXTS[stop_outcome])
+	}
+	return ""
 }
 
 // operation_step_findings checks the status and the table of error details
@@ -618,6 +657,14 @@ Operation_Mailbox :: struct {
 	written:    u64, // The sequences that the tool wrote.
 }
 
+// operation_mailbox_header_known says if a header has the magic and the
+// format of this tool. A mailbox of another format holds its fields at
+// other places or with other meanings (the format 1 held a stop code where
+// the format 2 holds the stop cause), so the tool reads none of it.
+operation_mailbox_header_known :: proc(header: ^operation_sequence.Mailbox_Header) -> bool {
+	return header.magic == operation_sequence.MAILBOX_MAGIC && header.format == operation_sequence.MAILBOX_FORMAT
+}
+
 // operation_mailbox_open opens the memory file and checks the mailbox that
 // the line of the log names: inside the memory, with its magic and its
 // format.
@@ -636,7 +683,7 @@ operation_mailbox_open :: proc(path: string, address: i64) -> (mailbox: Operatio
 		os.close(file)
 		return {}, "cannot read the mailbox"
 	}
-	if header.magic != operation_sequence.MAILBOX_MAGIC || header.format != operation_sequence.MAILBOX_FORMAT {
+	if !operation_mailbox_header_known(&header) {
 		os.close(file)
 		return {}, fmt.tprintf("the mailbox at %d has the magic %x and the format %d", address, header.magic, header.format)
 	}

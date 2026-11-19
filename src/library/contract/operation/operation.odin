@@ -254,25 +254,28 @@ Object_Kind :: enum u8 {
 // (`system.memory_create`) or with `system.call`.
 Operation :: enum u32 {
 	None           = 0,
-	Log            = 1, // (log, address, length, level: Log_Level, channel, channel, runs).
-	// Writes one text on the log of the kernel: records of the log, which a reader with the memory of the log
-	// reads, and one line `[name:channel] text` on the serial port. The kernel sets the time, the process and
-	// the thread of each record, so a process cannot write a record of another process. The operation writes
-	// the records only; the tick of the first processor writes their line on the serial port after it, so a
-	// `Log` never waits for the lines of other processes.
+	Log            = 1, // (log, address, length, level: Log_Level, runs, form: Log_Record_Form).
+	// Writes one text or one log fact on the log of the kernel: records of the log, which a reader with the
+	// memory of the log reads, and one line `[name] text` on the serial port. The kernel sets the time, the
+	// process and the thread of each record, so a process cannot write a record of another process. The
+	// operation writes the records only; the tick of the first processor writes their line on the serial port
+	// after it, so a `Log` never waits for the lines of other processes.
 	//
 	// **Arguments**
 	//
 	// - `log`: the log handle, with **Write**. Each process has it in its context at `CONTEXT_LOG`.
-	// - `address`, `length`: the text, at most `LOG_TEXT_BYTES_MOST` bytes, in memory that the process can read. A text longer
-	//   than `LOG_TEXT_CAPACITY` continues in the next records (`Log_Record`, `more`).
+	// - `address`, `length`: the bytes of the record, in memory that the process can read. For the form `Text`,
+	//   the text, at most `LOG_TEXT_BYTES_MOST` bytes. A text longer than `LOG_TEXT_CAPACITY` continues in the
+	//   next records (`Log_Record`, `more`). For the form `Fact`, a `Log_Fact` up to the end of its values:
+	//   from `LOG_FACT_HEAD_BYTES` to `size_of(Log_Fact)` bytes. The kernel writes `value_count` from the
+	//   length, and reads no other field of it.
 	// - `level`: a `Log_Level`, from `Info` (0) to `Error` (3).
-	// - `channel`, `channel`: the name of the channel, 16 bytes in two values. The name is the bytes before
-	//   the first one that is not a printable character: all zero is no channel.
 	// - `runs`: the count of the value runs of the text, at most `LOG_CALL_RUN_LIMIT`; 0 is a plain text. The
 	//   runs (`value_kinds.Value_Run_In_Call`) follow the `length` bytes of the text at `address`. A run says
 	//   which bytes of the text are one value, and its kind: a reader of the log shows each value in the color
-	//   of its kind. The text is written whole in every case: if a run is wrong, the record is plain.
+	//   of its kind. The text is written whole in every case: if a run is wrong, the record is plain. A fact
+	//   has no runs: 0.
+	// - `form`: a `Log_Record_Form`. 0 is `Text`, so a writer of text gives five arguments.
 	//
 	// **Results**: none.
 	//
@@ -280,10 +283,13 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Handle`, `No_Right`: `log` is not a log handle with **Write**.
 	// - `Bad_Address`: `length` is above `LOG_TEXT_BYTES_MOST`, or the process cannot read the text and its runs.
-	// - `Bad_Operation`: `level` is above `Error`, or `runs` is above `LOG_CALL_RUN_LIMIT`.
+	//   For a fact: `length` is below `LOG_FACT_HEAD_BYTES` or above `size_of(Log_Fact)`, or the process cannot
+	//   read the bytes.
+	// - `Bad_Operation`: `level` is above `Error`, `runs` is above `LOG_CALL_RUN_LIMIT`, `form` names no
+	//   `Log_Record_Form`, or a fact has runs.
 	// - `No_Budget`: the budget of the process accepted all the records of its amount in this second
 	//   (`Budget_Amounts`, `log_records`). No other budget counts the record, so the refusal says nothing of
-	//   what other processes wrote.
+	//   what other processes wrote. A fact counts one record.
 	Memory_Create  = 2, // (budget, pages, flags: Memory_Flags) -> memory handle.
 	// Makes a memory object of `pages` pages of 4096 bytes, and gives a handle to it with each right of
 	// memory: **Give**, **Read**, **Write** and **Execute**. The memory is zero. The budget pays now, so an
@@ -445,27 +451,36 @@ Operation :: enum u32 {
 	//   area or its page tables.
 	// - `No_Slot`: the thread table of the kernel is full, or the process has `THREAD_CAPACITY` threads.
 	// - `No_Memory`: no free run of page frames for the thread area.
-	Process_Stop   = 8, // (process, code).
+	Process_Stop   = 8, // (process, outcome: Stop_Outcome).
 	// Stops a process: this one or another one. Each of its threads ends, and the operation returns when no
-	// thread of the process runs an instruction any more. The process is `Stopped` with the stop code, which
-	// `Process_State` gives. Its handles, its mappings and its memory end when its last thread left its
-	// processor. A process that is stopped already stays as it is.
+	// thread of the process runs an instruction any more. The process is `Stopped` with its stop cause and its
+	// stop outcome, which `Process_State` gives. Its handles, its mappings and its memory end when its last
+	// thread left its processor. A process that is stopped already keeps its first stop cause and outcome.
+	//
+	// The kernel records the stop cause from the target, never from the argument: `Itself` when the target is
+	// the process that asks (by 0 or by a handle that names it), `Holder` for another process. Only a process
+	// that stops itself says what its work gave: a holder cannot forge the end of another process
+	// (src/md/api/process_stop.md).
 	//
 	// **Arguments**
 	//
 	// - `process`: 0 for this process, or a process handle with **Control**. With 0, the thread that asks
 	//   ends with its process: the operation does not return.
-	// - `code`: the stop code, any value. The kernel uses the codes `STOP_CODE_FAULT` to
-	//   `STOP_CODE_FAULT_UNANSWERED` for the stops that it makes.
+	// - `outcome`: for a stop of this process, the word of a `Stop_Outcome` other than `None`: `Done`,
+	//   `Failed`, `Refused` or `Stopped_On_Request`. For a stop of another process, 0.
 	//
 	// **Results**: none.
 	//
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
-	Process_State  = 9, // (process, report: Stop_Report) -> state: Process_State, code, entries, slot, serial.
-	// Gives the state of a process, its stop code, its count of kernel entries, and its place in the reports of
-	// `Inspect`. With an address, the kernel also writes there where the process stopped on a fault.
+	// - `Bad_Operation`: `outcome` names no outcome other than `None` for a stop of this process, or it is not 0
+	//   for a stop of another process. The error record gives the word, and the largest word that the target
+	//   takes. Nothing changes: the target runs on.
+	Process_State  = 9, // (process, report: Stop_Report) -> state: Process_State, cause: Stop_Cause, outcome: Stop_Outcome, entries, slot, serial.
+	// Gives the state of a process, its stop cause and its stop outcome, its count of kernel entries, and its
+	// place in the reports of `Inspect`. With an address, the kernel also writes there where the process
+	// stopped on a fault. A reader takes the first three results through `stop_of_words`.
 	//
 	// The root service states facts of a process that it started by that place: the disk process page names
 	// each disk process by its slot and its serial, which the reports of `Inspect` give too
@@ -476,16 +491,18 @@ Operation :: enum u32 {
 	// - `process`: a process handle with **Read**.
 	// - `report`: 0, or the address of a `Stop_Report` that the process can write: the instruction, the
 	//   address of a page fault, the module and the stack trace of the fault that stopped the process. All
-	//   zero while the process runs, or when it stopped with no fault.
+	//   zero while the process runs, or when its stop cause is not `Fault`, `Not_Committed` or
+	//   `Cannot_Return`.
 	//
 	// **Results**
 	//
 	// 1. the `Process_State` of the process: `Created`, `Ready` (one of its threads is ready), `Waiting` or
 	//    `Stopped`;
-	// 2. its stop code: 0 while it runs;
-	// 3. its kernel entries since its start;
-	// 4. its process slot: the index that `Inspect` with the kind `Process` takes for it;
-	// 5. its process serial, as `Process_Report.process_serial` gives it: the slot and the serial name this
+	// 2. its `Stop_Cause`: `None` while it runs;
+	// 3. its `Stop_Outcome`: `None` while it runs, and for each stop cause but `Itself`;
+	// 4. its kernel entries since its start;
+	// 5. its process slot: the index that `Inspect` with the kind `Process` takes for it;
+	// 6. its process serial, as `Process_Report.process_serial` gives it: the slot and the serial name this
 	//    process and no later one. The kernel keeps both until the last handle of the process closes.
 	//
 	// **Statuses**
@@ -532,7 +549,7 @@ Operation :: enum u32 {
 	// - a memory object, when no handle and no mapping names it;
 	// - a budget, when its last handle closes: what it holds returns to the budget that it came from, which
 	//   pays for its objects;
-	// - a process: it stops with `STOP_CODE_NO_HANDLE` when its last handle closes;
+	// - a process: it stops with the stop cause `Handles_Closed` when its last handle closes;
 	// - the event table of the machine, when the last machine handle with **Events** of its process closes.
 	//
 	// **Arguments**
@@ -694,7 +711,8 @@ Operation :: enum u32 {
 	Thread_Stop    = 17, // (thread).
 	// Ends a thread: the calling thread, or a thread that a handle names, of this process or of another one.
 	// A thread on another processor leaves it at once, and the operation returns after it left. The other
-	// threads of its process get an event. A process with no thread left stops, with the code 0.
+	// threads of its process get an event. A process with no thread left stops, with the stop cause
+	// `Last_Thread_Ended` and no stop outcome.
 	//
 	// **Arguments**
 	//
@@ -1048,7 +1066,7 @@ Operation :: enum u32 {
 	// debugger that ends never holds and never stops the process.
 	//
 	// When a thread of the process waits for an answer, a new handler or the end of the delivery ends the
-	// ring that holds its record: the process stops with `STOP_CODE_FAULT_UNANSWERED`, as when the handler
+	// ring that holds its record: the process stops with the stop cause `Fault_Unanswered`, as when the handler
 	// thread ends, and the operation gives `Ok`.
 	//
 	// **Results**: none.
@@ -1077,7 +1095,7 @@ Operation :: enum u32 {
 	// - `answer`: a `Fault_Answer_Kind`:
 	//   - `Resume`: the thread continues with its registers, at the instruction of its record (the faulting
 	//     instruction again, or the next one after a trap), or where `Thread_Control` wrote;
-	//   - `Stop`: the process stops as with no handler: the stop code and the stop report of the fault.
+	//   - `Stop`: the process stops as with no handler: the stop cause and the stop report of the fault.
 	// - `process`: 0, or the process handle with **Debug** of the process that the caller debugs: the answer
 	//   is for a thread of that process, whose record came to the debug handler. Only `Resume`: a debugger
 	//   stops a process with `Process_Stop` and the right **Control**. After a `Debug` fault of an execute
@@ -1725,10 +1743,10 @@ PROCESS_MODULE_CAPACITY :: 16
 // The console and the process `errors` turn it into a stack trace with names
 // (see [stop report](term:stop-report)).
 //
-// Example: a null pointer read gives `code = 0x10E` (`STOP_CODE_FAULT` plus
-// 14), `vector = 14`, `address = 0`, and `frames[0].address` the instruction.
+// Example: a null pointer read gives `cause = u32(Stop_Cause.Fault)`,
+// `vector = 14`, `address = 0`, and `frames[0].address` the instruction.
 Stop_Report :: struct {
-	code:        u32, // The stop code: STOP_CODE_FAULT plus the vector.
+	cause:       u32, // The word of the `Stop_Cause`: `Fault`, `Not_Committed` or `Cannot_Return`, which a reader takes through `stop_cause_of_word`. 0 in a report of another stop, which stays zero.
 	vector:      u32, // The vector of the processor exception: a `Fault_Kind` when the kernel delivers that kind.
 	instruction: u64, // The address of the instruction.
 	address:     u64, // A page fault: the address that the instruction used. 0 for another fault.
@@ -2076,7 +2094,7 @@ Fault_Access :: bit_set[Fault_Access_Bit; u64]
 Fault_Answer_Kind :: enum u64 {
 	None   = 0, // No answer: refused.
 	Resume = 1, // The thread continues with its registers: at the instruction of its record (the faulting instruction again, or the next one after a trap), or where Thread_Control wrote. For a kind of FAULT_KINDS_RESUMABLE, or after a write of Thread_Control.
-	Stop   = 2, // The process stops as if no handler were set: the stop code and the stop report of the fault.
+	Stop   = 2, // The process stops as if no handler were set: the stop cause and the stop report of the fault.
 }
 
 // What Thread_Control does. The results are in the completion record.
@@ -2968,15 +2986,6 @@ MAP_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execut
 // The largest code of `Machine_Stop`: the host receives one byte.
 MACHINE_STOP_CODE_MOST :: 255
 
-// The code of a process that the kernel stopped. `Process_State` gives the
-// code; `Process_Stop` takes any other code from the process that stops a
-// process. The console and the log name each of these codes.
-STOP_CODE_FAULT :: 0x100 // Add the number of the processor exception: 14 is a page fault.
-STOP_CODE_NO_HANDLE :: 0x200 // The last handle to the process closed.
-STOP_CODE_NOT_COMMITTED :: 0x300 // A page fault on a page of an Uncommitted object that is not committed.
-STOP_CODE_RETURN :: 0x400 // The kernel cannot return to a thread of the process: its instruction or stack address is not one that the processor takes (docs/ARCHITECTURE.md, "The return to a process"). The stop report has the address in `address`.
-STOP_CODE_FAULT_UNANSWERED :: 0x500 // The fault ring of the process ended while a thread waited for an answer in it: its handler thread ended, or Fault_Handler_Set named another handler or ended the delivery.
-
 // The state of a process or of a thread. A process is Ready when one of
 // its threads is Ready.
 //
@@ -2990,8 +2999,7 @@ Process_State :: enum u32 {
 	Ready   = 2, // A thread runs or waits for a processor in a run queue.
 	Waiting = 3, // Each thread is in a wait: a deadline or a word wait. A wake makes it Ready again. A hold does not change it.
 	// The process ended: `Process_Stop`, a fault with no fault handler, the close of the last handle to it, or
-	// the end of its last thread (the stop code 0). Its stop code says which. A thread that ended is Stopped
-	// too.
+	// the end of its last thread. Its `Stop_Cause` says which. A thread that ended is Stopped too.
 	Stopped = 4,
 }
 
@@ -3247,12 +3255,12 @@ Processor_Report :: struct {
 	cache_drains:        u64, // Drains that took the frames of the stack, for a take that found no free frame.
 }
 
-// The log: records in channels.
+// The log: records of text, each with its process and its level.
 //
 // The kernel keeps the last LOG_RECORD_CAPACITY records in one memory
 // object. The kernel is the one writer: it sets the time, the process and
 // the thread of each record, so a process cannot write a record of another
-// process. A process chooses only the level, the channel and the text.
+// process. A process chooses only the level and the text.
 // A reader maps the memory object without Write. It reads Log_Head.written,
 // and it waits on the low 32 bits of that word (Word_Wait).
 //
@@ -3274,10 +3282,7 @@ Log_Level :: enum u8 {
 
 // The bytes of text in one log record. With the other fields, a record is
 // 256 bytes; a longer text continues in the next records (`more`).
-LOG_TEXT_CAPACITY :: 152
-// The bytes of the name of a channel: two values of 8 bytes of the `Log`
-// operation.
-LOG_CHANNEL_CAPACITY :: 16
+LOG_TEXT_CAPACITY :: 168
 // The value runs that one record keeps: the kind of each typed part of its
 // text (modus:contract/value_kinds). A text with more typed parts keeps its first
 // runs; the rest of its text is plain.
@@ -3334,7 +3339,7 @@ Log_Head :: struct {
 }
 
 // One record of the log of the kernel: one text, or a part of a longer
-// text, of one thread, with its time, its level and its channel.
+// text, of one thread, with its time and its level.
 //
 // The kernel writes it for a `Log` operation, or for a line of its own; the
 // root service gives the memory of the records (`ROOT_LOG_RECORDS`) to the
@@ -3349,9 +3354,8 @@ Log_Head :: struct {
 // at most 256 process slots and 256 thread slots, which leaves room for the
 // two numbers in 256 bytes. See [log record](term:log-record).
 //
-// Example: the line `[console:shell] started` on the serial port is one
-// record with `name = "console"`, `channel = "shell"`, `level = .Info`,
-// `text_count = 7`.
+// Example: the line `[console] started` on the serial port is one record
+// with `name = "console"`, `level = .Info`, `text_count = 7`.
 Log_Record :: struct {
 	sequence:       u64, // The number of the record in the whole log, from 0.
 	time:           u64, // Microseconds since the start of the machine.
@@ -3361,17 +3365,57 @@ Log_Record :: struct {
 	more:           u8, // 1: the text continues in the next record.
 	process_serial: u32, // The process serial: it changes for each new process in the slot. 0: the kernel.
 	own_number:     u32, // The number of the record among the records of its process, from 0 at its start; it starts again from 0 after 2^32 records. 0 for the kernel.
-	text_count:     u16, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`.
-	run_count:      u8, // The value runs of the text: runs[:run_count].
-	reserved:       u8, // 0.
+	text_count:     u16, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`. 0 for a fact.
+	run_count:      u8, // The value runs of the text: runs[:run_count]. 0 for a fact.
+	form:           u8, // The byte of a `Log_Record_Form` (`log_record_form`): what the bytes after the name hold. 0: a text.
 	name:           [PROCESS_NAME_BYTES_MOST + 1]u8, // The name of the process, or "kernel".
-	channel:    [LOG_CHANNEL_CAPACITY]u8, // All zero: the process gave no channel.
-	runs:       [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count].
-	text:       [LOG_TEXT_CAPACITY]u8, // The text, UTF-8, `text_count` bytes.
+	runs:           [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count]. A fact: the first bytes of its `Log_Fact`.
+	text:           [LOG_TEXT_CAPACITY]u8, // The text, UTF-8, `text_count` bytes. A fact: the rest of its `Log_Fact`.
 }
 
 #assert(size_of(Log_Record) == 256)
 #assert(offset_of(Log_Record, name) == 32)
+#assert(offset_of(Log_Record, runs) == 64)
+
+// The form of a log record: what its bytes after the name of the process
+// hold. A reader takes the byte `Log_Record.form` through `log_record_form`,
+// and shows a record of a byte that names no member with its head only
+// (src/md/features/log_facts.md, "The record").
+Log_Record_Form :: enum u8 {
+	Text = 0, // The value runs and the text. A zero record is a text record.
+	Fact = 1, // A log fact: one `Log_Fact`, in one record (`more` is 0).
+}
+
+// The bytes of the values of one log fact: the fields of its record type,
+// with no padding. A fact is one record, so its values fit in it beside the
+// module hash and the fact key.
+LOG_FACT_VALUE_CAPACITY :: 144
+
+// The bytes of a log record after the name of the process, for the form
+// Fact: the module hash, the fact key, the count of the value bytes, and
+// the values. The writer gives it to `Log`, up to the end of its values;
+// the kernel writes `value_count` from the length and copies the bytes with
+// no check of their content (src/md/features/log_facts.md, "The record").
+//
+// Example: the fact `storage.Bad_Block{block = 12, ...}` of the module whose
+// hash starts with 1a 2b is the hash, the key 18017458693634389201, a count
+// of 16, and the 16 bytes of the record.
+Log_Fact :: struct {
+	module_hash: [32]u8, // The hash of the module that holds the description of the fact: its own-hash place. Zero: no module.
+	key:         u64, // The fact key: the typeid of the record type. Never 0 from `system.log_fact`.
+	value_count: u16, // The bytes of `values` in use, at most `LOG_FACT_VALUE_CAPACITY`: the kernel writes it.
+	reserved:    [6]u8, // 0: the kernel writes it.
+	values:      [LOG_FACT_VALUE_CAPACITY]u8, // The bytes of the record of the fact type, in the order of its fields.
+}
+// The bytes of a fact before its values: the least `length` of a fact.
+LOG_FACT_HEAD_BYTES :: 48
+#assert(offset_of(Log_Fact, values) == LOG_FACT_HEAD_BYTES)
+// A fact fills the bytes of a record after the name of the process, which
+// end at the offset 64.
+#assert(size_of(Log_Fact) + 64 == size_of(Log_Record))
+// A value run names its start and its length in the text of its record
+// with one byte each (value_kinds.Value_Run).
+#assert(LOG_TEXT_CAPACITY <= 256)
 #assert(size_of(Log_Head) == size_of(Log_Record))
 
 // The stacks of the kernel. Each processor has one slot of addresses: a
@@ -3531,7 +3575,12 @@ Boot_Report :: struct {
 // zeros.
 Process_Report :: struct {
 	state:        Process_State, // `None` for a slot with no process.
-	code:         u32, // The stop code: 0 while the process runs.
+	// The word of its `Stop_Cause`: 0 while the process runs. A record of the kernel holds the word, which a
+	// reader takes through `stop_cause_of_word`.
+	stop_cause:   u32,
+	// The word of its `Stop_Outcome`: 0 while the process runs, and for each cause but `Itself`. A reader
+	// takes it through `stop_outcome_of_word`.
+	stop_outcome: u32,
 	name:         [PROCESS_NAME_BYTES_MOST + 1]u8, // The name that `Process_Create` gave; zero bytes after it.
 	mapped_pages: u64, // The pages of all its mappings.
 	handle_count: u64, // The handles in its handle table.

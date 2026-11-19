@@ -15,8 +15,8 @@
 //   8 GiB holds about 2000 blocks with its version, and the loop of range commits about 4000.
 //
 // **What a reader sees**: no window. The log has one line for each case, "...: as it must" or "WRONG", the
-// measures of the commits, and at the end "ranges: done, N wrong". The process stops with the code 0 when no case
-// is wrong, else with the code 2.
+// measures of the commits, and at the end "ranges: done, N wrong". The process stops with `Done` when no case
+// is wrong, else with `Failed`.
 //
 // The exports that it calls: [write_range](storage.write_range), [set_size](storage.set_size) and
 // [commit](storage.commit) of the storage service.
@@ -80,10 +80,10 @@ outcome :: proc "contextless" (good: bool, what: string, parts: ..system.Part) {
 		system.write_part(&writer, part)
 	}
 	if good {
-		system.log("ranges: ", what, system.written(&writer), ": as it must")
+		system.log(.Info, "ranges: ", what, system.written(&writer), ": as it must")
 	} else {
 		wrong_cases += 1
-		system.log_in("ranges", .Error, "ranges: WRONG: ", what, system.written(&writer))
+		system.log(.Error, "ranges: WRONG: ", what, system.written(&writer))
 	}
 }
 
@@ -162,7 +162,7 @@ small_writes_read :: proc "contextless" () -> bool {
 }
 
 measure_log :: proc "contextless" (what: string, measure: storage.Commit_Measure) {
-	system.log("ranges: ", what, u64(measure.changed), " blocks changed of ", u64(measure.object_blocks), ", ", u64(measure.hashed_blocks), " blocks and ", u64(measure.hashed_nodes), " object nodes hashed, ", u64(measure.written), " blocks written, in ", u64(measure.milliseconds), " ms")
+	system.log(.Info, "ranges: ", what, u64(measure.changed), " blocks changed of ", u64(measure.object_blocks), ", ", u64(measure.hashed_blocks), " blocks and ", u64(measure.hashed_nodes), " object nodes hashed, ", u64(measure.written), " blocks written, in ", u64(measure.milliseconds), " ms")
 }
 
 first_run :: proc "contextless" () {
@@ -202,7 +202,7 @@ first_run :: proc "contextless" () {
 		_, write_status := storage.write_range(&client, storage.ROOT, "sparse", offset, bytes[:])
 		writes_good &&= write_status == .Ok
 	}
-	system.log("ranges: 1000 range writes at scrambled offsets are pending, in ", system.time() - writes_start, " ms")
+	system.log(.Info, "ranges: 1000 range writes at scrambled offsets are pending, in ", system.time() - writes_start, " ms")
 	measure, status = storage.commit(&client, storage.ROOT, "sparse")
 	measure_log("1000 writes at scrambled offsets, then one commit: ", measure)
 	// The bound of the cost: each changed block, the last block of the hash,
@@ -224,7 +224,7 @@ first_run :: proc "contextless" () {
 	refusals()
 	conflict_case()
 	twin_case()
-	system.log("ranges: the cases took ", system.time() - start, " ms")
+	system.log(.Info, "ranges: the cases took ", system.time() - start, " ms")
 	loop()
 }
 
@@ -432,7 +432,7 @@ loop :: proc "contextless" () {
 		_, status := storage.commit(&client, storage.ROOT, "loop")
 		good &&= status == .Ok
 		if (commit_number + 1) % 50 == 0 {
-			system.log("ranges: loop, ", u64(commit_number + 1), " commits of 4 range writes, in ", system.time() - start, " ms")
+			system.log(.Info, "ranges: loop, ", u64(commit_number + 1), " commits of 4 range writes, in ", system.time() - start, " ms")
 		}
 	}
 	outcome(good, "the loop made ", u64(LOOP_COMMITS), " commits of range writes")
@@ -466,28 +466,32 @@ second_run :: proc "contextless" () {
 // then it stops.
 //
 // It opens its private store and reads its usage; with no store or no usage it writes "ranges: WRONG: ..." and
-// stops with the code 1. A store with no object gives the first run: each case, then the loop of range commits. A
+// stops with `Failed`. A store with no object gives the first run: each case, then the loop of range commits. A
 // store with objects gives the second run: it reads back the small object, the object of the cut and the object
-// of the loop, and writes the object of 1 MiB under a third name. It writes "ranges: done, N wrong" and stops with the code 0, or 2 when a case is wrong.
+// of the loop, and writes the object of 1 MiB under a third name. It writes "ranges: done, N wrong" and stops with
+// `Done`, or `Failed` when a case is wrong.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ok: bool
 	if client, ok = storage.open(ctx); !ok {
-		system.log_in("ranges", .Error, "ranges: WRONG: no store")
-		system.stop(1)
+		system.log(.Error, "ranges: WRONG: no store")
+		system.stop(.Failed)
 	}
 	counts, status := storage.usage(&client)
 	if status != .Ok {
-		system.log_in("ranges", .Error, "ranges: WRONG: no usage")
-		system.stop(1)
+		system.log(.Error, "ranges: WRONG: no usage")
+		system.stop(.Failed)
 	}
 	if counts.objects == 0 {
-		system.log("ranges: a new store: the first run")
+		system.log(.Info, "ranges: a new store: the first run")
 		first_run()
 	} else {
-		system.log("ranges: a store with ", counts.objects, " objects: the run after the remount")
+		system.log(.Info, "ranges: a store with ", counts.objects, " objects: the run after the remount")
 		second_run()
 	}
-	system.log("ranges: done, ", u64(wrong_cases), " wrong")
-	system.stop(wrong_cases == 0 ? 0 : 2)
+	system.log(.Info, "ranges: done, ", u64(wrong_cases), " wrong")
+	if wrong_cases != 0 {
+		system.stop(.Failed)
+	}
+	system.stop(.Done)
 }

@@ -27,7 +27,7 @@
 //
 // **What a reader sees.** No window: the line `entropy: ok, a queue of
 // <size>` on the log. A failure at the start writes a line at the level
-// error on the channel `entropy` and stops the service.
+// error and stops the service.
 //
 // **What it does not prove.** It does not test the bytes of the device: the
 // root service refuses a read with no byte, with one value only, or equal
@@ -63,8 +63,8 @@ machine: system.Handle
 clients: ring.Ring
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log_in("entropy", .Error, "entropy: ", text)
-	system.stop(1)
+	system.log(.Error, "entropy: ", text)
+	system.stop(.Failed)
 }
 
 // start resets the device, agrees on the features (the device has none
@@ -86,7 +86,7 @@ start :: proc "contextless" (queues: system.Handle) {
 	address, map_status := system.memory_map(queues, {.Write})
 	physical, physical_status := system.memory_physical(machine, queues)
 	if map_status != .Ok || physical_status != .Ok {
-		system.log_in("entropy", .Error, "entropy: the map of the queue gave the status ", map_status, ", its device address the status ", physical_status)
+		system.log(.Error, "entropy: the map of the queue gave the status ", map_status, ", its device address the status ", physical_status)
 		fail("no physical address for the queue")
 	}
 	base := uintptr(address)
@@ -151,7 +151,7 @@ answer :: proc "contextless" (tag: u32, asked: u32, used: virtio.Used) {
 // **The stop**: with no ring, no configuration, no virtio registers, a
 // device that needs a reset, or a device that uses a read that was not
 // given (`entropy: the device used a read that was not given`), it writes
-// the reason at the level error and stops with the code 1. Else it never
+// the reason at the level error and stops with `Failed`. Else it never
 // returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -169,7 +169,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the device has no virtio registers in the memory that it received")
 	}
 	start(ctx.handles[pci.GRANT_QUEUES])
-	system.log("entropy: ok, a queue of ", u64(queue.size))
+	system.log(.Info, "entropy: ok, a queue of ", u64(queue.size))
 
 	in_flight := false
 	in_flight_tag: u32

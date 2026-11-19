@@ -39,6 +39,7 @@ the_rules_keep_their_contrast_in_each_appearance :: proc(t: ^testing.T) {
 			{"a resource", tokens.resource},
 			{"a failure", tokens.failed},
 			{"a warning", tokens.warning},
+			{"a measure near its limit", tokens.near_limit},
 			{"a link", tokens.link},
 		}
 		for concept in concepts {
@@ -126,6 +127,7 @@ the_two_appearances_differ_where_they_must :: proc(t: ^testing.T) {
 	// The tokens that the processes share: the same rule, the shade that
 	// keeps 4.5 to 1 on the light surfaces.
 	testing.expect_value(t, light.warning, shade(DARK_WARNING, 57))
+	testing.expect_value(t, light.near_limit, shade(DARK_NEAR_LIMIT, 70))
 	testing.expect_value(t, light.link, shade(DARK_LINK, 55))
 	dark_series := DARK_SERIES
 	series_light_percents := [SERIES_COLOR_COUNT]u32{76, 64, 56, 75, 79, 57, 54, 63}

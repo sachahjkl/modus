@@ -361,6 +361,11 @@ process_roles := [?]Process_Role_Row {
 	{name = "interface_font"},
 	// An arena that grows until its own budget refuses a commit.
 	{name = "arena"},
+	// The two rows of the test of the restarts of a start policy, which only
+	// the image of the test of the rescue holds: each stops itself at once,
+	// and needs no grant.
+	{name = "stops_refused"},
+	{name = "stops_failed"},
 }
 
 // The processes that this service starts itself, each in its own way and

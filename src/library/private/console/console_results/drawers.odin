@@ -21,6 +21,8 @@ Part :: enum u8 {
 	Operation = 8, // The operation or the export of an error.
 	Size      = 9, // An Integer field that counts a size, and its unit.
 	Time      = 10, // An Integer field that counts a time, and its unit.
+	Module    = 11, // A Text field that holds the name of a module.
+	Version   = 12, // A field that holds a hash, in hexadecimal.
 }
 
 // part_value_kind gives the value kind of a part. None: the part is not a
@@ -41,6 +43,10 @@ part_value_kind :: proc "contextless" (part: Part) -> value_kinds.Value_Kind {
 		return .Status
 	case .Operation:
 		return .Operation
+	case .Module:
+		return .Module
+	case .Version:
+		return .Version
 	case .Plain, .Label, .Note, .Failure:
 	}
 	return .None
@@ -62,6 +68,9 @@ COLUMN_LIMIT :: 40 // The most columns of a drawn table: the fields of a record 
 CONTINUATION_MOST :: 48 // A line goes on under its last column only when that column starts at or before this one.
 COLUMN_GAP :: 2 // The spaces between two columns.
 BYTES_IN_A_ROW :: 16 // The bytes of one row of a view of bytes.
+// The bytes of the text of one cell: a hash in hexadecimal, two digits for
+// each byte, is the longest; a number takes at most 20.
+CELL_TEXT_CAPACITY :: 2 * value_kinds.HASH_FIELD_BYTES
 
 BLANKS :: "                                                                "
 
@@ -103,20 +112,91 @@ integer_part :: proc "contextless" (item: module.Field) -> (part: Part, unit: st
 	return .Number, ""
 }
 
-// cell_of gives the text of one field of a record. The text of a number is
-// in buffer; the text of a Text field is in the record.
-cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> Cell {
-	// A byte that names no type: the check of the description refused it,
-	// and the cell is empty.
+// field_at_the_right says if the values of a field are at the right of
+// their column: the digits of an Integer, of a hexadecimal Integer and of
+// a handle. A status is a name, and a module name and a hash are at the
+// left as a text is.
+field_at_the_right :: proc "contextless" (item: module.Field) -> bool {
 	type, type_ok := module.field_type(item)
-	if !type_ok {
+	kind, kind_ok := module.field_kind(item)
+	if !type_ok || !kind_ok {
+		return false
+	}
+	switch type {
+	case .Integer:
+		return kind == .Plain || kind == .Hexadecimal
+	case .Handle:
+		return true
+	case .None, .Text, .Record, .Table, .Bytes:
+	}
+	return false
+}
+
+// hexadecimal_text writes "0x" and two hexadecimal digits for each byte of
+// a field of size bytes, in buffer: the width of the text says the size.
+hexadecimal_text :: proc "contextless" (buffer: []u8, value: u64, size: u32) -> string {
+	writer := sentence.Writer {
+		buffer = buffer,
+	}
+	sentence.write_part(&writer, "0x")
+	sentence.write_hex(&writer, value, 2 * int(size))
+	return sentence.written(&writer)
+}
+
+// hash_text writes two hexadecimal digits for each byte of a hash, the
+// first byte first, in buffer. A hash that the buffer cannot hold whole
+// gives "": a hash is never cut.
+hash_text :: proc "contextless" (buffer: []u8, bytes: []u8) -> string {
+	if 2 * len(bytes) > len(buffer) {
+		return ""
+	}
+	digits := sentence.HEX_DIGITS
+	for value, index in bytes {
+		buffer[2 * index] = digits[value >> 4]
+		buffer[2 * index + 1] = digits[value & 0xF]
+	}
+	return string(buffer[:2 * len(bytes)])
+}
+
+// cell_of gives the text of one field of a record, by its type and its
+// field kind. The text of a number, of a status of a word that names no
+// member and of a hash is in buffer, of CELL_TEXT_CAPACITY bytes; the text
+// of a Text field is in the record, and the name of a status in the
+// contract.
+cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> Cell {
+	// A byte that names no type or no kind: the check of the description
+	// refused it, and the cell is empty.
+	type, type_ok := module.field_type(item)
+	kind, kind_ok := module.field_kind(item)
+	if !type_ok || !kind_ok {
 		return {}
 	}
 	switch type {
-	case .None, .Record, .Table, .Bytes:
+	case .None, .Record, .Table:
 		// A record holds no such field (module.field_size): an empty cell.
+	case .Bytes:
+		// A Bytes field is a hash (module.field_kind_valid).
+		bytes := module.field_bytes(row, item)
+		if kind != .Hash || bytes == nil {
+			return {}
+		}
+		return {text = hash_text(buffer, bytes), part = .Version}
 	case .Integer:
 		value := module.field_integer(row, item)
+		switch kind {
+		case .Hexadecimal:
+			return {text = hexadecimal_text(buffer, u64(value), module.field_size(item)), number = true, part = .Number}
+		case .Status:
+			which, which_ok := module.field_contract_enum(item)
+			if name, named := op.contract_enum_member_name(which, u64(value)); which_ok && named {
+				return {text = name, part = .Status}
+			}
+			// A word that names no member: its number, never the name of
+			// another member.
+			return {text = sentence.format(buffer, u64(value)), part = .Number}
+		case .Plain, .Module_Name, .Hash:
+			// module.field_kind_valid refuses the two last on an Integer.
+		}
 		part, unit := integer_part(item)
 		if item.unsigned && module.field_size(item) == 8 {
 			return {text = sentence.format(buffer, u64(value)), number = true, part = part, unit = unit}
@@ -131,7 +211,7 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 		}
 		return {text = sentence.format(buffer, handle), number = true, part = .Handle}
 	case .Text:
-		return {text = module.field_text(row, item), part = .Plain}
+		return {text = module.field_text(row, item), part = kind == .Module_Name ? Part.Module : Part.Plain}
 	}
 	return {}
 }
@@ -246,7 +326,7 @@ draw_record :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: 
 			continue
 		}
 		name := module.string_at(file, item.name_offset, item.name_count)
-		buffer: [24]u8
+		buffer: [CELL_TEXT_CAPACITY]u8
 		cell := cell_of(bytes, item, buffer[:])
 		blanks(sink, COLUMN_GAP)
 		sink.write(sink, name, .Label)
@@ -295,7 +375,7 @@ draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: [
 	for index in 0 ..< shown {
 		row := bytes[index * size:][:size]
 		for number in 0 ..< field_count {
-			buffer: [24]u8
+			buffer: [CELL_TEXT_CAPACITY]u8
 			widths[number] = max(widths[number], len(cell_of(row, items[number], buffer[:]).text))
 		}
 	}
@@ -306,13 +386,13 @@ draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: [
 	sink.continuation = last_start <= CONTINUATION_MOST ? last_start : COLUMN_GAP
 	for number in 0 ..< field_count {
 		name := module.string_at(file, items[number].name_offset, items[number].name_count)
-		head_write(sink, name, units[number], widths[number], items[number].type != u8(module.Type.Text), number == field_count - 1)
+		head_write(sink, name, units[number], widths[number], field_at_the_right(items[number]), number == field_count - 1)
 	}
 	sink.end_line(sink)
 	for index in 0 ..< shown {
 		row := bytes[index * size:][:size]
 		for number in 0 ..< field_count {
-			buffer: [24]u8
+			buffer: [CELL_TEXT_CAPACITY]u8
 			cell := cell_of(row, items[number], buffer[:])
 			cell_write(sink, cell.text, widths[number], cell.number, number == field_count - 1, cell.part)
 		}

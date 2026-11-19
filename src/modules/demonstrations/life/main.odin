@@ -150,13 +150,13 @@ board_draw :: proc "contextless" () {
 // pointer of the window, takes one step when the time of the next step
 // came and the game is not paused, and draws the board when a cell
 // changed. It then waits for an event, a call, or the next step (with no
-// end while paused). With no window, it stops with the code 1.
+// end while paused). With no window, it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	window, ok := display.open(ctx, COLUMNS * CELL, ROWS * CELL, "life")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	board = {pixels = raw_data(board_pixels[:]), width = COLUMNS * CELL, height = ROWS * CELL, stride = COLUMNS * CELL}
 	picture_memories[0] = board_pixels[:]
@@ -203,7 +203,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.draw_picture(frame.table, 0, 0, board, board_generation)
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		if !logged {
-			system.log("life: ok")
+			system.log(.Info, "life: ok")
 			logged = true
 		}
 		wait: system.Wait

@@ -31,6 +31,8 @@ expected_fields :: proc() -> []Expected_Field {
 	field: module.Field
 	documentation: module.Documentation
 	budget: module.Budget_Request
+	fact: module.Fact
+	own_hash_place: module.Own_Hash_Place
 	draw: draw_record.Draw_Record
 	rectangle: draw_record.Rectangle_Fields
 	gradient: draw_record.Gradient_Fields
@@ -99,10 +101,20 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Field", "unsigned", offset_of(module.Field, unsigned), size_of(field.unsigned)},
 		{"module.Field", "integer_unit", offset_of(module.Field, integer_unit), size_of(field.integer_unit)},
 		{"module.Field", "detail", offset_of(module.Field, detail), size_of(field.detail)},
+		{"module.Field", "kind", offset_of(module.Field, kind), size_of(field.kind)},
+		{"module.Field", "contract_enum", offset_of(module.Field, contract_enum), size_of(field.contract_enum)},
 		{"module.Field", "reserved", offset_of(module.Field, reserved), size_of(field.reserved)},
 		{"module.Budget_Request", "pages", offset_of(module.Budget_Request, pages), size_of(budget.pages)},
 		{"module.Budget_Request", "processes", offset_of(module.Budget_Request, processes), size_of(budget.processes)},
 		{"module.Budget_Request", "threads", offset_of(module.Budget_Request, threads), size_of(budget.threads)},
+		{"module.Fact", "key", offset_of(module.Fact, key), size_of(fact.key)},
+		{"module.Fact", "record", offset_of(module.Fact, record), size_of(fact.record)},
+		{"module.Fact", "template_offset", offset_of(module.Fact, template_offset), size_of(fact.template_offset)},
+		{"module.Fact", "template_count", offset_of(module.Fact, template_count), size_of(fact.template_count)},
+		{"module.Fact", "package_offset", offset_of(module.Fact, package_offset), size_of(fact.package_offset)},
+		{"module.Fact", "package_count", offset_of(module.Fact, package_count), size_of(fact.package_count)},
+		{"module.Fact", "reserved", offset_of(module.Fact, reserved), size_of(fact.reserved)},
+		{"module.Own_Hash_Place", "memory_offset", offset_of(module.Own_Hash_Place, memory_offset), size_of(own_hash_place.memory_offset)},
 		{"draw_record.Draw_Record", "kind", offset_of(draw_record.Draw_Record, kind), size_of(draw.kind)},
 		{"draw_record.Draw_Record", "reserved", offset_of(draw_record.Draw_Record, reserved), size_of(draw.reserved)},
 		{"draw_record.Draw_Record", "element", offset_of(draw_record.Draw_Record, element), size_of(draw.element)},

@@ -791,7 +791,7 @@ played_line_write :: proc "contextless" () {
 			// Not the start of the line of an asked animation: a reader
 			// of the log that waits for "dash played: " must not take
 			// a dash of the own order for the dash that it asked for.
-			system.log("heron: ", name, " played in its own order: ", frames, " frames")
+			system.log(.Info, "heron: ", name, " played in its own order: ", frames, " frames")
 		}
 		return
 	}
@@ -813,13 +813,13 @@ played_line_write :: proc "contextless" () {
 	} else if asked_ways == u32(1) << u32(Move_Way.Free) {
 		ways = ", free"
 	}
-	system.log("heron: ", name, " played: ", frames, " frames", what, ways)
+	system.log(.Info, "heron: ", name, " played: ", frames, " frames", what, ways)
 	if measure_line_written || asked_pictures == 0 {
 		return
 	}
 	measure_line_written = true
 	mean := asked_draw_time / asked_pictures
-	system.log("heron: a picture of ", name, " took ", mean / 1000, ".", mean / 100 % 10, " us to draw and damaged ", asked_damage / asked_pictures, " pixels of the ", u64(WIDTH * HEIGHT), " of the window, the means of ", asked_pictures, " pictures (a measure)")
+	system.log(.Info, "heron: a picture of ", name, " took ", mean / 1000, ".", mean / 100 % 10, " us to draw and damaged ", asked_damage / asked_pictures, " pixels of the ", u64(WIDTH * HEIGHT), " of the window, the means of ", asked_pictures, " pictures (a measure)")
 }
 
 // shows_line_write writes the line of what the window shows, after a
@@ -831,17 +831,17 @@ played_line_write :: proc "contextless" () {
 shows_line_write :: proc "contextless" () {
 	lines := lines_shown ? "shown" : "hidden"
 	if state != .Animation {
-		system.log("heron: shows the still heron, ", way_text(shown.way), "; the lines of the cells ", lines)
+		system.log(.Info, "heron: shows the still heron, ", way_text(shown.way), "; the lines of the cells ", lines)
 		return
 	}
 	held := paused ? ", held" : ""
 	changed := u64(changed_cells())
 	if shown.way == .On_The_Grid {
 		side := shown.cells_right < 0 ? " cells to the left and " : " cells to the right and "
-		system.log("heron: shows ", mark.animation_names[animation], " at frame ", u64(frame_now()), " of ", u64(mark.animation_frame_count(animation)), held, ", on the grid: the form ", mark.form_names[shown.form], ", ", u64(abs(shown.cells_right)), side, u64(max(shown.cells_up, 0)), " up; the lines of the cells ", lines, "; ", changed, " cells of the frame differ from the still heron")
+		system.log(.Info, "heron: shows ", mark.animation_names[animation], " at frame ", u64(frame_now()), " of ", u64(mark.animation_frame_count(animation)), held, ", on the grid: the form ", mark.form_names[shown.form], ", ", u64(abs(shown.cells_right)), side, u64(max(shown.cells_up, 0)), " up; the lines of the cells ", lines, "; ", changed, " cells of the frame differ from the still heron")
 		return
 	}
-	system.log("heron: shows ", mark.animation_names[animation], " at frame ", u64(frame_now()), " of ", u64(mark.animation_frame_count(animation)), held, ", free: the frame stretched to ", u64(max(shown.body.right - shown.body.left, 0)), " by ", u64(max(shown.body.bottom - shown.body.top, 0)), " pixels; the lines of the cells ", lines, "; ", changed, " cells of the frame differ from the still heron")
+	system.log(.Info, "heron: shows ", mark.animation_names[animation], " at frame ", u64(frame_now()), " of ", u64(mark.animation_frame_count(animation)), held, ", free: the frame stretched to ", u64(max(shown.body.right - shown.body.left, 0)), " by ", u64(max(shown.body.bottom - shown.body.top, 0)), " pixels; the lines of the cells ", lines, "; ", changed, " cells of the frame differ from the still heron")
 }
 
 // entry opens the window and plays the animations until the process is
@@ -853,13 +853,13 @@ shows_line_write :: proc "contextless" () {
 // each tile of the stage, then the band. The interface package draws again
 // only the tiles and the texts that changed. The loop then waits for a key,
 // a call, the next picture of an animation, or the end of the still time
-// (with no end while paused). With no random seed or no window, it stops
-// with the code 1.
+// (with no end while paused). With no random seed, it stops with
+// `Refused`; with no window, with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("heron: no random seed in the context")
-		system.stop(1)
+		system.log(.Info, "heron: no random seed in the context")
+		system.stop(.Refused)
 	}
 	service, _ := system.service_open(ctx)
 	// The surface has two pictures, as each surface has: the process draws
@@ -867,7 +867,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// a damage rectangle that is cleared and does not hold the heron yet.
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "heron")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	stage = {pixels = raw_data(stage_pixels[:]), width = STAGE_WIDTH, height = STAGE_HEIGHT, stride = STAGE_WIDTH}
 	for &picture, index in pictures {
@@ -929,7 +929,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		if !logged {
-			system.log("heron: ok, the first picture is presented")
+			system.log(.Info, "heron: ok, the first picture is presented")
 			logged = true
 		}
 		if played_line_waits {
@@ -939,16 +939,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if pause_line_waits {
 			pause_line_waits = false
 			pause_line := paused ? "heron: paused" : "heron: plays again"
-			system.log(pause_line)
+			system.log(.Info, pause_line)
 		}
 		if speed_line_waits {
 			speed_line_waits = false
 			speed_line := slow ? "heron: slow" : "heron: full speed"
-			system.log(speed_line)
+			system.log(.Info, speed_line)
 		}
 		if cell_line_waits {
 			cell_line_waits = false
-			system.log("heron: cells of ", u64(cell_sizes[cell_size_index]), " pixels")
+			system.log(.Info, "heron: cells of ", u64(cell_sizes[cell_size_index]), " pixels")
 		}
 		if shows_line_waits {
 			shows_line_waits = false

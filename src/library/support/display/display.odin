@@ -465,7 +465,7 @@ picture_end :: proc "contextless" (window: ^Window) {
 		window.picture_count += 1
 		if count := window.picture_count; system.measure_run() && (count == 1 || count == 3 || count == PICTURES_MEASURED) {
 			mean := window.picture_time / count
-			system.log("display: ", string(window.title[:window.title_count]), " drew one picture in ", mean / 1000, ".", mean / 100 % 10, " us, the mean of ", count)
+			system.log(.Info, "display: ", string(window.title[:window.title_count]), " drew one picture in ", mean / 1000, ".", mean / 100 % 10, " us, the mean of ", count)
 		}
 	}
 	window.picture_started = 0
@@ -589,7 +589,7 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 	// test waits for this line before a picture of the new size.
 	if window.resized_picture_due {
 		window.resized_picture_due = false
-		system.log_in("processes", .Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.canvas.width), "x", u64(window.canvas.height), " after a resize")
+		system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.canvas.width), "x", u64(window.canvas.height), " after a resize")
 	}
 	return true
 }
@@ -686,7 +686,7 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 		}
 	}
 	if status != .Ok {
-		system.log_in("processes", .Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height))
+		system.log(.Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height))
 		// A full ring keeps the request: the next present declines it.
 		resize_decline(window)
 		return status
@@ -714,7 +714,7 @@ resize_decline :: proc "contextless" (window: ^Window) -> bool {
 		return false
 	}
 	window.resize_asked = false
-	system.log_in("processes", .Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
+	system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
 	return true
 }
 
@@ -810,7 +810,7 @@ canvas_wait :: proc "contextless" (window: ^Window) -> bool {
 	}
 	if !free {
 		window.compositor_late = true
-		system.log_in("processes", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor did not take a picture in ", u64(CANVAS_WAIT_BOUND_MILLISECONDS), " ms: this window draws no picture until it does")
+		system.log(.Warning, "display: ", string(window.title[:window.title_count]), ": the compositor did not take a picture in ", u64(CANVAS_WAIT_BOUND_MILLISECONDS), " ms: this window draws no picture until it does")
 	}
 	return free
 }
@@ -877,11 +877,11 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		record := system.receive(&window.ring.completions) or_return
 		read, read_ok := event_of_record(record)
 		if !read_ok {
-			system.log_in("processes", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor sent a record of the kind ", u64(record.kind), ", which names no event or has a size out of its range: it is refused")
+			system.log(.Warning, "display: ", string(window.title[:window.title_count]), ": the compositor sent a record of the kind ", u64(record.kind), ", which names no event or has a size out of its range: it is refused")
 			continue
 		}
 		if read.kind == .Settings_Changed {
-			text_settings_apply()
+			_ = text_settings_apply()
 		}
 		if read.kind == .Resized {
 			window.resize_asked = true
@@ -1007,12 +1007,12 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 	switch {
 	case problems.outlines.kind == .None:
 	case problems.outlines.kind == .Not_Mapped:
-		system.log_in("processes", .Warning, "display: no font outlines: the text is Spleen 8x16")
+		system.log(.Warning, "display: no font outlines: the text is Spleen 8x16")
 	case:
-		system.log_in("processes", .Warning, "display: the font outlines are refused: ", font_outlines.problem_sentences[problems.outlines.kind], ", value ", problems.outlines.value, ": the text is Spleen 8x16")
+		system.log(.Warning, "display: the font outlines are refused: ", font_outlines.problem_sentences[problems.outlines.kind], ", value ", problems.outlines.value, ": the text is Spleen 8x16")
 	}
 	if problems.fonts_missing != {} {
-		system.log_in("processes", .Warning, "display: the font outlines lack ", u64(card(problems.fonts_missing)), " fonts of the fallback chains, or the renderer refuses them: the chains skip them")
+		system.log(.Warning, "display: the font outlines lack ", u64(card(problems.fonts_missing)), " fonts of the fallback chains, or the renderer refuses them: the chains skip them")
 	}
 }
 
@@ -1044,7 +1044,7 @@ text_settings_load :: proc "contextless" (ctx: ^system.Context) -> (problems: Te
 	}
 	settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
 	problems.outlines, problems.fonts_missing = fallback_load(ctx)
-	text_settings_apply()
+	_ = text_settings_apply()
 	return problems, true
 }
 
@@ -1079,7 +1079,7 @@ interface_font_open :: proc "contextless" (ctx: ^system.Context) -> (font: Inter
 		return {}, false
 	}
 	if !interface_faces_opened() {
-		system.log_in("processes", .Warning, "display: the font outlines lack the interface font: the elements draw in the font of the cells")
+		system.log(.Warning, "display: the font outlines lack the interface font: the elements draw in the font of the cells")
 		return {}, false
 	}
 	return INTERFACE_FONT, true
@@ -1103,20 +1103,6 @@ interface_font_load :: proc "contextless" (ctx: ^system.Context) {
 // interface_font_of gives the interface font of this process, or nil.
 interface_font_of :: proc "contextless" () -> ^Interface_Font {
 	return process_interface_font_given ? &process_interface_font : nil
-}
-
-// appearance_apply gives the appearance in force of the settings page to
-// src/library/support/graphics. It gives true when the appearance changed:
-// the caller then draws its whole window, so that no picture shows two
-// appearances. With no page the process keeps the dark appearance.
-appearance_apply :: proc "contextless" () -> (changed: bool) {
-	if settings_page == nil {
-		return false
-	}
-	// A refused page gives the defaults: the process draws with them, as
-	// with a page that never stays stable.
-	choice, _ := settings.read(settings_page)
-	return appearance_of_choice_use(choice)
 }
 
 // appearance_of_choice_use makes the appearance in force of a choice the
@@ -1144,14 +1130,25 @@ cell_faces := [settings.Grid_Fit]text_rendering.Face {
 // private glyph cache keeps its glyphs: its key holds the face and the
 // size, and its words do not depend on the order of the stripes. A face
 // that the outlines lack draws nothing, and graphics draws in Spleen.
-text_settings_apply :: proc "contextless" () {
+//
+// It gives true when the font, the order of the stripes, a face or the
+// appearance changed: the caller then draws its whole window.
+// interface.window_frame_begin calls it at each frame, as the drawing
+// module does at each draw. The event Settings_Changed alone is not
+// enough: the compositor tells only the windows that have a surface, and a
+// window that read the page before the boot pass of `settings` and made
+// its surface after it gets no event, while its cells, which the drawing
+// module draws, follow the page.
+text_settings_apply :: proc "contextless" () -> (changed: bool) {
 	if settings_page == nil {
-		return
+		return false
 	}
 	// A refused page gives the defaults: the process draws with them, as
 	// with a page that never stays stable.
 	choice, _ := settings.read(settings_page)
-	_ = appearance_of_choice_use(choice)
+	state := &graphics.text_state
+	font_before, order_before, cells_before, bold_before := state.font, state.order, state.cell_face, state.bold_face
+	changed = appearance_of_choice_use(choice)
 	font := choice.font == .Spleen ? graphics.Text_Font.Spleen : graphics.Text_Font.Vector
 	graphics.text_faces_use(cell_faces[choice.grid_fit], .Cells_Bold)
 	order: graphics.Subpixel_Order
@@ -1164,4 +1161,6 @@ text_settings_apply :: proc "contextless" () {
 		order = .None
 	}
 	graphics.text_choice_set(font, order)
+	changed = changed || state.font != font_before || state.order != order_before || state.cell_face != cells_before || state.bold_face != bold_before
+	return changed
 }

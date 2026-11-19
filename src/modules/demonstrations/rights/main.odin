@@ -110,13 +110,13 @@ idle :: proc "c" (parameter: rawptr) -> ! {
 // writes the result, then shows the table until the principal closes the
 // window.
 //
-// With no window it stops with the code 1. Each operation is noted with
+// With no window it stops with `Failed`. Each operation is noted with
 // the status that the kernel gave and the status that it must give.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "rights")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine := ctx.handles[system.GRANT_MACHINE]
 	image := ctx.handles[system.GRANT_IMAGE]
@@ -162,7 +162,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for attempt in attempts[:attempt_count] {
 		if attempt.status != attempt.expected {
 			wrong += 1
-			system.log("rights: wrong answer: ", attempt.text, ": status ", u64(attempt.status))
+			system.log(.Info, "rights: wrong answer: ", attempt.text, ": status ", u64(attempt.status))
 		} else if attempt.status == .Ok {
 			allowed += 1
 		} else {
@@ -170,7 +170,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if wrong == 0 {
-		system.log("rights: ok, ", allowed, " allowed, ", refused, " refused")
+		system.log(.Info, "rights: ok, ", allowed, " allowed, ", refused, " refused")
 	}
 
 	for {

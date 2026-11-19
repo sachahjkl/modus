@@ -51,7 +51,7 @@ scenario_debugger := [?]Step {
 	{kind = .Wait, text = "debugged: a write of breakpoints on a thread of the caller, with no Debug handle: refused with Bad_Handle: as it must"},
 	{kind = .Wait, text = "debugged: a single step: one instruction ran, and the record names the step: as it must"},
 	{kind = .Wait, text = "debugged: a data breakpoint on a word that the child writes: the fault record names breakpoint 1: as it must"},
-	{kind = .Wait, text = "debugged: the breakpoints removed: the child resumed and ended with its own code: as it must"},
+	{kind = .Wait, text = "debugged: the breakpoints removed: the child resumed and stopped itself at its end: as it must"},
 	{kind = .Wait, text = "debugged: a detach while a thread is held: the child runs again: as it must"},
 	{kind = .Wait, text = "debugged: the debugger ended while the child was held at a breakpoint: the child runs again: as it must"},
 	{kind = .Wait, text = "debugged: the debugger closed its handle while the child was held at a breakpoint: the child runs again: as it must"},

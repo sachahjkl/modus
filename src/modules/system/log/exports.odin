@@ -9,7 +9,7 @@ import "base:intrinsics"
 
 // The log is also a service: records() gives the log records as a table of
 // records with typed fields, so that a reader checks the
-// process, the channel and the level of a record, not a line of text. The
+// process and the level of a record, not a line of text. The
 // serial port keeps the same records as lines: it works before any service
 // runs, and when the network does not.
 //
@@ -30,7 +30,7 @@ import "base:intrinsics"
 
 // One row of the log: records(). A row has 256 bytes, the most that a
 // record of a description has, and holds one log record: its text has the
-// 152 bytes of the text of a log record. A row says that its text goes on in
+// 168 bytes of the text of a log record. A row says that its text goes on in
 // the next row (continues), as a log record says that its text goes on in
 // the next log record (Log_Record.more).
 Record :: struct {
@@ -39,14 +39,13 @@ Record :: struct {
 	process:   [32]u8, // The name of the process, or "kernel".
 	slot:      i64, // The slot of the process. 0: the kernel.
 	level:     [8]u8, // info, debug, warning or error.
-	channel:   [16]u8, // Empty: the process gave no channel.
 	lost:      i64, // The first row only: the log records after `after` that the kernel wrote over before this call read them.
 	continues: i64, // 1: the text goes on in the next row.
 	runs:      i64, // The count of the value runs of the text: value_runs() gives them.
-	text:      [152]u8, // op.LOG_TEXT_CAPACITY: the tool that reads the descriptions needs the number.
+	text:      [168]u8, // op.LOG_TEXT_CAPACITY: the tool that reads the descriptions needs the number.
 }
 #assert(size_of(Record) == 256)
-#assert(op.LOG_TEXT_CAPACITY == 152)
+#assert(op.LOG_TEXT_CAPACITY == 168)
 
 // One value run of a log record: value_runs(). It says that the bytes start ..<
 // start + length of the text of the record `number` are a value of the
@@ -102,7 +101,6 @@ row_fill :: proc "contextless" (row: ^Record, number: i64, record: ^op.Log_Recor
 	if record.level <= max(system.Log_Level) {
 		copy(row.level[:], level_names[record.level])
 	}
-	copy(row.channel[:], system.name_of(record.channel[:]))
 	copy(row.text[:], record.text[:text_count])
 	row.continues = record.more != 0 ? 1 : 0
 	row.runs = i64(min(int(record.run_count), len(record.runs)))
@@ -168,18 +166,18 @@ scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^err
 	}
 	// The lent handle keeps the slot of the process for the whole call, so
 	// the slot and the serial name that process, also after it stopped.
-	results, status := system.call(.Process_State, u64(process))
+	slot, serial, status := system.process_place(process)
 	if status != .Ok {
 		errors.fail(error, ERROR, .Refused, .None, LENT_PROCESS_ARGUMENT, 0, 0, i64(status))
 		return {}, false
 	}
-	return log_scope.lent_process_scope(results[3], results[4]), true
+	return log_scope.lent_process_scope(slot, serial), true
 }
 
-// records gives the log records of the log scope of the caller from the number `after` on, one row each: the number, the time in microseconds, the process and its slot, the level, the channel, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows of the scope from `after` to the last record.
+// records gives the log records of the log scope of the caller from the number `after` on, one row each: the number, the time in microseconds, the process and its slot, the level, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows of the scope from `after` to the last record.
 //
-// **What it is for.** A reader of the log checks the process, the channel
-// and the level of a record as fields, not by a search in a line of text.
+// **What it is for.** A reader of the log checks the process and the level
+// of a record as fields, not by a search in a line of text.
 // The machine test reads the log this way, through the remote service. A
 // process reads its own records back, with their times, levels and value
 // runs.
@@ -191,10 +189,9 @@ scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^err
 // log, or for a reader of its own records its own number: the count of the
 // records of its process before it; `time`, microseconds since the start of the machine; `process`, its
 // name or `kernel`; `slot`, its process slot, 0 for the kernel; `level`,
-// `info`, `debug`, `warning` or `error`; `channel`, empty when the process
-// gave none; `lost`, in the first row only; `continues`, 1 when the text
-// goes on in the next row; `runs`, the count of its value runs; `text`, at
-// most 152 bytes.
+// `info`, `debug`, `warning` or `error`; `lost`, in the first row only;
+// `continues`, 1 when the text goes on in the next row; `runs`, the count of
+// its value runs; `text`, at most 168 bytes.
 //
 // **The result** counts the rows of the scope from `after` to the last
 // record, also the ones that do not fit in the table of the caller: a
@@ -374,6 +371,94 @@ value_runs_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, r
 			continue
 		}
 		runs_add(i64(record.sequence), &record, result, &total, &count)
+	}
+	return i64(total)
+}
+
+// One log fact of the log: fact_records(). The row of `records` with the
+// same number holds its head; a row there has no room for these fields. The
+// fields are the bytes of the record as the kernel wrote them: the service
+// renders nothing (src/md/features/log_facts.md, "The reader path").
+Fact_Row :: struct {
+	number:      i64, // The number of the log record, as in records().
+	form:        i64, // The byte of the record form: 1, Fact, for each row.
+	continues:   i64, // The byte `more` of the record: 0 for a fact.
+	key:         value_kinds.Hexadecimal_64, // The fact key that the writer gave.
+	module_hash: value_kinds.Hash_Field, // The module hash that the writer gave: its own-hash place.
+	value_count: i64, // The value bytes of the fact, as the kernel counted them from the length.
+	reserved:    value_kinds.Hexadecimal_64, // The 6 reserved bytes of the fact, as a number: 0, which the kernel writes.
+	values_head: value_kinds.Hexadecimal_64, // The first 8 value bytes, as a number in the order of memory.
+}
+#assert(size_of(Fact_Row) == 88)
+
+// fact_row_add adds the row of a record of the form Fact, and counts each
+// such record, also the ones that do not fit in the result. A record of
+// another form, and a byte that names no form, give no row.
+fact_row_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result: ^[]Fact_Row, total: ^int, count: ^int) {
+	if form, known := op.log_record_form(record); !known || form != .Fact {
+		return
+	}
+	total^ += 1
+	if count^ >= len(result^) {
+		return
+	}
+	fact := op.log_record_fact(record)
+	row := &result[count^]
+	row^ = {number = number, form = i64(record.form), continues = i64(record.more), key = value_kinds.Hexadecimal_64(fact.key), value_count = i64(fact.value_count)}
+	copy(row.module_hash[:], fact.module_hash[:])
+	reserved, values_head: u64
+	for value, index in fact.reserved {
+		reserved |= u64(value) << (8 * u64(index))
+	}
+	for index in 0 ..< 8 {
+		values_head |= u64(fact.values[index]) << (8 * u64(index))
+	}
+	row.reserved, row.values_head = value_kinds.Hexadecimal_64(reserved), value_kinds.Hexadecimal_64(values_head)
+	count^ += 1
+}
+
+// fact_records gives the log facts of the log scope of the caller from the number `after` on, one row each, with the bytes that its writer gave: the record form, the fact key, the module hash, the count of the value bytes, the reserved bytes and the first value bytes. The result is the count of the facts of the scope from `after` to the last record.
+//
+// **What it is for.** A log fact is a record with no text: its row in
+// `records` has its number, its time, its process and its level, and an
+// empty text. A reader joins these rows to the rows of `records` by
+// `number`. `log_reader` checks with them what the kernel wrote for each
+// fact that it gave to `Log`.
+//
+// **Parameter**: `after`, the number of the first record, as for
+// `records`.
+//
+// **A row** (`Fact_Row`): `number`, the record; `form`, the byte of its
+// record form; `continues`, its byte `more`; `key`; `module_hash`;
+// `value_count`; `reserved`; `values_head`, the first 8 value bytes.
+//
+// **Grant**: the [log scope](term:log-scope) of the connection, as for
+// `records`.
+//
+// ```
+// connect("log")
+// join(log.records(0), log.fact_records(0), "number")
+// ```
+@(export, link_name = "fact_records")
+fact_records :: proc "c" (after: i64, result: ^[]Fact_Row) -> i64 {
+	scope := caller_scope()
+	total := 0
+	count := 0
+	if !scope.whole_log {
+		own, _, _ := own_records_read(scope, after)
+		for &record in own {
+			fact_row_add(i64(record.own_number), &record, result, &total, &count)
+		}
+		return i64(total)
+	}
+	written := intrinsics.atomic_load(&reader_head.written)
+	next, _ := op.log_first_kept(u64(max(after, 0)), written)
+	for ; next < written; next += 1 {
+		record, whole := record_copy(next)
+		if !whole {
+			continue
+		}
+		fact_row_add(i64(record.sequence), &record, result, &total, &count)
 	}
 	return i64(total)
 }

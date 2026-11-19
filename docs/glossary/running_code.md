@@ -24,21 +24,21 @@ Do not use: process ID, PID, process number, program number.
 
 A stop cause is the fact that the kernel records of who or what stopped a process (`op.Stop_Cause`): the process itself, a holder of its process handle, a fault, the end of its last thread or the close of its last handle.
 
-No process can forge it: the kernel decides it at each stop, and the first stop keeps it. A holder with Read reads it with `Process_State`. It names no other process. For a fault, the vector and the stack trace are in the stop report. It is not the stop outcome, which the process chooses. Example: the console writes "the process calendar stopped: a fault, page fault".
+No process can forge it: the kernel decides it at each stop, and the first stop keeps it. A holder with Read reads it with `Process_State`, and `monitor.processes()` shows it in its column `cause`. It names no other process. For a fault, the vector and the stack trace are in the stop report. It is not the stop outcome, which the process chooses. Example: the console writes "the process calendar stopped: a fault, page fault".
 
 The design: `src/md/api/process_stop.md`.
 
-Do not use: exit reason, termination reason, signal.
+Do not use: exit reason, termination reason, signal, stop code.
 
 ### Stop outcome
 
 A stop outcome is what a process says about its work when it stops itself (`op.Stop_Outcome`): done, failed, refused, or stopped on request.
 
-The process passes it to `system.stop`, as in `system.stop(.Done)`. The kernel records it only with the stop cause `Itself`, and refuses an outcome from a holder, so `outcome == .Done` alone checks a clean stop. It is a claim of the process about itself, not a proof of its work. A failed stop gives its reason in the log; later, in an error record.
+The process passes it to `system.stop`, as in `system.stop(.Done)`. The kernel records it only with the stop cause `Itself`, and refuses an outcome from a holder, so `outcome == .Done` alone checks a clean stop. `monitor.processes()` shows it in its column `outcome`, and a start policy starts no row again after `Done` or `Refused`. It is a claim of the process about itself, not a proof of its work. A failed stop gives its reason in the log.
 
 The design: `src/md/api/process_stop.md`.
 
-Do not use: exit code, exit status, return code.
+Do not use: exit code, exit status, return code, stop code.
 
 ### Thread
 
@@ -364,13 +364,13 @@ Do not use: negative test, lkdtm.
 
 ### Log record
 
-A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a process (its name, its process slot and its process serial), the own number of the record among the records of its process, a thread, a level, a channel, a text and the value runs of the text.
+A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a process (its name, its process slot and its process serial), the own number of the record among the records of its process, a thread, a level, its record form, and then a text with its value runs or one log fact.
 
-A process writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the process and the thread, so a process cannot write a record in the name of another one. A long text continues in the next record. The log service serves the records as a table, `log.records(after)`, to each caller in its log scope. It is not a line of the serial port, which the serial writer prints from the record.
+A process writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the process and the thread, so no process writes in the name of another. A reader chooses records by process and by level. A long text continues in the next record. The log service serves the records as a table, `log.records(after)`, to each caller in its log scope. It is not a line of the serial port, which the serial writer prints from the record.
 
 The design: `docs/TOOLS.md`, "The log".
 
-Do not use: log line, message.
+Do not use: log line, message, log channel, facility, category, logger.
 
 ### Serial writer
 
@@ -432,6 +432,26 @@ The design: `src/md/features/log_facts.md`.
 
 Do not use: event table, message catalog, log schema.
 
+### Record form
+
+A record form is what the bytes of a log record after the name of its process hold: a text with its value runs (`Text`), or one log fact (`Fact`).
+
+It is one byte of the head of the record, `op.Log_Record_Form`, which the kernel writes from the last argument of `Log`. A reader takes the byte through one border, which refuses a byte that names no form: it then shows the head of the record only. A zero record is a text record. A new form is a new member of the enum, so the record has no version number.
+
+The design: `src/md/features/log_facts.md`, "The record".
+
+Do not use: log format, record variant.
+
+### Own-hash place
+
+The own-hash place is 32 bytes in the writable data of a module where each loader writes the hash of the module file before the first instruction.
+
+A module file cannot hold its own hash, and the kernel does not know which module of a process calls `Log`. So the module file names the place in its table `Own_Hash`, and `system.log_fact` copies those bytes into each log fact. The loader of the support package `system` writes it for each module that it loads, the kernel for the root service. A place of zero names no module. The hash is a claim of the writer, as the fact key is.
+
+The design: `src/md/features/log_facts.md`, "The record".
+
+Do not use: self hash, module identity place.
+
 ### Integer unit
 
 An integer unit is what an Integer parameter of a command or of an export, or an Integer field of a record, counts: a value kind, Size or Time, and one unit of that kind, such as pages or milliseconds.
@@ -442,6 +462,26 @@ The design: `src/md/features/palette.md`, "The form of an entry, from its descri
 
 Do not use: dimension, measure (for this).
 
+### Field kind
+
+A field kind is how a reader writes the value of one field of a record description: Plain, Hexadecimal, Status, Module_Name or Hash.
+
+The source states it with a type of the contract: `value_kinds.Hexadecimal_32`, a contract enum such as `operation.Log_Level`, `value_kinds.Module_Name_Field`, `value_kinds.Hash_Field`. The describe tool writes it in the field, and each reader takes its byte through one border that refuses a byte that names no kind. A reader writes a hexadecimal Integer after `0x`, a Status by the name of its member, a hash in hexadecimal, and gives each the color of its value kind. It is not an integer unit, which says what an Integer counts.
+
+The design: `src/md/features/console_value_colors.md`. The format: `docs/MODULE_CONTRACT.md`, "The kind of a field".
+
+Do not use: field format, display hint, field style.
+
+### Contract enum
+
+A contract enum is an enumeration of the contract whose members a field of the kind Status holds, named in the closed list `value_kinds.Contract_Enum`: `Status` and `Log_Level`.
+
+Each reader compiles the contract in, so it writes the name of a member from the word of the field (`operation.contract_enum_member_name`), and writes the number of a word that names no member, never another name. An enumeration of a module is no contract enum: the module file holds no names of its members, so its field stays a plain Integer. A new contract enum is a new member of the list, with its names in the contract.
+
+The design: `src/md/features/console_value_colors.md`.
+
+Do not use: status type, named enum, enum table.
+
 ### Cut mark
 
 A cut mark is the end of a text that a place of a fixed size does not hold: the start of the text, cut after a whole character, then "... and N bytes more" (`modus:contract/cut_mark`).
@@ -451,14 +491,6 @@ N counts each byte that the place does not hold, so the reader knows what is mis
 The rule: `docs/ARCHITECTURE.md`, "A text is never cut in silence".
 
 Do not use: ellipsis, truncation, "..." (alone).
-
-### Channel
-
-A channel is the short name of 16 bytes at most that a process gives to a log record, to group the records of one subject.
-
-A record with no channel has 16 zero bytes there. A reader of the log, such as the step `Record` of the machine test, chooses records by process, channel and level.
-
-Do not use: facility, tag, category, logger.
 
 ### Level
 
@@ -502,7 +534,7 @@ Do not use: per-program buffer, log buffer, log mailbox.
 
 The log scope of a connection to the log service is the set of log records that its caller receives from `log.records(after)` and `log.value_runs(after)`: the whole log, or its own records.
 
-The root service writes it in the grant of the connection, and the log service chooses the records; the reader never maps the memory of the log. A caller that acts for the principal, such as the console, receives the whole log; each other caller receives its own records. A starter reads the records of a child with `log.process_records(process, after)`, where it lends the process handle of the child. A log scope never names a channel, because the writer chooses a channel.
+The root service writes it in the grant of the connection, and the log service chooses the records; the reader never maps the memory of the log. A caller that acts for the principal, such as the console, receives the whole log; each other caller receives its own records. A starter reads the records of a child with `log.process_records(process, after)`, where it lends the process handle of the child.
 
 The design: `src/md/features/log_reader_scope.md`.
 

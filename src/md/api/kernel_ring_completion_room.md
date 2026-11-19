@@ -67,13 +67,13 @@ A process that asks to stop must stop, whatever its kernel ring holds. `system.s
 The chosen form, in rounds:
 
 1. Drop each completion that waits. The process ends, so no answer is wanted.
-2. If the ring is empty, send `Process_Stop` with the code of the process through `command_call`.
+2. If the ring is empty, send `Process_Stop` with the stop outcome of the process through `command_call`.
 3. Else enter the kernel with no deadline, so that the held commands run, and go back to 1.
 4. Stop the process by a fault when the ring does not empty: after a number of rounds equal to the capacity of the ring, or at once when a completion stays after the drop. A completion stays only when the process wrote false counters, and no entry changes them.
 
 The bound is a count, never a time. With room in the completion queue, each entry runs at least one held command, so an honest ring is empty after at most one round for each place.
 
-**The fault.** `stop` writes to the time page. A process can only read that page, so the write is a page fault at an address at or above `THREAD_AREA_BASE`. The kernel never gives a fault at such an address to a fault handler or a debugger, so it stops the process at once. It writes its report and one line of the log, with the stop code of a page fault (`STOP_CODE_FAULT` plus the vector 14). The same fault ends the process when `Process_Stop` itself is refused.
+**The fault.** `stop` writes to the time page. A process can only read that page, so the write is a page fault at an address at or above `THREAD_AREA_BASE`. The kernel never gives a fault at such an address to a fault handler or a debugger, so it stops the process at once. It writes its report and one line of the log, with the stop cause `Fault` and the vector 14 in the report. The same fault ends the process when `Process_Stop` itself is refused.
 
 The refused forms:
 
@@ -83,7 +83,7 @@ The refused forms:
 - **A new kernel operation, or a stop with no ring.** The kernel has one entry, through the ring, and its operations are counted. The fault already ends a process, with no change of the kernel.
 - **A wait with a time as the bound.** A test would then depend on the speed of the machine, and a time is no proof that the ring cannot empty.
 
-The decision of each round is a pure procedure (`stop_step`), which the host tests. The machine case is the child of the process `errors`: it fills its completion queue, holds one command, and stops with its own code. Its starter reads that code with `Process_State`.
+The decision of each round is a pure procedure (`stop_step`), which the host tests. The machine case is the child of the process `errors`: it fills its completion queue, holds one command, and stops itself with `Done`. Its starter checks with `system.process_stop_wait` that the stop outcome is `Done`, which comes only with the stop cause `Itself`: a stop by the fault of the time page would give `Fault` and no outcome.
 
 ## State
 

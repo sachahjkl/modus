@@ -325,16 +325,16 @@ weigh :: proc "c" (first, second, third, fourth, fifth, sixth, seventh, eighth: 
 // An export needs nothing from the entry.
 //
 // The entry opens the service ring; with none it writes "sample: no service
-// ring" and stops with the code 1. It writes "sample: serves its exports",
+// ring" and stops with `Refused`. It writes "sample: serves its exports",
 // then waits for calls and runs them for ever. It has no window.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, ok := system.service_open(ctx)
 	if !ok {
-		system.log("sample: no service ring")
-		system.stop(1)
+		system.log(.Info, "sample: no service ring")
+		system.stop(.Refused)
 	}
-	system.log("sample: serves its exports")
+	system.log(.Info, "sample: serves its exports")
 	for {
 		wait: system.Wait
 		system.service_wait(&wait, &service)

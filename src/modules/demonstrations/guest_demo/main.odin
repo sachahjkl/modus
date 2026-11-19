@@ -70,10 +70,10 @@ DEBUG_EXCEPTION_EXIT_CODE :: 0x88 // The exit of the instruction int1 (icebp).
 INTERRUPTED_RUNS_LIMIT :: 1000
 
 // fail writes the line of a failure, which starts with "guest_demo:
-// failed: ", and stops the process with the code 1.
+// failed: ", and stops the process with `Failed`.
 fail :: proc "contextless" (parts: ..system.Part) -> ! {
-	system.log(..parts)
-	system.stop(1)
+	system.log(.Info, ..parts)
+	system.stop(.Failed)
 }
 
 @(export, link_name = "entry")
@@ -113,9 +113,9 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 		error: errors.Error_Record
 		exit, run_status := system.guest_run(guest, &registers, &error)
 		if run_status == .Bad_Operation && error.kind == i64(errors.Kind.Unsupported) {
-			system.log("guest_demo: Guest_Run gave Bad_Operation with the error kind Unsupported: the processors of this machine have no virtualization support that the kernel uses, and no guest runs: as it must")
-			system.log("guest_demo: ok")
-			system.stop(0)
+			system.log(.Info, "guest_demo: Guest_Run gave Bad_Operation with the error kind Unsupported: the processors of this machine have no virtualization support that the kernel uses, and no guest runs: as it must")
+			system.log(.Info, "guest_demo: ok")
+			system.stop(.Done)
 		}
 		if run_status != .Ok {
 			fail("guest_demo: failed: Guest_Run gave ", run_status)
@@ -145,7 +145,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	if writes != 1 || written_port != PORT || written_value != VALUE {
 		fail("guest_demo: failed: the guest wrote ", writes, " times, the last ", written_value, " to the port ", written_port)
 	}
-	system.log("guest_demo: the guest wrote 42 to the port 0x80, then halted after it: as it must")
+	system.log(.Info, "guest_demo: the guest wrote 42 to the port 0x80, then halted after it: as it must")
 
 	// A debug exception of the guest exits: a guest whose delivery of it
 	// raised it again would hold the processor for ever.
@@ -168,13 +168,13 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 		}
 		break
 	}
-	system.log("guest_demo: the int1 of the guest arrived as an exit Other with the exit code 0x88: as it must")
+	system.log(.Info, "guest_demo: the int1 of the guest arrived as an exit Other with the exit code 0x88: as it must")
 
 	// A guest has no kernel half in its page table: no thread runs on it.
 	if _, start_status := system.call(.Process_Start, u64(guest), CODE_ADDRESS, op.STACK_TOP, op.CONTEXT_ADDRESS); start_status != .Bad_State {
 		fail("guest_demo: failed: Process_Start of the guest gave ", start_status, ", not Bad_State")
 	}
-	system.log("guest_demo: Process_Start of the guest gave Bad_State: as it must")
-	system.log("guest_demo: ok")
-	system.stop(0)
+	system.log(.Info, "guest_demo: Process_Start of the guest gave Bad_State: as it must")
+	system.log(.Info, "guest_demo: ok")
+	system.stop(.Done)
 }

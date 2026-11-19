@@ -53,10 +53,10 @@ system.log_fact(.Warning, Bad_Block{block = number, check = found, expected = wa
 - **The compiler holds two refusals.** The procedure has the clause `where !intrinsics.type_struct_has_implicit_padding(T) && size_of(T) <= op.LOG_FACT_VALUE_CAPACITY`, so a record with padding or too large fails at the compile of the call, before the tool runs.
 - **The tool holds the rest.** It refuses a call whose value is not a composite literal of a named type, because it has no type checker. It refuses the named type of a call when that type has no attribute `log_fact`. And it refuses the attribute on a declaration that is not a record type of the package scope.
 - **One fact type for one record type.** The template is on the type, so a record type has one template. The fact name for a reader is the package name and the type name: `storage.Bad_Block`.
-- **The kinds of the fields** come from the distinct types of `modus:contract/value_kinds`, as for an export ([console_value_colors.md](console_value_colors.md)). This design adds the kinds that the log uses today and a record description lacks: a hexadecimal Integer, a status of a contract enum (the reader writes the name of the member), a module name as a Text field, and a hash as a fixed array of bytes that the reader writes in hexadecimal. It gives the source form that [console_value_colors.md](console_value_colors.md) left open for "A kind for a Text field", and that file changes in the same commit as the code.
+- **The kinds of the fields** come from the distinct types of `modus:contract/value_kinds`, as for an export ([console_value_colors.md](console_value_colors.md)). This design adds the kinds that the log uses today and a record description lacked, as the field kind (`value_kinds.Field_Kind`): a hexadecimal Integer (`value_kinds.Hexadecimal_32` and the other sizes), a status of a contract enum (the field has the type of the enum, `operation.Log_Level`, and the reader writes the name of the member), a module name as a Text field (`value_kinds.Module_Name_Field`), and a hash as a fixed array of bytes that the reader writes in hexadecimal (`value_kinds.Hash_Field`, a field of the type Bytes). [console_value_colors.md](console_value_colors.md) holds the form in the description, the borders and the colors.
 - **No padding.** The compiler and the tool refuse a fact type with a byte that no field covers. Such a byte carries memory of the writer that no field names.
 - **No Handle field.** A handle number means nothing to a reader of the log. The tool refuses it.
-- **No Body field.** A `Body` field is an offset and a count in the body region of a record output ([module_outputs.md](module_outputs.md), "A large body"). Only the record of a record output or of a record input takes it: the tool refuses it in a log fact, as in the record of an export. A log fact has no body region, and its values are whole in its record.
+- **No Body field.** A `Body` field is an offset and a count in the body region of a record output ([module_outputs.md](module_outputs.md), "A large body"). Only the record of a record output or of a record input takes it: the tool refuses it in a log fact, as in the record of an export. A log fact has no body region, and its values are whole in its record. The type does not exist yet: the check of the fields of a fact type is a whole switch on the type of a field, so the first build with a type `Body` fails to compile until that switch refuses it.
 - **At most 144 bytes** of fields (`op.LOG_FACT_VALUE_CAPACITY`): the values of one record. A fact is one record, never more.
 
 ### The fact key: why the typeid
@@ -69,7 +69,7 @@ The code needs the key of a fact type at its compile, from the type alone, and t
 - **It is the hash of a name, not of a layout.** `type_hash_canonical_type` is SipHash-2-4 with a fixed key (`k0 = 0xa6592ea25e04ac3c`, `k1 = 0xba3cba04ed28a9ae`) over the canonical name of the type. For a named record type of the package scope, the canonical name is `<package name>::<type name>`: `storage::Bad_Block`. No address, time, path or order of the build enters it.
 - **It is the same in each build and in each module.** Two builds gave `18017458693634389201` for `storage.Bad_Block`. The value depends on the two names only, so each module that compiles the package gets the same key.
 - **It is unique in a module.** The compiler refuses two packages with one name in one build ("A package name must be unique"), so two fact types of one module have two canonical names.
-- **The tool computes it.** SipHash-2-4 of `core:crypto/siphash` with the same key, over `storage::Bad_Block`, gave `18017458693634389201`, the value of the compiler.
+- **The tool computes it.** SipHash-2-4 with the same key, over `storage::Bad_Block`, gave `18017458693634389201`, the value of the compiler. The tool has its own SipHash (`build.siphash_2_4`), checked against the vectors of its paper: `core:crypto/siphash` brings a package whose name the copy of the cryptography of Odin in the library also has, and the compiler refuses the two in one build.
 
 The contract states the key as bytes: "SipHash-2-4, with the key of 16 bytes above, over `<package name>::<type name>` in UTF-8". A writer in another language computes it, so the contract does not depend on Odin (property 19). In Odin, `typeid_of` computes it.
 
@@ -99,9 +99,13 @@ A type with the attribute that no call of the module names gets no row: a suppor
 
 The tool refuses at the build:
 
-- two fact types of one module with the same fact key, a fact key of 0, and a key that the IR of the module does not hold;
+- two fact types of one module with the same fact key, a fact key of 0, and a key that the IR of the module does not hold as an immediate `i64` (the compile step reads `<name>.ll` after the compiler wrote it, and before `llc`);
 - a fact template that breaks a rule of the template language (below);
-- a field that the fact template does not name, and a name in braces that names no field.
+- a field that the fact template does not name, and a name in braces that names no field;
+- the attribute on a declaration that is not a record type, on a declaration inside a procedure or a `when`, or on a type private to its file: each of them has another canonical name, so the key is not the typeid of `<package>::<type>`;
+- a record of a fact type whose name the module describes another way: one module describes a record name one way, whichever declaration names it.
+
+The extraction reads the sources that the compiler read for the module (its list of dependencies), and parses only a file that holds the word `log_fact`. The checks of the template language are one pure procedure of the contract, `module.fact_template_check`, which each reader that renders a fact calls too: the tool and a reader cannot disagree on a template.
 
 The tool describes each record type once in `Records`, whichever declaration names it: an export, a log fact, a record output or a record input. A record type that an export takes and a log fact writes has one row, and both name it by its index. Nothing in a record description says which declaration named it. The refusals of a fact type above are the refusals of the declaration, not of the record description.
 
@@ -122,11 +126,11 @@ It refuses: a name that names no field, a field that it does not name, a field n
 
 ### The record
 
-**The size.** A log record has 256 bytes today (`#assert(size_of(Log_Record) == 256)` in `src/library/contract/operation/operation.odin`), 16 records in a page, and a text line of up to 152 bytes takes one record. A fact takes one record of the same 256 bytes, so it costs no more memory in the whole log, in an own log ring or in the budget of each second than a text line of one record. A text line longer than one record costs more records than the fact of the same line. The size stays 256 until a measure shows that a smaller record pays (measure 8).
+**The size.** A log record has 256 bytes today (`#assert(size_of(Log_Record) == 256)` in `src/library/contract/operation/operation.odin`), 16 records in a page, and a text line of up to 168 bytes takes one record. A fact takes one record of the same 256 bytes, so it costs no more memory in the whole log, in an own log ring or in the budget of each second than a text line of one record. A text line longer than one record costs more records than the fact of the same line. The size stays 256 until a measure shows that a smaller record pays (measure 8).
 
 The record keeps its head: the number, the time, the process slot, the process serial, the own number, the thread, the level, `more` and the name of the process, which the kernel sets. A byte of the head that is reserved today becomes the record form (`op.Log_Record_Form`, an enum with explicit values): `Text = 0` and `Fact = 1`. A zero record is a text record, as before.
 
-The body after the head has 192 bytes, once the channel leaves:
+The body after the head has 192 bytes. Today a record is a text record: the value runs, then 168 bytes of text, since the channel left. With the form byte:
 
 | Form | Body |
 |---|---|
@@ -139,15 +143,19 @@ Text records and fact records follow each other in the whole log and in each own
 
 **The module hash.** A module file cannot hold its own hash, and the kernel does not know which code of a process called `Log`. So the module file names an own-hash place in its writable data, and the loader writes the hash of the module there when it binds the module. `system.log_fact` copies those 32 bytes. The kernel writes the place of the root service when it starts it, because the root service has no loader for imports. A place of zero is no module: a reader shows the fact raw.
 
+The place is a variable of the support package `system`, exported under the symbol `modus_own_hash`: an exported variable has bytes that the compiler cannot take as the zeros of the file, and the version script of the link keeps the symbol local to the module. The conversion finds the symbol in the symbol table of the linked file, checks that it is 32 bytes in a segment that the loader writes, and writes its offset as record 1 of the table `Own_Hash`. A module whose code never reads the place has no table: the link drops the variable. `validate` refuses a place that is not 32 bytes in one segment with Write and no Execute, so no file makes a loader write into its code. Each loader writes the place where it rebases and binds, for the range of the segments that it prepares (`module.own_hash_write`): the loader of `system`, the kernel for the root service, the loader of the tool on the host. The place took the version of the module format to 3: a loader of version 2 would leave it zero.
+
+The refused forms of the place: a field of the header, which has 4 bytes free and needs 8, and makes each file pay for a place that most modules do not have; a table that the loader finds by the name of a symbol at the load, which puts a symbol table in each module file.
+
 ### The writer path and its cost
 
 `system.log_fact(level, value)` builds the body on the stack: the module hash, the key, `size_of(value)` and the value bytes. It gives the body to the kernel with one `Log` operation of the form `Fact`. It formats nothing, and the call site holds a composite literal and one call. With the note of the refused lines and the count of a refusal, it never waits for the kernel log, as `system.log` ([log_side_channels.md](log_side_channels.md)). When the record output `log` is wired, it also writes that record output first, and waits there (see "The record output `log`").
 
-The `Log` operation takes the form in place of the two words of the channel: `(log, address, length, level, form, runs)`. The kernel converts the word to `Log_Record_Form` at its border, and refuses a word that names no member with `Bad_Operation`. For the form `Fact` it checks that the length is at most the body and that `runs` is 0. It copies the bytes into one record with no UTF-8 filter, because the body is not text, and writes the count of the value bytes from the length. It reads no field of the body. The kernel interface keeps its count of operations.
+The `Log` operation takes the form after the runs: `(log, address, length, level, runs, form)`. This changed from a form before the runs: in the last place, a zero form is `Text`, so each writer of text keeps its call of five values, and a call of five values cannot have its count of runs read as a form. The kernel converts the word to `Log_Record_Form` at its border, and refuses a word that names no member with `Bad_Operation`. For the form `Fact` it refuses runs with `Bad_Operation`, and a length below the head of a fact (48 bytes: the hash, the key, the count and the reserved bytes) or above the 192 bytes with `Bad_Address`. It copies the bytes into one record with no UTF-8 filter, because the body is not text, writes the count of the value bytes from the length and zeros the reserved bytes. It reads no other field of the body. The kernel interface keeps its count of operations. The kernel part of this is two procedures of `src/kernel/serial.odin` (`log_fact_operation`, `log_fact_record`), the border of the form in `Log`, the line of a fact in the serial writer, and the error records of the refusals.
 
 The cost to measure, and the claim that the measures must prove (see "The measures that decide it"): one kernel entry dominates both paths. A fact saves the formatting in the process, the UTF-8 filter and the cut of the runs in the kernel, and the records of a text longer than one record.
 
-`system.log` stays for a throwaway line and a debugging line, as text, with a level and no channel.
+`system.log` stays for a throwaway line and a debugging line, as text, with a level: `system.log(.Warning, "storage: the block ", block, " has a wrong check")`. The level is the first argument, as in `system.log_fact`, so one form names the level at each call.
 
 ### The record output `log`
 
@@ -159,7 +167,7 @@ The cost to measure, and the claim that the measures must prove (see "The measur
 
 The wiring gives the starter no new fact: a starter already reads the records of its child by lending the process handle to `log.process_records` ([log_reader_scope.md](log_reader_scope.md)). The difference is the guarantee, not the scope. The records that another process writes about this one (the line of the root service at its start, the report of the kernel at a fault) are not its own records, and are not in its `log`.
 
-**The writer path when `log` is wired.** `system.log`, `system.log_in` until it leaves, and `system.log_fact` write each record twice, in this order:
+**The writer path when `log` is wired.** `system.log` and `system.log_fact` write each record twice, in this order:
 
 1. To the record output `log`, with `system.output_write` and no deadline: the writer waits while the ring of its reader is full. No record is lost, so a reader that does not read stops the writer. A thread with a deadline (a frame loop, the path of a key) waits too: the starter that wires `log` takes that cost for the child.
 2. To the kernel log, with `Log`, as before. A refusal of the budget of each second drops the line in the kernel log only; the record output already holds it.
@@ -172,9 +180,9 @@ When the reader stops or closes its end, the record output gives `Ended`, the li
 
 ### The serial port
 
-The serial writer writes the line of a fact record from its bytes, with no template: `[storage] #1a2b3c4d5e6f7081:fa0adf38a559f4d1 0c00000000000000231a`. That is the first 8 bytes of the module hash, the fact key, and the value bytes in hexadecimal up to their last byte that is not zero. It is a filter of bytes, as the line of a text record is.
+The serial writer writes the line of a fact record from its bytes, with no template: `[storage] #1a2b3c4d5e6f7081:fa0adf38a559f4d1 0c000000000000001a2300001a2b`, for `block = 12`, `check = 0x231a` and `expected = 0x2b1a`. That is the first 8 bytes of the module hash, the fact key, and the value bytes in hexadecimal, in the order of memory (an integer is little-endian), up to their last byte that is not zero. It is a filter of bytes, as the line of a text record is.
 
-The tool renders the line on the host: it holds each module file that it built, finds the module by the 8 bytes, and writes the fact template with the values. The tool refuses a build where two module files share their first 8 bytes. The machine log that the tool keeps holds the rendered line, and the raw line when no module file has that hash. A person who reads the serial port with no tool reads the raw form.
+The tool renders the line on the host: it holds each module file that it built, finds the module by the 8 bytes, and writes the fact template with the values. The tool refuses a build where two module files share their first 8 bytes. Each step of a machine test reads the rendered line, and the raw line when no module file has that hash. The machine keeps the rendered log and the length of the file that it covers, and each read of the log renders only the whole lines after it: the same lines give the same text, so a place in the log is the same place in each read. A Text value takes the filter of the kernel for a text in the render, because the kernel filters no byte of a fact. The file of the machine log, which QEMU writes, keeps the raw lines; a copy of it with the rendered lines is left. A person who reads the serial port with no tool reads the raw form.
 
 ### The reader path
 
@@ -189,17 +197,19 @@ A reader copies a record, then reads its form through the border. For a fact rec
 
 **The raw form.** With no module file, the reader has no field name: the names are in the module file only. It shows the fact name as `#1a2b3c4d5e6f7081:fa0adf38a559f4d1` and the value bytes in hexadecimal. The proposal said that a reader with no module file shows the field names; that cannot hold, because the record carries no name.
 
-The rows of `log.records(after)` gain the form, the module hash, the fact key and the value bytes; a text row keeps its text, and `log.value_runs` stays for text records. The log service renders nothing: it holds no catalog, and a rendered text loses the fields that a reader filters on.
+A row of `log.records(after)` keeps its text for a text record, and `log.value_runs` stays for text records. A row of `records` has 256 bytes already, the limit of a record description, so the fields of a fact come in a second table joined on `number`, as the value runs do: `log.fact_records(after)` gives, for each fact of the log scope, the record form, `more`, the fact key, the module hash, the count of the value bytes, the reserved bytes and the first 8 value bytes. This changed from rows of `records` that gain the fields: the row has no room. The values whole come with the readers that render. The log service renders nothing: it holds no catalog, and a rendered text loses the fields that a reader filters on.
 
-### The log channel leaves
+### The log channel left
 
-The channel of a log record is the name of 16 bytes that the writer gives at each call (`log_in`). A typo makes a new stream, any process writes any name, and most texts already repeat it ("kernel: boot: ..."). The fact type and its module group the records better: a reader chooses its rows by fact type, by process and by level. So the channel leaves the record, the `Log` operation, `system.log_in`, the serial line (`[name] text`) and each reader. No grouping replaces it for `system.log`: a line that a reader groups is worth a fact type. A free name that any writer types is the form that this design removes, by any word.
+The channel of a log record was the name of 16 bytes that the writer gave at each call (`system.log_in`). A typo made a new stream, any process wrote any name, and most texts already repeated it ("kernel: boot: ..."). The fact type and its module group the records better: a reader chooses its rows by fact type, by process and by level. So the channel left the record, the `Log` operation, `system.log_in`, the serial line (`[name] text`) and each reader, in the first step of the migration, before any fact type exists. No grouping replaces it for `system.log`: a line that a reader groups is worth a fact type. A free name that any writer types is the form that this design removes, by any word.
 
-The glossary entry "Channel" (`docs/glossary/running_code.md`) is removed in the step that removes the field, and "Log record" loses the channel in the same step. After that step, the word has no meaning in the system: the glossary entry "Ring" lists it under "Do not use", and a record output does not take it.
+The glossary entry "Channel" (`docs/glossary/running_code.md`) left with the field, and "Log record" says that a record carries no name that its writer chooses. The word has no meaning in the system: the glossary entry "Ring" lists it under "Do not use", "Log record" lists "log channel", and a record output does not take it.
 
-**Each channel of today, sorted.** The counts are the calls of `log_in` in `src/`. A channel can also come through a variable: `interface.element_places_publish` takes one.
+**One writer of text, with its level.** `system.log(level, ...)` is the one writer of a text line of a process: no second procedure without a level, so each call says its level. The kernel keeps its own two writers, `log` at the level Info and `log_with_level`: they are kernel code, not the library, and most lines of the kernel are of the level Info.
 
-| Channel | Calls | Writers | Kind | What its readers use after the change |
+**Each former channel, sorted.** The counts were the calls of `log_in` in `src/`. A channel also came through a variable: `interface.element_places_publish` took one.
+
+| Channel | Calls | Writers | Kind | What its readers use once facts exist |
 |---|---|---|---|---|
 | `processes` | 248 | the root service: starts, stops, revocations, the trust, the start policy; `interface` through its variable: the element places of each window | (a) a subject tag | The fact types of the root service (`root.Process_Stopped`, with its stop cause and its stop outcome as fields) and `interface.Element_Place` and `interface.Element_Gone`. The step `Record` and the test pointer read their fields. |
 | `surfaces` | 99 | the compositor: windows, the pointer, the clipboard, the measures of a frame; `interface` for the palette | (a) | The fact types of the compositor; its measures as fields that the tool reads. |
@@ -222,14 +232,15 @@ The glossary entry "Channel" (`docs/glossary/running_code.md`) is removed in the
 
 No other channel is a stream of records. The element places come near: the tool reads each one to press an element, and a lost line fails the test. But their reader is a test, which the log serves, and a loss fails the test with its cause: they stay log facts.
 
-**The readers that filter by channel today, and what each one reads.**
+**The readers that filtered by channel, and what each one reads.** Each reads by process and by level now; the facts add their fact type and their fields.
 
-- **The step `Record` of the machine test** (`tools/modustool/machine/machine.odin`, the field `channel`): the process, the level, and a text or a fact with its fields.
-- **The window `log`**: it counts the records by process and by fact type, in place of 12 channels, and its line `log: ok, ...` says the count of the processes. Its column `channel` becomes the column `fact`.
-- **The records of a call in the console** (`console/line_records.odin`): it groups by process, which a call already is, and shows each fact by its name.
-- **The rows of `log.records`**, the row of `log_reader` and of `limits`: the field leaves.
-- **The example of [log_reader_scope.md](log_reader_scope.md)**, `where(log.records(0), "channel", "...")`: it becomes `log.records(0) |> facts(storage.Bad_Block)`. That file changes in the step that removes the field.
-- **The tool, where it reads the head `[name:channel]` of a line**: it reads `[name]`.
+- **The step `Record` of the machine test** (`tools/modustool/machine/machine.odin`): the process, the level and a text; once facts exist, a fact with its fields.
+- **The window `log`**: it counts the records by process, named by its process slot and its process serial, and its line `log: ok, ...` says the count of the processes. A card for each process holds its count, on the two lines that the window keeps for them; the processes that they do not hold count in the last card, "others", so no card covers the heads of the columns. Once facts exist, it counts by fact type too, and gets a column `fact`.
+- **The records of a call in the console** (`console/line_records.odin`): it groups by process, which a call already is; once facts exist, it shows each fact by its name.
+- **The rows of `log.records`** and the row of `log_reader`: the field left, and the text has 168 bytes, as the record.
+- **The example of [log_reader_scope.md](log_reader_scope.md)**: a reader chooses its rows by a field, `where(log.records(0), "level", "warning")`; once facts exist, `log.records(0) |> facts(storage.Bad_Block)`.
+- **The tool, where it reads the head of a line**: the head is `[name]`. The waits of the scenarios with a channel head took the head of the process.
+- **`server` and its access records**: one plain line at the level Info for each request, until the log fact `server.Access_Record`, then the record output `requests`.
 
 ### Filters of a reader: one form
 
@@ -288,11 +299,11 @@ Property 22 ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General m
 
 Each step is a commit on `master` that leaves a working system, with its tests.
 
-1. **The channel leaves.** The field, the two words of `Log`, `system.log_in` (in its place `system.log` with a level), the head `[name:channel]` of the serial line, the step `Record` without a channel, the window `log` and the console by process, the rows of `log.records`. The glossary removes "Channel" and changes "Log record"; [log_reader_scope.md](log_reader_scope.md) changes its example and its purpose. The text of a record grows to 168 bytes.
-2. **The record descriptions take the kinds of the log.** The hexadecimal Integer, the status of a contract enum, the module name as a Text field and the hash as bytes, in the module format, the tool, the console and [console_value_colors.md](console_value_colors.md). No log change: the exports gain the kinds.
-3. **The attribute in the build.** Each command of the tool that compiles a package of `src/` passes `-custom-attribute:log_fact`: the build of a module, of the kernel and of the boot program, the host tests, and the checks of the flake. A host test of the tool compiles one fact type, and compares the typeid that the compiler writes in the IR with the key that the tool computes. No module declares a fact type yet.
-4. **The fact table and the own-hash place.** The table `Facts`, the extraction of each fact type and its checks, the check of each key in the IR, the own-hash place that each loader writes, the version of the module format. A host test of the tool proves each refusal of the build. No module writes a fact yet.
-5. **The fact record and the first writer.** The form byte, `Log` of the form `Fact` with its refusals, the serial line of a fact, the render of the tool, `system.log_fact`, and one writer: `log_reader`, whose machine test waits for its fact by its fields and reads it back through `log.records` from its own log ring.
+1. **The channel leaves.** Built. The field, the two words of `Log`, `system.log_in` (in its place `system.log` with a level), the head `[name:channel]` of the serial line, the step `Record` without a channel, the window `log` and the console by process, the rows of `log.records`. The glossary removes "Channel" and changes "Log record"; [log_reader_scope.md](log_reader_scope.md) changes its example and its purpose. The text of a record grows to 168 bytes.
+2. **The record descriptions take the kinds of the log.** Built. The hexadecimal Integer, the status of a contract enum, the module name as a Text field and the hash as bytes, in the module format, the tool, the console and [console_value_colors.md](console_value_colors.md). No log change: the exports gain the kinds. The format version stays: the kind takes bytes that were reserved and zero, and zero keeps its meaning.
+3. **The attribute in the build.** Built. Each command of the tool that compiles a package of `src/` passes `-custom-attribute:log_fact` (`foundation.LOG_FACT_ATTRIBUTE_FLAG`): the build of a module, of the kernel and of the boot program, the host tests, the compile and the check of the tool, and the compile of the tool in the flake. A host test of the tool declares one fact type and compares `typeid_of` of that type with the key that the tool computes (`build.fact_key`). No module declares a fact type yet.
+4. **The fact table and the own-hash place.** Built. The table `Facts`, the extraction of each fact type and its checks, the check of each key in the IR, the own-hash place that each loader writes, the version 3 of the module format. A host test of the tool proves each refusal of the build.
+5. **The fact record and the first writer.** Built. The form byte, `Log` of the form `Fact` with its refusals, the serial line of a fact, the render of the tool, `system.log_fact`, and one writer: `log_reader`, whose machine test waits for the sentence that the tool writes from the fields of its fact. It reads its three facts back through `log.fact_records`, from its own log ring, and checks what the kernel wrote: the form, `more`, the key, the count of the value bytes, the reserved bytes that it zeroed, and the hash of its module in the fact of `system.log_fact`.
 6. **The readers.** The rows of `log.records` with the fact, the render in the console, the window `log` and `remote`, the raw form, `facts` in the console with its typed name, its checked fields and the enum of the level.
 7. **The machine tests read facts.** The step of a fact, the check of the scenarios before the run, the measures from fields.
 8. **The writers, one module group at a time.** The root service (`processes`, `calls`, `devices`), the compositor and `interface` (`surfaces`, the element places), the storage service (`storage`, `disk`), the device services, then the rest. Each step converts a whole module, so that a reader of that module reads one form. The text of each template is the sentence of today, so each wait of the tests passes unchanged.
@@ -365,4 +376,6 @@ Each measure is printed, never asserted ([`docs/TOOLS.md`](../../../docs/TOOLS.m
 
 ## State
 
-Designed, not built. The channel is in the record, in `Log` and in each reader of today; no fact table, no own-hash place, no fact record and no record output `log` exist.
+Built: the first five steps of the migration. The channel left the record, `Log`, `system.log_in`, the serial line and each reader; `system.log` takes a level; the text of a record has 168 bytes. A record description takes the four kinds of the log. Each compile of a package of `src/` accepts the attribute `log_fact`, and the tool computes the fact key that the compiler gives as the typeid. The module format has the tables `Facts` and `Own_Hash` (version 3); the tool extracts each fact type that a call names, refuses each form above, and finds each key in the IR; each loader writes the own-hash place. A log record has its record form; `Log` takes the form `Fact` and refuses each wrong fact with its error record; the serial port gets the raw line of a fact, and the tool renders it for the steps of a machine test. `system.log_fact` writes a fact, and `log_reader` is its one writer. `log.fact_records` gives the bytes of each fact of a log scope.
+
+Left: the readers of the system (the values whole in `log.fact_records`, the console, the window `log`, `remote`, `facts`), which show a fact as a record with no text until then; the steps of a machine test that wait for a fact by its fields and their check before the run; a copy of the machine log with the rendered lines; the writers of the modules; the measures; the record output `log`. No measure of the write cost or of the render exists yet.

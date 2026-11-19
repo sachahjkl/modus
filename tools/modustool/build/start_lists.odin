@@ -88,6 +88,27 @@ MISSING_CONSOLE_START_LIST := [?]Start_List_Row {
 	{name = MISSING_CONSOLE_MODULE, needs = {.Screen}, absent_rule = .Not_Started, usable_mark = .Needed},
 }
 
+// The count of the restarts of the two rows of the test of the restarts:
+// two, so that a row that restarts writes the counts 1 and 0 left, then
+// stays stopped.
+STOP_TEST_RESTARTS :: 2
+
+// The rescue list of the test of the rescue: the default rescue list, then
+// the two rows of the test of the restarts (src/md/features/start_policy.md,
+// "The subtle points"). The rescue makes the machine usable, so its
+// watch reads each stop: stops_refused stops with Refused and does not
+// start again, stops_failed stops with Failed and starts again until its
+// restarts end.
+@(rodata)
+MISSING_CONSOLE_RESCUE_LIST := [?]Start_List_Row {
+	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
+	{name = "compositor", needs = {.Screen}, absent_rule = .Not_Started},
+	{name = "console", needs = {.Screen}, absent_rule = .Not_Started, usable_mark = .Needed},
+	{name = "remote", needs = {.Network_Device}, absent_rule = .Not_Started},
+	{name = "stops_refused", absent_rule = .Not_Started, restart_count = STOP_TEST_RESTARTS},
+	{name = "stops_failed", absent_rule = .Not_Started, restart_count = STOP_TEST_RESTARTS},
+}
+
 // The rows that the check must refuse in the list of the test of the
 // rescue, each for a name of no module of the image.
 @(rodata)
@@ -110,7 +131,7 @@ start_lists_of_image :: proc(image_path: string) -> Start_Lists {
 	case foundation.BOOT_IMAGE_OPERATION_SEQUENCES:
 		return {start = OPERATION_SEQUENCES_START_LIST[:], rescue = OPERATION_SEQUENCES_START_LIST[:]}
 	case BOOT_IMAGE_MISSING_CONSOLE:
-		return {start = MISSING_CONSOLE_START_LIST[:], rescue = DEFAULT_RESCUE_LIST[:], start_refused_on_purpose = true}
+		return {start = MISSING_CONSOLE_START_LIST[:], rescue = MISSING_CONSOLE_RESCUE_LIST[:], start_refused_on_purpose = true}
 	}
 	return {start = DEFAULT_START_LIST[:], rescue = DEFAULT_RESCUE_LIST[:]}
 }

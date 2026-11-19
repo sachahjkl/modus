@@ -731,7 +731,7 @@ kernel_stack_scan_follows_the_tables_and_the_calls_that_never_return :: proc(t: 
 
 // Lines of the listing of the kernel: a prefix that llvm-objdump writes on
 // its own line, at the address that a jump goes to (memory_protect), and
-// gdt_load, which returns with a far return, before a call of log_in
+// gdt_load, which returns with a far return, before a call of log_with_level
 // (processor_setup). The prologues and the ends are added.
 KERNEL_STACK_TEST_REAL_LINES_LISTING :: "0000000000001000 <kernel_interrupt>:\n" +
 	"    1000:      \tcallq\t0x23170 <kernel::memory_protect>\n" +
@@ -753,10 +753,10 @@ KERNEL_STACK_TEST_REAL_LINES_LISTING :: "0000000000001000 <kernel_interrupt>:\n"
 	"   2a70c:      \tmovq\t%rbx, %rdi\n" +
 	"   2a70f:      \tcallq\t0xa5f58 <gdt_load>\n" +
 	"   2a714:      \tmovl\t%r14d, %eax\n" +
-	"   2ab0d:      \tcallq\t0x1b470 <kernel::log_in>\n" +
+	"   2ab0d:      \tcallq\t0x1b470 <kernel::log_with_level>\n" +
 	"   2ab12:      \tpopq\t%rbp\n" +
 	"   2ab13:      \tretq\n" +
-	"000000000001b470 <kernel::log_in>:\n" +
+	"000000000001b470 <kernel::log_with_level>:\n" +
 	"   1b470:      \tretq\n" +
 	"00000000000a5f58 <gdt_load>:\n" +
 	"   a5f58:      \tlgdtq\t(%rdi)\n" +
@@ -775,7 +775,7 @@ KERNEL_STACK_TEST_REAL_LINES_LISTING :: "0000000000001000 <kernel_interrupt>:\n"
 	"    1400:      \tretq\n"
 
 // The depths, with the frames of the kernel:
-//   memory_protect 968; processor_setup: 200 + 8 + log_in 744 = 952 (its
+//   memory_protect 968; processor_setup: 200 + 8 + log_with_level 744 = 952 (its
 //   call of gdt_load: 200 + 8 + 8 = 216);
 //   kernel_interrupt 16 + 8 + 968 = 992, and 184 above it: 1176;
 //   the interrupt at the idle wait: 184 + 16 + 8 + 0 = 208, then

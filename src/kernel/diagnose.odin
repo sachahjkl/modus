@@ -913,11 +913,24 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Log:
+		// A fact: its length is between its head and its whole record.
+		if record_form, record_form_known := enum_word.member_of_word(op.Log_Record_Form, v[5]); record_form_known && record_form == .Fact {
+			if v[2] < op.LOG_FACT_HEAD_BYTES {
+				record_set(record, .Too_Small, .Bytes, 3, v[2], op.LOG_FACT_HEAD_BYTES, 0)
+			} else if v[2] > size_of(op.Log_Fact) {
+				record_set(record, .Too_Long, .Bytes, 3, v[2], size_of(op.Log_Fact), 0)
+			} else if !read_range(process, v[1], v[2]) {
+				record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2], 0)
+			} else {
+				return false
+			}
+			return true
+		}
 		// The text, then its value runs, at the address.
 		if v[2] > op.LOG_TEXT_BYTES_MOST {
 			record_set(record, .Too_Long, .Bytes, 3, v[2], op.LOG_TEXT_BYTES_MOST, 0)
-		} else if v[6] <= op.LOG_CALL_RUN_LIMIT && !read_range(process, v[1], v[2] + v[6] * size_of(value_kinds.Value_Run_In_Call)) {
-			record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2] + v[6] * size_of(value_kinds.Value_Run_In_Call), 0)
+		} else if v[4] <= op.LOG_CALL_RUN_LIMIT && !read_range(process, v[1], v[2] + v[4] * size_of(value_kinds.Value_Run_In_Call)) {
+			record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2] + v[4] * size_of(value_kinds.Value_Run_In_Call), 0)
 		} else {
 			return false
 		}
@@ -1278,8 +1291,14 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Log:
-		if v[6] > op.LOG_CALL_RUN_LIMIT {
-			record_set(record, .Too_Long, .Records, 7, v[6], op.LOG_CALL_RUN_LIMIT, 0)
+		// A fact has no value runs: its values are not text. Its bound is 0,
+		// whatever the count, so this check comes first.
+		if record_form, record_form_known := enum_word.member_of_word(op.Log_Record_Form, v[5]); record_form_known && record_form == .Fact && v[4] != 0 {
+			record_set(record, .Too_Long, .Records, 5, v[4], 0, 0)
+			return true
+		}
+		if v[4] > op.LOG_CALL_RUN_LIMIT {
+			record_set(record, .Too_Long, .Records, 5, v[4], op.LOG_CALL_RUN_LIMIT, 0)
 			return true
 		}
 	case .Inspect:
@@ -1415,6 +1434,22 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		// and, as its limit, the address of that framebuffer.
 		if device_kind, device_kind_known := enum_word.member_of_word(op.Device_Kind, v[1]); device_kind_known && device_kind == .Display_Memory && device_range(v[2], v[3]) && !display_memory_range(v[2], v[3]) {
 			record_set(record, .Bad_Value, .None, 3, v[2], boot_record.framebuffer.address, 0)
+			return true
+		}
+	case .Process_Stop:
+		// An outcome word that the target does not take: the limit is the
+		// largest member for a stop of the caller, and 0 for a stop of
+		// another process.
+		itself := v[0] == 0
+		if !itself {
+			slot, held := read_handle_find(process, v[0], .Process, {.Control})
+			if !held {
+				return false
+			}
+			itself = &processes[slot.object] == process
+		}
+		if _, limit, known := op.stop_outcome_of_operation_word(v[1], itself); !known {
+			record_set(record, .Bad_Value, .None, 2, v[1], limit, 0)
 			return true
 		}
 	case .Machine_Stop:

@@ -10,7 +10,7 @@ import terminal "modus:support/terminal"
 // The log records of a line.
 //
 // While a line calls an export, the console shows under the line the log
-// records that the called process writes: grouped by channel, with each
+// records that the called process writes: grouped by process, with each
 // value in the color of its value kind, as the window of the log draws
 // them (docs/CONSOLE.md, "The log records of a line").
 //
@@ -46,9 +46,8 @@ Line_Records :: struct {
 	processes:    [LINE_RECORD_PROCESSES]string, // The processes that the line called.
 	process_count: int,
 	// The group of the last record that the console drew: a record of the
-	// same process and channel needs no new head.
+	// same process needs no new head.
 	head_process: [32]u8,
-	head_channel: [16]u8,
 	head_drawn:   bool,
 	rows:        [LINE_RECORD_BATCH * module.RECORD_SIZE_LIMIT]u8, // The rows of one answer that the console draws.
 }
@@ -176,7 +175,7 @@ line_records_ask :: proc "contextless" (function: module.Function, export: u32, 
 			rows, _ := isolated.result_table(sandbox.region, buffer, completion.values[0], u64(described.size))
 			return {kind = .Table, record = rows, file = line_records.file, detail = function.result_detail}, completion.values[0], true
 		}
-		if state, _ := system.process_state(sandbox.process); state == .Stopped {
+		if state, _, _ := system.process_state(sandbox.process); state == .Stopped {
 			return {}, 0, false
 		}
 		system.wait_records(&wait, &sandbox.ring.completions)
@@ -309,18 +308,17 @@ line_records_show :: proc "contextless" () {
 	}
 }
 
-// line_records_draw draws records of one answer: for each process and
-// channel, in the order of its first record, one head line and its
-// records. With runs, the console asks the service for the value runs of
-// the records from the first one on.
+// line_records_draw draws records of one answer: for each process, in the
+// order of its first record, one head line and its records. With runs, the
+// console asks the service for the value runs of the records from the first
+// one on.
 line_records_draw :: proc "contextless" (table: Table, kept_rows: Value, kept: int, with_runs: bool) {
 	number, _ := table_field(table, "number")
 	process, _ := table_field(table, "process")
-	channel, has_channel := table_field(table, "channel")
 	level, has_level := table_field(table, "level")
 	text, has_text := table_field(table, "text")
 	continues, has_continues := table_field(table, "continues")
-	if !has_channel || !has_level || !has_text || !has_continues {
+	if !has_level || !has_text || !has_continues {
 		return
 	}
 	run_rows: Value
@@ -346,25 +344,19 @@ line_records_draw :: proc "contextless" (table: Table, kept_rows: Value, kept: i
 		}
 		first_row := table_row(table, kept_rows, first)
 		group_process := module.field_text(first_row, process)
-		group_channel := module.field_text(first_row, channel)
-		if !line_records.head_drawn || system.name_of(line_records.head_process[:]) != group_process || system.name_of(line_records.head_channel[:]) != group_channel {
-			line_records.head_process, line_records.head_channel = {}, {}
+		if !line_records.head_drawn || system.name_of(line_records.head_process[:]) != group_process {
+			line_records.head_process = {}
 			copy(line_records.head_process[:len(line_records.head_process) - 1], group_process)
-			copy(line_records.head_channel[:len(line_records.head_channel) - 1], group_channel)
 			line_records.head_drawn = true
 			output_continuation = LINE_RECORD_INDENT
 			emit("  ", {})
 			emit(group_process, value_kind_style(.Module))
-			if group_channel != "" {
-				emit(" ", {})
-				emit(group_channel, {tone = u8(terminal.Tone.Accent)})
-			}
 			emit_end()
 		}
 		open := false // The text of the record before goes on in this one.
 		for index in first ..< kept {
 			row := table_row(table, kept_rows, index)
-			if drawn[index] || module.field_text(row, process) != group_process || module.field_text(row, channel) != group_channel {
+			if drawn[index] || module.field_text(row, process) != group_process {
 				continue
 			}
 			drawn[index] = true

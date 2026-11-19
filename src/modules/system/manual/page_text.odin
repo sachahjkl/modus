@@ -687,7 +687,7 @@ link_open :: proc "contextless" (number: int) {
 	// are bytes of a module file, of the resource or of built; the log
 	// line is written before the page changes.
 	link := page_links[number - 1]
-	system.log("manual: the link ", link.label, " opens ", link.target)
+	system.log(.Info, "manual: the link ", link.label, " opens ", link.target)
 	navigation_leave()
 	destination_show(link.destination)
 }
@@ -727,7 +727,7 @@ link_focus_move :: proc "contextless" (backward: bool) {
 	next := manual_navigation.focus_step(page_link_count, focused_link - 1, first_in_view, backward)
 	if next < 0 {
 		focused_link = 0
-		system.log("manual: the page has no link that opens")
+		system.log(.Info, "manual: the page has no link that opens")
 		return
 	}
 	focused_link = next + 1
@@ -735,7 +735,7 @@ link_focus_move :: proc "contextless" (backward: bool) {
 	if link.first_row >= 0 && (link.first_row < first_line || link.first_row >= first_line + view_rows()) {
 		first_line = clamp(link.first_row - view_rows() / 3, 0, max(rows() - view_rows(), 0))
 	}
-	system.log("manual: the focus is on the link ", link.label, " to ", link.target)
+	system.log(.Info, "manual: the focus is on the link ", link.label, " to ", link.target)
 }
 
 // The link pages: the resource manual_pages of the boot image, validated
@@ -749,21 +749,21 @@ link_pages: manual_pages.Pages
 link_pages_open :: proc "contextless" () {
 	entry := system.image_resource_find(image, manual_pages.RESOURCE_NAME)
 	if entry == nil {
-		system.log("manual: the boot image has no link pages")
+		system.log(.Info, "manual: the boot image has no link pages")
 		return
 	}
 	bytes := image[entry.offset:][:entry.size]
 	if blake3.hash(bytes) != entry.hash {
-		system.log_in("", .Warning, "manual: the link pages do not have the hash of their entry: not read")
+		system.log(.Warning, "manual: the link pages do not have the hash of their entry: not read")
 		return
 	}
 	pages, problem := manual_pages.validate(bytes)
 	if problem != .None {
-		system.log_in("", .Warning, "manual: the link pages break the rule ", u64(problem), " of their format: not read")
+		system.log(.Warning, "manual: the link pages break the rule ", u64(problem), " of their format: not read")
 		return
 	}
 	link_pages = pages
-	system.log("manual: ", u64(pages.count), " link pages")
+	system.log(.Info, "manual: ", u64(pages.count), " link pages")
 }
 
 // link_page_build writes a link page: its title as its heading, where it
@@ -821,8 +821,8 @@ markdown_check :: proc "contextless" () {
 	}
 	marks := page_marks
 	if marks.bold > 0 && marks.italic > 0 && marks.code > 0 && marks.items > 0 && marks.links_that_open > 0 && marks_left == 0 && widest <= TEXT_WIDTH {
-		system.log("manual: the Markdown of its page: bold, italics, code, list items and links that open a page; no mark is left and no row passes the window: as it must")
+		system.log(.Info, "manual: the Markdown of its page: bold, italics, code, list items and links that open a page; no mark is left and no row passes the window: as it must")
 		return
 	}
-	system.log("manual: the Markdown of its page: FAILED: ", u64(marks.bold), " bold, ", u64(marks.italic), " italics, ", u64(marks.code), " code, ", u64(marks.items), " list items, ", u64(marks.links_that_open), " links that open a page of ", u64(marks.links), ", ", u64(marks_left), " marks left, the widest row ", u64(widest), " of ", u64(TEXT_WIDTH), " pixels")
+	system.log(.Info, "manual: the Markdown of its page: FAILED: ", u64(marks.bold), " bold, ", u64(marks.italic), " italics, ", u64(marks.code), " code, ", u64(marks.items), " list items, ", u64(marks.links_that_open), " links that open a page of ", u64(marks.links), ", ", u64(marks_left), " marks left, the widest row ", u64(widest), " of ", u64(TEXT_WIDTH), " pixels")
 }

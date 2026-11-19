@@ -137,7 +137,7 @@ portraits_prepare :: proc "contextless" () {
 			continue
 		}
 		if len(source) != PORTRAIT_PIXELS {
-			system.log("hall_of_fame: the portrait ", u64(portrait), " has ", u64(len(source)), " pixels, not ", u64(PORTRAIT_PIXELS), ": its card shows no picture")
+			system.log(.Info, "hall_of_fame: the portrait ", u64(portrait), " has ", u64(len(source)), " pixels, not ", u64(PORTRAIT_PIXELS), ": its card shows no picture")
 			continue
 		}
 		first := (int(portrait) - 1) * PORTRAIT_PIXELS
@@ -335,7 +335,7 @@ build :: proc "contextless" (frame: ^interface.Frame) -> (drawn: int) {
 	choose_by_input(frame)
 	if chosen != before {
 		view_show_chosen()
-		system.log("hall_of_fame: chose ", people[chosen].name)
+		system.log(.Info, "hall_of_fame: chose ", people[chosen].name)
 	}
 
 	interface.background(frame, {0, 0, WIDTH, HEIGHT})
@@ -363,12 +363,12 @@ build :: proc "contextless" (frame: ^interface.Frame) -> (drawn: int) {
 
 // entry opens the window, prepares the portraits, then draws a frame at
 // each event of the window until the process is stopped. With no window,
-// it stops with the code 1.
+// it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "hall_of_fame")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	portraits_prepare()
 	picture_memories[0] = portrait_pixels[:]
@@ -383,7 +383,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// wake: the line says what the screen has.
 		if !logged && !window_memory.drawing.late {
 			logged = true
-			system.log("hall_of_fame: ok, the first frame drew ", u64(drawn), " of the ", u64(PERSON_COUNT), " people in ", window_memory.drawing.draw_time / 1000, " us")
+			system.log(.Info, "hall_of_fame: ok, the first frame drew ", u64(drawn), " of the ", u64(PERSON_COUNT), " people in ", window_memory.drawing.draw_time / 1000, " us")
 		}
 		deadline: u64 = system.WAIT_FOREVER
 		if time, due := interface.window_scroll_bar_wake(&window_memory.drawing); due {

@@ -128,37 +128,104 @@ the_places_of_an_own_log_ring :: proc(t: ^testing.T) {
 	testing.expect_value(t, wrap_offset, 0)
 }
 
-// The head of a line of the serial port: the name and the channel of a
-// process in brackets, the name alone with no channel, nothing for the
-// kernel and for a record that continues a line. A name and a channel that
-// fill their whole fields have no zero after them, and still fit.
+// The head of a line of the serial port is the name of the process in
+// brackets, and nothing more: the bytes after the name (the runs, the text)
+// never enter it. The edges come first: the kernel and a record that
+// continues a line have no head, an empty name, a name of one byte, and a
+// name that fills its whole field with no zero after it.
 @(test)
 the_head_of_a_line_of_the_serial_port :: proc(t: ^testing.T) {
 	head: [LOG_LINE_HEAD_CAPACITY]u8
-	record := Log_Record{process = 3}
-	copy(record.name[:], "console")
-	copy(record.channel[:], "shell")
-	count := log_line_head(&record, false, &head)
-	testing.expect_value(t, string(head[:count]), "[console:shell] ")
-	testing.expect_value(t, log_line_head(&record, true, &head), 0)
-
-	record.channel = {}
-	count = log_line_head(&record, false, &head)
-	testing.expect_value(t, string(head[:count]), "[console] ")
 
 	kernel := Log_Record{}
 	copy(kernel.name[:], "kernel")
-	copy(kernel.channel[:], "boot")
 	testing.expect_value(t, log_line_head(&kernel, false, &head), 0)
+	testing.expect_value(t, log_line_head(&kernel, true, &head), 0)
+
+	record := Log_Record{process = 3}
+	copy(record.text[:], "text")
+	record.runs[0] = {start = 1, length = 2, kind = 3}
+	testing.expect_value(t, log_line_head(&record, true, &head), 0)
+	count := log_line_head(&record, false, &head)
+	testing.expect_value(t, string(head[:count]), "[] ")
+
+	record.name[0] = 'n'
+	count = log_line_head(&record, false, &head)
+	testing.expect_value(t, string(head[:count]), "[n] ")
+
+	record.name = {}
+	copy(record.name[:], "console")
+	count = log_line_head(&record, false, &head)
+	testing.expect_value(t, string(head[:count]), "[console] ")
+	testing.expect_value(t, log_line_head(&record, true, &head), 0)
 
 	for &byte_value in record.name {
 		byte_value = 'n'
 	}
-	for &byte_value in record.channel {
-		byte_value = 'c'
-	}
 	count = log_line_head(&record, false, &head)
 	testing.expect_value(t, count, LOG_LINE_HEAD_CAPACITY)
-	testing.expect_value(t, head[1 + LOG_NAME_BYTES], u8(':'))
-	testing.expect_value(t, head[LOG_LINE_HEAD_CAPACITY - 2], u8(']'))
+	testing.expect_value(t, head[1 + LOG_NAME_BYTES - 1], u8('n'))
+	testing.expect_value(t, head[1 + LOG_NAME_BYTES], u8(']'))
+	testing.expect_value(t, head[LOG_LINE_HEAD_CAPACITY - 1], u8(' '))
+}
+
+// The form of a record is read through its border: a byte that names no
+// form is refused, the edges first (one past the last member, the largest
+// byte), then the two members. The fact of a record is its bytes after the
+// name of the process, and fills the record.
+@(test)
+the_form_of_a_record_is_read_through_its_border :: proc(t: ^testing.T) {
+	record: Log_Record
+	for word in ([2]u8{u8(max(Log_Record_Form)) + 1, max(u8)}) {
+		record.form = word
+		_, ok := log_record_form(&record)
+		testing.expectf(t, !ok, "the form byte %d is taken", word)
+	}
+	record.form = 0
+	text_form, text_ok := log_record_form(&record)
+	record.form = u8(Log_Record_Form.Fact)
+	fact_form, fact_ok := log_record_form(&record)
+	testing.expect(t, text_ok && text_form == .Text && fact_ok && fact_form == .Fact)
+	testing.expect_value(t, uintptr(log_record_fact(&record)) - uintptr(&record), uintptr(offset_of(Log_Record, runs)))
+	testing.expect_value(t, int(offset_of(Log_Record, runs)) + size_of(Log_Fact), size_of(Log_Record))
+	// The longest line of a fact fits after the longest head.
+	testing.expect(t, LOG_SERIAL_LINE_BYTES_MOST >= LOG_LINE_HEAD_CAPACITY + LOG_FACT_LINE_BYTES_MOST + 2)
+}
+
+// The line of a fact on the serial port: "#", the first 8 bytes of the
+// module hash, ":", the fact key, then the value bytes up to their last
+// byte that is not zero. The edges: no value byte and only zero values (no
+// space), a count past the capacity and the largest count (the capacity),
+// bytes past the count (not written), and every value byte not zero (the
+// longest line).
+@(test)
+the_line_of_a_fact :: proc(t: ^testing.T) {
+	line: [LOG_FACT_LINE_BYTES_MOST]u8
+	fact := Log_Fact{key = 0xfa0a_df38_a559_f4d1}
+	hash_start := [8]u8{0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81}
+	copy(fact.module_hash[:], hash_start[:])
+	fact.module_hash[8] = 0xFF // Past the 8 bytes: not in the line.
+	count := log_fact_line(&fact, &line)
+	testing.expect_value(t, string(line[:count]), "#1a2b3c4d5e6f7081:fa0adf38a559f4d1")
+	fact.value_count = 4
+	count = log_fact_line(&fact, &line)
+	testing.expect_value(t, string(line[:count]), "#1a2b3c4d5e6f7081:fa0adf38a559f4d1")
+
+	fact.values[0], fact.values[2] = 0x0c, 0x23
+	fact.values[5] = 0x99 // Past the count: not in the line.
+	count = log_fact_line(&fact, &line)
+	testing.expect_value(t, string(line[:count]), "#1a2b3c4d5e6f7081:fa0adf38a559f4d1 0c0023")
+
+	for &value in fact.values {
+		value = 0xAB
+	}
+	for value_count in ([3]u16{LOG_FACT_VALUE_CAPACITY, LOG_FACT_VALUE_CAPACITY + 1, max(u16)}) {
+		fact.value_count = value_count
+		count = log_fact_line(&fact, &line)
+		testing.expectf(t, count == LOG_FACT_LINE_BYTES_MOST, "a count of %d gives a line of %d bytes", value_count, count)
+	}
+	testing.expect_value(t, line[LOG_FACT_LINE_BYTES_MOST - 1], u8('b'))
+	zero := Log_Fact{value_count = LOG_FACT_VALUE_CAPACITY}
+	count = log_fact_line(&zero, &line)
+	testing.expect_value(t, string(line[:count]), "#0000000000000000:0000000000000000")
 }

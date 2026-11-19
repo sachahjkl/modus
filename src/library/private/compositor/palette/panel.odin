@@ -457,6 +457,10 @@ part_color :: proc "contextless" (part: palette_table.Run_Part) -> graphics.Colo
 		return graphics.value_kind_color(value_kinds.Value_Kind.Status, graphics.appearance)
 	case .Operation:
 		return graphics.value_kind_color(value_kinds.Value_Kind.Operation, graphics.appearance)
+	case .Module:
+		return graphics.value_kind_color(value_kinds.Value_Kind.Module, graphics.appearance)
+	case .Version:
+		return graphics.value_kind_color(value_kinds.Value_Kind.Version, graphics.appearance)
 	}
 	return graphics.colors.text
 }

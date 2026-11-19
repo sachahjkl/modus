@@ -130,7 +130,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "terminal_keys.png", group = .Console, guide = "docs/CONSOLE.md", caption = "A key is a record from the terminal to its process: flood stops its lines at the key Space, and shows it in its edit line."},
 	{file = "terminal_held.png", group = .Console, guide = "docs/CONSOLE.md", caption = "The view of a terminal is held while the process continues to write."},
 	{file = "terminal_stopped.png", group = .Console, guide = "docs/CONSOLE.md", caption = "The process stopped: its terminal stays, with the lines that the process wrote."},
-	{file = "log.png", group = .Console, guide = "docs/TOOLS.md", caption = "The log: records with a time, a process, a channel and a level, and each value of a text in the color of its kind."},
+	{file = "log.png", group = .Console, guide = "docs/TOOLS.md", caption = "The log: records with a time, a process and a level, and each value of a text in the color of its kind."},
 
 	// The mark and the graphics.
 	{file = "heron.png", group = .Mark, home = true, guide = "docs/DESIGN.md", caption = "The process heron: the heron of the mark held at a frame of its dash, in whole square cells, with the lines of the cells."},
@@ -204,7 +204,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "settings.png", group = .Interface, guide = "docs/FONTS.md", caption = "The process settings: the font, the subpixel order, the pointer theme and the grid fit change while the processes run."},
 	{file = "desktop_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The light appearance: the bar, the console and the settings in the light form of the color tokens, set with settings.set(\"appearance\", \"light\")."},
 	{file = "console_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The console in the light appearance: each value kind keeps its color, in its light value."},
-	{file = "monitor_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The monitor in the light appearance: the pages in the color of memory, the share of each process in the color of a process."},
+	{file = "monitor_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The monitor in the light appearance: three graphs of the last minute over the grid of points, and each bar in the color of its intensity step."},
 	{file = "rings_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The rings in the light appearance: each node a card, each record in the series color of its number, in its light value."},
 	{file = "clock_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The clock in the light appearance: the time page in the color of memory, the kernel entry in the kernel blue."},
 	{file = "clock_resized.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The clock after a drag of its corner: its process made the surface of the new size, paid by its budget, and drew its next frame in it."},

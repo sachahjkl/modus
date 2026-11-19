@@ -57,7 +57,12 @@
 // - "terminal: a press on the arrow up of the scroll bar of console: the
 //   view starts at line L of N", or "... the view follows the last lines";
 // - "terminal: a drag of the thumb of the scroll bar of console: ...";
-// - "terminal: console stopped with code C after L lines and R records";
+// - "terminal: console stopped: itself, done, after L lines and R
+//   records", with the stop outcome in place of "done", or the text of
+//   another stop cause in place of "itself, done";
+// - "terminal: console draws its interface text in the interface font", or
+//   "... in the font of the cells", at its first frame and at each change
+//   of the setting `font`;
 // - "terminal: console shows the character N in its cells, drawn by this
 //   process from the font F of its fallback chain", once for each font F,
 //   for the first or the last character of the view past the 192
@@ -77,6 +82,7 @@
 package terminal_process
 
 import "modus:contract/enum_word"
+import op "modus:contract/operation"
 import "modus:support/display"
 import "modus:support/text_rendering"
 import "modus:support/graphics"
@@ -291,7 +297,8 @@ Request :: struct {
 	follow: bool, // The view shows the last lines.
 	top:    u64, // If not follow: the line of the first row.
 	stopped: bool, // The process stopped: the reader writes a line that says it.
-	code:    u32,
+	cause:   op.Stop_Cause,
+	outcome: op.Stop_Outcome,
 }
 
 Cell :: interface.Text_Grid_Cell
@@ -364,13 +371,13 @@ lost_wake_check :: proc "contextless" (ended_by_time: bool, wakes_before: u32) {
 	}
 	if intrinsics.atomic_load(&drawer_wakes) == wakes_before && intrinsics.atomic_load(&activity) != activity_at_wait && !lost_wake_logged[0] {
 		lost_wake_logged[0] = true
-		system.log("terminal: ", process_name, ": the drawer slept to its deadline after a change of the view, and no wake came")
+		system.log(.Info, "terminal: ", process_name, ": the drawer slept to its deadline after a change of the view, and no wake came")
 	}
 	read := intrinsics.atomic_load(&source.commands.counters.read)
 	stuck := intrinsics.atomic_load(&reader_idle) != 0 && ring.count(&source.commands) != 0
 	if stuck && reader_stuck_seen && read == reader_read_seen && !lost_wake_logged[1] {
 		lost_wake_logged[1] = true
-		system.log("terminal: ", process_name, ": the reader waits with ", u64(ring.count(&source.commands)), " records in its ring, and read none since the last look")
+		system.log(.Info, "terminal: ", process_name, ": the reader waits with ", u64(ring.count(&source.commands)), " records in its ring, and read none since the last look")
 	}
 	reader_read_seen, reader_stuck_seen = read, stuck
 }
@@ -442,7 +449,7 @@ apply :: proc "contextless" (record: ring.Record) {
 		intrinsics.atomic_add(&records_refused, 1)
 		if !records_refusal_logged {
 			records_refusal_logged = true
-			system.log("terminal: ", process_name, " sent a record of the kind ", u64(record.kind), ", which names no record: it is refused")
+			system.log(.Info, "terminal: ", process_name, " sent a record of the kind ", u64(record.kind), ", which names no record: it is refused")
 		}
 		return
 	}
@@ -471,7 +478,7 @@ apply :: proc "contextless" (record: ring.Record) {
 		if terminal.edit_key_serial_take(&edit_key_serial, record.values[2], intrinsics.atomic_load(&key_serial_forwarded)) {
 			edit_serials_refused += 1
 			if edit_serials_refused == 1 {
-				system.log("terminal: ", process_name, " named a key serial past the keys that it got: it is refused, and the next ones are counted")
+				system.log(.Info, "terminal: ", process_name, " named a key serial past the keys that it got: it is refused, and the next ones are counted")
 			}
 		}
 		edit_line = {style = transmute(terminal.Style)record.values[0]}
@@ -526,11 +533,11 @@ apply :: proc "contextless" (record: ring.Record) {
 	// plain, and the log says it once.
 	if !runs_refusal_logged && edit_runs_refused + list_keeping.runs_refused != 0 {
 		runs_refusal_logged = true
-		system.log("terminal: ", process_name, " sent runs of code that do not fit their row: the row is drawn plain, its text whole")
+		system.log(.Info, "terminal: ", process_name, " sent runs of code that do not fit their row: the row is drawn plain, its text whole")
 	}
 	if !rows_refusal_logged && list_keeping.rows_refused != 0 {
 		rows_refusal_logged = true
-		system.log("terminal: ", process_name, " sent a row of a completion list whose icon names no icon: the row is refused")
+		system.log(.Info, "terminal: ", process_name, " sent a row of a completion list whose icon names no icon: the row is refused")
 	}
 }
 
@@ -751,7 +758,10 @@ note :: proc "contextless" (parts: ..system.Part) {
 // view_make fills the view for the request.
 view_make :: proc "contextless" () {
 	if request.stopped {
-		note("-- ", process_name, " stopped with code ", u64(request.code), " after ", lines_written, " lines --")
+		stop_buffer: [64]u8
+		stop_text := system.Writer{buffer = stop_buffer[:]}
+		system.stop_write(&stop_text, request.cause, request.outcome)
+		note("-- ", process_name, " stopped: ", system.written(&stop_text), ", after ", lines_written, " lines --")
 		status_line.total = 0
 		edit_line = {}
 		edit_runs_pending = {}
@@ -1039,10 +1049,33 @@ tile :: proc "contextless" (table: ^interface.Draw_Table, x: int, label: string,
 	interface.draw_text(table, x, 28, number(&buffer, value), color, interface.FONT_LARGE)
 }
 
+// The font of the interface text of the window in the last frame, once
+// known: the log names each change, so that a machine test knows which
+// font a picture shows before it takes it.
+interface_text_font_told: interface.Font_Kind
+interface_text_font_known: bool
+
+// interface_text_font_tell writes one line when the font that draws the
+// interface text of the window changes: the interface font, or the font of
+// the cells (the setting `spleen`, or no interface font).
+interface_text_font_tell :: proc "contextless" (table: ^interface.Draw_Table) {
+	used := interface.font_in_use(table, interface.FONT_INTERFACE, 0).kind
+	if interface_text_font_known && used == interface_text_font_told {
+		return
+	}
+	interface_text_font_told, interface_text_font_known = used, true
+	if used == .Interface {
+		system.log(.Info, "terminal: ", process_name, " draws its interface text in the interface font")
+	} else {
+		system.log(.Info, "terminal: ", process_name, " draws its interface text in the font of the cells")
+	}
+}
+
 draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	buffer: [27]u8
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
+	interface_text_font_tell(table)
 	// While the list of the action bar is open, a press is the bar's: the
 	// scroll bars under the list do not take it.
 	interface.action_bar_input_take(&frame, &bar)
@@ -1201,7 +1234,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	bar_result = interface.action_bar(&frame, bar_area, items[:], &bar, {alignment = .Right})
 	interface.window_frame_end(&drawing, &frame, window)
 	if table.full {
-		system.log("terminal: the draw table is full: records are missing")
+		system.log(.Info, "terminal: the draw table is full: records are missing")
 	}
 }
 
@@ -1242,7 +1275,7 @@ view_move :: proc "contextless" (move: i64) {
 		request.follow = true
 	}
 	if was_following && !request.follow {
-		system.log("terminal: the view stays at line ", request.top + 1, ", ", process_name, " continues")
+		system.log(.Info, "terminal: the view stays at line ", request.top + 1, ", ", process_name, " continues")
 	}
 }
 
@@ -1262,8 +1295,8 @@ status_bar_length :: proc "contextless" (value, total: u64, length: int) -> int 
 }
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log("terminal: ", text)
-	system.stop(1)
+	system.log(.Info, "terminal: ", text)
+	system.stop(.Failed)
 }
 
 // The entry of the terminal: it opens the window of one process, starts the
@@ -1275,10 +1308,10 @@ fail :: proc "contextless" (text: string) -> ! {
 // 1. reads its values: the name of the process, the columns (40 at least),
 //    the rows (4 at least), and the flag that it measures;
 // 2. opens a window of two pictures with the name of the process; with no
-//    window, it writes "terminal: no surface" and stops with the code 1;
+//    window, it writes "terminal: no surface" and stops with `Failed`;
 // 3. creates the three areas of the lines;
 // 4. opens the terminal ring and maps the text region, read-only; a wrong
-//    ring or region stops it with the code 1;
+//    ring or region stops it with `Failed`;
 // 5. starts the reader thread, and writes "terminal: ok, ...".
 //
 // The first thread is then the drawer. It sleeps while nothing changes,
@@ -1338,7 +1371,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if _, status = system.thread_start(read, nil); status != .Ok {
 		fail("no thread")
 	}
-	system.log("terminal: ok, ", process_name, " writes in a ring of ", u64(ring.capacity(&source.commands)), " records")
+	system.log(.Info, "terminal: ok, ", process_name, " writes in a ring of ", u64(ring.capacity(&source.commands)), " records")
 
 	request.follow = true
 	now := system.time()
@@ -1403,6 +1436,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// A record during this wait needs no wake: the picture is due
 			// already, and the next picture takes it.
 			now = display.wait(&window, next_frame)
+		}
+		// The choice of the settings page, read at each turn: the
+		// compositor tells only a window with a surface, and this window
+		// can read the page before the boot pass of `settings` and make its
+		// surface after it. A change then draws the whole window, as the
+		// event does.
+		if display.text_settings_apply() {
+			interface.draw_whole_window_next(&drawing)
+			dirty = true
 		}
 		for event in display.next_event(&window) {
 			// A new font: each record of the frame is the same, each pixel
@@ -1470,13 +1512,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					if system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Key), tag = event.code, values = {0 = u64(event.character), 1 = u64(event.modifiers), 2 = event.key_serial}}) {
 						keys_sent += 1
 						if keys_sent == 1 {
-							system.log("terminal: the first key goes to ", process_name)
+							system.log(.Info, "terminal: the first key goes to ", process_name)
 						}
 						if lost, ended := key_path.loss_end(&keys_loss); ended {
-							system.log("terminal: ", process_name, " reads its keys again: ", lost, " keys were lost")
+							system.log(.Info, "terminal: ", process_name, " reads its keys again: ", lost, " keys were lost")
 						}
 					} else if key_path.loss_count(&keys_loss) {
-						system.log("terminal: ", process_name, " does not read its keys: its queue of ", u64(ring.capacity(&source.completions)), " keys is full, and a new key is lost")
+						system.log(.Info, "terminal: ", process_name, " does not read its keys: its queue of ", u64(ring.capacity(&source.completions)), " keys is full, and a new key is lost")
 					}
 				}
 				request.follow = true
@@ -1494,15 +1536,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// after this read ends the next wait with nothing to draw at once.
 		events_seen = intrinsics.volatile_load(system.events())
 		if process != 0 {
-			if state, code := system.process_state(process); state == .Stopped {
-				request.stopped, request.code = true, code
+			if state, cause, outcome := system.process_state(process); state == .Stopped {
+				request.stopped, request.cause, request.outcome = true, cause, outcome
 				view_take()
-				system.log("terminal: ", process_name, " stopped with code ", u64(code), " after ", view.count - 1, " lines and ", view.records, " records")
+				stop_buffer: [64]u8
+				stop_text := system.Writer{buffer = stop_buffer[:]}
+				system.stop_write(&stop_text, cause, outcome)
+				system.log(.Info, "terminal: ", process_name, " stopped: ", system.written(&stop_text), ", after ", view.count - 1, " lines and ", view.records, " records")
 				if lost, ended := key_path.loss_end(&keys_loss); ended {
-					system.log("terminal: ", process_name, " stopped and did not read its keys: ", lost, " keys were lost")
+					system.log(.Info, "terminal: ", process_name, " stopped and did not read its keys: ", lost, " keys were lost")
 				}
 				if refused := intrinsics.atomic_load(&records_refused); refused != 0 {
-					system.log("terminal: ", process_name, " stopped after ", refused, " records whose kind names no record")
+					system.log(.Info, "terminal: ", process_name, " stopped after ", refused, " records whose kind names no record")
 				}
 				system.close(process)
 				process = 0
@@ -1551,6 +1596,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					second_logged = true
 					time := now - second_start
 					system.log(
+						.Info,
 						"terminal: ",
 						process_name,
 						" wrote ",
@@ -1634,16 +1680,16 @@ list_scroll_send :: proc "contextless" () -> (sent: bool) {
 			list_first_asked, list_first_when_asked = moved.first, view.list_first
 			list_drag_moved ||= moved.held == .Thumb
 			if moved.pressed_now != .None && moved.pressed_now != .Thumb {
-				system.log("terminal: a press on ", scroll_part_words(moved.pressed_now), " of the scroll bar of the completion list of ", process_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
+				system.log(.Info, "terminal: a press on ", scroll_part_words(moved.pressed_now), " of the scroll bar of the completion list of ", process_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
 			}
 			if moved.wheel_taken {
-				system.log("terminal: the wheel moves the completion list of ", process_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
+				system.log(.Info, "terminal: the wheel moves the completion list of ", process_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
 			}
 		}
 	}
 	if moved.drag_ended {
 		if list_drag_moved {
-			system.log("terminal: a drag of the thumb of the scroll bar of the completion list of ", process_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
+			system.log(.Info, "terminal: a drag of the thumb of the scroll bar of the completion list of ", process_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
 		}
 		list_drag_moved = false
 	}
@@ -1677,7 +1723,7 @@ fallback_cells_tell :: proc "contextless" () {
 		case .Private_Cache, .Not_Kept:
 			if found.font not_in fallback_fonts_told && found.rows > 0 && found.inside {
 				fallback_fonts_told += {found.font}
-				system.log("terminal: ", process_name, " shows the character ", u64(character), " in its cells, drawn by this process from the font ", text_rendering.outline_font_name(found.font), " of its fallback chain")
+				system.log(.Info, "terminal: ", process_name, " shows the character ", u64(character), " in its cells, drawn by this process from the font ", text_rendering.outline_font_name(found.font), " of its fallback chain")
 			}
 		case .Banded:
 			// Drawn band by band, before the process had its glyph memory
@@ -1686,7 +1732,7 @@ fallback_cells_tell :: proc "contextless" () {
 		case .Missing:
 			if !missing_cell_told && found.font == .None {
 				missing_cell_told = true
-				system.log("terminal: ", process_name, " shows the character ", u64(character), " in its cells as the replacement glyph: no font of its fallback chain has it")
+				system.log(.Info, "terminal: ", process_name, " shows the character ", u64(character), " in its cells as the replacement glyph: no font of its fallback chain has it")
 			}
 		}
 	}
@@ -1740,9 +1786,9 @@ scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part) -> str
 // the view is after it: one line for each frame that the wheel moved.
 wheel_log :: proc "contextless" () {
 	if request.follow {
-		system.log("terminal: the wheel moves the view of ", process_name, ": the view follows the last lines")
+		system.log(.Info, "terminal: the wheel moves the view of ", process_name, ": the view follows the last lines")
 	} else {
-		system.log("terminal: the wheel moves the view of ", process_name, ": the view starts at line ", request.top + 1, " of ", view.count)
+		system.log(.Info, "terminal: the wheel moves the view of ", process_name, ": the view starts at line ", request.top + 1, " of ", view.count)
 	}
 }
 
@@ -1750,9 +1796,9 @@ wheel_log :: proc "contextless" () {
 // and where the view is after it.
 scroll_log :: proc "contextless" (act, part: string) {
 	if request.follow {
-		system.log("terminal: ", act, part, " of the scroll bar of ", process_name, ": the view follows the last lines")
+		system.log(.Info, "terminal: ", act, part, " of the scroll bar of ", process_name, ": the view follows the last lines")
 	} else {
-		system.log("terminal: ", act, part, " of the scroll bar of ", process_name, ": the view starts at line ", request.top + 1, " of ", view.count)
+		system.log(.Info, "terminal: ", act, part, " of the scroll bar of ", process_name, ": the view starts at line ", request.top + 1, " of ", view.count)
 	}
 }
 
@@ -1774,12 +1820,12 @@ paste_type :: proc "contextless" (window: ^display.Window, event: display.Event)
 	text := paste_bytes[:count]
 	characters := text_encoding.character_count(text)
 	if process == 0 {
-		system.log("terminal: a paste of ", u64(characters), " characters, and no process to type them")
+		system.log(.Info, "terminal: a paste of ", u64(characters), " characters, and no process to type them")
 		return
 	}
 	room := int(ring.capacity(&source.completions) - ring.count(&source.completions))
 	if characters > room {
-		system.log("terminal: the paste of ", u64(characters), " characters is larger than the room of ", u64(room), " keys of ", process_name, ": nothing is typed")
+		system.log(.Info, "terminal: the paste of ", u64(characters), " characters is larger than the room of ", u64(room), " keys of ", process_name, ": nothing is typed")
 		return
 	}
 	for place := 0; place < count; {
@@ -1790,5 +1836,5 @@ paste_type :: proc "contextless" (window: ^display.Window, event: display.Event)
 		place += length
 		system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Key), tag = 0, values = {0 = u64(character), 1 = 0}})
 	}
-	system.log("terminal: a paste of ", u64(characters), " characters goes to ", process_name)
+	system.log(.Info, "terminal: a paste of ", u64(characters), " characters goes to ", process_name)
 }

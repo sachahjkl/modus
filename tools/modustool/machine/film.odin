@@ -487,7 +487,7 @@ Film :: struct {
 	output: string, // The log of its machine.
 }
 
-FILM_NAMES :: "terminal | palette | heron | boot | desktop | console | program"
+FILM_NAMES :: "terminal | palette | heron | boot | desktop | console | program | monitor"
 TEST_OUTPUT_FILM_TERMINAL :: foundation.BUILD_FOLDER + "/test_output_film_terminal.txt"
 TEST_OUTPUT_FILM_PALETTE :: foundation.BUILD_FOLDER + "/test_output_film_palette.txt"
 TEST_OUTPUT_FILM_HERON :: foundation.BUILD_FOLDER + "/test_output_film_heron.txt"
@@ -495,6 +495,7 @@ TEST_OUTPUT_FILM_BOOT :: foundation.BUILD_FOLDER + "/test_output_film_boot.txt"
 TEST_OUTPUT_FILM_DESKTOP :: foundation.BUILD_FOLDER + "/test_output_film_desktop.txt"
 TEST_OUTPUT_FILM_CONSOLE :: foundation.BUILD_FOLDER + "/test_output_film_console.txt"
 TEST_OUTPUT_FILM_PROGRAM :: foundation.BUILD_FOLDER + "/test_output_film_program.txt"
+TEST_OUTPUT_FILM_MONITOR :: foundation.BUILD_FOLDER + "/test_output_film_monitor.txt"
 
 // film_of_name gives the film with a name. The name of a film is the text
 // of the step Film_Start of its scenario.
@@ -514,6 +515,8 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 		return Film{name = "console", steps = scenario_console_film[:], output = TEST_OUTPUT_FILM_CONSOLE}, true
 	case "program":
 		return Film{name = "program", steps = scenario_program_film[:], output = TEST_OUTPUT_FILM_PROGRAM}, true
+	case "monitor":
+		return Film{name = "monitor", steps = scenario_monitor_film[:], output = TEST_OUTPUT_FILM_MONITOR}, true
 	}
 	return {}, false
 }
@@ -521,8 +524,9 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 // run_film makes one film: `film` and `film terminal` the film of the
 // terminal, `film palette` the film of the palette, `film heron` the film
 // of the process heron, `film boot` the film of the boot of the machine,
-// and `film desktop`, `film console` and `film program` the films of the
-// chapters of the tutorial (docs/TOOLS.md, "The film").
+// `film desktop`, `film console` and `film program` the films of the
+// chapters of the tutorial, and `film monitor` the film of the graphs of
+// monitor under a load (docs/TOOLS.md, "The film").
 // The films differ by their scenario only: the worker, the list of the
 // encoder and the encoder are the same. A film is for the development log, and for the
 // news entry that names it: it is not a test, and no check runs it.

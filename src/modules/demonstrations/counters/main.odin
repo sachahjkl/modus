@@ -66,15 +66,15 @@ LINES_IN_A_PAGE :: PAGE_BYTES / LINE_BYTES
 loop_sink: u64
 
 // fail writes the line of a failure, which starts with "counters: failed: ",
-// and stops the process with the code 1.
+// and stops the process with `Failed`.
 fail :: proc "contextless" (parts: ..system.Part) -> ! {
-	system.log(..parts)
-	system.stop(1)
+	system.log(.Info, ..parts)
+	system.stop(.Failed)
 }
 
 // counts_log writes the four counts of one measure on one line.
 counts_log :: proc "contextless" (counters: op.Thread_Counters, prefix: string) {
-	system.log(prefix, counters.instructions_retired, " instructions retired, ", counters.cycles, " cycles, ", counters.cache_misses, " cache misses, ", counters.branch_misses, " branch misses")
+	system.log(.Info, prefix, counters.instructions_retired, " instructions retired, ", counters.cycles, " cycles, ", counters.cache_misses, " cache misses, ", counters.branch_misses, " branch misses")
 }
 
 // difference gives the counts of a measure between two reads of one start.
@@ -134,7 +134,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if refused != .No_Right {
 		fail("counters: failed: Start_Counters with a copy of the machine handle with no right gave ", refused, ", not No_Right")
 	}
-	system.log("counters: Start_Counters with a copy of the machine handle with no right gave No_Right: as it must")
+	system.log(.Info, "counters: Start_Counters with a copy of the machine handle with no right gave No_Right: as it must")
 
 	// 2. No count before a start, or no counters on this machine.
 	error: errors.Error_Record
@@ -145,14 +145,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if start_status != .Bad_Operation || start_error.kind != i64(errors.Kind.Unsupported) {
 			fail("counters: failed: Read_Counters gave Unsupported and Start_Counters gave ", start_status)
 		}
-		system.log("counters: Read_Counters and Start_Counters gave Bad_Operation with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must")
-		system.log("counters: ok")
-		system.stop(0)
+		system.log(.Info, "counters: Read_Counters and Start_Counters gave Bad_Operation with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must")
+		system.log(.Info, "counters: ok")
+		system.stop(.Done)
 	}
 	if before_start != .Bad_State {
 		fail("counters: failed: Read_Counters before Start_Counters gave ", before_start, ", not Bad_State")
 	}
-	system.log("counters: Read_Counters before Start_Counters gave Bad_State: as it must")
+	system.log(.Info, "counters: Read_Counters before Start_Counters gave Bad_State: as it must")
 
 	// 3. A loop of known length.
 	if status := system.thread_counters_start(machine); status != .Ok {
@@ -167,7 +167,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// counts on the line say which.
 		fail("counters: failed: a loop of ", u64(LOOP_TURNS), " turns retired ", loop.instructions_retired, " instructions, fewer than ", u64(LOOP_INSTRUCTIONS_LEAST), "; ", loop.cycles, " cycles, ", loop.cache_misses, " cache misses, ", loop.branch_misses, " branch misses")
 	}
-	system.log("counters: a loop of ", u64(LOOP_TURNS), " turns retired at least ", u64(LOOP_INSTRUCTIONS_LEAST), " instructions: as it must")
+	system.log(.Info, "counters: a loop of ", u64(LOOP_TURNS), " turns retired at least ", u64(LOOP_INSTRUCTIONS_LEAST), " instructions: as it must")
 	counts_log(loop, "counters: the loop (a measure): ")
 
 	// 4. The thread goes on counting.
@@ -175,7 +175,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if later.instructions_retired < loop.instructions_retired || later.cycles < loop.cycles || later.cache_misses < loop.cache_misses || later.branch_misses < loop.branch_misses {
 		fail("counters: failed: a second read gave a count below the first")
 	}
-	system.log("counters: a second read gave no count below the first: as it must")
+	system.log(.Info, "counters: a second read gave no count below the first: as it must")
 
 	// 5. One data layout read in two orders.
 	region, created := system.memory_create(REGION_PAGES)
@@ -201,7 +201,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if sum_in_order != sum_by_page {
 		fail("counters: failed: the two orders read other words: ", sum_in_order, " and ", sum_by_page)
 	}
-	system.log("counters: ", u64(REGION_PAGES * WORDS_IN_A_PAGE), " reads of ", u64(WORD_BYTES), " bytes in ", u64(REGION_PAGES), " pages, in order and by page, read the same words: as it must")
+	system.log(.Info, "counters: ", u64(REGION_PAGES * WORDS_IN_A_PAGE), " reads of ", u64(WORD_BYTES), " bytes in ", u64(REGION_PAGES), " pages, in order and by page, read the same words: as it must")
 	counts_log(in_order, "counters: the reads in order (a measure): ")
 	counts_log(by_page, "counters: the reads by page (a measure): ")
 
@@ -213,7 +213,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if _, after_stop := system.thread_counters_read(machine); after_stop != .Bad_State {
 		fail("counters: failed: Read_Counters after Stop_Counters gave ", after_stop, ", not Bad_State")
 	}
-	system.log("counters: Stop_Counters with no handle gave Ok, and Read_Counters after it gave Bad_State: as it must")
-	system.log("counters: ok")
-	system.stop(0)
+	system.log(.Info, "counters: Stop_Counters with no handle gave Ok, and Read_Counters after it gave Bad_State: as it must")
+	system.log(.Info, "counters: ok")
+	system.stop(.Done)
 }

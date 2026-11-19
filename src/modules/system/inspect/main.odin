@@ -181,7 +181,7 @@ sample_take :: proc "contextless" () {
 		if fresh.process.process_serial != serial || fresh.mappings.process_serial != serial || fresh.modules.process_serial != serial || fresh.threads.process_serial != serial || fresh.stop.process_serial != serial {
 			dropped_samples += 1
 			if dropped_samples <= 4 {
-				system.log("inspect: a sample mixed two processes of slot ", slot, ": dropped, ", dropped_samples, " in all")
+				system.log(.Info, "inspect: a sample mixed two processes of slot ", slot, ": dropped, ", dropped_samples, " in all")
 			}
 			current.time = system.time()
 			return
@@ -210,13 +210,13 @@ sample_log :: proc "contextless" () {
 		pages += mapping.page_count
 		present += mapping.present
 	}
-	system.log("inspect: ", name, ": ", current.mappings.count, " mappings, ", pages, " mapped pages, ", present, " with a frame, ", current.threads.count, " threads, ", current.modules.count, " modules; the kernel says ", current.process.mapped_pages, " mapped pages and ", current.process.thread_count, " threads")
-	system.log("inspect: one sample of ", name, " took ", current.nanoseconds / 1000, " us and ", current.entries, " kernel entries")
-	if current.stop.code != 0 {
+	system.log(.Info, "inspect: ", name, ": ", current.mappings.count, " mappings, ", pages, " mapped pages, ", present, " with a frame, ", current.threads.count, " threads, ", current.modules.count, " modules; the kernel says ", current.process.mapped_pages, " mapped pages and ", current.process.thread_count, " threads")
+	system.log(.Info, "inspect: one sample of ", name, " took ", current.nanoseconds / 1000, " us and ", current.entries, " kernel entries")
+	if current.stop.cause != 0 {
 		buffer: [512]u8
 		writer := system.Writer{buffer = buffer[:]}
 		stop_write(&writer, &current.stop)
-		system.log("inspect: ", name, " stopped: ", system.written(&writer))
+		system.log(.Info, "inspect: ", name, " stopped: ", system.written(&writer))
 	}
 }
 
@@ -357,16 +357,16 @@ key :: proc "contextless" (event: display.Event) {
 		choose(min(position_of_selected() + 1, shown_count - 1))
 	case event.code == KEY_TAB:
 		hex_view = !hex_view
-		system.log("inspect: ", hex_view ? "the bytes of the memory of inspect" : "the reports of ", hex_view ? "" : system.name_of(current.process.name[:]))
+		system.log(.Info, "inspect: ", hex_view ? "the bytes of the memory of inspect" : "the reports of ", hex_view ? "" : system.name_of(current.process.name[:]))
 	case event.character == ' ':
 		frozen = !frozen
-		system.log("inspect: the sample is ", frozen ? "frozen" : "live")
+		system.log(.Info, "inspect: the sample is ", frozen ? "frozen" : "live")
 	case event.code == display.KEY_BACKSPACE:
 		had := filter_count
 		filter_count = max(filter_count - 1, 0)
 		list_read()
 		if had == 1 {
-			system.log("inspect: the list shows all ", u64(shown_count), " processes")
+			system.log(.Info, "inspect: the list shows all ", u64(shown_count), " processes")
 		}
 	case event.code == display.KEY_ENTER:
 		choose(0)
@@ -399,13 +399,13 @@ key :: proc "contextless" (event: display.Event) {
 // when Space froze the sample, it only reads the list of the processes
 // again.
 //
-// **The stop**: with no window, it stops with the code 1. Else it never
+// **The stop**: with no window, it stops with `Failed`. Else it never
 // returns: `stop("inspect")`, or the close button of its window, ends it.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "inspect")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
@@ -422,7 +422,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	sample_take()
-	system.log("inspect: ok, ", u64(entry_count), " processes; up, down, letters: choose; space: freeze; tab: the bytes of its own memory")
+	system.log(.Info, "inspect: ok, ", u64(entry_count), " processes; up, down, letters: choose; space: freeze; tab: the bytes of its own memory")
 	for {
 		draw(&window)
 		next := current.time + SAMPLE_INTERVAL

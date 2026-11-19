@@ -1,6 +1,6 @@
 # Module contract
 
-`src/library/contract/module/format.odin` is version 2 of the format at the level of bytes.
+`src/library/contract/module/format.odin` is version 3 of the format at the level of bytes.
 
 This document gives the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `glossary/README.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -66,7 +66,7 @@ A module is one file that holds its code and everything needed to use it: what i
 +--------------------+
 | flat tables        |  segments, imports, slots, exports, rebases,
 |                    |  functions, strings, documentation, records, fields,
-|                    |  budget
+|                    |  budget, facts, own hash
 +--------------------+
 | segment data       |  code, read-only data, data; each segment on a page
 +--------------------+
@@ -78,7 +78,7 @@ The code is `src/library/contract/module/format.odin`; all numbers are little-en
 - **Feature bits**: A loader that does not know a set bit refuses the module with a clear error. ELF has no such field, and old loaders crash on new files. [Load §1]
 - **Table directory**: Each entry gives the record size of its table. A table can gain fields at the end of its record. A reader that knows a shorter record ignores the rest. A reader that knows a longer record reads the missing fields as zero. [Types §4, §5]
 - **Index 0** of each table is the empty entry (ZII).
-- **Hash**: The identity of a module is the hash of the whole file. The file contains no reference to its own hash. Imports are hashes, so an import cycle cannot exist in the files. [Load §4] A replacement can make one (section "Replacement of an import"): the loader refuses it.
+- **Hash**: The identity of a module is the hash of the whole file. The file contains no reference to its own hash: a loader writes the hash at its own-hash place (section "The log facts and the own-hash place"). Imports are hashes, so an import cycle cannot exist in the files. [Load §4] A replacement can make one (section "Replacement of an import"): the loader refuses it.
 
 The byte layout of the header, of an entry of the table directory and of one record of each table follows: its offset, its size, its name and its type for each field. On the site each one is a diagram in rows of 8 bytes, with the type and the comment of a field under the pointer. The offsets and the sizes come from the compiler, and the types from `src/library/contract/module/format.odin`: the tool writes these lists, and checks them (`SITE.md`, "The byte layouts"). The table Strings has no record: it is bytes.
 
@@ -151,7 +151,7 @@ The loader reads none of these tables: they are for a caller that must know the 
 |---|---|
 | Functions | One export (`module.Function`, 168 bytes): its name, one line of help, its documentation text, the name, the type, the detail and the direction of each of its parameters (12 at most), the type and the detail of its result, and the description of its error record (0: it gives none) |
 | Records | One record that an export receives or gives: its name, its size (256 bytes at most) and the range of its fields |
-| Fields | One field of a record: its name, its offset, its type (Integer, Handle or Text), signed or unsigned, the integer unit of an Integer (section 5, "The unit of an Integer field"), and its detail (the size of an integer or a text, the rights of a handle) |
+| Fields | One field of a record: its name, its offset, its type (Integer, Handle, Text or Bytes), signed or unsigned, the integer unit of an Integer (section 5, "The unit of an Integer field"), its detail (the size of an integer, a text or bytes, the rights of a handle), and its field kind with the contract enum of a status (section 5, "The kind of a field") |
 | Strings | The bytes of all names, help lines and documentation texts |
 | Documentation | Record 1: the documentation of the module, one line and a text |
 
@@ -185,15 +185,17 @@ offset  size  field        type
     20     4  reserved     u32
 
 module.Field, 24 bytes: one record of the table Fields
-offset  size  field         type
-     0     4  name_offset   u32
-     4     4  name_count    u32
-     8     4  offset        u32
-    12     1  type          u8
-    13     1  unsigned      bool
-    14     2  integer_unit  value_kinds.Integer_Unit
-    16     4  detail        u32
-    20     4  reserved      u32
+offset  size  field          type
+     0     4  name_offset    u32
+     4     4  name_count     u32
+     8     4  offset         u32
+    12     1  type           u8
+    13     1  unsigned       bool
+    14     2  integer_unit   value_kinds.Integer_Unit
+    16     4  detail         u32
+    20     1  kind           u8
+    21     1  contract_enum  u8
+    22     2  reserved       [2]u8
 
 module.Documentation, 16 bytes: one record of the table Documentation
 offset  size  field         type
@@ -327,6 +329,38 @@ When the budget of the root service holds each part, the budget of the process w
 
 The design and the refused forms: `src/md/features/module_budget_request.md`.
 
+### The log facts and the own-hash place
+
+A log fact is a log record that carries the values of one record type of its writer, with no text (`TOOLS.md`, "The log"). Its sentence is in the module file, and the log fact names the module by its hash. Two tables hold what a reader of the log needs.
+
+| Table | One record describes |
+|---|---|
+| Facts | One fact type that the module writes: its fact key, the index of its record description in the table `Records`, its fact template and the name of the package that declares the record type, both in the string table. The build writes the rows sorted by key, with no key 0 and no key in two rows. No reader checks the order or the uniqueness: a file that breaks them gives no row for some keys in a search, never a row of another key |
+| Own_Hash | The record 1 only: the own-hash place, 32 bytes of the writable data of the module where each loader writes the hash of the module file |
+
+```byte-layout module.Fact module.Own_Hash_Place
+module.Fact, 32 bytes: one record of the table Facts
+offset  size  field            type
+     0     8  key              u64
+     8     4  record           u32
+    12     4  template_offset  u32
+    16     4  template_count   u32
+    20     4  package_offset   u32
+    24     4  package_count    u32
+    28     4  reserved         u32
+
+module.Own_Hash_Place, 8 bytes: the record 1 of the table Own_Hash
+offset  size  field          type
+     0     8  memory_offset  u64
+```
+
+- **The record of a fact type** is a record description of the table `Records`, as the record of an export is. A record that an export takes and a fact writes has one row.
+- **The checks of a reader**: `module.fact` refuses a row with the key 0, a `reserved` word that is not 0, a record that `record_type` refuses or whose values pass `op.LOG_FACT_VALUE_CAPACITY` (144 bytes), a template of 0 bytes or of more than `FACT_TEMPLATE_BYTES_MOST` (256), and a text outside the string table. `module.fact_find` finds a row by its key in the sorted table. `module.fact_template_valid` checks the language of the template against the fields: a reader shows a fact whose template breaks a rule raw.
+- **The own-hash place.** A module file cannot hold its own hash. The support package `system` declares the place, a variable with the symbol `modus_own_hash` (`module.OWN_HASH_PLACE_SYMBOL`), and the build writes its memory offset in the table `Own_Hash`. `validate` refuses a place that is not 32 bytes inside one segment with Write and no Execute (`Bad_Own_Hash_Place`), so no file makes a loader write into its code. A module whose code does not read the place has no table: the link drops the variable.
+- **The version.** Version 3 of the format adds the two tables. A loader of version 2 would leave the place zero, so the version changed, and a loader refuses a file of version 2.
+
+What the build checks, and how a source declares a fact type: `TOOLS.md`, "The log facts of the build". The design: `src/md/features/log_facts.md`.
+
 ## 2. Loading
 
 The loader turns a module file into code that runs in a process. It is a library in user space (`src/library/support/system`, `load.odin`), not a part of the kernel: it asks the kernel only to create a process and to map memory. It finds each import by its hash among the files that it was granted, and it never searches a path.
@@ -336,7 +370,7 @@ The loader does five steps:
 1. Place the module and each of its imports in the address range of the process: the module of a process at `PROCESS_BASE`, each import after it. The design is a random base; today the base is fixed ("Addresses", below).
 2. Get each imported module from the load source by its hash, and check the hash and the tables of the file. Load it if it is not in the module space of the process yet.
 3. Rebase: add the base address to each location of the rebase table.
-4. Bind: for each slot, write the address of the export `(import, export index)`.
+4. Bind: for each slot, write the address of the export `(import, export index)`, and write the hash of the module file at its own-hash place (`module.own_hash_write`), when the file has one. The kernel writes it for the root service, which it loads itself.
 5. Map the segments with their protection: a segment with the flag Read only after the load loses Write after steps 3 and 4. The starter then starts the process at the entry export (`Header.entry_export`) with `Process_Start`.
 
 Status of the loader in user space (`src/library/support/system/load.odin`):
@@ -391,7 +425,7 @@ A name is 32 bytes, from the load source: the loader reads it in the entries of 
 - **Text for a reader**: `system.load_error_text` writes the record as lines, with no other data. The console prints each line after "error: ", for example "error: agenda imports calendar, and its replacement calendar_changed fails the check" and "error: export days_in_month of calendar_changed: 3 parameters, calendar has 2". The root service writes the lines on the log when a start fails.
 - **A call host**: its first completion has the tag 0: Ok when it loaded its module, or `Load_Failed` with the record at the start of the call region. The console waits for it in `isolate`, copies the record, and reads it as values: a value out of an enumeration is shown as unknown, and a name is read up to its 32 bytes.
 - **Unload**: `module_space_release` gives `false` and the stage Unmap when the kernel refuses to remove a module.
-- **A fault in a module**: the kernel keeps a stop report for each process (`op.Stop_Report`): the stop code, the instruction, the address, and the module record of the module of the instruction, that is the module that ran (B2, not B). The holder of the process handle reads it with `Process_State`. The console prints "error: the instruction is at " and the procedure of the instruction in calendar_fixed (section "Debug information"), or "at offset ... of calendar_fixed ..." with no debug image, and "error: calendar_fixed ... runs in place of calendar ...". The log of the kernel has the same facts, as offsets.
+- **A fault in a module**: the kernel keeps a stop report for each process (`op.Stop_Report`): the stop cause, the vector, the instruction, the address, and the module record of the module of the instruction, that is the module that ran (B2, not B). The holder of the process handle reads it with `Process_State`. The console prints "error: the instruction is at " and the procedure of the instruction in calendar_fixed (section "Debug information"), or "at offset ... of calendar_fixed ..." with no debug image, and "error: calendar_fixed ... runs in place of calendar ...". The log of the kernel has the same facts, as offsets.
 - **What the record does not explain**: the first failure only: a load stops at the first stage that fails. A caller that gives a table of error details receives one load error for each import that is missing or has the wrong hash (section 8, "The table of error details"); the other stages still give the first failure only. It does not say which part of a Record differs (only that the two records differ, and their names). It does not say why a file is in the load source or not. A replacement nearer to the failure hides one farther on the path: the record holds one replacement. A fault report gives the stack trace (section 8): a fault in B2 that a call from A caused names B2, then A. The record of a call host comes from another process: the console checks its values, and cannot prove them.
 
 What this design removes, compared with ELF:
@@ -568,7 +602,7 @@ The tag does not refuse an older version of the table that the storage service k
 
 - The record `Client_Add`, which tells the compositor of a new window, holds the nickname (values 1 to 3) and the first 8 bytes of the hash (value 4). The window has the nickname as its title, in the title bar, the menu of the windows and the palette: the title that the process asks for is not read, so the window of a disk process cannot have the title `console`. The menu and the palette (the window and its close) show the hash prefix after the nickname, so a nickname that only looks like a name of the system (`consoIe`) is told apart; the title bar shows the nickname alone.
 - A disk process cannot start a child: its budget holds one process, its own. So no child of it takes the name of a process of the system in the monitor.
-- The disk process page (`modus:contract/disk_process_page`) holds one row for each disk process that runs: its process slot, its process serial, its nickname and its whole hash. The root service maps it read-only into each process that it starts with the right Inspect, as the monitor. The root service learns the process slot and the process serial from `Process_State`, which gives them as its results 4 and 5.
+- The disk process page (`modus:contract/disk_process_page`) holds one row for each disk process that runs: its process slot, its process serial, its nickname and its whole hash. The root service maps it read-only into each process that it starts with the right Inspect, as the monitor. The root service learns the process slot and the process serial from `Process_State`, which gives them as its results 5 and 6.
 - The export `monitor.processes()` gives what the window shows: the row of a disk process has its nickname as its `name`, and the whole hash of its file, 64 hexadecimal digits, in `hash`. The row of each other process has an empty `hash`. `columns(where(processes(), "name", "store_importer"), "name hash")` in the console gives `store_importer  5f0c1a2b…`.
 
 The monitor writes one line for each disk process that it shows, and the compositor one line for each disk process in the menu of the windows when the menu opens:
@@ -655,7 +689,7 @@ The code is `src/library/contract/isolated/` and `src/modules/system/host`.
 - **Completion record**: `kind` is a status (`isolated.Status`): 0 `Ok`; 1 `Bad_Export`, the module has no export with this index, or the export has no description; 2 `Bad_Arguments`, the argument record or one of its slices is not in the call region; 3 `Bad_Handle`, a handle of the argument record did not come through the call ring or lacks a right of the description ("Records and handles, as implemented"); 4 `Load_Failed`, only in the first completion of a call host, with the tag 0 (section 2, "The error of a load"). `values[0]` and `values[1]` are the integer results; `values[2]` and `values[3]` are the float results.
 - **The receiver checks**: The call host reads the types from the description in the module, not from the caller. It copies the argument record to private memory once. It checks the offset and the count of each slice against the size of the call region, with no overflow. Then it calls `export_call`.
 - **The caller checks**: The caller reads a bounded number of completion records, and ignores each record whose tag is not the tag of the call.
-- **Failure**: A fault in the module stops the call host only. The kernel wakes the caller, which holds the handle of the process. The caller reads the stop code. A call has no time limit. The caller ends a call when it closes the handle: the kernel stops a process that no handle names. The console does this when Escape is pressed. The next call starts a new call host.
+- **Failure**: A fault in the module stops the call host only. The kernel wakes the caller, which holds the handle of the process. The caller reads the stop cause, and the stop report of a fault. A call has no time limit. The caller ends a call when it closes the handle: the kernel stops a process that no handle names. The console does this when Escape is pressed. The next call starts a new call host.
 - **Tests**: `odin test isolated` has a round trip, the refused cases at each limit, and 200 000 random argument records. The machine test calls a module that reads address 0, that loops with no end, and that tries to stop the machine.
 
 ### Records and handles, as implemented
@@ -835,12 +869,12 @@ The test tool and a developer read the state of the running system as typed reco
 - **The principal.** Each client proves its own key in the QUIC handshake, and a principal allows that key from a console that acts for it: `remote_allow(key)` (`docs/PRINCIPALS.md`, "The client keys of remote"). Each connection of the remote service to a service is for one such grant, and the root service gives that connection the principal of the grant, with the flag to act for it (`isolated.CALLER_ACTS_FOR_PRINCIPAL`): `manual.running()`, `monitor.processes()` and `storage.stores()` give the client what a console of that principal sees. Reason: the purpose is to read the state of the system as the principal that allowed the client; a grant of less makes the tool see less than the console. A key that no principal allowed is refused in its handshake. `remote_disallow(key)` ends the grant, and the open connection of the client with it. `revoke("remote", "acts_for_principal")` in the console ends the flag for each client: the root service tells each service of the remote service that the grant of its connection changed, and the next call is refused with its error record.
 - **What it does not protect** (property 20): whoever holds the private key of an allowed client calls for its principal. The listen grant of the remote service still admits the address of the host only, and a Retry of QUIC proves that the client receives at that address. The host knows the machine by the key that it pinned, and no one on the path reads or changes a call (`docs/QUIC.md`, section 7, "Who may call").
 - **A machine that runs outside the test.** `modustool run` starts the machine with a window, and the peer with its call socket; it prints the path of the socket and the key of the client of the peer for this run. Type `remote_allow("<that key>")` in the console of the machine. Start `remote` from the menu of the bar, or `start("remote")` in the console, and read its public key in its window. Then, in another terminal of the development shell: `modustool call <the 64 hexadecimal digits of the key of remote> "monitor.processes()"`. The QUIC client of the peer pins that key. The tool reads the module files of `build/modules`: the machine must run the boot image of the same build, else the remote service refuses the hash. In the machine test the peer takes a call socket of its own and the key on the log, and the step `Call` uses the same code.
-- **The monitor** is the first service of inspection: `processes()` (a Table of `Process`: slot, name, state, resident pages, mapped pages, handles, threads, processor time in ms, kernel entries, start time in us, from `op.Process_Report`, and `hash`: the whole hash of the file of a disk process, from the disk process page, empty for each other process; the name of a disk process is its nickname), `counts()` (a Table of `Count`: name, value, unit, from `op.System_Report`), `count(name)` (one count as an Integer) and `served()` (a Record of the calls of the monitor itself). The first three give facts of other processes and of the machine: only to a caller that acts for the principal, else `No_Grant`. The monitor already reads these facts with the machine and the right Inspect for its window, so the exports need no new grant; the remote service does not get the machine.
+- **The monitor** is the first service of inspection: `processes()` (a Table of `Process`: slot, name, state, the stop cause of a stopped process, the stop outcome of a process that stopped itself, resident pages, mapped pages, handles, threads, processor time in ms, kernel entries, start time in us, from `op.Process_Report`, and `hash`: the whole hash of the file of a disk process, from the disk process page, empty for each other process; the name of a disk process is its nickname), `counts()` (a Table of `Count`: name, value, unit, from `op.System_Report`), `count(name)` (one count as an Integer) and `served()` (a Record of the calls of the monitor itself). The first three give facts of other processes and of the machine: only to a caller that acts for the principal, else `No_Grant`. The monitor already reads these facts with the machine and the right Inspect for its window, so the exports need no new grant; the remote service does not get the machine.
 - **The second layer**. Each part is an export with a description; the request and the answer are the same as in the first layer.
   - **A lost datagram and another hash, tested.** The peer drops a datagram of `remote` when the step asks it (`lose`): QUIC sends it again, and `monitor.served()` shows that the monitor ran the call one time. A request with a changed hash (`wrong_hash`) is refused, and the tool names the hash that runs and the hash that it sent.
   - **The compositor is a service**: `pointer()` (one row of `Pointer`: x, y, buttons, the pointer records that arrived, the menu of the bar that is open, the state of the palette) and `windows()` (a Table of `Window`: title, place, size, order from the front, focus, whether the keys go to it). They are facts of the screen of the principal, so they need the caller to act for the principal. `pointer()` is a Table of one row and not a Record: a Record result cannot refuse (this section, "Records and handles"). The root service gives the compositor a service ring and its own file at the values 4 and 5 of its context (0 to 3 are the screen).
   - **The confirmed place of the pointer.** Before each press of a step `Click`, `Drag`, `Launch`, `Move`, `Close` or `Front`, the tool reads `compositor.pointer()` and moves the pointer again from the place that the compositor has, until it is the place of the step (6 tries; a failure names the two places). Before `remote` runs, the tool moves the pointer with no confirmation.
-  - **The log records as a table**: the process `log`, which holds the grant to read the log, serves `records(after)`: one row of `Record` for each log record from the number `after` (number, time, process, slot, level, channel, the count of its value runs, text, and in the first row the records that the kernel wrote over), and `value_runs(after)`: one row of `Value_Run` for each value run of those records (`TOOLS.md`, "The log"). A caller that acts for the principal receives the whole log: the log has facts of all processes. Each other caller receives its own records only, by its process slot and its process serial (`TOOLS.md`, "Who reads which records"). `process_records(process, after)` and `process_value_runs(process, after)` take a lent Handle with the right Read: they give the records of the process of that handle, so that a starter reads what its children wrote. The step `Record` of the test waits for a record of a process, a channel and a level with a part of a text; a later step names the number of that record with `{record}`, for example `log.value_runs({record})`, because the count of the records before it depends on what each process wrote since the boot. The serial port stays the one path that works before `remote` runs and when the network does not: the machine test reads it for each other check.
+  - **The log records as a table**: the process `log`, which holds the grant to read the log, serves `records(after)`: one row of `Record` for each log record from the number `after` (number, time, process, slot, level, the count of its value runs, text, and in the first row the records that the kernel wrote over), and `value_runs(after)`: one row of `Value_Run` for each value run of those records (`TOOLS.md`, "The log"). A caller that acts for the principal receives the whole log: the log has facts of all processes. Each other caller receives its own records only, by its process slot and its process serial (`TOOLS.md`, "Who reads which records"). `process_records(process, after)` and `process_value_runs(process, after)` take a lent Handle with the right Read: they give the records of the process of that handle, so that a starter reads what its children wrote. The step `Record` of the test waits for a record of a process and a level with a part of a text; a later step names the number of that record with `{record}`, for example `log.value_runs({record})`, because the count of the records before it depends on what each process wrote since the boot. The serial port stays the one path that works before `remote` runs and when the network does not: the machine test reads it for each other check.
   - **Arguments from the host**: Integers, Texts, and tables to read: a literal of rows, `monitor.counts_named([("processes"), ("processors")])`, and a text for Bytes(Read). A Record argument has no text form yet: no export that `remote` reaches takes a Record. A Change or Append table is refused: the answer carries one result place, and the rows would not come back.
 - **Three uses with no change of the format.** The second layer does (1) and (3); (2) is not done for most `.Wait` checks. (1) Log records as binary records: an export of a service gives a Table of log records (`op.Log_Record` has a fixed size), and the tool prints it with its field names. (2) The `.Wait` checks of the machine test become `.Call` checks that compare fields of records. (3) The pointer place of the compositor: an export of the compositor gives a Record of the place, and the tool reads it before a click. Each one is an export with a description; the request and the answer stay as they are.
 
@@ -1015,7 +1049,7 @@ The description of an export names each parameter and the result with one member
 | `Record` | Bytes of a fixed size with described fields | The address of the record | One more argument, the address of the memory of the record; the export has no integer result | Not allowed: a record holds no record |
 | `Handle` | A handle that the caller lends for the time of the call, with the rights that the callee needs | The handle, in a register | Not allowed | The handle, in 4 bytes |
 | `Table` | Records of one description that follow each other, with a direction | The address of a table place `{address, count, capacity}` | One more argument, the address of a buffer record `{address, capacity in records}`; the integer result is the count of records of the full table | Not allowed |
-| `Bytes` | Bytes with no description, with a direction | The address of a table place, with the count and the capacity in bytes | Not allowed | Not allowed |
+| `Bytes` | Bytes with no description, with a direction | The address of a table place, with the count and the capacity in bytes | Not allowed | A hash, in a field of 1 to 32 bytes of the kind `Hash` ("The kind of a field") |
 
 - **A direction** (`module.Direction`) says what the callee does with the memory of a Table or Bytes parameter: `Read` (it reads and writes nothing), `Change` (it reads and writes the records that exist), `Append` (it writes after the records that exist). `Read` is the value 0: the direction with the least power is the default (section 4, "Tables and bytes as parameters").
 - **A count larger than the capacity** means "the answer did not fit" for a Text result and for a Table result. The caller owns all the memory, and the callee allocates no larger buffer.
@@ -1048,6 +1082,10 @@ The description of an export names each parameter and the result with one member
 | A field `i64`, `u64`, `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, or an enum with such a backing type | An `Integer` field of that size |
 | A field `system.Lent({...})` | A `Handle` field |
 | A field `[N]u8` | A `Text` field of N bytes |
+| A field `value_kinds.Hexadecimal_8`, `_16`, `_32`, `_64` | An unsigned `Integer` field of that size, of the kind `Hexadecimal` |
+| A field of a contract enum of `value_kinds.CONTRACT_ENUM_TYPES`: `operation.Status`, `operation.Log_Level` | An unsigned `Integer` field of the size of the enum, of the kind `Status`, with its enum |
+| A field `value_kinds.Module_Name_Field` | A `Text` field of 32 bytes, of the kind `Module_Name` |
+| A field `value_kinds.Hash_Field` | A `Bytes` field of 32 bytes, of the kind `Hash` |
 
 **An example**, three exports of `src/modules/demonstrations/sample`: an Integer result from a Record, a Record result, and a lent Handle.
 
@@ -1100,7 +1138,39 @@ An Integer field of a record states its integer unit in the same form as a param
 
 - **The checks**: `module.record_type` and `information.check` refuse a unit that is not one of the contract, and a unit on a field that is not an Integer. Two records are equal only with the same unit on each field: the check of a replacement and the check of an import declaration refuse another unit ("the field time of the record Process is a number in ms, the field time of Process is a plain number").
 - **A table of the console**: `columns` and `join` keep the unit of each field. A built-in table gives the unit in its column (`console_results.size_column`, `time_column`), and the name of the column does not repeat it: `used`, not `used_pages`.
-- **Not built**: a value kind for a Text field, such as a module or a version. The design: `src/md/features/console_value_colors.md`.
+- **A Text field and a hash**: they take a field kind, not a unit ("The kind of a field").
+
+### The kind of a field
+
+A field of a record states its field kind (`glossary/running_code.md`, "Field kind"): how a reader writes its value when it is not a plain number or a plain text. A reader writes the value by its kind, in the color of its value kind (`CONSOLE.md`, "The drawers"). The design: `src/md/features/console_value_colors.md`.
+
+- **In the file**: `Field.kind`, one byte of `value_kinds.Field_Kind`, and `Field.contract_enum`, one byte of `value_kinds.Contract_Enum`. Two bytes after them are reserved and 0. A zero field kind is `Plain` and a zero enum is `None`: the meaning of each field of a file before the kinds, so the format version does not change.
+- **The kinds**:
+
+  | Kind | Field | In the source | A reader writes |
+  |---|---|---|---|
+  | `Plain` | Integer, Text or Handle | `i64`, `[N]u8`, `Lent({...})` | The value by its type, an Integer with its unit |
+  | `Hexadecimal` | Integer of 1, 2, 4 or 8 bytes, with no unit | `value_kinds.Hexadecimal_8` to `Hexadecimal_64` | `0x` and the hexadecimal digits of its bytes |
+  | `Status` | Unsigned Integer, with no unit, and an enum | `operation.Status`, `operation.Log_Level` | The name of the member; the number when the word names no member |
+  | `Module_Name` | Text | `value_kinds.Module_Name_Field`, 32 bytes | The text |
+  | `Hash` | Bytes of 1 to 32 bytes | `value_kinds.Hash_Field`, 32 bytes | Two hexadecimal digits for each byte, the first byte first |
+
+  ```odin
+  Block_Check :: struct {
+  	block:    u64,
+  	check:    value_kinds.Hexadecimal_32,
+  	expected: value_kinds.Hexadecimal_32,
+  	level:    operation.Log_Level,
+  	writer:   value_kinds.Module_Name_Field,
+  	module:   value_kinds.Hash_Field,
+  }
+  ```
+
+- **The contract enums**: `value_kinds.Contract_Enum` is the closed list of the enums of the contract that a Status field holds, and `value_kinds.CONTRACT_ENUM_TYPES` names the type of each one. `operation.contract_enum_member_name` gives the name of a member, and refuses a word that names no member of the enum. An enum of a module has no names in the module file: its field is a plain Integer.
+- **The borders**: `module.field_kind` and `module.field_contract_enum` take each byte, and refuse a byte that names no member. `module.field_kind_valid` refuses each pair that the table does not have: a kind on another type, a unit beside a kind, a Status with a sign or with no enum, an enum on a field that is not a Status, a Bytes field that is not a Hash, a hash of 0 bytes or of more than 32, and a reserved byte that is not 0. `module.record_type` and `information.check` refuse a record with such a field.
+- **The checks**: two records are equal only with the same kind and the same enum on each field. The check of a replacement and the check of an import declaration refuse another kind.
+- **The describe tool** reads the type of a field through an import of `modus:contract/value_kinds` or of the package of the enum, under any name; a type of the same name in another package has no description. A field kind is a field only: a parameter of such a type has no description.
+- **Not built**: a kind on a parameter or a result, and the names of an enum of a module.
 
 ## 6. The context
 
@@ -1112,7 +1182,7 @@ An Integer field of a record states its integer unit in the same form as a param
 
 ```odin
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	system.log("fault: this process writes to address 0")
+	system.log(.Info, "fault: this process writes to address 0")
 ```
 
 `system.log` writes with the handle `ctx.handles[CONTEXT_LOG]`; `system.context_record()` gives the same record anywhere in the process.
@@ -1202,8 +1272,8 @@ This reuses the compiler, the linker and the debugger formats.
 The source of a module imports the packages of the system from one source library (`glossary/communication.md`, "Source library"). Its name is `modus`, and its folder is `src/library`.
 
 - **The import lines.** `import "modus:support/system"`, `import operation "modus:contract/operation"`. The first folder of the path says what the package is: `contract` is what two parties agree on, `support` is what two modules or more compile in, and `private` is what one module alone compiles in (`modus:private/storage/storage_tree`, a private part of the storage service, which no other module imports). One package has one import line, in the kernel, in a module of the system and in a module outside the repository. No source of the system imports a package of the library by a relative path.
-- **The flag.** The compiler gets the library with one flag: `-collection:modus=src/library`. The tool gives it in each command that runs the compiler. To run the host tests of one package by hand: `nix develop -c odin test <folder of the package> -vet -collection:modus=src/library`. A module needs nothing more, and a language server for a module the same one entry: the library `modus` at `src/library`.
-- **The kernel parts.** The kernel has a second source library of its own, `kernel`, in the folder `src/kernel`: its kernel parts (`glossary/communication.md`, "Kernel part"), imported as `kernel:iommu`. The tool gives the flag `-collection:kernel=src/kernel` to the compile of the kernel, to the host tests of the folders under `src/kernel` and to its own compile, and to no module. To run the host tests of a kernel part by hand: `nix develop -c odin test src/kernel/<part> -vet -collection:modus=src/library -collection:kernel=src/kernel`. A language server for the system needs the two entries.
+- **The flag.** The compiler gets the library with one flag: `-collection:modus=src/library`. The tool gives it in each command that runs the compiler. To run the host tests of one package by hand: `nix develop -c odin test <folder of the package> -vet -collection:modus=src/library -custom-attribute:log_fact`. A module needs one more flag only, `-custom-attribute:log_fact`: with it the compiler accepts the attribute of a fact type and ignores it (`src/md/features/log_facts.md`). A language server for a module needs the same one entry: the library `modus` at `src/library`.
+- **The kernel parts.** The kernel has a second source library of its own, `kernel`, in the folder `src/kernel`: its kernel parts (`glossary/communication.md`, "Kernel part"), imported as `kernel:iommu`. The tool gives the flag `-collection:kernel=src/kernel` to the compile of the kernel, to the host tests of the folders under `src/kernel` and to its own compile, and to no module. To run the host tests of a kernel part by hand: `nix develop -c odin test src/kernel/<part> -vet -collection:modus=src/library -collection:kernel=src/kernel -custom-attribute:log_fact`. A language server for the system needs the two entries.
 - **The rule of the kernel.** The kernel imports the contract packages and its kernel parts only, and a contract package imports no support package. The compiler does not hold this rule, because the kernel gets the same library as a module. The tool holds it: before each build, it reads each import of each source file of `src/` (`TOOLS.md`, "The imports of the sources of the system"). The compiler refuses a kernel part in a module, which does not get the second flag, and the tool refuses it in each other file of `src/`.
 - **A module outside the repository.** Its sources write the same import lines, and its compiler gets the same flag with the path of `src/library` of the repository of the system. The tool builds its module (section "A module of another project").
 
@@ -1246,12 +1316,12 @@ The tool writes `build/<name>.module` and `build/<name>.debug` in the folder of 
 
 | Step | Process | What it gives |
 |---|---|---|
-| 1. Compile | `odin build` with `-target:freestanding_amd64_sysv -build-mode:llvm-ir -reloc-mode:pic -no-entry-point -default-to-nil-allocator -o:speed -vet -debug-info:same-code -collection:modus=src/library`, and for the kernel `-collection:kernel=src/kernel` too | One LLVM IR file, `<name>.ll` |
+| 1. Compile | `odin build` with `-target:freestanding_amd64_sysv -build-mode:llvm-ir -reloc-mode:pic -no-entry-point -default-to-nil-allocator -o:speed -vet -debug-info:same-code -collection:modus=src/library -custom-attribute:log_fact`, and for the kernel `-collection:kernel=src/kernel` too | One LLVM IR file, `<name>.ll`, which holds the fact key of each fact type that the module writes as an immediate, or the step fails (`TOOLS.md`, "The log facts of the build") |
 | 2. Make the object | `llc -O3 -misched-topdown --frame-pointer=all -relocation-model=pic --function-sections --data-sections` | One ELF object, `objects/<name>.o` |
 | 3. Assemble | `nasm -f elf64` | One object for `src/runtime/memory.asm`, one for each `.asm` file of the source folder, and for a module of the boot image one for each `.asm` file of `src/library/support/system` |
 | 4. Describe | The tool (`describe_package`) | The exports and their descriptions, and the stated budget (the constant `MODULE_BUDGET`), from the source; a version script that makes only the exports visible |
 | 5. Link | `ld.lld -shared -nostdlib -Bsymbolic --gc-sections --build-id=none -z now -z relro` | One ELF file, `linked.elf` |
-| 6. Convert | The tool (`import_declarations_check`, then `convert`) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module, `build/modules/<name>.module`, with the hashes of its imports in its import table, and the table `Budget` when the source states a budget: the stated budget and the counted parts, from the memory size of the module and the files of its imports. A segment that is read-only after the load and that no loader writes becomes a constant segment (section 2, "Shared code"). A library module that still has a segment that is read-only after the load is refused (section "A library as a module") |
+| 6. Convert | The tool (`import_declarations_check`, then `convert`) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module, `build/modules/<name>.module`, with the hashes of its imports in its import table, and the table `Budget` when the source states a budget: the stated budget and the counted parts, from the memory size of the module and the files of its imports; the table `Facts` of the log facts that the sources write, and the table `Own_Hash` with the place of the symbol `modus_own_hash` of the linked file (section "The log facts and the own-hash place"). A segment that is read-only after the load and that no loader writes becomes a constant segment (section 2, "Shared code"). A library module that still has a segment that is read-only after the load is refused (section "A library as a module") |
 | 7. Write the debug object | The tool | `build/modules/<name>.debug` (section "Debug information") |
 
 Why each choice:
@@ -1426,7 +1496,7 @@ The answer of `remote` carries the details of a call that failed (section "A cal
 The completion record of a kernel operation has a fixed size: its seven values are the error record. A table of details does not fit there: it is memory of the process, which the command names. The design: `src/md/features/kernel_error_details.md`.
 
 - **In the command, not in the thread.** Bit 31 of the `kind` of a command record (`op.COMMAND_NAMES_ERROR_DETAILS`) says that the last value of the command, `values[6]`, is the address of a table place of error records in memory of the process (`op.Error_Details_Place`, the layout of `system.Error_Details`). A process calls `system.call_with_error_details(&error, &details, operation, values...)`. A place in the thread record is refused: it is a value outside the call, the defect of `errno` (section "The three places").
-- **Which operations**: each operation whose last value is not a parameter (`op.command_takes_error_details`), except `Guest_Run`, which the kernel runs before the dispatch of the others. A command of `Log`, which uses its last value, or of `Guest_Run` with the bit is refused with `Bad_Operation` and the record `Unsupported`, and the kernel writes no detail.
+- **Which operations**: each operation whose last value is not a parameter (`op.command_takes_error_details`), except `Guest_Run`, which the kernel runs before the dispatch of the others. `Log` takes a table: its value runs are its fifth value, and its last value is free. A command of `Guest_Run` with the bit is refused with `Bad_Operation` and the record `Unsupported`, and the kernel writes no detail.
 - **What the kernel writes**: the error record of the completion is the first detail. Then one detail for each other argument, in their order, at most one for each argument, that a check finds wrong after the refusal: a handle (absent, ended, of the wrong kind, without the rights that the operation needs), a count above the limit of its form (`Too_Long`), a flag outside the flags of its form (`Bad_Flags`), a choice above its largest value or 0 where 0 names nothing (`Bad_Value`). A command has at most 7 details. A budget that cannot pay, a full table and the state of another process are not wrong arguments: the error record names them when they explain the status, and no detail does.
 - **An argument that the operation does not read** with the other values gets no detail (`op.argument_is_read`): the budget of a decommit, the thread of `Thread_Control` with a command out of range, the thread of `Fault_Handler_Set` that ends the delivery.
 - **The Append rule**: the kernel copies the table place once, writes the details that fit after `count` with the checked copy of a write under the process lock, and sets `count` to the count of the full answer: a detail past the capacity is counted and not written. A table place that the process cannot read stops everything. A record inside the capacity that the process cannot receive ends the answer there, and the count names the records written only. The completion holds the error record in each case.
@@ -1482,7 +1552,7 @@ A module names its exports only. The names of its other procedures, the source l
 The parts are in this order, with no byte between them and no byte after the strings. Each record has fields of 4 bytes at most, and each part starts at a multiple of 4 bytes.
 
 - **The check** (`debug_object.check`) refuses each other form: a size that is not the size of the tables, a count over its bound, a procedure that starts inside the one before it or has no byte, a name or a path outside the strings, a byte of a name or a path that is not a visible character of ASCII (0x21 to 0x7E: no control byte, no space, no byte of UTF-8, so a hostile name cannot change or forge a line of the log or of the terminal of the host), a path with a part `..`, a package that is not followed by `::`, a row that does not come after the row before it, a row that names a file that the table does not have, a table with no last row with the file 0. A reader checks an object once, before its first lookup: `system.Debug_Names` keeps the verdict of each module that it searched (its object, or none), so a stop report of many frames checks each object one time. A search walks at most 4096 entries of the image, and skips an entry whose object does not start on a page. With an object that did not pass, the lookup still reads only inside the object.
-- **The log has no control character**: the kernel writes `?` in place of each byte of each invalid sequence of the text of the operation `Log` (`docs/glossary/text.md`, "Invalid sequence"): a control character of C0 or C1, the byte 0x7F, and a broken sequence of UTF-8. The other parts of the line are checked too: the kernel takes the channel up to its first byte outside 33 to 126, and `Process_Create` refuses a name of a process with a byte outside 32 to 126 (`Bad_Operation`), and that name starts each line of the process. So a text that a process took from data cannot change a line of the serial log, whatever check came before, and a process that calls the operations itself cannot either.
+- **The log has no control character**: the kernel writes `?` in place of each byte of each invalid sequence of the text of the operation `Log` (`docs/glossary/text.md`, "Invalid sequence"): a control character of C0 or C1, the byte 0x7F, and a broken sequence of UTF-8. The other part of the line is checked too: `Process_Create` refuses a name of a process with a byte outside 32 to 126 (`Bad_Operation`), and that name starts each line of the process. So a text that a process took from data cannot change a line of the serial log, whatever check came before, and a process that calls the operations itself cannot either.
 - **The lookup** (`debug_object.place_of`): the procedure that holds an offset and its offset in it, and the file and the line of the instruction. Two binary searches.
 - **The bounds**: 2^20 procedures, 4095 files, lines below 2^20, 2^24 rows, 2^20 types, 2^22 fields, 2^22 enumeration values, 2^20 globals, 2^22 variables, 2^24 variable ranges and 64 MiB of strings. The tool refuses a module past one of them. The rows are most of the bytes: the file and the line share one word, so a row has 8 bytes.
 - **Paths**: the tool joins the directory of each file of the line program with the compilation directory of its unit (the attribute `DW_AT_comp_dir` of `.debug_info`: the directory 0 of a line program of DWARF 2 to 4 is only there), then removes the folder of the build (the compiler runs at the root of the repository) or the folder of the Odin installation (`odin root`). A debug object holds no path of the build host: the tool refuses to write one with an absolute path of a file, or with the folder of the build anywhere in its bytes. So the same source gives the same debug object in another folder or on another machine.

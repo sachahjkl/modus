@@ -30,7 +30,7 @@
 //
 // **The stop**: with no stream ring, no sample region, a refused `Attach`
 // or `Start`, or a case that does not get its refusal, it writes the
-// reason on the log and stops with the code 1.
+// reason on the log and stops with `Failed`.
 package tone
 
 import "modus:contract/errors"
@@ -67,8 +67,8 @@ tone_completion: ring.Record
 tone_completed: bool
 
 fail :: proc "contextless" (parts: ..system.Part) -> ! {
-	system.log(..parts)
-	system.stop(1)
+	system.log(.Info, ..parts)
+	system.stop(.Failed)
 }
 
 // cosine gives the cosine of a small angle by its series: the step of the
@@ -169,7 +169,7 @@ case_check :: proc "contextless" (tag: u32, command: timed_stream.Command, refus
 	if status_of(record) != refused.status || error.kind != i64(refused.kind) || error.unit != i64(refused.unit) || error.argument != refused.argument || error.operation != i64(command) {
 		fail("tone: ", refused.name, " got the status ", u64(record.kind), ", the kind ", error.kind, ", the unit ", error.unit, ", the argument ", error.argument)
 	}
-	system.log("tone: ", refused.name, " is refused with ", timed_stream_status_name(refused.status), ": as it must")
+	system.log(.Info, "tone: ", refused.name, " is refused with ", timed_stream_status_name(refused.status), ": as it must")
 }
 
 timed_stream_status_name :: proc "contextless" (status: timed_stream.Status) -> string {
@@ -243,7 +243,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if started.values[2] != u64(timed_stream.Format.Signed_16_Stereo_48000) {
 		fail("tone: the stream has the format ", started.values[2])
 	}
-	system.log("tone: the stream started; the service holds ", started.values[1], " ns of frames")
+	system.log(.Info, "tone: the stream started; the service holds ", started.values[1], " ns of frames")
 
 	tone_time := anchor.time + TONE_OFFSET_NANOSECONDS
 	format := u64(timed_stream.Format.Signed_16_Stereo_48000)
@@ -274,13 +274,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	played_time, frame, underruns := tone.values[0], tone.values[1], tone.values[2]
 	expected_frame, _ := timed_stream.frame_of_time(anchor, tone_time)
 	expected_time, _ := timed_stream.time_of_frame(anchor, expected_frame)
-	system.log("tone: the tone of 440 Hz played from the frame ", frame, " of the stream for ", u64(TONE_FRAMES), " frames; underruns before its end: ", underruns)
+	system.log(.Info, "tone: the tone of 440 Hz played from the frame ", frame, " of the stream for ", u64(TONE_FRAMES), " frames; underruns before its end: ", underruns)
 	// A record keeps its frames: an underrun moves its time, never its
 	// frame. With no underrun, its time is the time of that frame.
 	if frame != expected_frame || (underruns == 0 && played_time != expected_time) {
 		fail("tone: the tone played from the frame ", frame, " at ", played_time, " ns; its time names the frame ", expected_frame, " at ", expected_time, " ns")
 	}
-	system.log("tone: the tone played at the frame of its time: as it must")
+	system.log(.Info, "tone: the tone played at the frame of its time: as it must")
 
 	for {
 		system.sleep(system.WAIT_FOREVER)

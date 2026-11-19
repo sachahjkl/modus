@@ -128,8 +128,8 @@ draw_time: u64
 start_time: u64
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log("server: ", text)
-	system.stop(1)
+	system.log(.Info, "server: ", text)
+	system.stop(.Failed)
 }
 
 now_microseconds :: proc "contextless" () -> u64 {
@@ -250,7 +250,7 @@ connection_log_second_end :: proc "contextless" () {
 		return
 	}
 	if connections_not_logged > 0 {
-		system.log("server: ", connections_not_logged, " ends of connections in one second are not on the log (the limit is 50)")
+		system.log(.Info, "server: ", connections_not_logged, " ends of connections in one second are not on the log (the limit is 50)")
 	}
 	connection_log_second, connection_log_count, connections_not_logged = second, 0, 0
 }
@@ -287,7 +287,7 @@ ended_log :: proc "contextless" (index: int, how: string) {
 		return
 	}
 	remote_text: [32]u8
-	system.log("server: ", address_text(remote_text[:], connection.remote_address, connection.remote_port), " ", how, ": ", u64(session.requests), " requests, in ", connection.bytes_received, ", out ", connection.bytes_sent, ", srtt ", connection.smoothed_rtt, " us, ", connection.retransmissions, " retransmissions, ", connection.probes, " probes, ", connection.challenges, " challenges")
+	system.log(.Info, "server: ", address_text(remote_text[:], connection.remote_address, connection.remote_port), " ", how, ": ", u64(session.requests), " requests, in ", connection.bytes_received, ", out ", connection.bytes_sent, ", srtt ", connection.smoothed_rtt, " us, ", connection.retransmissions, " retransmissions, ", connection.probes, " probes, ", connection.challenges, " challenges")
 	keep_alive_measure(index)
 }
 
@@ -324,7 +324,7 @@ event_take :: proc "contextless" (event: tcp.Event) {
 		open := tcp.open_count(&table)
 		if open > most_open {
 			most_open = open
-			system.log("server: ", u64(open), " connections open at once")
+			system.log(.Info, "server: ", u64(open), " connections open at once")
 		}
 	}
 	switch {
@@ -357,7 +357,7 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	// count doubles: a flood of damaged segments writes few lines.
 	if table.bad_checksums >= max(2 * bad_checksums_logged, 1) {
 		bad_checksums_logged = table.bad_checksums
-		system.log("server: ", table.bad_checksums, " segments dropped for a wrong checksum")
+		system.log(.Info, "server: ", table.bad_checksums, " segments dropped for a wrong checksum")
 	}
 	// The events and the answers write data; the next step sends it. A few
 	// rounds end the work of one pass; what is left waits for the next pass.
@@ -449,7 +449,7 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 //
 // The entry, in order:
 //
-// 1. takes its random generator; with no seed it stops with the code 1;
+// 1. takes its random generator; with no seed it stops with `Refused`;
 // 2. opens its window and its service, then its endpoint and its datagram
 //    region; a missing part stops it (`fail`);
 // 3. asks the network service for its grant; a grant that is not a listen
@@ -466,13 +466,13 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("server: no random seed in the context")
-		system.stop(1)
+		system.log(.Info, "server: no random seed in the context")
+		system.stop(.Refused)
 	}
 	date_page = date.page_of(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "server")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	start_time = system.time()
 	service, _ = system.service_open(ctx)
@@ -532,7 +532,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log("server: listening on the TCP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections, the secret of the initial sequence numbers from the generator of the process")
+	system.log(.Info, "server: listening on the TCP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections, the secret of the initial sequence numbers from the generator of the process")
 
 	incoming: [RECEIVE_PLACES]tcp.Incoming
 	used: [RECEIVE_PLACES]u32

@@ -31,14 +31,27 @@ import "modus:support/sentence"
 // A field of a record that the console describes: a column of a table that
 // a command makes, or a field that `join` or `columns` takes from a table.
 Column :: struct {
-	name:         string, // The name of the field.
-	type:         module.Type, // Integer, Handle or Text.
-	detail:       u32, // An Integer: its size in bytes. A Text: its size in bytes.
-	unsigned:     bool, // An Integer: true for an unsigned integer.
-	integer_unit: value_kinds.Integer_Unit, // An Integer: what it counts, {} for a plain number.
-	side:         int, // For join: the field comes from the left table (0) or from the right table (1).
-	from:         u32, // For join and columns: the offset of the field in the record of its table.
-	offset:       u32, // The offset of the field in the new record: description_write gives it.
+	name:          string, // The name of the field.
+	type:          module.Type, // Integer, Handle, Text or Bytes.
+	detail:        u32, // An Integer: its size in bytes. A Text or Bytes: its size in bytes.
+	unsigned:      bool, // An Integer: true for an unsigned integer.
+	integer_unit:  value_kinds.Integer_Unit, // An Integer: what it counts, {} for a plain number.
+	kind:          value_kinds.Field_Kind, // How a reader writes the value (module.Field.kind).
+	contract_enum: value_kinds.Contract_Enum, // A Status: the enum of its members.
+	side:          int, // For join: the field comes from the left table (0) or from the right table (1).
+	from:          u32, // For join and columns: the offset of the field in the record of its table.
+	offset:        u32, // The offset of the field in the new record: description_write gives it.
+}
+
+// column_of_field gives the column of a field of a record that a reader
+// checked (module.record_type), with its name: its type, its size, its
+// unit and its kind. ok is false for a byte of a type or a kind that names
+// no member.
+column_of_field :: proc "contextless" (name: string, item: module.Field) -> (column: Column, ok: bool) {
+	type := module.field_type(item) or_return
+	kind := module.field_kind(item) or_return
+	which := module.field_contract_enum(item) or_return
+	return {name = name, type = type, detail = item.detail, unsigned = item.unsigned, integer_unit = item.integer_unit, kind = kind, contract_enum = which, from = item.offset}, true
 }
 
 // text_column gives a Text column of a size in bytes.
@@ -84,7 +97,7 @@ description_write :: proc "contextless" (buffer: []u8, name: string, columns: []
 		if width == 0 {
 			return nil, 0, false
 		}
-		column_alignment: u32 = column.type == .Text ? 1 : width
+		column_alignment: u32 = column.type == .Text || column.type == .Bytes ? 1 : width
 		size = (size + column_alignment - 1) / column_alignment * column_alignment
 		column.offset = size
 		size += width
@@ -127,14 +140,8 @@ description_write :: proc "contextless" (buffer: []u8, name: string, columns: []
 	record.name_offset = name_offset
 	(^module.Record)(&buffer[records + size_of(module.Record)])^ = record
 	for column, index in columns {
-		item := module.Field {
-			offset       = column.offset,
-			type         = u8(column.type),
-			detail       = column.detail,
-			unsigned     = column.unsigned,
-			integer_unit = column.integer_unit,
-			name_count   = u32(len(column.name)),
-		}
+		item := column_field(column)
+		item.name_count = u32(len(column.name))
 		field_name, field_fits := text(buffer, strings, &text_count, column.name)
 		if !field_fits {
 			return nil, size, false
@@ -153,7 +160,7 @@ description_write :: proc "contextless" (buffer: []u8, name: string, columns: []
 // column_field gives the field of a column, as a reader of the description
 // finds it.
 column_field :: proc "contextless" (column: Column) -> module.Field {
-	return {offset = column.offset, type = u8(column.type), detail = column.detail, unsigned = column.unsigned, integer_unit = column.integer_unit}
+	return {offset = column.offset, type = u8(column.type), detail = column.detail, unsigned = column.unsigned, integer_unit = column.integer_unit, kind = u8(column.kind), contract_enum = u8(column.contract_enum)}
 }
 
 // row_text_set writes a text in a Text column of a row. A text longer than

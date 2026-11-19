@@ -62,6 +62,10 @@ Color_Tokens :: struct {
 	// the log, a ring that is full. A yellow apart from the orange of the
 	// boot program, so that "starts" and "take care" stay two colors.
 	warning:      Color,
+	// A measure near its limit: the very high intensity step of a gauge
+	// (intensity.odin). An orange apart from the yellow of a warning and
+	// the coral of a failure: a load near its limit is neither.
+	near_limit:   Color,
 	link:         Color, // A name that leads to another page: a link of a page of `manual`.
 	// The series colors: they tell apart the members of one series, several
 	// things of one kind that no concept of the rules tells apart (the
@@ -115,6 +119,7 @@ DARK_NOT_USABLE :: 0x4A5563
 DARK_TEXT :: 0xDCE4EC
 DARK_DIM :: 0x7C8A99
 DARK_WARNING :: 0xF0C050
+DARK_NEAR_LIMIT :: 0xF2843C
 DARK_LINK :: 0x6CB4F0
 SERIES_COLOR_COUNT :: 8
 // The series colors of the dark appearance. A process that computes a
@@ -158,6 +163,7 @@ DARK_COLOR_TOKENS :: Color_Tokens {
 	dim                       = DARK_DIM,
 	text_strong               = COLOR_WHITE,
 	warning                   = DARK_WARNING,
+	near_limit                = DARK_NEAR_LIMIT,
 	link                      = DARK_LINK,
 	series                    = DARK_SERIES,
 	title                     = DARK_TITLE,
@@ -199,6 +205,7 @@ LIGHT_COLOR_TOKENS :: Color_Tokens {
 	dim                       = 0x4A525B, // shade(DARK_DIM, 60).
 	text_strong               = COLOR_BLACK,
 	warning                   = 0x886D2D, // shade(DARK_WARNING, 57).
+	near_limit                = 0xA85C29, // shade(DARK_NEAR_LIMIT, 70).
 	// shade(DARK_LINK, 55): a focused link is on the track, so the link
 	// keeps 4.5 to 1 there too.
 	link                      = 0x3B6283,
