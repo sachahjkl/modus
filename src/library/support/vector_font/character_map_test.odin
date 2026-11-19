@@ -7,7 +7,8 @@ import "core:testing"
 b612_file := #load("../../../../resources/fonts/b612.ttf")
 
 // One segment of a cmap of format 4 that a test writes: its first and last
-// code, and a delta that maps each code of it to the glyph 1.
+// code, and a delta that maps its first code to the glyph 1: a delta adds
+// one constant, so each next code of the segment takes the next glyph.
 @(private = "file")
 Test_Segment :: struct {
 	start, end: int,
@@ -129,7 +130,8 @@ the_segments_of_a_character_map :: proc(t: ^testing.T) {
 	testing.expect_value(t, font.map_segments, 1)
 	for character in ([?]rune{'A', 'M', 'Z'}) {
 		glyph, found := glyph_of(&font, character)
-		testing.expectf(t, found == .None && glyph == 1, "%c in one segment: %v %v", character, glyph, found)
+		expected := 1 + int(character - 'A')
+		testing.expectf(t, found == .None && glyph == expected, "%c in one segment: %v %v, not %v", character, glyph, found, expected)
 	}
 	for character in ([?]rune{'@', '[', 0, 0xFFFF}) {
 		_, found := glyph_of(&font, character)
