@@ -1039,7 +1039,6 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 | `acpi_processors` | raw | The processors that the table APIC names stay in the table of the caller, and those of the identifiers of 8 bits are processors of the other mode too |
 | `sentences` | raw | The sentence of any error record is a valid text; in a small buffer it is the start of the whole sentence, then the cut mark with the count of the bytes that it lacks |
 | `palette_table` | raw | The copies of the entries, of the result and of the candidates hold what the checks accept; the runs of a result and an argument write again to themselves |
-| `demand_cache` | raw | An entry that `find` gives is of its face and of the frame, and its glyphs read words of the cache only; the writer of the font service publishes it again |
 | `value_runs` | raw | The runs that `value_runs_check` accepts write again to themselves, and their parts in the records of the log are the runs cut at the bounds of the records |
 | `text_encoding` | raw | The check of a text agrees with the reader of UTF-8 of the Odin library, each character encodes to its own bytes, and a cut ends after a whole character |
 | `kept_stop_reports` | generated | A hidden stop report names no hidden value, and the table of the kept reports follows its model |

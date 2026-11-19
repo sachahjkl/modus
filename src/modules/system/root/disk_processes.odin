@@ -622,9 +622,8 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		system.grant_put(&context_grants, system.GRANT_DISPLAY, {display_memory, {.Read, .Write}})
 	}
 	// The date page, the fresh bytes page, the settings page, five glyph
-	// caches, the font outlines, the demand cache, the file of the storage
-	// service.
-	mappings: [12]system.Mapping
+	// caches, the font outlines, the file of the storage service.
+	mappings: [11]system.Mapping
 	mapping_count := 0
 	date_page_give(mappings[:], &mapping_count, &values)
 	fresh_bytes_page_give(slot, mappings[:], &mapping_count, &values)

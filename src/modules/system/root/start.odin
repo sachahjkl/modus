@@ -21,9 +21,9 @@ import terminal "modus:support/terminal"
 
 // The mappings of a start: the storage file, the date page, the fresh
 // bytes page, the settings page, five glyph caches, the file of a service,
-// the debug image, the disk process page, the font outlines and the demand
-// cache: 14 places for the union, and the largest role uses 13.
-START_MAPPING_LIMIT :: 14
+// the debug image, the disk process page and the font outlines: 13 places
+// for the union, and the largest role uses 12.
+START_MAPPING_LIMIT :: 13
 
 // The work of one start: what the steps of start() build, and the handles
 // of this service that the start closes at its end, whatever its result.
@@ -429,7 +429,7 @@ start_handles_of_the_role_give :: proc "contextless" (work: ^Start_Work) {
 // start_pages_give maps the pages that each process reads, and those of its
 // role: the date page and its fresh bytes page, the debug image, the disk
 // process page, and for a process with a surface the settings page, the
-// glyph caches, the font outlines and the demand cache, read-only.
+// glyph caches and the font outlines, read-only.
 start_pages_give :: proc "contextless" (work: ^Start_Work) {
 	grants := work.role.grants
 	date_page_give(work.mappings[:], &work.mapping_count, &work.values)

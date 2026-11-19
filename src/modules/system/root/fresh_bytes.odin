@@ -14,8 +14,10 @@ import "modus:support/system"
 // its key at its next refill or key.
 //
 // One object, not one for each process: each object would be one more
-// handle of this service, and a full handle table refuses the load of the
-// next process (font_service.odin says how the table fills).
+// handle of this service. Its handle table holds the process of each
+// process that runs, its rings, and the parts of the prepared modules (up
+// to 64), and a full table refuses the load of the next process
+// (memory_create of a writable segment gives No_Slot).
 
 fresh_bytes_memory: system.Handle // STARTED_CAPACITY pages; 0: no fresh bytes.
 fresh_bytes_address: uintptr // The object, mapped with Write in this service.

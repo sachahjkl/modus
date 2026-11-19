@@ -333,17 +333,6 @@ fuzz_target_table := [?]Fuzz_Target {
 		start = fuzz_palette_table_start,
 	},
 	{
-		name = "demand_cache",
-		kind = .Raw,
-		about = "contract/demand_cache: an entry that find gives is of its face and its frame and reads words of the cache only; the writer publishes it again",
-		packages = {foundation.SOURCE_FOLDER_CONTRACT + "/demand_cache"},
-		input_limit = FUZZ_DEMAND_INPUT_LIMIT,
-		execute = fuzz_demand_cache_execute,
-		seeds = fuzz_demand_cache_seeds,
-		regions = fuzz_demand_cache_regions,
-		start = fuzz_demand_cache_start,
-	},
-	{
 		name = "value_runs",
 		kind = .Raw,
 		about = "contract/value_kinds: the runs that the check accepts write again to themselves, and their parts in the records are the runs cut at the bounds",

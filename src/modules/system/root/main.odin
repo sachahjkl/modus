@@ -603,7 +603,7 @@ entropy_report: random.Entropy_Report
 //    the list start_list, or, when the boot record asks for it, the rescue
 //    start policy with the list rescue_list (start_policy.odin). The start
 //    policy asks for each other start: the parts of the system (`input`,
-//    the compositor, the font service) start by their procedures here,
+//    the compositor) start by their procedures here,
 //    each other process with the grants of its role.
 //
 // With no screen before the first start (modus:support/screen_presence),
@@ -911,9 +911,8 @@ compositor_start :: proc "contextless" () -> system.Status {
 	// a service ring and its own file, as start() gives to a service. Its
 	// values 0 to 3 are the screen, so the file is at values 4 and 5.
 	// The file, two pointer themes, the settings page, five glyph caches,
-	// the font outlines, the demand cache, the date page, the fresh bytes
-	// page.
-	mappings: [14]system.Mapping
+	// the font outlines, the date page, the fresh bytes page.
+	mappings: [13]system.Mapping
 	mapping_count := 0
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == "compositor" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
@@ -1614,9 +1613,8 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	columns, rows, measure := role_terminal(&writer.role)
 	handles := terminal.Terminal_Handles{display = display_memory, ring = ring_memory, text = text_memory, writer = writer.process, log = log_grant(role)}
 	terminal.context_of(&context_grants, &values, handles, system.name_pack(system.name_of(writer.name[:])), columns, rows, measure)
-	// The settings page, five glyph caches, the font outlines and the
-	// demand cache.
-	mappings: [8]system.Mapping
+	// The settings page, five glyph caches and the font outlines.
+	mappings: [7]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
 	if context_refused("terminal", &context_grants, &values) {
@@ -1902,7 +1900,6 @@ release :: proc "contextless" (item: ^Started) {
 	tpm_service_end(item)
 	entropy_service_end(item)
 	fresh_bytes_forget(item)
-	font_service_end(item)
 	endpoint_close(item)
 	disk_load_forget(item)
 	principal_change_forget(item)

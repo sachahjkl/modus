@@ -70,7 +70,6 @@ The default list keeps the behaviour of today, with one change: the console.
 |---|---|---|---|---|
 | `input` | a screen | no start, one line; an absent PS/2 controller is the line of the input service, which stops | no | started by the root service |
 | `compositor` | a screen | a screen of memory, when the row gives a size; else no start, one line | no | started by the root service |
-| `glyphs` | | | no | the font service, started by the root service; it ends after it draws the demand cache |
 | `date` | | | no | a failure writes "root: cannot start date: the system has no date" |
 | `console` | a screen | no start, one line | yes | a failure stops the machine (`fail`) |
 | `settings` | | | no | the pass of the kept settings |

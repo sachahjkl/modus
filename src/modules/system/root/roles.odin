@@ -301,9 +301,6 @@ process_roles := [?]Process_Role_Row {
 	// The registers of the TPM, and the ring and the region that `unlock`
 	// receives (tpm_service_start).
 	{name = "tpm", grants = {.System_Part}},
-	// The demand cache with Write and the font outlines
-	// (font_service_start).
-	{name = "glyphs", grants = {.System_Part}},
 	// Only the image of the test of a shortage of frames holds it: its
 	// start list asks for it, and shortage_start gives it the machine with Inspect and
 	// Stop; a command Start of another sender gives it no grant.
@@ -373,8 +370,7 @@ process_roles := [?]Process_Role_Row {
 // (tools/modustool/build/process_roles_check.odin), because the debug access to
 // a process reads that grant. The names are strings that the tool reads.
 @(rodata)
-system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "glyphs"}
-#assert(FONT_SERVICE_NAME == "glyphs")
+system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound"}
 
 // name_is_a_system_part says if a name is one of system_part_names.
 name_is_a_system_part :: proc "contextless" (name: string) -> bool {

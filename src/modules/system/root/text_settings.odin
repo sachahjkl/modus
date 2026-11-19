@@ -72,7 +72,7 @@ text_settings_create :: proc "contextless" () {
 		glyph_cache_mappings[cache] = mapping
 	}
 	// The font outlines, given only when their hash is right and their
-	// format valid, as a glyph cache; and the demand cache beside them.
+	// format valid, as a glyph cache.
 	if mapping, _, given := resource_mapping(font_outlines.RESOURCE_NAME, font_outlines.ADDRESS, "each process with a surface"); given {
 		entry := system.image_resource_find(image, font_outlines.RESOURCE_NAME)
 		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size]); problem.kind == .None {
@@ -81,26 +81,26 @@ text_settings_create :: proc "contextless" () {
 			system.log_in("processes", .Warning, "root: the font outlines are refused: ", font_outlines.problem_sentences[problem.kind], ", value ", problem.value, ": they are not given")
 		}
 	}
-	demand_cache_create()
 	if glyph_cache_mappings[.With_Grid_Fit].page_count == 0 {
 		system.log_in("processes", .Warning, "root: the boot image has no valid glyph cache: the text of the system is Spleen 8x16")
 	}
 }
 
-// text_settings_give adds the settings page, the glyph caches, the font
-// outlines and the demand cache, read-only, to the mappings of a process
-// that has a surface or a terminal, and sets the bit of each range in its
-// values. A cache mapping has no flag: the right Read only, for every
-// process, the process `settings` included. The pages of the caches and of
-// the outlines come from the boot image, whose one handle (of this
-// service) has no right Write.
+// text_settings_give adds the settings page, the glyph caches and the font
+// outlines, read-only, to the mappings of a process that has a surface or
+// a terminal, and sets the bit of each range in its values. A cache
+// mapping has no flag: the right Read only, for every process, the process
+// `settings` included. The pages of the caches and of the outlines come
+// from the boot image, whose one handle (of this service) has no right
+// Write. The process draws each glyph past the glyph caches itself, from
+// the outlines, into its private glyph cache.
 text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
 	if settings_page == nil {
 		return
 	}
-	// The page, the caches, the outlines and the demand cache.
-	if count^ + 1 + len(glyph_cache_mappings) + 2 > len(mappings) {
-		mapping_dropped_log("the settings page, the glyph caches, the font outlines and the demand cache", len(mappings))
+	// The page, the caches and the outlines.
+	if count^ + 1 + len(glyph_cache_mappings) + 1 > len(mappings) {
+		mapping_dropped_log("the settings page, the glyph caches and the font outlines", len(mappings))
 		return
 	}
 	mappings[count^] = {memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}
@@ -120,7 +120,6 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 		count^ += 1
 		system.range_mapped_put(values, .Font_Outlines)
 	}
-	demand_cache_give(mappings, count, values)
 }
 
 // settings_boot_pass_start starts `settings` for its boot pass: it reads

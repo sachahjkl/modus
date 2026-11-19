@@ -3,9 +3,9 @@
 // resource of the boot image,
 // RESOURCE_NAME. The modus tool writes it from the subsets of
 // resources/fonts. The root service checks its hash once, and maps it
-// read-only at ADDRESS in each process that gets the glyph caches and in
-// the font service. A process draws from it the glyphs past the glyph
-// caches into its private glyph cache.
+// read-only at ADDRESS in each process that gets the glyph caches. A
+// process draws from it the glyphs past the glyph caches into its private
+// glyph cache.
 //
 //   Header        HEADER_SIZE bytes, at 0
 //   Font_Record   RECORD_SIZE bytes x font_count, at RECORDS_OFFSET
@@ -37,6 +37,44 @@ FONT_LIMIT :: 8 // The most fonts of one resource.
 RESOURCE_NAME :: "font_outlines" // The name of the resource in the boot image.
 ADDRESS :: fixed_addresses.FONT_OUTLINES_ADDRESS // Where a process maps it, read-only.
 
+// A run of code points with no gap.
+Character_Range :: struct {
+	first, last: rune,
+}
+
+// The characters past the glyph cache that the subsets of the outlines
+// hold, after the characters of the glyph cache: the modus tool writes
+// them into the subsets (`modustool vector_fonts`), and the golden hashes
+// of the glyphs that a process draws from them name them. A process does
+// not need the list: it draws any character that a font of its chain has.
+//
+// The subset of B612 Regular: the Greek letters that the character map of
+// B612 1.008 has. It lacks the capital pi (U+03A0) and the small rho
+// (U+03C1); U+03A2 is no character.
+@(rodata)
+interface_past_cache_ranges := [?]Character_Range {
+	{0x0391, 0x039F}, // Alpha to omicron, capitals.
+	{0x03A1, 0x03A1}, // Rho, capital.
+	{0x03A3, 0x03A9}, // Sigma to omega, capitals.
+	{0x03B1, 0x03C0}, // Alpha to pi, small.
+	{0x03C2, 0x03C9}, // Final sigma to omega, small.
+}
+INTERFACE_PAST_CACHE_COUNT :: 47 // The characters of interface_past_cache_ranges.
+
+// The subsets of Paper Mono and Paper Mono SemiBold: the five Greek
+// letters of Paper Mono, the box-drawing characters and the block
+// elements. It has no other Greek letter.
+@(rodata)
+cell_past_cache_ranges := [?]Character_Range {
+	{0x039B, 0x039B}, // Lambda, capital.
+	{0x03A9, 0x03A9}, // Omega, capital.
+	{0x03BB, 0x03BC}, // Lambda and mu, small.
+	{0x03C0, 0x03C0}, // Pi, small.
+	{0x2500, 0x257F}, // The box-drawing characters.
+	{0x2580, 0x259F}, // The block elements.
+}
+CELL_PAST_CACHE_COUNT :: 165 // The characters of cell_past_cache_ranges.
+
 // The first HEADER_SIZE bytes of the resource.
 Header :: struct {
 	magic:      u64, // MAGIC.
@@ -50,7 +88,7 @@ Header :: struct {
 // One font file of the resource.
 Font_Record :: struct {
 	name:   [NAME_SIZE]u8, // The name of the font file in resources/fonts, with no extension: bytes 33 to 126, then zero bytes.
-	hash:   [32]u8, // The BLAKE3 hash of the font file: the hash that its glyph cache and its demand face name.
+	hash:   [32]u8, // The BLAKE3 hash of the font file: the hash that its glyph cache names.
 	offset: u64, // The first byte of the font file, from the start of the resource.
 	size:   u64, // The bytes of the font file.
 }

@@ -2,7 +2,7 @@ Copyright 2025 The Paper Mono Project Authors (https://github.com/paper-design/p
 
 This file is a subset of paper_mono_semibold, made by "modustool vector_fonts" (docs/FONTS.md):
 the characters 32 to 126, the characters U+00A0 to U+00FF, the characters U+20AC,
-the characters that the font service draws on demand, U+039B to U+039B U+03A9 to U+03A9 U+03BB to U+03BC U+03C0 to U+03C0 U+2500 to U+257F U+2580 to U+259F,
+the characters that each process draws from the outlines, U+039B to U+039B U+03A9 to U+03A9 U+03BB to U+03BC U+03C0 to U+03C0 U+2500 to U+257F U+2580 to U+259F,
 and the glyph .notdef, each glyph a simple glyph
 (66 glyphs made of glyphs were made simple), no hinting instructions, no
 OpenType layout tables;

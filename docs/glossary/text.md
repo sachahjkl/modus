@@ -140,31 +140,11 @@ The design: `docs/FONTS.md`, "12.4 The glyph cache with subpixel positions".
 
 Do not use: proportional font cache.
 
-### Font service
-
-The font service is the process `glyphs`: it draws the fixed subsets past the glyph caches into the demand cache at its start, then ends.
-
-It reads the font outlines of the boot image and draws each character of the subset of each demand face, in a fixed order, so the demand cache holds the same entries whatever the processes draw. Then it writes on the log what each fallback chain lacks, and ends with the code 0. The root service starts it with the demand cache with Write. Nothing goes from a process to it, and a process never waits for it: a process draws each glyph that the demand cache does not hold itself.
-
-The design: `src/md/features/glyphs_on_demand.md`.
-
-Do not use: font server, rasterizer service, glyph daemon.
-
-### Demand cache
-
-The demand cache is the memory where the font service writes the glyphs of the fixed subsets past the glyph caches, and which each process that gets the glyph caches maps read-only.
-
-It holds a header with a generation, a hash table by face and code point, and words of coverage in the form of a glyph cache (`src/library/contract/demand_cache`). The font service writes an entry, then its key, then the generation; an entry never changes after that. A process copies and checks each entry before it draws a word of it. Its entries do not depend on what the processes draw, so it tells no process what another draws. It is not a glyph cache: it changes while a process reads it.
-
-The design: `src/md/features/glyphs_on_demand.md`.
-
-Do not use: atlas, shared glyph cache, dynamic cache.
-
 ### Font outlines
 
 The font outlines are one resource of the boot image that holds the font files of the system, from which each process draws the glyphs past its glyph caches.
 
-The resource is `font_outlines` (`src/library/contract/font_outlines`): a header, one record for each font with the BLAKE3 hash of its file, then the font files of the glyph caches. The root service checks its hash once and maps it read-only at the fixed range `Font_Outlines` in each process that gets the glyph caches, and in the font service. A process validates its header once. The font outlines are not a glyph cache: they hold outlines, not drawn words.
+The resource is `font_outlines` (`src/library/contract/font_outlines`): a header, one record for each font with the BLAKE3 hash of its file, then the font files of the glyph caches. The root service checks its hash once and maps it read-only at the fixed range `Font_Outlines` in each process that gets the glyph caches. A process validates its header once. The font outlines are not a glyph cache: they hold outlines, not drawn words.
 
 The design: `src/md/features/glyphs_on_demand.md`, "Layer 0: the outlines, shared and read-only".
 
@@ -184,21 +164,11 @@ Do not use: font stack, font fallback list.
 
 The private glyph cache is the memory where a copy of the text rendering module keeps the glyphs that it drew, which no other process reads.
 
-A glyph is drawn at its first use and kept, by its face, font, glyph index, text size and position: 1 MiB of words and 4 096 entries at most. A new glyph that finds no room evicts the glyphs of the oldest frames, never one of the frame in progress; past that it is drawn and not kept. The budget of the process pays for it. It holds no advance. It is not the demand cache: it is not shared, so it tells no process what another draws.
+A glyph is drawn at its first use and kept, by its face, font, glyph index, text size and position: 1 MiB of words and 4 096 entries at most. A new glyph that finds no room evicts the glyphs of the oldest frames, never one of the frame in progress; past that it is drawn and not kept. The budget of the process pays for it. It holds no advance. It is not shared, so it tells no process what another draws.
 
 The design: `src/md/features/text_rendering.md`, "The cache".
 
 Do not use: glyph atlas, local cache, per-program cache.
-
-### Demand face
-
-A demand face is one glyph cache of the boot image that the glyphs of the demand cache stand beside: a font file in one form of glyph cache.
-
-The demand cache keeps the glyphs of each face apart, because a glyph past the glyph cache must have the form, the baseline and the scale of the glyphs beside it. There are four: `Interface` (B612 Regular), `Cells` (Paper Mono with the grid fit), `Cells_Without_Grid_Fit` and `Cells_Bold` (Paper Mono SemiBold). Each face has a fixed subset, as the Greek letters of B612 for `Interface`. A demand face is not a font file: `Cells` and `Cells_Without_Grid_Fit` have one font file.
-
-The design: `src/md/features/glyphs_on_demand.md`.
-
-Do not use: font slot, font index.
 
 ### Setting
 
@@ -534,7 +504,7 @@ Do not use: font metrics (for this), em box.
 
 A face is a first font with its frame, its weight and its grid fit, from which each glyph of a text comes.
 
-The faces are `Interface`, `Interface_Bold`, `Cells`, `Cells_Without_Grid_Fit` and `Cells_Bold` (`text_rendering.Face`), each with its fallback chain. A glyph of another font of the chain stands in the frame of the first font: in its cell for a face of cells. A process finds the face of a glyph cache by the hash of its font file and its flags. A face is not a font file: two faces can share one. It is not a demand face, which names a subset of the demand cache.
+The faces are `Interface`, `Interface_Bold`, `Cells`, `Cells_Without_Grid_Fit` and `Cells_Bold` (`text_rendering.Face`), each with its fallback chain. A glyph of another font of the chain stands in the frame of the first font: in its cell for a face of cells. A process finds the face of a glyph cache by the hash of its font file and its flags. A face is not a font file: two faces can share one.
 
 The design: `src/md/features/text_rendering.md`, "The faces".
 

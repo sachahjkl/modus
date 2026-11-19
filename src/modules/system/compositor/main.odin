@@ -128,11 +128,17 @@ import "base:intrinsics"
 //   mapping takes at most 17 page tables of 2 MiB (its start need not be
 //   on a 2 MiB edge) and 2 page directories (it can cross a 1 GiB edge):
 //   19 pages. Each of the 32 clients can hold one such second mapping:
-//   32 x 19 = 608 pages.
-// 4050 + 10 + 9 + 3 + 2 + 2255 + 608 = 6937. A screen whose frame and
-// background the budget cannot pay is named on one line, and the
+//   32 x 19 = 608 pages;
+// - the glyph memory of its two copies of the text rendering, its own
+//   (its bar, its menus, its titles) and the one of the drawing module:
+//   each draws a glyph past the glyph caches, as a box-drawing character
+//   or a Greek letter of a title, into its own private glyph cache, and
+//   reserves its memory at the first such glyph: 2 x 354 pages
+//   (display.TEXT_MEMORY_PAGES) = 708 pages.
+// 4050 + 10 + 9 + 3 + 2 + 2255 + 608 + 708 = 7645. A screen whose frame
+// and background the budget cannot pay is named on one line, and the
 // compositor stops (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6937, processes = 1, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7645, processes = 1, threads = 2}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -651,6 +657,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// (modus:contract/settings); a change of the settings wakes this loop.
 	display.text_settings_open(ctx)
 	display.interface_font_load(ctx)
+	// What the fallback chains draw past the glyph caches, script by
+	// script, once at each boot: the log names what no font has.
+	display.script_coverage_tell("compositor")
 	palette_start() // palette.odin
 	bar_layout_update()
 	bar_measure()

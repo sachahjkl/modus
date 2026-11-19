@@ -4,7 +4,6 @@ package graphics
 import "core:mem"
 import "core:sync"
 import "core:testing"
-import "modus:contract/demand_cache"
 import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "base:runtime"
@@ -21,12 +20,11 @@ import "modus:support/vector_font"
 fallback_test_lock: sync.Mutex
 
 // fallback_open_for_test opens the four font files of the resource of the
-// boot image, and the demand cache at demand_base (0: none), in a fallback
-// state of all zero. The caller frees the words.
+// boot image in a fallback state of all zero. The caller frees the words.
 @(private = "file")
 test_glyph_memory: ^text_rendering.Glyph_Memory
 
-fallback_open_for_test :: proc(t: ^testing.T, demand_base: uintptr) -> (words: []u64) {
+fallback_open_for_test :: proc(t: ^testing.T) -> (words: []u64) {
 	fonts := [4]font_outlines.Font_Input {
 		{"b612", #load("../../../../resources/fonts/b612.ttf")},
 		{"b612_bold", #load("../../../../resources/fonts/b612_bold.ttf")},
@@ -52,20 +50,39 @@ fallback_open_for_test :: proc(t: ^testing.T, demand_base: uintptr) -> (words: [
 	mem.zero(test_glyph_memory, size_of(text_rendering.Glyph_Memory))
 	text_rendering.cache_state = {}
 	text_rendering.memory_give(test_glyph_memory)
-	missing := text_rendering.open(&outlines, demand_base)
+	missing := text_rendering.open(&outlines)
 	testing.expect_value(t, missing, text_rendering.Outline_Fonts{})
 	return words
 }
 
+// cell_ink_count counts the pixels of a canvas that differ from the
+// background: those inside the cell at (left, 0) of a scale, and those
+// outside it.
+@(private = "file")
+cell_ink_count :: proc(pixels: []Color, width, left, scale: int) -> (inside, outside: int) {
+	for pixel, index in pixels {
+		if pixel == DARK_CARD_BOTTOM {
+			continue
+		}
+		column, row := index % width, index / width
+		if column >= left && column < left + CELL_WIDTH * scale && row < CELL_HEIGHT * scale {
+			inside += 1
+		} else {
+			outside += 1
+		}
+	}
+	return inside, outside
+}
+
 // A cell past the glyph cache draws its glyph from the fallback chain of
-// the cells, with the blend of each cell. First what draws the replacement
-// glyph: no outlines open, a character that no font has, and the setting
-// Spleen. Then the glyph of 'A' that the font service drew and published
-// as U+2500 gives the pixels of 'A' from the glyph cache of cells of the
-// same font file, at each scale, from the demand cache; the same character
-// drawn in the private glyph cache gives the pixels of the demand cache;
-// and a Greek letter of B612, the second font of the chain, stays in its
-// cell.
+// the cells, with the blend of each cell, into the private glyph cache of
+// the process. First what draws the replacement glyph: no outlines open, a
+// character that no font has, and the setting Spleen. Then the glyph of
+// 'A' that the private glyph cache draws gives the pixels of 'A' from the
+// glyph cache of cells of the same font file, at each scale, so a cell
+// does not depend on which of the two drew it. Last, a box-drawing
+// character of Paper Mono and a Greek letter of B612, the second font of
+// the chain, each stay in their cell.
 @(test)
 a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
@@ -93,7 +110,6 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	built_pixels, fallback_pixels: [WIDTH * HEIGHT]Color
 	built := Canvas{pixels = raw_data(built_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
 	drawn := Canvas{pixels = raw_data(fallback_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
-	BOX :: rune(0x2500)
 
 	// The replacement glyph: no outlines, no font for Ж, and Spleen.
 	Case :: enum {
@@ -109,10 +125,10 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 		case .No_Outlines:
 			text_rendering.state = {}
 		case .No_Font:
-			words = fallback_open_for_test(t, 0)
+			words = fallback_open_for_test(t)
 			text = "Ж"
 		case .Spleen:
-			words = fallback_open_for_test(t, 0)
+			words = fallback_open_for_test(t)
 			text_choice_set(.Spleen, .Red_Green_Blue)
 		}
 		clear(built, DARK_CARD_BOTTOM)
@@ -124,22 +140,8 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	}
 	text_choice_set(.Vector, .Red_Green_Blue)
 
-	// The demand cache: 'A' published as U+2500.
-	demand_font: vector_font.Demand_Font
-	demand_font, problem = vector_font.demand_font_open(font_bytes, .Cells, render)
-	testing.expect_value(t, problem, vector_font.Font_Problem.None)
-	bytes, allocation := mem.alloc_bytes(demand_cache.SIZE, demand_cache.PAGE_SIZE)
-	testing.expect(t, allocation == nil)
-	defer mem.free_bytes(bytes)
-	base := uintptr(raw_data(bytes))
-	faces: [demand_cache.Face]demand_cache.Face_Header
-	faces[.Cells] = {font_hash = cache.header.font_hash, flags = demand_font.flags}
-	writer := demand_cache.writer_open(base, vector_font.RENDERER_VERSION, faces)
-	entry, result := vector_font.demand_glyph_draw(&demand_font, &writer, 'A', render)
-	testing.expect_value(t, result, vector_font.Demand_Result.Drawn)
-	place, _ := demand_cache.place_find(&writer, .Cells, BOX)
-	demand_cache.publish(&writer, place, .Cells, BOX, entry)
-	words := fallback_open_for_test(t, base)
+	// 'A' from the private glyph cache and from the glyph cache of cells.
+	words := fallback_open_for_test(t)
 	defer delete(words)
 	text_rendering.frame_begin()
 	testing.expect_value(t, cell_face(), text_rendering.Face.Cells)
@@ -147,63 +149,38 @@ a_cell_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 		clear(built, DARK_CARD_BOTTOM)
 		clear(drawn, DARK_CARD_BOTTOM)
 		text_scaled(built, CELL_WIDTH * scale, 0, "A", DARK_TEXT, scale)
-		text_scaled(drawn, CELL_WIDTH * scale, 0, "─", DARK_TEXT, scale)
-		testing.expectf(t, built_pixels == fallback_pixels, "scale %v: the cell from the demand cache has the pixels of the glyph cache", scale)
+		testing.expectf(t, face_glyph_draw(.Cells, 'A', text_rendering.size_of_scale(scale), 0, &text_state.square_root, &text_state.blend_tables, text_state.order, drawn, CELL_WIDTH * scale, 0, DARK_TEXT, OPAQUE), "scale %v: the private glyph cache draws A", scale)
+		_, _, source := text_rendering.glyph(.Cells, 'A', text_rendering.size_of_scale(scale), 0)
+		testing.expect_value(t, source, text_rendering.Glyph_Source.Private_Cache)
+		testing.expectf(t, built_pixels == fallback_pixels, "scale %v: the private cell has the pixels of the glyph cache", scale)
 	}
-	// One character at scale 1, as `character` draws it.
-	clear(built, DARK_CARD_BOTTOM)
-	clear(drawn, DARK_CARD_BOTTOM)
-	character(built, CELL_WIDTH, 0, 'A', DARK_TEXT)
-	character(drawn, CELL_WIDTH, 0, BOX, DARK_TEXT)
-	testing.expect(t, built_pixels == fallback_pixels)
 
-	// The private glyph cache: ═ drawn by the font service and by this
-	// process give the same pixels; and α of B612 stays in its cell.
-	DOUBLE :: rune(0x2550)
-	double_entry: demand_cache.Entry
-	double_entry, result = vector_font.demand_glyph_draw(&demand_font, &writer, DOUBLE, render)
-	testing.expect_value(t, result, vector_font.Demand_Result.Drawn)
-	place, _ = demand_cache.place_find(&writer, .Cells, DOUBLE)
-	demand_cache.publish(&writer, place, .Cells, DOUBLE, double_entry)
-	for scale in 1 ..= 3 {
-		text_rendering.frame_begin()
-		clear(built, DARK_CARD_BOTTOM)
-		text_scaled(built, CELL_WIDTH * scale, 0, "═", DARK_TEXT, scale)
-		_, _, from_demand := text_rendering.glyph(.Cells, DOUBLE, text_rendering.size_of_scale(scale), 0)
-		testing.expect_value(t, from_demand, text_rendering.Glyph_Source.Demand_Cache)
-		delete(words)
-		words = fallback_open_for_test(t, 0)
-		clear(drawn, DARK_CARD_BOTTOM)
-		text_scaled(drawn, CELL_WIDTH * scale, 0, "═", DARK_TEXT, scale)
-		_, _, from_private := text_rendering.glyph(.Cells, DOUBLE, text_rendering.size_of_scale(scale), 0)
-		testing.expect_value(t, from_private, text_rendering.Glyph_Source.Private_Cache)
-		testing.expectf(t, built_pixels == fallback_pixels, "scale %v: the private cell has the pixels of the demand cache", scale)
-		clear(drawn, DARK_CARD_BOTTOM)
-		text_scaled(drawn, CELL_WIDTH * scale, 0, "α", DARK_TEXT, scale)
-		ink, outside := 0, 0
-		for row in 0 ..< HEIGHT {
-			for column in 0 ..< WIDTH {
-				if fallback_pixels[row * WIDTH + column] == DARK_CARD_BOTTOM {
-					continue
-				}
-				inside := column >= CELL_WIDTH * scale && column < 2 * CELL_WIDTH * scale && row < CELL_HEIGHT * scale
-				if inside {
-					ink += 1
-				} else {
-					outside += 1
-				}
-			}
+	// ═ of Paper Mono and α of B612: each from the private glyph cache, and
+	// each in its cell.
+	Cell_Case :: struct {
+		text:      string,
+		character: rune,
+		font:      text_rendering.Outline_Font,
+	}
+	cell_cases := [2]Cell_Case{{"═", 0x2550, .Paper_Mono}, {"α", 0x03B1, .B612}}
+	for each in cell_cases {
+		for scale in 1 ..= 3 {
+			text_rendering.frame_begin()
+			clear(drawn, DARK_CARD_BOTTOM)
+			text_scaled(drawn, CELL_WIDTH * scale, 0, each.text, DARK_TEXT, scale)
+			_, _, source := text_rendering.glyph(.Cells, each.character, text_rendering.size_of_scale(scale), 0)
+			testing.expectf(t, source == .Private_Cache, "%v at scale %v: from %v", each.text, scale, source)
+			testing.expect_value(t, text_rendering.font_of(.Cells, each.character), each.font)
+			ink, outside := cell_ink_count(fallback_pixels[:], WIDTH, CELL_WIDTH * scale, scale)
+			testing.expectf(t, ink > 0 && outside == 0, "scale %v: %v has %v pixels of ink in its cell and %v outside", scale, each.text, ink, outside)
+			// A change of the order of the stripes in the same frame: the
+			// words do not depend on it, so the glyph is not drawn again.
+			drawn_before := text_rendering.counts().drawn
+			text_choice_set(.Vector, .Blue_Green_Red)
+			clear(drawn, DARK_CARD_BOTTOM)
+			text_scaled(drawn, CELL_WIDTH * scale, 0, each.text, DARK_TEXT, scale)
+			text_choice_set(.Vector, .Red_Green_Blue)
+			testing.expectf(t, text_rendering.counts().drawn == drawn_before, "scale %v: a change of the order of the stripes draws no glyph again", scale)
 		}
-		testing.expectf(t, ink > 0 && outside == 0, "scale %v: α has %v pixels of ink in its cell and %v outside", scale, ink, outside)
-		// A change of the order of the stripes in the same frame: the
-		// words do not depend on it, so the glyph is not drawn again.
-		drawn_before := text_rendering.counts().drawn
-		text_choice_set(.Vector, .Blue_Green_Red)
-		clear(drawn, DARK_CARD_BOTTOM)
-		text_scaled(drawn, CELL_WIDTH * scale, 0, "α", DARK_TEXT, scale)
-		text_choice_set(.Vector, .Red_Green_Blue)
-		testing.expectf(t, text_rendering.counts().drawn == drawn_before, "scale %v: a change of the order of the stripes draws no glyph again", scale)
-		delete(words)
-		words = fallback_open_for_test(t, base)
 	}
 }

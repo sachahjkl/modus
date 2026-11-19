@@ -72,7 +72,7 @@ The deadline and its number: [`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md)
 - **A call of the root service for fresh bytes.** It needs a ring for each process, and the root service would answer at the rate that each process chooses. The page has neither cost, and a process reads it with no wait.
 - **A connection of each process to the entropy service.** It gives each process a part of a device, a new right, and the entropy service many clients; the root service is its one client.
 - **The bytes of the device given as they are.** One read of 32 bytes would go to one process, or the same bytes to several. The stream of the root service after the mix gives each process its own bytes, from one read.
-- **A memory object for each process.** Each object is one more handle of the root service, and a full handle table of the root service refuses the load of the next process (the comment of `demand_cache_memory` in `src/modules/system/root/font_service.odin` says how the table fills). One object of 32 pages is one handle.
+- **A memory object for each process.** Each object is one more handle of the root service, and a full handle table of the root service refuses the load of the next process (the comment of `fresh_bytes_memory` in `src/modules/system/root/fresh_bytes.odin` says how the table fills). One object of 32 pages is one handle.
 - **A check of the page at each draw.** See "Why the mix is never done for each draw".
 - **A refresh with no entropy device.** The stream of the root service alone holds nothing that the seed of a process did not already come from. A machine with no device writes no fresh bytes, and each page keeps the change count 0.
 - **A line of the log for each refresh.** 120 lines an hour say the same fact.
@@ -87,7 +87,7 @@ The deadline and its number: [`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md)
 - **The tag of a read.** The root service gives each read the number of the read in the tag of its command, and refuses a completion with another tag. A service that writes a completion that was not asked for then adds no bytes, and counts as a refused read.
 - **A second thread.** A generator from `random.seed_for_a_child` has no page. A process that wants the page in the generator of another thread calls `random.fresh_bytes_attach` with the page of its context. Two generators that mix the same bytes stay apart: each has its own key.
 - **The entropy report** keeps the facts of the two reads of the start only, so the line of `randomness` "64 bytes mixed after the gathering" stays true whatever the time of its start.
-- **The last slot of the band.** `Fresh_Bytes_Page` is the 16th member of `Fixed_Range`, and the band has 16 slots: the next fixed range needs a larger `SLOT_COUNT` first, which the compiler says.
+- **Its slot in the band.** `Fresh_Bytes_Page` has the value 15 of `Fixed_Range`, written in the enumeration, because the value is its bit in the context. The band has 17 slots (`SLOT_COUNT`), the values 0 to 16; the slot 13 of a range that left names no member, and the border refuses its bit (`fixed_ranges_of_word`). A new fixed range takes the slot 13 only when no module of an earlier build can still run; else it needs a larger `SLOT_COUNT`, which the compiler says.
 - **The time of a refresh is a fact that a process sees.** The change count says when the root service wrote. It is the clock of the root service, not a fact of another process.
 
 ## State
