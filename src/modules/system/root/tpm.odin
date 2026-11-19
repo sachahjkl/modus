@@ -197,7 +197,7 @@ start_policy_measure :: proc "contextless" (module_hash: [32]u8, list_hash: [32]
 			system.log_in("processes", .Info, "root: the start policy ", string(head[:]), " ", what, " is measured into PCR 12: PCR 12 = ", string(digits[:]))
 			return true
 		}
-		if state, _ := system.process_state(tpm_process.process); state == .Stopped {
+		if state, _, _ := system.process_state(tpm_process.process); state == .Stopped {
 			system.log_in("processes", .Warning, "root: the start policy ", string(head[:]), " ", what, " is not measured: the TPM service stopped during the measure")
 			return false
 		}

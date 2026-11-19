@@ -62,7 +62,9 @@ stop_report_keep :: proc "contextless" (item: ^Started) {
 	}
 	report := system.process_stop_report(item.process)
 	name := system.name_of(item.name[:])
-	if report.code == 0 {
+	// A stop with no report (the process stopped itself, or a holder
+	// stopped it) leaves the report zero, its cause word too.
+	if report.cause == 0 {
 		disk_process.kept_stop_report_forget(&kept_stop_reports, item.principal, name)
 		return
 	}

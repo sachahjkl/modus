@@ -509,5 +509,5 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		second_run(counts)
 	}
 	system.log("hierarchy: done, ", u64(wrong_cases), " wrong")
-	system.stop(wrong_cases == 0 ? 0 : 2)
+	system.stop(wrong_cases == 0 ? 0 : 1)
 }

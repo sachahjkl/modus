@@ -6,7 +6,7 @@ The operation is in `src/library/contract/operation/operation.odin`, `Process_St
 
 ## The purpose
 
-Today a stopped process has one number, its stop code. `Process_Stop` takes any value from the process that stops itself and from any holder of its process handle with **Control**. The kernel writes its own stops in a range of the same number: `0x100` plus the vector, `0x200`, `0x300`, `0x400`, `0x500`. Three faults follow:
+Before this design, a stopped process had one number, its stop code. `Process_Stop` took any value from the process that stops itself and from any holder of its process handle with **Control**. The kernel wrote its own stops in a range of the same number: `0x100` plus the vector, `0x200`, `0x300`, `0x400`, `0x500`. Three faults followed:
 
 - **A holder forges the end of a process.** A holder with Control stops a process with the code 0, and every reader reads "done". The root service does it at each stop that it makes.
 - **A reader decodes a number.** The console, the root service, the start policy and the machine tests compare codes with constants of each module (`0x10E`, `42`, `REPAIRS_CODE | bits`). Property 22 forbids a task that needs a number ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General mechanisms, and a plain expression for each frequent task").
@@ -49,7 +49,7 @@ Stop_Cause :: enum u32 {
 
 `Last_Thread_Ended` is not in the first list of members. The kernel has that path today: the end of the last thread stops the process with the code 0. Under `Itself` it would need an outcome that the process never chose. With the outcome `Done`, it would forge a clean end.
 
-`Not_Committed` and `Cannot_Return` keep their own members, as their stop codes do today. They are not faults of the code: the first is a growth that the process did not pay, and the second can come from a frame that a holder wrote with thread control.
+`Not_Committed` and `Cannot_Return` keep their own members, as their stop codes did. They are not faults of the code: the first is a growth that the process did not pay, and the second can come from a frame that a holder wrote with thread control.
 
 ### `Stop_Outcome`
 
@@ -94,7 +94,7 @@ Each case is a fault of the kernel. `system.process_state` stops its process thr
 
 ### `Stop_Report` and `Process_Report`
 
-- **`Stop_Report.code` becomes `cause: u32`**, the word of a `Stop_Cause`, which a reader takes through `op.stop_cause_of_word`. The vector stays in `vector`: today the code repeats it (`0x100 + vector`). A report of a stop that is not a fault stays zero, so its cause word is 0. The reader takes the cause from `Process_State`, not from the report.
+- **`Stop_Report.code` becomes `cause: u32`**, the word of a `Stop_Cause`, which a reader takes through `op.stop_cause_of_word`. The vector stays in `vector`: the old code repeated it (`0x100 + vector`). A report of a stop that is not a fault stays zero, so its cause word is 0. The reader takes the cause from `Process_State`, not from the report.
 - **`Process_Report.code` becomes two words, `stop_cause: u32` and `stop_outcome: u32`.** The record grows by 4 bytes. A record of the kernel holds the words, not the enums, as `Module_Record.writer` does: a shared record holds the word in place of an enum field ([../infrastructure/choice_constants.md](../infrastructure/choice_constants.md)).
 - The kept stop report of a disk process copies the report as it is ([../features/debug_object_of_a_disk_process.md](../features/debug_object_of_a_disk_process.md)).
 
@@ -103,7 +103,7 @@ Each case is a fault of the kernel. `system.process_state` stops its process thr
 - `system.stop(outcome: op.Stop_Outcome) -> !`, with no default. `system.stop(.Done)`. A refused stop still ends the process by the fault of [kernel_ring_completion_room.md](kernel_ring_completion_room.md), "The stop of a process": the cause is then `Fault`, never a false `Done`.
 - `system.process_stop(process: Handle)` stops another process. It has no outcome parameter.
 - `system.process_state(process) -> (state, cause, outcome)`.
-- `system.process_stop_wait(process, deadline) -> (cause, outcome, stopped)` waits for the stop of a process up to its deadline. It replaces the helper that each demonstration has today (`stop_code` in `frames`, `child_stop_code` in `address_space`).
+- `system.process_stop_wait(process, deadline) -> (cause, outcome, stopped)` waits for the stop of a process up to its deadline. It replaces the helper that each demonstration has (`stop_cause_wait` in `frames`, `child_stop_cause` in `address_space`, `wait_for_stop` in `debugged`).
 - `op.STOP_CAUSE_TEXTS` and `op.STOP_OUTCOME_TEXTS`, two whole arrays indexed by the enum, give the words of the readers: "itself", "a holder", "its last thread ended", "its last handle closed", "a fault", "a page that is not committed", "the kernel cannot return to its thread", "a fault that no thread can answer"; "done", "failed", "refused", "stopped on request". The compiler checks that each member has its text.
 
 ### The readers
@@ -195,4 +195,11 @@ No measure decides this design. The kernel stores 4 more bytes for each process 
 
 ## State
 
-Designed, not built. The kernel keeps one open stop code, `Process_Stop` takes any value from the process and from a holder, and the readers compare numbers.
+Built: the stop cause and no result in a stop, the first two steps of the migration.
+
+- The kernel records the cause at each stop, beside the stop code, and the first stop keeps both. `Process_Stop` gives `Itself` when the target is the caller, by 0 or by a handle that names it, and `Holder` otherwise. `Process_State` gives `state, cause, code, entries, slot, serial`: the code is in the place that the outcome takes later, so step 3 moves no other result. `Stop_Report.cause` and `Process_Report.stop_cause` hold the word.
+- `op.stop_of_words(state, cause)` is the border, with two words until the outcome exists; `system.process_state` gives `(state, cause, code)`, and `system.stop_write` the words "itself, code 0" or the text of the cause for a line. The constants `STOP_CODE_*` are gone.
+- The readers: the root line "root: settings stopped: itself, code 0" or "root: net stopped: a holder", the start policy, the terminal, the console "the process calendar stopped: a fault, page fault", the column `cause` of `monitor.processes()`, and the demonstrations and machine tests.
+- No stop carries a result: each code is 0 or 1. The children of `fault_ring` write their result bits in the page that they share with the parent. The operation sequence runner writes its end (`Runner_End`) in its results, and the service writes its stop cause in the mailbox. A child of `debugged`, `kernel_events`, `return_fault`, `errors`, `locks` or `locker` that fails a step writes a line that names the step and stops with 1. Each holder passes 0.
+
+Left: the stop outcome (step 3), with which the code leaves; `Refused` and `Stopped_On_Request` where they belong, and the enum of stop codes of the start policy (step 4); the check of the tool, and the end of the exception of [../infrastructure/choice_constants.md](../infrastructure/choice_constants.md) for the stop codes past 255 (step 5); the error record (step 6); `system.process_stop_wait`, the end word of a record output and the fuzz target of `op.stop_of_words`.

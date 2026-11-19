@@ -168,7 +168,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		draw_hex(&frame)
 	} else {
 		draw_modules(&frame)
-		if current.stop.code != 0 {
+		if current.stop.cause != 0 {
 			draw_stop(&frame)
 		} else {
 			draw_threads(&frame)

@@ -16,7 +16,7 @@
 //
 // **What a reader sees**: no window. The log has one line for each case, "...: as it must" or "WRONG", the
 // measures of the commits, and at the end "ranges: done, N wrong". The process stops with the code 0 when no case
-// is wrong, else with the code 2.
+// is wrong, else with the code 1.
 //
 // The exports that it calls: [write_range](storage.write_range), [set_size](storage.set_size) and
 // [commit](storage.commit) of the storage service.
@@ -489,5 +489,5 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		second_run()
 	}
 	system.log("ranges: done, ", u64(wrong_cases), " wrong")
-	system.stop(wrong_cases == 0 ? 0 : 2)
+	system.stop(wrong_cases == 0 ? 0 : 1)
 }

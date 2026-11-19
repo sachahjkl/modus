@@ -212,7 +212,7 @@ sample_log :: proc "contextless" () {
 	}
 	system.log("inspect: ", name, ": ", current.mappings.count, " mappings, ", pages, " mapped pages, ", present, " with a frame, ", current.threads.count, " threads, ", current.modules.count, " modules; the kernel says ", current.process.mapped_pages, " mapped pages and ", current.process.thread_count, " threads")
 	system.log("inspect: one sample of ", name, " took ", current.nanoseconds / 1000, " us and ", current.entries, " kernel entries")
-	if current.stop.code != 0 {
+	if current.stop.cause != 0 {
 		buffer: [512]u8
 		writer := system.Writer{buffer = buffer[:]}
 		stop_write(&writer, &current.stop)

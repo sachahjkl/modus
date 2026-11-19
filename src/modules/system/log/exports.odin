@@ -173,7 +173,7 @@ scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^err
 		errors.fail(error, ERROR, .Refused, .None, LENT_PROCESS_ARGUMENT, 0, 0, i64(status))
 		return {}, false
 	}
-	return log_scope.lent_process_scope(results[3], results[4]), true
+	return log_scope.lent_process_scope(results[4], results[5]), true
 }
 
 // records gives the log records of the log scope of the caller from the number `after` on, one row each: the number, the time in microseconds, the process and its slot, the level, the channel, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows of the scope from `after` to the last record.

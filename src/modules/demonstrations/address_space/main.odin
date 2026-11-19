@@ -390,7 +390,7 @@ guard_page :: proc "contextless" (ctx: ^system.Context) {
 	}
 	defer system.close(process)
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		state, _ := system.process_state(process)
+		state, _, _ := system.process_state(process)
 		if state == .Stopped {
 			break
 		}
@@ -609,8 +609,8 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		system.close(memory)
 	}
 	// A child touches a page of an uncommitted object that is not committed:
-	// it stops with the code of a page that is not committed.
-	edge_case_results[9] = child_stop_code(ctx, 3) == op.STOP_CODE_NOT_COMMITTED
+	// it stops with the stop cause of a page that is not committed.
+	edge_case_results[9] = child_stop_cause(ctx, 3) == .Not_Committed
 	// An Uncommitted object of 1 page, then a report: the test build
 	// checks the sums of the frames at each report (a page that such an
 	// object pays and that no count names stops the machine), and the free
@@ -811,11 +811,12 @@ large_object_ends_quickly :: proc "contextless" () -> bool {
 	return kept == 0
 }
 
-// child_stop_code starts the child with a role and gives its stop code.
-child_stop_code :: proc "contextless" (ctx: ^system.Context, role: u64) -> u32 {
+// child_stop_cause starts the child with a role and gives its stop cause:
+// None when it did not start or did not stop within the hang bound.
+child_stop_cause :: proc "contextless" (ctx: ^system.Context, role: u64) -> op.Stop_Cause {
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		return 0
+		return .None
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	grants: [op.CONTEXT_HANDLES]system.Grant
@@ -823,17 +824,17 @@ child_stop_code :: proc "contextless" (ctx: ^system.Context, role: u64) -> u32 {
 	values[VALUE_ROLE] = role
 	process, start := system.process_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
 	if start != .Ok {
-		return 0
+		return .None
 	}
 	defer system.close(process)
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		if state, _ := system.process_state(process); state == .Stopped {
+		if state, _, _ := system.process_state(process); state == .Stopped {
 			break
 		}
 		system.sleep(system.time() + 10)
 	}
-	_, code := system.process_state(process)
-	return code
+	_, cause, _ := system.process_state(process)
+	return cause
 }
 
 // The child of the role 3: it touches a page that is not committed.

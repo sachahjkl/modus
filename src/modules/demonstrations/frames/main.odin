@@ -135,19 +135,19 @@ twin_start :: proc "contextless" (name: string, mode: twins.Twin_Mode, table: ^s
 	return system.process_start(system.image_find(image, "twin"), name, grants, random.values_with_seed(&process_generator, values), TWIN_AMOUNTS, nil, table)
 }
 
-// stop_code waits until a process stops, and gives its code. The bound only
-// ends a hang.
-stop_code :: proc "contextless" (process: system.Handle) -> (code: u32, stopped: bool) {
+// stop_cause_wait waits until a process stops, and gives its stop cause.
+// The bound only ends a hang.
+stop_cause_wait :: proc "contextless" (process: system.Handle) -> (cause: op.Stop_Cause, stopped: bool) {
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for system.time() < deadline {
 		wait := system.wait_begin()
-		state, stop := system.process_state(process)
+		state, stop_cause, _ := system.process_state(process)
 		if state == .Stopped {
-			return stop, true
+			return stop_cause, true
 		}
 		system.wait_end(&wait, deadline)
 	}
-	return 0, false
+	return .None, false
 }
 
 TWIN_NAMES := [TWIN_COUNT]string{"twin 1", "twin 2", "twin 3", "twin 4"}
@@ -268,12 +268,14 @@ shared_code_cases :: proc "contextless" () {
 
 	// A write to the shared code: the kernel stops the twin that writes.
 	writer, _ := twin_start("twin 5", .Write_Code, &prepared)
-	stop, stopped := stop_code(writer)
+	cause, stopped := stop_cause_wait(writer)
+	// The kernel forgets the stop report with the last handle: read it first.
+	vector := system.process_stop_report(writer).vector
 	system.close(writer)
-	note("a twin writes to its shared code", stopped && stop == op.STOP_CODE_FAULT + 14, "stopped: page fault")
+	note("a twin writes to its shared code", stopped && cause == .Fault && vector == u32(op.Fault_Kind.Page_Fault), "stopped: page fault")
 	running := 0
 	for process in processes {
-		if state, _ := system.process_state(process); state != .Stopped && state != .None {
+		if state, _, _ := system.process_state(process); state != .Stopped && state != .None {
 			running += 1
 		}
 	}

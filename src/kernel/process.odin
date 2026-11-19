@@ -340,6 +340,7 @@ THREAD_TABLE_CAPACITY :: 256
 
 Process :: struct {
 	state:        op.Process_State, // None, Created, Ready or Stopped.
+	cause:        op.Stop_Cause, // Why it stopped: set with the state Stopped, under the process lock.
 	code:         u32,
 	name:         [op.PROCESS_NAME_BYTES_MOST + 1]u8, // Zero bytes after the name.
 	table:        u64,
@@ -1558,6 +1559,9 @@ process_free :: proc "contextless" (process: ^Process) {
 	}
 	own_log_ring_end(process)
 	process.state = .None
+	// A slot with no process has no stop cause: a report of the slot must
+	// not pair the state None with the cause of the process before.
+	process.cause = .None
 	budgets[process.budget].amounts.processes += 1
 }
 
@@ -1795,9 +1799,9 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 		thread_free(thread)
 	}
 	if last {
-		process_stop(process_index, 0)
+		process_stop(process_index, .Last_Thread_Ended, 0)
 	} else if unanswered {
-		process_stop(process_index, op.STOP_CODE_FAULT_UNANSWERED)
+		process_stop(process_index, .Fault_Unanswered, 0)
 	} else if running {
 		process_event(process_index)
 	}
@@ -1837,8 +1841,9 @@ process_state :: proc "contextless" (index: u32) -> op.Process_State {
 // its last thread leaves its processor"). Each thread that waits or is in a
 // queue ends now; each thread on a processor gets stop_requested. The last
 // of these processors to leave its thread, or this call if none runs one,
-// cleans the process up. The caller holds the control lock.
-process_stop :: proc "contextless" (index: u32, code: u32) {
+// cleans the process up. The caller holds the control lock. The first stop
+// keeps its cause and its code: a later stop or fault changes neither.
+process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, code: u32) {
 	process := &processes[index]
 	taken := process_lock(index)
 	if process.state == .None || process.state == .Stopped {
@@ -1855,6 +1860,7 @@ process_stop :: proc "contextless" (index: u32, code: u32) {
 	// The state changes first: a handle that this process closes later can
 	// name this process, and an operation of the process sees it.
 	process.state = .Stopped
+	process.cause = cause
 	process.code = code
 	// The debugging of a process ends with the process: its debug handler
 	// is free for another process, and no ring takes a record of a process
@@ -2110,8 +2116,8 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// The process ran int1 with a held debug trap, and the second trap
 		// took the place of the frame of the first on their one stack: the
 		// kernel does not know where the thread was, so it cannot return to
-		// it, and no fault handler could resume it. The process stops with
-		// the stop code of a debug exception and the instruction address 0;
+		// it, and no fault handler could resume it. The process stops as a
+		// fault of a debug exception, with the instruction address 0;
 		// its general registers are its own, so the stack trace starts from
 		// its frame pointer.
 		frame.vector = VECTOR_DEBUG
@@ -2267,16 +2273,16 @@ page_fault :: proc "contextless" (index: u32, address: u64, error: u64) -> bool 
 process_fault :: proc "contextless" (index: u32, frame: ^Frame, address: u64) {
 	control_take()
 	defer control_free()
-	process_stop(index, process_fault_report(index, frame, address))
+	process_stop(index, process_fault_report(index, frame, address), 0)
 }
 
 // process_fault_report writes the stop report and the line of the log of a
-// fault of a thread of a process, and gives the stop code. address is the
+// fault of a thread of a process, and gives the stop cause. address is the
 // address of a page fault (the processor gives it in cr2). The caller holds
 // the control lock, and the page table of this processor is the one of the
 // process: the stack trace reads its memory. Then the caller stops the
-// process with the code.
-process_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: u64) -> (code: u32) {
+// process with the cause.
+process_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: u64) -> (cause: op.Stop_Cause) {
 	process := &processes[index]
 	taken := process_lock(index)
 	name := frame.vector < 32 ? EXCEPTION_NAMES[frame.vector] : ""
@@ -2284,23 +2290,23 @@ process_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: 
 	// replacement names the module that runs, not the one of the import.
 	found := module_of(process, frame.rip)
 	// The first stop is the one that the report keeps: a process that a stop
-	// or another fault already stopped keeps its code and its report.
+	// or another fault already stopped keeps its cause and its report.
 	first := process.state != .Stopped && process.state != .None
 	// A page of an Uncommitted object that is not committed has its own
-	// code: the access went to addresses with no memory paid behind them.
-	code = op.STOP_CODE_FAULT + u32(frame.vector)
+	// cause: the access went to addresses with no memory paid behind them.
+	cause = .Fault
 	if frame.vector == VECTOR_PAGE_FAULT && process.table != 0 {
 		if mapping := mapping_at(process, address); mapping != nil && mapping.region < REGION_CAPACITY {
 			region := &regions[mapping.region]
 			page := mapping.first + (address - mapping.address) / PAGE_SIZE
 			if region.uncommitted && !page_committed(region, region_page_state(region, page)) {
-				code = op.STOP_CODE_NOT_COMMITTED
+				cause = .Not_Committed
 				name = "page fault on a page that is not committed"
 			}
 		}
 	}
 	if first {
-		process.stop = {code = code, vector = u32(frame.vector), instruction = frame.rip}
+		process.stop = {cause = u32(cause), vector = u32(frame.vector), instruction = frame.rip}
 		if frame.vector == 14 {
 			process.stop.address = address
 		}
@@ -2321,7 +2327,7 @@ process_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: 
 		stack_trace(process, frame, &process.stop)
 	}
 	process_unlock(index, taken)
-	return code
+	return cause
 }
 
 process_name :: proc "contextless" (process: ^Process) -> string {

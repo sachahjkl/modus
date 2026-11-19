@@ -1271,7 +1271,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// A block service that stopped before it mapped the ring: the disk is
 	// silent, as at a stop during a wait.
 	if give_status != .Ok {
-		if state, _ := system.process_state(block_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
+		if state, _, _ := system.process_state(block_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
 			disk_silence_note(.Block_Service_Stopped)
 		}
 	}

@@ -1180,7 +1180,7 @@ call :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {
 		if record, ok := system.receive(&frames.completions); ok && record.tag == tag {
 			return record
 		}
-		state, _ := system.process_state(frame_service)
+		state, _, _ := system.process_state(frame_service)
 		switch system.answer_wait_of(system.time(), deadline, state) {
 		case .Waits:
 		case .Stopped:
@@ -1206,7 +1206,7 @@ frame_service_check :: proc "contextless" () {
 	}
 	frame_service_events = events
 	frame_service_state_read = true
-	if state, _ := system.process_state(frame_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
+	if state, _, _ := system.process_state(frame_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
 		frame_service_stopped_fail()
 	}
 }
@@ -1269,7 +1269,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	give_status := system.Status.Bad_Handle
 	for attempt := 0; attempt < 2000 && give_status != .Ok; attempt += 1 {
 		if given, give_status = system.give(frames_memory, memory, {.Read, .Write}); give_status != .Ok {
-			if state, _ := system.process_state(frame_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
+			if state, _, _ := system.process_state(frame_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
 				frame_service_stopped_fail()
 			}
 			system.sleep(system.time() + 1)

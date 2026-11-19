@@ -60,7 +60,7 @@
 // refused with `Busy` and does not run; a wait of the library ends at once
 // and pushes nothing; and after the read each answer has come once, in
 // order, and the kept command runs once. Its child stops on a kernel ring
-// that holds records, and must stop with its own stop code.
+// that holds records, and its stop must be a stop of itself, not a fault.
 //
 // **The measures**, printed and never compared to a bound: a kernel
 // operation that succeeds and one that fails with its record; a direct
@@ -785,7 +785,7 @@ case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 	limit := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		wait := system.wait_begin()
-		if state, _ := system.process_state(process); state == .Stopped || system.time() > limit {
+		if state, _, _ := system.process_state(process); state == .Stopped || system.time() > limit {
 			break
 		}
 		system.wait_end(&wait, limit)
@@ -800,7 +800,8 @@ case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 		system.frame_text(writer, image, &debug_names, &frame, number)
 		all_in_fault &&= frame.hash == fault_hash
 	}
-	return report.code == op.STOP_CODE_FAULT + 14 && all_in_fault
+	cause, _ := op.stop_cause_of_word(u64(report.cause))
+	return cause == .Fault && report.vector == u32(op.Fault_Kind.Page_Fault) && all_in_fault
 }
 
 // case_run runs the case of an index, writes the sentence of its error
@@ -958,15 +959,12 @@ lock_takes :: proc "contextless" (machine: system.Handle) -> (control, frame: u6
 	return report.locks[op.Lock_Kind.Control].takes, report.locks[op.Lock_Kind.Frame].takes
 }
 
-// The stop code of the child: not 0 and not a code of a fault, so that the
-// starter sees that the child stopped with its own stop, not by a fault.
-CHILD_STOP_CODE :: 7
-
 // child runs REFUSALS refused Log operations, writes their time, and stops
 // on a kernel ring that holds records: a full completion queue, unread, and
 // one command held behind it. A stop must end the process whatever its ring
 // holds (src/md/api/kernel_ring_completion_room.md, "The stop of a
-// process").
+// process"). The starter reads the stop cause Itself, not Fault: the stop
+// went through, and no write to the time page ended the child.
 child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	page := (^Child_Page)(uintptr(MEASURE_ADDRESS))
 	log := u64(ctx.handles[op.CONTEXT_LOG])
@@ -985,7 +983,7 @@ child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	}
 	system.enter(0)
 	_ = ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.None)})
-	system.stop(CHILD_STOP_CODE)
+	system.stop(0)
 }
 
 // refusals measures the two refusals; the machine handle reads the counts of
@@ -1009,7 +1007,7 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 	process, status := system.process_start(system.image_find(image, "errors"), "errors child", grants, random.values_with_seed(&process_generator, values), {pages = 512, processes = 1, threads = 1, processor = 1_000_000, log_records = 0}, mappings[:], nil, {image = image}, &error)
 	if status == .Ok {
 		for intrinsics.atomic_load(&page.done) == 0 {
-			if state, _ := system.process_state(process); state == .Stopped {
+			if state, _, _ := system.process_state(process); state == .Stopped {
 				break
 			}
 			system.sleep(system.time() + 10)
@@ -1019,19 +1017,20 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 		// stops; the hang bound only ends a stop that never comes.
 		deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 		child_state: op.Process_State
+		child_cause: op.Stop_Cause
 		child_code: u32
 		for {
 			wait := system.wait_begin()
-			child_state, child_code = system.process_state(process)
+			child_state, child_cause, child_code = system.process_state(process)
 			if child_state == .Stopped || system.time() >= deadline {
 				break
 			}
 			system.wait_end(&wait, deadline)
 		}
-		if child_state == .Stopped && child_code == CHILD_STOP_CODE {
-			system.log("errors: a stop on a kernel ring that holds records ends the process with its own stop code: as it must")
+		if child_cause == .Itself && child_code == 0 {
+			system.log("errors: a stop on a kernel ring that holds records ends the process as a stop of itself, not a fault: as it must")
 		} else {
-			system.log("errors: WRONG: a stop on a kernel ring that holds records left the child in the state ", u64(child_state), " with the code ", u64(child_code))
+			system.log("errors: WRONG: a stop on a kernel ring that holds records left the child in the state ", op.STATE_NAMES[child_state], ", stopped by ", op.STOP_CAUSE_TEXTS[child_cause], ", with the code ", u64(child_code))
 		}
 		system.close(process)
 	} else {

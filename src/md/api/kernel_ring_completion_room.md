@@ -73,7 +73,7 @@ The chosen form, in rounds:
 
 The bound is a count, never a time. With room in the completion queue, each entry runs at least one held command, so an honest ring is empty after at most one round for each place.
 
-**The fault.** `stop` writes to the time page. A process can only read that page, so the write is a page fault at an address at or above `THREAD_AREA_BASE`. The kernel never gives a fault at such an address to a fault handler or a debugger, so it stops the process at once. It writes its report and one line of the log, with the stop code of a page fault (`STOP_CODE_FAULT` plus the vector 14). The same fault ends the process when `Process_Stop` itself is refused.
+**The fault.** `stop` writes to the time page. A process can only read that page, so the write is a page fault at an address at or above `THREAD_AREA_BASE`. The kernel never gives a fault at such an address to a fault handler or a debugger, so it stops the process at once. It writes its report and one line of the log, with the stop cause `Fault` and the vector 14 in the report. The same fault ends the process when `Process_Stop` itself is refused.
 
 The refused forms:
 

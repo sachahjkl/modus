@@ -322,7 +322,7 @@ raw_call :: proc "contextless" (connection: ^system.Call_Connection, export: u32
 				return record.kind, transmute(errors.Error_Record)record.values
 			}
 		}
-		if state, _ := system.process_state(connection.process); state == .Stopped {
+		if state, _, _ := system.process_state(connection.process); state == .Stopped {
 			return max(u32), {} // A word that names no status: the process stopped.
 		}
 		system.wait_records(&wait, &connection.calls.completions)

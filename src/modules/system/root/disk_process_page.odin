@@ -61,7 +61,7 @@ disk_process_page_add :: proc "contextless" (item: ^Started) {
 	if status != .Ok {
 		return
 	}
-	process_page.row_write(disk_process_page, disk_process_page_index(item), process_page.row_of(results[3], results[4], system.name_of(item.name[:]), item.hash))
+	process_page.row_write(disk_process_page, disk_process_page_index(item), process_page.row_of(results[4], results[5], system.name_of(item.name[:]), item.hash))
 }
 
 // disk_process_page_remove clears the row of a slot that this service

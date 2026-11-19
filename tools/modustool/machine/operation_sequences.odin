@@ -189,9 +189,23 @@ operation_findings :: proc(sequence: ^operation_sequence.Sequence, header: ^oper
 		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the outcome is %v (problem %d, start status %d, step started %d)", outcome, header.refusal_problem, header.start_status, results.step_started)})
 		return findings[:]
 	}
-	if outcome == .Stopped && (header.stop_code == operation_sequence.RUNNER_SEQUENCE_REFUSED_CODE || header.stop_code == operation_sequence.RUNNER_BATCH_REFUSED_CODE) {
-		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the runner could not run its sequence: stop code %x", header.stop_code)})
+	// The stop cause and the end are words of the memory of the machine:
+	// each becomes its member here, and a word that names none is a finding.
+	cause, cause_known := operation.stop_cause_of_word(header.stop_cause)
+	if !cause_known {
+		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the stop cause word %d of the runner names no cause", header.stop_cause)})
 		return findings[:]
+	}
+	end, end_known := enum_word.member_of_word(operation_sequence.Runner_End, results.end)
+	if !end_known {
+		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the end word %d of the runner names no end", results.end)})
+		return findings[:]
+	}
+	switch end {
+	case .Sequence_Refused, .Batch_Refused:
+		append(&findings, Operation_Finding{.Outcome, -1, fmt.tprintf("the runner could not run its sequence: its end is %v, its stop cause %s", end, operation.STOP_CAUSE_TEXTS[cause])})
+		return findings[:]
+	case .None, .Ran:
 	}
 	if header.budget_after != header.budget_before {
 		append(&findings, Operation_Finding{.Budget_Not_Back, -1, fmt.tprintf("the budget held %v before the runner and %v after it", header.budget_before, header.budget_after)})

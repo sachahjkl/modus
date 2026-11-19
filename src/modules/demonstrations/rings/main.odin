@@ -309,7 +309,7 @@ watch :: proc "contextless" () {
 	}
 	for &node, index in nodes {
 		if node.process != 0 {
-			if state, _ := system.process_state(node.process); state == .Stopped {
+			if state, _, _ := system.process_state(node.process); state == .Stopped {
 				node_stop(index)
 				system.log("rings: node ", u64(index + 1), " stopped alone")
 			}

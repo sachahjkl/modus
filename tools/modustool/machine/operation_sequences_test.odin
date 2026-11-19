@@ -200,10 +200,23 @@ the_oracles_of_the_outcome_and_of_the_budget :: proc(t: ^testing.T) {
 	}
 	header = oracle_header()
 	header.outcome = u64(operation_sequence.Execution_Outcome.Stopped)
-	for code in ([]u64{operation_sequence.RUNNER_SEQUENCE_REFUSED_CODE, operation_sequence.RUNNER_BATCH_REFUSED_CODE}) {
-		header.stop_code = code
-		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "a runner that stopped with the code %x is taken", code)
+	header.stop_cause = u64(operation.Stop_Cause.Itself)
+	for end in ([]operation_sequence.Runner_End{.Sequence_Refused, .Batch_Refused}) {
+		results.end = u64(end)
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "a runner that ended with %v is taken", end)
 	}
+	// A word of the memory of the machine that names no end, or no cause, is
+	// a finding, never an end or a cause.
+	for word in ([]u64{u64(max(operation_sequence.Runner_End)) + 1, max(u64)}) {
+		results.end = word
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the end word %d is taken", word)
+	}
+	results.end = u64(operation_sequence.Runner_End.Ran)
+	for word in ([]u64{u64(max(operation.Stop_Cause)) + 1, max(u64)}) {
+		header.stop_cause = word
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the stop cause word %d is taken", word)
+	}
+	results.end = 0
 	header = oracle_header()
 	results.steps_run = 1
 	testing.expect(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "more steps than the sequence are taken")
