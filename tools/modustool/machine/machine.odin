@@ -2620,6 +2620,22 @@ scenario := [?]Step {
 	{kind = .Record, process = "log_reader storm", level = "Info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
 	{kind = .Record, process = "log_reader", level = "Info", text = "log_reader: ok"},
 	{kind = .Record, process = "root", level = "Info", text = "root: log_reader stopped with code 0"},
+	// The names that facts() and a condition read are checked before any
+	// call (src/md/features/log_facts.md, "Filters of a reader: one
+	// form"): a fact name of two dots, a fact type that the package of
+	// log_reader does not write, and an order on the level of the table of
+	// a fact type. Each line runs no call, so processes() on the left is
+	// never called. A line that reads the fact of log_reader whole is a
+	// step of the machine tests that read facts: log.records(0) of a full
+	// log does not fit in the call region of the console.
+	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe.value)"},
+	{kind = .Wait, text = "[console] error: facts: no fact type has the name log_reader.Fact_Probe.value; the fact types are "},
+	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probes)"},
+	{kind = .Wait, text = "[console] error: facts: no fact type has the name log_reader.Fact_Probes; the fact types of log_reader are log_reader.Fact_Probe"},
+	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe) |> where(level >= Warning)"},
+	{kind = .Wait, text = "[console] error: where: the field level is Status(Log_Level): it takes = and != only, because the order of the members is no order of weight"},
+	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe) |> where(level = \"Warning\")"},
+	{kind = .Wait, text = "[console] error: where: the field level holds a member of Log_Level, and a member is a name, not a text or a number: \"Warning\" is none; the members are Info, Debug, Warning, Error"},
 	// An arena grows one page at a time until its budget refuses the
 	// commit: the refusal is a value that the process reads, the arena
 	// keeps its state, a reset takes the same pages again with no commit,

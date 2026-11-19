@@ -1,9 +1,9 @@
 package console
 
 import module "modus:contract/module"
-import op "modus:contract/operation"
-import "modus:contract/value_kinds"
+import "modus:private/console/console_condition"
 import "modus:private/console/console_results"
+import "modus:support/sentence"
 
 // Tables: a value that holds records of one record description, one after
 // the other (module.Type.Table). A Table result of an export gives one, and
@@ -99,38 +99,13 @@ field_names :: proc "contextless" (table: Table) -> string {
 	return string(scratch[start:scratch_count])
 }
 
-// row_value gives one field of a row as a value: an Integer, a Text or a Handle.
-row_value :: proc "contextless" (row: []u8, item: module.Field) -> Value {
-	// A byte that names no type gives no value, as a field of no value.
-	type, type_ok := module.field_type(item)
-	if !type_ok {
-		return {}
-	}
-	switch type {
-	case .Integer:
-		return {kind = .Integer, integer = module.field_integer(row, item)}
-	case .Handle:
-		return {kind = .Handle, integer = i64((^u32)(&row[item.offset])^)}
-	case .Text:
-		return {kind = .Text, text = module.field_text(row, item)}
-	case .None, .Record, .Table, .Bytes:
-		// A field of a row holds no such value: the field gives none. A
-		// hash is a Bytes field, which table_argument refuses before.
-	}
-	return {}
-}
-
-// compare gives -1, 0 or 1: Integers by value, Texts byte by byte.
-compare :: proc "contextless" (a, b: Value) -> int {
-	if a.kind == .Text {
-		for i in 0 ..< min(len(a.text), len(b.text)) {
-			if a.text[i] != b.text[i] {
-				return a.text[i] < b.text[i] ? -1 : 1
-			}
-		}
-		return len(a.text) < len(b.text) ? -1 : len(a.text) > len(b.text) ? 1 : 0
-	}
-	return a.integer < b.integer ? -1 : a.integer > b.integer ? 1 : 0
+// row_field gives one field of a row as the value that where, sort and
+// join compare (console_condition.values_compare): an Integer with its
+// sign, a handle, or a Text. A field with no such value gives a zero
+// value: table_argument refused a Bytes field before.
+row_field :: proc "contextless" (row: []u8, item: module.Field) -> console_condition.Field_Value {
+	value, _ := console_condition.field_value_of(row, item)
+	return value
 }
 
 // table_argument reads the table argument of a command, and one of its
@@ -275,7 +250,7 @@ table_where :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	count := 0
 	for index in 0 ..< table.rows {
-		count += int(condition_holds(row_value(table_row(table, arguments[0], index), item), condition))
+		count += int(console_condition.condition_holds(row_field(table_row(table, arguments[0], index), item), condition))
 	}
 	bytes := table_bytes(count * table.size)
 	if bytes == nil && count > 0 {
@@ -284,7 +259,7 @@ table_where :: proc "contextless" (arguments: []Value) -> Value {
 	place := 0
 	for index in 0 ..< table.rows {
 		row := table_row(table, arguments[0], index)
-		if condition_holds(row_value(row, item), condition) {
+		if console_condition.condition_holds(row_field(row, item), condition) {
 			copy(bytes[place:], row)
 			place += table.size
 		}
@@ -292,179 +267,79 @@ table_where :: proc "contextless" (arguments: []Value) -> Value {
 	return {kind = .Table, record = bytes, file = arguments[0].file, detail = arguments[0].detail}
 }
 
-// condition_holds says if the value of a field passes a condition: Texts
-// byte by byte, Integers, handles and the words of a status by value.
-condition_holds :: proc "contextless" (value: Value, condition: Condition) -> bool {
-	compared := Value{kind = .Integer, integer = condition.compared}
-	if value.kind == .Text {
-		compared = {kind = .Text, text = condition.text}
+// condition_fail fails the line with the sentence of a refusal of a
+// condition, which console_condition writes.
+condition_fail :: proc "contextless" (refusal: console_condition.Refusal, details: console_condition.Refusal_Details) -> Value {
+	writer := sentence.Writer {
+		buffer = scratch[scratch_count:],
 	}
-	order := compare(value, compared)
-	switch condition.comparison {
-	case .Equal:
-		return order == 0
-	case .Not_Equal:
-		return order != 0
-	case .Less:
-		return order < 0
-	case .Less_Or_Equal:
-		return order <= 0
-	case .Greater:
-		return order > 0
-	case .Greater_Or_Equal:
-		return order >= 0
-	}
-	return false
-}
-
-// comparison_at reads the operator of a condition at the byte place of a
-// text, and gives the byte after it. ok is false when no operator is
-// there. "!" alone is no operator.
-comparison_at :: proc "contextless" (text: string, place: int) -> (comparison: Comparison, end: int, ok: bool) {
-	if place < 0 || place >= len(text) {
-		return .Equal, place, false
-	}
-	second := place + 1 < len(text) ? text[place + 1] : 0
-	switch text[place] {
-	case '=':
-		return .Equal, place + 1, true
-	case '!':
-		if second == '=' {
-			return .Not_Equal, place + 2, true
-		}
-	case '<':
-		if second == '=' {
-			return .Less_Or_Equal, place + 2, true
-		}
-		return .Less, place + 1, true
-	case '>':
-		if second == '=' {
-			return .Greater_Or_Equal, place + 2, true
-		}
-		return .Greater, place + 1, true
-	}
-	return .Equal, place, false
-}
-
-// comparison_read reads the operator of a condition at the place of the
-// parser. ok is false, with nothing read, when no operator is there.
-comparison_read :: proc "contextless" () -> (comparison: Comparison, ok: bool) {
-	skip_spaces()
-	end: int
-	comparison, end, ok = comparison_at(source, position)
-	if ok {
-		position = end
-	}
-	return comparison, ok
-}
-
-// status_member_word gives the word of the member of the contract enum of
-// a status field that a name names, and fails the line with the members
-// when it names none. It is the one place where a name of a member becomes
-// its word.
-status_member_word :: proc "contextless" (command_name, field_name: string, which: value_kinds.Contract_Enum, member: string) -> (word: u64, ok: bool) {
-	if word, ok = op.contract_enum_member_of_name(which, member); ok {
-		return word, true
-	}
-	fail(command_name, ": the field ", field_name, " holds a member of ", value_kinds.CONTRACT_ENUM_TYPES[which].name, ": ", status_members_text(which), "; \"", member, "\" names none")
-	return 0, false
-}
-
-// condition_check says if a field of a record takes an operator, and fails
-// the line when it does not: a Bytes field has no value that the console
-// compares, and a Text or a status has no order. It runs before any row is
-// read: when the line runs, and before the run when the console knows the
-// record (pipe_condition_check).
-condition_check :: proc "contextless" (command_name: string, file: []u8, item: module.Field, field_name: string, comparison: Comparison) -> bool {
-	type, type_ok := module.field_type(item)
-	kind, kind_ok := module.field_kind(item)
-	if !type_ok || !kind_ok {
-		fail(command_name, ": the field ", field_name, " has a type or a kind that names nothing")
-		return false
-	}
-	switch type {
-	case .Integer:
-		if kind != .Status || comparison == .Equal || comparison == .Not_Equal {
-			return true
-		}
-		fail(command_name, ": the field ", field_name, " is ", type_text_of_field(file, item), ": it takes = and != only, because the order of the members is no order of weight")
-		return false
-	case .Text:
-		if comparison == .Equal || comparison == .Not_Equal {
-			return true
-		}
-		fail(command_name, ": the field ", field_name, " is ", type_text_of_field(file, item), ": a Text takes = and != only")
-		return false
-	case .Handle:
-		return true
-	case .Bytes, .None, .Record, .Table:
-	}
-	fail(command_name, ": the field ", field_name, " is ", type_text_of_field(file, item), "; ", command_name, " compares an Integer, a Text or a status")
-	return false
-}
-
-// status_members_text writes the names of the members of a contract enum,
-// for an error.
-status_members_text :: proc "contextless" (which: value_kinds.Contract_Enum) -> string {
-	start := scratch_count
-	written := 0
-	for word in 0 ..< op.contract_enum_member_count(which) {
-		if name, named := op.contract_enum_member_name(which, word); named {
-			scratch_text(written > 0 ? ", " : "", name)
-			written += 1
-		}
-	}
-	return string(scratch[start:scratch_count])
+	console_condition.refusal_write(&writer, refusal, details)
+	text := sentence.written(&writer)
+	scratch_count += len(text)
+	return fail(text)
 }
 
 // condition_read reads the argument of a parameter of the form Condition:
-// a field of the table of the first argument, an operator, and a value. A
-// status field takes the name of a member, which becomes its word here, at
-// one place; another field takes an expression of its kind. Each fault
-// fails the line before the command runs.
+// a field of the table of the first argument, an operator, and a value
+// (console_condition). A status field takes the name of a member, which
+// becomes its word there, at one place; another field takes an expression
+// of its kind, in the range of the field. Each fault fails the line before
+// the command runs.
 condition_read :: proc "contextless" (command_name: string, before: []Value) -> Value {
 	if len(before) == 0 {
 		return fail(command_name, ": a condition comes after a table: ", command_name, "(t, block = 12)")
+	}
+	if before[0].kind != .Table {
+		return fail(command_name, ": argument 1 is ", kind_names[before[0].kind], ", not a Table: a condition names a field of the record of a table")
 	}
 	table, table_ok := table_of(before[0])
 	if !table_ok {
 		return fail(command_name, ": the table has no valid description")
 	}
-	field_name := read_name()
-	if field_name == "" {
-		return fail(command_name, " takes a condition: a field, an operator and a value, as ", command_name, "(t, block = 12); the fields are ", field_names(table))
+	details := console_condition.Refusal_Details {
+		command = command_name,
+		file    = table.file,
+		record  = table.record,
 	}
-	comparison, comparison_ok := comparison_read()
-	if !comparison_ok {
-		return fail(command_name, ": after the field ", field_name, " comes an operator: =, !=, <, <=, > or >=")
+	head, refusal := console_condition.head_read(source, position)
+	details.field, details.comparison = head.field, head.comparison
+	if refusal != .None {
+		return condition_fail(refusal, details)
 	}
-	item, found := table_field(table, field_name)
-	if !found {
-		return fail(command_name, ": the records ", type_text(table.file, .Record, before[0].detail), " have no field ", field_name, "; their fields are ", field_names(table))
+	position = head.value_start
+	found: bool
+	if details.item, found = console_condition.field_find(table.file, table.record, head.field); !found {
+		return condition_fail(.Unknown_Field, details)
 	}
-	if !condition_check(command_name, table.file, item, field_name, comparison) {
-		return {}
+	if refusal = console_condition.field_check(details.item, head.comparison); refusal != .None {
+		return condition_fail(refusal, details)
 	}
-	condition := Condition{field = field_name, comparison = comparison}
-	if kind, _ := module.field_kind(item); kind == .Status {
-		which, _ := module.field_contract_enum(item)
-		word, named := status_member_word(command_name, field_name, which, read_name())
-		if !named {
+	condition := Condition{field = head.field, comparison = head.comparison}
+	if which, status := console_condition.field_is_status(details.item); status {
+		word: u64
+		end: int
+		word, details.member, end, refusal = console_condition.member_read(source, position, which)
+		if refusal != .None {
+			return condition_fail(refusal, details)
+		}
+		position = end
+		condition.compared = i64(word)
+	} else {
+		value := expression()
+		if failed {
 			return {}
 		}
-		condition.compared = i64(word)
-		return {condition = condition_keep(condition)}
+		details.value_type = type_of_kind(value.kind)
+		if refusal = console_condition.value_check(details.item, details.value_type, value.integer); refusal != .None {
+			return condition_fail(refusal, details)
+		}
+		condition.compared, condition.text = value.integer, value.text
 	}
-	value := expression()
-	if failed {
-		return {}
+	kept: ^Condition
+	if kept, refusal = console_condition.condition_keep(&line_conditions, condition); refusal != .None {
+		return condition_fail(refusal, details)
 	}
-	expected: Kind = item.type == u8(module.Type.Text) ? .Text : .Integer
-	if value.kind != expected {
-		return fail(command_name, ": the field ", field_name, " is ", type_text_of_field(table.file, item), ", the value is ", kind_names[value.kind])
-	}
-	condition.compared, condition.text = value.integer, value.text
-	return {condition = condition_keep(condition)}
+	return {condition = kept}
 }
 
 // table_sort gives the rows of a table in the increasing order of a field.
@@ -483,9 +358,9 @@ table_sort :: proc "contextless" (arguments: []Value) -> Value {
 	held: [module.RECORD_SIZE_LIMIT]u8
 	for index in 1 ..< table.rows {
 		copy(held[:], table_row(table, sorted, index))
-		key := row_value(held[:table.size], item)
+		key := row_field(held[:table.size], item)
 		place := index
-		for place > 0 && compare(row_value(table_row(table, sorted, place - 1), item), key) > 0 {
+		for place > 0 && console_condition.values_compare(row_field(table_row(table, sorted, place - 1), item), key) > 0 {
 			copy(table_row(table, sorted, place), table_row(table, sorted, place - 1))
 			place -= 1
 		}
@@ -563,9 +438,9 @@ table_join :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	rows := 0
 	for a in 0 ..< left.rows {
-		key := row_value(table_row(left, arguments[0], a), left_item)
+		key := row_field(table_row(left, arguments[0], a), left_item)
 		for b in 0 ..< right.rows {
-			rows += int(compare(key, row_value(table_row(right, arguments[1], b), right_item)) == 0)
+			rows += int(console_condition.values_compare(key, row_field(table_row(right, arguments[1], b), right_item)) == 0)
 		}
 	}
 	bytes := table_bytes(rows * int(size))
@@ -575,10 +450,10 @@ table_join :: proc "contextless" (arguments: []Value) -> Value {
 	place := 0
 	for a in 0 ..< left.rows {
 		row_left := table_row(left, arguments[0], a)
-		key := row_value(row_left, left_item)
+		key := row_field(row_left, left_item)
 		for b in 0 ..< right.rows {
 			row_right := table_row(right, arguments[1], b)
-			if compare(key, row_value(row_right, right_item)) != 0 {
+			if console_condition.values_compare(key, row_field(row_right, right_item)) != 0 {
 				continue
 			}
 			for column in columns[:count] {

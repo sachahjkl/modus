@@ -2,6 +2,7 @@ package console
 
 import "modus:contract/errors"
 import module "modus:contract/module"
+import "modus:private/console/console_condition"
 import "modus:private/console/console_language"
 import "modus:support/system"
 
@@ -69,21 +70,7 @@ Value :: struct {
 
 // The conditions of the line that runs. A value names one by its address,
 // so that a value stays small: a call keeps 12 of them on the stack.
-CONDITION_CAPACITY :: 32
-line_conditions: [CONDITION_CAPACITY]Condition
-line_condition_count: int
-
-// condition_keep keeps a condition for the line that runs, and gives its
-// address; nil, with the line failed, when the line holds too many.
-condition_keep :: proc "contextless" (condition: Condition) -> ^Condition {
-	if line_condition_count == CONDITION_CAPACITY {
-		fail("a line holds at most ", i64(CONDITION_CAPACITY), " conditions")
-		return nil
-	}
-	line_conditions[line_condition_count] = condition
-	line_condition_count += 1
-	return &line_conditions[line_condition_count - 1]
-}
+line_conditions: console_condition.Condition_List
 
 // What the parser reads for a parameter of a command. Most parameters take
 // an expression; a few take a name that the console checks against a
@@ -95,36 +82,10 @@ Parameter_Form :: enum u8 {
 	Condition  = 2, // A field of the table of the first argument, an operator and a value.
 }
 
-// The operators of a condition.
-Comparison :: enum u8 {
-	Equal            = 0, // =
-	Not_Equal        = 1, // !=
-	Less             = 2, // <
-	Less_Or_Equal    = 3, // <=
-	Greater          = 4, // >
-	Greater_Or_Equal = 5, // >=
-}
-
-@(rodata)
-comparison_texts := [Comparison]string {
-	.Equal            = "=",
-	.Not_Equal        = "!=",
-	.Less             = "<",
-	.Less_Or_Equal    = "<=",
-	.Greater          = ">",
-	.Greater_Or_Equal = ">=",
-}
-
 // A condition on one field of the rows of a table: `block = 12`,
-// `level = Warning`, `name != "console"`. The value is an Integer for an
-// Integer or a Handle field and for a Status field (the number of its
-// member), a Text for a Text field.
-Condition :: struct {
-	field:      string, // The name of the field, as the line has it.
-	comparison: Comparison,
-	compared:   i64, // An Integer, a Handle, or the word of a member.
-	text:       string, // A Text.
-}
+// `level = Warning`, `name != "console"`. The package console_condition
+// reads it, checks it and compares the values, with host tests.
+Condition :: console_condition.Condition
 
 // kind_of_type gives the kind of a type of the module contract.
 kind_of_type :: proc "contextless" (type: module.Type) -> (kind: Kind) {
@@ -333,7 +294,7 @@ read_name :: proc "contextless" () -> string {
 // its failure, or the value of an expression. A line that keeps its value
 // in a variable draws nothing.
 run_line :: proc "contextless" (text: string) {
-	source, position, failed, scratch_count, table_used, line_condition_count = text, 0, false, 0, 0, 0
+	source, position, failed, scratch_count, table_used, line_conditions.count = text, 0, false, 0, 0, 0
 	failure_reset()
 	line_records_start()
 
@@ -761,16 +722,12 @@ pipe_stage_names_check :: proc "contextless" (text: string, stages: []console_la
 		return true
 	}
 	argument := text[stage.arguments_start:stage.arguments_end]
-	first := console_language.token_next(argument, 0)
-	if first.kind != .Name {
-		return true
-	}
-	first_name := argument[first.start:first.end]
 	switch found.parameter_forms[1] {
 	case .Expression:
 	case .Fact_Name:
-		if !fact_name_known(first_name) {
-			fact_name_fail(name, first_name)
+		first := console_language.token_next(argument, 0)
+		if first.kind == .Name && !fact_name_known(argument[first.start:first.end]) {
+			fact_name_fail(name, argument[first.start:first.end])
 			return false
 		}
 	case .Condition:
@@ -778,35 +735,81 @@ pipe_stage_names_check :: proc "contextless" (text: string, stages: []console_la
 		if !known {
 			return true
 		}
-		table := Table{file = file}
-		table.record, known = module.record_type(file, detail)
-		if !known {
+		record, record_ok := module.record_type(file, detail)
+		if !record_ok {
 			return true
 		}
-		comparison, comparison_end, has_comparison := comparison_at(argument, console_language.space_end(argument, first.end))
-		if !has_comparison {
-			fail(name, ": after the field ", first_name, " comes an operator: =, !=, <, <=, > or >=")
+		// The same checks as condition_read, with the same sentences.
+		details := console_condition.Refusal_Details {
+			command = name,
+			file    = file,
+			record  = record,
+		}
+		head, refusal := console_condition.head_read(argument, 0)
+		details.field, details.comparison = head.field, head.comparison
+		if refusal != .None {
+			condition_fail(refusal, details)
 			return false
 		}
-		item, has_field := table_field(table, first_name)
-		if !has_field {
-			fail(name, ": the records ", type_text(file, .Record, detail), " have no field ", first_name, "; their fields are ", field_names(table))
+		found_field: bool
+		if details.item, found_field = console_condition.field_find(file, record, head.field); !found_field {
+			condition_fail(.Unknown_Field, details)
 			return false
 		}
-		if !condition_check(name, file, item, first_name, comparison) {
+		if refusal = console_condition.field_check(details.item, head.comparison); refusal != .None {
+			condition_fail(refusal, details)
 			return false
 		}
-		if kind, _ := module.field_kind(item); kind == .Status {
-			member := console_language.token_next(argument, comparison_end)
-			which, _ := module.field_contract_enum(item)
-			if member.kind == .Name {
-				if _, named := status_member_word(name, first_name, which, argument[member.start:member.end]); !named {
-					return false
-				}
+		if which, status := console_condition.field_is_status(details.item); status {
+			// After the operator of a status: a name of a member, never a
+			// text, a number or an expression.
+			_, details.member, _, refusal = console_condition.member_read(argument, head.value_start, which)
+			if refusal != .None {
+				condition_fail(refusal, details)
+				return false
+			}
+			return true
+		}
+		// A literal alone: its kind and its range are known before the
+		// run. Another expression is checked when it runs.
+		if value_type, value, literal := literal_of(argument, head.value_start); literal {
+			details.value_type = value_type
+			if refusal = console_condition.value_check(details.item, value_type, value); refusal != .None {
+				condition_fail(refusal, details)
+				return false
 			}
 		}
 	}
 	return true
+}
+
+// literal_of reads a value that is one literal and nothing after it, at a
+// byte place of an argument: a number, a number after "-", or a text.
+// literal is false for any other expression, and for a number that does
+// not fit in an Integer: the parser reads those when the line runs.
+literal_of :: proc "contextless" (text: string, place: int) -> (type: module.Type, value: i64, literal: bool) {
+	token := console_language.token_next(text, place)
+	negative := false
+	if token.kind == .Operator && text[token.start] == '-' {
+		negative = true
+		token = console_language.token_next(text, token.end)
+	}
+	if console_language.token_next(text, token.end).kind != .None {
+		return .None, 0, false
+	}
+	switch token.kind {
+	case .Number:
+		value = console_language.number_value(text, token.start, token.end) or_return
+		if negative {
+			value = console_language.integer_negate(value) or_return
+		}
+		return .Integer, value, true
+	case .Text:
+		return .Text, 0, !negative
+	case .None, .Name, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe:
+		// A variable, a call, an expression: its kind comes when it runs.
+	}
+	return .None, 0, false
 }
 
 // pipe_left_record gives the record of the table on the left of a stage,

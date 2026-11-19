@@ -1,5 +1,6 @@
 package log
 
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/log_scope"
 import "modus:contract/value_kinds"
@@ -91,11 +92,12 @@ own_records_read :: proc "contextless" (scope: log_scope.Scope, after: i64) -> (
 // row_fill writes the row of a record with its number: the number in the
 // whole log, or the own number for a reader of its own records. A fact has
 // no text and no runs: its bytes are not text, and fact_records gives them.
-// The form passes its border before this call: the caller gives no row for
-// a record of a form that names no member, and counts it as lost, as a torn
-// record, because no reader can read its bytes.
-row_fill :: proc "contextless" (row: ^Record, number: i64, record: ^op.Log_Record, form: op.Log_Record_Form) {
-	row^ = {number = number, time = i64(record.time), slot = i64(record.process), level = record.level, form = form}
+// The form and the level pass their borders before this call
+// (record_borders): the caller gives no row for a record whose form or
+// level names no member, and counts it as lost, as a torn record, because
+// no reader can read its bytes.
+row_fill :: proc "contextless" (row: ^Record, number: i64, record: ^op.Log_Record, form: op.Log_Record_Form, level: op.Log_Level) {
+	row^ = {number = number, time = i64(record.time), slot = i64(record.process), level = level, form = form}
 	copy(row.process[:len(row.process) - 1], system.name_of(record.name[:]))
 	switch form {
 	case .Text:
@@ -105,6 +107,16 @@ row_fill :: proc "contextless" (row: ^Record, number: i64, record: ^op.Log_Recor
 		row.runs = i64(min(int(record.run_count), len(record.runs)))
 	case .Fact:
 	}
+}
+
+// record_borders reads the form and the level of a record through their
+// borders: the record is in memory that the kernel writes, and a byte of
+// it becomes an enum at this one place. ok is false when either byte names
+// no member.
+record_borders :: proc "contextless" (record: ^op.Log_Record) -> (form: op.Log_Record_Form, level: op.Log_Level, ok: bool) {
+	form = op.log_record_form(record) or_return
+	level = enum_word.member_of_word(op.Log_Level, u64(transmute(u8)record.level)) or_return
+	return form, level, true
 }
 
 // runs_add adds the rows of the value runs of a record with its number,
@@ -207,7 +219,9 @@ scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^err
 // from the own log ring of its process, which keeps its last 64 records and
 // which the records of others never fill
 // (src/md/features/own_log_ring.md). A reader whose records are all gone
-// receives no row, so no `lost` either.
+// receives no row, so no `lost` either. A record whose form or level byte
+// names no member gives no row, counts in `lost`, and is not in the
+// result.
 //
 // **Grant**: the [log scope](term:log-scope) of the connection. A caller
 // that **acts for the principal** receives the whole log: the records are
@@ -269,15 +283,18 @@ records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, resu
 		own, own_lost, own_total := own_records_read(scope, after)
 		own_count := 0
 		for index in 0 ..< len(own) {
-			if own_count == len(result^) {
-				break
-			}
-			form, known := op.log_record_form(&own[index])
+			form, level, known := record_borders(&own[index])
 			if !known {
+				// No row: the record is lost, and it leaves the count of
+				// the rows of the scope, so the result counts rows only.
 				own_lost += 1
+				own_total -= min(own_total, 1)
 				continue
 			}
-			row_fill(&result[own_count], i64(own[index].own_number), &own[index], form)
+			if own_count == len(result^) {
+				continue
+			}
+			row_fill(&result[own_count], i64(own[index].own_number), &own[index], form, level)
 			own_count += 1
 		}
 		if own_count > 0 {
@@ -300,15 +317,16 @@ records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, resu
 			lost += 1
 			continue
 		}
-		form, known := op.log_record_form(&record)
+		form, level, known := record_borders(&record)
 		if !known {
+			// No row, and no place in the count of the rows.
 			lost += 1
 			continue
 		}
 		total += 1
 		// Each place of the result has a row (a Table result: the caller
 		// reads min(count, capacity) rows).
-		row_fill(&result[count], i64(record.sequence), &record, form)
+		row_fill(&result[count], i64(record.sequence), &record, form, level)
 		count += 1
 	}
 	if count > 0 {
@@ -400,7 +418,7 @@ value_runs_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, r
 // (src/md/features/log_facts.md, "The reader path").
 Fact_Row :: struct {
 	number:      i64, // The number of the log record, as in records().
-	form:        i64, // The byte of the record form: 1, Fact, for each row.
+	form:        op.Log_Record_Form, // Fact for each row, as the field form of records() names it: the same enum in the two tables.
 	continues:   i64, // The byte `more` of the record: 0 for a fact.
 	key:         value_kinds.Hexadecimal_64, // The fact key that the writer gave.
 	module_hash: value_kinds.Hash_Field, // The module hash that the writer gave: its own-hash place.
@@ -423,7 +441,7 @@ fact_row_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result:
 	}
 	fact := op.log_record_fact(record)
 	row := &result[count^]
-	row^ = {number = number, form = i64(record.form), continues = i64(record.more), key = value_kinds.Hexadecimal_64(fact.key), value_count = i64(fact.value_count)}
+	row^ = {number = number, form = .Fact, continues = i64(record.more), key = value_kinds.Hexadecimal_64(fact.key), value_count = i64(fact.value_count)}
 	copy(row.module_hash[:], fact.module_hash[:])
 	reserved: u64
 	for value, index in fact.reserved {
@@ -447,8 +465,8 @@ fact_row_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result:
 // **Parameter**: `after`, the number of the first record, as for
 // `records`.
 //
-// **A row** (`Fact_Row`): `number`, the record; `form`, the byte of its
-// record form; `continues`, its byte `more`; `key`; `module_hash`;
+// **A row** (`Fact_Row`): `number`, the record; `form`, `Fact`, a member
+// of `Log_Record_Form` as in a row of `records`; `continues`, its byte `more`; `key`; `module_hash`;
 // `value_count`; `reserved`; `values`, the 144 value bytes, with 0 past
 // `value_count`.
 //

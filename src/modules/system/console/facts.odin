@@ -28,7 +28,7 @@ import terminal "modus:support/terminal"
 FACT_NAME_CAPACITY :: 256 // The fact names of the boot image that the console knows: a name past them is not offered and not found.
 FACT_NAME_BYTES :: 64 // The bytes of one fact name, "package.Type": a longer one is not offered and not found.
 FACT_MATCH_CAPACITY :: 16 // The modules whose fact table holds one fact name, that facts() reads; more are left out.
-FACT_MODULE_CACHE :: 8 // The last modules that the render found by their hash: a log of one writer costs one search.
+FACT_FILE_CAPACITY :: 64 // The module files of the boot image with a fact table that the console keeps; the facts of a module past them show raw.
 
 // The fact names of the boot image: each pair of a package name and a
 // record name that a table Facts holds, once. The image does not change
@@ -39,13 +39,22 @@ fact_name_count: int
 fact_name_bytes: [FACT_NAME_CAPACITY * FACT_NAME_BYTES]u8
 fact_name_used: int
 
-// A module of the image found by its hash, for the render.
-Fact_Module :: struct {
+// A module file of the image that has a fact table, and its hash.
+Fact_File :: struct {
 	hash: [32]u8,
 	file: []u8,
 }
-fact_modules: [FACT_MODULE_CACHE]Fact_Module
-fact_module_next: int
+
+// The module files of the boot image that have a fact table and that the
+// checks of the module format took, read once with the fact names. facts()
+// and the render read these only, so a file is checked once, never at each
+// key or each record. The hash of each file is its entry of the image: the
+// boot program hashed each file of the image against the signed system
+// description before the kernel ran (src/boot/trust.odin, trust_check,
+// which calls system_description.image_check), and the image is granted
+// read-only, so the console does not hash a file again.
+fact_files: [FACT_FILE_CAPACITY]Fact_File
+fact_file_count: int
 
 // One module of the image whose fact table has a row of a fact name.
 Fact_Match :: struct {
@@ -90,15 +99,22 @@ facts_start :: proc "contextless" () {
 }
 
 // fact_names_read reads the fact names of each module of the boot image,
-// each once. A module file is hostile input: module.fact checks each row
-// before it reads it.
+// each once, and keeps each module file with a fact table that
+// module.validate takes (fact_files). A module file is hostile input: a
+// file that the checks refuse gives no name, and module.fact checks each
+// row before it reads it.
 fact_names_read :: proc "contextless" () {
-	fact_name_count, fact_name_used = 0, 0
+	fact_name_count, fact_name_used, fact_file_count = 0, 0, 0
 	for &entry in system.image_entries(image) {
 		file, ok := fact_image_file(&entry)
-		if !ok {
+		if !ok || module.count(file, .Facts) <= 1 || fact_file_count == FACT_FILE_CAPACITY {
 			continue
 		}
+		if module.validate(file) != .None {
+			continue
+		}
+		fact_files[fact_file_count] = {hash = entry.hash, file = file}
+		fact_file_count += 1
 		for index in 1 ..< module.count(file, .Facts) {
 			row, description, row_ok := module.fact(file, index)
 			if !row_ok {
@@ -169,31 +185,25 @@ fact_name_split :: proc "contextless" (name: string) -> (package_name, type_name
 }
 
 // fact_matches gives each module of the boot image whose table Facts has a
-// row of the fact name, in the order of the image, at most len(into).
+// row of the fact name, in the order of the image, at most len(into). It
+// reads the files that fact_names_read checked, and checks none again.
 fact_matches :: proc "contextless" (name: string, into: []Fact_Match) -> int {
 	package_name, type_name, ok := fact_name_split(name)
 	if !ok {
 		return 0
 	}
 	count := 0
-	for &entry in system.image_entries(image) {
+	for &kept in fact_files[:fact_file_count] {
 		if count == len(into) {
 			break
 		}
-		file, file_ok := fact_image_file(&entry)
-		if !file_ok {
-			continue
-		}
+		file := kept.file
 		for index in 1 ..< module.count(file, .Facts) {
 			row, description, row_ok := module.fact(file, index)
 			if !row_ok || module.string_at(file, row.package_offset, row.package_count) != package_name || module.string_at(file, description.name_offset, description.name_count) != type_name {
 				continue
 			}
-			// The table is valid before a row of it is read as a fact type.
-			if module.validate(file) != .None {
-				break
-			}
-			into[count] = {hash = entry.hash, file = file, key = row.key, record = row.record, description = description}
+			into[count] = {hash = kept.hash, file = file, key = row.key, record = row.record, description = description}
 			count += 1
 			break
 		}
@@ -247,28 +257,22 @@ fact_name_read :: proc "contextless" (command_name: string) -> Value {
 // ---- The render.
 
 // fact_module_of_hash gives the module file of the boot image with a hash,
-// checked, or nil. It keeps the last modules found.
+// among the checked files with a fact table (fact_files), or nil: a hash
+// of zero, a module that the image does not hold, the module of a disk
+// process, a module with no fact table, a file that the checks refused. A
+// search costs no check of a file and no kernel call: a hash with no
+// module costs the same as one with a module.
 fact_module_of_hash :: proc "contextless" (hash: [32]u8) -> []u8 {
 	zero: [32]u8
 	if hash == zero {
 		return nil
 	}
-	for item in fact_modules {
-		if item.file != nil && item.hash == hash {
-			return item.file
+	for &kept in fact_files[:fact_file_count] {
+		if kept.hash == hash {
+			return kept.file
 		}
 	}
-	entry := system.image_entry_of(image, hash)
-	if entry == nil {
-		return nil
-	}
-	file := image[entry.offset:][:entry.size]
-	if module.validate(file) != .None {
-		return nil
-	}
-	fact_modules[fact_module_next % FACT_MODULE_CACHE] = {hash = hash, file = file}
-	fact_module_next += 1
-	return file
+	return nil
 }
 
 // fact_emit writes one fact on the output line: its sentence with each

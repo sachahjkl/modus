@@ -193,7 +193,7 @@ Record :: struct {
 // src/modules/system/log/exports.odin.
 Fact_Row :: struct {
 	number:      i64,
-	form:        i64,
+	form:        op.Log_Record_Form,
 	continues:   i64,
 	key:         u64,
 	module_hash: [32]u8,
@@ -608,9 +608,9 @@ fact_rows_check :: proc "contextless" (connection: ^system.Call_Connection, file
 	}
 	expected := &expected_fact_rows
 	expected^ = {
-		{form = i64(op.Log_Record_Form.Fact), key = FACT_BODY_KEY, value_count = 0},
-		{form = i64(op.Log_Record_Form.Fact), key = FACT_BODY_KEY, value_count = op.LOG_FACT_VALUE_CAPACITY, values = fact_body.values},
-		{form = i64(op.Log_Record_Form.Fact), key = transmute(u64)typeid_of(Fact_Probe), module_hash = own_module_hash, value_count = size_of(Fact_Probe)},
+		{form = .Fact, key = FACT_BODY_KEY, value_count = 0},
+		{form = .Fact, key = FACT_BODY_KEY, value_count = op.LOG_FACT_VALUE_CAPACITY, values = fact_body.values},
+		{form = .Fact, key = transmute(u64)typeid_of(Fact_Probe), module_hash = own_module_hash, value_count = size_of(Fact_Probe)},
 	}
 	probe := Fact_Probe{value = FACT_VALUE, mark = FACT_MARK, number = FACT_NUMBER}
 	copy(expected[2].values[:], ([^]u8)(&probe)[:size_of(Fact_Probe)])
@@ -625,7 +625,7 @@ fact_rows_check :: proc "contextless" (connection: ^system.Call_Connection, file
 			for place in 0 ..< 8 {
 				first_values |= u64(row.values[place]) << (8 * u64(place))
 			}
-			system.log(.Error, "log_reader: WRONG: the fact ", u64(index), " has the form ", row.form, ", more ", row.continues, ", the reserved bytes ", system.Hex(row.reserved), ", the key ", system.Hex(row.key), ", ", row.value_count, " value bytes, the first ", system.Hex(first_values), " and the last ", u64(row.values[len(row.values) - 1]))
+			system.log(.Error, "log_reader: WRONG: the fact ", u64(index), " has the form ", u64(row.form), ", more ", row.continues, ", the reserved bytes ", system.Hex(row.reserved), ", the key ", system.Hex(row.key), ", ", row.value_count, " value bytes, the first ", system.Hex(first_values), " and the last ", u64(row.values[len(row.values) - 1]))
 			return "a fact record does not hold what the kernel must write"
 		}
 	}

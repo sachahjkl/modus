@@ -41,7 +41,7 @@ The console owns the line that the input edits: its bytes, the caret, the line h
 
 A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No process receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between processes").
 
-The code is `src/modules/system/console/language.odin` (the parser and the values), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line) and `src/library/private/console/console_results` (the drawers).
+The code is `src/modules/system/console/language.odin` (the parser and the values), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line), `src/modules/system/console/facts.odin` (the log facts), `src/library/private/console/console_results` (the drawers) and `src/library/private/console/console_condition` (the conditions of `where`).
 
 ### The form of a line
 
@@ -176,9 +176,9 @@ The argument of `where` after the table is a condition: a field of the record of
 | Status of a contract enum (`level`) | The name of a member: `Info`, `Debug`, `Warning`, `Error` | `=`, `!=` |
 | Hash, values of a fact | None: the console has no such value | None |
 
-A status takes `=` and `!=` only: the numbers of the members are no order of weight (`Debug` is 1, `Warning` is 2). The name of a member is the name that the console draws in a cell, with its capital letter.
+A status takes `=` and `!=` only: the numbers of the members are no order of weight (`Debug` is 1, `Warning` is 2). The name of a member is the name that the console draws in a cell, with its capital letter; a text (`"Warning"`) or a number (`2`) is no member. An unsigned field compares as unsigned: `where(key > 0)` keeps a key of 2^63 and the largest key. `where`, `sort` and `join` compare the values of fields so.
 
-**What is refused before a row is read.** A field that the record does not have (the error lists the fields), a value of another kind than the field, a name that names no member of the enum of a status (the error lists the members), an order on a Text or a status, and a hash. When the console knows the record of the table before the run, in a line with `|>`, it refuses these before any call: the result of an export, the table of `facts(...)`, and the table of a `where`, `sort`, `first` or `skip` after one of them.
+**What is refused before a row is read.** No field before the operator (`where(t, = 3)`), a field with no operator (`where(t, level)`), a `!` alone, `==`, no value after the operator, a field that the record does not have (the error lists the fields), a value of another kind than the field, a negative value for an unsigned field, a value that the bytes of the field cannot hold, a text, a number or a name of no member after the operator of a status (the error lists the members), an order on a Text or a status, and a hash. A table argument that is no table is refused with its kind (`where(5, a = 1)`). When the console knows the record of the table before the run, in a line with `|>`, it refuses these before any call, and the kind and the range of a value that is one literal too: the result of an export, the table of `facts(...)`, and the table of a `where`, `sort`, `first` or `skip` after one of them. The reading and the checks are the private package `src/library/private/console/console_condition`, whose host tests give each refused input.
 
 ```
 > log.records(0) |> where(levle = Warning)
@@ -187,6 +187,8 @@ error: where: the records Record have no field levle; their fields are number, t
 error: where: the field level holds a member of Log_Level: Info, Debug, Warning, Error; "warning" names none
 > log.records(0) |> where(level >= Warning)
 error: where: the field level is Status(Log_Level): it takes = and != only, because the order of the members is no order of weight
+> log.records(0) |> where(level = "Warning")
+error: where: the field level holds a member of Log_Level, and a member is a name, not a text or a number: "Warning" is none; the members are Info, Debug, Warning, Error
 ```
 
 **The completion.** In a line with `|>`, inside `where(` after a table whose record the console knows, the completion list offers the fields, and after the operator of a status field the members of its enum.

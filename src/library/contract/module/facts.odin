@@ -455,7 +455,9 @@ fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: [
 // the value bytes of the fact, which must have the size of its record; the
 // procedure reads a copy and changes none of them. The readers of the
 // system and the tool call it, so they never write two sentences for one
-// fact. A refusal gives 0 bytes: the reader shows the raw form.
+// fact. A refusal gives 0 bytes and leaves sentence and runs as they were:
+// the reader shows the raw form. A sentence of more than
+// FACT_SENTENCE_BYTES_MOST bytes is refused, whatever the buffer.
 //
 // Example: the template "storage: the block {block} has a wrong check
 // {check}, expected {expected}" with the values of block = 12, check =
@@ -474,6 +476,12 @@ fact_sentence_write :: proc "contextless" (file: []u8, key: u64, values: []u8, s
 	}
 	copied: [op.LOG_FACT_VALUE_CAPACITY]u8
 	own := copied[:copy(copied[:], values)]
+	// The sentence and its runs go to memory of this procedure first: a
+	// refusal leaves the buffer and the runs of the caller as they were.
+	local_sentence: [FACT_SENTENCE_BYTES_MOST]u8
+	local_runs: [FACT_SENTENCE_RUNS_MOST]value_kinds.Value_Run_In_Call
+	kept_sentence := local_sentence[:min(len(sentence), FACT_SENTENCE_BYTES_MOST)]
+	kept_runs := local_runs[:min(len(runs), FACT_SENTENCE_RUNS_MOST)]
 	written := 0
 	runs_written := 0
 	template := string_at(file, row.template_offset, row.template_count)
@@ -483,7 +491,7 @@ fact_sentence_write :: proc "contextless" (file: []u8, key: u64, values: []u8, s
 		switch template[at] {
 		case '{':
 			if template[at + 1] == '{' {
-				sentence_byte(sentence, &written, '{')
+				sentence_byte(kept_sentence, &written, '{')
 				at += 2
 				continue
 			}
@@ -498,21 +506,23 @@ fact_sentence_write :: proc "contextless" (file: []u8, key: u64, values: []u8, s
 					continue
 				}
 				start := written
-				kind := fact_value_write(sentence, &written, own, item)
-				value_kinds.value_run_add(runs, &runs_written, start, written, kind)
+				kind := fact_value_write(kept_sentence, &written, own, item)
+				value_kinds.value_run_add(kept_runs, &runs_written, start, written, kind)
 				break
 			}
 			at = closing + 1
 		case '}':
-			sentence_byte(sentence, &written, '}')
+			sentence_byte(kept_sentence, &written, '}')
 			at += 2
 		case:
-			sentence_byte(sentence, &written, template[at])
+			sentence_byte(kept_sentence, &written, template[at])
 			at += 1
 		}
 	}
-	if written > len(sentence) {
+	if written > len(kept_sentence) {
 		return 0, 0, .Too_Long
 	}
+	copy(sentence, kept_sentence[:written])
+	copy(runs, kept_runs[:runs_written])
 	return written, runs_written, .None
 }

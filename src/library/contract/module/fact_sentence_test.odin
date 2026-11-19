@@ -96,8 +96,9 @@ sentence_values :: proc() -> (values: [SENTENCE_RECORD_SIZE]u8) {
 // Each fact that a reader cannot write is refused, with no byte written:
 // the key 0, a key that no row has, a count of the value bytes of 0, one
 // less and one more than the record, a template that names no field, and a
-// sentence one byte longer than the buffer. The edge that fits, the
-// buffer of the exact length, is written.
+// sentence one byte longer than the buffer. After each refusal the buffer
+// and the runs of the caller hold the bytes that they held. The edge that
+// fits, the buffer of the exact length, is written.
 @(test)
 a_fact_that_cannot_be_written_is_refused :: proc(t: ^testing.T) {
 	file := sentence_file()
@@ -120,18 +121,45 @@ a_fact_that_cannot_be_written_is_refused :: proc(t: ^testing.T) {
 	}
 	longer: [SENTENCE_RECORD_SIZE + 1]u8
 	copy(longer[:], values[:])
+	// The bytes that the caller had: a refusal leaves each of them.
+	MARK :: u8(0x5A)
+	marked :: proc(sentence: []u8, runs: []value_kinds.Value_Run_In_Call) {
+		for &value in sentence {
+			value = MARK
+		}
+		for &run in runs {
+			run = {start = 0x5A5A, length = 0x5A5A, kind = MARK, reserved = MARK}
+		}
+	}
+	unchanged :: proc(sentence: []u8, runs: []value_kinds.Value_Run_In_Call) -> bool {
+		for value in sentence {
+			if value != MARK {
+				return false
+			}
+		}
+		for run in runs {
+			if run != (value_kinds.Value_Run_In_Call{start = 0x5A5A, length = 0x5A5A, kind = MARK, reserved = MARK}) {
+				return false
+			}
+		}
+		return true
+	}
 	for item in refused {
+		marked(sentence[:], runs[:])
 		count, run_count, refusal := fact_sentence_write(file, item.key, longer[:item.count], sentence[:], runs[:])
 		testing.expectf(t, refusal == item.refusal && count == 0 && run_count == 0, "the key %x with %d bytes gave %v, %d bytes", item.key, item.count, refusal, count)
+		testing.expectf(t, unchanged(sentence[:], runs[:]), "the refusal %v changed the buffer of the caller", item.refusal)
 	}
 	whole, _, whole_refusal := fact_sentence_write(file, SENTENCE_KEY, values[:], sentence[:], runs[:])
 	testing.expect_value(t, whole_refusal, Fact_Render_Refusal.None)
+	marked(sentence[:], runs[:])
 	short_count, short_runs, short_refusal := fact_sentence_write(file, SENTENCE_KEY, values[:], sentence[:whole - 1], runs[:])
 	testing.expect(t, short_refusal == .Too_Long && short_count == 0 && short_runs == 0)
+	testing.expect(t, unchanged(sentence[:], runs[:]), "Too_Long changed the buffer of the caller")
 	exact: [FACT_SENTENCE_BYTES_MOST]u8
 	exact_count, _, exact_refusal := fact_sentence_write(file, SENTENCE_KEY, values[:], exact[:whole], runs[:])
 	testing.expect(t, exact_refusal == .None && exact_count == whole)
-	testing.expect_value(t, string(exact[:exact_count]), string(sentence[:whole]))
+	testing.expect_value(t, string(exact[:exact_count]), "b 12 p 1500 ms h dead0001 c 0x0000231a l Warning d -5 n [ok] m storage {x}")
 }
 
 // The values that a field cannot hold as a known form: a level word that
