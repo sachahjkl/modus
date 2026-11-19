@@ -192,7 +192,7 @@ part_style :: proc "contextless" (part: console_results.Part) -> terminal.Style 
 		return {tone = u8(terminal.Tone.Dim)}
 	case .Failure:
 		return {tone = u8(terminal.Tone.Bad)}
-	case .Number, .Size, .Time, .Handle, .Type, .Status, .Operation:
+	case .Number, .Size, .Time, .Handle, .Type, .Status, .Operation, .Module, .Version:
 	}
 	return value_kind_style(console_results.part_value_kind(part))
 }
@@ -333,7 +333,7 @@ record_fields_text :: proc "contextless" (writer: ^system.Writer, value: Value) 
 		if !found {
 			continue
 		}
-		buffer: [24]u8
+		buffer: [console_results.CELL_TEXT_CAPACITY]u8
 		system.write_part(writer, number > 0 ? ", " : "")
 		system.write_part(writer, module.string_at(value.file, item.name_offset, item.name_count))
 		system.write_part(writer, " = ")

@@ -232,3 +232,95 @@ each_integer_unit_has_one_type :: proc(t: ^testing.T) {
 	testing.expect(t, !found)
 	testing.expect_value(t, size_of(Size_In_Pages), size_of(i64))
 }
+
+// A byte of a field kind or of a contract enum that names no member is
+// refused by its border: one past the last member, a byte in the middle
+// of the rest, and the largest byte. Each member then reads back from its
+// own byte.
+@(test)
+a_byte_that_names_no_field_kind_is_refused :: proc(t: ^testing.T) {
+	refused_kinds := [?]u8{u8(max(Field_Kind)) + 1, 128, max(u8)}
+	for word in refused_kinds {
+		_, ok := field_kind_of_word(word)
+		testing.expectf(t, !ok, "the byte %d names no field kind, and it is taken", word)
+	}
+	refused_enums := [?]u8{u8(max(Contract_Enum)) + 1, 128, max(u8)}
+	for word in refused_enums {
+		_, ok := contract_enum_of_word(word)
+		testing.expectf(t, !ok, "the byte %d names no contract enum, and it is taken", word)
+	}
+	for kind in Field_Kind {
+		read, ok := field_kind_of_word(u8(kind))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, kind)
+	}
+	for which in Contract_Enum {
+		read, ok := contract_enum_of_word(u8(which))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, which)
+	}
+}
+
+// Plain has no value kind of its own, and each other field kind has the
+// value kind that its color shows: no two kinds share one, so a reader
+// that does not see colors still tells them apart by the sign of each.
+@(test)
+each_field_kind_has_its_value_kind :: proc(t: ^testing.T) {
+	testing.expect_value(t, field_kind_value_kind(.Plain), Value_Kind.None)
+	testing.expect_value(t, field_kind_value_kind(.Hexadecimal), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Status), Value_Kind.Status)
+	testing.expect_value(t, field_kind_value_kind(.Module_Name), Value_Kind.Module)
+	testing.expect_value(t, field_kind_value_kind(.Hash), Value_Kind.Version)
+}
+
+// The table of the types of a field kind gives each name once, with the
+// size of its type, and names no type for Plain or for Status: a status
+// takes the type of its enum. A name of another type is no kind.
+@(test)
+each_field_kind_type_has_its_size :: proc(t: ^testing.T) {
+	sizes := map[string]u32 {
+		"Hexadecimal_8"     = size_of(Hexadecimal_8),
+		"Hexadecimal_16"    = size_of(Hexadecimal_16),
+		"Hexadecimal_32"    = size_of(Hexadecimal_32),
+		"Hexadecimal_64"    = size_of(Hexadecimal_64),
+		"Module_Name_Field" = size_of(Module_Name_Field),
+		"Hash_Field"        = size_of(Hash_Field),
+	}
+	defer delete(sizes)
+	testing.expect_value(t, len(FIELD_KIND_TYPES), len(sizes))
+	for item, index in FIELD_KIND_TYPES {
+		size, named := sizes[item.name]
+		testing.expectf(t, named && size == item.size, "the type %s has %d bytes in the table", item.name, item.size)
+		testing.expectf(t, item.kind != .Plain && item.kind != .Status, "the type %s has the kind %v", item.name, item.kind)
+		found, ok := field_kind_of_type_name(item.name)
+		testing.expectf(t, ok && found == item, "the name %s gives %v", item.name, found)
+		for other in FIELD_KIND_TYPES[:index] {
+			testing.expectf(t, other.name != item.name, "the type %s is in the table two times", item.name)
+		}
+	}
+	refused_names := [?]string{"", "u32", "Hexadecimal", "Hexadecimal_128", "hash_field", "Status"}
+	for name in refused_names {
+		_, found := field_kind_of_type_name(name)
+		testing.expectf(t, !found, "the name %q is taken as a type of a field kind", name)
+	}
+	// A hash field holds at most the hash of a module, so a reader writes
+	// it in a fixed buffer of two digits for each byte.
+	testing.expect_value(t, size_of(Hash_Field), HASH_FIELD_BYTES)
+}
+
+// Each contract enum but None names a type of the contract, and no two
+// name the same type.
+@(test)
+each_contract_enum_names_one_type :: proc(t: ^testing.T) {
+	testing.expect_value(t, CONTRACT_ENUM_TYPES[.None], Contract_Enum_Type{})
+	for which in Contract_Enum {
+		if which == .None {
+			continue
+		}
+		row := CONTRACT_ENUM_TYPES[which]
+		testing.expectf(t, row.package_name != "" && row.name != "", "the enum %v names no type", which)
+		for other in Contract_Enum {
+			testing.expectf(t, other == which || CONTRACT_ENUM_TYPES[other] != row, "the enums %v and %v name one type", which, other)
+		}
+	}
+}

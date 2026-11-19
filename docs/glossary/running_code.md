@@ -422,6 +422,26 @@ The design: `src/md/features/palette.md`, "The form of an entry, from its descri
 
 Do not use: dimension, measure (for this).
 
+### Field kind
+
+A field kind is how a reader writes the value of one field of a record description: Plain, Hexadecimal, Status, Module_Name or Hash.
+
+The source states it with a type of the contract: `value_kinds.Hexadecimal_32`, a contract enum such as `operation.Log_Level`, `value_kinds.Module_Name_Field`, `value_kinds.Hash_Field`. The describe tool writes it in the field, and each reader takes its byte through one border that refuses a byte that names no kind. A reader writes a hexadecimal Integer after `0x`, a Status by the name of its member, a hash in hexadecimal, and gives each the color of its value kind. It is not an integer unit, which says what an Integer counts.
+
+The design: `src/md/features/console_value_colors.md`. The format: `docs/MODULE_CONTRACT.md`, "The kind of a field".
+
+Do not use: field format, display hint, field style.
+
+### Contract enum
+
+A contract enum is an enumeration of the contract whose members a field of the kind Status holds, named in the closed list `value_kinds.Contract_Enum`: `Status` and `Log_Level`.
+
+Each reader compiles the contract in, so it writes the name of a member from the word of the field (`operation.contract_enum_member_name`), and writes the number of a word that names no member, never another name. An enumeration of a module is no contract enum: the module file holds no names of its members, so its field stays a plain Integer. A new contract enum is a new member of the list, with its names in the contract.
+
+The design: `src/md/features/console_value_colors.md`.
+
+Do not use: status type, named enum, enum table.
+
 ### Cut mark
 
 A cut mark is the end of a text that a place of a fixed size does not hold: the start of the text, cut after a whole character, then "... and N bytes more" (`modus:contract/cut_mark`).

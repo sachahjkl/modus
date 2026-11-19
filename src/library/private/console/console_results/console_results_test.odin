@@ -3,6 +3,7 @@ package console_results
 
 import "modus:contract/errors"
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:support/graphics"
 import "core:strings"
@@ -340,6 +341,170 @@ table_cells_have_the_color_of_their_value_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, drawn.parts[Part.Label], len("name") + len("count") + len("used (pages)") + len("wait (ms)"))
 	testing.expect_value(t, drawn.parts[Part.Size], len("120") + len("7"))
 	testing.expect_value(t, drawn.parts[Part.Time], len("45") + len("1500"))
+}
+
+// The record of the tests of the field kinds: a status of a log level, a
+// hexadecimal Integer of 4 bytes, a module name, and a hash of 4 bytes.
+Kinds_Table :: struct {
+	description: [1024]u8,
+	file:        []u8,
+	columns:     [4]Column,
+	size:        int,
+	rows:        [4 * 44]u8,
+	row_count:   int,
+}
+
+kinds_table_make :: proc(t: ^testing.T, table: ^Kinds_Table) {
+	table.columns = {
+		{name = "level", type = .Integer, detail = 1, unsigned = true, kind = .Status, contract_enum = .Log_Level},
+		{name = "check", type = .Integer, detail = 4, unsigned = true, kind = .Hexadecimal},
+		{name = "writer", type = .Text, detail = value_kinds.MODULE_NAME_FIELD_BYTES, kind = .Module_Name},
+		{name = "module", type = .Bytes, detail = 4, kind = .Hash},
+	}
+	size: u32
+	ok: bool
+	table.file, size, ok = description_write(table.description[:], "Fact_Sample", table.columns[:])
+	testing.expect(t, ok, "the description is written")
+	testing.expect_value(t, size, 44)
+	table.size = int(size)
+}
+
+kinds_table_add :: proc(table: ^Kinds_Table, level: i64, check: i64, writer: string, hash: [4]u8) {
+	row := table.rows[table.row_count * table.size:][:table.size]
+	row_integer_set(row, table.columns[0], level)
+	row_integer_set(row, table.columns[1], check)
+	row_text_set(row, table.columns[2], writer)
+	hash_bytes := hash
+	copy(row[table.columns[3].offset:][:4], hash_bytes[:])
+	table.row_count += 1
+}
+
+// Each field kind survives the description that the console writes, and
+// the contract reads it back: the kind and the enum of each field, and
+// the column that columns and join make from that field.
+@(test)
+a_field_states_its_kind :: proc(t: ^testing.T) {
+	table := new(Kinds_Table, context.temp_allocator)
+	kinds_table_make(t, table)
+	described, ok := module.record_type(table.file, 1)
+	if !testing.expect(t, ok, "the record is found") {
+		return
+	}
+	for column, number in table.columns {
+		item, found := module.field(table.file, described, u32(number))
+		testing.expect(t, found)
+		testing.expect_value(t, item.kind, u8(column.kind))
+		testing.expect_value(t, item.contract_enum, u8(column.contract_enum))
+		back, back_ok := column_of_field(column.name, item)
+		testing.expect(t, back_ok)
+		testing.expect_value(t, back.kind, column.kind)
+		testing.expect_value(t, back.contract_enum, column.contract_enum)
+		testing.expect_value(t, back.type, column.type)
+	}
+	// A field whose kind byte names no kind gives no column.
+	broken, _ := module.field(table.file, described, 0)
+	broken.kind = u8(max(value_kinds.Field_Kind)) + 1
+	_, broken_ok := column_of_field("level", broken)
+	testing.expect(t, !broken_ok)
+	// A kind on a field that it does not fit makes a description that the
+	// contract refuses, and the drawer then draws no field of it.
+	refused := [?]Column {
+		{name = "check", type = .Integer, detail = 4, kind = .Hash},
+		{name = "level", type = .Integer, detail = 1, unsigned = true, kind = .Status},
+		{name = "level", type = .Integer, detail = 1, kind = .Status, contract_enum = .Log_Level},
+		{name = "writer", type = .Text, detail = 8, kind = .Hexadecimal},
+		{name = "module", type = .Bytes, detail = 4},
+		{name = "module", type = .Bytes, detail = value_kinds.HASH_FIELD_BYTES + 1, kind = .Hash},
+	}
+	for column in refused {
+		one := [1]Column{column}
+		buffer: [1024]u8
+		file, _, written := description_write(buffer[:], "Refused", one[:])
+		testing.expect(t, written)
+		_, valid := module.record_type(file, 1)
+		testing.expectf(t, !valid, "the kind %v on a field %v is refused", column.kind, column.type)
+		drawn := new(Drawn, context.temp_allocator)
+		sink := drawn_sink(drawn)
+		draw_table(&sink, file, 1, nil, 20)
+		testing.expect_value(t, drawn_text(drawn), "a table with no valid description\n")
+	}
+}
+
+// Each cell has the part of its field kind: a status its name, in the
+// part Status, and a word that names no member its number as a Number,
+// never a name; a hexadecimal Integer "0x" and two digits for each byte,
+// at the right; a module name the part Module; a hash its bytes in
+// hexadecimal, its zero bytes too, the part Version. A status, a module
+// name and a hash are at the left of their column, with their head.
+@(test)
+table_cells_have_the_part_of_their_field_kind :: proc(t: ^testing.T) {
+	table := new(Kinds_Table, context.temp_allocator)
+	kinds_table_make(t, table)
+	kinds_table_add(table, i64(op.Log_Level.Warning), 0x1a2b, "storage", {0x0a, 0x00, 0xff, 0x01})
+	// One past the last level: a word that names no member.
+	kinds_table_add(table, i64(max(op.Log_Level)) + 1, 0xffff_ffff, "log", {})
+	drawn := new(Drawn, context.temp_allocator)
+	sink := drawn_sink(drawn)
+	draw_table(&sink, table.file, 1, table.rows[:table.row_count * table.size], 20)
+	expected := "level         check  writer   module\n" + "Warning  0x00001a2b  storage  0a00ff01\n" + "4        0xffffffff  log      00000000\n" + "2 rows of Fact_Sample\n"
+	testing.expect_value(t, drawn_text(drawn), expected)
+	Cell_Part :: struct {
+		text: string,
+		part: Part,
+		kind: value_kinds.Value_Kind,
+	}
+	// In the order of the rows; each text is found after the one before it.
+	cells := [?]Cell_Part {
+		{"Warning", .Status, .Status},
+		{"0x00001a2b", .Number, .Number},
+		{"storage", .Module, .Module},
+		{"0a00ff01", .Version, .Version},
+		{"4", .Number, .Number},
+		{"0xffffffff", .Number, .Number},
+		{"log", .Module, .Module},
+		{"00000000", .Version, .Version},
+	}
+	after := -1
+	for cell in cells {
+		part, number, found := drawn_part_of(drawn, cell.text, after)
+		if !testing.expectf(t, found, "the cell %s is drawn", cell.text) {
+			continue
+		}
+		after = number
+		testing.expectf(t, part == cell.part, "the cell %s has the part %v, not %v", cell.text, part, cell.part)
+		testing.expect_value(t, part_value_kind(part), cell.kind)
+	}
+	// No head has a unit: the kinds have none.
+	testing.expect_value(t, drawn.parts[Part.Label], len("level") + len("check") + len("writer") + len("module"))
+}
+
+// A record writes each field by its kind, in the part of the kind.
+@(test)
+record_fields_are_written_by_their_kind :: proc(t: ^testing.T) {
+	table := new(Kinds_Table, context.temp_allocator)
+	kinds_table_make(t, table)
+	kinds_table_add(table, i64(op.Log_Level.Warning), 0x1a2b, "storage", {0x0a, 0x00, 0xff, 0x01})
+	drawn := new(Drawn, context.temp_allocator)
+	sink := drawn_sink(drawn)
+	draw_record(&sink, table.file, 1, table.rows[:table.size])
+	expected := "Fact_Sample\n" + "  level   Warning\n" + "  check   0x00001a2b\n" + "  writer  storage\n" + "  module  0a00ff01\n"
+	testing.expect_value(t, drawn_text(drawn), expected)
+	testing.expect_value(t, drawn.parts[Part.Status], len("Warning"))
+	testing.expect_value(t, drawn.parts[Part.Module], len("storage"))
+	testing.expect_value(t, drawn.parts[Part.Version], len("0a00ff01"))
+}
+
+// A hash that the buffer cannot hold whole gives no text: a hash is never
+// cut. The edges: a buffer of one byte less, and of the exact size.
+@(test)
+a_hash_is_whole_or_nothing :: proc(t: ^testing.T) {
+	bytes := [3]u8{0x00, 0x10, 0xff}
+	short: [5]u8
+	testing.expect_value(t, hash_text(short[:], bytes[:]), "")
+	exact: [6]u8
+	testing.expect_value(t, hash_text(exact[:], bytes[:]), "0010ff")
+	none: [0]u8
+	testing.expect_value(t, hash_text(none[:], nil), "")
 }
 
 // A record writes the unit after the value of a size or a time, in the

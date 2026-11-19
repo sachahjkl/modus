@@ -36,7 +36,8 @@ import "base:intrinsics"
 palette_destroying_commands := [?]string{"shutdown", "stop", "revoke", "lock", "history_clear", "unload", "replace"}
 
 #assert(u8(console_results.Part.Operation) == u8(palette_table.Run_Part.Operation))
-#assert(u8(console_results.Part.Size) == u8(palette_table.Run_Part.Size) && u8(console_results.Part.Time) == u8(palette_table.Run_Part.Time) && max(console_results.Part) == console_results.Part.Time)
+#assert(u8(console_results.Part.Size) == u8(palette_table.Run_Part.Size) && u8(console_results.Part.Time) == u8(palette_table.Run_Part.Time))
+#assert(u8(console_results.Part.Module) == u8(palette_table.Run_Part.Module) && u8(console_results.Part.Version) == u8(palette_table.Run_Part.Version) && max(console_results.Part) == console_results.Part.Version)
 #assert(u8(console_results.Part.Plain) == u8(palette_table.Run_Part.Plain) && u8(console_results.Part.Failure) == u8(palette_table.Run_Part.Failure) && u8(console_results.Part.Number) == u8(palette_table.Run_Part.Number))
 
 palette_ring: ring.Ring // The ring from the compositor: its choices, and the answers of the console.
@@ -877,6 +878,10 @@ run_part_of :: proc "contextless" (part: console_results.Part) -> (run_part: pal
 		run_part = .Size
 	case .Time:
 		run_part = .Time
+	case .Module:
+		run_part = .Module
+	case .Version:
+		run_part = .Version
 	}
 	return run_part
 }

@@ -151,7 +151,7 @@ The loader reads none of these tables: they are for a caller that must know the 
 |---|---|
 | Functions | One export (`module.Function`, 168 bytes): its name, one line of help, its documentation text, the name, the type, the detail and the direction of each of its parameters (12 at most), the type and the detail of its result, and the description of its error record (0: it gives none) |
 | Records | One record that an export receives or gives: its name, its size (256 bytes at most) and the range of its fields |
-| Fields | One field of a record: its name, its offset, its type (Integer, Handle or Text), signed or unsigned, the integer unit of an Integer (section 5, "The unit of an Integer field"), and its detail (the size of an integer or a text, the rights of a handle) |
+| Fields | One field of a record: its name, its offset, its type (Integer, Handle, Text or Bytes), signed or unsigned, the integer unit of an Integer (section 5, "The unit of an Integer field"), its detail (the size of an integer, a text or bytes, the rights of a handle), and its field kind with the contract enum of a status (section 5, "The kind of a field") |
 | Strings | The bytes of all names, help lines and documentation texts |
 | Documentation | Record 1: the documentation of the module, one line and a text |
 
@@ -185,15 +185,17 @@ offset  size  field        type
     20     4  reserved     u32
 
 module.Field, 24 bytes: one record of the table Fields
-offset  size  field         type
-     0     4  name_offset   u32
-     4     4  name_count    u32
-     8     4  offset        u32
-    12     1  type          u8
-    13     1  unsigned      bool
-    14     2  integer_unit  value_kinds.Integer_Unit
-    16     4  detail        u32
-    20     4  reserved      u32
+offset  size  field          type
+     0     4  name_offset    u32
+     4     4  name_count     u32
+     8     4  offset         u32
+    12     1  type           u8
+    13     1  unsigned       bool
+    14     2  integer_unit   value_kinds.Integer_Unit
+    16     4  detail         u32
+    20     1  kind           u8
+    21     1  contract_enum  u8
+    22     2  reserved       [2]u8
 
 module.Documentation, 16 bytes: one record of the table Documentation
 offset  size  field         type
@@ -1015,7 +1017,7 @@ The description of an export names each parameter and the result with one member
 | `Record` | Bytes of a fixed size with described fields | The address of the record | One more argument, the address of the memory of the record; the export has no integer result | Not allowed: a record holds no record |
 | `Handle` | A handle that the caller lends for the time of the call, with the rights that the callee needs | The handle, in a register | Not allowed | The handle, in 4 bytes |
 | `Table` | Records of one description that follow each other, with a direction | The address of a table place `{address, count, capacity}` | One more argument, the address of a buffer record `{address, capacity in records}`; the integer result is the count of records of the full table | Not allowed |
-| `Bytes` | Bytes with no description, with a direction | The address of a table place, with the count and the capacity in bytes | Not allowed | Not allowed |
+| `Bytes` | Bytes with no description, with a direction | The address of a table place, with the count and the capacity in bytes | Not allowed | A hash, in a field of 1 to 32 bytes of the kind `Hash` ("The kind of a field") |
 
 - **A direction** (`module.Direction`) says what the callee does with the memory of a Table or Bytes parameter: `Read` (it reads and writes nothing), `Change` (it reads and writes the records that exist), `Append` (it writes after the records that exist). `Read` is the value 0: the direction with the least power is the default (section 4, "Tables and bytes as parameters").
 - **A count larger than the capacity** means "the answer did not fit" for a Text result and for a Table result. The caller owns all the memory, and the callee allocates no larger buffer.
@@ -1048,6 +1050,10 @@ The description of an export names each parameter and the result with one member
 | A field `i64`, `u64`, `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, or an enum with such a backing type | An `Integer` field of that size |
 | A field `system.Lent({...})` | A `Handle` field |
 | A field `[N]u8` | A `Text` field of N bytes |
+| A field `value_kinds.Hexadecimal_8`, `_16`, `_32`, `_64` | An unsigned `Integer` field of that size, of the kind `Hexadecimal` |
+| A field of a contract enum of `value_kinds.CONTRACT_ENUM_TYPES`: `operation.Status`, `operation.Log_Level` | An unsigned `Integer` field of the size of the enum, of the kind `Status`, with its enum |
+| A field `value_kinds.Module_Name_Field` | A `Text` field of 32 bytes, of the kind `Module_Name` |
+| A field `value_kinds.Hash_Field` | A `Bytes` field of 32 bytes, of the kind `Hash` |
 
 **An example**, three exports of `src/modules/demonstrations/sample`: an Integer result from a Record, a Record result, and a lent Handle.
 
@@ -1100,7 +1106,39 @@ An Integer field of a record states its integer unit in the same form as a param
 
 - **The checks**: `module.record_type` and `information.check` refuse a unit that is not one of the contract, and a unit on a field that is not an Integer. Two records are equal only with the same unit on each field: the check of a replacement and the check of an import declaration refuse another unit ("the field time of the record Process is a number in ms, the field time of Process is a plain number").
 - **A table of the console**: `columns` and `join` keep the unit of each field. A built-in table gives the unit in its column (`console_results.size_column`, `time_column`), and the name of the column does not repeat it: `used`, not `used_pages`.
-- **Not built**: a value kind for a Text field, such as a module or a version. The design: `src/md/features/console_value_colors.md`.
+- **A Text field and a hash**: they take a field kind, not a unit ("The kind of a field").
+
+### The kind of a field
+
+A field of a record states its field kind (`glossary/running_code.md`, "Field kind"): how a reader writes its value when it is not a plain number or a plain text. A reader writes the value by its kind, in the color of its value kind (`CONSOLE.md`, "The drawers"). The design: `src/md/features/console_value_colors.md`.
+
+- **In the file**: `Field.kind`, one byte of `value_kinds.Field_Kind`, and `Field.contract_enum`, one byte of `value_kinds.Contract_Enum`. Two bytes after them are reserved and 0. A zero field kind is `Plain` and a zero enum is `None`: the meaning of each field of a file before the kinds, so the format version does not change.
+- **The kinds**:
+
+  | Kind | Field | In the source | A reader writes |
+  |---|---|---|---|
+  | `Plain` | Integer, Text or Handle | `i64`, `[N]u8`, `Lent({...})` | The value by its type, an Integer with its unit |
+  | `Hexadecimal` | Integer of 1, 2, 4 or 8 bytes, with no unit | `value_kinds.Hexadecimal_8` to `Hexadecimal_64` | `0x` and the hexadecimal digits of its bytes |
+  | `Status` | Unsigned Integer, with no unit, and an enum | `operation.Status`, `operation.Log_Level` | The name of the member; the number when the word names no member |
+  | `Module_Name` | Text | `value_kinds.Module_Name_Field`, 32 bytes | The text |
+  | `Hash` | Bytes of 1 to 32 bytes | `value_kinds.Hash_Field`, 32 bytes | Two hexadecimal digits for each byte, the first byte first |
+
+  ```odin
+  Block_Check :: struct {
+  	block:    u64,
+  	check:    value_kinds.Hexadecimal_32,
+  	expected: value_kinds.Hexadecimal_32,
+  	level:    operation.Log_Level,
+  	writer:   value_kinds.Module_Name_Field,
+  	module:   value_kinds.Hash_Field,
+  }
+  ```
+
+- **The contract enums**: `value_kinds.Contract_Enum` is the closed list of the enums of the contract that a Status field holds, and `value_kinds.CONTRACT_ENUM_TYPES` names the type of each one. `operation.contract_enum_member_name` gives the name of a member, and refuses a word that names no member of the enum. An enum of a module has no names in the module file: its field is a plain Integer.
+- **The borders**: `module.field_kind` and `module.field_contract_enum` take each byte, and refuse a byte that names no member. `module.field_kind_valid` refuses each pair that the table does not have: a kind on another type, a unit beside a kind, a Status with a sign or with no enum, an enum on a field that is not a Status, a Bytes field that is not a Hash, a hash of 0 bytes or of more than 32, and a reserved byte that is not 0. `module.record_type` and `information.check` refuse a record with such a field.
+- **The checks**: two records are equal only with the same kind and the same enum on each field. The check of a replacement and the check of an import declaration refuse another kind.
+- **The describe tool** reads the type of a field through an import of `modus:contract/value_kinds` or of the package of the enum, under any name; a type of the same name in another package has no description. A field kind is a field only: a parameter of such a type has no description.
+- **Not built**: a kind on a parameter or a result, and the names of an enum of a module.
 
 ## 6. The context
 
@@ -1202,8 +1240,8 @@ This reuses the compiler, the linker and the debugger formats.
 The source of a module imports the packages of the system from one source library (`glossary/communication.md`, "Source library"). Its name is `modus`, and its folder is `src/library`.
 
 - **The import lines.** `import "modus:support/system"`, `import operation "modus:contract/operation"`. The first folder of the path says what the package is: `contract` is what two parties agree on, `support` is what two modules or more compile in, and `private` is what one module alone compiles in (`modus:private/storage/storage_tree`, a private part of the storage service, which no other module imports). One package has one import line, in the kernel, in a module of the system and in a module outside the repository. No source of the system imports a package of the library by a relative path.
-- **The flag.** The compiler gets the library with one flag: `-collection:modus=src/library`. The tool gives it in each command that runs the compiler. To run the host tests of one package by hand: `nix develop -c odin test <folder of the package> -vet -collection:modus=src/library`. A module needs nothing more, and a language server for a module the same one entry: the library `modus` at `src/library`.
-- **The kernel parts.** The kernel has a second source library of its own, `kernel`, in the folder `src/kernel`: its kernel parts (`glossary/communication.md`, "Kernel part"), imported as `kernel:iommu`. The tool gives the flag `-collection:kernel=src/kernel` to the compile of the kernel, to the host tests of the folders under `src/kernel` and to its own compile, and to no module. To run the host tests of a kernel part by hand: `nix develop -c odin test src/kernel/<part> -vet -collection:modus=src/library -collection:kernel=src/kernel`. A language server for the system needs the two entries.
+- **The flag.** The compiler gets the library with one flag: `-collection:modus=src/library`. The tool gives it in each command that runs the compiler. To run the host tests of one package by hand: `nix develop -c odin test <folder of the package> -vet -collection:modus=src/library -custom-attribute:log_fact`. A module needs one more flag only, `-custom-attribute:log_fact`: with it the compiler accepts the attribute of a fact type and ignores it (`src/md/features/log_facts.md`). A language server for a module needs the same one entry: the library `modus` at `src/library`.
+- **The kernel parts.** The kernel has a second source library of its own, `kernel`, in the folder `src/kernel`: its kernel parts (`glossary/communication.md`, "Kernel part"), imported as `kernel:iommu`. The tool gives the flag `-collection:kernel=src/kernel` to the compile of the kernel, to the host tests of the folders under `src/kernel` and to its own compile, and to no module. To run the host tests of a kernel part by hand: `nix develop -c odin test src/kernel/<part> -vet -collection:modus=src/library -collection:kernel=src/kernel -custom-attribute:log_fact`. A language server for the system needs the two entries.
 - **The rule of the kernel.** The kernel imports the contract packages and its kernel parts only, and a contract package imports no support package. The compiler does not hold this rule, because the kernel gets the same library as a module. The tool holds it: before each build, it reads each import of each source file of `src/` (`TOOLS.md`, "The imports of the sources of the system"). The compiler refuses a kernel part in a module, which does not get the second flag, and the tool refuses it in each other file of `src/`.
 - **A module outside the repository.** Its sources write the same import lines, and its compiler gets the same flag with the path of `src/library` of the repository of the system. The tool builds its module (section "A module of another project").
 
@@ -1246,7 +1284,7 @@ The tool writes `build/<name>.module` and `build/<name>.debug` in the folder of 
 
 | Step | Process | What it gives |
 |---|---|---|
-| 1. Compile | `odin build` with `-target:freestanding_amd64_sysv -build-mode:llvm-ir -reloc-mode:pic -no-entry-point -default-to-nil-allocator -o:speed -vet -debug-info:same-code -collection:modus=src/library`, and for the kernel `-collection:kernel=src/kernel` too | One LLVM IR file, `<name>.ll` |
+| 1. Compile | `odin build` with `-target:freestanding_amd64_sysv -build-mode:llvm-ir -reloc-mode:pic -no-entry-point -default-to-nil-allocator -o:speed -vet -debug-info:same-code -collection:modus=src/library -custom-attribute:log_fact`, and for the kernel `-collection:kernel=src/kernel` too | One LLVM IR file, `<name>.ll` |
 | 2. Make the object | `llc -O3 -misched-topdown --frame-pointer=all -relocation-model=pic --function-sections --data-sections` | One ELF object, `objects/<name>.o` |
 | 3. Assemble | `nasm -f elf64` | One object for `src/runtime/memory.asm`, one for each `.asm` file of the source folder, and for a module of the boot image one for each `.asm` file of `src/library/support/system` |
 | 4. Describe | The tool (`describe_package`) | The exports and their descriptions, and the stated budget (the constant `MODULE_BUDGET`), from the source; a version script that makes only the exports visible |

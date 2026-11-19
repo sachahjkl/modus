@@ -308,6 +308,140 @@ integer_unit_of_type_name :: proc "contextless" (name: string) -> (integer_unit:
 	return {}, false
 }
 
+// How a reader writes the value of a field of a record, past its type: the
+// field kind of a description (module.Field.kind). See [field
+// kind](term:field-kind). The byte crosses a border in each module file:
+// a reader takes it through field_kind_of_word.
+//
+// Example: the field `check: value_kinds.Hexadecimal_32` of a record is an
+// Integer of 4 bytes with the kind Hexadecimal: a reader writes "0x1a2b".
+Field_Kind :: enum u8 {
+	Plain       = 0, // As its type says: an Integer in decimal with its integer unit, a Text, a Handle.
+	Hexadecimal = 1, // An Integer with no unit, written as "0x" and its hexadecimal digits. The value kind is Number.
+	Status      = 2, // An unsigned Integer with no unit that holds a member of a contract enum: the reader writes the name of the member. The value kind is Status.
+	Module_Name = 3, // A Text: the name of a module or of a process. The value kind is Module.
+	Hash        = 4, // A field of the type Bytes: a hash, or its head, written as two hexadecimal digits for each byte. The value kind is Version.
+}
+
+// field_kind_of_word is the border of the byte of a field kind in a module
+// file: the member, or false for a byte that names none.
+field_kind_of_word :: proc "contextless" (word: u8) -> (kind: Field_Kind, ok: bool) {
+	return enum_word.member_of_word(Field_Kind, u64(word))
+}
+
+// field_kind_value_kind gives the value kind of a field kind, for the color
+// of its value. Plain gives None: the type of the field and its integer
+// unit decide.
+field_kind_value_kind :: proc "contextless" (kind: Field_Kind) -> Value_Kind {
+	switch kind {
+	case .Plain:
+		return .None
+	case .Hexadecimal:
+		return .Number
+	case .Status:
+		return .Status
+	case .Module_Name:
+		return .Module
+	case .Hash:
+		return .Version
+	}
+	return .None
+}
+
+// The enums of the contract whose members a field of the kind Status
+// holds: each reader compiles the contract in, so it writes the name of
+// the member (operation.contract_enum_member_name). The byte crosses a
+// border in each module file (module.Field.contract_enum): a reader takes
+// it through contract_enum_of_word. A new enum that a field needs is a new
+// member, with its names in the contract.
+Contract_Enum :: enum u8 {
+	None      = 0, // No enum: a field that is not a Status.
+	Status    = 1, // operation.Status: the status of a kernel operation.
+	Log_Level = 2, // operation.Log_Level: the level of a log record.
+}
+
+// contract_enum_of_word is the border of the byte of a contract enum in a
+// module file: the member, or false for a byte that names none.
+contract_enum_of_word :: proc "contextless" (word: u8) -> (which: Contract_Enum, ok: bool) {
+	return enum_word.member_of_word(Contract_Enum, u64(word))
+}
+
+// The type of the source of a field of the kind Status: the package of the
+// contract that declares the enum, and its name there.
+Contract_Enum_Type :: struct {
+	package_name: string, // The folder of the package under src/library/contract.
+	name:         string, // The name of the enum in that package.
+}
+
+// The type of the source of each contract enum: the one table that names
+// them for the tool and for a reader that writes the type of a field.
+@(rodata)
+CONTRACT_ENUM_TYPES := [Contract_Enum]Contract_Enum_Type {
+	.None      = {},
+	.Status    = {package_name = "operation", name = "Status"},
+	.Log_Level = {package_name = "operation", name = "Log_Level"},
+}
+
+// The types that a field of a record takes to state its field kind, in
+// place of an integer or of an array of bytes. Each is distinct, so the
+// compiler refuses a value of another kind at a write of the field; its
+// bytes are those of the type that it names. The tool that describes a
+// module finds the kind of each name in FIELD_KIND_TYPES
+// (docs/MODULE_CONTRACT.md, "The kind of a field").
+
+// An Integer field of 1 byte, written in hexadecimal.
+Hexadecimal_8 :: distinct u8
+// An Integer field of 2 bytes, written in hexadecimal.
+Hexadecimal_16 :: distinct u16
+// An Integer field of 4 bytes, written in hexadecimal.
+Hexadecimal_32 :: distinct u32
+// An Integer field of 8 bytes, written in hexadecimal.
+Hexadecimal_64 :: distinct u64
+
+// The bytes of a Text field that holds the name of a module or of a
+// process: the longest name of a process and one zero byte.
+MODULE_NAME_FIELD_BYTES :: 32
+// A Text field that holds the name of a module or of a process, with zero
+// bytes after it.
+Module_Name_Field :: distinct [MODULE_NAME_FIELD_BYTES]u8
+
+// The bytes of a hash of a module: the most bytes of a field of the kind
+// Hash. A shorter field holds the head of a hash.
+HASH_FIELD_BYTES :: 32
+// A field of the type Bytes that holds a BLAKE3 hash.
+Hash_Field :: distinct [HASH_FIELD_BYTES]u8
+
+// The name of a type of a field with a field kind, its kind, and its size
+// in bytes.
+Field_Kind_Type :: struct {
+	name: string, // The name of the type in this package.
+	kind: Field_Kind, // How a reader writes the value.
+	size: u32, // The bytes of the field.
+}
+
+// Each type of a field with a field kind: the one table that names them
+// for the tool. A test checks each size against the type.
+@(rodata)
+FIELD_KIND_TYPES := [?]Field_Kind_Type {
+	{"Hexadecimal_8", .Hexadecimal, 1},
+	{"Hexadecimal_16", .Hexadecimal, 2},
+	{"Hexadecimal_32", .Hexadecimal, 4},
+	{"Hexadecimal_64", .Hexadecimal, 8},
+	{"Module_Name_Field", .Module_Name, MODULE_NAME_FIELD_BYTES},
+	{"Hash_Field", .Hash, HASH_FIELD_BYTES},
+}
+
+// field_kind_of_type_name gives the row of FIELD_KIND_TYPES of the name of
+// a type. ok is false for another name.
+field_kind_of_type_name :: proc "contextless" (name: string) -> (row: Field_Kind_Type, ok: bool) {
+	for item in FIELD_KIND_TYPES {
+		if item.name == name {
+			return item, true
+		}
+	}
+	return {}, false
+}
+
 // A hash, or the head of one: two hexadecimal digits for each byte, the
 // first byte first. The kind is Version.
 Hash :: struct {

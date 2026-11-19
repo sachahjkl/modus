@@ -99,6 +99,8 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Field", "unsigned", offset_of(module.Field, unsigned), size_of(field.unsigned)},
 		{"module.Field", "integer_unit", offset_of(module.Field, integer_unit), size_of(field.integer_unit)},
 		{"module.Field", "detail", offset_of(module.Field, detail), size_of(field.detail)},
+		{"module.Field", "kind", offset_of(module.Field, kind), size_of(field.kind)},
+		{"module.Field", "contract_enum", offset_of(module.Field, contract_enum), size_of(field.contract_enum)},
 		{"module.Field", "reserved", offset_of(module.Field, reserved), size_of(field.reserved)},
 		{"module.Budget_Request", "pages", offset_of(module.Budget_Request, pages), size_of(budget.pages)},
 		{"module.Budget_Request", "processes", offset_of(module.Budget_Request, processes), size_of(budget.processes)},
