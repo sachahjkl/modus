@@ -623,10 +623,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 // The entry of net: it runs the cases of its endpoint once, then the
 // measures, then sends one datagram after each key.
 //
-// The entry opens its window (with none, it stops with the code 1), reads
+// The entry opens its window (with none, it stops with `Failed`), reads
 // the frequency of the cycle counter, and opens its endpoint and its
 // datagram region. With no endpoint it writes "net: no endpoint: the
-// process has no grant of the network" and stops with the code 1. Then it
+// process has no grant of the network" and stops with `Refused`. Then it
 // runs the cases, writes "net: ok, N cases" or "net: WRONG: ...", runs the
 // three measures, and writes "net: the measures are done". The process
 // then waits for keys for ever: each key runs `after_key`.
@@ -634,7 +634,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "net")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	boot: op.Boot_Report
 	system.call(.Inspect, u64(ctx.handles[system.GRANT_MACHINE]), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(&boot)), size_of(boot))
@@ -643,7 +643,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	status: system.Status
 	if datagrams, status = system.ring_open(ring_memory); status != .Ok {
 		system.log("net: no endpoint: the process has no grant of the network")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	// The datagram region: the root service made it, with the ring.
 	region_memory := ctx.handles[datagram.GRANT_REGION]
@@ -651,7 +651,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region_pages, size_status := system.memory_size(region_memory)
 	if map_status != .Ok || size_status != .Ok || region_pages < REGION_PAGES {
 		system.log("net: no datagram region")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)
 	draw(&window)

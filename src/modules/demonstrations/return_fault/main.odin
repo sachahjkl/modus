@@ -96,7 +96,7 @@ Case :: struct {
 	ran:       bool,
 	right:     bool,
 	cause:     op.Stop_Cause, // The stop cause of the child.
-	code:      u32, // Its stop code: 0 or 1, when it stopped itself.
+	outcome:   op.Stop_Outcome, // Its stop outcome, when it stopped itself.
 	vector:    u32, // The vector of its stop report.
 	address:   u64, // The address of its stop report.
 }
@@ -122,12 +122,12 @@ child_instruction_address :: proc "contextless" (holds_ymm: bool) -> ! {
 	memory, created := system.memory_create(1)
 	if created != .Ok {
 		system.log("return_fault: the child of the instruction address could not make its page: ", op.STATUS_NAMES[created])
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	address, mapped := system.memory_map(memory, {.Write})
 	if mapped != .Ok {
 		system.log("return_fault: the child of the instruction address could not map its page to write it: ", op.STATUS_NAMES[mapped])
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	page := ([^]u8)(address)
 	page[system.PAGE_SIZE - 2] = 0x0F // syscall
@@ -135,13 +135,13 @@ child_instruction_address :: proc "contextless" (holds_ymm: bool) -> ! {
 	system.memory_unmap(address)
 	if _, at_the_end := system.memory_map(memory, {.Execute}, 0, LAST_PAGE); at_the_end != .Ok {
 		system.log("return_fault: the child of the instruction address could not map its page at the last page: ", op.STATUS_NAMES[at_the_end])
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	jump_to_the_last_instruction(rawptr(uintptr(LAST_INSTRUCTION)), holds_ymm)
 }
 
-// child_nested_task stops with the code 0 when the flag was set before the
-// entry and clear after it. Else it writes what it saw, and stops with 1:
+// child_nested_task stops with Done when the flag was set before the entry
+// and clear after it. Else it writes what it saw, and stops with Failed:
 // the stop says only right or wrong, the line says why.
 child_nested_task :: proc "contextless" () -> ! {
 	NESTED_TASK :: u64(1) << 14
@@ -150,16 +150,16 @@ child_nested_task :: proc "contextless" () -> ! {
 	switch {
 	case before & NESTED_TASK == 0:
 		system.log("return_fault: the child of the nested task: popfq did not set the flag, so the case did not run")
-		system.stop(1)
+		system.stop(.Failed)
 	case after & NESTED_TASK != 0:
 		system.log("return_fault: the child of the nested task: the flag came back after the entry")
-		system.stop(1)
+		system.stop(.Failed)
 	}
-	system.stop(0)
+	system.stop(.Done)
 }
 
 // case_run starts the child of a case, waits for its stop, and reads its
-// stop cause, its stop code and its stop report.
+// stop cause, its stop outcome and its stop report.
 case_run :: proc "contextless" (item: ^Case) {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
@@ -173,17 +173,11 @@ case_run :: proc "contextless" (item: ^Case) {
 	}
 	defer system.close(process)
 	// The bound only ends a hang.
-	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		if state, _, _ := system.process_state(process); state == .Stopped {
-			break
-		}
-		system.sleep(system.time() + 10)
-	}
-	_, cause, code := system.process_state(process)
+	cause, outcome, _ := system.process_stop_wait(process, system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
 	report := system.process_stop_report(process)
 	item.ran = true
 	item.cause = cause
-	item.code = code
+	item.outcome = outcome
 	item.vector = report.vector
 	item.address = report.address
 	switch item.role {
@@ -192,7 +186,7 @@ case_run :: proc "contextless" (item: ^Case) {
 	case .Stack_Address:
 		item.right = cause == .Cannot_Return && report.address == 0x8000_0000_0000_0000
 	case .Nested_Task:
-		item.right = cause == .Itself && code == 0
+		item.right = outcome == .Done
 	case .Trap_Flag:
 		// A debug exception of the process stops it as its own fault.
 		item.right = cause == .Fault && report.vector == u32(op.Fault_Kind.Debug)
@@ -202,11 +196,11 @@ case_run :: proc "contextless" (item: ^Case) {
 	}
 	verdict := item.right ? string(": as it must") : string(": WRONG")
 	switch cause {
-	case .Itself, .Holder:
-		system.log("return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", code ", u64(code), ", the address ", system.Hex(item.address), verdict)
+	case .Itself:
+		system.log("return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", ", op.STOP_OUTCOME_TEXTS[outcome], ", the address ", system.Hex(item.address), verdict)
 	case .Fault:
 		system.log("return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", vector ", u64(report.vector), ", the address ", system.Hex(item.address), verdict)
-	case .None, .Last_Thread_Ended, .Handles_Closed, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
+	case .None, .Holder, .Last_Thread_Ended, .Handles_Closed, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
 		system.log("return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", the address ", system.Hex(item.address), verdict)
 	}
 }
@@ -242,18 +236,21 @@ draw :: proc "contextless" (window: ^display.Window) {
 //
 // - a role of a case: the child makes its hostile state at once. It never
 //   comes back here: the kernel stops it as its own fault, or it stops
-//   itself. The child of the trap flag writes a line and stops with the
-//   code 1 when no trap came.
+//   itself. The child of the trap flag writes a line and stops with
+//   `Failed` when no trap came.
 // - `Parent` (0, as the root service starts it): it takes its random
-//   generator, opens its window and maps the boot image (a failure stops it
-//   with the code 1), runs each case with `case_run`, writes the result on
-//   the log, and then draws its window for ever.
+//   generator, opens its window and maps the boot image (no seed stops it
+//   with `Refused`, a window or an image that fails with `Failed`), runs
+//   each case with `case_run`, writes the result on the log, and then
+//   draws its window for ever.
+//
+// A role word that names no role stops it with `Refused`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	role, role_ok := enum_word.member_of_word(Role, ctx.values[VALUE_ROLE])
 	if !role_ok {
 		system.log("return_fault: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	switch role {
 	case .Instruction_Address:
@@ -265,23 +262,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case .Trap_Flag:
 		syscall_with_the_trap_flag()
 		system.log("return_fault: the child of the trap flag: no trap came")
-		system.stop(1)
+		system.stop(.Failed)
 	case .Stack_At_A_Syscall:
 		syscall_with_a_stack_that_is_not_canonical()
 	case .Parent:
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("return_fault: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "return_fault")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
 		system.log("return_fault: no boot image")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	with_avx = .Avx in sets.usable_instruction_sets()

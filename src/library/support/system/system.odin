@@ -302,11 +302,12 @@ sleep :: proc "contextless" (deadline: u64) -> u64 {
 	return enter(max(deadline, 1))
 }
 
-// stop ends this process with a stop code: each of its threads ends, and
-// its memory and its handles end. A holder of its process handle reads the
-// stop cause `Itself` and the code with `Process_State`. Give 0 or 1: a
-// result goes through memory that the starter shares, never through the
-// code. It does not return.
+// stop ends this process with its stop outcome: each of its threads ends,
+// and its memory and its handles end. A holder of its process handle reads
+// the stop cause `Itself` and the outcome with `Process_State`. The outcome
+// says what the work gave, never a result: a result goes through memory
+// that the starter shares. It has no default, so each stop names its
+// outcome. It does not return.
 //
 // It stops the process whatever its kernel ring holds: it drops each
 // completion that waits, as the process ends and wants no answer, and
@@ -316,15 +317,17 @@ sleep :: proc "contextless" (deadline: u64) -> u64 {
 // and the stop cause is then `Fault`, never `Itself`
 // (src/md/api/kernel_ring_completion_room.md, "The stop of a process").
 //
-// Example: `system.stop(1)` after a check of a test that failed.
-stop :: proc "contextless" (code: u32 = 0) -> ! {
+// Example: `system.stop(.Done)` at the end of the work; `system.stop(.Failed)`
+// after a check of a test that failed, with its line on the log before;
+// `system.stop(.Refused)` for a context or an argument that it refuses.
+stop :: proc "contextless" (outcome: op.Stop_Outcome) -> ! {
 	kernel := kernel_ring()
 	for round := 0; ; round += 1 {
 		switch stop_step(&kernel, round) {
 		case .Enter_For_Held_Commands:
 			enter(0)
 		case .Send_Stop:
-			if _, status := call(.Process_Stop, 0, u64(code)); status == .Ok {
+			if _, status := call(.Process_Stop, 0, u64(outcome)); status == .Ok {
 				// The kernel ends this thread when it leaves its processor.
 				for {}
 			}
@@ -807,12 +810,12 @@ handle_state :: proc "contextless" (handle: Handle, memory: Handle = 0) -> (kind
 }
 
 // kernel_word_refused writes the line of a word of a result of the kernel
-// that names no member of its enum, and stops the process with the code 1.
+// that names no member of its enum, and stops the process with `Failed`.
 // The kernel and this library come from one build: such a word is a fault
 // of the build, and no member stands in for it.
 kernel_word_refused :: proc "contextless" (what: string, word: u64) -> ! {
 	log_in("processes", .Error, "system: the kernel gave the word ", word, " for ", what, ", which names no member")
-	stop(1)
+	stop(.Failed)
 }
 
 // handle_revoke ends each handle and each mapping that came from a handle:

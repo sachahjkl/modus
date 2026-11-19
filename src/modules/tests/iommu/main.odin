@@ -21,11 +21,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	blocks, status := system.ring_open(ctx.handles[block.GRANT_RING])
 	if status != .Ok {
 		system.log_in("iommu", .Error, "iommu: no block ring")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if !system.send(&blocks.commands, ring.Record{kind = u32(block.Command.Info), tag = 1}) {
 		system.log_in("iommu", .Error, "iommu: the block ring has no room")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
@@ -35,11 +35,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			} else {
 				system.log("iommu: the test device service gave the status ", u64(record.kind), " to Info")
 			}
-			system.stop(0)
+			system.stop(.Done)
 		}
 		if system.time() >= deadline {
 			system.log("iommu: the test device service did not answer before the hang bound")
-			system.stop(1)
+			system.stop(.Failed)
 		}
 		wait: system.Wait
 		system.wait_records(&wait, &blocks.completions)

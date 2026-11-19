@@ -100,7 +100,7 @@ requests: u64 // The physical address of the page of the request.
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log_in("iommu", .Error, "iommu_device: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // request gives the device one request for the test block: the header, a

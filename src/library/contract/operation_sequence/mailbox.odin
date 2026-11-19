@@ -19,7 +19,7 @@ import "modus:contract/fixed_addresses"
 import "modus:contract/operation"
 
 MAILBOX_MAGIC :: u64(0x4C49_414D_5245_504F) // The bytes "OPERMAIL".
-MAILBOX_FORMAT :: 2
+MAILBOX_FORMAT :: 3
 
 // The process that runs each sequence, and the module of the boot image
 // that holds it.
@@ -27,9 +27,10 @@ RUNNER_NAME :: "operation_sequence_runner"
 
 // How the runner ended, which it writes in `Runner_Results.end` before it
 // stops itself. A stop carries no result (src/md/api/process_stop.md): the
-// runner stops with the code 0 after `Ran` and 1 after a refusal, and the
-// word here says which refusal. `None` with the stop cause Itself is not
-// an end of the runner: a step stopped it.
+// runner stops with the outcome `Done` after `Ran`, `Refused` after
+// `Sequence_Refused` and `Failed` after `Batch_Refused`, and the word here
+// says which end. `None` with the stop cause Itself is not an end of the
+// runner: a step stopped it, with any outcome that the step named.
 Runner_End :: enum u64 {
 	None             = 0, // The runner did not write its end: a step stopped it, or a fault.
 	Ran              = 1, // It ran each step of its sequence.
@@ -76,7 +77,8 @@ Mailbox_Header :: struct {
 	refusal_index:     i64, // Refused: the `index` of the `Refusal`.
 	refusal_argument:  i64, // Refused: the `argument` of the `Refusal`.
 	start_status:      u64, // Not_Started: the word of the status of the start.
-	stop_cause:        u64, // The word of the `operation.Stop_Cause` of the runner; a reader takes it through `operation.stop_cause_of_word`.
+	stop_cause:        u64, // The word of the `operation.Stop_Cause` of the runner.
+	stop_outcome:      u64, // The word of the `operation.Stop_Outcome` of the runner; a reader takes the state Stopped, the cause and the outcome through `operation.stop_of_words`.
 	budget_before:     Mailbox_Amounts, // What the budget of the sequence held before the runner started.
 	budget_after:      Mailbox_Amounts, // What it held after the runner stopped and each of its handles ended.
 }

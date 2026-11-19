@@ -325,17 +325,17 @@ measure :: proc "contextless" () {
 // entry opens the window, opens the glyph caches of the interface font,
 // measures one line, writes the lines on the log, then draws the window at
 // each event until the process is stopped. With no window, it stops with
-// the code 1.
+// `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_font")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	font, font_ok := display.interface_font_open(ctx)
 	if !font_ok {
 		system.log("interface_font: the boot image gives no valid cache of the interface font")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	regular_cache, bold_cache = font.regular, font.bold
 	spacing_ok: [3]bool
@@ -343,7 +343,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	regular_spacing_large, spacing_ok[1] = text_rendering.spacing_of(&regular_cache, 3)
 	bold_spacing, spacing_ok[2] = text_rendering.spacing_of(&bold_cache, 1)
 	if !spacing_ok[0] || !spacing_ok[1] || !spacing_ok[2] {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	no_pair_spacing_large = {advances = regular_spacing_large.advances}
 	greek_lines_make()

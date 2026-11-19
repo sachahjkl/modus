@@ -416,24 +416,24 @@ draw :: proc "contextless" (window: ^display.Window) {
 //
 // **The stop**: with no window, no block ring, no data region, no block
 // service, or a refused `Attach`, it writes the reason on the log and stops
-// with the code 1. Else it never returns.
+// with `Failed`. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "disk")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	ring_memory := ctx.handles[block.GRANT_RING]
 	status: system.Status
 	if blocks, status = system.ring_open(ring_memory); status != .Ok {
 		system.log("disk: no block ring")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	memory, memory_status := system.memory_create(REGION_PAGES, 0, {.Contiguous}) // The device reads and writes it.
 	address, map_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || map_status != .Ok {
 		system.log("disk: no data region")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)
 	// The data region goes to the block service through the block ring.
@@ -449,12 +449,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if give_status != .Ok {
 		system.log("disk: the block service does not map the block ring")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if attached := call(.Attach, {0 = u64(given)}); block.Status(attached.kind) != .Ok {
 		text: [240]u8
 		system.log("disk: the block service refused the data region: ", refusal_text(text[:], attached))
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	info := call(.Info)
 	disk_blocks = info.values[0]

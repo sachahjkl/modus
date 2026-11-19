@@ -51,7 +51,7 @@ one :: #force_no_inline proc "contextless" (address: uintptr) {
 // return address, and the stack trace has every level.
 //
 // If the write ever succeeds, the process writes `fault: the write did not
-// stop the process` and stops with the code 1: that line is a fault of the
+// stop the process` and stops with `Failed`: that line is a fault of the
 // kernel.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -62,5 +62,5 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address := uintptr(ctx.values[14])
 	one(address)
 	system.log("fault: the write did not stop the process")
-	system.stop(1)
+	system.stop(.Failed)
 }

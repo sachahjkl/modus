@@ -32,7 +32,7 @@ import "modus:support/system"
 // The entry of a node: it maps its four memory objects, then passes records
 // for ever.
 //
-// A memory object that does not map stops it with the code 1. Each turn:
+// A memory object that does not map stops it with `Failed`. Each turn:
 //
 // 1. a record that it held for its work time goes to the ring after it; a
 //    full ring refuses it, and the node keeps it and marks itself blocked;
@@ -50,7 +50,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		item = ctx.handles[role]
 		status: system.Status
 		if address[role], status = system.memory_map(item); status != .Ok {
-			system.stop(1)
+			system.stop(.Failed)
 		}
 	}
 	before, _ := ring.open(address[relay.GRANT_BEFORE], ring.PAGE_COUNT)

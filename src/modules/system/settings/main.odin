@@ -428,7 +428,7 @@ boot_pass :: proc "contextless" () -> ! {
 	text: [256]u8
 	writer := system.Writer{buffer = text[:]}
 	system.log("settings: the boot pass: ", what, ": ", values_text(&writer, choice), "; in ", (system.nanoseconds() - start) / 1000, " us")
-	system.stop(0)
+	system.stop(.Done)
 }
 
 // A button of the row of the time zone: its label and how far it moves the
@@ -575,13 +575,13 @@ draw_with_bar :: proc "contextless" (window: ^display.Window) {
 // The entry of settings: the boot pass, or the window and the service.
 //
 // The entry maps the settings page; with no page it writes "settings: no
-// settings page" and stops with the code 1. It opens its private store; a
+// settings page" and stops with `Refused`. It opens its private store; a
 // process with no store still runs, and says "NOT kept: no store".
 //
 // - **The boot pass** (the context value `VALUE_BOOT_PASS` is not 0): it
 //   reads the record of its store, writes the page, wakes the compositor,
-//   writes "settings: the boot pass: ..." with its time, and stops with the
-//   code 0. A missing or unreadable record gives the defaults. A record of
+//   writes "settings: the boot pass: ..." with its time, and stops with
+//   `Done`. A missing or unreadable record gives the defaults. A record of
 //   another version gives the defaults, which the pass keeps in its place.
 // - **Otherwise**: it opens its window (with none, it stops with the code
 //   1) and its service, draws, and writes "settings: ok, ...". Then one loop
@@ -593,7 +593,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address, status := system.memory_map(page_handle)
 	if status != .Ok {
 		system.log("settings: no settings page: status ", u64(status))
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	page = (^settings.Page)(address)
 	date_page = date.page_of(ctx)
@@ -603,7 +603,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "settings")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	service, _ = system.service_open(ctx)
 	draw_with_bar(&window)

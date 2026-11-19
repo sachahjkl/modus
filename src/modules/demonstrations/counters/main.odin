@@ -66,10 +66,10 @@ LINES_IN_A_PAGE :: PAGE_BYTES / LINE_BYTES
 loop_sink: u64
 
 // fail writes the line of a failure, which starts with "counters: failed: ",
-// and stops the process with the code 1.
+// and stops the process with `Failed`.
 fail :: proc "contextless" (parts: ..system.Part) -> ! {
 	system.log(..parts)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // counts_log writes the four counts of one measure on one line.
@@ -147,7 +147,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		system.log("counters: Read_Counters and Start_Counters gave Bad_Operation with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must")
 		system.log("counters: ok")
-		system.stop(0)
+		system.stop(.Done)
 	}
 	if before_start != .Bad_State {
 		fail("counters: failed: Read_Counters before Start_Counters gave ", before_start, ", not Bad_State")
@@ -215,5 +215,5 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.log("counters: Stop_Counters with no handle gave Ok, and Read_Counters after it gave Bad_State: as it must")
 	system.log("counters: ok")
-	system.stop(0)
+	system.stop(.Done)
 }

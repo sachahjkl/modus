@@ -628,7 +628,7 @@ no_screen_stop :: proc "contextless" () -> ! {
 	} else {
 		system.log("unlock: no screen: the window of unlock cannot be shown: nothing is typed, and nothing changes")
 	}
-	system.stop(0)
+	system.stop(.Done)
 }
 
 // principal_recovery_ask asks for the recovery key of the named principal.
@@ -746,7 +746,7 @@ machine_passphrase_alone_create :: proc "contextless" () {
 		erase(key[:])
 		erase(typed[:])
 		erase(first[:])
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	mode = .Done
 }
@@ -2458,14 +2458,15 @@ enter :: proc "contextless" (window: ^display.Window) {
 
 // principal_file_read reads the file of the named principal from the store,
 // in its form, and gives its public part to the root service. It gives
-// false when the store holds no file. A file that does not decode, or a
-// record that the root service refuses, stops the process with the code 1.
+// false when the store holds no file. A file that does not decode stops
+// the process with `Refused`: its input. A store that gives no file, or a
+// record that the root service refuses, stops it with `Failed`.
 principal_file_read :: proc "contextless" () -> (found: bool) {
 	buffer: [principals.PRINCIPAL_FILE_LIMIT + 1]u8
 	bytes, present, read_status := storage.read(&client, storage.ROOT, principals.FILE_OBJECT, buffer[:])
 	if read_status != .Ok {
 		system.log("unlock: the store did not give the file of the principal: status ", u64(read_status))
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if !present {
 		return false
@@ -2477,7 +2478,7 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 		file, file_bytes, problem = principals.file_decode(bytes)
 		if problem != .None {
 			system.log("unlock: the file of the principal is refused: ", principals.file_problem_sentences[problem])
-			system.stop(1)
+			system.stop(.Refused)
 		}
 		name, name_length = file.name, file.name_length
 		signing_public_key, unlock_public_key = file.signing_public_key, file.unlock_public_key
@@ -2485,16 +2486,16 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 		principal_tpm_file, principal_tpm_file_bytes, problem = principals.principal_tpm_file_decode(bytes)
 		if problem != .None {
 			system.log("unlock: the file of the principal sealed by the TPM is refused: ", principals.principal_tpm_file_problem_sentences[problem])
-			system.stop(1)
+			system.stop(.Refused)
 		}
 		name, name_length = principal_tpm_file.name, principal_tpm_file.name_length
 		signing_public_key, unlock_public_key = principal_tpm_file.signing_public_key, principal_tpm_file.unlock_public_key
 	case .Unknown:
 		system.log("unlock: the file of the principal is refused: it starts with neither PRINCIPL nor PRINCIPT")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	if !record_give() {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	return true
 }
@@ -2510,14 +2511,14 @@ machine_key_without_window :: proc "contextless" () -> ! {
 	switch machine_record_read() {
 	case .Absent:
 		system.log("unlock: no record of the machine key: the disk grants of principal 0 last until the machine stops, and the start policy of the boot image runs")
-		system.stop(0)
+		system.stop(.Done)
 	case .Unreadable:
 		completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Unreadable)})
 		if !answered || system.Status(completion.kind) != .Ok {
 			system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
 		}
 		system.log("unlock: the record of the machine key cannot be read: the disk grants of principal 0 stay absent, and the start policy of the boot image runs")
-		system.stop(0)
+		system.stop(.Done)
 	case .Present:
 	}
 	sealed_by_the_tpm := machine_form == .Sealed_By_The_Tpm
@@ -2525,23 +2526,26 @@ machine_key_without_window :: proc "contextless" () -> ! {
 	completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)})
 	if !answered || system.Status(completion.kind) != .Ok {
 		system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
-		system.stop(0)
+		system.stop(.Done)
 	}
 	if !sealed_by_the_tpm {
 		system.log("unlock: the machine key opens with the machine passphrase: the window of unlock asks for it after the start policy starts")
-		system.stop(0)
+		system.stop(.Done)
 	}
 	if machine_tpm_unseal() != .Opened {
 		system.log("unlock: the TPM did not release the machine key before the start policy: the window of unlock asks for its recovery key after the start policy starts")
 	}
-	system.stop(0)
+	system.stop(.Done)
 }
 
 // The entry of unlock: it reads or creates the record of a named principal,
 // asks for the passphrase, and stops when the session starts.
 //
 // The entry takes its random generator, opens the ring to the root service
-// and its private store; with no ring or no store it stops with the code 1.
+// and its private store; with no ring it stops with `Refused`, with no
+// store with `Failed`. A mode word that names no mode, and a request that
+// the machine cannot take (a record that exists already or cannot be read,
+// no TPM service, Secure Boot off, a refused name), stop it with `Refused`.
 // Then:
 //
 // - **Create** (the context value `VALUE_MODE` is `Unlock_Mode.Create_Principal`):
@@ -2567,8 +2571,8 @@ machine_key_without_window :: proc "contextless" () -> ! {
 //   times, or shows the new recovery key until Enter. Enter with nothing
 //   ends the change. A file that cannot take the change (a new recovery key
 //   for the form under the passphrase alone, no TPM service for the form
-//   sealed by the TPM, a new seal with Secure Boot off) stops it with the
-//   code 1 before its window opens.
+//   sealed by the TPM, a new seal with Secure Boot off) stops it with
+//   `Refused` before its window opens.
 // - **Unlock**: it reads the file "principal", and the record "machine"
 //   unless the mode is `Unlock_Mode.Unlock_Machine_Key_Held`. With a record under
 //   a machine passphrase it asks for the machine passphrase first; when
@@ -2583,13 +2587,13 @@ machine_key_without_window :: proc "contextless" () -> ! {
 //   them (src/md/features/version_erase.md). Enter with nothing skips
 //   either. With no record to ask for and no file it writes "unlock: no
 //   named principal: the machine runs as principal 0, with no unlock" and
-//   stops with the code 0.
-//   A file that does not decode, or a record that the root service
-//   refuses, stops it with the code 1.
+//   stops with `Done`.
+//   A file that does not decode stops it with `Refused`; a record that
+//   the root service refuses, with `Failed`.
 //
 // It reserves the memory of Argon2id (about 19 MiB), opens its window, and
 // reads keys until the passphrase opens the seal and the root service
-// starts the session. It then stops with the code 0. A wrong passphrase
+// starts the session. It then stops with `Done`. A wrong passphrase
 // keeps the window open.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -2600,12 +2604,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	status: system.Status
 	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT]); status != .Ok {
 		system.log("unlock: no ring to the root service")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	ok: bool
 	if client, ok = storage.open(ctx); !ok {
 		system.log("unlock: no store: no named principal can be kept")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	// The TPM service, when the system is measured into a TPM.
 	tpm_open(ctx)
@@ -2614,7 +2618,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	start_mode, start_mode_ok := principals.unlock_mode_of_word(ctx.values[principals.VALUE_MODE])
 	if !start_mode_ok {
 		system.log("unlock: the root service gave the mode ", ctx.values[principals.VALUE_MODE], ", which names no mode of unlock: nothing is done")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	switch start_mode {
 	case .Machine_Key_Without_Window:
@@ -2625,23 +2629,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// store is the truth.
 		if !has_tpm {
 			system.log("unlock: no TPM service: no machine key is sealed by the TPM")
-			system.stop(1)
+			system.stop(.Refused)
 		}
 		if !seal_allowed {
 			system.log("unlock: the firmware did not verify the boot program (Secure Boot is off): no machine key is sealed by the TPM")
-			system.stop(1)
+			system.stop(.Refused)
 		}
 		switch machine_record_read() {
 		case .Absent:
 		case .Present:
 			system.log("unlock: the machine has a record of its machine key already: a change is not built")
-			system.stop(1)
+			system.stop(.Refused)
 		case .Unreadable:
 			system.log("unlock: the record of the machine key cannot be read: no new machine key replaces it")
-			system.stop(1)
+			system.stop(.Refused)
 		}
 		if !machine_seal_create() {
-			system.stop(1)
+			system.stop(.Failed)
 		}
 		mode = .Recovery_Shown
 		message = "write it down, then Enter: the record is written then"
@@ -2649,7 +2653,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		name, name_length = principals.name_unpack({ctx.values[principals.VALUE_NAME], ctx.values[principals.VALUE_NAME + 1], ctx.values[principals.VALUE_NAME + 2]})
 		if principals.name_problem(the_name()) != .None {
 			system.log("unlock: the name of the new principal is refused")
-			system.stop(1)
+			system.stop(.Refused)
 		}
 		mode = .Create_First
 		message = "type a passphrase of 8 bytes at least"
@@ -2661,10 +2665,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		case .Absent:
 		case .Present:
 			system.log("unlock: the machine has a passphrase already: a change is not built")
-			system.stop(1)
+			system.stop(.Refused)
 		case .Unreadable:
 			system.log("unlock: the record of the machine passphrase cannot be read: no new passphrase replaces it")
-			system.stop(1)
+			system.stop(.Refused)
 		}
 		mode = .Machine_Create_First
 		message = "type a passphrase of 8 bytes at least"
@@ -2676,14 +2680,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if !principal_file_read() {
 			system.log("unlock: no named principal: there is no passphrase to change")
 			change_end(.Refused, .Unknown_Form)
-			system.stop(1)
+			system.stop(.Refused)
 		}
 		if problem := principals.change_problem(principal_form, change_mode, has_tpm, seal_allowed); problem != .None {
 			system.log("unlock: principal ", number, " \"", the_name(), "\" is not changed: ", principals.change_problem_sentences[problem])
 			// The console that asked gives the cause: the sentence does not
 			// fit on one line of the window.
 			change_end(.Refused, problem)
-			system.stop(1)
+			system.stop(.Refused)
 		}
 		mode = .Change_Current
 		if principal_form == .Sealed_By_The_Tpm {
@@ -2746,7 +2750,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			principal_ask()
 		case:
 			system.log("unlock: no named principal: the machine runs as principal 0, with no unlock")
-			system.stop(0)
+			system.stop(.Done)
 		}
 	}
 	// From here a key must be typed. On a machine with no screen the root
@@ -2763,12 +2767,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if memory_status != .Ok {
 		system.log("unlock: no memory for the derivation of the key: status ", u64(memory_status))
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	work = {bytes = ([^]u8)(address), count = 0, capacity = principals.DERIVATION_MEMORY_KIBIBYTES * 1024}
 	window, opened := display.open(ctx, WIDTH, HEIGHT, "unlock")
 	if !opened {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	for mode != .Done {
 		// A press on an item of the action bar runs its key, as the key
@@ -2807,7 +2811,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 	}
-	system.stop(0)
+	system.stop(.Done)
 }
 
 // key_run runs one key: a typed key, or the key of an item of the action

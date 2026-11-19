@@ -28,7 +28,7 @@
 // refused the commit with No_Budget, the arena kept its state, a reset
 // took the same pages again with no commit, and its end gave every page
 // back to the budget: as it must", or a line "arena: WRONG: ...". The
-// process stops with the code 0.
+// process stops with `Done`.
 package arena
 
 import "base:intrinsics"
@@ -46,7 +46,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	arena, created := system.arena_create(reservation, error = &record)
 	if created != .Ok {
 		system.log("arena: WRONG: the reservation of ", reservation, " pages failed with ", created)
-		system.stop(0)
+		system.stop(.Done)
 	}
 
 	first: rawptr
@@ -109,5 +109,5 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case:
 		system.log("arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must")
 	}
-	system.stop(0)
+	system.stop(.Done)
 }

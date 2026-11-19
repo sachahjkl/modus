@@ -27,7 +27,7 @@
 //
 // - **Image**: the boot image, read-only, for the resource table and the
 //   bytes of each theme. With no image it writes "pointers: no boot image"
-//   and stops with the code 1.
+//   and stops with `Failed`.
 //
 // **What a reader sees**: the tiles of one theme; a button for each theme
 // changes the theme, and a press writes "pointers: the theme NAME is
@@ -346,7 +346,7 @@ frame_draw :: proc "contextless" (window: ^display.Window) -> u64 {
 // which the compositor prefers them. For each theme it computes the hash,
 // compares it with the entry of the resource, validates the file with the
 // validation of the compositor, and writes one line on the log. With no
-// theme it stops with the code 1; with no window it stops with the code 1.
+// theme it stops with `Failed`; with no window it stops with `Failed`.
 // Then it draws, and draws again after each event that changes the window.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -355,7 +355,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address, status := system.memory_map(image_handle, {}) // Read only.
 	if status != .Ok || image_size == 0 {
 		system.log("pointers: no boot image")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	image := ([^]u8)(address)[:image_size]
 	// The themes, in the order in which the compositor prefers them.
@@ -387,11 +387,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if theme_count == 0 {
 		system.log("pointers: the boot image has no pointer theme")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "pointers")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	table = {records = table_records[:], text = table_text[:]}
 	spent := frame_draw(&window)

@@ -394,12 +394,12 @@ BUILDS :: 200
 // the two draw tables, measures both builds and the case of a table that is
 // too small, writes the lines on the log, then draws its window through the
 // module at each event until the process is stopped. With no window, it
-// stops with the code 1.
+// stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_through_module")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]

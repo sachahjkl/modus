@@ -15,9 +15,9 @@ import "modus:contract/enum_word"
 // `Fault`, and `Stop_Report.vector == u32(Fault_Kind.Page_Fault)`.
 Stop_Cause :: enum u32 {
 	None              = 0, // The process has not stopped.
-	Itself            = 1, // It called `Process_Stop` on itself. Its stop code says why, until the stop outcome replaces it.
+	Itself            = 1, // It called `Process_Stop` on itself. Its `Stop_Outcome` says why.
 	Holder            = 2, // Another process stopped it with a process handle with **Control**.
-	Last_Thread_Ended = 3, // Its last thread ended with `Thread_Stop`. It chose nothing.
+	Last_Thread_Ended = 3, // Its last thread ended with `Thread_Stop`. It chose no stop outcome.
 	Handles_Closed    = 4, // The last handle to it closed.
 	Fault             = 5, // A processor exception that no fault handler took, or that a handler answered with a stop. The vector is in the stop report.
 	Not_Committed     = 6, // A page fault on a page of an Uncommitted object that is not committed.
@@ -47,27 +47,35 @@ stop_cause_of_word :: proc "contextless" (word: u64) -> (cause: Stop_Cause, ok: 
 	return enum_word.member_of_word(Stop_Cause, word)
 }
 
-// stop_of_words is the one border of the first two results of
-// `Process_State`: the state and the stop cause. It refuses a word that
-// names no member, the state `Stopped` with no cause, and a cause with a
-// state other than `Stopped`. Each refusal is a fault of the kernel: a
-// reader stops on it, and never takes the words for a stop that did not
-// happen.
+// stop_of_words is the one border of the first three results of
+// `Process_State`: the state, the stop cause and the stop outcome. It
+// refuses a word that names no member, the state `Stopped` with no cause, a
+// cause or an outcome with a state other than `Stopped`, the cause `Itself`
+// with no outcome, and an outcome with a cause other than `Itself`. Each
+// refusal is a fault of the kernel: a reader stops on it, and never takes
+// the words for a stop that did not happen.
 //
-// Example: `stop_of_words(u64(Process_State.Stopped), u64(Stop_Cause.Itself))`
-// is `.Stopped, .Itself, true`; `stop_of_words(u64(Process_State.Ready),
-// u64(Stop_Cause.Fault))` is refused.
-stop_of_words :: proc "contextless" (state_word: u64, cause_word: u64) -> (state: Process_State, cause: Stop_Cause, ok: bool) {
-	state_known, cause_known: bool
+// Example: `stop_of_words(u64(Process_State.Stopped), u64(Stop_Cause.Itself),
+// u64(Stop_Outcome.Done))` is `.Stopped, .Itself, .Done, true`;
+// `stop_of_words(u64(Process_State.Stopped), u64(Stop_Cause.Holder),
+// u64(Stop_Outcome.Done))` is refused.
+stop_of_words :: proc "contextless" (state_word: u64, cause_word: u64, outcome_word: u64) -> (state: Process_State, cause: Stop_Cause, outcome: Stop_Outcome, ok: bool) {
+	state_known, cause_known, outcome_known: bool
 	state, state_known = enum_word.member_of_word(Process_State, state_word)
 	cause, cause_known = enum_word.member_of_word(Stop_Cause, cause_word)
-	if !state_known || !cause_known {
-		return {}, {}, false
+	outcome, outcome_known = enum_word.member_of_word(Stop_Outcome, outcome_word)
+	if !state_known || !cause_known || !outcome_known {
+		return {}, {}, {}, false
 	}
 	// A stopped process always has its cause, and a process that runs or a
 	// slot with no process has none.
 	if (state == .Stopped) != (cause != .None) {
-		return {}, {}, false
+		return {}, {}, {}, false
 	}
-	return state, cause, true
+	// Only a process that stopped itself chose an outcome, and it always
+	// chose one: the kernel refuses its stop with none.
+	if (cause == .Itself) != (outcome != .None) {
+		return {}, {}, {}, false
+	}
+	return state, cause, outcome, true
 }

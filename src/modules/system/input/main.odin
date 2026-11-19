@@ -207,10 +207,10 @@ mouse_command :: proc "contextless" (command: u8) {
 // when a wait begins, and `input: the input ring has room again` when it
 // ends.
 //
-// **The stop**: with no ring, it writes `input: no ring` and stops with the
-// code 1. With no PS/2 controller (a status port that reads all ones, or a
+// **The stop**: with no ring, it writes `input: no ring` and stops with
+// `Failed`. With no PS/2 controller (a status port that reads all ones, or a
 // drain that does not end), it writes `input: no PS/2 controller: no
-// keyboard and no mouse` and stops with the code 1; the compositor runs
+// keyboard and no mouse` and stops with `Failed`; the compositor runs
 // with no input. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -218,7 +218,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	status: system.Status
 	if output, status = system.ring_open(output_memory); status != .Ok {
 		system.log("input: no ring")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 
 	// The settings page, when the root service mapped it for this service.
@@ -239,7 +239,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			bytes_drained += 1
 		case .No_Controller:
 			system.log("input: no PS/2 controller: no keyboard and no mouse")
-			system.stop(1)
+			system.stop(.Failed)
 		}
 	}
 	controller_command(0xA8) // Enable the mouse port.

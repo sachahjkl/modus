@@ -363,12 +363,12 @@ build :: proc "contextless" (frame: ^interface.Frame) -> (drawn: int) {
 
 // entry opens the window, prepares the portraits, then draws a frame at
 // each event of the window until the process is stopped. With no window,
-// it stops with the code 1.
+// it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "hall_of_fame")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	portraits_prepare()
 	picture_memories[0] = portrait_pixels[:]

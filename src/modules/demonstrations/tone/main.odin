@@ -30,7 +30,7 @@
 //
 // **The stop**: with no stream ring, no sample region, a refused `Attach`
 // or `Start`, or a case that does not get its refusal, it writes the
-// reason on the log and stops with the code 1.
+// reason on the log and stops with `Failed`.
 package tone
 
 import "modus:contract/errors"
@@ -68,7 +68,7 @@ tone_completed: bool
 
 fail :: proc "contextless" (parts: ..system.Part) -> ! {
 	system.log(..parts)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // cosine gives the cosine of a small angle by its series: the step of the

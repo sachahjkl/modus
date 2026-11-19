@@ -46,25 +46,25 @@ scenario_fault_ring := [?]Step {
 	{kind = .Wait, text = "kernel: process fault_ring child: the fault ring is full (1 times): the fault stops the process"},
 	{kind = .Wait, text = "fault_ring: a full ring: the child stopped: a page that is not committed, the address "},
 	{kind = .Wait, text = "fault_ring: the process stops while a thread waits: stopped again by this process, the child keeps the stop cause itself: as it must"},
-	{kind = .Wait, text = "fault_ring: the process stops while a thread waits: the child stopped: itself, code 0, the address 0000000000000000: as it must"},
+	{kind = .Wait, text = "fault_ring: the process stops while a thread waits: the child stopped: itself, done, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: the handler ends while a thread waits: the child stopped: a fault that no thread can answer, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: a word wait, a fault, a decommit of the word: the waker woke 1 thread; no second record and no run before the answer; the answer: Ok, the thread read 5eed000000000000: as it must"},
-	{kind = .Wait, text = "fault_ring: a word wait, a fault, a decommit of the word: the child stopped: itself, code 0, the address 0000000000000000: as it must"},
+	{kind = .Wait, text = "fault_ring: a word wait, a fault, a decommit of the word: the child stopped: itself, done, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: a new handler while a thread waits: the child stopped: a fault that no thread can answer, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: an answer from another process: the parent answered for the thread 2 and the serial 1: refused with Bad_State; the thread still waited, and the answer of its own process resumed it: as it must"},
-	{kind = .Wait, text = "fault_ring: an answer from another process: the child stopped: itself, code 0, the address 0000000000000000: as it must"},
+	{kind = .Wait, text = "fault_ring: an answer from another process: the child stopped: itself, done, the address 0000000000000000: as it must"},
 	// A Wait finds its text anywhere in the log: the line goes on with the
 	// time of the case (", in N ms"), which changes from run to run. The
 	// case writes its progress, and its time grows with the load of the
 	// host: the step has the bound of such a case.
 	{kind = .Wait, text = "fault_ring: 10 000 answers given at once: 10000 faults resumed, 10000 values right, of 10000: as it must", seconds = PROGRESS_CASE_HANG_BOUND_SECONDS},
-	{kind = .Wait, text = "fault_ring: 10 000 answers given at once: the child stopped: itself, code 0, the address 0000000000000000: as it must"},
+	{kind = .Wait, text = "fault_ring: 10 000 answers given at once: the child stopped: itself, done, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: a divide error, answered stop: 1 record of the kind 0, the error code 0, the instruction of the stop report; Resume got Bad_State: as it must"},
 	{kind = .Wait, text = "fault_ring: a divide error, answered stop: the child stopped: a fault, vector 0, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: an invalid opcode, answered stop: 1 record of the kind 6, the error code 0, the instruction of the stop report; Resume got Bad_State: as it must"},
 	{kind = .Wait, text = "fault_ring: an invalid opcode, answered stop: the child stopped: a fault, vector 6, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: a breakpoint, answered resume: 1 record of the kind 3; the thread went on after the int3 and computed 42: as it must"},
-	{kind = .Wait, text = "fault_ring: a breakpoint, answered resume: the child stopped: itself, code 0, the address 0000000000000000: as it must"},
+	{kind = .Wait, text = "fault_ring: a breakpoint, answered resume: the child stopped: itself, done, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: a divide error with a handler of pages: the handler read 0 records; the stop report names the vector 0: as it must"},
 	{kind = .Wait, text = "fault_ring: a divide error with a handler of pages: the child stopped: a fault, vector 0, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: a privileged instruction, answered stop: 1 record of the kind 13, the error code 0, the instruction of the stop report; Resume got Bad_State: as it must"},
@@ -81,7 +81,7 @@ scenario_fault_ring := [?]Step {
 	{kind = .Wait, text = "fault_ring: two stops, two resumes: still stopped after one Resume, running after the second; a third Resume got Bad_State: as it must"},
 	{kind = .Wait, text = "fault_ring: the rights of a thread handle: with Read and Control, Stop got No_Right, Read_Registers No_Right, Write_Registers No_Right; with Inspect only, Stop, Read_Registers and Resume got Ok, Write_Registers No_Right; with Write only, Write_Registers got No_Right; the thread kept running: as it must"},
 	{kind = .Wait, text = "fault_ring: a divide error skipped by its handler: Resume before the write got Bad_State; after the write of the instruction address and rax, the thread went on with 42: as it must"},
-	{kind = .Wait, text = "fault_ring: the control of a thread: the child stopped: itself, code 0, the result bits 00000000000000ff: as it must"},
+	{kind = .Wait, text = "fault_ring: the control of a thread: the child stopped: itself, done, the result bits 00000000000000ff: as it must"},
 	{kind = .Wait, text = "fault_ring: the thread of another process: 32 calls of 32 refused; no number and no handle of this process names it: as it must"},
 	{kind = .Wait, text = "fault_ring: the thread of another process: the thread of the parent has the stop count 0 and kept running: as it must"},
 	// The entries to the gates and the debug trap, in one child.
@@ -97,7 +97,7 @@ scenario_fault_ring := [?]Step {
 	{kind = .Wait, text = "fault_ring: mov ss, then int3, with the trap flag: on this processor the machine went on; one breakpoint record after the int3, and each other record is a debug trap of this process, in its code: as it must"},
 	// The trap of the first int1 is at an int1: the kernel keeps it.
 	{kind = .Wait, text = "fault_ring: two int1 in a row: two debug records, at the address of the first plus 1 and plus 2: as it must"},
-	{kind = .Wait, text = "fault_ring: the entries and the debug trap: the child stopped: itself, code 0, the result bits 000000000000007f: as it must"},
+	{kind = .Wait, text = "fault_ring: the entries and the debug trap: the child stopped: itself, done, the result bits 000000000000007f: as it must"},
 	// Two outcomes are right, by what the processor does: the line names
 	// the one of this processor, and the last line counts the case.
 	{kind = .Wait, text = "fault_ring: mov ss, then int1, with the trap flag: the machine went on and the child gave back every page and every thread; on this processor "},

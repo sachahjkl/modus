@@ -259,7 +259,7 @@ fault_handler_set :: proc "contextless" (process_index: u32, handler_index: u32,
 	if fault_waiter_exists(process_index) {
 		// A stop of the process takes the control lock.
 		require_control() or_return
-		process_stop(process_index, .Fault_Unanswered, 0)
+		process_stop(process_index, .Fault_Unanswered, .None)
 		return .Ok
 	}
 	process.fault_handler = handler_index

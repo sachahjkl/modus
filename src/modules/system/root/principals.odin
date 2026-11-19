@@ -284,7 +284,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	count: u64
 	for &item in started {
 		if item.process != 0 && item.principal == number {
-			system.call(.Process_Stop, u64(item.process), 0)
+			system.process_stop(item.process)
 			if !item.is_terminal {
 				count += 1
 			}
@@ -308,7 +308,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	// (unlock_for_a_locked_principal).
 	if running := find("unlock"); running != nil {
 		unlock_stop_ask()
-		system.call(.Process_Stop, u64(running.process), 0)
+		system.process_stop(running.process)
 		system.log_in("processes", .Info, "root: the lock stops the window of unlock, which ran for ", principals.mode_words(unlock_run.mode), "; unlock asks for the passphrase when it stopped")
 		return .Ok
 	}
@@ -318,7 +318,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 
 // unlock_stopped counts a stop of `unlock` that reap found: each stop
 // while a principal is locked, whatever its code, unless the root service
-// asked it. An `unlock` that stops at once with the code 0 (a store that
+// asked it. An `unlock` that stops at once with `Done` (a store that
 // lost the file of a principal whose record is locked) must be bounded as
 // a fault is.
 unlock_stopped :: proc "contextless" () {

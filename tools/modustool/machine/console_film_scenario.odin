@@ -33,7 +33,7 @@ scenario_console_film := [?]Step {
 	// start; the history of a new disk is empty.
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "console: no line history kept: the history starts empty", any_order = true},
-	{kind = .Wait, text = "root: settings stopped: itself, code 0"},
+	{kind = .Wait, text = "root: settings stopped: itself, done"},
 	// processes() reads the service monitor, which the start list does not
 	// start: it starts before the film, out of the picture of the scenes.
 	{kind = .Type, text = "start(\"monitor\")"},

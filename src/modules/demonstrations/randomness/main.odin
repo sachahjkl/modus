@@ -213,23 +213,23 @@ draw :: proc "contextless" (window: ^display.Window) {
 // then draws a live stream every 500 ms for ever.
 //
 // With no seed in its context, it writes "randomness: no random seed in the
-// context" and stops with the code 1; with no window, it stops with the
-// code 1. The counts and the measure run once, in the main thread, after
+// context" and stops with `Refused`, as for a seed strength that names no
+// strength; with no window, it stops with `Failed`. The counts and the measure run once, in the main thread, after
 // the first picture.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("randomness: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	report_ok: bool
 	if report, report_ok = random.report_values_read(&ctx.values); !report_ok {
 		system.log("randomness: the root service gave the seed strength ", ctx.values[0] & 0xFF, ", which names no strength: nothing is shown")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "randomness")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	random.fill(&process_generator, first_bytes[:])
 	hex: interface.Text_Builder

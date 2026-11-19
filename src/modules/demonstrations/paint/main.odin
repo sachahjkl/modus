@@ -146,7 +146,7 @@ lines :: proc "c" () -> i64 {
 // calls and the events of the pointer in one loop until the principal
 // closes the window.
 //
-// With no window it stops with the code 1. Each turn draws the palette, the
+// With no window it stops with `Failed`. Each turn draws the palette, the
 // counts of the callers and the paper, then waits for an event or a call.
 // The calls run first, then the events: the left button draws, the right
 // button erases with a wide line, a click on the palette chooses a color,
@@ -156,7 +156,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "paint")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	paper_picture := paper()
 	graphics.clear(paper_picture, COLOR_PAPER)

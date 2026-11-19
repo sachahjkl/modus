@@ -34,14 +34,6 @@ import "modus:support/system"
 // page and their page tables.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
 
-// The stop codes before Machine_Usable: the root service then starts the
-// rescue start policy.
-Stop_Code :: enum u32 {
-	Root_Ring_Refused = 1, // The ring to the root service does not open.
-	Console_Refused   = 2, // The root service did not start the console.
-	Usable_Refused    = 3, // The root service refused Machine_Usable.
-}
-
 // The order of this start policy: the input service and the compositor
 // when the machine has a screen, then the console, which makes the machine
 // usable.
@@ -50,6 +42,8 @@ ORDER :: [3]string{"input", "compositor", "console"}
 requests: ring.Ring
 next_tag: u32 = 1
 
+// Each stop before Machine_Usable writes its line first and stops with
+// Failed: the root service then starts the rescue start policy.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("disk_start_policy: ok, a start policy from the disk: its order is in its code")
@@ -57,7 +51,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	requests, ring_status = system.ring_open(ctx.handles[system.GRANT_ROOT])
 	if ring_status != .Ok {
 		system.log("disk_start_policy: the root ring does not open: status ", ring_status)
-		system.stop(u32(Stop_Code.Root_Ring_Refused))
+		system.stop(.Failed)
 	}
 	// Its one grant: the root ring and the log, and no window, no store and
 	// no right of the machine.
@@ -106,7 +100,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if status != .Ok {
 			system.log("disk_start_policy: cannot start ", name, ": status ", status)
 			if name == "console" {
-				system.stop(u32(Stop_Code.Console_Refused))
+				system.stop(.Failed)
 			}
 			continue
 		}
@@ -114,7 +108,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if status, _ := command_call(.Machine_Usable, ""); status != .Ok {
 		system.log("disk_start_policy: the root service refused Machine_Usable: status ", status)
-		system.stop(u32(Stop_Code.Usable_Refused))
+		system.stop(.Failed)
 	}
 	system.log("disk_start_policy: the console runs: the machine is usable")
 	for {

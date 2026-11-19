@@ -235,12 +235,12 @@ draw :: proc "contextless" (window: ^display.Window) {
 // two ways (`run`), compares the two ways and the cycle counter,
 // tries to remove the time page, and writes the summary line. It then
 // draws the window at each event, and measures the time of a draw. It
-// never returns; with no window, it stops with the code 1.
+// never returns; with no window, it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "clock")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	// The limits are constants of this process that size_limits_of_words
 	// takes: a refusal is a fault of this source, which the line says.

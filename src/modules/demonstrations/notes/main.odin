@@ -269,7 +269,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 // The entry of notes: it restores the note and the count from its store, then commits each key until the
 // principal closes the window.
 //
-// With no window it stops with the code 1. With no store it runs, and keeps nothing. With a store it reads the
+// With no window it stops with `Failed`. With no store it runs, and keeps nothing. With a store it reads the
 // note, the count and the list of the versions of the note (`restore`, `history_read`), and writes the line of
 // the start on the log.
 //
@@ -285,7 +285,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "notes")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if client, ok = storage.open(ctx); !ok {
 		restored, gone = "no store: the process keeps nothing", true

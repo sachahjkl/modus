@@ -153,14 +153,14 @@ waiter :: proc "c" (parameter: rawptr) -> ! {
 
 // The entry of debug_target. It writes its globals, starts the thread that
 // waits, writes "debug_target: runs, with a thread that waits" (or stops
-// with the code 1 when the thread does not start), then runs its rounds
+// with `Failed` when the thread does not start), then runs its rounds
 // for ever.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	#force_no_inline fill_globals()
 	if _, status := system.thread_start(waiter, nil); status != .Ok {
 		system.log("debug_target: the second thread did not start: status ", status)
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	system.log("debug_target: runs, with a thread that waits")
 	#force_no_inline run_rounds()

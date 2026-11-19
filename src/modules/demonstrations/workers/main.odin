@@ -203,7 +203,7 @@ compute :: proc "c" (parameter: rawptr) -> ! {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "workers")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	// The window shows the picture with a picture record: until the first
 	// tiles, the picture is the background.
@@ -235,7 +235,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		worker.thread, status = system.thread_start(compute, &worker)
 		if status != .Ok {
 			system.log("workers: cannot start a thread")
-			system.stop(1)
+			system.stop(.Failed)
 		}
 	}
 

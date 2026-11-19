@@ -382,12 +382,12 @@ draw :: proc "contextless" (window: ^display.Window) {
 // entry runs the vectors of each primitive, the refused inputs, the
 // measures of speed and of one call, reads the hash of the module, writes
 // the lines on the log, then keeps the window open until the process is
-// stopped. With no window, it stops with the code 1.
+// stopped. With no window, it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "cryptography_vectors")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]

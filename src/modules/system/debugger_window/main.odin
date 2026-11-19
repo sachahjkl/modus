@@ -1229,7 +1229,7 @@ service_reach :: proc "contextless" (ctx: ^system.Context) -> (problem: string) 
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "debugger_window")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if problem := service_reach(ctx); problem != "" {
 		status_set(true, problem)

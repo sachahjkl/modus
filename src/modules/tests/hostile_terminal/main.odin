@@ -38,15 +38,15 @@ import terminal "modus:support/terminal"
 refused_kind_words := [3]u32{u32(terminal.Kind.None), u32(max(terminal.Kind)) + 1, max(u32)}
 
 // entry writes the three records and the line, waits until the terminal
-// read them, writes the result on the log, and stops with the code 0. With
-// no terminal it writes `hostile_terminal: no terminal` and stops with the
-// code 1.
+// read them, writes the result on the log, and stops with `Done`. With
+// no terminal it writes `hostile_terminal: no terminal` and stops with
+// `Refused`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output, ok := terminal.open(ctx)
 	if !ok {
 		system.log("hostile_terminal: no terminal")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	// A tag of 0: a record whose kind names no record takes no byte of the
 	// text region, so the line after it starts at the first byte.
@@ -72,5 +72,5 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else {
 		system.log("hostile_terminal: WRONG: the terminal did not read its records in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
 	}
-	system.stop(0)
+	system.stop(.Done)
 }

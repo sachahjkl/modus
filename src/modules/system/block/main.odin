@@ -135,7 +135,7 @@ interrupts: u64
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log_in("block", .Error, "block: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // start resets the device, agrees on the features, and gives it the queue.
@@ -352,7 +352,7 @@ stop_with_each_request_failed :: proc "contextless" (cause: Device_Stop) -> ! {
 	case .Needs_Reset:
 		system.log_in("block", .Error, "block: the device needs a reset: ", u64(in_flight), " requests in flight fail, and the service stops")
 	}
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // entry starts the device and then serves the block ring, until the
@@ -381,12 +381,12 @@ stop_with_each_request_failed :: proc "contextless" (cause: Device_Stop) -> ! {
 //
 // **The stop**: with no ring, no configuration, or no virtio registers, it
 // writes the reason (`block: no block ring`) at the level error and stops
-// with the code 1. A request that the device does not answer by its
+// with `Failed`. A request that the device does not answer by its
 // deadline (system.ANSWER_BOUND_MILLISECONDS after the device got it), and
 // a device that sets its needs-reset bit, end the service too: each
 // request in flight completes with `Device_Error` and the record
 // `No_Answer` of the device, the line says the cause, and
-// the service stops with the code 1. Else it never returns.
+// the service stops with `Failed`. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]

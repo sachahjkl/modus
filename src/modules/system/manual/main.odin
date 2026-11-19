@@ -796,7 +796,7 @@ signature :: proc "c" (name: ^string, export: i64, result: ^[]u8, error: ^errors
 // When the loader starts it, the entry:
 //
 // 1. opens the service ring, so that callers can reach the exports;
-// 2. opens a window of two pictures; with no window, it stops with the code 1;
+// 2. opens a window of two pictures; with no window, it stops with `Failed`;
 // 3. maps the boot image and the replacement table, read-only;
 // 4. measures the information functions once (`information_start`), and writes the line
 //    "manual: information: ... modules break a rule" on the log;
@@ -810,7 +810,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "manual")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]

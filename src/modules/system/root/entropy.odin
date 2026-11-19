@@ -80,7 +80,7 @@ entropy_service_start :: proc "contextless" () {
 	opened: ring.Ring
 	if opened, status = system.ring_open(ring_memory); status != .Ok {
 		// reap takes the device back when the service stopped.
-		system.call(.Process_Stop, u64(driver.process), 0)
+		system.process_stop(driver.process)
 		system.close(ring_memory)
 		system.log_in("devices", .Warning, "root: cannot open the entropy ring: status ", status, ": the random seed of the system has the sources of the processor only")
 		return
@@ -184,7 +184,7 @@ entropy_reads_late_end :: proc "contextless" () {
 	fresh_bytes_deadline = system.WAIT_FOREVER
 	intrinsics.mem_zero_volatile(&entropy_mixing, size_of(entropy_mixing)) // No read comes after these.
 	system.log_in("devices", .Warning, "root: the entropy device did not answer a read in ", u64(entropy_read_deadline.READ_DEADLINE_MILLISECONDS / 1000), " seconds: ", u64(late), " reads count as refused, and the entropy service stops: no more bytes of the device")
-	system.call(.Process_Stop, u64(entropy_process.process), 0)
+	system.process_stop(entropy_process.process)
 }
 
 // fresh_bytes_read_ask asks the entropy service for the next read of the

@@ -528,7 +528,7 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 	}
 	if status != .Ok {
 		system.log("compositor: no memory")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}
 }
@@ -595,12 +595,12 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 // 6. A frame, at most one each 16 ms, when the screen has damage.
 //
 // **The stop.** With no framebuffer (modus:support/screen_presence), the
-// compositor writes `compositor: no framebuffer` and stops with the code 1;
+// compositor writes `compositor: no framebuffer` and stops with `Failed`;
 // with no input ring or no control ring, it writes `compositor: no input
-// ring or no control ring` and stops with the code 1. When its budget
+// ring or no control ring` and stops with `Failed`. When its budget
 // cannot pay the frame and the background of the screen, it writes
 // `compositor: a screen of <width>x<height> needs <n> pages, the budget
-// holds <m>` and stops with the code 1. Without the
+// holds <m>` and stops with `Failed`. Without the
 // memory of its frame, it writes `compositor: no memory` and stops. Else it
 // never returns.
 @(export, link_name = "entry")
@@ -616,11 +616,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// process: the two never disagree on a screen.
 	if !screen_presence.screen_present(status, ctx.values[VALUE_WIDTH], ctx.values[VALUE_HEIGHT]) {
 		system.log("compositor: no framebuffer")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	if input_status != .Ok || control_status != .Ok {
 		system.log("compositor: no input ring or no control ring")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
 	screen_pages_open(ctx)
@@ -635,7 +635,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	budget_left, budget_status := system.budget_read()
 	if budget_status != .Ok || budget_left.pages < needed_pages {
 		system.log("compositor: a screen of ", u64(width), "x", u64(height), " needs ", needed_pages, " pages, the budget holds ", budget_left.pages)
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	frame = canvas_create(width, height)
 	background = canvas_create(width, height)

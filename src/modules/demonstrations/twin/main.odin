@@ -22,19 +22,19 @@ import "modus:support/twins"
 //
 // - `Twin_Mode.Write_Page`: it maps the shared page, writes the agreed
 //   word in it, and wakes `frames`, which waits on that word. A page that
-//   does not map stops it with the code 1.
+//   does not map stops it with `Failed`.
 // - `Twin_Mode.Write_Code`: it writes one byte in its own code. The page
 //   has no right Write, so the kernel stops the process as its own fault:
 //   the expected result.
 // - `Twin_Mode.Wait`: it only sleeps, as one more process that shares the
 //   code of the module.
-// - a word that names no mode: it writes a line and stops with the code 1.
+// - a word that names no mode: it writes a line and stops with `Refused`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	mode, mode_ok := twins.twin_mode_of_word(ctx.values[twins.VALUE_MODE])
 	if !mode_ok {
 		system.log("twin: the mode ", ctx.values[twins.VALUE_MODE], " names no mode of a twin: nothing is done")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	switch mode {
 	case .Wait:
@@ -43,7 +43,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// that the process `frames` took, or it takes it now.
 		address, status := system.memory_map(ctx.handles[twins.GRANT_PAGE])
 		if status != .Ok {
-			system.stop(1)
+			system.stop(.Failed)
 		}
 		word := (^u32)(address)
 		intrinsics.volatile_store(word, twins.WORD)

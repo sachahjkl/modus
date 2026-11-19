@@ -386,20 +386,20 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 // `log: ok, <count> records, <count> gone before its start, <count> lost
 // since, <count> channels`. Then it runs the calls of its exports.
 //
-// **The stop**: with no window, it stops with the code 1. With no grant of
+// **The stop**: with no window, it stops with `Failed`. With no grant of
 // the log records, it writes `log: cannot read the records of the log:
-// status <status>` at the level error, and stops with the code 1. Else it
+// status <status>` at the level error, and stops with `Failed`. Else it
 // never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "log")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	reader, status := system.log_open(ctx.handles[system.GRANT_LOG_RECORDS])
 	if status != .Ok {
 		system.log_in("log", .Error, "log: cannot read the records of the log: status ", u64(status))
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	// The service reads the same memory object: exports.odin. Its handle
 	// also reads the own log ring of a caller (Log_Read).

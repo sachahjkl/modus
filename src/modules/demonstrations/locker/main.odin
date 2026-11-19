@@ -96,10 +96,10 @@ churn :: proc "contextless" (stop_after: u64, peer: system.Handle) -> ! {
 	for round := 0; ; round += 1 {
 		if stop_after != 0 && system.time() >= start + stop_after {
 			if peer == 0 {
-				system.stop(0)
+				system.stop(.Done)
 			}
 			// Two processes stop each other: `locks` stops this one now too.
-			system.call(.Process_Stop, u64(peer), 0)
+			system.process_stop(peer)
 			stop_after = 0
 		}
 		if thread, status := system.thread_start(brief, nil); status == .Ok {
@@ -117,7 +117,7 @@ churn :: proc "contextless" (stop_after: u64, peer: system.Handle) -> ! {
 // (`churn`), or a locker slot of the board. A locker prepares the page
 // tables of its range, tells `locks` that it is ready, then waits for each
 // command and runs its mode until the next one. With no board or a slot
-// number past the board, it stops with the code 1.
+// number past the board, it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_CHURN {
@@ -127,7 +127,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	index := ctx.values[lockers.VALUE_INDEX]
 	if status != .Ok || index >= lockers.LOCKER_CAPACITY {
 		system.log("locker: no board, or the slot ", index, " is past the board")
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	slot := &(^lockers.Board)(address).slots[index]
 	own, _ := system.memory_create(1)
@@ -150,7 +150,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		mode, mode_ok := enum_word.member_of_word(lockers.Mode, u64(slot.mode))
 		if !mode_ok {
 			system.log("locker: the board names the mode ", u64(slot.mode), ", which names no mode")
-			system.stop(1)
+			system.stop(.Refused)
 		}
 		start := slot.start
 		end := slot.end

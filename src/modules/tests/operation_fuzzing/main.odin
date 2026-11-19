@@ -52,7 +52,7 @@ sequence: operation_sequence.Sequence
 
 failed :: proc "contextless" (text: string, status: system.Status) -> ! {
 	system.log("operation_fuzzing: failed: ", text, ": status ", status)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 @(export, link_name = "entry")
@@ -110,7 +110,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // execute runs the sequence of the mailbox, and writes its outcome.
 execute :: proc "contextless" () {
 	header.outcome = u64(operation_sequence.Execution_Outcome.None)
-	header.stop_cause, header.start_status = 0, 0
+	header.stop_cause, header.stop_outcome, header.start_status = 0, 0, 0
 	header.budget_before, header.budget_after = {}, {}
 	results := (^operation_sequence.Runner_Results)(&mailbox[operation_sequence.MAILBOX_RESULTS_OFFSET])
 	results^ = {}
@@ -136,9 +136,10 @@ execute :: proc "contextless" () {
 	}
 	defer system.close(budget)
 	header.budget_before = amounts_of(budget)
-	outcome, stop_cause, start_status := runner_run(budget, bytes, results)
+	outcome, stop_cause, stop_outcome, start_status := runner_run(budget, bytes, results)
 	header.outcome = u64(outcome)
 	header.stop_cause = u64(stop_cause)
+	header.stop_outcome = u64(stop_outcome)
 	header.start_status = u64(start_status)
 	header.budget_after = amounts_of(budget)
 }
@@ -152,7 +153,7 @@ amounts_of :: proc "contextless" (budget: system.Handle) -> operation_sequence.M
 // sequence, starts it, waits for its stop, and copies its results. Each
 // handle of this process to an object of the runner is closed before it
 // returns, so the budget then holds again what it held before.
-runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^operation_sequence.Runner_Results) -> (outcome: operation_sequence.Execution_Outcome, stop_cause: op.Stop_Cause, start_status: system.Status) {
+runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^operation_sequence.Runner_Results) -> (outcome: operation_sequence.Execution_Outcome, stop_cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome, start_status: system.Status) {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	mappings: [2 + operation_sequence.AREAS_MOST]system.Mapping
 	held: [2 + operation_sequence.AREAS_MOST]system.Handle
@@ -164,20 +165,20 @@ runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^
 	// The copy of the sequence, read-only for the runner.
 	sequence_memory, made := object_with(budget, operation_sequence.SEQUENCE_OBJECT_PAGES, bytes)
 	if made != .Ok {
-		return .Not_Started, .None, made
+		return .Not_Started, .None, .None, made
 	}
 	held[0] = sequence_memory
 	mappings[0] = {memory = sequence_memory, address = operation_sequence.RUNNER_SEQUENCE_ADDRESS, flags = {}}
 	results_memory, created := system.memory_create(operation_sequence.RESULTS_OBJECT_PAGES, budget)
 	if created != .Ok {
-		return .Not_Started, .None, created
+		return .Not_Started, .None, .None, created
 	}
 	held[1] = results_memory
 	mappings[1] = {memory = results_memory, address = operation_sequence.RUNNER_RESULTS_ADDRESS, flags = {.Write}}
 	for area in 0 ..< sequence.area_count {
 		memory, area_made := object_with(budget, u64(sequence.areas[area].pages), operation_sequence.area_content(&sequence, area))
 		if area_made != .Ok {
-			return .Not_Started, .None, area_made
+			return .Not_Started, .None, .None, area_made
 		}
 		held[2 + area] = memory
 		mappings[2 + area] = {memory = memory, address = operation_sequence.area_address(area), flags = {.Write}}
@@ -190,13 +191,13 @@ runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^
 	// which it removes before it reads the budget again.
 	view, viewed := system.memory_map(results_memory, {})
 	if viewed != .Ok {
-		return .Not_Started, .None, viewed
+		return .Not_Started, .None, .None, viewed
 	}
 	defer system.memory_unmap(view)
 	load_error: module.Load_Error
 	runner, started := system.process_start(runner_file, operation_sequence.RUNNER_NAME, grants, random.values_with_seed(&generator, values), amounts_with_processor(RUNNER_AMOUNTS), mappings[:2 + sequence.area_count], &prepared, {image = image}, &load_error, budget)
 	if started != .Ok {
-		return .Not_Started, .None, started
+		return .Not_Started, .None, .None, started
 	}
 	// The runner holds its objects now: these handles end with it.
 	for &handle in held {
@@ -218,19 +219,18 @@ runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^
 		system.wait_end(&wait, deadline)
 	}
 	if outcome == .Hung {
-		system.call(.Process_Stop, u64(runner), 0)
+		system.process_stop(runner)
 	}
-	stop_code: u32
-	_, stop_cause, stop_code = system.process_state(runner)
+	_, stop_cause, stop_outcome = system.process_state(runner)
 	system.close(runner)
 	results^ = (^operation_sequence.Runner_Results)(view)^
 	// The end is a word of memory that the runner wrote: it becomes its
 	// member here, and a word that names no end is not Ran.
 	end, end_known := enum_word.member_of_word(operation_sequence.Runner_End, results.end)
-	if outcome == .Stopped && stop_cause == .Itself && stop_code == 0 && end_known && end == .Ran && results.steps_run == u64(sequence.step_count) {
+	if outcome == .Stopped && stop_outcome == .Done && end_known && end == .Ran && results.steps_run == u64(sequence.step_count) {
 		outcome = .Ran
 	}
-	return outcome, stop_cause, .Ok
+	return outcome, stop_cause, stop_outcome, .Ok
 }
 
 // object_with makes a memory object of pages from a budget, and writes

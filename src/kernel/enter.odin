@@ -477,7 +477,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		handle := handle_insert(process, {kind = .Process, rights = RIGHTS_PROCESS, object = created})
 		if handle == 0 {
 			// No handle ever named it, so no reader sees this cause.
-			process_stop(created, .Handles_Closed, 0)
+			process_stop(created, .Handles_Closed, .None)
 			return .No_Slot
 		}
 		results[0] = u64(handle)
@@ -561,7 +561,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if to == process {
 			cause = .Itself
 		}
-		process_stop(index_of_process(to), cause, u32(v[1]))
+		// The one border of the outcome word: only the process itself says
+		// what its work gave, so a holder cannot forge a clean end. A refusal
+		// changes nothing, and the target runs on.
+		outcome, _, outcome_known := op.stop_outcome_of_operation_word(v[1], cause == .Itself)
+		if !outcome_known {
+			return .Bad_Operation
+		}
+		process_stop(index_of_process(to), cause, outcome)
 		return .Ok
 
 	case .Process_State:
@@ -571,7 +578,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		defer process_unlock(slot.object, taken)
 		results[0] = u64(process_state(slot.object))
 		results[1] = u64(processes[slot.object].cause)
-		results[2] = u64(processes[slot.object].code)
+		results[2] = u64(processes[slot.object].outcome)
 		results[3] = processes[slot.object].entries
 		// The place of the process in the reports of Inspect: a starter that
 		// states facts of its child by its slot needs no search of the
@@ -935,8 +942,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					report = {
 						state        = process_state(u32(v[2])),
 						thread_count = u64(about.thread_count),
-						code         = about.code,
 						stop_cause   = u32(about.cause),
+						stop_outcome = u32(about.outcome),
 						name         = about.name,
 						mapped_pages = about.mapped_pages,
 						present_pages = about.table == 0 ? 0 : present_pages(about),
@@ -1244,7 +1251,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		fault_frame := waiter.frame
 		fault_frame.rip = waiter.fault_instruction
 		fault_frame.rbp = waiter.fault_frame_pointer
-		process_stop(process_index, process_fault_report(process_index, &fault_frame, waiter.fault_address), 0)
+		process_stop(process_index, process_fault_report(process_index, &fault_frame, waiter.fault_address), .None)
 		return .Ok
 
 	case .Events_Set:

@@ -149,6 +149,7 @@ oracle_header :: proc() -> operation_sequence.Mailbox_Header {
 	// Ran writes the end Ran too.
 	header.outcome = u64(operation_sequence.Execution_Outcome.Stopped)
 	header.stop_cause = u64(operation.Stop_Cause.Itself)
+	header.stop_outcome = u64(operation.Stop_Outcome.Done)
 	header.budget_before = {pages = 100, processes = 2, threads = 3}
 	header.budget_after = header.budget_before
 	return header
@@ -204,13 +205,12 @@ the_oracles_of_the_outcome_and_of_the_budget :: proc(t: ^testing.T) {
 	}
 	header = oracle_header()
 	header.outcome = u64(operation_sequence.Execution_Outcome.Stopped)
-	header.stop_cause = u64(operation.Stop_Cause.Itself)
 	for end in ([]operation_sequence.Runner_End{.Sequence_Refused, .Batch_Refused}) {
 		results.end = u64(end)
 		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "a runner that ended with %v is taken", end)
 	}
-	// A word of the memory of the machine that names no end, or no cause, is
-	// a finding, never an end or a cause.
+	// A word of the memory of the machine that names no end, no cause or no
+	// outcome is a finding, never an end, a cause or an outcome.
 	for word in ([]u64{u64(max(operation_sequence.Runner_End)) + 1, max(u64)}) {
 		results.end = word
 		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the end word %d is taken", word)
@@ -220,6 +220,16 @@ the_oracles_of_the_outcome_and_of_the_budget :: proc(t: ^testing.T) {
 		header.stop_cause = word
 		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the stop cause word %d is taken", word)
 	}
+	header = oracle_header()
+	for word in ([]u64{u64(operation.Stop_Outcome.None), u64(max(operation.Stop_Outcome)) + 1, max(u64)}) {
+		header.stop_outcome = word
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the stop outcome word %d with the cause Itself is taken", word)
+	}
+	// An outcome with a cause other than Itself: a holder cannot say what
+	// the work of the runner gave.
+	header = oracle_header()
+	header.stop_cause = u64(operation.Stop_Cause.Holder)
+	testing.expect(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "a stop outcome with the cause Holder is taken")
 	results.end = 0
 	header = oracle_header()
 	results.steps_run = 1
@@ -239,46 +249,60 @@ the_oracles_of_the_outcome_and_of_the_budget :: proc(t: ^testing.T) {
 	results.end = 0
 }
 
-// The outcome, the stop cause and the end tell one story, or the tool
-// takes the execution: each pair that cannot come from the runner and the
-// service is a finding, and the pairs that can are the last cases.
+// The outcome, the stop cause, the stop outcome and the end tell one
+// story, or the tool takes the execution: each group that cannot come from
+// the runner and the service is a finding, and the groups that can are the
+// last cases.
 @(test)
-the_words_of_a_stop_come_as_pairs :: proc(t: ^testing.T) {
+the_words_of_a_stop_tell_one_story :: proc(t: ^testing.T) {
 	grammar, ok := operation_grammar_read()
 	testing.expect(t, ok, "the grammar is not read")
 	sequence := oracle_sequence()
 	results: operation_sequence.Runner_Results
-	Pair :: struct {
-		outcome: operation_sequence.Execution_Outcome,
-		cause:   operation.Stop_Cause,
-		end:     operation_sequence.Runner_End,
+	Group :: struct {
+		outcome:      operation_sequence.Execution_Outcome,
+		cause:        operation.Stop_Cause,
+		stop_outcome: operation.Stop_Outcome,
+		end:          operation_sequence.Runner_End,
 	}
-	refused := [?]Pair {
-		{.Ran, .Holder, .Ran}, // Ran with a cause other than Itself.
-		{.Ran, .Fault, .Ran},
-		{.Ran, .Itself, .None}, // Ran with no end written.
-		{.Stopped, .None, .None}, // Stopped with no cause.
-		{.Ran, .None, .Ran},
-		{.Stopped, .Holder, .Ran}, // The end Ran with a stop by a holder.
-		{.Stopped, .Fault, .Ran},
+	refused := [?]Group {
+		{.Ran, .Holder, .None, .Ran}, // Ran with a cause other than Itself.
+		{.Ran, .Fault, .None, .Ran},
+		{.Ran, .Itself, .Failed, .Ran}, // Ran with a stop that says the work failed.
+		{.Ran, .Itself, .Done, .None}, // Ran with no end written.
+		{.Stopped, .None, .None, .None}, // Stopped with no cause.
+		{.Ran, .None, .None, .Ran},
+		{.Stopped, .Holder, .None, .Ran}, // The end Ran with a stop by a holder.
+		{.Stopped, .Fault, .None, .Ran},
+		{.Stopped, .Itself, .Refused, .Ran}, // The end Ran with an outcome other than Done.
+		{.Stopped, .Holder, .Done, .None}, // An outcome from a holder.
+		{.Stopped, .Itself, .None, .None}, // A stop of itself with no outcome.
 	}
-	for pair in refused {
+	for group in refused {
 		header := oracle_header()
-		header.outcome = u64(pair.outcome)
-		header.stop_cause = u64(pair.cause)
-		results.end = u64(pair.end)
-		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the outcome %v, the cause %v and the end %v are taken", pair.outcome, pair.cause, pair.end)
-		testing.expectf(t, operation_stop_pair_problem(pair.outcome, pair.cause, pair.end) != "", "the pair %v has a problem", pair)
+		header.outcome = u64(group.outcome)
+		header.stop_cause = u64(group.cause)
+		header.stop_outcome = u64(group.stop_outcome)
+		results.end = u64(group.end)
+		testing.expectf(t, oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the group %v is taken", group)
 	}
-	accepted := [?]Pair {
-		{.Ran, .Itself, .Ran},
-		{.Stopped, .Itself, .None}, // A step stopped the runner.
-		{.Stopped, .Holder, .None},
-		{.Stopped, .Fault, .None},
+	accepted := [?]Group {
+		{.Ran, .Itself, .Done, .Ran},
+		{.Stopped, .Itself, .Done, .None}, // A step stopped the runner, with any outcome that it named.
+		{.Stopped, .Itself, .Stopped_On_Request, .None},
+		{.Stopped, .Holder, .None, .None},
+		{.Stopped, .Fault, .None, .None},
 	}
-	for pair in accepted {
-		testing.expectf(t, operation_stop_pair_problem(pair.outcome, pair.cause, pair.end) == "", "the pair %v has no problem", pair)
+	for group in accepted {
+		header := oracle_header()
+		header.outcome = u64(group.outcome)
+		header.stop_cause = u64(group.cause)
+		header.stop_outcome = u64(group.stop_outcome)
+		results.end = u64(group.end)
+		testing.expectf(t, !oracle_has(operation_findings(&sequence, &header, &results, &grammar), .Outcome), "the group %v is refused", group)
+		testing.expectf(t, operation_stop_pair_problem(group.outcome, group.stop_outcome, group.end) == "", "the group %v has a problem", group)
 	}
+	results.end = 0
 }
 
 // A mailbox of another format, or with another magic, is refused: its

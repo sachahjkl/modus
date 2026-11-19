@@ -908,7 +908,7 @@ frame_has_its_pointer :: proc "contextless" (walked: ^Stack, frame: int) -> bool
 // The entry of the debugger service. It takes the machine handle, maps the
 // boot image, takes the debug image, and opens its ring to the root
 // service and its service ring; with no service ring it writes "debugger:
-// no service ring" and stops with the code 1. Then it writes "debugger:
+// no service ring" and stops with `Refused`. Then it writes "debugger:
 // serves its exports", and waits for calls and runs them for ever, in this
 // thread, which is also the debug handler of the process that it debugs.
 @(export, link_name = "entry")
@@ -924,7 +924,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, opened = system.service_open(ctx)
 	if !opened {
 		system.log("debugger: no service ring")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	system.log("debugger: serves its exports")
 	own := system.thread_record()

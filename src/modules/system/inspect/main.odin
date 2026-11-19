@@ -399,13 +399,13 @@ key :: proc "contextless" (event: display.Event) {
 // when Space froze the sample, it only reads the list of the processes
 // again.
 //
-// **The stop**: with no window, it stops with the code 1. Else it never
+// **The stop**: with no window, it stops with `Failed`. Else it never
 // returns: `stop("inspect")`, or the close button of its window, ends it.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "inspect")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {

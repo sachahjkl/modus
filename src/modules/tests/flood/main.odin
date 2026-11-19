@@ -66,13 +66,13 @@ texts := [?]string {
 // entry opens the terminal, writes `flood: ok`, then writes numbered lines
 // with no end. Each 256 lines it reads the keys: Space pauses, and
 // while paused it waits for a key with no processor use. With no terminal,
-// it writes `flood: no terminal` and stops with the code 1.
+// it writes `flood: no terminal` and stops with `Refused`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output, ok := terminal.open(ctx)
 	if !ok {
 		system.log("flood: no terminal")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	system.log("flood: ok")
 	digits: [10]u8

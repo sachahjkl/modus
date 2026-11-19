@@ -317,8 +317,10 @@ start_policy_none :: proc "contextless" (cause: string) {
 
 // start_policy_stopped is told of each process that stopped, before its
 // place is freed. Any stop cause of the start policy before the machine is
-// usable starts the rescue; the line gives the cause.
-start_policy_stopped :: proc "contextless" (item: ^Started, cause: op.Stop_Cause, code: u32) {
+// usable starts the rescue, whatever its stop outcome: a policy that
+// stopped before it said so did not make the machine usable. The line gives
+// the cause and the outcome.
+start_policy_stopped :: proc "contextless" (item: ^Started, cause: op.Stop_Cause, outcome: op.Stop_Outcome) {
 	if item != start_policy_process {
 		return
 	}
@@ -326,7 +328,7 @@ start_policy_stopped :: proc "contextless" (item: ^Started, cause: op.Stop_Cause
 	hash := start_policy_hash_text(start_policy_hash)
 	buffer: [64]u8
 	stop_text := system.Writer{buffer = buffer[:]}
-	system.stop_write(&stop_text, cause, code)
+	system.stop_write(&stop_text, cause, outcome)
 	switch start_policy_stage {
 	case .None, .Stopping, .No_Policy:
 		// The stop was asked by this service, or the policy was no longer
@@ -372,7 +374,7 @@ root_stop_ask :: proc "contextless" (item: ^Started) {
 	if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 		unlock_stop_ask()
 	}
-	system.call(.Process_Stop, u64(item.process), 0)
+	system.process_stop(item.process)
 }
 
 // start_policy_step runs after each reap: it starts the rescue when the

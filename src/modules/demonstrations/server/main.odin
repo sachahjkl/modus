@@ -127,7 +127,7 @@ start_time: u64
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log("server: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 now_microseconds :: proc "contextless" () -> u64 {
@@ -447,7 +447,7 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 //
 // The entry, in order:
 //
-// 1. takes its random generator; with no seed it stops with the code 1;
+// 1. takes its random generator; with no seed it stops with `Refused`;
 // 2. opens its window and its service, then its endpoint and its datagram
 //    region; a missing part stops it (`fail`);
 // 3. asks the network service for its grant; a grant that is not a listen
@@ -465,12 +465,12 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
 		system.log("server: no random seed in the context")
-		system.stop(1)
+		system.stop(.Refused)
 	}
 	date_page = date.page_of(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "server")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	start_time = system.time()
 	service, _ = system.service_open(ctx)

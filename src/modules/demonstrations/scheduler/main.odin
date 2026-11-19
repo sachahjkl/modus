@@ -1960,7 +1960,7 @@ choose :: proc "contextless" (index: int) {
 // each strategy, the stress of the changes, then a window where a key or a
 // click chooses the strategy.
 //
-// With no window it stops with the code 1. A failed check does not stop
+// With no window it stops with `Failed`. A failed check does not stop
 // it: `fail` keeps the first problem, and the result line says it. After
 // the measures it gives the machine back the strategy of its start. Then it
 // draws every 500 ms; the keys 1, 2 and 3, or a click on a tile, change the
@@ -1979,7 +1979,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "scheduler")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	// The boot image holds the file of this process, for the processes of

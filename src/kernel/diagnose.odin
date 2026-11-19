@@ -1417,6 +1417,22 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			record_set(record, .Bad_Value, .None, 3, v[2], boot_record.framebuffer.address, 0)
 			return true
 		}
+	case .Process_Stop:
+		// An outcome word that the target does not take: the limit is the
+		// largest member for a stop of the caller, and 0 for a stop of
+		// another process.
+		itself := v[0] == 0
+		if !itself {
+			slot, held := read_handle_find(process, v[0], .Process, {.Control})
+			if !held {
+				return false
+			}
+			itself = &processes[slot.object] == process
+		}
+		if _, limit, known := op.stop_outcome_of_operation_word(v[1], itself); !known {
+			record_set(record, .Bad_Value, .None, 2, v[1], limit, 0)
+			return true
+		}
 	case .Machine_Stop:
 		// A code that the host cannot receive whole.
 		if v[1] > op.MACHINE_STOP_CODE_MOST {

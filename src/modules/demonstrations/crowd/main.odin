@@ -358,13 +358,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 // entry finds its own slot with the machine handle, runs each queue
 // (`run`), and writes the summary line: it is wrong when a record is lost,
 // read two times, or out of the order of its writer. The process then keeps
-// its window open until it is stopped; with no window, it stops with the
-// code 1.
+// its window open until it is stopped; with no window, it stops with
+// `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "crowd")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report

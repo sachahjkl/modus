@@ -66,13 +66,13 @@
 // - `log_reader: the process handle of the log service from connect, with
 //   Read and no Give: the lend failed with No_Right, and it reads no record
 //   of the service: as it must`;
-// - `log_reader: ok`, then it stops with the code 0.
+// - `log_reader: ok`, then it stops with `Done`.
 //
 // Each child writes `log_reader child: the record that the starter reads
-// back, with the value <n>`, its number, and stops with the code 0.
+// back, with the value <n>`, its number, and stops with `Done`.
 //
 // A check that fails writes a line with `WRONG`, and the process stops with
-// the code 1.
+// `Failed`.
 //
 // **Its grants**: **Connect**, to the log service only, with no grant to
 // act for the principal; **Image**, for the description of the exports of
@@ -397,18 +397,6 @@ lent_service_handle_refused :: proc "contextless" (connection: ^system.Call_Conn
 	return ""
 }
 
-// child_wait waits until a child stopped, and gives its stop cause and its
-// stop code. The bound only ends a hang.
-child_wait :: proc "contextless" (child: system.Handle) -> (cause: op.Stop_Cause, code: u32, stopped: bool) {
-	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		if state, stop_cause, stop_code := system.process_state(child); state == .Stopped {
-			return stop_cause, stop_code, true
-		}
-		system.sleep(system.time() + 10)
-	}
-	return .None, 0, false
-}
-
 // children_start starts the two children, and waits until each one
 // stopped: then each one wrote its record. This process keeps the handle
 // of each child, so the own log ring of each one stays after its stop. It
@@ -435,15 +423,15 @@ children_start :: proc "contextless" (ctx: ^system.Context, image: []u8) -> stri
 		children[index] = process
 	}
 	for index in 0 ..< CHILD_COUNT {
-		cause, code, stopped := child_wait(children[index])
+		cause, outcome, stopped := system.process_stop_wait(children[index], system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
 		if !stopped {
 			system.log("log_reader: WRONG: ", child_names[index], " did not stop")
 			return "a child did not stop"
 		}
-		if cause != .Itself || code != 0 {
+		if outcome != .Done {
 			buffer: [64]u8
 			stop_text := system.Writer{buffer = buffer[:]}
-			system.stop_write(&stop_text, cause, code)
+			system.stop_write(&stop_text, cause, outcome)
 			system.log("log_reader: WRONG: ", child_names[index], " stopped: ", system.written(&stop_text))
 			return "a child did not write its record"
 		}
@@ -475,19 +463,19 @@ storm_write :: proc "contextless" (log: u64, text: string) -> bool {
 }
 
 // storm is the storm child: it writes STORM_RECORDS records, then its last
-// line, and stops with the code 0; with the code 1 when the kernel refused
-// a record for another reason than the log limit.
+// line, and stops with Done; with Failed when the kernel refused a record
+// for another reason than the log limit.
 storm :: proc "contextless" (ctx: ^system.Context) -> ! {
 	log := u64(ctx.handles[op.CONTEXT_LOG])
 	for _ in 0 ..< STORM_RECORDS {
 		if !storm_write(log, STORM_LINE) {
-			system.stop(1)
+			system.stop(.Failed)
 		}
 	}
 	if !storm_write(log, STORM_LAST_LINE) {
-		system.stop(1)
+		system.stop(.Failed)
 	}
-	system.stop(0)
+	system.stop(.Done)
 }
 
 // log_records_wait waits until the budget of this process holds `amount`
@@ -539,12 +527,12 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 		system.log("log_reader: WRONG: while the storm child runs, this process holds ", storm_log_records_kept, " log records of each second of its ", whole_log_records)
 		return "the storm child did not take its log records from the budget of this process"
 	}
-	cause, code, stopped := child_wait(child)
+	_, outcome, stopped := system.process_stop_wait(child, system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
 	if !stopped {
 		return "the storm child did not stop within the hang bound"
 	}
-	if cause != .Itself || code != 0 {
-		return "the storm child did not stop itself with the code 0"
+	if outcome != .Done {
+		return "the storm child did not stop itself with Done"
 	}
 	if held, reached := log_records_wait(whole_log_records); !reached {
 		system.log("log_reader: WRONG: after the stop of the storm child, this process holds ", held, " log records of each second, and not ", whole_log_records)
@@ -643,7 +631,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// handle of the child, and stops.
 	if number, is_child := child_number_of(ctx.values[VALUE_CHILD]); is_child {
 		system.log(CHILD_TEXT, number)
-		system.stop(0)
+		system.stop(.Done)
 	}
 	if ctx.values[VALUE_STORM] != 0 {
 		storm(ctx)
@@ -651,8 +639,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log(OWN_TEXT, u64(OWN_VALUE))
 	if problem := check(ctx); problem != "" {
 		system.log("log_reader: WRONG: ", problem)
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	system.log("log_reader: ok")
-	system.stop(0)
+	system.stop(.Done)
 }

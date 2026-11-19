@@ -33,7 +33,7 @@ Round :: enum u32 {
 // round_of_word is the border of the shared page. A word that names no
 // round, and the word of None, which is no round to run, are refused: the
 // child runs nothing in their place, writes the line of the refusal, and
-// stops itself with the code 1. The parent sees the stop at once, and does
+// stops itself with `Refused`. The parent sees the stop at once, and does
 // not wait for the end of a round that never runs.
 round_of_word :: proc "contextless" (word: u32) -> (round: Round, ok: bool) {
 	for member in Round {

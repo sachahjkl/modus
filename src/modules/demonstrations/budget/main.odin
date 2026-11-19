@@ -101,12 +101,12 @@ wait_release :: proc "c" (parameter: rawptr) -> ! {
 // then keeps the window open until the process is stopped. Each step checks
 // its answer against the budget that it read before (`system.budget_read`):
 // the count of objects that the pages pay for, the pages left, and each
-// page back after the close. With no window, it stops with the code 1.
+// page back after the close. With no window, it stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "budget")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	start, _ := system.budget_read()
 	note("the budget from the root service", false, start.pages != 0, start.pages, " pages")

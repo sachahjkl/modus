@@ -64,7 +64,7 @@ clients: ring.Ring
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log_in("entropy", .Error, "entropy: ", text)
-	system.stop(1)
+	system.stop(.Failed)
 }
 
 // start resets the device, agrees on the features (the device has none
@@ -151,7 +151,7 @@ answer :: proc "contextless" (tag: u32, asked: u32, used: virtio.Used) {
 // **The stop**: with no ring, no configuration, no virtio registers, a
 // device that needs a reset, or a device that uses a read that was not
 // given (`entropy: the device used a read that was not given`), it writes
-// the reason at the level error and stops with the code 1. Else it never
+// the reason at the level error and stops with `Failed`. Else it never
 // returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {

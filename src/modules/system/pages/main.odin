@@ -253,12 +253,12 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 // The entry of pages: every 500 ms it reads the two mapping reports and
 // draws them, and the first time it writes the result on the log.
 //
-// With no window it stops with the code 1. It never stops by itself.
+// With no window it stops with `Failed`. It never stops by itself.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "pages")
 	if !ok {
-		system.stop(1)
+		system.stop(.Failed)
 	}
 	machine := ctx.handles[system.GRANT_MACHINE]
 	logged := false
