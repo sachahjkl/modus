@@ -2,7 +2,7 @@ package build
 
 import "modus:contract/blake3"
 import module "modus:contract/module"
-import "modus:contract/value_kinds"
+import "modus:contract/module_file_writer"
 import "core:fmt"
 import "core:mem"
 import "core:slice"
@@ -41,23 +41,11 @@ Export_Description :: struct {
 	line:          int,
 }
 
-// The description of a record: what module.Record and its fields hold.
-Record_Description :: struct {
-	name:   string,
-	size:   u32,
-	fields: []Field_Description,
-}
-
-Field_Description :: struct {
-	name:          string,
-	offset:        u32,
-	type:          module.Type,
-	detail:        u32, // An Integer: its size, 0 for 8. A Handle: the rights that the callee needs. A Text or Bytes: its size in bytes.
-	unsigned:      bool, // An unsigned Integer.
-	integer_unit:  value_kinds.Integer_Unit, // An Integer: what it counts, {} for a plain number (module.Field.integer_unit).
-	kind:          value_kinds.Field_Kind, // How a reader writes the value (module.Field.kind).
-	contract_enum: value_kinds.Contract_Enum, // A Status: the enum of its members (module.Field.contract_enum).
-}
+// The description of a record and of its fields: the records of the module
+// file writer, so that the description that the source gives is the one
+// that the file holds.
+Record_Description :: module_file_writer.Record_Description
+Field_Description :: module_file_writer.Field_Description
 
 // The description of a module: what its source says to a reader, and its exports.
 Module_Description :: struct {
@@ -242,76 +230,46 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 	symbol_names := sections[dynamic_symbols.link]
 	symbol_count := dynamic_symbols.size / size_of(Elf_Symbol)
 
-	// Exports.
-	export_records := make([dynamic]module.Export, context.temp_allocator)
-	function_records := make([dynamic]module.Function, context.temp_allocator)
-	string_bytes := make([dynamic]u8, context.temp_allocator)
-	append(&export_records, module.Export{})
-	append(&function_records, module.Function{})
-	append(&string_bytes, 0)
-	entry_export: u32
-	for description, index in exports {
-		export_name := description.name
-		// The buffer of a result and the error record take arguments of the
-		// call form too.
-		if arguments := module.call_argument_count(len(description.parameters), u8(description.result), description.error_record != 0); arguments > module.PARAMETER_CAPACITY {
-			return fail(name, "export %s takes %d arguments in the call form; an export takes at most %d", export_name, arguments, module.PARAMETER_CAPACITY)
-		}
+	// Exports: the code offset of each is its function symbol in the input.
+	export_parts := make([dynamic]module_file_writer.Export_Part, context.temp_allocator)
+	for description in exports {
+		code_offset: u64
 		found := false
 		for i in 0 ..< symbol_count {
 			symbol := at(elf, dynamic_symbols.offset + i * size_of(Elf_Symbol), Elf_Symbol) or_return
-			if symbol.section_index == 0 || symbol.info & 0xF != ELF_SYMBOL_FUNCTION || text(elf, symbol_names, symbol.name) != export_name {
+			if symbol.section_index == 0 || symbol.info & 0xF != ELF_SYMBOL_FUNCTION || text(elf, symbol_names, symbol.name) != description.name {
 				continue
 			}
-			append(&export_records, module.Export{code_offset = symbol.value, function = u32(len(function_records))})
-			function := module.Function {
-				name_offset     = u32(len(string_bytes)),
-				name_count      = u32(len(export_name)),
-				about_offset    = u32(len(string_bytes) + len(export_name)),
-				about_count     = u32(len(description.about)),
-				parameter_count = u8(len(description.parameters)),
-				result          = u8(description.result),
-			}
-			for type, parameter in description.parameters[:min(len(description.parameters), module.PARAMETER_CAPACITY)] {
-				function.parameters[parameter] = u8(type)
-			}
-			copy(function.parameter_details[:], description.details)
-			copy(function.parameter_directions[:], description.directions)
-			function.result_detail = description.result_detail
-			function.error_record = description.error_record
-			append(&string_bytes, export_name)
-			append(&string_bytes, description.about)
-			function.text_offset = u32(len(string_bytes))
-			function.text_count = u32(len(description.text))
-			append(&string_bytes, description.text)
-			for parameter_name, parameter in description.names {
-				function.parameter_names[parameter] = u32(len(string_bytes))
-				function.parameter_name_counts[parameter] = u8(len(parameter_name))
-				append(&string_bytes, parameter_name)
-			}
-			append(&function_records, function)
-			found = true
+			code_offset, found = symbol.value, true
 			break
 		}
 		if !found {
-			return fail(name, "export %s is not a function of the input", export_name)
+			return fail(name, "export %s is not a function of the input", description.name)
 		}
-		if export_name == "entry" {
-			entry_export = u32(index + 1)
-		}
+		append(&export_parts, module_file_writer.Export_Part {
+			name                 = description.name,
+			code_offset          = code_offset,
+			about                = description.about,
+			text                 = description.text,
+			parameters           = description.parameters,
+			parameter_names      = description.names,
+			parameter_details    = description.details,
+			parameter_directions = description.directions,
+			result               = description.result,
+			result_detail        = description.result_detail,
+			error_record         = description.error_record,
+		})
 	}
 
 	// Imports.
-	import_records := make([dynamic]module.Import, context.temp_allocator)
-	append(&import_records, module.Import{})
+	import_hashes := make([dynamic][module.HASH_SIZE]u8, context.temp_allocator)
 	for item in imports {
-		append(&import_records, module.Import{hash = blake3.hash(item.file)})
+		append(&import_hashes, blake3.hash(item.file))
 	}
 
 	// Relocations: each one becomes a rebase or a slot.
 	rebases := make([dynamic]u64, context.temp_allocator)
 	slot_records := make([dynamic]module.Slot, context.temp_allocator)
-	append(&slot_records, module.Slot{})
 	for section in sections {
 		if section.type != ELF_SECTION_RELA || section.flags & ELF_SECTION_FLAG_ALLOCATED == 0 {
 			continue
@@ -362,125 +320,77 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 			append(&rebases, relocation.offset)
 		}
 	}
-	// A segment that the loader writes nowhere is only read. The linker puts
-	// its own table there, which is not copied, so such a segment is often
-	// empty: every process that has the module can then share its pages.
-	for &image in images {
-		image.record.flags = segment_flags_after_the_relocations(image.record, rebases[:], slot_records[1:])
-	}
-	rebase_words := encode_rebases(rebases[:])
+	// The writer takes the rebases in order; the relocations of the input
+	// come in the order of their sections.
+	slice.sort(rebases[:])
 
-	// Layout: header, directory, tables, then the data of each segment.
-	output := make([dynamic]u8)
-	directory: [module.TABLE_COUNT]module.Table_Entry
-	resize(&output, size_of(module.Header) + size_of(directory))
-	add_table :: proc(output: ^[dynamic]u8, directory: ^[module.TABLE_COUNT]module.Table_Entry, kind: module.Table_Kind, records: []$T) {
-		resize(output, mem.align_forward_int(len(output), 8))
-		directory[kind] = {offset = u64(len(output)), count = u32(len(records)), record_size = size_of(T)}
-		append(output, ..slice.to_bytes(records))
-	}
-	segment_records := make([dynamic]module.Segment, context.temp_allocator)
-	append(&segment_records, module.Segment{})
-	for image in images {
-		append(&segment_records, image.record)
-	}
-	add_table(&output, &directory, .Segments, segment_records[:])
-	segment_table_offset := directory[module.Table_Kind.Segments].offset
-	add_table(&output, &directory, .Imports, import_records[:])
-	add_table(&output, &directory, .Slots, slot_records[:])
-	add_table(&output, &directory, .Exports, export_records[:])
-	add_table(&output, &directory, .Rebases, rebase_words)
-	add_table(&output, &directory, .Functions, function_records[:])
-	documentation_records := [2]module.Documentation{}
-	documentation_records[1] = {
-		about_offset = u32(len(string_bytes)),
-		about_count  = u32(len(description.about)),
-		text_offset  = u32(len(string_bytes) + len(description.about)),
-		text_count   = u32(len(description.text)),
-	}
-	append(&string_bytes, description.about)
-	append(&string_bytes, description.text)
-	// The records, and the fields of each record one after the other.
-	record_records := make([dynamic]module.Record, context.temp_allocator)
-	field_records := make([dynamic]module.Field, context.temp_allocator)
-	append(&record_records, module.Record{})
-	append(&field_records, module.Field{})
-	for item in description.records {
-		append(&record_records, module.Record{name_offset = u32(len(string_bytes)), name_count = u32(len(item.name)), size = item.size, first_field = u32(len(field_records)), field_count = u32(len(item.fields))})
-		append(&string_bytes, item.name)
-		for field in item.fields {
-			append(&field_records, module.Field{name_offset = u32(len(string_bytes)), name_count = u32(len(field.name)), offset = field.offset, type = u8(field.type), detail = field.detail, unsigned = field.unsigned, integer_unit = field.integer_unit, kind = u8(field.kind), contract_enum = u8(field.contract_enum)})
-			append(&string_bytes, field.name)
-		}
-	}
-	add_table(&output, &directory, .Records, record_records[:])
-	add_table(&output, &directory, .Fields, field_records[:])
-	// The log facts, sorted by key, and the place where a loader writes the
-	// hash of the module: the variable of the support package system that
-	// log_fact copies (src/md/features/log_facts.md, "The record").
+	// The place where a loader writes the hash of the module: the variable
+	// of the support package system that log_fact copies
+	// (src/md/features/log_facts.md, "The record").
 	own_hash_place, has_place := own_hash_place_of_elf(elf, sections[:], images[:]) or_return
 	if len(description.facts) > 0 && !has_place {
 		return fail(name, "the module writes log facts, and its linked file has no symbol %s: the variable of the support package system that holds the hash of the module", module.OWN_HASH_PLACE_SYMBOL)
 	}
-	if len(description.facts) > 0 {
-		fact_records := make([dynamic]module.Fact, context.temp_allocator)
-		append(&fact_records, module.Fact{})
-		for fact in description.facts {
-			row := module.Fact{key = fact.key, record = fact.record_index}
-			row.template_offset, row.template_count = u32(len(string_bytes)), u32(len(fact.template))
-			append(&string_bytes, fact.template)
-			row.package_offset, row.package_count = u32(len(string_bytes)), u32(len(fact.package_name))
-			append(&string_bytes, fact.package_name)
-			append(&fact_records, row)
-		}
-		add_table(&output, &directory, .Facts, fact_records[:])
+	fact_parts := make([]module_file_writer.Fact_Part, len(description.facts), context.temp_allocator)
+	for fact, index in description.facts {
+		fact_parts[index] = {key = fact.key, record_index = fact.record_index, template = fact.template, package_name = fact.package_name}
 	}
-	if has_place {
-		place_records := [2]module.Own_Hash_Place{1 = {memory_offset = own_hash_place}}
-		add_table(&output, &directory, .Own_Hash, place_records[:])
+	segment_parts := make([]module_file_writer.Segment_Part, len(images), context.temp_allocator)
+	for image, index in images {
+		segment_parts[index] = {memory_offset = image.record.memory_offset, memory_size = image.record.memory_size, flags = image.record.flags, data = image.data}
 	}
-	add_table(&output, &directory, .Strings, string_bytes[:])
-	add_table(&output, &directory, .Documentation, documentation_records[:])
+	parts := module_file_writer.Module_Parts {
+		segments           = segment_parts,
+		exports            = export_parts[:],
+		imports            = import_hashes[:],
+		slots              = slot_records[:],
+		rebases            = rebases[:],
+		records            = description.records,
+		facts              = fact_parts,
+		has_own_hash_place = has_place,
+		own_hash_place     = own_hash_place,
+		about              = description.about,
+		text               = description.text,
+	}
 	// A module whose source states no budget has no table Budget: it asks
-	// for the least budget. The memory size of the module is known here,
-	// before the tables, and no table changes it.
+	// for the least budget.
 	if description.budget.stated {
 		counted, counted_ok := budget_count(description.budget.parts, memory_size, description.budget.import_memory_sizes)
 		if !counted_ok {
 			return fail(name, "the budget that the module asks for passes the end of 64 bits")
 		}
-		budget_records := [2]module.Budget_Request{1 = counted.request}
-		add_table(&output, &directory, .Budget, budget_records[:])
+		parts.has_budget, parts.budget = true, counted.request
 	}
-	for image, index in images {
-		// The zero bytes at the end of a segment are not stored.
-		data := image.data
-		for len(data) > 0 && data[len(data) - 1] == 0 {
-			data = data[:len(data) - 1]
-		}
-		resize(&output, mem.align_forward_int(len(output), module.PAGE_SIZE))
-		record := image.record
-		record.file_offset = u64(len(output))
-		record.file_size = u64(len(data))
-		append(&output, ..data)
-		mem.copy(&output[int(segment_table_offset) + (index + 1) * size_of(module.Segment)], &record, size_of(record))
-	}
-	header := module.Header {
-		magic        = module.MAGIC,
-		version      = module.VERSION,
-		header_size  = size_of(module.Header),
-		machine      = .X86_64,
-		table_count  = module.TABLE_COUNT,
-		memory_size  = memory_size,
-		entry_export = entry_export,
-	}
-	mem.copy(&output[0], &header, size_of(header))
-	mem.copy(&output[size_of(header)], &directory, size_of(directory))
 
-	if error := module.validate(output[:]); error != .None {
-		return fail(name, "the module that was written is not valid: %v", error)
+	size, refusal := module_file_writer.file_size_needed(parts)
+	if refusal.refusal != .None {
+		return fail(name, "%s", module_file_refusal_text(parts, refusal))
 	}
-	return output[:], true
+	output := make([]u8, int(size))
+	_, refusal = module_file_writer.write(parts, output)
+	if refusal.refusal != .None {
+		delete(output)
+		return fail(name, "%s", module_file_refusal_text(parts, refusal))
+	}
+	return output, true
+}
+
+// module_file_refusal_text says why the module file writer refused the
+// parts of a module, with the name of the part when it has one.
+module_file_refusal_text :: proc(parts: module_file_writer.Module_Parts, refusal: module_file_writer.Refusal_Record) -> string {
+	part := ""
+	switch refusal.table {
+	case .Exports, .Functions:
+		if refusal.index < u64(len(parts.exports)) {
+			part = fmt.tprintf(" (export %s)", parts.exports[refusal.index].name)
+		}
+	case .Records, .Fields:
+		if refusal.index < u64(len(parts.records)) {
+			part = fmt.tprintf(" (record %s)", parts.records[refusal.index].name)
+		}
+	case .None, .Segments, .Imports, .Slots, .Rebases, .Strings, .Documentation, .Budget, .Facts, .Own_Hash:
+	}
+	return fmt.tprintf("the module file writer refuses the module: %v in the table %v, part %d%s, value %d (src/library/contract/module_file_writer)", refusal.refusal, refusal.table, refusal.index, part, refusal.value)
 }
 
 // own_hash_place_of_elf gives the memory offset of the own-hash place: the
@@ -531,67 +441,8 @@ own_hash_place_of_elf :: proc(elf: []u8, sections: []Elf_Section_Header, images:
 	return memory_offset, found, true
 }
 
-// segment_flags_after_the_relocations gives the flags of a segment once
-// each rebase and each slot of the module is known. A segment that is
-// read-only after the load and that holds no rebase and no slot is a
-// segment that no loader writes: it loses Write and Read_Only_After_Load,
-// and is a constant segment. Each other segment keeps its flags.
-//
-// Why it is sound: a loader writes a segment in two ways only, a rebase
-// and a slot, and both lists are complete here. The pages of such a
-// segment are then the same at each base and with each binding, which is
-// what makes a segment a part of the shared code of a module. Its
-// protection in a process does not change: a segment that is read-only
-// after the load was never writable there.
-segment_flags_after_the_relocations :: proc(segment: module.Segment, rebases: []u64, slots: []module.Slot) -> module.Segment_Flags {
-	if .Read_Only_After_Load not_in segment.flags {
-		return segment.flags
-	}
-	first, end := segment.memory_offset, segment.memory_offset + segment.memory_size
-	for offset in rebases {
-		if offset >= first && offset < end {
-			return segment.flags
-		}
-	}
-	for slot in slots {
-		if slot.memory_offset >= first && slot.memory_offset < end {
-			return segment.flags
-		}
-	}
-	return segment.flags - {.Write, .Read_Only_After_Load}
-}
-
 // module_export_name gives the name of an export of a module file.
 module_export_name :: proc(file: []u8, export_index: u32) -> string {
 	function, _ := module.function(file, export_index)
 	return module.string_at(file, function.name_offset, function.name_count)
-}
-
-// encode_rebases writes memory offsets in the RELR form (module/format.odin).
-encode_rebases :: proc(memory_offsets: []u64, allocator := context.temp_allocator) -> []u64 {
-	slice.sort(memory_offsets)
-	words := make([dynamic]u64, allocator)
-	i := 0
-	for i < len(memory_offsets) {
-		append(&words, memory_offsets[i])
-		cursor := memory_offsets[i] + 8
-		i += 1
-		for {
-			bitmap: u64
-			for i < len(memory_offsets) {
-				distance := memory_offsets[i] - cursor
-				if distance >= 8 * module.REBASE_BITMAP_LOCATIONS || distance % 8 != 0 {
-					break
-				}
-				bitmap |= 1 << (distance / 8 + 1)
-				i += 1
-			}
-			if bitmap == 0 {
-				break
-			}
-			append(&words, bitmap | 1)
-			cursor += 8 * module.REBASE_BITMAP_LOCATIONS
-		}
-	}
-	return words[:]
 }
