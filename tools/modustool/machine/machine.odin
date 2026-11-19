@@ -2062,6 +2062,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
 	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
 	{kind = .Wait, text = "address_space: edge case: a map with a flag that the kernel does not know is refused: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: the end of the last thread stops the process with its own stop cause and the code 0: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: a process gets no Control over itself, and its stop through its own handle is refused: right", any_order = true},
 	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
 	// Each page table that a mapping made returns to the budget with its
 	// unmap, at three levels, for a reservation, for a large page, and
@@ -2782,7 +2784,7 @@ scenario := [?]Step {
 	// The process stops: its terminal stays, with what the process wrote.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"flood\")"},
-	{kind = .Wait, text = "terminal: flood stopped: a holder after "},
+	{kind = .Wait, text = "terminal: flood stopped: a holder, after "},
 	{kind = .Click, x = 940, y = 400}, // A part of the window that the console does not cover.
 	{kind = .Shot, text = "terminal_stopped"},
 	// The scenario closes the window: the terminal stops.
@@ -2989,6 +2991,7 @@ scenario := [?]Step {
 	// The child of errors stops on a kernel ring that holds records
 	// (src/md/api/kernel_ring_completion_room.md, "The stop of a process").
 	{kind = .Wait, text = "errors: a stop on a kernel ring that holds records ends the process as a stop of itself, not a fault: as it must"},
+	{kind = .Wait, text = "errors: the report of the slot of the child after its last handle closed gives its state None and its serial, and no fact of the child: as it must", fails_on = "errors: WRONG: the report of the free slot "},
 	{kind = .Wait, text = " refused Memory_Create: "},
 	{kind = .Wait, text = "errors: a kernel command and its table of error details: accepted with no table "},
 	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},
@@ -3582,6 +3585,8 @@ scenario_measure_address_space := [?]Step {
 	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
 	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
 	{kind = .Wait, text = "address_space: edge case: a map with a flag that the kernel does not know is refused: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: the end of the last thread stops the process with its own stop cause and the code 0: right", any_order = true},
+	{kind = .Wait, text = "address_space: edge case: a process gets no Control over itself, and its stop through its own handle is refused: right", any_order = true},
 	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
 	// Each page table that a mapping made returns to the budget with its
 	// unmap, at three levels, for a reservation, for a large page, and

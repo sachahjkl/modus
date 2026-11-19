@@ -986,6 +986,33 @@ child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	system.stop(0)
 }
 
+// free_slot_check reads the report of the slot of a child after its last
+// handle closed: a free slot gives its state None and its serial, and no
+// fact of the process that it held (its name, its code, its stop cause, its
+// counts). The slot frees when the last processor left the child; the hang
+// bound only ends a wait that never ends. A new process in the slot before
+// the read is a line, not a pass: the check did not run.
+free_slot_check :: proc "contextless" (slot: u64, serial: u64) {
+	report: op.Process_Report
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+		report = {}
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report))
+		if report.state == .None || report.process_serial != serial {
+			break
+		}
+		system.sleep(system.time() + 10)
+	}
+	free := op.Process_Report{state = .None, process_serial = serial}
+	switch {
+	case report.process_serial != serial:
+		system.log("errors: WRONG: the slot ", slot, " of the child served another process before its report was read")
+	case report != free:
+		system.log("errors: WRONG: the report of the free slot ", slot, " gives the state ", u64(report.state), ", the stop cause ", u64(report.stop_cause), ", the code ", u64(report.code), ", ", report.handle_count, " handles, ", report.entries, " entries of the process before it")
+	case:
+		system.log("errors: the report of the slot of the child after its last handle closed gives its state None and its serial, and no fact of the child: as it must")
+	}
+}
+
 // refusals measures the two refusals; the machine handle reads the counts of
 // the locks.
 refusals :: proc "contextless" (ctx: ^system.Context) {
@@ -1032,7 +1059,9 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 		} else {
 			system.log("errors: WRONG: a stop on a kernel ring that holds records left the child in the state ", op.STATE_NAMES[child_state], ", stopped by ", op.STOP_CAUSE_TEXTS[child_cause], ", with the code ", u64(child_code))
 		}
+		places, _ := system.call(.Process_State, u64(process))
 		system.close(process)
+		free_slot_check(places[4], places[5])
 	} else {
 		// A child that does not start measures nothing: the case says so,
 		// and does not pass in silence.

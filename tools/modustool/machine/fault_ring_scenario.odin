@@ -45,6 +45,7 @@ scenario_fault_ring := [?]Step {
 	{kind = .Wait, text = "fault_ring: a fault of the handler itself: the child stopped: a page that is not committed, the address "},
 	{kind = .Wait, text = "kernel: process fault_ring child: the fault ring is full (1 times): the fault stops the process"},
 	{kind = .Wait, text = "fault_ring: a full ring: the child stopped: a page that is not committed, the address "},
+	{kind = .Wait, text = "fault_ring: the process stops while a thread waits: stopped again by this process, the child keeps the stop cause itself: as it must"},
 	{kind = .Wait, text = "fault_ring: the process stops while a thread waits: the child stopped: itself, code 0, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: the handler ends while a thread waits: the child stopped: a fault that no thread can answer, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: a word wait, a fault, a decommit of the word: the waker woke 1 thread; no second record and no run before the answer; the answer: Ok, the thread read 5eed000000000000: as it must"},

@@ -926,25 +926,30 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				about := &processes[v[2]]
 				about_taken := process_lock(u32(v[2]))
 				defer process_unlock(u32(v[2]), about_taken)
-				report = {
-					state        = process_state(u32(v[2])),
-					thread_count = u64(about.thread_count),
-					code         = about.code,
-					stop_cause   = u32(about.cause),
-					name         = about.name,
-					mapped_pages = about.mapped_pages,
-					present_pages = about.state == .None || about.table == 0 ? 0 : present_pages(about),
-					process_serial = u64(about.serial),
-					run_time     = about.run_time,
-					start_time   = about.start_time,
-					entries      = about.entries,
-				}
-				if about.state != .None {
-					report.budget = budgets[about.budget].amounts
-				}
-				for slot in about.handles {
-					if slot.kind != .None {
-						report.handle_count += 1
+				// A free slot keeps the facts of its last process: the report
+				// gives only its state and its serial, as the stop report of a
+				// free slot gives nothing (stop_report_for_inspect).
+				if about.state == .None {
+					report = {state = .None, process_serial = u64(about.serial)}
+				} else {
+					report = {
+						state        = process_state(u32(v[2])),
+						thread_count = u64(about.thread_count),
+						code         = about.code,
+						stop_cause   = u32(about.cause),
+						name         = about.name,
+						mapped_pages = about.mapped_pages,
+						present_pages = about.table == 0 ? 0 : present_pages(about),
+						process_serial = u64(about.serial),
+						run_time     = about.run_time,
+						start_time   = about.start_time,
+						entries      = about.entries,
+						budget       = budgets[about.budget].amounts,
+					}
+					for slot in about.handles {
+						if slot.kind != .None {
+							report.handle_count += 1
+						}
 					}
 				}
 			}

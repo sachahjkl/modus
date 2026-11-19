@@ -304,8 +304,9 @@ sleep :: proc "contextless" (deadline: u64) -> u64 {
 
 // stop ends this process with a stop code: each of its threads ends, and
 // its memory and its handles end. A holder of its process handle reads the
-// stop cause `Itself` and the code with `Process_State`. The code is 0 or
-// 1 and carries no data. It does not return.
+// stop cause `Itself` and the code with `Process_State`. Give 0 or 1: a
+// result goes through memory that the starter shares, never through the
+// code. It does not return.
 //
 // It stops the process whatever its kernel ring holds: it drops each
 // completion that waits, as the process ends and wants no answer, and

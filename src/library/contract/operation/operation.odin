@@ -458,8 +458,9 @@ Operation :: enum u32 {
 	//
 	// - `process`: 0 for this process, or a process handle with **Control**. With 0, the thread that asks
 	//   ends with its process: the operation does not return.
-	// - `code`: the stop code: 0 or 1, with no data. A stop of the kernel has the code 0, and its cause tells
-	//   it apart.
+	// - `code`: the stop code, any value: the kernel does not check it. A stop of the kernel has the code 0, and
+	//   its cause tells it apart. The processes of the system stop with 0 or 1, but the start policies, which
+	//   keep their own codes until the stop outcome replaces the code (src/md/api/process_stop.md).
 	//
 	// **Results**: none.
 	//

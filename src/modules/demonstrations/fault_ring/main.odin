@@ -1450,6 +1450,11 @@ child :: proc "contextless" (role: Role) -> ! {
 	step_failed("the stop of the case")
 }
 
+// The stop cause of the child of the case "the process stops while a thread
+// waits" after this process stopped it again as a holder: it must stay
+// Itself.
+cause_after_holder_stop: op.Stop_Cause
+
 // child_run starts the child of a role, waits for its stop, and gives its
 // stop cause, its stop code and its stop report. The budget of this
 // process, before the start and after the end of the child, says if the
@@ -1503,7 +1508,15 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 			system.close(process)
 			return
 		}
-		if op.Process_State(results[0]) == .Stopped {
+		// The words of the kernel cross their border: a pair that it
+		// refuses is no stop, and the case is wrong.
+		state, _, known := op.stop_of_words(results[0], results[1])
+		if !known {
+			system.log("fault_ring: ", name, ": Process_State gave the state word ", results[0], " with the stop cause word ", results[1], ", which do not fit")
+			system.close(process)
+			return
+		}
+		if state == .Stopped {
 			stopped = true
 			break
 		}
@@ -1540,6 +1553,12 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 		return
 	}
 	_, cause, code = system.process_state(process)
+	// A stop by this process, as a holder, after the child stopped itself:
+	// the first stop keeps its cause and its code.
+	if role == .Stop_While_Waiting {
+		system.call(.Process_Stop, u64(process), 0)
+		_, cause_after_holder_stop, _ = system.process_state(process)
+	}
 	if _, status = system.call(.Process_State, u64(process), u64(uintptr(&report))); status != .Ok {
 		system.log("fault_ring: ", name, ": Process_State with the stop report failed: ", op.STATUS_NAMES[status])
 		system.close(process)
@@ -1724,7 +1743,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		case .Full_Ring:
 			item.right = cause == .Not_Committed && !left
 		case .Stop_While_Waiting:
-			item.right = clean_end(cause, code) && !left
+			item.right = clean_end(cause, code) && cause_after_holder_stop == .Itself && !left
+			system.log("fault_ring: ", item.name, ": stopped again by this process, the child keeps the stop cause ", op.STOP_CAUSE_TEXTS[cause_after_holder_stop], item.right ? string(": as it must") : string(": WRONG"))
 		case .Handler_Ends, .Handler_Changed:
 			item.right = cause == .Fault_Unanswered && !left
 		case .Word_Leftover:

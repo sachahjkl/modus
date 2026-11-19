@@ -57,6 +57,8 @@ scenario_kernel_events := [?]Step {
 	{kind = .Wait, text = " lost, of 0); a rule for every process that matches nothing "},
 	{kind = .Wait, text = " lost, of 0); a rule that accepts each of its operations "},
 	{kind = .Wait, text = "kernel_events: in 200 ms while this process sleeps, every process: "},
+	// A later stop by a holder keeps the first stop cause.
+	{kind = .Wait, text = "kernel_events: the child that faults, stopped again by this process: its stop cause stays a fault: as it must"},
 	{kind = .Wait, text = "kernel_events: the table is given; waiting for the revocation of the grant machine"},
 	// The end of the table with its owner.
 	{kind = .Front, text = "console"},

@@ -281,9 +281,9 @@ child_start :: proc "contextless" (role: Role, name: string, amounts: system.Bud
 // child_stopped waits until a child stopped. The bound only ends a hang.
 child_stopped :: proc "contextless" (child: ^Child) -> bool {
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-		results, status := system.call(.Process_State, u64(child.process))
-		if status != .Ok || op.Process_State(results[0]) == .Stopped {
-			return status == .Ok
+		// The state word crosses the border of the library, never a cast.
+		if state, _, _ := system.process_state(child.process); state == .Stopped {
+			return true
 		}
 		system.sleep(system.time() + 10)
 	}
@@ -292,10 +292,16 @@ child_stopped :: proc "contextless" (child: ^Child) -> bool {
 
 // child_end stops a child, closes it, and says if its budget came back
 // whole: each page, each thread and its process. The budget comes back when
-// the last processor left the child; the bound only ends a hang.
-child_end :: proc "contextless" (child: ^Child, name: string) -> (back: bool) {
+// the last processor left the child; the bound only ends a hang. With
+// cause_after_stop, it gives the stop cause of the child after its own
+// stop, before the close: a child that stopped before keeps its first
+// cause.
+child_end :: proc "contextless" (child: ^Child, name: string, cause_after_stop: ^op.Stop_Cause = nil) -> (back: bool) {
 	system.call(.Process_Stop, u64(child.process), 0)
 	child_stopped(child)
+	if cause_after_stop != nil {
+		_, cause_after_stop^, _ = system.process_state(child.process)
+	}
 	system.close(child.process)
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; !back && system.time() < deadline; {
 		after, _ := system.budget_read()
@@ -956,7 +962,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		case_of_the_cost(&load, other)
 		if faulter_started {
-			child_end(&faulter, "the child that faults")
+			// The child stopped on its fault long before: the stop of its
+			// parent as a holder does not change its first stop cause.
+			cause_after_stop: op.Stop_Cause
+			child_end(&faulter, "the child that faults", &cause_after_stop)
+			kept := cause_after_stop == .Fault
+			system.log("kernel_events: the child that faults, stopped again by this process: its stop cause stays ", op.STOP_CAUSE_TEXTS[cause_after_stop], kept ? string(": as it must") : string(", not a fault: WRONG"))
 		}
 		interface_draw(&window)
 		case_of_the_revoked_right(&load)

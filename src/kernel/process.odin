@@ -1435,6 +1435,15 @@ page_give :: proc "contextless" (process: ^Process, address: u64, write: bool, e
 	return true
 }
 
+// stop_cause_missing stops the machine when a path of the kernel stops a
+// process with no stop cause: a fault of the kernel, which no process can
+// cause, since each operation names the cause itself.
+stop_cause_missing :: proc "contextless" (index: u32) -> ! {
+	fault_report_begin()
+	log("kernel: the kernel stopped the process slot ", u64(index), " with no stop cause")
+	machine_stop(.Invariant_Broken)
+}
+
 // present_count_broken stops the machine of the test when the count of the
 // present pages of a mapping is not what its page table holds.
 present_count_broken :: proc "contextless" (mapping: ^Mapping, walked: u64) -> ! {
@@ -1559,8 +1568,9 @@ process_free :: proc "contextless" (process: ^Process) {
 	}
 	own_log_ring_end(process)
 	process.state = .None
-	// A slot with no process has no stop cause: a report of the slot must
-	// not pair the state None with the cause of the process before.
+	// A slot with no process has no stop cause. Its other facts (the name,
+	// the code, the counts) stay until a new process takes the slot: the
+	// reports of Inspect give none of them for a free slot.
 	process.cause = .None
 	budgets[process.budget].amounts.processes += 1
 }
@@ -1844,6 +1854,11 @@ process_state :: proc "contextless" (index: u32) -> op.Process_State {
 // cleans the process up. The caller holds the control lock. The first stop
 // keeps its cause and its code: a later stop or fault changes neither.
 process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, code: u32) {
+	// Every path of the kernel names its cause: a stop with none would give
+	// readers the state Stopped with no cause, which their border refuses.
+	if cause == .None {
+		stop_cause_missing(index)
+	}
 	process := &processes[index]
 	taken := process_lock(index)
 	if process.state == .None || process.state == .Stopped {

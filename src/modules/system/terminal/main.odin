@@ -57,7 +57,7 @@
 // - "terminal: a press on the arrow up of the scroll bar of console: the
 //   view starts at line L of N", or "... the view follows the last lines";
 // - "terminal: a drag of the thumb of the scroll bar of console: ...";
-// - "terminal: console stopped: itself, code C after L lines and R
+// - "terminal: console stopped: itself, code C, after L lines and R
 //   records", or the text of another stop cause in place of "itself, code
 //   C";
 // - "terminal: console shows the character N in its cells, drawn by this
@@ -758,7 +758,7 @@ view_make :: proc "contextless" () {
 		stop_buffer: [64]u8
 		stop_text := system.Writer{buffer = stop_buffer[:]}
 		system.stop_write(&stop_text, request.cause, request.code)
-		note("-- ", process_name, " stopped: ", system.written(&stop_text), " after ", lines_written, " lines --")
+		note("-- ", process_name, " stopped: ", system.written(&stop_text), ", after ", lines_written, " lines --")
 		status_line.total = 0
 		edit_line = {}
 		edit_runs_pending = {}
@@ -1507,7 +1507,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				stop_buffer: [64]u8
 				stop_text := system.Writer{buffer = stop_buffer[:]}
 				system.stop_write(&stop_text, cause, code)
-				system.log("terminal: ", process_name, " stopped: ", system.written(&stop_text), " after ", view.count - 1, " lines and ", view.records, " records")
+				system.log("terminal: ", process_name, " stopped: ", system.written(&stop_text), ", after ", view.count - 1, " lines and ", view.records, " records")
 				if lost, ended := key_path.loss_end(&keys_loss); ended {
 					system.log("terminal: ", process_name, " stopped and did not read its keys: ", lost, " keys were lost")
 				}
