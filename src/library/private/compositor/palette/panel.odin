@@ -703,7 +703,10 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 			} else {
 				entry_about(&about, list, chosen)
 			}
-			interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&about), text_room), graphics.colors.dim, interface.FONT_INTERFACE)
+			// A help line: the caption size, on the baseline of a line of
+			// the body in the band.
+			caption_top := interface.text_top_on_baseline(table, interface.FONT_INTERFACE, y + DETAIL_TOP + 4, interface.FONT_CAPTION)
+			interface.draw_text(table, x + TEXT_MARGIN, caption_top, interface.text_fit(table, interface.FONT_CAPTION, interface.text_of(&about), text_room), graphics.colors.dim, interface.FONT_CAPTION)
 		}
 	}
 
@@ -1095,8 +1098,12 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 	// The whole signature, as code, then the help sentence.
 	signature := string(form.given.signature[:form.given.signature_length])
 	after := interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, {}, signature, text_room), graphics.code_class_color(.Punctuation, graphics.appearance))
+	// The help sentence is a help line: the caption size, on the baseline
+	// of the signature.
 	about := string(form.given.about[:form.given.about_length])
-	interface.draw_text(table, after + 16, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, about, x + TEXT_MARGIN + text_room - after - 16), graphics.colors.dim, interface.FONT_INTERFACE)
+	about_left := after + 2 * graphics.GAP
+	about_top := interface.text_top_on_baseline(table, {}, y + DETAIL_TOP + 4, interface.FONT_CAPTION)
+	interface.draw_text(table, about_left, about_top, interface.text_fit(table, interface.FONT_CAPTION, about, x + TEXT_MARGIN + text_room - about_left), graphics.colors.dim, interface.FONT_CAPTION)
 }
 
 // result_draw draws, in the place of the list, the entry that the panel
@@ -1137,7 +1144,9 @@ result_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y:
 		place += length
 		line_y := y + LIST_TOP + RESULT_LINES_TOP + line * interface.LINE
 		if large && line == 0 {
-			run_x = interface.large_number(frame, run_x, line_y, text, part_color(run_part))
+			// The one number that the panel is about: the largest size,
+			// not the number of a card (docs/DESIGN.md, "5. Text").
+			run_x = interface.draw_text(table, run_x, line_y, text, part_color(run_part), interface.FONT_LARGEST)
 			continue
 		}
 		run_x = interface.draw_text(table, run_x, line_y, text, part_color(run_part))

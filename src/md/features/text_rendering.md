@@ -48,11 +48,11 @@ A process can draw any text size from 4 to 256 pixels. The desktop and the eleme
 
 | Token | Text size | x-height and cap height after the grid fit, at scale 1: B612; Paper Mono | Its elements |
 |---|---|---|---|
-| `text_caption` | 14 | 6 and 9 rows; 6 and 8 rows | The caption of a card, the detail of a row of a list, the hash prefix after a nickname in the menu of the windows |
+| `text_caption` | 14 | 6 and 9 rows; 6 and 8 rows | The caption of a card, a label under a value, the help line of the chosen row of the palette, the hash prefix after a nickname in the menu of the windows and in `monitor` |
 | `text_body` | 16 | 7 and 10; 7 and 9 | Each other text |
-| `text_heading` | 24 | 11 and 15; 10 and 14 | A heading of a page of `manual`, the heading of a group of a list |
+| `text_heading` | 24 | 11 and 15; 10 and 14 | The page heading: the title of a page of `manual` |
 | `text_large` | 32 | | The one number of a card |
-| `text_largest` | 48 | | The one number that a whole window is about |
+| `text_largest` | 48 | | The one number that a whole window or panel is about: the result of the palette |
 
 **The caption: 14, the readable floor of both fonts.** The x-height is the height that a reader reads, and the grid fit puts it on whole rows. At 14 the x-height of both fonts is 6 rows, one row under the body. At 13 the x-height of Paper Mono is 5.46 rows, which the grid fit rounds to 5, while B612 keeps 6: the two fonts of one line then differ by a row, and lowercase letters of 5 rows with subpixel bands lose their counters (`e`, `a`, `s`). At 14 a cell of Paper Mono is 7 pixels, a whole count.
 
@@ -60,7 +60,13 @@ A process can draw any text size from 4 to 256 pixels. The desktop and the eleme
 
 **The steps of the scale.** 16, 24, 32 and 48 are whole pixels at each scale from 1.25 to 2. 14 is a whole count at 1.5 (21) and 2 (28), and half a pixel off at 1.25 (17.5) and 1.75 (24.5). A text size needs no whole pixel: the glyphs are drawn at the fractional size, and only the baseline goes to a whole pixel, which the box of the record holds. A caption never forms a text grid, so no cell of it needs whole pixels.
 
-The draw record holds any text size from its version 18. The elements of the caption and of the heading are the work after it: each element is sized from the measure of its text at the new size, so that no text passes its box or lies over another.
+**The elements at the tokens.** Each element is sized from the measure of its text at its size, never from a fixed line of 16:
+
+- **Two sizes on one line share one baseline.** The caption of a card is on the baseline of its title; the help sentence of the palette on the baseline of the signature or of a line of the body. The top of the smaller text is the top of the line plus the difference of the two baselines (`interface.text_top_on_baseline`), each from the row where the rasterizer puts it (`text_rendering.baseline_row`). The baseline is a whole row at each size and never goes up when the size grows, so the caption starts at the top of the title or lower, inside the band of the title. A top in the middle of the line was refused: the two baselines then differ by a pixel, which a reader sees between two words.
+- **A label under a value starts at the line of the value, with no gap.** The line of a text holds its descent, so the caption needs no space of its own; a gap would part the label from what it names. Its height is its lines times 14 (`interface.caption_height`).
+- **A page heading is not a row.** `manual` scrolls rows of one height and finds the row of a press by a division. A heading of 24 among rows of 16 would break both. The heading takes whole rows of the text column instead, its lines and a `gap` under them, and stays when the rows move. A heading wider than its box goes on more lines.
+- **The heading of a group of a list stays at the body.** A row of a list is 24 pixels, and a text of 24 fills it with no room; the group heading is a dim row of the list, as each other row.
+- **A caption keeps the bound of a text.** 14 is under the large text, so the dim color keeps 4.5 to 1 on each surface of a card: the host test of the appearance computes it. On the chosen row a caption is white, as each text there.
 
 ### The faces
 
@@ -276,7 +282,7 @@ The boot display in Spleen only, which this module needs first, is built ([boot_
    - Left: the glyph cache file leaves the system: its format in `src/library/contract/glyph_cache` (the character index and its constants stay, in a contract of their own name), `vector_font.glyph_cache_build` and its proportional form, the fuzz target `glyph_cache`, the candidates of `vector_glyphs` and of `build/fonts/candidates.png`, which draw from it, and the tests that take a cache as their reference (the blend, the shaping, the cells and the text of a face): each takes its glyphs from a face. Measures 2, 3 and 6 run before and after the removal of the caches of the boot image; their commands are in [`docs/FONTS.md`](../../../docs/FONTS.md), "14.6 Measures".
 3. The draw record with sizes, in two parts, each a working system:
    - Built: version 18, `size` in place of `scale` in the text record and in the text grid, refused by the border and by the writer under 4 and over 256 pixels; every writer and reader moved (the contract, the interface package, the drawing module, the compositor, the palette, the tool's layout of the bytes and the fuzz target); `interface.Font` holds a text size, `FONT_LARGE` is the size 32 and `FONT_LARGEST` the size 48, the sizes of before, so no picture changes; `graphics.text_sized` draws the cells at any size, and the bold weight is drawn at each size.
-   - Left: the elements at the text size tokens: the caption at 14 and the heading at 24 in the elements of "The text size tokens", the one number of a card at 32, each element sized from the measure of its text at its size.
+   - Built: the elements at the text size tokens. `interface.FONT_CAPTION`, `FONT_CAPTION_CELLS` and `FONT_HEADING`; the caption of a card at 14 on the baseline of its title; `large_number` at 32, with its label as a caption under it (`draw_caption`) in `remote`, `settings`, `interface_elements` and `server`; the page heading of `manual` at 24 (`draw_heading`) over its rows; the help line of the palette and the hash prefix in the menu of the windows and in `monitor` at 14; the result of the palette at 48. `text_rendering.baseline_row` gives the baseline of a face at a size.
 4. The scale factor of the desktop ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen").
 5. The grid as spacing tokens ([spacing_tokens.md](spacing_tokens.md)). Built: it depended on no other step.
 

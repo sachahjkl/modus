@@ -284,7 +284,14 @@ overview_build :: proc "contextless" () -> int {
 	page_kind = .Overview
 	count := min(information.modules(catalog(), module_rows[:]), len(module_rows))
 	run_count, _ := information.running(machine, catalog(), running_rows[:])
-	put_built(0, graphics.colors.text, "ALL MODULES (", u64(count), ")")
+	heading := system.Writer {
+		buffer = built[built_count:],
+	}
+	system.write_part(&heading, "All the modules (")
+	system.write_part(&heading, u64(count))
+	system.write_part(&heading, ")")
+	built_count += heading.count
+	heading_set(system.written(&heading), graphics.colors.text)
 	put("The flat tables of each module of the boot image, as the manual reads them.", 0, graphics.colors.dim)
 	put("Sizes in bytes of memory. o: this table; up, down: the page of a module.", 0, graphics.colors.dim)
 	put("", 0, 0)

@@ -256,7 +256,7 @@ The text, the pictures and the opaque rectangles on whole pixels cost what they 
 Built: version 18 of the record. A text and a text grid carry a text size in 1/64 pixel in place of one of three scales.
 
 - **The fields.** `size` u16 at 42 of a `Text`, after `font` at 40 and `weight` at 41; `size` u16 at 36 of a `Text_Grid`. The border (`draw_record.text_size_valid`) refuses a size under `TEXT_SIZE_MINIMUM` or past `TEXT_SIZE_LIMIT`, 0 too, with `Field_Past_Bound`; the bound of the origin of a text is the larger of 16 pixels and one line. The exports are `damage_of_draw_table_18` and `execute_draw_table_in_rectangles_18`.
-- **The writers.** `interface.Font` holds a text size, 0 for the body; a writer refuses a size that the border refuses and sets `refused`. The fonts `FONT_LARGE` and `FONT_LARGEST` are the sizes 32 and 48 of the scales 2 and 3, so the pictures of the desktop do not change.
+- **The writers.** `interface.Font` holds a text size, 0 for the body; a writer refuses a size that the border refuses and sets `refused`. The fonts of the text size tokens, `FONT_CAPTION` to `FONT_LARGEST`, give the elements their sizes ([../features/text_rendering.md](../features/text_rendering.md), "The text size tokens").
 - **The tests.** Host tests give the border the sizes 0, 1, 255, 16 385 and the largest u16 in a text of each font and in a grid, check the refusal and that no primitive comes back, the origin one pixel past one line at the largest size, and take the sizes 256 and 16 384; the writer refuses the same sizes with no record and no byte of text; a text of each text size token and each weight draws the pixels of its reference, whole and in four damage rectangles.
 
 Before it, version 17 of the record. A clip is pushed and popped.

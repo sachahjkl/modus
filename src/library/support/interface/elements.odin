@@ -26,26 +26,30 @@ background :: proc "contextless" (frame: ^Frame, area: Area) {
 
 // card draws the frame of one subject (docs/DESIGN.md, section 3): a border
 // of 1 pixel in its accent, the surface of a card, a bar of 4 x 16 pixels
-// and the title in the accent, the caption of its record in the dim color,
-// and a count at the right. It gives the area of its content.
+// and the title in the accent, the caption of its record at the caption
+// size in the dim color, on the baseline of the title, and a count at the
+// right. It gives the area of its content.
 card :: proc "contextless" (frame: ^Frame, area: Area, title, caption: string, accent: graphics.Color, count := "") -> Area {
 	table := frame.table
 	draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(accent, 28), graphics.shade(accent, 14))
 	draw_vertical_gradient(table, area.x + 1, area.y + 1, area.width - 2, area.height - 2, graphics.colors.card_top, graphics.colors.card_bottom)
-	draw_vertical_gradient(table, area.x + graphics.MARGIN, area.y + 12, 4, 16, graphics.shade(accent, 130), accent)
+	title_top := area.y + 12
+	draw_vertical_gradient(table, area.x + graphics.MARGIN, title_top, 4, 16, graphics.shade(accent, 130), accent)
 	// The title, then the caption, take the room before the count: a
 	// narrow card cuts them, so they never run past the border.
 	title_left := area.x + graphics.MARGIN + 12
 	right := area.x + area.width - graphics.MARGIN
 	if count != "" {
-		right -= text_measured_width(table, {}, count) + 16
+		right -= text_measured_width(table, {}, count) + 2 * graphics.GAP
 	}
-	after := draw_text(table, title_left, area.y + 12, text_fit(table, FONT_INTERFACE_BOLD, title, right - title_left), accent, FONT_INTERFACE_BOLD)
+	after := draw_text(table, title_left, title_top, text_fit(table, FONT_INTERFACE_BOLD, title, right - title_left), accent, FONT_INTERFACE_BOLD)
 	if count != "" {
-		draw_text_right(table, area.x + area.width - graphics.MARGIN, area.y + 12, count, graphics.colors.text)
+		draw_text_right(table, area.x + area.width - graphics.MARGIN, title_top, count, graphics.colors.text)
 	}
-	draw_text(table, after + 16, area.y + 12, text_fit(table, FONT_INTERFACE, caption, right - (after + 16)), graphics.colors.dim, FONT_INTERFACE)
-	return {area.x + graphics.MARGIN, area.y + graphics.TITLE, area.width - 2 * graphics.MARGIN, area.height - graphics.TITLE - 8}
+	caption_left := after + 2 * graphics.GAP
+	caption_top := text_top_on_baseline(table, FONT_INTERFACE_BOLD, title_top, FONT_CAPTION)
+	draw_text(table, caption_left, caption_top, text_fit(table, FONT_CAPTION, caption, right - caption_left), graphics.colors.dim, FONT_CAPTION)
+	return {area.x + graphics.MARGIN, area.y + graphics.TITLE, area.width - 2 * graphics.MARGIN, area.height - graphics.TITLE - graphics.GAP}
 }
 
 // label_value_line draws a name in the dim color and its value: at
@@ -225,10 +229,41 @@ mark :: proc "contextless" (frame: ^Frame, x, y, size: int, color: graphics.Colo
 	draw_rectangle(frame.table, x, y, size, size, color)
 }
 
-// large_number draws the one number of a card, at the largest text size
-// (graphics.TEXT_LARGEST), and gives the x after it.
+// large_number draws the one number of a card at the large text size
+// (graphics.TEXT_LARGE), and gives the x after it. Its line is
+// line_height(FONT_LARGE) high: a label under it starts there
+// (draw_caption).
 large_number :: proc "contextless" (frame: ^Frame, x, y: int, text: string, color: graphics.Color) -> int {
-	return draw_text(frame.table, x, y, text, color, FONT_LARGEST)
+	return draw_text(frame.table, x, y, text, color, FONT_LARGE)
+}
+
+// draw_caption draws a caption (docs/DESIGN.md, "5. Text"): a label under
+// a value, or the help line under an element, at the caption size in the
+// dim color, in a box of `room` pixels whose top left corner is (x, y), on
+// the lines that it needs (draw_text_wrapped). It gives the height that it
+// took, which caption_height gives before the draw.
+draw_caption :: proc "contextless" (frame: ^Frame, x, y, room: int, text: string) -> int {
+	return draw_text_wrapped(frame.table, x, y, room, text, graphics.colors.dim, FONT_CAPTION) * line_height(FONT_CAPTION)
+}
+
+// caption_height gives the height of a caption in a box of `room` pixels:
+// its lines times the line of the caption size.
+caption_height :: proc "contextless" (table: ^Draw_Table, text: string, room: int) -> int {
+	return text_wrapped_line_count(table, FONT_CAPTION, text, room) * line_height(FONT_CAPTION)
+}
+
+// draw_heading draws the title of a page at the heading size (docs/DESIGN.md,
+// "5. Text"), in a box of `room` pixels whose top left corner is (x, y), on
+// the lines that it needs: a title is never cut. It gives the height that
+// it took, which heading_height gives before the draw.
+draw_heading :: proc "contextless" (frame: ^Frame, x, y, room: int, text: string, color: graphics.Color) -> int {
+	return draw_text_wrapped(frame.table, x, y, room, text, color, FONT_HEADING) * line_height(FONT_HEADING)
+}
+
+// heading_height gives the height of a heading in a box of `room` pixels:
+// its lines times the line of the heading size.
+heading_height :: proc "contextless" (table: ^Draw_Table, text: string, room: int) -> int {
+	return text_wrapped_line_count(table, FONT_HEADING, text, room) * line_height(FONT_HEADING)
 }
 
 // button draws a button with a label: the track, blue when it has the focus

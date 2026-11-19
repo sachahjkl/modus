@@ -35,13 +35,24 @@ TEXT_SIZE_UNITS :: draw_record.UNITS_PER_PIXEL
 
 FONT_BOLD :: Font{weight = .Bold} // The font of the cells, bold.
 
-FONT_LARGEST :: Font{size = graphics.TEXT_LARGEST * TEXT_SIZE_UNITS} // The one number of a card.
-FONT_LARGE :: Font{size = graphics.TEXT_LARGE * TEXT_SIZE_UNITS} // The font of the cells at twice the size of the body.
+// The fonts of the text size tokens (docs/DESIGN.md, "5. Text"). A number
+// is a value: it is in the font of the cells.
+FONT_LARGE :: Font{size = graphics.TEXT_LARGE * TEXT_SIZE_UNITS} // The one number of a card.
+FONT_LARGEST :: Font{size = graphics.TEXT_LARGEST * TEXT_SIZE_UNITS} // The one number that a whole window or panel is about.
 
-// The interface font: the names, the labels, the buttons, the lists, the
-// captions; its bold weight: the titles of the cards.
+// The interface font: the names, the labels, the buttons, the lists; its
+// bold weight: the titles of the cards.
 FONT_INTERFACE :: Font{kind = .Interface}
 FONT_INTERFACE_BOLD :: Font{kind = .Interface, weight = .Bold}
+
+// A caption: the caption of a card, a label under a value, the help line
+// under an element. FONT_CAPTION_CELLS is a value at the caption size: the
+// hash prefix after a nickname.
+FONT_CAPTION :: Font{kind = .Interface, size = graphics.TEXT_CAPTION * TEXT_SIZE_UNITS}
+FONT_CAPTION_CELLS :: Font{size = graphics.TEXT_CAPTION * TEXT_SIZE_UNITS}
+
+// A heading: the title of a page.
+FONT_HEADING :: Font{kind = .Interface, size = graphics.TEXT_HEADING * TEXT_SIZE_UNITS}
 
 // The most bytes of one text in the interface font: the execution places
 // its glyphs on its stack. A longer text is drawn in the font of the cells.
@@ -276,6 +287,40 @@ draw_text_wrapped :: proc "contextless" (table: ^Draw_Table, x, y, room: int, te
 // is the size: 16 for the body.
 line_height :: proc "contextless" (font: Font) -> int {
 	return 2 * cell_width_of(font)
+}
+
+// baseline_of_font gives the row of the baseline of a text of a font, from
+// the top of its line, in the font that the table draws it in
+// (font_in_use): the row of the face of the vector font that draws it.
+// With Spleen, or with no face open, it is three quarters of the line, the
+// baseline of Spleen 8x16 at the body (row 12 of 16).
+baseline_of_font :: proc "contextless" (table: ^Draw_Table, font: Font) -> int {
+	used := font_in_use(table, font, 0)
+	face := text_rendering.Face.None
+	if graphics.text_state.font == .Vector {
+		switch used.kind {
+		case .Interface:
+			face = interface_face_of(used)
+		case .Cells_8x16:
+			face = graphics.text_state.cell_face
+			if used.weight == .Bold && graphics.text_state.bold_face != .None {
+				face = graphics.text_state.bold_face
+			}
+		}
+	}
+	if row, ok := text_rendering.baseline_row(face, font_text_size(used)); ok {
+		return row
+	}
+	return 3 * line_height(used) / 4
+}
+
+// text_top_on_baseline gives the top of the line of a text of a font whose
+// baseline is the baseline of a line of line_font with its top at
+// line_top: two text sizes on one line, as the title of a card and its
+// caption. The baseline is a row of whole pixels at each size, so the two
+// texts share it exactly.
+text_top_on_baseline :: proc "contextless" (table: ^Draw_Table, line_font: Font, line_top: int, font: Font) -> int {
+	return line_top + baseline_of_font(table, line_font) - baseline_of_font(table, font)
 }
 
 // A short text that a caller builds from parts, in its own memory.

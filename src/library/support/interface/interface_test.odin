@@ -71,6 +71,41 @@ text_measure :: proc(t: ^testing.T) {
 	testing.expect_value(t, text_width({}, "abc"), 24)
 	testing.expect_value(t, text_width(FONT_LARGEST, "12"), 48)
 	testing.expect_value(t, line_height(FONT_LARGE), 32)
+	// The line of each font of a token is the token: a whole count of
+	// pixels, so the elements under it start on a whole pixel.
+	testing.expect_value(t, line_height(FONT_CAPTION), graphics.TEXT_CAPTION)
+	testing.expect_value(t, line_height(FONT_CAPTION_CELLS), graphics.TEXT_CAPTION)
+	testing.expect_value(t, text_width(FONT_CAPTION_CELLS, "12"), graphics.TEXT_CAPTION)
+	testing.expect_value(t, line_height(FONT_HEADING), graphics.TEXT_HEADING)
+	testing.expect_value(t, line_height(FONT_LARGE), graphics.TEXT_LARGE)
+	testing.expect_value(t, line_height(FONT_LARGEST), graphics.TEXT_LARGEST)
+}
+
+// The one number of a card: a value, in the font of the cells, at the
+// large size, and the x after it is the end of its cells.
+@(test)
+the_number_of_a_card_is_at_the_large_size :: proc(t: ^testing.T) {
+	memory := new(Tables)
+	defer free(memory)
+	table := table_of(memory)
+	state: Interface_State
+	input: Input
+	frame := frame_begin(&table, &state, &input)
+	after := large_number(&frame, 10, 20, "12 345", graphics.colors.text)
+	frame_end(&frame)
+	testing.expect_value(t, after, 10 + 6 * graphics.TEXT_LARGE / 2)
+	found := false
+	for record in table.records[:table.record_count] {
+		if shown, size, is_text := text_of_record(&table, record); is_text && shown == "12 345" {
+			found = true
+			view := record_view(record)
+			testing.expect_value(t, size, graphics.TEXT_LARGE * TEXT_SIZE_UNITS)
+			testing.expect_value(t, view.font, Font_Kind.Cells_8x16)
+			testing.expect_value(t, view.y, 20)
+			testing.expect_value(t, view.height, graphics.TEXT_LARGE)
+		}
+	}
+	testing.expect(t, found, "the number has a record")
 }
 
 // The lines of a text, joined with one space where a line ended at a space,
