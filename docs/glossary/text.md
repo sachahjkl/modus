@@ -250,15 +250,35 @@ The design: `src/md/features/appearance.md`, "The colors of the processes".
 
 Do not use: identity color, tint, palette, hue (for this).
 
+### Intensity step
+
+An intensity step is one of the three ranges of the share that a gauge shows: normal, high from 60 %, and very high from 85 %.
+
+A gauge, as the memory bar and the processor bar of a process in `monitor`, takes the color of its step: the color of the concept that it measures, then `warning`, then `near_limit`. A share at a threshold is in the higher step. The number beside the gauge says the value, so the color is never the only sign. It is not a continuous hue: each color keeps one meaning. `graphics.intensity_of` gives the step, `graphics.intensity_color` its color.
+
+The design: `src/md/features/monitor_window.md`, "The intensity steps".
+
+Do not use: heat color, severity, load level, color scale.
+
 ### Warning color
 
 The warning color is the color token of a state that asks for attention and is not a failure.
 
-A record of the log of the level Warning and a ring of `rings` that is full have it (`graphics.colors.warning`). It is a yellow apart from the orange of the boot program, so that "starts" and "take care" are two colors; a failure has the color `failed`. A warning color is never the only sign: the level or a word says the state.
+A record of the log of the level Warning, a ring of `rings` that is full and a gauge at its high intensity step have it (`graphics.colors.warning`). It is a yellow apart from the orange of the boot program, so that "starts" and "take care" are two colors; a failure has the color `failed`. A warning color is never the only sign: the level or a word says the state.
 
 The design: `src/md/features/appearance.md`, "The colors of the processes".
 
 Do not use: caution color, alert color.
+
+### Near limit color
+
+The near limit color is the color token of a measure near its limit: the very high intensity step of a gauge.
+
+A gauge of `monitor` at 85 % or more has it (`graphics.colors.near_limit`). It is an orange between the yellow of the warning color and the coral of `failed`: a load near its limit asks for more attention than a warning, and it is not a failure, because the machine still does what it must. It is never the only sign: the number beside the gauge says the value.
+
+The design: `src/md/features/monitor_window.md`, "The intensity steps".
+
+Do not use: danger color, critical color, overload color.
 
 ### Link color
 

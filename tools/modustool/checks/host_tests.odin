@@ -291,6 +291,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_SUPPORT + "/kind_icons",
 	foundation.SOURCE_FOLDER_CONTRACT + "/manual_pages",
 	foundation.SOURCE_FOLDER_PRIVATE + "/manual/manual_navigation",
+	foundation.SOURCE_FOLDER_PRIVATE + "/monitor/sample_history",
 	foundation.SOURCE_FOLDER_CONTRACT + "/ring",
 	foundation.SOURCE_FOLDER_CONTRACT + "/glyph_cache",
 	foundation.SOURCE_FOLDER_CONTRACT + "/datagram",
