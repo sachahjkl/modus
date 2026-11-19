@@ -127,8 +127,9 @@ enlarged :: proc "contextless" (canvas: graphics.Canvas, x, y: int, candidate: b
 	if candidate {
 		candidate_text(view, 0, 0, ENLARGED_WORD, graphics.colors.text, 1)
 	} else {
-		for index in 0 ..< len(ENLARGED_WORD) {
-			graphics.character_spleen(view, index * graphics.CELL_WIDTH, 0, rune(ENLARGED_WORD[index]), graphics.colors.text)
+		word := ENLARGED_WORD
+		for index in 0 ..< len(word) {
+			graphics.character_spleen(view, index * graphics.CELL_WIDTH, 0, rune(word[index]), graphics.colors.text)
 		}
 	}
 	for row in 0 ..< 16 {
