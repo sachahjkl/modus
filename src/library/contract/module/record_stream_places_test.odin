@@ -106,8 +106,10 @@ a_record_stream_place_that_another_write_meets_is_refused :: proc(t: ^testing.T)
 	refused := [?]Loader_Writes {
 		{hash_place = SECOND_OUTPUT_PLACE + RECORD_STREAM_PLACE_SIZE - 1},
 		{hash_place = SECOND_OUTPUT_PLACE - HASH_SIZE + 1},
-		{rebases = {SECOND_OUTPUT_PLACE - REBASE_WORD_SIZE + 1}},
-		{rebases = {SECOND_OUTPUT_PLACE + RECORD_STREAM_PLACE_SIZE - 1}},
+		// A rebase word with its low bit set is a bitmap, so a location is
+		// even: the nearest even locations that share a byte with the place.
+		{rebases = {SECOND_OUTPUT_PLACE - REBASE_WORD_SIZE + 2}},
+		{rebases = {SECOND_OUTPUT_PLACE + RECORD_STREAM_PLACE_SIZE - 2}},
 		// The offset word puts the cursor 8 bytes after it; bit 4 names
 		// the fourth word from the cursor: the place of the record input.
 		{rebases = {INPUT_PLACE - 4 * REBASE_WORD_SIZE, 1 << 4 | 1}},

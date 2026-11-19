@@ -1042,9 +1042,9 @@ root_loop_pass :: proc "contextless" () {
 		if item.process != 0 && item.requests.head != nil {
 			root_ring_serve(&item)
 		}
-		// The answers of the process to the ends of its wirings. They
-		// are not in the wait: an end that the process refused is read at
-		// the next pass, which any event starts.
+		// The answers of the process to the ends of its wirings: Taken,
+		// Closed or a refusal. They are in the wait below, so an answer
+		// starts a pass and never waits for another event.
 		if item.process != 0 && item.wiring.head != nil {
 			wiring_completions_read(&item)
 		}
@@ -1066,6 +1066,9 @@ root_loop_pass :: proc "contextless" () {
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
 			system.wait_records(&wait, &item.requests.commands)
+		}
+		if item.process != 0 && item.wiring.head != nil {
+			system.wait_records(&wait, &item.wiring.completions)
 		}
 	}
 	// The appearance in force at an edge of the rule of the day
