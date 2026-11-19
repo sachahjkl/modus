@@ -544,9 +544,9 @@ Do not use: symbol server, debug archive.
 
 The module file writer is the contract package that writes a valid module file from its parts: the segments, the exports, the imports, the slots, the rebases, the records, the log facts and the budget.
 
-The tool and each program of modus that writes a module compile it in, so the format has one writer. It writes into memory that the caller gives, with no allocator and no kernel operation. The tool fills its parts from the linked file of `lld`; an assembler fills them from its labels. It is not the module writer of a module record.
+Its package is `modus:contract/module_file_writer`. The tool and each program of modus that writes a module compile it in, so the format has one writer. It writes into memory that the caller gives, with no allocator and no kernel operation, and refuses a part that a loader or a reader would refuse. The tool fills its parts from the linked file of `lld`; an assembler fills them from its labels. It is not the module writer of a module record.
 
-The design: `src/md/features/first_compiler.md`.
+The design: `src/md/features/first_compiler.md`; the guide: `docs/MODULE_CONTRACT.md`, "The module file writer".
 
 Do not use: module writer (for this), linker, emitter.
 

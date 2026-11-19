@@ -675,8 +675,9 @@ import_declarations_check :: proc(build: foundation.Module_Build, imports: []Imp
 // process does not start (src/library/support/system, load.odin).
 //
 // A segment of that range of the linker that the loader writes nowhere is
-// not such a segment: the conversion gives it the flags of a constant
-// segment (segment_flags_after_the_relocations), so the flag that this check
+// not such a segment: the module file writer gives it the flags of a
+// constant segment (module_file_writer.segment_flags_after_the_relocations),
+// so the flag that this check
 // reads is set only where a rebase or a slot is.
 module_is_a_library_check :: proc(name: string, file: []u8) -> bool {
 	for index in 1 ..< module.count(file, .Segments) {
