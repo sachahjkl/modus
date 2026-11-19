@@ -550,8 +550,8 @@ Status: Decided.
 - **Rule**: Each design lists its frequent tasks and shows the expression of each. A review checks that no expression is an incantation.
 - **Why**: A general concept serves many uses, but a frequent use that needs a trick is a fault of the concept: each reader decodes it again, and a wrong decoding is a wrong result. A specific tool makes one use explicit, but many specific tools that half overlap are a fault too: two ways to do one thing, which drift apart (Objective, rule 1). The balance is one mechanism, with a name for each frequent use.
 - **Examples**:
-  1. `log.records(0) | facts(storage.Bad_Block)` finds the bad blocks of a disk. A filter on the record form and on the fact key gives the same rows, and a reader must decode it (`src/md/features/log_facts.md`).
-  2. `server.requests | where(status >= 500)` follows the failed requests of a server, with the names of its record (`src/md/features/module_outputs.md`).
+  1. `log.records(0) |> facts(storage.Bad_Block)` finds the bad blocks of a disk. A filter on the record form and on the fact key gives the same rows, and a reader must decode it (`src/md/features/log_facts.md`).
+  2. `server.requests |> where(status >= 500)` follows the failed requests of a server, with the names of its record (`src/md/features/module_outputs.md`).
   3. A record output copies each record to each of its readers. A `tee` module, which only copies records to two places, is refused.
 - **Forbids**: an incantation in the manner of `find -print0 | xargs -0` as the way to do a frequent task; an option that changes the meaning of a tool; a second mechanism beside a general one.
 - **Cost**: Each design writes the list of its frequent tasks, and a review reads each expression. Each alias is one more name in a description, which the console completes and the manual shows; an alias that nobody uses is a name to remove.

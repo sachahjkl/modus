@@ -228,7 +228,7 @@ No other channel is a stream of records. The element places come near: the tool 
 - **The window `log`**: it counts the records by process and by fact type, in place of 12 channels, and its line `log: ok, ...` says the count of the processes. Its column `channel` becomes the column `fact`.
 - **The records of a call in the console** (`console/line_records.odin`): it groups by process, which a call already is, and shows each fact by its name.
 - **The rows of `log.records`**, the row of `log_reader` and of `limits`: the field leaves.
-- **The example of [log_reader_scope.md](log_reader_scope.md)**, `where(log.records(0), "channel", "...")`: it becomes `log.records(0) | facts(storage.Bad_Block)`. That file changes in the step that removes the field.
+- **The example of [log_reader_scope.md](log_reader_scope.md)**, `where(log.records(0), "channel", "...")`: it becomes `log.records(0) |> facts(storage.Bad_Block)`. That file changes in the step that removes the field.
 - **The tool, where it reads the head `[name:channel]` of a line**: it reads `[name]`.
 
 ### Filters of a reader: one form
@@ -236,8 +236,8 @@ No other channel is a stream of records. The element places come near: the tool 
 The console filters log rows with its one command `where` on a column, and gets the columns of a fact type with `facts`. No name of a fact type, of a field or of a level is a free string:
 
 ```
-> log.records(0) | facts(storage.Bad_Block) | where(block = 12)
-> log.records(0) | where(level = Warning) | where(process = "storage")
+> log.records(0) |> facts(storage.Bad_Block) |> where(block = 12)
+> log.records(0) |> where(level = Warning) |> where(process = "storage")
 ```
 
 - **The fact type is a typed name.** `storage.Bad_Block` is a name of the command line, as `server.requests` is ([module_outputs.md](module_outputs.md), "The console form"). The console completes it from the fact tables of the module files of its catalog: each pair of a package name and a record type that a fact table holds. It refuses, before the call, a name that no fact table holds, with the sentence of a name that names nothing and the close names that it has. `facts` keeps the rows of that fact type and gives a table: the columns of the head of a row (number, time, process, level), then the fields of `Bad_Block`. The console resolves the name to the pairs of a module hash and a fact key, and builds the description of the table from the record description.
@@ -245,7 +245,7 @@ The console filters log rows with its one command `where` on a column, and gets 
 - **The level is an enum.** The column `level` is a field of the contract enum `Log_Level`, with the kind of a status of a contract enum. The console completes its members, `Info`, `Debug`, `Warning` and `Error`, and refuses a word that names no member. It takes `=` and `!=` only: the order of the numbers of the members is not an order of weight (Debug is 1, Warning is 2), so `>=` on it has no meaning, and the console refuses it.
 - **The process is a value.** `process = "storage"` compares the Text field of the name of a process. A process name is a value of the row, not a name that the console resolves: no process has an identity by its name ([log_reader_scope.md](log_reader_scope.md), "Refused forms").
 
-So `where` stays a command of every table, and only `facts` knows the log. The operator `|` and the comparison form of `where` are those of [module_outputs.md](module_outputs.md), "The console form": the old form `where(t, "block", 12)` leaves in that step, for the log rows too.
+So `where` stays a command of every table, and only `facts` knows the log. The operator `|>` and the comparison form of `where` are those of [module_outputs.md](module_outputs.md), "The console form": the old form `where(t, "block", 12)` leaves in that step, for the log rows too.
 
 ### Which reader sees which fields
 
@@ -273,9 +273,9 @@ Property 22 ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General m
 
 | Task | Expression |
 |---|---|
-| Find the bad blocks of a disk | `log.records(0) \| facts(storage.Bad_Block)` |
-| Find one bad block | `log.records(0) \| facts(storage.Bad_Block) \| where(block = 12)` |
-| Follow the warnings of one process, as they come | `log.follow \| where(process = "storage") \| where(level = Warning)` |
+| Find the bad blocks of a disk | `log.records(0) \|> facts(storage.Bad_Block)` |
+| Find one bad block | `log.records(0) \|> facts(storage.Bad_Block) \|> where(block = 12)` |
+| Follow the warnings of one process, as they come | `log.follow \|> where(process = "storage") \|> where(level = Warning)` |
 | Wait in a machine test for a fact with one field | the step `{kind = .Fact, process = "storage", fact = storage.Bad_Block, where = block = 12}`, which the tool checks against the fact table before the run |
 | Keep the whole log of a child, for an audit | in the console, `start(server, wire(server.log, collector.sources))`; in a starter, the same row in the wiring list of its `Start`, then `system.input_read(&audit, deadline)` on its record input |
 | Write a fact | `system.log_fact(.Warning, Bad_Block{block = number, check = found, expected = wanted})` |

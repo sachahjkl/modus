@@ -1,0 +1,50 @@
+# The pipe operator of the console
+
+`a |> f(b, c)` is `f(a, b, c)`: the value on the left is the first argument of the call on the right. `a |> f` is `f(a)`. It chains from the left: `x |> h |> g(1) |> f` is `f(g(h(x), 1))`. The guide is [`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "The pipe operator".
+
+## Purpose
+
+A frequent task of the console is a chain of calls: a table, then a filter, then the columns. With calls in calls, the reader reads it from the inside out, and the name of the last call is the first word of the line. With `|>`, the line reads in the order in which its calls run, which property 22 asks for: `processes() |> where("name", "server") |> columns("name slot")`. The designs of the log facts and of the record outputs write their frequent tasks with it ([log_facts.md](log_facts.md), [module_outputs.md](module_outputs.md)).
+
+## Constraints
+
+- **Sugar only.** The operator adds no meaning and no kind. A line with `|>` checks and runs as the same line with calls in calls, with the same errors.
+- **A refused line runs nothing.** A fault of the operator is found before the first call: a call has effects, and the console cannot undo them.
+- **One parser.** The console has one parser of its expressions and one check of a call; the operator gives them no second path.
+
+## The chosen form
+
+**The lowest priority, from the left.** The whole expression on the left is the value: `1 + 2 |> text` is `text(1 + 2)`. A `,` and the parentheses that hold it end it, so `|>` works inside an argument: `where(x |> f, "a", 1)`. On the right: the name of a command, alone or with its arguments.
+
+**The nested form before the parser.** `pipe_nested_form` (`src/library/private/console/console_language/pipe.odin`) writes the line with calls in calls, before any call, and the parser of the console reads that line. So the parser, the check of the arguments and the calls are those of every line, and the equivalence holds by construction: a host test compares the nested form of each line with the line with calls in calls. The procedure is pure: it reads the text and writes into memory of the caller. A nested form is never longer than its line: each `|>` of 2 bytes becomes `, ` or `()`.
+
+**The check before the run.** The nested form reads the arguments of a call before the call, and the innermost call runs first: a fault of the call on the right would show after the left part ran. So the console checks, before any call, what the text and the command table show:
+
+- the form of the operator, in the pure procedure: no value on the left, nothing on the right, a right part that is no name or no call, a `|` alone, a `)` that no `(` opened;
+- each name on the right, from the last stage to the first, as the nested form looks them up;
+- the count of the arguments: a command that takes none, a call with 12 arguments already, another count;
+- the first parameter, when the console knows the value on the left before the run (`Left_Knowledge`): a literal, a variable, the result of an export, whose description gives its record, and a result of the kind Integer, Text or none. The sentence is the sentence of the same line with calls in calls, from the same procedure (`argument_accepted`).
+
+**The completion after `|>`.** The list offers the commands that take an argument and whose first parameter takes the value on the left, from the same knowledge. The console reads the line up to the `|>`, with a name of one byte in the place of the typed one, so the name being typed does not change the value on the left. When it does not know the value, it offers each command that takes an argument.
+
+**Why `|>`, and not `|`.** `|>` has no other meaning in the language, so a reader and the parser never take it for another operator, and `|` stays free for a union of sets. The arrow reads as "goes to". Elixir, Gleam and R give the same sign this meaning. F#, where the sign comes from, gives the value to a function of one argument: `x |> f a` is `f a x` there, with the value last; the console has no curried call, so the first argument is the one place that reads as the line.
+
+## The refused forms
+
+- **`|`.** It reads as a pipe of text between processes, which property 19 refuses, and it takes the sign that a union of sets needs.
+- **The value as the last argument**, as in F#. The commands of the console take their subject first (`where(table, ...)`, `columns(table, ...)`), so the last place would need the arguments of each command in another order.
+- **The operator in the parser**, with a call that takes a first value from the left. It is a second path through the parser and the check, which the equivalence would have to test case by case.
+- **A check during the run only.** The left part would run before a fault of the right part: `processes() |> help` would connect to `monitor` and then fail.
+- **A check of each kind before the run.** A built-in command makes the description of its table when it runs; a check before the run would need a second description of each one. The call checks it then, after the left part ran, with the sentence of the nested form.
+
+## Subtle points
+
+- **Two faults in one line** can give another first error than the nested form: the check before the run finds the faults that it knows first. A line with one fault gives the error of the nested form, or a sentence of the operator.
+- **An error that quotes the line** (`unexpected "..."`) quotes the nested form, which the parser read.
+- **A `|` alone fails each line**, also a line with no `|>`: it was an unknown byte, and its line failed after the part before it ran.
+- **A call with no `)`** keeps none in the nested form, so the parser says that it misses, as for the line with calls in calls.
+- **The hint line** under the edit line marks the parameter by the count of the arguments in the parentheses, one place before the parameter that takes the argument at the caret: `ROADMAP.md` has the correction.
+
+## State
+
+Built: the operator for the calls of today (tables, records, exports), its refusals, its completion and its colors (an Operator). Left: the hint line after `|>`; the Stream of the record outputs, which takes `|>` as each value does.
