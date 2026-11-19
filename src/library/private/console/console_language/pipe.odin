@@ -149,41 +149,41 @@ pipe_nested_form :: proc "contextless" (text: string, first: int, memory: []u8, 
 		form.refusal, form.found_start, form.found_end = .Unmatched_Close, unmatched_close, len(text)
 		return form
 	}
-	writer := Pipe_Writer {
+	pipe_writer := Pipe_Writer {
 		text   = text,
 		memory = memory,
 		stages = stages,
 	}
-	pipe_write(&writer, text[:start])
-	pipe_segment_write(&writer, start, len(text))
-	form.stage_count = writer.stage_count
-	if writer.refusal != .None {
+	pipe_write(&pipe_writer, text[:start])
+	pipe_segment_write(&pipe_writer, start, len(text))
+	form.stage_count = pipe_writer.stage_count
+	if pipe_writer.refusal != .None {
 		form.nested = ""
-		form.refusal, form.found_start, form.found_end = writer.refusal, writer.found_start, writer.found_end
+		form.refusal, form.found_start, form.found_end = pipe_writer.refusal, pipe_writer.found_start, pipe_writer.found_end
 		return form
 	}
-	form.nested = string(writer.memory[:writer.count])
+	form.nested = string(pipe_writer.memory[:pipe_writer.count])
 	return form
 }
 
 // pipe_refuse keeps the first fault: a later one changes nothing.
-pipe_refuse :: proc "contextless" (writer: ^Pipe_Writer, refusal: Pipe_Refusal, start, end: int) {
-	if writer.refusal == .None {
-		writer.refusal, writer.found_start, writer.found_end = refusal, start, end
+pipe_refuse :: proc "contextless" (pipe_writer: ^Pipe_Writer, refusal: Pipe_Refusal, start, end: int) {
+	if pipe_writer.refusal == .None {
+		pipe_writer.refusal, pipe_writer.found_start, pipe_writer.found_end = refusal, start, end
 	}
 }
 
 // pipe_write adds bytes to the nested form.
-pipe_write :: proc "contextless" (writer: ^Pipe_Writer, bytes: string) {
-	if writer.refusal != .None {
+pipe_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, bytes: string) {
+	if pipe_writer.refusal != .None {
 		return
 	}
-	if len(bytes) > len(writer.memory) - writer.count {
-		pipe_refuse(writer, .Too_Long, 0, len(writer.text))
+	if len(bytes) > len(pipe_writer.memory) - pipe_writer.count {
+		pipe_refuse(pipe_writer, .Too_Long, 0, len(pipe_writer.text))
 		return
 	}
-	copy(writer.memory[writer.count:], bytes)
-	writer.count += len(bytes)
+	copy(pipe_writer.memory[pipe_writer.count:], bytes)
+	pipe_writer.count += len(bytes)
 }
 
 // pipe_trim gives text[start:end] without its spaces at both ends.
@@ -268,67 +268,67 @@ pipe_argument_count :: proc "contextless" (text: string, start, end: int) -> int
 
 // pipe_segment_write writes one segment: an expression with no ','
 // outside parentheses, whose "|>" outside parentheses are its stages.
-pipe_segment_write :: proc "contextless" (writer: ^Pipe_Writer, start, end: int) {
-	if writer.refusal != .None {
+pipe_segment_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
+	if pipe_writer.refusal != .None {
 		return
 	}
-	text := writer.text
+	text := pipe_writer.text
 	first_operator := pipe_next_operator(text, start, end)
 	if first_operator == end {
-		pipe_group_copy(writer, start, end)
+		pipe_group_copy(pipe_writer, start, end)
 		return
 	}
 	left_start, left_end := pipe_trim(text, start, first_operator)
 	if left_start == left_end {
-		pipe_refuse(writer, .No_Left_Value, first_operator, first_operator + 2)
+		pipe_refuse(pipe_writer, .No_Left_Value, first_operator, first_operator + 2)
 		return
 	}
 	// Each stage is read before any is written: the nested form writes the
 	// name of the last stage first.
-	first_stage := writer.stage_count
+	first_stage := pipe_writer.stage_count
 	operator := first_operator
 	for operator < end {
 		part_start := operator + 2
 		part_end := pipe_next_operator(text, part_start, end)
-		if writer.stage_count == len(writer.stages) {
-			pipe_refuse(writer, .Too_Many_Stages, operator, operator + 2)
+		if pipe_writer.stage_count == len(pipe_writer.stages) {
+			pipe_refuse(pipe_writer, .Too_Many_Stages, operator, operator + 2)
 			return
 		}
 		stage := Pipe_Stage {
 			operator_start = operator,
 		}
-		if !pipe_stage_read(writer, &stage, part_start, part_end) {
+		if !pipe_stage_read(pipe_writer, &stage, part_start, part_end) {
 			return
 		}
-		if writer.stage_count == first_stage {
+		if pipe_writer.stage_count == first_stage {
 			pipe_left_read(text, &stage, left_start, left_end)
 		} else {
-			stage.left, stage.stage_before = .Stage, writer.stage_count - 1
+			stage.left, stage.stage_before = .Stage, pipe_writer.stage_count - 1
 		}
-		writer.stages[writer.stage_count] = stage
-		writer.stage_count += 1
+		pipe_writer.stages[pipe_writer.stage_count] = stage
+		pipe_writer.stage_count += 1
 		operator = part_end
 	}
-	last_stage := writer.stage_count
+	last_stage := pipe_writer.stage_count
 	// The spaces before the segment stay: after "name =" and after a ','.
-	pipe_write(writer, text[start:left_start])
+	pipe_write(pipe_writer, text[start:left_start])
 	for index := last_stage - 1; index >= first_stage; index -= 1 {
-		pipe_write(writer, text[writer.stages[index].name_start:writer.stages[index].name_end])
-		pipe_write(writer, "(")
+		pipe_write(pipe_writer, text[pipe_writer.stages[index].name_start:pipe_writer.stages[index].name_end])
+		pipe_write(pipe_writer, "(")
 	}
-	pipe_group_copy(writer, left_start, left_end)
+	pipe_group_copy(pipe_writer, left_start, left_end)
 	for index in first_stage ..< last_stage {
 		// The groups of the arguments add stages after last_stage: a copy
 		// of each stage of this segment keeps its places.
-		stage := writer.stages[index]
+		stage := pipe_writer.stages[index]
 		if stage.argument_count > 0 {
-			pipe_write(writer, ", ")
-			pipe_pieces_write(writer, stage.arguments_start, stage.arguments_end)
+			pipe_write(pipe_writer, ", ")
+			pipe_pieces_write(pipe_writer, stage.arguments_start, stage.arguments_end)
 		}
 		// A call with no ')' stays without one: the parser then says that
 		// it is missing, as for the same line with calls in calls.
 		if stage.closed {
-			pipe_write(writer, ")")
+			pipe_write(pipe_writer, ")")
 		}
 	}
 }
@@ -336,22 +336,22 @@ pipe_segment_write :: proc "contextless" (writer: ^Pipe_Writer, start, end: int)
 // pipe_stage_read reads the call on the right of one "|>": the bytes
 // text[part_start:part_end], up to the next "|>" or the end of the
 // segment. It gives false, with the fault, when they are no call.
-pipe_stage_read :: proc "contextless" (writer: ^Pipe_Writer, stage: ^Pipe_Stage, part_start, part_end: int) -> bool {
-	text := writer.text
+pipe_stage_read :: proc "contextless" (pipe_writer: ^Pipe_Writer, stage: ^Pipe_Stage, part_start, part_end: int) -> bool {
+	text := pipe_writer.text
 	name := token_next(text, part_start)
 	if name.kind == .None || name.start >= part_end {
 		if part_end >= len(text) {
-			pipe_refuse(writer, .Line_End, stage.operator_start, stage.operator_start + 2)
+			pipe_refuse(pipe_writer, .Line_End, stage.operator_start, stage.operator_start + 2)
 		} else {
 			// Another "|>", or the ')' or the ',' that ends the segment.
 			next := token_next(text, part_end)
-			pipe_refuse(writer, .Not_A_Call, next.start, next.end)
+			pipe_refuse(pipe_writer, .Not_A_Call, next.start, next.end)
 		}
 		return false
 	}
 	_, trimmed_end := pipe_trim(text, part_start, part_end)
 	if name.kind != .Name {
-		pipe_refuse(writer, .Not_A_Call, name.start, trimmed_end)
+		pipe_refuse(pipe_writer, .Not_A_Call, name.start, trimmed_end)
 		return false
 	}
 	stage.name_start, stage.name_end = name.start, name.end
@@ -369,7 +369,7 @@ pipe_stage_read :: proc "contextless" (writer: ^Pipe_Writer, stage: ^Pipe_Stage,
 		after = token_next(text, close + 1)
 	}
 	if after.kind != .None && after.start < part_end {
-		pipe_refuse(writer, .Not_A_Call, name.start, trimmed_end)
+		pipe_refuse(pipe_writer, .Not_A_Call, name.start, trimmed_end)
 		return false
 	}
 	return true
@@ -410,33 +410,33 @@ pipe_left_read :: proc "contextless" (text: string, stage: ^Pipe_Stage, start, e
 
 // pipe_group_copy copies text[start:end] as it is, but the inside of each
 // pair of parentheses, whose pieces can hold "|>".
-pipe_group_copy :: proc "contextless" (writer: ^Pipe_Writer, start, end: int) {
-	text := writer.text
+pipe_group_copy :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
+	text := pipe_writer.text
 	copied := start
-	for token := token_next(text, start); token.kind != .None && token.start < end && writer.refusal == .None; token = token_next(text, token.end) {
+	for token := token_next(text, start); token.kind != .None && token.start < end && pipe_writer.refusal == .None; token = token_next(text, token.end) {
 		if token.kind != .Operator || text[token.start] != '(' {
 			continue
 		}
-		pipe_write(writer, text[copied:token.end])
+		pipe_write(pipe_writer, text[copied:token.end])
 		close, closed := pipe_group_close(text, token.end, end)
-		pipe_pieces_write(writer, token.end, close)
+		pipe_pieces_write(pipe_writer, token.end, close)
 		if !closed {
 			return
 		}
-		pipe_write(writer, ")")
+		pipe_write(pipe_writer, ")")
 		copied = close + 1
 		token.end = close + 1
 	}
-	pipe_write(writer, text[copied:end])
+	pipe_write(pipe_writer, text[copied:end])
 }
 
 // pipe_pieces_write writes the inside of a pair of parentheses: each piece
 // between two ',' outside inner parentheses is a segment.
-pipe_pieces_write :: proc "contextless" (writer: ^Pipe_Writer, start, end: int) {
-	text := writer.text
+pipe_pieces_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
+	text := pipe_writer.text
 	piece_start := start
 	depth := 0
-	for token := token_next(text, start); token.kind != .None && token.start < end && writer.refusal == .None; token = token_next(text, token.end) {
+	for token := token_next(text, start); token.kind != .None && token.start < end && pipe_writer.refusal == .None; token = token_next(text, token.end) {
 		if token.kind != .Operator {
 			continue
 		}
@@ -447,11 +447,11 @@ pipe_pieces_write :: proc "contextless" (writer: ^Pipe_Writer, start, end: int) 
 			depth -= 1
 		case ',':
 			if depth == 0 {
-				pipe_segment_write(writer, piece_start, token.start)
-				pipe_write(writer, ",")
+				pipe_segment_write(pipe_writer, piece_start, token.start)
+				pipe_write(pipe_writer, ",")
 				piece_start = token.end
 			}
 		}
 	}
-	pipe_segment_write(writer, piece_start, end)
+	pipe_segment_write(pipe_writer, piece_start, end)
 }
