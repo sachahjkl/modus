@@ -372,6 +372,46 @@ The design: `docs/TOOLS.md`, "The log".
 
 Do not use: span (for this), token, highlight range.
 
+### Log fact
+
+A log fact is a log record that carries the values of one record type of its writer, with no text: the hash of the writer's module, a fact key, and the value bytes.
+
+Its fact type is the record type with its fact template, named by the package and the record (`storage.Bad_Block`). The module file describes both, so a reader writes the sentence and filters by field (`block = 12`), and a machine test waits for a fact and its fields. A log fact is diagnostics: the kernel log can lose it, and only a wired record output `log` keeps each one. It is not a record output of the work of a module. Example: `system.log_fact(.Warning, Bad_Block{block = 12, ...})`.
+
+The design: `src/md/features/log_facts.md`.
+
+Do not use: log event, structured log, log message.
+
+### Fact template
+
+A fact template is the sentence of a log fact, with the name of each field of its record in braces: `"storage: the block {block} has a wrong check {check}"`.
+
+The source gives it as an attribute of the record type, `@(log_fact = "...")`, which the compiler ignores; the tool reads it and writes it in the fact table of the module file. It refuses a template that leaves a field out, names a field that the record lacks, names a field twice, or holds a format in the braces: the kind of the field in the record description decides how a reader writes the value. A reader with no module file shows the value bytes raw.
+
+The design: `src/md/features/log_facts.md`.
+
+Do not use: format string, pattern, message template.
+
+### Fact key
+
+A fact key is the number of 64 bits that names one fact type inside one module: SipHash-2-4, with a fixed key, of `<package name>::<type name>`.
+
+In Odin it is the typeid of the record type, `typeid_of(T)`, an immediate in the code; the tool computes the same number from the source and checks it in the IR of the module. A log fact carries the module hash and the fact key, and a reader finds its row in the fact table of that module. The tool refuses two fact types of one module with one key, and a key of 0. A key is no border: any writer can write any key.
+
+The design: `src/md/features/log_facts.md`.
+
+Do not use: event index, event identifier, message number.
+
+### Fact table
+
+The fact table is the flat table of a module file that holds one row for each fact type of the module: its fact key, its record description, its fact template and the package that declares it.
+
+The tool writes it from the record types with the attribute `log_fact` that the calls of `system.log_fact` name, in the packages that the module compiles in, sorted by fact key. A reader of the log finds the module by the hash in a log fact, then the row by the key. The record descriptions stay in the table `Records`, which the exports also use: the fact table adds the template and the key only.
+
+The design: `src/md/features/log_facts.md`.
+
+Do not use: event table, message catalog, log schema.
+
 ### Integer unit
 
 An integer unit is what an Integer parameter of a command or of an export, or an Integer field of a record, counts: a value kind, Size or Time, and one unit of that kind, such as pages or milliseconds.

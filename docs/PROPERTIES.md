@@ -1,6 +1,6 @@
 # Kernel properties
 
-This document gives the 21 properties on which `modus` is built: the rules that every part of the system obeys, what each rule forbids, and what it costs. They are the fundamental concepts of the system: a design that breaks one is wrong until the property itself changes.
+This document gives the 22 properties on which `modus` is built: the rules that every part of the system obeys, what each rule forbids, and what it costs. They are the fundamental concepts of the system: a design that breaks one is wrong until the property itself changes.
 
 ## How to read this document
 
@@ -13,8 +13,8 @@ This document gives the 21 properties on which `modus` is built: the rules that 
 | Section | What it says |
 |---|---|
 | "Objective", "Assumptions" | What the system aims at, and the three rules of every decision |
-| "Summary" | The 21 properties in one table, with their status |
-| "1. Small kernel with a small, counted interface" to "21. Principals: who acts, without users" | One section for each property |
+| "Summary" | The 22 properties in one table, with their status |
+| "1. Small kernel with a small, counted interface" to "22. General mechanisms, and a plain expression for each frequent task" | One section for each property |
 | "Tensions between properties" | Where two properties pull against each other, and the answer |
 | "Reuse list", "Open decisions", "First milestone" | What the system takes from others, what is still open, and the first end-to-end system |
 
@@ -86,6 +86,7 @@ Three rules apply to every decision:
 | 19 | A command is a function: no text between processes | Decided (detail proposed) |
 | 20 | No ambient access: the other holes to close | Decided |
 | 21 | Principals: who acts, without users | Decided (layers 1 and 2); direction for the rest |
+| 22 | General mechanisms, and a plain expression for each frequent task | Decided |
 
 ## 1. Small kernel with a small, counted interface
 
@@ -535,6 +536,28 @@ The "user" of current systems does six jobs. This system splits them:
 - **Cost**: Work that runs while the principal is locked needs a key that stays available. This must be a narrow and visible grant.
 - **Prior art to study**: SPKI/SDSI, object-capability systems (KeyKOS, seL4, Fuchsia), macaroons and UCAN for signed delegation, passkeys for the unlock.
 
+## 22. General mechanisms, and a plain expression for each frequent task
+
+Status: Decided.
+
+**In short.** One general mechanism serves each need, and each frequent task is one expression that says what it does. A frequent task never needs a trick, a hidden encoding or a combination that a reader must decode; a named short form gives it its words, and adds no mechanism.
+
+- **Rule**: Each need has one general mechanism. No second mechanism runs beside it for a special case.
+- **Rule**: Each frequent task is one expression that reads as its intent. When a task needs a combination that a reader must decode, that combination gets a name.
+- **Rule**: An alias or a wrapper is welcome: a short, named form, built on the general mechanism, for a frequent use. It adds no mechanism.
+- **Rule**: A specific tool that only copies what the general mechanism does, and makes no use clearer, is refused.
+- **Rule**: No useful task needs knowledge of a detail of an implementation: a number, an encoding, a hidden order, a magic option.
+- **Rule**: Each design lists its frequent tasks and shows the expression of each. A review checks that no expression is an incantation.
+- **Why**: A general concept serves many uses, but a frequent use that needs a trick is a fault of the concept: each reader decodes it again, and a wrong decoding is a wrong result. A specific tool makes one use explicit, but many specific tools that half overlap are a fault too: two ways to do one thing, which drift apart (Objective, rule 1). The balance is one mechanism, with a name for each frequent use.
+- **Examples**:
+  1. `log.records(0) | facts(storage.Bad_Block)` finds the bad blocks of a disk. A filter on the record form and on the fact key gives the same rows, and a reader must decode it (`src/md/features/log_facts.md`).
+  2. `server.requests | where(status >= 500)` follows the failed requests of a server, with the names of its record (`src/md/features/module_outputs.md`).
+  3. A record output copies each record to each of its readers. A `tee` module, which only copies records to two places, is refused.
+- **Forbids**: an incantation in the manner of `find -print0 | xargs -0` as the way to do a frequent task; an option that changes the meaning of a tool; a second mechanism beside a general one.
+- **Cost**: Each design writes the list of its frequent tasks, and a review reads each expression. Each alias is one more name in a description, which the console completes and the manual shows; an alias that nobody uses is a name to remove.
+- **Reuse**: The aliases and the functions of a shell, as the form of a named short form. PowerShell and Nushell, where typed records in a pipeline make a frequent filter one call. The `tee` and `xargs` of Unix, as specific tools and encodings that this property refuses.
+- **Open**: what makes a task frequent: the proposal is a task that a guide, a machine test or the console shows, or that a principal does each day. No check of the tool finds an incantation; a review finds it.
+
 ## Tensions between properties
 
 - **Sandbox (2) against direct device access (5)**: Direct access is safe only when the hardware isolates queues. On the first machine the hypervisor does this. On real hardware an IOMMU is a requirement. The kernel programs the IOMMU of Intel and the IOMMU of AMD (property 5, "As built, the devices").
@@ -542,6 +565,7 @@ The "user" of current systems does six jobs. This system splits them:
 - **Replaceable modules (10) against speed**: Calls through a table cost one indirect call. The bundle is the place where a developer trades replaceability for inlining.
 - **No global file system (8) against the desktop**: The principal thinks in documents, not in processes. The document store service must exist before the first real desktop module.
 - **Small interface (1) against typed resources (3)**: Types multiply operations. The ring of property 4 solves this: the kernel has few entry operations, and the typed commands are records in a ring.
+- **Named forms (22) against a small, counted interface (1) and permanent descriptions (19)**: Each named form of a frequent task is one more name to learn and to keep, and a name in the description of an export is a permanent contract. The answer: a named form lives in a library or in the console, never as a kernel operation, and it adds no mechanism. A named form whose task is no longer frequent is removed, as each name of the system is (no backward compatibility).
 - **New storage engine (9) against reliability**: The engine is small and each commit is tested against a stop of the machine. SQLite is not used.
 
 ## Reuse list
