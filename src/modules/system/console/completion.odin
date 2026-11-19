@@ -18,6 +18,7 @@ package console
 
 import op "modus:contract/operation"
 import "modus:contract/text_encoding"
+import "modus:private/console/console_language"
 import "modus:support/display"
 import "modus:support/line_editor"
 import "modus:support/system"
@@ -371,6 +372,9 @@ names_rank :: proc "contextless" (by_tab: bool) {
 		place.replace_start = place.word_start
 		names_collect(&completion.names, place)
 	}
+	if place.place == .Name || place.place == .Member {
+		pipe_completion_filter(&completion.names, text, place.word_start)
+	}
 	completion.ranked_count, completion.matched_count = line_editor.rank_candidates(place.query, completion.names.items[:completion.names.count], completion.ranked[:])
 	ranking_measured(started)
 	completion.place = place
@@ -383,6 +387,61 @@ names_rank :: proc "contextless" (by_tab: bool) {
 	completion.escaped = false
 	completion.chosen, completion.first_shown = 0, 0
 	completion.list_changed = true
+}
+
+// The stages of the line that the input types, for the completion after a
+// "|>": the stages of the line that runs are of the second thread.
+completion_line_stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
+
+// pipe_completion_filter keeps, after a "|>", only the commands that can be
+// its call: those that take an argument, and whose first parameter takes
+// the value on the left when the console knows its kind before the run.
+pipe_completion_filter :: proc "contextless" (table: ^Candidate_Table, text: string, word_start: int) {
+	if !console_language.pipe_before(text, word_start) {
+		return
+	}
+	left, knowledge := pipe_left_at(text, word_start)
+	kept := 0
+	for item in table.items[:table.count] {
+		takes := false
+		switch item.kind {
+		case .Command, .Export, .Record:
+			takes = int(item.number) < command_count && pipe_stage_takes(&commands[item.number], left, knowledge)
+		case .Service, .Module, .Process, .Variable, .History_Line:
+			// No call: "|>" refuses it.
+		}
+		if takes {
+			table.items[kept] = item
+			kept += 1
+		}
+	}
+	table.count = kept
+}
+
+// pipe_left_at gives what the console knows of the value on the left of
+// the "|>" before the name at word_start. The name that the input types
+// does not change it: the line is read up to that "|>", with a name of one
+// byte in the place of the typed one, so that the "|>" has its call.
+pipe_left_at :: proc "contextless" (text: string, word_start: int) -> (value: Value, knowledge: Left_Knowledge) {
+	start := clamp(word_start, 0, len(text))
+	line_to_name: [LINE_CAPACITY + 1]u8
+	if start >= len(line_to_name) {
+		return {}, .None
+	}
+	count := copy(line_to_name[:], text[:start])
+	line_to_name[count] = '_'
+	read := string(line_to_name[:count + 1])
+	memory: [2 * (LINE_CAPACITY + 1)]u8
+	form := console_language.pipe_nested_form(read, console_language.expression_start(read), memory[:], completion_line_stages[:])
+	if form.refusal != .None {
+		return {}, .None
+	}
+	for index in 0 ..< form.stage_count {
+		if completion_line_stages[index].name_start == start {
+			return pipe_left_value(read, completion_line_stages[:form.stage_count], index)
+		}
+	}
+	return {}, .None
 }
 
 ranking_measured :: proc "contextless" (started: u64) {

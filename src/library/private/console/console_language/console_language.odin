@@ -14,7 +14,9 @@ package console_language
 import terminal "modus:support/terminal"
 
 // The kinds of tokens. The parser reads the operators one byte at a time;
-// the arrow '->' is a token of the signatures, not of an expression.
+// the arrow '->' is a token of the signatures, not of an expression. The
+// pipe operator '|>' never reaches the parser: pipe.odin writes the line in
+// its nested form first.
 Token_Kind :: enum u8 {
 	None            = 0, // The end of the text.
 	Name            = 1, // A letter or '_', then letters, digits, '_' and '.': monitor.count, r.x.
@@ -23,7 +25,8 @@ Token_Kind :: enum u8 {
 	Text_Unfinished = 4, // A quote and the rest of the line: no end quote yet.
 	Operator        = 5, // One byte of OPERATOR_BYTES.
 	Arrow           = 6, // '->'.
-	Unknown         = 7, // One byte of no other token.
+	Unknown         = 7, // One byte of no other token. A '|' with no '>' after it is one.
+	Pipe            = 8, // '|>': the value on its left is the first argument of the call on its right.
 }
 
 // A token: its kind and its bytes, text[start:end].
@@ -122,6 +125,8 @@ token_next :: proc "contextless" (text: string, position: int) -> Token {
 		return {kind = finished ? .Text : .Text_Unfinished, start = start, end = end}
 	case character == '-' && start + 1 < len(text) && text[start + 1] == '>':
 		return {kind = .Arrow, start = start, end = start + 2}
+	case character == '|' && start + 1 < len(text) && text[start + 1] == '>':
+		return {kind = .Pipe, start = start, end = start + 2}
 	case operator_byte(character):
 		return {kind = .Operator, start = start, end = start + 1}
 	}
@@ -208,7 +213,7 @@ line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: N
 			count = run_add(runs, count, token.start, token.end, .Text)
 		case .Text_Unfinished:
 			count = run_add(runs, count, token.start, token.end, .Text_Unfinished)
-		case .Operator:
+		case .Operator, .Pipe:
 			count = run_add(runs, count, token.start, token.end, .Operator)
 		case .Arrow:
 			count = run_add(runs, count, token.start, token.end, .Arrow)
@@ -375,7 +380,7 @@ signature_runs :: proc "contextless" (text: string, first: int, runs: []terminal
 					kind = .Words
 				}
 			}
-		case .Unknown:
+		case .Unknown, .Pipe:
 			if place == .Words {
 				kind = .Words
 			}
