@@ -254,9 +254,9 @@ Object_Kind :: enum u8 {
 // (`system.memory_create`) or with `system.call`.
 Operation :: enum u32 {
 	None           = 0,
-	Log            = 1, // (log, address, length, level: Log_Level, channel, channel, runs).
+	Log            = 1, // (log, address, length, level: Log_Level, runs).
 	// Writes one text on the log of the kernel: records of the log, which a reader with the memory of the log
-	// reads, and one line `[name:channel] text` on the serial port. The kernel sets the time, the process and
+	// reads, and one line `[name] text` on the serial port. The kernel sets the time, the process and
 	// the thread of each record, so a process cannot write a record of another process. The operation writes
 	// the records only; the tick of the first processor writes their line on the serial port after it, so a
 	// `Log` never waits for the lines of other processes.
@@ -267,8 +267,6 @@ Operation :: enum u32 {
 	// - `address`, `length`: the text, at most `LOG_TEXT_BYTES_MOST` bytes, in memory that the process can read. A text longer
 	//   than `LOG_TEXT_CAPACITY` continues in the next records (`Log_Record`, `more`).
 	// - `level`: a `Log_Level`, from `Info` (0) to `Error` (3).
-	// - `channel`, `channel`: the name of the channel, 16 bytes in two values. The name is the bytes before
-	//   the first one that is not a printable character: all zero is no channel.
 	// - `runs`: the count of the value runs of the text, at most `LOG_CALL_RUN_LIMIT`; 0 is a plain text. The
 	//   runs (`value_kinds.Value_Run_In_Call`) follow the `length` bytes of the text at `address`. A run says
 	//   which bytes of the text are one value, and its kind: a reader of the log shows each value in the color
@@ -3247,12 +3245,12 @@ Processor_Report :: struct {
 	cache_drains:        u64, // Drains that took the frames of the stack, for a take that found no free frame.
 }
 
-// The log: records in channels.
+// The log: records of text, each with its process and its level.
 //
 // The kernel keeps the last LOG_RECORD_CAPACITY records in one memory
 // object. The kernel is the one writer: it sets the time, the process and
 // the thread of each record, so a process cannot write a record of another
-// process. A process chooses only the level, the channel and the text.
+// process. A process chooses only the level and the text.
 // A reader maps the memory object without Write. It reads Log_Head.written,
 // and it waits on the low 32 bits of that word (Word_Wait).
 //
@@ -3274,10 +3272,7 @@ Log_Level :: enum u8 {
 
 // The bytes of text in one log record. With the other fields, a record is
 // 256 bytes; a longer text continues in the next records (`more`).
-LOG_TEXT_CAPACITY :: 152
-// The bytes of the name of a channel: two values of 8 bytes of the `Log`
-// operation.
-LOG_CHANNEL_CAPACITY :: 16
+LOG_TEXT_CAPACITY :: 168
 // The value runs that one record keeps: the kind of each typed part of its
 // text (modus:contract/value_kinds). A text with more typed parts keeps its first
 // runs; the rest of its text is plain.
@@ -3334,7 +3329,7 @@ Log_Head :: struct {
 }
 
 // One record of the log of the kernel: one text, or a part of a longer
-// text, of one thread, with its time, its level and its channel.
+// text, of one thread, with its time and its level.
 //
 // The kernel writes it for a `Log` operation, or for a line of its own; the
 // root service gives the memory of the records (`ROOT_LOG_RECORDS`) to the
@@ -3349,9 +3344,8 @@ Log_Head :: struct {
 // at most 256 process slots and 256 thread slots, which leaves room for the
 // two numbers in 256 bytes. See [log record](term:log-record).
 //
-// Example: the line `[console:shell] started` on the serial port is one
-// record with `name = "console"`, `channel = "shell"`, `level = .Info`,
-// `text_count = 7`.
+// Example: the line `[console] started` on the serial port is one record
+// with `name = "console"`, `level = .Info`, `text_count = 7`.
 Log_Record :: struct {
 	sequence:       u64, // The number of the record in the whole log, from 0.
 	time:           u64, // Microseconds since the start of the machine.
@@ -3365,13 +3359,13 @@ Log_Record :: struct {
 	run_count:      u8, // The value runs of the text: runs[:run_count].
 	reserved:       u8, // 0.
 	name:           [PROCESS_NAME_BYTES_MOST + 1]u8, // The name of the process, or "kernel".
-	channel:    [LOG_CHANNEL_CAPACITY]u8, // All zero: the process gave no channel.
-	runs:       [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count].
-	text:       [LOG_TEXT_CAPACITY]u8, // The text, UTF-8, `text_count` bytes.
+	runs:           [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count].
+	text:           [LOG_TEXT_CAPACITY]u8, // The text, UTF-8, `text_count` bytes.
 }
 
 #assert(size_of(Log_Record) == 256)
 #assert(offset_of(Log_Record, name) == 32)
+#assert(offset_of(Log_Record, runs) == 64)
 #assert(size_of(Log_Head) == size_of(Log_Record))
 
 // The stacks of the kernel. Each processor has one slot of addresses: a

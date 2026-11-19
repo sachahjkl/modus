@@ -686,7 +686,7 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		system.close(memory)
 	}
 	for name, index in edge_case_names {
-		system.log("address_space: edge case: ", name, ": ", edge_case_results[index] ? "right" : "WRONG")
+		system.log(.Info, "address_space: edge case: ", name, ": ", edge_case_results[index] ? "right" : "WRONG")
 		if !edge_case_results[index] {
 			fail("an edge case")
 		}
@@ -774,7 +774,7 @@ revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
 		system.word_wait(&board.woken, 0, system.time() + 100)
 	}
 	woke := intrinsics.atomic_load(&board.woken) != 0
-	system.log("address_space: a revocation of a mapping of 1 GiB with a thread that waits on a word of it: ", revoke_time / 1000, " us; the waiter ", woke ? "woke" : "did not wake")
+	system.log(.Info, "address_space: a revocation of a mapping of 1 GiB with a thread that waits on a word of it: ", revoke_time / 1000, " us; the waiter ", woke ? "woke" : "did not wake")
 	system.call(.Process_Stop, u64(process), 0)
 	return woke
 }
@@ -807,7 +807,7 @@ large_object_ends_quickly :: proc "contextless" () -> bool {
 	after, _ := system.budget_read()
 	// The 513 page tables of the mapping return with the unmap.
 	kept := before.pages - after.pages
-	system.log("address_space: an Uncommitted object of 1 GiB with 4 frames: unmap and close in ", ended / 1000, " us; pages kept: ", kept)
+	system.log(.Info, "address_space: an Uncommitted object of 1 GiB with 4 frames: unmap and close in ", ended / 1000, " us; pages kept: ", kept)
 	return kept == 0
 }
 
@@ -961,7 +961,7 @@ delegation_note :: proc "contextless" (step: int, right: bool, result: ^Delegati
 		system.kernel_error_text(&writer, &result.record)
 	}
 	delegation_line_counts[step] = len(system.written(&writer))
-	system.log("address_space: delegation: ", delegation_names[step], ": ", right ? "as expected: " : "WRONG: ", string(delegation_lines[step][:delegation_line_counts[step]]))
+	system.log(.Info, "address_space: delegation: ", delegation_names[step], ": ", right ? "as expected: " : "WRONG: ", string(delegation_lines[step][:delegation_line_counts[step]]))
 	if !right {
 		fail("a case of the delegation")
 	}
@@ -1110,7 +1110,7 @@ neighbour_touch :: proc "c" (parameter: rawptr) -> ! {
 
 page_tables_line :: proc "contextless" (right_case: bool, parts: ..system.Part) {
 	buffer: [320]u8
-	system.log("address_space: page tables: ", system.format(buffer[:], ..parts), right_case ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "address_space: page tables: ", system.format(buffer[:], ..parts), right_case ? string(": as it must") : string(": WRONG"))
 	if !right_case {
 		fail("a page table did not return to the budget")
 	}
@@ -1244,7 +1244,7 @@ page_tables_return :: proc "contextless" () {
 		system.close(near)
 		system.close(far)
 		system.close(watched)
-		system.log("address_space: page tables: the other thread wrote and read its page ", touches_after - touches_before, " times during the rounds")
+		system.log(.Info, "address_space: page tables: the other thread wrote and read its page ", touches_after - touches_before, " times during the rounds")
 		page_tables_line(thread_status == .Ok && rounds_right == NEIGHBOUR_ROUNDS && rounds_wrong == 0 && touches_before != 0 && touches_after > touches_before && value_right && after.pages == before.pages, u64(NEIGHBOUR_ROUNDS), " rounds of a map and an unmap beside a page that another thread writes and reads: ", rounds_right, " rounds right, the page of the other thread ", value_right ? string("stayed right") : string("changed"), ", ", before.pages - after.pages, " pages kept")
 	}
 }
@@ -1381,23 +1381,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	start_budget, _ := system.budget_read()
 
 	arena()
-	system.log("address_space: arena: 1 GiB of addresses in one mapping, ", arena_list_pages, " pages paid for its frame list, mapped in ", arena_map_microseconds, " us; pages committed and used in one second with 1, 16, 256 ranges for each kernel entry: ", arena_pages_per_second[0], ", ", arena_pages_per_second[1], ", ", arena_pages_per_second[2], "; kernel entries for 1000 pages: ", arena_entries_per_thousand_pages[0], ", ", arena_entries_per_thousand_pages[1], ", ", arena_entries_per_thousand_pages[2])
+	system.log(.Info, "address_space: arena: 1 GiB of addresses in one mapping, ", arena_list_pages, " pages paid for its frame list, mapped in ", arena_map_microseconds, " us; pages committed and used in one second with 1, 16, 256 ranges for each kernel entry: ", arena_pages_per_second[0], ", ", arena_pages_per_second[1], ", ", arena_pages_per_second[2], "; kernel entries for 1000 pages: ", arena_entries_per_thousand_pages[0], ", ", arena_entries_per_thousand_pages[1], ", ", arena_entries_per_thousand_pages[2])
 	sparse()
-	system.log("address_space: sparse table: ", sparse_committed, " pages committed of ", u64(GIGABYTE_PAGES), ", ", sparse_present, " with a frame; decommit: ", decommit_returned, " pages back in the budget at once, in ", decommit_microseconds, " us; a page committed again is zero: ", u64(recommit_zero))
+	system.log(.Info, "address_space: sparse table: ", sparse_committed, " pages committed of ", u64(GIGABYTE_PAGES), ", ", sparse_present, " with a frame; decommit: ", decommit_returned, " pages back in the budget at once, in ", decommit_microseconds, " us; a page committed again is zero: ", u64(recommit_zero))
 	protection()
-	system.log("address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls, least and most of 5 batches: ", shootdown_least[0], " to ", shootdown_most[0], " ns with 1 processor running the process, ", shootdown_least[1], " to ", shootdown_most[1], " ns with 2, ", shootdown_least[2], " to ", shootdown_most[2], " ns with 4")
+	system.log(.Info, "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls, least and most of 5 batches: ", shootdown_least[0], " to ", shootdown_most[0], " ns with 1 processor running the process, ", shootdown_least[1], " to ", shootdown_most[1], " ns with 2, ", shootdown_least[2], " to ", shootdown_most[2], " ns with 4")
 	guard_page(ctx)
-	system.log("address_space: guard page: the child stopped with vector ", guard_vector, " at ", system.Hex(guard_address), ", in its guard page: ", u64(guard_right))
+	system.log(.Info, "address_space: guard page: the child stopped with vector ", guard_vector, " at ", system.Hex(guard_address), ", in its guard page: ", u64(guard_right))
 	large_pages()
-	system.log("address_space: large pages: one random read over 64 MiB: ", large_nanoseconds / 10, ".", large_nanoseconds % 10, " ns through large pages of 2 MiB, ", small_nanoseconds / 10, ".", small_nanoseconds % 10, " ns through pages of 4 KiB of the same object; the report says Large: ", u64(large_flags_right))
+	system.log(.Info, "address_space: large pages: one random read over 64 MiB: ", large_nanoseconds / 10, ".", large_nanoseconds % 10, " ns through large pages of 2 MiB, ", small_nanoseconds / 10, ".", small_nanoseconds % 10, " ns through pages of 4 KiB of the same object; the report says Large: ", u64(large_flags_right))
 	refuse()
 	edge_cases(ctx)
 	delegation(ctx)
 	addresses_reused()
-	system.log("address_space: addresses: one object mapped and unmapped 100000 times: the budget holds ", reuse_pages_last, " pages after, ", reuse_pages_first, " after the first time")
+	system.log(.Info, "address_space: addresses: one object mapped and unmapped 100000 times: the budget holds ", reuse_pages_last, " pages after, ", reuse_pages_first, " after the first time")
 	page_tables_return()
 	for &item in refusals {
-		system.log("address_space: refused: ", item.name, ": ", string(item.sentence[:item.count]))
+		system.log(.Info, "address_space: refused: ", item.name, ": ", string(item.sentence[:item.count]))
 	}
 	// Each page returned, except what this process still maps: the boot
 	// image, which each case that starts a child maps, and its page tables.
@@ -1408,9 +1408,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	done = true
 	if right {
-		system.log("address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record")
+		system.log(.Info, "address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record")
 	} else {
-		system.log("address_space: wrong: ", problem)
+		system.log(.Info, "address_space: wrong: ", problem)
 	}
 	frame_draw(&window)
 	deadline := system.time()

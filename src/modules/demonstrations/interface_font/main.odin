@@ -160,14 +160,14 @@ fallback_lines_tell :: proc "contextless" () {
 	fallback_told = true
 	face := text_rendering.face_of_cache(&regular_cache)
 	if face != .Interface {
-		system.log_in("processes", .Warning, FAULT, "the glyph cache of B612 Regular has no face; the font outlines are not given")
+		system.log(.Warning, FAULT, "the glyph cache of B612 Regular has no face; the font outlines are not given")
 		return
 	}
 	// The glyphs below come from the private glyph cache of this process:
 	// its glyph memory first, which a process reserves at the first glyph
 	// that needs it.
 	if !display.text_memory_reserve() {
-		system.log_in("processes", .Warning, FAULT, "this process has no glyph memory: each glyph past its glyph caches is drawn band by band")
+		system.log(.Warning, FAULT, "this process has no glyph memory: each glyph past its glyph caches is drawn band by band")
 		return
 	}
 	drawn, missing: u64
@@ -190,33 +190,33 @@ fallback_lines_tell :: proc "contextless" () {
 		}
 	}
 	if drawn == B612_GREEK_LETTER_COUNT && missing == 0 {
-		system.log("interface_font: each Greek letter of B612 is drawn by this process: ", drawn, " letters: as it must")
+		system.log(.Info, "interface_font: each Greek letter of B612 is drawn by this process: ", drawn, " letters: as it must")
 	} else {
-		system.log_in("processes", .Warning, "interface_font: not each Greek letter of B612 is drawn: ", drawn, " of ", u64(B612_GREEK_LETTER_COUNT), ", ", missing, " with no glyph")
+		system.log(.Warning, "interface_font: not each Greek letter of B612 is drawn: ", drawn, " of ", u64(B612_GREEK_LETTER_COUNT), ", ", missing, " with no glyph")
 	}
 	for character in BOX_CHARACTERS {
 		entry, _, source := text_rendering.glyph(face, character, text_rendering.size_of_scale(1), 0)
 		font := text_rendering.font_of(face, character)
 		if font != .Paper_Mono || source != .Private_Cache || entry.row_count == 0 {
-			system.log_in("processes", .Warning, FAULT, "the character ", u64(character), " comes from the font ", text_rendering.outline_font_name(font), ", with ", u64(entry.row_count), " rows of ink")
+			system.log(.Warning, FAULT, "the character ", u64(character), " comes from the font ", text_rendering.outline_font_name(font), ", with ", u64(entry.row_count), " rows of ink")
 			return
 		}
 	}
-	system.log("interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: ", u64(len(BOX_CHARACTERS)), " characters: as it must")
+	system.log(.Info, "interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: ", u64(len(BOX_CHARACTERS)), " characters: as it must")
 	for character in MISSING_CHARACTERS {
 		_, _, source := text_rendering.glyph(face, character, text_rendering.size_of_scale(1), 0)
 		if text_rendering.has(face, character) || source != .Missing {
-			system.log_in("processes", .Warning, FAULT, "the character ", u64(character), " has a glyph, and no font of the chain has it")
+			system.log(.Warning, FAULT, "the character ", u64(character), " has a glyph, and no font of the chain has it")
 			return
 		}
 		// Its advance is the advance of the replacement glyph: the shaper
 		// gives it no fallback glyph.
 		if _, found := text_rendering.advance(face, character, text_rendering.size_of_scale(1)); found {
-			system.log_in("processes", .Warning, FAULT, "the character ", u64(character), " has an advance of a font")
+			system.log(.Warning, FAULT, "the character ", u64(character), " has an advance of a font")
 			return
 		}
 	}
-	system.log("interface_font: ", u64(len(MISSING_CHARACTERS)), " characters that no font of the chain has draw the replacement glyph: as it must")
+	system.log(.Info, "interface_font: ", u64(len(MISSING_CHARACTERS)), " characters that no font of the chain has draw the replacement glyph: as it must")
 }
 
 // line_width gives the width of a text in 1/64 of a pixel.
@@ -334,7 +334,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	font, font_ok := display.interface_font_open(ctx)
 	if !font_ok {
-		system.log("interface_font: the boot image gives no valid cache of the interface font")
+		system.log(.Info, "interface_font: the boot image gives no valid cache of the interface font")
 		system.stop(1)
 	}
 	regular_cache, bold_cache = font.regular, font.bold
@@ -348,9 +348,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	no_pair_spacing_large = {advances = regular_spacing_large.advances}
 	greek_lines_make()
 	measure()
-	system.log("interface_font: one line of ", u64(len(PARAGRAPH[1])), " characters in B612 at scale 1 (the least of 50 batches): shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; the caches of ", regular_cache.header.file_size, " and ", bold_cache.header.file_size, " bytes, from the boot image")
+	system.log(.Info, "interface_font: one line of ", u64(len(PARAGRAPH[1])), " characters in B612 at scale 1 (the least of 50 batches): shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; the caches of ", regular_cache.header.file_size, " and ", bold_cache.header.file_size, " bytes, from the boot image")
 	draw(&window)
-	system.log("interface_font: ok, B612 Regular and Bold, ", u64(regular_cache.header.pair_count), " and ", u64(bold_cache.header.pair_count), " pairs")
+	system.log(.Info, "interface_font: ok, B612 Regular and Bold, ", u64(regular_cache.header.pair_count), " and ", u64(bold_cache.header.pair_count), " pairs")
 	for {
 		// The input of the window: each event gives a frame.
 		list: system.Wait

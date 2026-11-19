@@ -687,7 +687,7 @@ input_of_record :: proc "contextless" (record: ring.Record) -> (given: Input_Rec
 // terminal that writes such records with no end costs its reader no wait.
 @(private)
 input_refusal_log :: proc "contextless" (record: ring.Record) {
-	system.log_in("processes", .Warning, "terminal: the terminal sent an input record of the kind ", u64(record.kind), ", which names no input: it is refused")
+	system.log(.Warning, "terminal: the terminal sent an input record of the kind ", u64(record.kind), ", which names no input: it is refused")
 }
 
 // clear tells the terminal to forget all the lines.

@@ -57,7 +57,7 @@ window_queue_memory_open :: proc "contextless" (index: int) {
 		}
 		if status != .Ok {
 			window_queue_memory_refused[index] = true
-			system.log("compositor: no memory for the records that wait for window ", system.name_of(clients[index].title[:]), ": each record that its full ring refuses is lost")
+			system.log(.Info, "compositor: no memory for the records that wait for window ", system.name_of(clients[index].title[:]), ": each record that its full ring refuses is lost")
 			return
 		}
 		window_queue_memory[index] = memory
@@ -101,7 +101,7 @@ window_event_send :: proc "contextless" (client: ^Client, kind: display.Event_Ki
 		system.wake_reader(target)
 	}
 	if result.loss_began {
-		system.log("compositor: window ", system.name_of(client.title[:]), " does not read its events: ", u64(queue.count), " records wait for it, and a new record is lost")
+		system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " does not read its events: ", u64(queue.count), " records wait for it, and a new record is lost")
 	}
 	if queue.refused[class] != refused_before {
 		switch class {
@@ -132,7 +132,7 @@ window_events_pass :: proc "contextless" () {
 			system.wake_reader(&client.ring.completions)
 		}
 		if lost, ended := key_path.window_queue_loss_ended(&queue); ended {
-			system.log("compositor: window ", system.name_of(client.title[:]), " reads its events again: ", lost[.Key], " key records, ", lost[.Pointer], " pointer records and ", lost[.Other], " other records were lost")
+			system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " reads its events again: ", lost[.Key], " key records, ", lost[.Pointer], " pointer records and ", lost[.Other], " other records were lost")
 		}
 	}
 }
@@ -175,7 +175,7 @@ window_queue_close :: proc "contextless" (index: int) {
 	queue := &window_queues[index]
 	if queue.loss.open {
 		lost := key_path.window_queue_loss_close(queue)
-		system.log("compositor: window ", system.name_of(clients[index].title[:]), " closed and did not read its events: ", lost[.Key], " key records, ", lost[.Pointer], " pointer records and ", lost[.Other], " other records were lost")
+		system.log(.Info, "compositor: window ", system.name_of(clients[index].title[:]), " closed and did not read its events: ", lost[.Key], " key records, ", lost[.Pointer], " pointer records and ", lost[.Other], " other records were lost")
 	}
 	queue^ = {}
 }

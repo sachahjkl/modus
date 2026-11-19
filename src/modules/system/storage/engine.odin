@@ -125,11 +125,11 @@ disk_silence_note :: proc "contextless" (cause: Disk_Silence) {
 	block_service = 0
 	switch cause {
 	case .No_Answer:
-		system.log_in("disk", .Error, "storage: the disk does not answer: the block service says that the device did not answer a request", DISK_SILENT_LINE)
+		system.log(.Error, "storage: the disk does not answer: the block service says that the device did not answer a request", DISK_SILENT_LINE)
 	case .Block_Service_Stopped:
-		system.log_in("disk", .Error, "storage: the disk does not answer: the block service stopped before it answered", DISK_SILENT_LINE)
+		system.log(.Error, "storage: the disk does not answer: the block service stopped before it answered", DISK_SILENT_LINE)
 	case .No_Completion:
-		system.log_in("disk", .Error, "storage: the disk does not answer: no completion came in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms", DISK_SILENT_LINE)
+		system.log(.Error, "storage: the disk does not answer: no completion came in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms", DISK_SILENT_LINE)
 	}
 }
 
@@ -275,7 +275,7 @@ transfer :: proc "contextless" (command: block.Command, requests: []Request) -> 
 					text: [240]u8
 					writer := system.Writer{buffer = text[:]}
 					system.ring_error_text(&writer, &error, "block", block.command_name(error.operation), block.argument_name(error.operation, error.argument))
-					system.log_in("disk", .Error, "storage: the block service refused a request: ", system.written(&writer))
+					system.log(.Error, "storage: the block service refused a request: ", system.written(&writer))
 				}
 				good = false
 			}
@@ -1267,7 +1267,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	if plan.tree_damaged {
 		plan_drop()
 		store_damaged[plan.store_index] = true
-		system.log_in("storage", .Warning, "storage: a node of a tree of the store ", system.name_of(plan.next.stores[plan.store_index].name[:]), " has a wrong check or breaks a rule of the format: the service changes nothing more in the store")
+		system.log(.Warning, "storage: a node of a tree of the store ", system.name_of(plan.next.stores[plan.store_index].name[:]), " has a wrong check or breaks a rule of the format: the service changes nothing more in the store")
 		return errors.fail(error, failure(.Damaged), .Damaged, .Stores)
 	}
 	if plan.device {
@@ -1277,7 +1277,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	if plan.count_fault {
 		plan_drop()
 		store_faulty[plan.store_index] = true
-		system.log_in("storage", .Error, "storage: a fault of the engine: a commit would take a count of names of a block below 0; the service makes no change in the store ", system.name_of(plan.next.stores[plan.store_index].name[:]), " until its next start, which counts again")
+		system.log(.Error, "storage: a fault of the engine: a commit would take a count of names of a block below 0; the service makes no change in the store ", system.name_of(plan.next.stores[plan.store_index].name[:]), " until its next start, which counts again")
 		return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
 	}
 	if plan.capacity_reached {
@@ -1328,13 +1328,13 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		// on from it.
 		plan_drop()
 		commits_refused += 1
-		system.log_in("storage", .Error, "storage: the read back of the commit of generation ", plan.next.generation, " found ", differ, differ == 1 ? string(" block with other bytes: the disk did not keep it") : string(" blocks with other bytes: the disk did not keep them"), "; the commit is refused before its root, and the service goes on from generation ", root.generation)
+		system.log(.Error, "storage: the read back of the commit of generation ", plan.next.generation, " found ", differ, differ == 1 ? string(" block with other bytes: the disk did not keep it") : string(" blocks with other bytes: the disk did not keep them"), "; the commit is refused before its root, and the service goes on from generation ", root.generation)
 		return errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, i64(differ))
 	case .Device:
 		// No root names the blocks: the disk holds the state before.
 		plan_drop()
 		commits_refused += 1
-		system.log_in("storage", .Error, "storage: the read back of the commit of generation ", plan.next.generation, " failed on the device: the commit is refused before its root")
+		system.log(.Error, "storage: the read back of the commit of generation ", plan.next.generation, " failed on the device: the commit is refused before its root")
 		return errors.fail(error, failure(.Disk), .Device)
 	}
 	plan.next.time = time_now()
@@ -1361,7 +1361,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		// writes its root in that place.
 		plan_drop()
 		commits_refused += 1
-		system.log_in("storage", .Error, "storage: the read back of the root of the commit of generation ", plan.next.generation, " found other bytes: the disk did not keep it; the commit is refused, and the service goes on from generation ", root.generation)
+		system.log(.Error, "storage: the read back of the root of the commit of generation ", plan.next.generation, " found other bytes: the disk did not keep it; the commit is refused, and the service goes on from generation ", root.generation)
 		root_refused_in_a_row()
 		return errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, 1)
 	case .Device:
@@ -1378,7 +1378,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	commits += 1
 	opened.store_versions[plan.store_index] = u64(i64(opened.store_versions[plan.store_index]) + plan.versions_change)
 	if plan.dropped_versions != 0 {
-		system.log_in("storage", .Warning, "storage: the commit of generation ", root.generation, " dropped ", plan.dropped_versions, " version indexes or leaves with a wrong check in the store ", system.name_of(root.stores[plan.store_index].name[:]), ": those versions are lost, the objects stay")
+		system.log(.Warning, "storage: the commit of generation ", root.generation, " dropped ", plan.dropped_versions, " version indexes or leaves with a wrong check in the store ", system.name_of(root.stores[plan.store_index].name[:]), ": those versions are lost, the objects stay")
 	}
 	owner := u8(plan.store_index + 1)
 	for place in plan.delta_places[:plan.delta_count] {
@@ -1608,7 +1608,7 @@ root_refused_in_a_row :: proc "contextless" () {
 	roots_refused_in_a_row += 1
 	if roots_refused_in_a_row == ROOT_REFUSAL_LIMIT {
 		broken = true
-		system.log_in("storage", .Error, "storage: the disk did not keep the root of ", u64(ROOT_REFUSAL_LIMIT), " commits in a row: a place of the root drops its writes; the service makes no change until its next start, and its objects can still be read")
+		system.log(.Error, "storage: the disk did not keep the root of ", u64(ROOT_REFUSAL_LIMIT), " commits in a row: a place of the root drops its writes; the service makes no change until its next start, and its objects can still be read")
 	}
 }
 
@@ -1618,7 +1618,7 @@ root_refused_in_a_row :: proc "contextless" () {
 root_undecided :: proc "contextless" (generation: u64, cause: string) {
 	commits_undecided += 1
 	broken = true
-	system.log_in("storage", .Error, "storage: the root of the commit of generation ", generation, ": ", cause, "; the commit is not taken, the open of the next start decides, and the service makes no change until then")
+	system.log(.Error, "storage: the root of the commit of generation ", generation, ": ", cause, "; the commit is not taken, the open of the next start decides, and the service makes no change until then")
 }
 
 // root_read_back reads the root in `place` from the device and compares it

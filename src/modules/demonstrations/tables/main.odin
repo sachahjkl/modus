@@ -484,7 +484,7 @@ measure :: proc "contextless" () {
 					result, status := system.call_isolated(connection, sample_file, index, arguments[:], nil, way == .Memory_Object)
 					intrinsics.volatile_store(&sink, result)
 					if status != .Ok && ok {
-						system.log("tables: ", measure_names[way], ", ", u64(size), " rows: call ", u64(call_number), " gave the status ", u64(status))
+						system.log(.Info, "tables: ", measure_names[way], ", ", u64(size), " rows: call ", u64(call_number), " gave the status ", u64(status))
 					}
 					ok &&= status == .Ok
 				}
@@ -667,7 +667,7 @@ process_generator: random.Generator
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("tables: no random seed in the context")
+		system.log(.Info, "tables: no random seed in the context")
 		system.stop(1)
 	}
 	window, opened := display.open(ctx, WIDTH, HEIGHT, "tables")
@@ -695,7 +695,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
 		system.load_error_text(&writer, &load_error)
-		system.log("tables: the call host did not start: status ", u64(status), "; ", system.written(&writer))
+		system.log(.Info, "tables: the call host did not start: status ", u64(status), "; ", system.written(&writer))
 	}
 	// The service: the root service starts sample as a process.
 	if ring_handle := ctx.handles[system.GRANT_ROOT]; ring_handle != 0 {
@@ -714,7 +714,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if hostile_host, status = system.call_host_start(image, image_memory, hostile_file, "hostile host", random.values_with_seed(&process_generator, {}), &load_error); status == .Ok {
 		hostile_ready[.Call_Host] = true
 	}
-	system.log("tables: the ways: direct ", ways_ready[.Direct] ? "ready" : "refused", ", call host ", ways_ready[.Call_Host] ? "ready" : "refused", ", service ", ways_ready[.Service] ? "ready" : "refused")
+	system.log(.Info, "tables: the ways: direct ", ways_ready[.Direct] ? "ready" : "refused", ", call host ", ways_ready[.Call_Host] ? "ready" : "refused", ", service ", ways_ready[.Service] ? "ready" : "refused")
 
 	// The table of the measures: 65536 readings in a memory object.
 	pages := u64(LARGE_COUNT * size_of(Reading) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
@@ -737,24 +737,24 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for way in Way {
 			if !item.answers[way].right {
 				wrong += 1
-				system.log("tables: wrong answer: ", item.name, ", ", way_names[way], ": ", answer_text(&item.answers[way]))
+				system.log(.Info, "tables: wrong answer: ", item.name, ", ", way_names[way], ": ", answer_text(&item.answers[way]))
 			}
 		}
 	}
 	for &item in hostile[:hostile_count] {
 		if !item.answer.right {
 			wrong += 1
-			system.log("tables: wrong answer: ", item.name, ": ", answer_text(&item.answer))
+			system.log(.Info, "tables: wrong answer: ", item.name, ": ", answer_text(&item.answer))
 		}
 	}
 	for &item in hostile[:hostile_count] {
-		system.log("tables: ", item.name, ": ", answer_text(&item.answer))
+		system.log(.Info, "tables: ", item.name, ": ", answer_text(&item.answer))
 	}
 	for way in Measure_Way {
-		system.log("tables: sum_values, ", measure_names[way], ": ", measures[way][0], " ns for 64 rows, ", measures[way][1], " ns for 1024 rows, ", measures[way][2], " ns for 65536 rows (0: refused)")
+		system.log(.Info, "tables: sum_values, ", measure_names[way], ": ", measures[way][0], " ns for 64 rows, ", measures[way][1], " ns for 1024 rows, ", measures[way][2], " ns for 65536 rows (0: refused)")
 	}
 	if wrong == 0 {
-		system.log("tables: ok, ", u64(case_count), " cases in 3 ways and ", u64(hostile_count), " hostile cases")
+		system.log(.Info, "tables: ok, ", u64(case_count), " cases in 3 ways and ", u64(hostile_count), " hostile cases")
 	}
 
 	for {

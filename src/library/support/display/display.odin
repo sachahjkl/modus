@@ -465,7 +465,7 @@ picture_end :: proc "contextless" (window: ^Window) {
 		window.picture_count += 1
 		if count := window.picture_count; system.measure_run() && (count == 1 || count == 3 || count == PICTURES_MEASURED) {
 			mean := window.picture_time / count
-			system.log("display: ", string(window.title[:window.title_count]), " drew one picture in ", mean / 1000, ".", mean / 100 % 10, " us, the mean of ", count)
+			system.log(.Info, "display: ", string(window.title[:window.title_count]), " drew one picture in ", mean / 1000, ".", mean / 100 % 10, " us, the mean of ", count)
 		}
 	}
 	window.picture_started = 0
@@ -583,7 +583,7 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 	// test waits for this line before a picture of the new size.
 	if window.resized_picture_due {
 		window.resized_picture_due = false
-		system.log_in("processes", .Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.canvas.width), "x", u64(window.canvas.height), " after a resize")
+		system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.canvas.width), "x", u64(window.canvas.height), " after a resize")
 	}
 	return true
 }
@@ -680,7 +680,7 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 		}
 	}
 	if status != .Ok {
-		system.log_in("processes", .Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height))
+		system.log(.Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height))
 		// A full ring keeps the request: the next present declines it.
 		resize_decline(window)
 		return status
@@ -708,7 +708,7 @@ resize_decline :: proc "contextless" (window: ^Window) -> bool {
 		return false
 	}
 	window.resize_asked = false
-	system.log_in("processes", .Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
+	system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
 	return true
 }
 
@@ -804,7 +804,7 @@ canvas_wait :: proc "contextless" (window: ^Window) -> bool {
 	}
 	if !free {
 		window.compositor_late = true
-		system.log_in("processes", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor did not take a picture in ", u64(CANVAS_WAIT_BOUND_MILLISECONDS), " ms: this window draws no picture until it does")
+		system.log(.Warning, "display: ", string(window.title[:window.title_count]), ": the compositor did not take a picture in ", u64(CANVAS_WAIT_BOUND_MILLISECONDS), " ms: this window draws no picture until it does")
 	}
 	return free
 }
@@ -871,7 +871,7 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		record := system.receive(&window.ring.completions) or_return
 		read, read_ok := event_of_record(record)
 		if !read_ok {
-			system.log_in("processes", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor sent a record of the kind ", u64(record.kind), ", which names no event or has a size out of its range: it is refused")
+			system.log(.Warning, "display: ", string(window.title[:window.title_count]), ": the compositor sent a record of the kind ", u64(record.kind), ", which names no event or has a size out of its range: it is refused")
 			continue
 		}
 		if read.kind == .Settings_Changed {
@@ -1007,21 +1007,21 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 		switch {
 		case problem.kind == .None:
 		case problem.kind == .Not_Mapped:
-			system.log_in("processes", .Warning, "display: no glyph cache with the grid fit ", settings.descriptions[.Grid_Fit].value_names[grid_fit], ": that text is Spleen 8x16")
+			system.log(.Warning, "display: no glyph cache with the grid fit ", settings.descriptions[.Grid_Fit].value_names[grid_fit], ": that text is Spleen 8x16")
 		case problems.cells_of_another_font[grid_fit]:
-			system.log_in("processes", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": that text is Spleen 8x16")
+			system.log(.Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": that text is Spleen 8x16")
 		case:
-			system.log_in("processes", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": that text is Spleen 8x16")
+			system.log(.Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": that text is Spleen 8x16")
 		}
 	}
 	if problems.bold.kind != .None && problems.bold.kind != .Not_Mapped {
-		system.log_in("processes", .Warning, "display: the bold glyph cache is refused: ", glyph_cache.problem_sentences[problems.bold.kind], ": the titles are the regular weight")
+		system.log(.Warning, "display: the bold glyph cache is refused: ", glyph_cache.problem_sentences[problems.bold.kind], ": the titles are the regular weight")
 	}
 	if problems.outlines.kind != .None && problems.outlines.kind != .Not_Mapped {
-		system.log_in("processes", .Warning, "display: the font outlines are refused: ", font_outlines.problem_sentences[problems.outlines.kind], ", value ", problems.outlines.value, ": the characters past the glyph caches draw the replacement glyph")
+		system.log(.Warning, "display: the font outlines are refused: ", font_outlines.problem_sentences[problems.outlines.kind], ", value ", problems.outlines.value, ": the characters past the glyph caches draw the replacement glyph")
 	}
 	if problems.fonts_missing != {} {
-		system.log_in("processes", .Warning, "display: the font outlines lack ", u64(card(problems.fonts_missing)), " fonts of the fallback chains, or the renderer refuses them: the chains skip them")
+		system.log(.Warning, "display: the font outlines lack ", u64(card(problems.fonts_missing)), " fonts of the fallback chains, or the renderer refuses them: the chains skip them")
 	}
 }
 
@@ -1114,7 +1114,7 @@ interface_font_open :: proc "contextless" (ctx: ^system.Context) -> (font: Inter
 			return {}, false
 		}
 		if problem.kind != .None {
-			system.log_in("processes", .Warning, "display: the glyph cache of the interface font is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value)
+			system.log(.Warning, "display: the glyph cache of the interface font is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value)
 			return {}, false
 		}
 	}

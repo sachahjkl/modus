@@ -82,7 +82,6 @@ A pair of the glyph cache names its two characters by their character index, in 
 
 - the name of a module, of an export, of a field and of a record of the module contract;
 - the names of a debug object: types, fields, procedures, variables and paths of sources ([`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "Debug information");
-- the channel of a line of the log (the kernel takes the bytes 33 to 126);
 - the name of a process: the kernel refuses a name with another byte at `Process_Create`, because the name starts each line of the process on the serial port; so the name of a disk process too;
 - the name of a setting and of its values;
 - the name of a font and of a pointer theme in their files;
@@ -121,7 +120,7 @@ The command `character` still writes a character from its code point: it writes 
 
 - **A measure in bytes is wider than the drawing, never narrower.** A text of UTF-8 has at least as many bytes as characters. A process that still places a text by its count of bytes leaves a gap after a character outside ASCII; it never draws a text over another. `interface.text_width`, `graphics.text_width` and `text_fit` count characters.
 - **A writer cuts, a reader checks.** A record of the terminal of 256 bytes ends after a whole character, so a reader never sees half a character at the end of a run. A process that writes the ring by hand can still split one: the terminal draws two replacement glyphs, and nothing more happens.
-- **The check of the kernel is a filter of bytes, not a text parser.** It keeps no state between two calls and builds no structure, as the check of the channel does. It must be in the kernel: a process calls `Log` itself, so a check in the support library is no check.
+- **The check of the kernel is a filter of bytes, not a text parser.** It keeps no state between two calls and builds no structure, as the check of the name of a process does. It must be in the kernel: a process calls `Log` itself, so a check in the support library is no check.
 - **The kernel replaces with `?`, not with U+FFFD.** U+FFFD is three bytes, and the value runs of a log line name offsets into the text.
 - **Bidirectional controls are characters of a text.** The drawing has no bidirectional algorithm: such a character the font lacks draws the replacement glyph and changes no order. A terminal of the host that reads the serial port can reorder a line with them; the log is for the developer, and the rule refuses the controls that act on a terminal.
 - **One code point, one cell.** A combining accent and a wide character take one cell each. No font of the system draws them, so each draws the replacement glyph in its own cell.

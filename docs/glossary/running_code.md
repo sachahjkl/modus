@@ -344,13 +344,13 @@ Do not use: negative test, lkdtm.
 
 ### Log record
 
-A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a process (its name, its process slot and its process serial), the own number of the record among the records of its process, a thread, a level, a channel, a text and the value runs of the text.
+A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a process (its name, its process slot and its process serial), the own number of the record among the records of its process, a thread, a level, a text and the value runs of the text.
 
-A process writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the process and the thread, so a process cannot write a record in the name of another one. A long text continues in the next record. The log service serves the records as a table, `log.records(after)`, to each caller in its log scope. It is not a line of the serial port, which the serial writer prints from the record.
+A process writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the process and the thread, so a process cannot write a record in the name of another one. A record carries no name that its writer chooses to group it: a reader chooses records by process and by level. A long text continues in the next record. The log service serves the records as a table, `log.records(after)`, to each caller in its log scope. It is not a line of the serial port, which the serial writer prints from the record.
 
 The design: `docs/TOOLS.md`, "The log".
 
-Do not use: log line, message.
+Do not use: log line, message, log channel, facility, category, logger.
 
 ### Serial writer
 
@@ -431,14 +431,6 @@ N counts each byte that the place does not hold, so the reader knows what is mis
 The rule: `docs/ARCHITECTURE.md`, "A text is never cut in silence".
 
 Do not use: ellipsis, truncation, "..." (alone).
-
-### Channel
-
-A channel is the short name of 16 bytes at most that a process gives to a log record, to group the records of one subject.
-
-A record with no channel has 16 zero bytes there. A reader of the log, such as the step `Record` of the machine test, chooses records by process, channel and level.
-
-Do not use: facility, tag, category, logger.
 
 ### Level
 

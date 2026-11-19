@@ -76,7 +76,7 @@ site_accent_graphic_color :: proc(accent: Site_Accent, light: bool) -> graphics.
 }
 
 // site_without_process_label takes the label "[process] " or
-// "[process:channel] " of the log off a line.
+// "[process] " of the log off a line.
 site_without_process_label :: proc(line: string) -> string {
 	if strings.has_prefix(line, "[") {
 		if end := strings.index(line, "] "); end > 0 {

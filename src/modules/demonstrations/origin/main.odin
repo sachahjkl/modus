@@ -149,11 +149,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for item in cases[:case_count] {
 		if !item.right {
 			wrong += 1
-			system.log("origin: wrong answer: ", item.text)
+			system.log(.Info, "origin: wrong answer: ", item.text)
 		}
 	}
 	if wrong == 0 {
-		system.log("origin: ok, ", u64(case_count), " cases")
+		system.log(.Info, "origin: ok, ", u64(case_count), " cases")
 	}
 
 	// The measure. One cycle of a lent handle is four kernel entries: a
@@ -172,7 +172,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.close(copy)
 	}
 	copy_time = (system.time() - start) * 1_000_000 / CYCLES
-	system.log("origin: lend a handle and take it back: ", lend_time, " ns with 4 kernel entries; copy and close: ", copy_time, " ns with 2")
+	system.log(.Info, "origin: lend a handle and take it back: ", lend_time, " ns with 4 kernel entries; copy and close: ", copy_time, " ns with 2")
 
 	for {
 		frame := interface.window_frame_start(&window_memory, &window)

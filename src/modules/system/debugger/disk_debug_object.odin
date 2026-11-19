@@ -122,16 +122,16 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 	for_report := kept != nil
 	tag := root_request_send(name, connection_ring, false, store = true, kept = for_report)
 	if tag == 0 {
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the command to the root service was not sent")
+		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the command to the root service was not sent")
 		return
 	}
 	completion, answered = root_answer_wait(tag, limit)
 	if !answered {
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the root service gave no connection to the store in ", u64(DISK_DEBUG_OBJECT_MILLISECONDS), " ms")
+		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the root service gave no connection to the store in ", u64(DISK_DEBUG_OBJECT_MILLISECONDS), " ms")
 		return
 	}
 	if system.Status(completion.kind) != .Ok {
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the root service refused the connection to the store, status word ", u64(completion.kind))
+		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the root service refused the connection to the store, status word ", u64(completion.kind))
 		return
 	}
 	// The connection lives for the read only: after it, on each path, the
@@ -185,11 +185,11 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		}
 		switch {
 		case for_report && !report_received:
-			system.log("debugger: no stop report of ", system.Module_Name{name}, ": the page of the root service does not map")
+			system.log(.Info, "debugger: no stop report of ", system.Module_Name{name}, ": the page of the root service does not map")
 		case held_by_the_session:
 			// The object of the session describes the module: no read.
 		case:
-			system.log("debugger: no debug object for ", system.Module_Name{name}, ": the connection to the store does not open")
+			system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the connection to the store does not open")
 		}
 		return
 	}
@@ -211,27 +211,27 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 	arguments[1].text = digits[:]
 	answer_value, text, status, done := store_call(&client, "size", arguments[:2], limit)
 	if !done {
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the storage service gave no size in ", u64(DISK_DEBUG_OBJECT_MILLISECONDS), " ms")
+		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the storage service gave no size in ", u64(DISK_DEBUG_OBJECT_MILLISECONDS), " ms")
 		return
 	}
 	if storage.export_failed_with(status, answer_value, .Absent) {
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the store ", disk_process.STORE_NAME, " of principal ", store_principal, " has no object ", object_name)
+		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the store ", disk_process.STORE_NAME, " of principal ", store_principal, " has no object ", object_name)
 		return
 	}
 	if status != .Ok || answer_value < 0 {
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the storage service refused the size of ", object_name, ", status ", u64(status))
+		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the storage service refused the size of ", object_name, ", status ", u64(status))
 		return
 	}
 	// The size is copied here and checked one time: no later answer
 	// changes it.
 	object_read, size_answer := disk_process.read_begin(u64(answer_value), disk_process.DEBUG_OBJECT_BYTES_LIMIT)
 	if size_answer != .Good {
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the object ", object_name, " has ", u64(answer_value), " bytes, and a debug object has 1 to ", u64(disk_process.DEBUG_OBJECT_BYTES_LIMIT))
+		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the object ", object_name, " has ", u64(answer_value), " bytes, and a debug object has 1 to ", u64(disk_process.DEBUG_OBJECT_BYTES_LIMIT))
 		return
 	}
 	object_memory, create_status := system.memory_create((object_read.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 	if create_status != .Ok {
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": no memory for its ", object_read.size, " bytes: status ", create_status)
+		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": no memory for its ", object_read.size, " bytes: status ", create_status)
 		return
 	}
 	into.memory = object_memory
@@ -239,7 +239,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 	if map_status != .Ok {
 		held_object_forget(into)
 		into.module_hash = module_hash
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": its memory does not map: status ", map_status)
+		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": its memory does not map: status ", map_status)
 		return
 	}
 	bytes := ([^]u8)(address)[:object_read.size]
@@ -273,7 +273,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 			system.memory_unmap(address)
 			held_object_forget(into)
 			into.module_hash = module_hash
-			system.log("debugger: no debug object for ", system.Module_Name{name}, ": ", problem)
+			system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": ", problem)
 			return
 		}
 		if read_answer == .Complete {
@@ -289,14 +289,14 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		held_object_forget(into)
 		into.module_hash = module_hash
 		if fault != .None {
-			system.log("debugger: refused the debug object ", object_name, " of ", system.Module_Name{name}, ": ", debug_object.fault_sentences[fault])
+			system.log(.Info, "debugger: refused the debug object ", object_name, " of ", system.Module_Name{name}, ": ", debug_object.fault_sentences[fault])
 		} else {
-			system.log("debugger: refused the debug object ", object_name, " of ", system.Module_Name{name}, ": it names the module ", system.Hash{named[:]}, ", not this module")
+			system.log(.Info, "debugger: refused the debug object ", object_name, " of ", system.Module_Name{name}, ": it names the module ", system.Hash{named[:]}, ", not this module")
 		}
 		return
 	}
 	into.object = bytes
-	system.log("debugger: read the debug object ", object_name, " of ", system.Module_Name{name}, " from the store ", disk_process.STORE_NAME, " of principal ", store_principal, ": ", object_read.size, " bytes, checked whole")
+	system.log(.Info, "debugger: read the debug object ", object_name, " of ", system.Module_Name{name}, " from the store ", disk_process.STORE_NAME, " of principal ", store_principal, ": ", object_read.size, " bytes, checked whole")
 	return
 }
 

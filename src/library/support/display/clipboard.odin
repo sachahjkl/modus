@@ -36,7 +36,7 @@ copy_send :: proc "contextless" (window: ^Window, text: []u8, error: ^errors.Err
 	title := string(window.title[:window.title_count])
 	problem = clipboard_text_problem(text, CLIPBOARD_TEXT_LIMIT)
 	if problem != .None {
-		system.log_in("processes", .Warning, "display: ", title, ": the copy is refused: ", CLIPBOARD_PROBLEM_SENTENCES[problem])
+		system.log(.Warning, "display: ", title, ": the copy is refused: ", CLIPBOARD_PROBLEM_SENTENCES[problem])
 		copy_decline(window)
 		return problem, .Ok
 	}
@@ -59,13 +59,13 @@ copy_send :: proc "contextless" (window: ^Window, text: []u8, error: ^errors.Err
 		system.close(memory)
 	}
 	if status != .Ok {
-		system.log_in("processes", .Warning, "display: ", title, ": the copy of ", u64(len(text)), " bytes is refused: ", op.STATUS_NAMES[status])
+		system.log(.Warning, "display: ", title, ": the copy of ", u64(len(text)), " bytes is refused: ", op.STATUS_NAMES[status])
 		copy_decline(window)
 		return .Kernel_Refused, status
 	}
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Copy), values = {0 = u64(granted), 1 = u64(Clipboard_Kind.Text), 2 = u64(len(text)), 3 = window.copy_serial}})
 	window.copy_asked = false
-	system.log_in("processes", .Info, "display: ", title, ": a copy of ", u64(len(text)), " bytes of text")
+	system.log(.Info, "display: ", title, ": a copy of ", u64(len(text)), " bytes of text")
 	return .None, .Ok
 }
 
@@ -104,9 +104,9 @@ paste_read :: proc "contextless" (window: ^Window, event: Event, room: []u8) -> 
 	paste_answer(window, event)
 	title := string(window.title[:window.title_count])
 	if problem == .None {
-		system.log_in("processes", .Info, "display: ", title, ": a paste of ", u64(count), " bytes of text")
+		system.log(.Info, "display: ", title, ": a paste of ", u64(count), " bytes of text")
 	} else {
-		system.log_in("processes", .Warning, "display: ", title, ": the paste is refused: ", CLIPBOARD_PROBLEM_SENTENCES[problem])
+		system.log(.Warning, "display: ", title, ": the paste is refused: ", CLIPBOARD_PROBLEM_SENTENCES[problem])
 	}
 	return count, problem
 }
@@ -181,5 +181,5 @@ paste_copy :: proc "contextless" (window: ^Window, event: Event, room: []u8) -> 
 // the lend at once.
 paste_refuse :: proc "contextless" (window: ^Window, event: Event) {
 	paste_answer(window, event)
-	system.log_in("processes", .Info, "display: ", string(window.title[:window.title_count]), ": no part of the window takes the paste")
+	system.log(.Info, "display: ", string(window.title[:window.title_count]), ": no part of the window takes the paste")
 }

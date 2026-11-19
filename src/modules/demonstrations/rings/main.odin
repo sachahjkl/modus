@@ -94,7 +94,7 @@ series_color :: proc "contextless" (number: u64) -> graphics.Color {
 }
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log("rings: ", text)
+	system.log(.Info, "rings: ", text)
 	system.stop(1)
 }
 
@@ -130,9 +130,9 @@ node_stop :: proc "contextless" (index: int) {
 toggle :: proc "contextless" (index: int) {
 	if nodes[index].process != 0 {
 		node_stop(index)
-		system.log("rings: node ", u64(index + 1), " stopped")
+		system.log(.Info, "rings: node ", u64(index + 1), " stopped")
 	} else if node_start(index) {
-		system.log("rings: node ", u64(index + 1), " started")
+		system.log(.Info, "rings: node ", u64(index + 1), " started")
 	}
 }
 
@@ -170,7 +170,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("rings: no random seed in the context")
+		system.log(.Info, "rings: no random seed in the context")
 		system.stop(1)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "rings")
@@ -208,7 +208,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for index in 0 ..< START_RECORDS {
 		add(index)
 	}
-	system.log("rings: ok, ", u64(relay.NODE_COUNT), " processes, ", u64(relay.NODE_COUNT), " rings, ", u64(START_RECORDS), " records")
+	system.log(.Info, "rings: ok, ", u64(relay.NODE_COUNT), " processes, ", u64(relay.NODE_COUNT), " rings, ", u64(START_RECORDS), " records")
 
 	buttons: u32
 	for {
@@ -295,7 +295,7 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 		toggle(int(press.character - '1'))
 	case 'a':
 		add(added % relay.NODE_COUNT)
-		system.log("rings: the key a adds a record: ", u64(added), " records in all")
+		system.log(.Info, "rings: the key a adds a record: ", u64(added), " records in all")
 	}
 }
 
@@ -311,14 +311,14 @@ watch :: proc "contextless" () {
 		if node.process != 0 {
 			if state, _ := system.process_state(node.process); state == .Stopped {
 				node_stop(index)
-				system.log("rings: node ", u64(index + 1), " stopped alone")
+				system.log(.Info, "rings: node ", u64(index + 1), " stopped alone")
 			}
 			continue
 		}
 		_, count := pending(&nodes[(index + relay.NODE_COUNT - 1) % relay.NODE_COUNT].after.commands)
 		if count == total && total > 0 && !node.waiting_logged {
 			node.waiting_logged = true
-			system.log("rings: node ", u64(index + 1), " does not run: ", u64(total), " records wait in the ring before it")
+			system.log(.Info, "rings: node ", u64(index + 1), " does not run: ", u64(total), " records wait in the ring before it")
 		}
 	}
 }

@@ -66,7 +66,7 @@ text_settings_create :: proc "contextless" () {
 		problem: glyph_cache.Problem
 		caches[cache], problem = glyph_cache.validate(image[entry.offset:][:entry.size])
 		if problem.kind != .None {
-			system.log_in("processes", .Warning, "root: the glyph cache ", name, " is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ": it is not given")
+			system.log(.Warning, "root: the glyph cache ", name, " is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ": it is not given")
 			continue
 		}
 		glyph_cache_mappings[cache] = mapping
@@ -78,11 +78,11 @@ text_settings_create :: proc "contextless" () {
 		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size]); problem.kind == .None {
 			font_outlines_mapping = mapping
 		} else {
-			system.log_in("processes", .Warning, "root: the font outlines are refused: ", font_outlines.problem_sentences[problem.kind], ", value ", problem.value, ": they are not given")
+			system.log(.Warning, "root: the font outlines are refused: ", font_outlines.problem_sentences[problem.kind], ", value ", problem.value, ": they are not given")
 		}
 	}
 	if glyph_cache_mappings[.With_Grid_Fit].page_count == 0 {
-		system.log_in("processes", .Warning, "root: the boot image has no valid glyph cache: the text of the system is Spleen 8x16")
+		system.log(.Warning, "root: the boot image has no valid glyph cache: the text of the system is Spleen 8x16")
 	}
 }
 
@@ -132,7 +132,7 @@ settings_boot_pass_start :: proc "contextless" () -> system.Status {
 	status := start("settings")
 	settings_boot_pass = false
 	if status != .Ok {
-		system.log_in("processes", .Warning, "root: the boot pass of settings did not start (status ", status, "): the settings are the defaults")
+		system.log(.Warning, "root: the boot pass of settings did not start (status ", status, "): the settings are the defaults")
 	}
 	return status
 }

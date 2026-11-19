@@ -66,6 +66,13 @@
 // - `log_reader: the process handle of the log service from connect, with
 //   Read and no Give: the lend failed with No_Right, and it reads no record
 //   of the service: as it must`;
+// - `log_reader: Log refused 9 wrong calls, each with its status and its
+//   error record: the level word, the runs and the length past their
+//   bounds, and a text past the end of the addresses; the own log ring kept
+//   the same <count> records: as it must`: it calls the kernel operation
+//   `Log` itself (log_operation_check);
+// - `log_reader: Log wrote a text of 0 bytes, of 1 byte and of 4096 bytes,
+//   in 1, 1 and 25 records: as it must`;
 // - `log_reader: ok`, then it stops with the code 0.
 //
 // Each child writes `log_reader child: the record that the starter reads
@@ -156,11 +163,10 @@ Record :: struct {
 	process:   [32]u8,
 	slot:      i64,
 	level:     [8]u8,
-	channel:   [16]u8,
 	lost:      i64,
 	continues: i64,
 	runs:      i64,
-	text:      [152]u8,
+	text:      [168]u8,
 }
 #assert(size_of(Record) == 256)
 
@@ -310,18 +316,18 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 		after = u64(record_rows[given - 1].number + 1)
 	}
 	if other_rows != 0 {
-		system.log("log_reader: WRONG: the log service gave ", u64(other_rows), " rows of other processes")
+		system.log(.Info, "log_reader: WRONG: the log service gave ", u64(other_rows), " rows of other processes")
 		return "the log service gave records of other processes"
 	}
 	if !found_own_record {
-		system.log("log_reader: WRONG: the log service gave ", u64(own_count), " rows, the first with lost ", first_lost, ", and not the record that this process wrote")
+		system.log(.Info, "log_reader: WRONG: the log service gave ", u64(own_count), " rows, the first with lost ", first_lost, ", and not the record that this process wrote")
 		return "the log service did not give the record of this process"
 	}
 	if slot == 0 || slots_differ {
 		return "the rows of this process name the kernel, or two slots"
 	}
 	if own_count != 1 || first_number != 0 || own_number != 0 || first_lost != 0 {
-		system.log("log_reader: WRONG: the log service gave ", u64(own_count), " rows of the name log_reader, the first with the number ", first_number, " and lost ", first_lost, ", the record of this process with the number ", own_number, "; one row, its first record, with the number 0 and lost 0, was the answer")
+		system.log(.Info, "log_reader: WRONG: the log service gave ", u64(own_count), " rows of the name log_reader, the first with the number ", first_number, " and lost ", first_lost, ", the record of this process with the number ", own_number, "; one row, its first record, with the number 0 and lost 0, was the answer")
 		return "the log service gave a row before the first record of this process, or of an earlier run"
 	}
 
@@ -347,26 +353,135 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 		}
 	}
 	if other_runs != 0 {
-		system.log("log_reader: WRONG: the log service gave ", u64(other_runs), " value runs of other records")
+		system.log(.Info, "log_reader: WRONG: the log service gave ", u64(other_runs), " value runs of other records")
 		return "the log service gave value runs of other records"
 	}
 	if !found_own_run {
 		return "the log service did not give the value run of the record of this process"
 	}
-	system.log("log_reader: its own records: ", u64(own_count), " rows from the own number 0, its first record, in the slot ", slot, ", lost 0: no row of another process or of an earlier run: as it must")
-	system.log("log_reader: the value runs: ", u64(runs_given), " rows, each of a record of this process, with the run of its value ", u64(OWN_VALUE), ": as it must")
+	system.log(.Info, "log_reader: its own records: ", u64(own_count), " rows from the own number 0, its first record, in the slot ", slot, ", lost 0: no row of another process or of an earlier run: as it must")
+	system.log(.Info, "log_reader: the value runs: ", u64(runs_given), " rows, each of a record of this process, with the run of its value ", u64(OWN_VALUE), ": as it must")
 
 	for index in 0 ..< CHILD_COUNT {
 		if problem := child_records_check(&connection, file, process_records_export, process_value_runs_export, index); problem != "" {
 			return problem
 		}
 	}
-	system.log("log_reader: a child wrote ", u64(STORM_RECORDS), " records after the records of this process and of its two children, more than the ", u64(op.LOG_RECORD_CAPACITY), " that the whole log keeps, and the own log ring of each one kept its records: as it must")
-	system.log("log_reader: the storm child took ", u64(STORM_LOG_RECORDS), " of the ", whole_log_records, " log records of each second of this process, which kept ", storm_log_records_kept, ", and each child gave its records back at its stop: as it must")
+	system.log(.Info, "log_reader: a child wrote ", u64(STORM_RECORDS), " records after the records of this process and of its two children, more than the ", u64(op.LOG_RECORD_CAPACITY), " that the whole log keeps, and the own log ring of each one kept its records: as it must")
+	system.log(.Info, "log_reader: the storm child took ", u64(STORM_LOG_RECORDS), " of the ", whole_log_records, " log records of each second of this process, which kept ", storm_log_records_kept, ", and each child gave its records back at its stop: as it must")
 	if problem := lent_memory_refused(&connection, file, process_records_export); problem != "" {
 		return problem
 	}
-	return lent_service_handle_refused(&connection, file, process_records_export)
+	if problem := lent_service_handle_refused(&connection, file, process_records_export); problem != "" {
+		return problem
+	}
+	return log_operation_check(&connection, file, records_export)
+}
+
+// The arguments of the operation Log, from 1, as its error record names
+// them: (log, address, length, level, runs).
+LOG_ARGUMENT_ADDRESS :: 2
+LOG_ARGUMENT_LENGTH :: 3
+LOG_ARGUMENT_LEVEL :: 4
+LOG_ARGUMENT_RUNS :: 5
+// The records of a text of LOG_TEXT_BYTES_MOST bytes of ASCII: no character
+// moves the cut of a record.
+BOUND_TEXT_RECORDS :: (op.LOG_TEXT_BYTES_MOST + op.LOG_TEXT_CAPACITY - 1) / op.LOG_TEXT_CAPACITY
+
+// The text of the longest Log: LOG_TEXT_BYTES_MOST bytes of one letter. Not
+// on the stack, which is small.
+bound_text: [op.LOG_TEXT_BYTES_MOST]u8
+
+// One call of the operation Log that the kernel must refuse, and what its
+// refusal must be: the status, and the kind, the argument and the value of
+// its error record.
+Log_Refusal :: struct {
+	name:     string,
+	address:  u64,
+	length:   u64,
+	level:    u64,
+	runs:     u64,
+	status:   system.Status,
+	kind:     errors.Kind,
+	argument: i64,
+	value:    u64,
+}
+
+// own_record_count gives the count of the own records that the own log ring
+// of this process keeps, from the own number 0: the result of
+// log.records(0). It holds each record of this process while it has
+// written fewer than the ring keeps.
+own_record_count :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, records_export: u32) -> (count: i64, ok: bool) {
+	arguments := [1]isolated.Argument{{integer = 0}}
+	result, status := system.call_isolated(connection, file, records_export, arguments[:], nil, false, bytes_of(record_rows[:]))
+	return result, status == .Ok && result >= 0
+}
+
+// log_operation_check calls the kernel operation Log itself, past the
+// support library. First each call that the kernel must refuse: a level
+// word that names no member (one past the last member, a word whose low
+// byte names a member, the largest word), a count of runs past its bound
+// and the largest count, a length past its bound and the largest length,
+// and a text or its runs past the end of the addresses of a process (a
+// damaged length). Each refusal has its status and its error record, and
+// the own log ring keeps the same count of records: no refusal wrote one.
+// Then the edges that the kernel takes: a text of 0 bytes, of 1 byte, and
+// of LOG_TEXT_BYTES_MOST bytes, which takes BOUND_TEXT_RECORDS records. It
+// gives the reason of the first check that fails, or "".
+log_operation_check :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, records_export: u32) -> string {
+	for &byte_value in bound_text {
+		byte_value = 'x'
+	}
+	log := u64(system.context_record().handles[op.CONTEXT_LOG])
+	text := u64(uintptr(&bound_text[0]))
+	info := u64(op.Log_Level.Info)
+	end_of_addresses := u64(op.USER_END - 1)
+	refusals := [?]Log_Refusal {
+		{"the level one past the last member", text, 1, u64(max(op.Log_Level)) + 1, 0, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_LEVEL, u64(max(op.Log_Level)) + 1},
+		{"a level word whose low byte names a member", text, 1, 1 << 8, 0, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_LEVEL, 1 << 8},
+		{"the largest level word", text, 1, max(u64), 0, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_LEVEL, max(u64)},
+		{"one run past the bound", text, 1, info, op.LOG_CALL_RUN_LIMIT + 1, .Bad_Operation, .Too_Long, LOG_ARGUMENT_RUNS, op.LOG_CALL_RUN_LIMIT + 1},
+		{"the largest count of runs", text, 1, info, max(u64), .Bad_Operation, .Too_Long, LOG_ARGUMENT_RUNS, max(u64)},
+		{"one byte past the bound of the text", text, op.LOG_TEXT_BYTES_MOST + 1, info, 0, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, op.LOG_TEXT_BYTES_MOST + 1},
+		{"the largest length", text, max(u64), info, 0, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, max(u64)},
+		{"a text past the end of the addresses", end_of_addresses, 2, info, 0, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, end_of_addresses},
+		{"runs past the end of the addresses", end_of_addresses, 1, info, 1, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, end_of_addresses},
+	}
+	before, read := own_record_count(connection, file, records_export)
+	if !read {
+		return "log.records did not give the count of the own records"
+	}
+	for refusal in refusals {
+		record: errors.Error_Record
+		_, status := system.call_with_error(&record, .Log, log, refusal.address, refusal.length, refusal.level, refusal.runs)
+		if status != refusal.status || errors.Kind(record.kind) != refusal.kind || record.argument != refusal.argument || record.value != transmute(i64)refusal.value {
+			system.log(.Error, "log_reader: WRONG: Log with ", refusal.name, " gave ", op.STATUS_NAMES[status], ", the error kind ", record.kind, " for the argument ", record.argument, " with the value ", record.value)
+			return "the operation Log did not refuse a wrong call with its status and its error record"
+		}
+	}
+	after, read_after := own_record_count(connection, file, records_export)
+	if !read_after || after != before {
+		system.log(.Error, "log_reader: WRONG: the own log ring kept ", before, " records before the refused calls of Log, and ", after, " after them")
+		return "a refused call of Log wrote a record"
+	}
+	system.log(.Info, "log_reader: Log refused ", u64(len(refusals)), " wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, and a text past the end of the addresses; the own log ring kept the same ", u64(before), " records: as it must")
+
+	before, read = own_record_count(connection, file, records_export)
+	lengths := [3]u64{0, 1, op.LOG_TEXT_BYTES_MOST}
+	for length in lengths {
+		if _, status := system.call(.Log, log, text, length, info, 0); status != .Ok {
+			system.log(.Error, "log_reader: WRONG: Log with a text of ", length, " bytes gave ", op.STATUS_NAMES[status])
+			return "the operation Log refused a text at an edge of its length"
+		}
+	}
+	after, read_after = own_record_count(connection, file, records_export)
+	expected := before + 2 + BOUND_TEXT_RECORDS
+	if !read || !read_after || after != expected {
+		system.log(.Error, "log_reader: WRONG: the texts of 0, 1 and ", u64(op.LOG_TEXT_BYTES_MOST), " bytes took ", after - before, " records, not ", expected - before)
+		return "the operation Log wrote another count of records for a text at an edge of its length"
+	}
+	system.log(.Info, "log_reader: Log wrote a text of 0 bytes, of 1 byte and of ", u64(op.LOG_TEXT_BYTES_MOST), " bytes, in 1, 1 and ", u64(BOUND_TEXT_RECORDS), " records: as it must")
+	return ""
 }
 
 // lent_service_handle_refused lends the process handle of the log service
@@ -384,16 +499,16 @@ lent_service_handle_refused :: proc "contextless" (connection: ^system.Call_Conn
 	status := system.lend(file, function, arguments[:], connection.ring_memory, &lending)
 	system.lend_end(&lending)
 	if status != .No_Right {
-		system.log("log_reader: WRONG: the lend of the process handle of the log service gave ", op.STATUS_NAMES[status])
+		system.log(.Info, "log_reader: WRONG: the lend of the process handle of the log service gave ", op.STATUS_NAMES[status])
 		return "the process handle of the log service, with no Give, was lent"
 	}
 	call_arguments := [2]isolated.Argument{{integer = u64(connection.process)}, {integer = 0}}
 	_, call_status := system.call_isolated(connection, file, records_export, call_arguments[:], nil, false, bytes_of(record_rows[:]))
 	if call_status != .Lend_Failed {
-		system.log("log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status ", u64(call_status))
+		system.log(.Info, "log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status ", u64(call_status))
 		return "the call with the process handle of the log service was not refused"
 	}
-	system.log("log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must")
+	system.log(.Info, "log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must")
 	return ""
 }
 
@@ -429,7 +544,7 @@ children_start :: proc "contextless" (ctx: ^system.Context, image: []u8) -> stri
 		values[VALUE_CHILD] = CHILD_TAG | u64(index + 1)
 		process, status := system.process_start(file, child_names[index], grants, random.values_with_seed(&process_generator, values), CHILD_AMOUNTS, nil, nil, {image = image})
 		if status != .Ok {
-			system.log("log_reader: WRONG: ", child_names[index], " did not start: ", op.STATUS_NAMES[status])
+			system.log(.Info, "log_reader: WRONG: ", child_names[index], " did not start: ", op.STATUS_NAMES[status])
 			return "a child did not start"
 		}
 		children[index] = process
@@ -437,11 +552,11 @@ children_start :: proc "contextless" (ctx: ^system.Context, image: []u8) -> stri
 	for index in 0 ..< CHILD_COUNT {
 		code, stopped := child_wait(children[index])
 		if !stopped {
-			system.log("log_reader: WRONG: ", child_names[index], " did not stop")
+			system.log(.Info, "log_reader: WRONG: ", child_names[index], " did not stop")
 			return "a child did not stop"
 		}
 		if code != 0 {
-			system.log("log_reader: WRONG: ", child_names[index], " stopped with the code ", u64(code))
+			system.log(.Info, "log_reader: WRONG: ", child_names[index], " stopped with the code ", u64(code))
 			return "a child did not write its record"
 		}
 	}
@@ -459,7 +574,7 @@ next_second :: proc "contextless" () {
 // must be in the log. false: the kernel refused it for another reason.
 storm_write :: proc "contextless" (log: u64, text: string) -> bool {
 	for {
-		_, status := system.call(.Log, log, u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0, 0, 0)
+		_, status := system.call(.Log, log, u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0)
 		switch status {
 		case .Ok:
 			return true
@@ -515,7 +630,7 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 		return "the boot image has no module log_reader"
 	}
 	if held, reached := log_records_wait(whole_log_records); !reached {
-		system.log("log_reader: WRONG: after the stop of the two children, this process holds ", held, " log records of each second, and not ", whole_log_records)
+		system.log(.Info, "log_reader: WRONG: after the stop of the two children, this process holds ", held, " log records of each second, and not ", whole_log_records)
 		return "the two children did not give their log records back"
 	}
 	grants: [op.CONTEXT_HANDLES]system.Grant
@@ -524,7 +639,7 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 	values[VALUE_STORM] = 1
 	child, status := system.process_start(file, STORM_NAME, grants, random.values_with_seed(&process_generator, values), STORM_AMOUNTS, nil, nil, {image = image})
 	if status != .Ok {
-		system.log("log_reader: WRONG: ", STORM_NAME, " did not start: ", op.STATUS_NAMES[status])
+		system.log(.Info, "log_reader: WRONG: ", STORM_NAME, " did not start: ", op.STATUS_NAMES[status])
 		return "the storm child did not start"
 	}
 	defer system.close(child)
@@ -533,7 +648,7 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 	during, _ := system.budget_read()
 	storm_log_records_kept = during.log_records
 	if whole_log_records < STORM_LOG_RECORDS || storm_log_records_kept != whole_log_records - STORM_LOG_RECORDS {
-		system.log("log_reader: WRONG: while the storm child runs, this process holds ", storm_log_records_kept, " log records of each second of its ", whole_log_records)
+		system.log(.Info, "log_reader: WRONG: while the storm child runs, this process holds ", storm_log_records_kept, " log records of each second of its ", whole_log_records)
 		return "the storm child did not take its log records from the budget of this process"
 	}
 	code, stopped := child_wait(child)
@@ -544,7 +659,7 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 		return "the storm child stopped with a code other than 0"
 	}
 	if held, reached := log_records_wait(whole_log_records); !reached {
-		system.log("log_reader: WRONG: after the stop of the storm child, this process holds ", held, " log records of each second, and not ", whole_log_records)
+		system.log(.Info, "log_reader: WRONG: after the stop of the storm child, this process holds ", held, " log records of each second, and not ", whole_log_records)
 		return "the storm child did not give its log records back"
 	}
 	return ""
@@ -563,7 +678,7 @@ child_records_check :: proc "contextless" (connection: ^system.Call_Connection, 
 	arguments := [2]isolated.Argument{{integer = u64(children[index])}, {integer = 0}}
 	count, status := system.call_isolated(connection, file, records_export, arguments[:], nil, false, bytes_of(record_rows[:]))
 	if status != .Ok {
-		system.log("log_reader: WRONG: the call of log.process_records for ", name, " gave the status ", u64(status))
+		system.log(.Info, "log_reader: WRONG: the call of log.process_records for ", name, " gave the status ", u64(status))
 		return "the call of log.process_records did not come back"
 	}
 	given := min(max(int(count), 0), ROWS)
@@ -579,27 +694,27 @@ child_records_check :: proc "contextless" (connection: ^system.Call_Connection, 
 		}
 	}
 	if other_rows != 0 {
-		system.log("log_reader: WRONG: the records of ", name, ": ", u64(other_rows), " rows of another process")
+		system.log(.Info, "log_reader: WRONG: the records of ", name, ": ", u64(other_rows), " rows of another process")
 		return "the log service gave a child the records of another process"
 	}
 	if given != 1 || !found_child_record || record_rows[0].lost != 0 {
-		system.log("log_reader: WRONG: the records of ", name, ": ", u64(given), " rows; one row, its record with the number 0 and lost 0, was the answer")
+		system.log(.Info, "log_reader: WRONG: the records of ", name, ": ", u64(given), " rows; one row, its record with the number 0 and lost 0, was the answer")
 		return "the log service did not give exactly the record of the child"
 	}
 
 	run_arguments := [2]isolated.Argument{{integer = u64(children[index])}, {integer = 0}}
 	run_count, run_status := system.call_isolated(connection, file, value_runs_export, run_arguments[:], nil, false, bytes_of(run_rows[:]))
 	if run_status != .Ok {
-		system.log("log_reader: WRONG: the call of log.process_value_runs for ", name, " gave the status ", u64(run_status))
+		system.log(.Info, "log_reader: WRONG: the call of log.process_value_runs for ", name, " gave the status ", u64(run_status))
 		return "the call of log.process_value_runs did not come back"
 	}
 	runs_given := min(max(int(run_count), 0), ROWS)
 	if runs_given != 1 || run_rows[0].number != 0 || run_rows[0].start != i64(len(CHILD_TEXT)) || system.name_of(run_rows[0].kind[:]) != value_kinds.VALUE_KIND_NAMES[.Number] {
-		system.log("log_reader: WRONG: the value runs of ", name, ": ", u64(runs_given), " rows; one row, the run of its value, was the answer")
+		system.log(.Info, "log_reader: WRONG: the value runs of ", name, ": ", u64(runs_given), " rows; one row, the run of its value, was the answer")
 		return "the log service did not give exactly the value run of the record of the child"
 	}
-	system.log("log_reader: the records of ", name, ": ", u64(given), " rows from the own number 0, its one record, lost 0: no row of this process, of the other child or of an earlier run: as it must")
-	system.log("log_reader: the value runs of ", name, ": ", u64(runs_given), " rows, the run of its value ", u64(index + 1), ": as it must")
+	system.log(.Info, "log_reader: the records of ", name, ": ", u64(given), " rows from the own number 0, its one record, lost 0: no row of this process, of the other child or of an earlier run: as it must")
+	system.log(.Info, "log_reader: the value runs of ", name, ": ", u64(runs_given), " rows, the run of its value ", u64(index + 1), ": as it must")
 	return ""
 }
 
@@ -617,10 +732,10 @@ lent_memory_refused :: proc "contextless" (connection: ^system.Call_Connection, 
 	refusal: errors.Error_Record
 	_, status := system.call_isolated(connection, file, records_export, arguments[:], &refusal, false, bytes_of(record_rows[:]))
 	if status != .Failed || refusal.kind != i64(errors.Kind.Handle_Kind) || refusal.argument != LENT_PROCESS_ARGUMENT || refusal.limit != i64(op.Object_Kind.Process) || refusal.found != i64(op.Object_Kind.Memory) {
-		system.log("log_reader: WRONG: a memory object in place of a process handle gave the status ", u64(status), ", the kind ", refusal.kind, ", the argument ", refusal.argument, " and the found kind ", refusal.found)
+		system.log(.Info, "log_reader: WRONG: a memory object in place of a process handle gave the status ", u64(status), ", the kind ", refusal.kind, ", the argument ", refusal.argument, " and the found kind ", refusal.found)
 		return "the log service did not refuse a memory object in place of a process handle"
 	}
-	system.log("log_reader: a memory object in place of a process handle: the log service refused it with Handle_Kind: as it must")
+	system.log(.Info, "log_reader: a memory object in place of a process handle: the log service refused it with Handle_Kind: as it must")
 	return ""
 }
 
@@ -639,17 +754,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// A child writes its one record, which its starter reads back with the
 	// handle of the child, and stops.
 	if number, is_child := child_number_of(ctx.values[VALUE_CHILD]); is_child {
-		system.log(CHILD_TEXT, number)
+		system.log(.Info, CHILD_TEXT, number)
 		system.stop(0)
 	}
 	if ctx.values[VALUE_STORM] != 0 {
 		storm(ctx)
 	}
-	system.log(OWN_TEXT, u64(OWN_VALUE))
+	system.log(.Info, OWN_TEXT, u64(OWN_VALUE))
 	if problem := check(ctx); problem != "" {
-		system.log("log_reader: WRONG: ", problem)
+		system.log(.Info, "log_reader: WRONG: ", problem)
 		system.stop(1)
 	}
-	system.log("log_reader: ok")
+	system.log(.Info, "log_reader: ok")
 	system.stop(0)
 }

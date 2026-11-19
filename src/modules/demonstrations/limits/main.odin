@@ -22,8 +22,7 @@
 // against its limit. The log gets a line of the times used, then
 // `limits: ok, 4 budgets within their processor time, <count> log records
 // written and <count> refused with <limit> for each second`, or
-// `limits: wrong: ...`. The burst writes its records on the channel
-// `burst`, at the level debug.
+// `limits: wrong: ...`. The burst writes its records at the level debug.
 //
 // **Its grants**: none. Its budget from the root service holds 2048 pages,
 // 1 process and 5 threads, with a limit of processor time and of log
@@ -119,11 +118,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The log: 100 records at once.
 	accepted, refused: u64
 	text := "limits: one record of the 100"
-	channel: [op.LOG_CHANNEL_CAPACITY]u8
-	copy(channel[:], "burst")
-	packed := transmute([2]u64)channel
 	for _ in 0 ..< BURST {
-		_, status := system.call(.Log, u64(ctx.handles[op.CONTEXT_LOG]), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Debug), packed[0], packed[1])
+		_, status := system.call(.Log, u64(ctx.handles[op.CONTEXT_LOG]), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Debug), 0)
 		if status == .Ok {
 			accepted += 1
 		} else if status == .No_Budget {
@@ -183,11 +179,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			for row in rows {
 				right &&= within(row)
 			}
-			system.log("limits: processor time of one second, used of limit: ", rows[0].used, " of ", rows[0].limit, ", ", rows[1].used, " of ", rows[1].limit, ", ", rows[2].used, " of ", rows[2].limit, ", the process ", rows[3].used, " of ", rows[3].limit)
+			system.log(.Info, "limits: processor time of one second, used of limit: ", rows[0].used, " of ", rows[0].limit, ", ", rows[1].used, " of ", rows[1].limit, ", ", rows[2].used, " of ", rows[2].limit, ", the process ", rows[3].used, " of ", rows[3].limit)
 			if right {
-				system.log("limits: ok, 4 budgets within their processor time, ", accepted, " log records written and ", refused, " refused with ", log_limit, " for each second")
+				system.log(.Info, "limits: ok, 4 budgets within their processor time, ", accepted, " log records written and ", refused, " refused with ", log_limit, " for each second")
 			} else {
-				system.log("limits: wrong: threads ", u64(started), " log ", u64(log_right), " rule ", u64(rule_right))
+				system.log(.Info, "limits: wrong: threads ", u64(started), " log ", u64(log_right), " rule ", u64(rule_right))
 			}
 		}
 

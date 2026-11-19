@@ -10,7 +10,7 @@ import "core:testing"
 quality_log :: proc(replaced_start: string = "", replaced_line: string = "") -> string {
 	lines := [?]string {
 		"[compositor] " + QUALITY_PROFILE_LINE,
-		"[compositor:surfaces] " + QUALITY_WINDOW_START_LOCKS + "51234.5 us",
+		"[compositor] " + QUALITY_WINDOW_START_LOCKS + "51234.5 us",
 		"[compositor] " + QUALITY_FRAME + ": least 812.4 us, median 9031.0 us, over 64 frames",
 		"[compositor] " + QUALITY_KEY + ": least 1203.7 us, median 14000.2 us, over 16 keys",
 	}

@@ -199,7 +199,7 @@ measure :: proc "contextless" (mode: lockers.Mode, rates: ^[len(counts)]u64, loc
 			// and the wait that follows (it can be in the count or not yet).
 			if mode == .Entries && (slot.entries != slot.count + 1 || kernel < slot.count + 3 || kernel > slot.count + 8) {
 				if entries_right {
-					system.log("locks: locker ", u64(index + 1), " counted ", slot.count, " operations and ", slot.entries, " entries, the kernel ", kernel)
+					system.log(.Info, "locks: locker ", u64(index + 1), " counted ", slot.count, " operations and ", slot.entries, " entries, the kernel ", kernel)
 				}
 				entries_right = false
 			}
@@ -532,7 +532,7 @@ stress :: proc "contextless" (image: []u8, processes_free: u64) {
 	stress_started = started
 	final := report()
 	stress_right = started == CHURN_ROUNDS * CHURN_COUNT && after.pages == initial.pages && after.processes == initial.processes && after.threads == initial.threads && final.budget_pages + final.reserved_pages == final.free_pages
-	system.log("locks: stress: ", started, " processes started, ", stopped, " stopped by this process (some by a thread while another thread closed the last handle), ", closed - stopped, " only by the close of their last handle, while their threads ran and they stopped each other; budget: pages ", after.pages, " of ", initial.pages, ", processes ", after.processes, " of ", initial.processes, ", threads ", after.threads, " of ", initial.threads, "; free pages ", final.free_pages, ", in budgets ", final.budget_pages, ", reserved ", final.reserved_pages)
+	system.log(.Info, "locks: stress: ", started, " processes started, ", stopped, " stopped by this process (some by a thread while another thread closed the last handle), ", closed - stopped, " only by the close of their last handle, while their threads ran and they stopped each other; budget: pages ", after.pages, " of ", initial.pages, ", processes ", after.processes, " of ", initial.processes, ", threads ", after.threads, " of ", initial.threads, "; free pages ", final.free_pages, ", in budgets ", final.budget_pages, ", reserved ", final.reserved_pages)
 }
 
 stress_right: bool
@@ -597,7 +597,7 @@ frames_stress :: proc "contextless" () {
 		faulted += board.slots[2].count + board.slots[3].count
 	}
 	frames_stress_right = answered && made != 0 && faulted != 0 && wrong == 0
-	system.log("locks: frames: ", made, " objects of 600 pages made and closed by two lockers while two lockers faulted ", faulted, " pages and this process read ", reports, " reports; reports where the free pages less the reserved pages were not the pages of the budgets: ", wrong)
+	system.log(.Info, "locks: frames: ", made, " objects of 600 pages made and closed by two lockers while two lockers faulted ", faulted, " pages and this process read ", reports, " reports; reports where the free pages less the reserved pages were not the pages of the budgets: ", wrong)
 }
 
 // The second thread of the stress case: it stops the process that the
@@ -638,7 +638,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("locks: no random seed in the context")
+		system.log(.Info, "locks: no random seed in the context")
 		system.stop(1)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "locks")
@@ -656,7 +656,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	memory, memory_status := system.memory_create(1)
 	address, map_status := system.memory_map(memory)
 	if image == nil || memory_status != .Ok || map_status != .Ok {
-		system.log("locks: no boot image or no memory")
+		system.log(.Info, "locks: no boot image or no memory")
 		system.stop(1)
 	}
 	board = (^lockers.Board)(address)
@@ -668,7 +668,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		values[lockers.VALUE_INDEX] = u64(index)
 		status: system.Status
 		if process, status = system.process_start(system.image_find(image, "locker"), names[index], grants, random.values_with_seed(&process_generator, values), LOCKER_AMOUNTS); status != .Ok {
-			system.log("locks: cannot start a locker: status ", u64(status))
+			system.log(.Info, "locks: cannot start a locker: status ", u64(status))
 			system.stop(1)
 		}
 	}
@@ -684,16 +684,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// check have the counts of its work.
 	measured := system.measure_run()
 	measure(.Entries, &entry_rates, &entry_locks)
-	system.log(measured ? "locks: kernel entries in one second, each locker on its own objects: 1 locker " : "locks: kernel entries, each locker on its own objects: 1 locker ", entry_rates[0], ", 2 lockers ", entry_rates[1], ", 4 lockers ", entry_rates[2])
+	system.log(.Info, measured ? "locks: kernel entries in one second, each locker on its own objects: 1 locker " : "locks: kernel entries, each locker on its own objects: 1 locker ", entry_rates[0], ", 2 lockers ", entry_rates[1], ", 4 lockers ", entry_rates[2])
 	measure(.Faults, &fault_rates, &fault_locks)
-	system.log(measured ? "locks: pages on first use in one second, each locker in its own memory: 1 locker " : "locks: pages on first use, each locker in its own memory: 1 locker ", fault_rates[0], ", 2 lockers ", fault_rates[1], ", 4 lockers ", fault_rates[2])
+	system.log(.Info, measured ? "locks: pages on first use in one second, each locker in its own memory: 1 locker " : "locks: pages on first use, each locker in its own memory: 1 locker ", fault_rates[0], ", 2 lockers ", fault_rates[1], ", 4 lockers ", fault_rates[2])
 	pairs_alone = pairs(0)
 	pairs_loaded = pairs(2)
-	system.log("locks: word wait, two threads wake each other: ", pairs_alone, measured ? " wakes in one second alone, " : " wakes alone, ", pairs_loaded, " while 2 lockers enter the kernel, ", lost_wakes, " lost")
+	system.log(.Info, "locks: word wait, two threads wake each other: ", pairs_alone, measured ? " wakes in one second alone, " : " wakes alone, ", pairs_loaded, " while 2 lockers enter the kernel, ", lost_wakes, " lost")
 	text: [512]u8
-	system.log("locks: lock waits of takes, 4 lockers, kernel entries: ", locks_text(text[:], entry_locks))
-	system.log("locks: lock waits of takes, 4 lockers, pages on first use: ", locks_text(text[:], fault_locks))
-	system.log("locks: lock waits of takes, word wait with 2 lockers: ", locks_text(text[:], pair_locks))
+	system.log(.Info, "locks: lock waits of takes, 4 lockers, kernel entries: ", locks_text(text[:], entry_locks))
+	system.log(.Info, "locks: lock waits of takes, 4 lockers, pages on first use: ", locks_text(text[:], fault_locks))
+	system.log(.Info, "locks: lock waits of takes, word wait with 2 lockers: ", locks_text(text[:], pair_locks))
 	frames_stress()
 	for process in processes {
 		system.close(process)
@@ -726,13 +726,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.write_unsigned(&writer, cache.cache_drains)
 			system.write_part(&writer, ";")
 		}
-		system.log(system.written(&writer))
+		system.log(.Info, system.written(&writer))
 	}
 	done = true
 	if entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right && frames_stress_right {
-		system.log("locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped process returned its pages, its slot and its threads")
+		system.log(.Info, "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped process returned its pages, its slot and its threads")
 	} else {
-		system.log("locks: wrong: entries ", u64(entries_right), " faults ", u64(faults_right), " pages ", u64(pages_right), " wakes ", u64(pairs_right), " lost ", lost_wakes, " stress ", u64(stress_right), " frames ", u64(frames_stress_right))
+		system.log(.Info, "locks: wrong: entries ", u64(entries_right), " faults ", u64(faults_right), " pages ", u64(pages_right), " wakes ", u64(pairs_right), " lost ", lost_wakes, " stress ", u64(stress_right), " frames ", u64(frames_stress_right))
 	}
 	draw(&window)
 	for {

@@ -272,7 +272,7 @@ case_budget :: proc "contextless" (writer: ^system.Writer) -> bool {
 
 case_address :: proc "contextless" (writer: ^system.Writer) -> bool {
 	record: errors.Error_Record
-	_, status := system.call_with_error(&record, .Log, u64(ctx_log), 0xFFFF_8000_0000_0000, 10, 0, 0, 0)
+	_, status := system.call_with_error(&record, .Log, u64(ctx_log), 0xFFFF_8000_0000_0000, 10, 0)
 	return kernel_text(writer, &record, status, .Bad_Address) && record.argument == 2
 }
 
@@ -284,13 +284,13 @@ case_address :: proc "contextless" (writer: ^system.Writer) -> bool {
 // process on the serial port, and the kernel refuses it.
 log_filter_check :: proc "contextless" () {
 	text := "errors: a log line with control bytes: \x1b[2J\r\xc2\x85\xc3( as it must"
-	system.call(.Log, u64(ctx_log), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0, 0, 0)
+	system.call(.Log, u64(ctx_log), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0)
 	name := "\x1b[2J"
 	_, status := system.call(.Process_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
 	if status == .Bad_Operation {
-		system.log("errors: a name of a process with an escape byte is refused: as it must")
+		system.log(.Info, "errors: a name of a process with an escape byte is refused: as it must")
 	} else {
-		system.log("errors: WRONG: a name of a process with an escape byte gave ", status)
+		system.log(.Info, "errors: WRONG: a name of a process with an escape byte gave ", status)
 	}
 }
 
@@ -314,15 +314,15 @@ kernel_details_check :: proc "contextless" () {
 		writer := system.Writer{buffer = buffer[:]}
 		system.error_detail_number_text(&writer, u64(number + 1), details.count)
 		system.kernel_error_text(&writer, &detail)
-		system.log("errors: ", system.written(&writer))
+		system.log(.Info, "errors: ", system.written(&writer))
 	}
 	two := status == .Bad_Handle && details.count == 2 && len(written) == 2 && written[0] == error
 	two &&= errors.Kind(written[0].kind) == .Handle_Absent && written[0].argument == 1
 	two &&= errors.Kind(written[1].kind) == .Bad_Flags && written[1].argument == 3 && u64(written[1].value) == DETAILS_UNKNOWN_FLAG
 	if two {
-		system.log("errors: a kernel command with two wrong arguments gives the two in its table of error details: as it must")
+		system.log(.Info, "errors: a kernel command with two wrong arguments gives the two in its table of error details: as it must")
 	} else {
-		system.log("errors: WRONG: a kernel command with two wrong arguments gave the status ", status, " and ", details.count, " error details")
+		system.log(.Info, "errors: WRONG: a kernel command with two wrong arguments gave the status ", status, " and ", details.count, " error details")
 	}
 	// A table of one place for two details: the Append rule. The kernel
 	// writes the first detail, the error record, and counts the two.
@@ -333,28 +333,28 @@ kernel_details_check :: proc "contextless" () {
 	rest_buffer: [SENTENCE_CAPACITY]u8
 	rest := system.Writer{buffer = rest_buffer[:]}
 	system.error_details_rest_text(&rest, u64(len(shown)), small.count)
-	system.log("errors: a table of 1 place: ", system.written(&rest))
+	system.log(.Info, "errors: a table of 1 place: ", system.written(&rest))
 	if status == .Bad_Handle && small.count == 2 && len(shown) == 1 && shown[0] == error && records[1] == (errors.Error_Record{}) {
-		system.log("errors: a table smaller than its error details holds the first and counts each one: as it must")
+		system.log(.Info, "errors: a table smaller than its error details holds the first and counts each one: as it must")
 	} else {
-		system.log("errors: WRONG: a table of 1 place gave the status ", status, " and the count ", small.count)
+		system.log(.Info, "errors: WRONG: a table of 1 place gave the status ", status, " and the count ", small.count)
 	}
 	// A command with a table that succeeds leaves the table as it was.
 	details.count = 0
 	_, status = system.call_with_error_details(&error, &details, .Handle_State, u64(system.own_budget()))
 	if status == .Ok && details.count == 0 {
-		system.log("errors: an accepted kernel command leaves its table of error details empty: as it must")
+		system.log(.Info, "errors: an accepted kernel command leaves its table of error details empty: as it must")
 	} else {
-		system.log("errors: WRONG: an accepted kernel command with a table gave the status ", status, " and ", details.count, " error details")
+		system.log(.Info, "errors: WRONG: an accepted kernel command with a table gave the status ", status, " and ", details.count, " error details")
 	}
 	// Log uses its last value: with the bit, the kernel refuses the command
 	// and writes no detail.
 	text := "x"
-	_, status = system.call_with_error_details(&error, &details, .Log, u64(ctx_log), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0, 0)
+	_, status = system.call_with_error_details(&error, &details, .Log, u64(ctx_log), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0)
 	if status == .Bad_Operation && errors.Kind(error.kind) == .Unsupported && details.count == 0 {
-		system.log("errors: Log refuses a table of error details: as it must")
+		system.log(.Info, "errors: Log refuses a table of error details: as it must")
 	} else {
-		system.log("errors: WRONG: Log with a table of error details gave the status ", status, " and ", details.count, " error details")
+		system.log(.Info, "errors: WRONG: Log with a table of error details gave the status ", status, " and ", details.count, " error details")
 	}
 }
 
@@ -380,7 +380,7 @@ kernel_ring_check :: proc "contextless" () {
 	defer system.close(refused_memory)
 	if held_created != .Ok || refused_created != .Ok {
 		system.close(held_memory)
-		system.log("errors: WRONG: the case of a full completion queue has no memory: ", held_created, " ", refused_created)
+		system.log(.Info, "errors: WRONG: the case of a full completion queue has no memory: ", held_created, " ", refused_created)
 		return
 	}
 	kernel := system.kernel_ring()
@@ -428,27 +428,27 @@ kernel_ring_check :: proc "contextless" () {
 	held_ran &&= held_after == .Bad_Handle
 	refused &&= refused_after == .Ok
 	if !pushes_taken {
-		system.log("errors: WRONG: the kernel ring refused a push of the case of a full completion queue")
+		system.log(.Info, "errors: WRONG: the kernel ring refused a push of the case of a full completion queue")
 	}
 	if filled && held {
-		system.log("errors: a command past a full completion queue stays unrun in the kernel ring, and the entry does not wait: as it must")
+		system.log(.Info, "errors: a command past a full completion queue stays unrun in the kernel ring, and the entry does not wait: as it must")
 	} else {
-		system.log("errors: WRONG: a command past a full completion queue: the queue filled: ", filled ? "yes" : "no", "; the command held with no wait: ", held ? "yes" : "no")
+		system.log(.Info, "errors: WRONG: a command past a full completion queue: the queue filled: ", filled ? "yes" : "no", "; the command held with no wait: ", held ? "yes" : "no")
 	}
 	if refused {
-		system.log("errors: a kernel call on a kernel ring that holds records is refused with Busy, and its command does not run: as it must")
+		system.log(.Info, "errors: a kernel call on a kernel ring that holds records is refused with Busy, and its command does not run: as it must")
 	} else {
-		system.log("errors: WRONG: a kernel call on a kernel ring that holds records gave ", refused_status, " and the kind ", refusal.kind)
+		system.log(.Info, "errors: WRONG: a kernel call on a kernel ring that holds records gave ", refused_status, " and the kind ", refusal.kind)
 	}
 	if wait_ended {
-		system.log("errors: a wait of the library on a kernel ring that holds records ends at once and pushes nothing: as it must")
+		system.log(.Info, "errors: a wait of the library on a kernel ring that holds records ends at once and pushes nothing: as it must")
 	} else {
-		system.log("errors: WRONG: a wait of the library on a kernel ring that holds records waited or pushed its command")
+		system.log(.Info, "errors: WRONG: a wait of the library on a kernel ring that holds records waited or pushed its command")
 	}
 	if answers_in_order && held_ran {
-		system.log("errors: each answer of a full completion queue arrives once and in order, and the held command runs once after them: as it must")
+		system.log(.Info, "errors: each answer of a full completion queue arrives once and in order, and the held command runs once after them: as it must")
 	} else {
-		system.log("errors: WRONG: the answers of a full completion queue: each once in order: ", answers_in_order ? "yes" : "no", "; the held command ran once: ", held_ran ? "yes" : "no")
+		system.log(.Info, "errors: WRONG: the answers of a full completion queue: each once in order: ", answers_in_order ? "yes" : "no", "; the held command ran once: ", held_ran ? "yes" : "no")
 	}
 }
 
@@ -481,7 +481,7 @@ kernel_details_measure :: proc "contextless" () {
 			best[variant] = min(best[variant], (system.nanoseconds() - start) / DETAILS_CALLS)
 		}
 	}
-	system.log("errors: a kernel command and its table of error details: accepted with no table ", best[0], " ns, with a table ", best[1], " ns; refused with its error record ", best[2], " ns, with its 2 error details ", best[3], " ns")
+	system.log(.Info, "errors: a kernel command and its table of error details: accepted with no table ", best[0], " ns, with a table ", best[1], " ns; refused with its error record ", best[2], " ns, with its 2 error details ", best[3], " ns")
 }
 
 case_name :: proc "contextless" (writer: ^system.Writer) -> bool {
@@ -712,7 +712,7 @@ families_measure :: proc "contextless" (ctx: ^system.Context) {
 		}
 		family_export = (system.nanoseconds() - start) * 10 / EXPORT_CALLS
 	}
-	system.log("errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", family_wrapper / 10, ".", family_wrapper % 10, " ns; a command of the root ring (Connect refused): ", family_root, " ns; an export (tally.add with a note of 40 bytes, direct): ", family_export / 10, ".", family_export % 10, " ns; ", u64(failed), " failures")
+	system.log(.Info, "errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", family_wrapper / 10, ".", family_wrapper % 10, " ns; a command of the root ring (Connect refused): ", family_root, " ns; an export (tally.add with a note of 40 bytes, direct): ", family_export / 10, ".", family_export % 10, " ns; ", u64(failed), " failures")
 }
 
 case_direct :: proc "contextless" (writer: ^system.Writer) -> bool {
@@ -928,7 +928,7 @@ measure :: proc "contextless" () {
 	}
 	direct_failed = (system.nanoseconds() - start) / DIRECT
 	if sum == 0 {
-		system.log("errors: the sum of the calls is 0")
+		system.log(.Info, "errors: the sum of the calls is 0")
 	}
 }
 
@@ -973,7 +973,7 @@ child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	text := "x"
 	start := system.time()
 	for _ in 0 ..< REFUSALS {
-		system.call(.Log, log, u64(uintptr(raw_data(text))), 1, u64(op.Log_Level.Debug), 0, 0)
+		system.call(.Log, log, u64(uintptr(raw_data(text))), 1, u64(op.Log_Level.Debug), 0)
 	}
 	page.log_ns = (system.time() - start) * 1_000_000 / REFUSALS
 	intrinsics.atomic_store(&page.done, 1)
@@ -1029,15 +1029,15 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 			system.wait_end(&wait, deadline)
 		}
 		if child_state == .Stopped && child_code == CHILD_STOP_CODE {
-			system.log("errors: a stop on a kernel ring that holds records ends the process with its own stop code: as it must")
+			system.log(.Info, "errors: a stop on a kernel ring that holds records ends the process with its own stop code: as it must")
 		} else {
-			system.log("errors: WRONG: a stop on a kernel ring that holds records left the child in the state ", u64(child_state), " with the code ", u64(child_code))
+			system.log(.Info, "errors: WRONG: a stop on a kernel ring that holds records left the child in the state ", u64(child_state), " with the code ", u64(child_code))
 		}
 		system.close(process)
 	} else {
 		// A child that does not start measures nothing: the case says so,
 		// and does not pass in silence.
-		system.log("errors: WRONG: the child of the refusals did not start: ", u64(status), ", the stage ", u64(error.stage), ", the status of the kernel ", u64(error.status), ", the error of the file ", u64(error.file_error))
+		system.log(.Info, "errors: WRONG: the child of the refusals did not start: ", u64(status), ", the stage ", u64(error.stage), ", the status of the kernel ", u64(error.status), ", the error of the file ", u64(error.file_error))
 	}
 	control_after, frame_after := lock_takes(machine)
 	refused_log_ns, refused_log_control, refused_log_frame = page.log_ns, control_after - control, frame_after - frame
@@ -1051,7 +1051,7 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 	refused_create_ns = (system.time() - start) * 1_000_000 / REFUSALS
 	control_after, frame_after = lock_takes(machine)
 	refused_create_control, refused_create_frame = control_after - control, frame_after - frame
-	system.log("errors: ", u64(REFUSALS), " refused Log: ", refused_log_ns, " ns each, the control lock taken ", refused_log_control, " times and the frame lock ", refused_log_frame, " times; ", u64(REFUSALS), " refused Memory_Create: ", refused_create_ns, " ns each, the control lock taken ", refused_create_control, " times and the frame lock ", refused_create_frame, " times")
+	system.log(.Info, "errors: ", u64(REFUSALS), " refused Log: ", refused_log_ns, " ns each, the control lock taken ", refused_log_control, " times and the frame lock ", refused_log_frame, " times; ", u64(REFUSALS), " refused Memory_Create: ", refused_create_ns, " ns each, the control lock taken ", refused_create_control, " times and the frame lock ", refused_create_frame, " times")
 }
 
 // Failures under contention: two threads make failures on the handles that
@@ -1187,7 +1187,7 @@ contend :: proc "contextless" () -> bool {
 	failures := contention.failures[0] + contention.failures[1]
 	wrong := contention.wrong[0] + contention.wrong[1]
 	refused := contention.refused[0] + contention.refused[1]
-	system.log("errors: under contention: ", failures, " failures from 2 threads while a third thread closed and made ", contention.made, " handles; ", wrong, " records contradict their status, ", refused, " records name no cause (Refused)")
+	system.log(.Info, "errors: under contention: ", failures, " failures from 2 threads while a third thread closed and made ", contention.made, " handles; ", wrong, " records contradict their status, ", refused, " records name no cause (Refused)")
 	// A record with no cause is right only when the state changed between
 	// the failure and the read: most records must name their cause.
 	return started == 3 && failures > 0 && contention.made > 0 && wrong == 0 && refused * 2 < failures
@@ -1230,7 +1230,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("errors: no random seed in the context")
+		system.log(.Info, "errors: no random seed in the context")
 		system.stop(1)
 	}
 	if ctx.values[VALUE_CHILD] != 0 {
@@ -1265,26 +1265,26 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		sentence := string(item.sentence[:item.count])
 		if index == FAULT_CASE {
-			system.log("errors: stack of fault: ", sentence[min(len(sentence), len("page fault at ")):])
+			system.log(.Info, "errors: stack of fault: ", sentence[min(len(sentence), len("page fault at ")):])
 		}
-		system.log("errors: ", key_names[index:index + 1], " ", item.text, ": ", item.right ? "" : "WRONG: ", sentence)
+		system.log(.Info, "errors: ", key_names[index:index + 1], " ", item.text, ": ", item.right ? "" : "WRONG: ", sentence)
 	}
 	if wrong == 0 {
-		system.log("errors: ok, ", u64(len(cases)), " cases, each with the expected error record")
+		system.log(.Info, "errors: ok, ", u64(len(cases)), " cases, each with the expected error record")
 	} else {
-		system.log("errors: ", u64(wrong), " cases of ", u64(len(cases)), " gave another answer")
+		system.log(.Info, "errors: ", u64(wrong), " cases of ", u64(len(cases)), " gave another answer")
 	}
 	log_filter_check()
 	kernel_details_check()
 	kernel_ring_check()
 	if !contend() {
-		system.log("errors: WRONG: the case under contention failed")
+		system.log(.Info, "errors: WRONG: the case under contention failed")
 	}
 	measure()
 	families_measure(ctx)
 	refusals(ctx)
 	kernel_details_measure()
-	system.log("errors: a kernel operation that succeeds: ", kernel_good, " ns; one that fails, with its error record: ", kernel_failed, " ns; a direct call that succeeds: ", direct_good, " ns; one that fails: ", direct_failed, " ns")
+	system.log(.Info, "errors: a kernel operation that succeeds: ", kernel_good, " ns; one that fails, with its error record: ", kernel_failed, " ns; a direct call that succeeds: ", direct_good, " ns; one that fails: ", direct_failed, " ns")
 
 	pressed := false
 	for {
@@ -1296,7 +1296,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Key:
 				if event.pressed && event.code == KEY_TAB {
 					shown_page = (shown_page + 1) % page_count
-					system.log("errors: the window shows the page ", u64(shown_page + 1), " of the cases")
+					system.log(.Info, "errors: the window shows the page ", u64(shown_page + 1), " of the cases")
 				} else if event.pressed {
 					for index in 0 ..< len(cases) {
 						if rune(key_names[index]) == event.character {
@@ -1316,7 +1316,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if chosen >= 0 {
 				run(chosen)
 				item := &cases[chosen]
-				system.log("errors: case ", key_names[chosen:chosen + 1], " again: ", item.right ? "" : "WRONG: ", string(item.sentence[:item.count]))
+				system.log(.Info, "errors: case ", key_names[chosen:chosen + 1], " again: ", item.right ? "" : "WRONG: ", string(item.sentence[:item.count]))
 			}
 		}
 	}

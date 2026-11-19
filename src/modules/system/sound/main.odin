@@ -23,7 +23,7 @@
 // stream <n> of <count>, ...` on the log when the device is ready, the line
 // `sound: the stream started, ...` at `Start`, and one line at the first
 // underrun and at the first hold of a period. A failure writes a line at
-// the level error on the channel `sound` and stops the service.
+// the level error and stops the service.
 //
 // **What it does not prove.** It does not know the delay of the device
 // after it took a period: QEMU reports none. It corrects no drift of the
@@ -128,7 +128,7 @@ pending_head: u32
 pending_count: u32
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log_in("sound", .Error, "sound: ", text)
+	system.log(.Error, "sound: ", text)
 	system.stop(1)
 }
 
@@ -174,7 +174,7 @@ control_answered :: proc "contextless" (name: string, request_bytes: u32, respon
 	answered: bool
 	response, length, answered = control_call(request_bytes, response_bytes)
 	if !answered {
-		system.log_in("sound", .Error, "sound: the device did not answer ", name, " in ", u64(DEVICE_ANSWER_BOUND_MILLISECONDS), " ms")
+		system.log(.Error, "sound: the device did not answer ", name, " in ", u64(DEVICE_ANSWER_BOUND_MILLISECONDS), " ms")
 		fail("the device does not answer")
 	}
 	return response, length
@@ -187,9 +187,9 @@ control_ok :: proc "contextless" (name: string, response: []u8, length: u32) {
 	case .Ok:
 		return
 	case .Short:
-		system.log_in("sound", .Error, "sound: the device answered ", name, " with ", u64(length), " bytes, fewer than its code")
+		system.log(.Error, "sound: the device answered ", name, " with ", u64(length), " bytes, fewer than its code")
 	case .Refused:
-		system.log_in("sound", .Error, "sound: the device refused ", name, " with the code ", u64(code))
+		system.log(.Error, "sound: the device refused ", name, " with the code ", u64(code))
 	}
 	fail("the device refused a control request")
 }
@@ -218,11 +218,11 @@ stream_choose :: proc "contextless" () -> (count: u32) {
 	case .Chosen:
 		return count
 	case .Short:
-		system.log_in("sound", .Error, "sound: the device answered PCM_INFO for ", u64(asked), " streams with ", u64(length), " bytes")
+		system.log(.Error, "sound: the device answered PCM_INFO for ", u64(asked), " streams with ", u64(length), " bytes")
 	case .Refused:
-		system.log_in("sound", .Error, "sound: the device refused PCM_INFO with the code ", u64(code))
+		system.log(.Error, "sound: the device refused PCM_INFO with the code ", u64(code))
 	case .None_Of_The_Format:
-		system.log_in("sound", .Error, "sound: the device has ", u64(count), " streams, and none plays 48000 frames in one second of 2 channels of signed 16-bit samples")
+		system.log(.Error, "sound: the device has ", u64(count), " streams, and none plays 48000 frames in one second of 2 channels of signed 16-bit samples")
 	}
 	fail("no output stream of the format")
 }
@@ -267,7 +267,7 @@ start :: proc "contextless" (queues: system.Handle) {
 	address, map_status := system.memory_map(queues, {.Write})
 	physical, physical_status := system.memory_physical(machine, queues)
 	if map_status != .Ok || physical_status != .Ok {
-		system.log_in("sound", .Error, "sound: the map of the queues gave the status ", map_status, ", their device address the status ", physical_status)
+		system.log(.Error, "sound: the map of the queues gave the status ", map_status, ", their device address the status ", physical_status)
 		fail("no physical address for the queues")
 	}
 	base := uintptr(address)
@@ -291,13 +291,13 @@ start :: proc "contextless" (queues: system.Handle) {
 	// The periods: memory of this budget, which the device reads.
 	period_memory, period_status := system.memory_create(PERIOD_PAGES, 0, {.Contiguous})
 	if period_status != .Ok {
-		system.log_in("sound", .Error, "sound: the memory of the periods gave the status ", period_status)
+		system.log(.Error, "sound: the memory of the periods gave the status ", period_status)
 		fail("no memory for the periods")
 	}
 	period_address, period_map_status := system.memory_map(period_memory, {.Write})
 	period_physical, period_physical_status := system.memory_physical(machine, period_memory)
 	if period_map_status != .Ok || period_physical_status != .Ok {
-		system.log_in("sound", .Error, "sound: the map of the periods gave the status ", period_map_status, ", their device address the status ", period_physical_status)
+		system.log(.Error, "sound: the map of the periods gave the status ", period_map_status, ", their device address the status ", period_physical_status)
 		fail("no physical address for the periods")
 	}
 	periods_memory = ([^]u8)(period_address)
@@ -306,7 +306,7 @@ start :: proc "contextless" (queues: system.Handle) {
 
 	count := stream_choose()
 	stream_prepare()
-	system.log("sound: ok, the output stream ", u64(stream_number), " of ", u64(count), ", 48000 frames in one second, 2 channels of signed 16-bit samples; ", u64(timed_stream.PERIODS_GIVEN), " periods of ", u64(timed_stream.PERIOD_FRAMES), " frames with the device; a transmit queue of ", u64(transmit_queue.size))
+	system.log(.Info, "sound: ok, the output stream ", u64(stream_number), " of ", u64(count), ", 48000 frames in one second, 2 channels of signed 16-bit samples; ", u64(timed_stream.PERIODS_GIVEN), " periods of ", u64(timed_stream.PERIOD_FRAMES), " frames with the device; a transmit queue of ", u64(transmit_queue.size))
 }
 
 // attach takes the sample region of the client, once. A handle that came
@@ -410,7 +410,7 @@ periods_give :: proc "contextless" () -> (wake_at: u64) {
 				holding = true
 				holds += 1
 				if holds == 1 {
-					system.log_in("sound", .Warning, "sound: the first hold: the device took the periods faster than their time; the service gives the next one when the time comes, and counts each hold")
+					system.log(.Warning, "sound: the first hold: the device took the periods faster than their time; the service gives the next one when the time comes, and counts each hold")
 				}
 			}
 			// The milliseconds of the system clock have the time 0 of its
@@ -454,7 +454,7 @@ stream_start :: proc "contextless" (command: ring.Record) -> (timed_stream.Statu
 	periods_give()
 	virtio.notify(&transmit_queue)
 	latency, _ := timed_stream.time_of_frame({}, timed_stream.PERIODS_GIVEN * timed_stream.PERIOD_FRAMES)
-	system.log("sound: the stream started: the frame 0 plays at ", anchor.time, " ns of the system clock; the service holds ", latency, " ns")
+	system.log(.Info, "sound: the stream started: the frame 0 plays at ", anchor.time, " ns of the system clock; the service holds ", latency, " ns")
 	return .Ok, {0 = anchor.time, 1 = latency, 2 = u64(timed_stream.Format.Signed_16_Stereo_48000)}
 }
 
@@ -605,7 +605,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			taken_end, problem := sound_device.period_used(&periods, used.id, answer)
 			if problem != .None {
 				if problem == .Refused {
-					system.log_in("sound", .Error, "sound: the device answered a period with the code ", u64(answer))
+					system.log(.Error, "sound: the device answered a period with the code ", u64(answer))
 				}
 				device_failed(USED_PROBLEM_TEXTS[problem])
 			}
@@ -622,7 +622,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if sound_device.underrun(&periods, anchor, now) {
 				underruns += 1
 				if underruns == 1 {
-					system.log_in("sound", .Warning, "sound: the first underrun: the device took each period before the next one came; the next frame plays now, and each completion counts the underruns")
+					system.log(.Warning, "sound: the first underrun: the device took each period before the next one came; the next frame plays now, and each completion counts the underruns")
 				}
 				anchor = {frame = periods.next_frame, time = now}
 			}

@@ -33,7 +33,7 @@ fresh_bytes_create :: proc "contextless" () {
 		address, status = system.memory_map(fresh_bytes_memory)
 	}
 	if status != .Ok {
-		system.log_in("processes", .Warning, "root: cannot create the fresh bytes pages: status ", status, ": a running process mixes no new bytes into its generator")
+		system.log(.Warning, "root: cannot create the fresh bytes pages: status ", status, ": a running process mixes no new bytes into its generator")
 		if fresh_bytes_memory != 0 {
 			system.close(fresh_bytes_memory)
 		}

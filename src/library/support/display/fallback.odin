@@ -40,9 +40,9 @@ script_coverage_tell :: proc "contextless" (caller: string) {
 		interface_drawn, total := text_rendering.coverage(.Interface, script)
 		cells_drawn, _ := text_rendering.coverage(.Cells, script)
 		if interface_drawn == total && cells_drawn == total {
-			system.log_in("processes", .Info, caller, ": the script ", text_rendering.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn))
+			system.log(.Info, caller, ": the script ", text_rendering.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn))
 		} else {
-			system.log_in("processes", .Info, caller, ": the script ", text_rendering.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn), "; no font of the system has the others")
+			system.log(.Info, caller, ": the script ", text_rendering.script_name(script), ": the chain of the interface draws ", u64(interface_drawn), " of its ", u64(total), " characters, the chain of the cells ", u64(cells_drawn), "; no font of the system has the others")
 		}
 	}
 }
@@ -115,11 +115,11 @@ text_memory_reserve :: proc "contextless" () -> bool {
 // text_frame_begin; the drawing module does not.
 text_not_kept_tell :: proc "contextless" () {
 	if count, report := text_rendering.not_kept_report(); report {
-		system.log("text_rendering: the glyphs of one frame fill the private glyph cache: ", count, " glyphs drawn and not kept")
+		system.log(.Info, "text_rendering: the glyphs of one frame fill the private glyph cache: ", count, " glyphs drawn and not kept")
 	}
 	if text_memory_status != .Ok && !text_memory_told {
 		text_memory_told = true
-		system.log("text_rendering: the glyph memory of ", u64(TEXT_MEMORY_PAGES), " pages is refused: ", op.STATUS_NAMES[text_memory_status], "; each glyph past the glyph caches is drawn band by band")
+		system.log(.Info, "text_rendering: the glyph memory of ", u64(TEXT_MEMORY_PAGES), " pages is refused: ", op.STATUS_NAMES[text_memory_status], "; each glyph past the glyph caches is drawn band by band")
 	}
 }
 

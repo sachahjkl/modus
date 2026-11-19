@@ -169,11 +169,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for &row in rows[:row_count] {
 		if !row.correct {
 			wrong += 1
-			system.log("budget: wrong answer: ", row.text, ": ", string(row.buffer[:row.count]), ", ", row.pages, " pages")
+			system.log(.Info, "budget: wrong answer: ", row.text, ": ", string(row.buffer[:row.count]), ", ", row.pages, " pages")
 		}
 	}
 	if wrong == 0 {
-		system.log("budget: ok, ", object_count, " memory objects then no budget, ", thread_count, " threads then no budget, each page returned")
+		system.log(.Info, "budget: ok, ", object_count, " memory objects then no budget, ", thread_count, " threads then no budget, each page returned")
 	}
 
 	for {

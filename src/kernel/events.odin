@@ -377,7 +377,7 @@ event_table_give :: proc "contextless" (table: ^Event_Table, region_index: u32, 
 	if event_logged_owner != owner || event_logged_serial != event_table.owner_serial {
 		event_logged_owner = owner
 		event_logged_serial = event_table.owner_serial
-		log_in("events", .Info, "kernel: process ", Module_Name{process_name(&processes[owner])}, " gave the event table: ", u64(table.rule_count), " rules, ", table.records, " records in the ring of each of ", u64(processor_count), " processors")
+		log_with_level(.Info, "kernel: process ", Module_Name{process_name(&processes[owner])}, " gave the event table: ", u64(table.rule_count), " rules, ", table.records, " records in the ring of each of ", u64(processor_count), " processors")
 	}
 }
 
@@ -413,9 +413,9 @@ event_table_end :: proc "contextless" (reason: Event_Table_End) {
 	switch reason {
 	case .Taken_Away:
 	case .Owner_Stopped:
-		log_in("events", .Info, "kernel: the event table of process ", Module_Name{process_name(&processes[owner])}, " ended: its process stopped; ", written, " records written, ", lost, " lost")
+		log_with_level(.Info, "kernel: the event table of process ", Module_Name{process_name(&processes[owner])}, " ended: its process stopped; ", written, " records written, ", lost, " lost")
 	case .Right_Ended:
-		log_in("events", .Info, "kernel: the event table of process ", Module_Name{process_name(&processes[owner])}, " ended: its right Events ended; ", written, " records written, ", lost, " lost")
+		log_with_level(.Info, "kernel: the event table of process ", Module_Name{process_name(&processes[owner])}, " ended: its right Events ended; ", written, " records written, ", lost, " lost")
 	}
 	region_release(region)
 }

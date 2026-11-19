@@ -141,7 +141,7 @@ arena_reservation_pages :: proc "contextless" (budget_pages: u64) -> u64 {
 // ```odin
 // bytes, status := system.arena_push(&arena, 100, 8)
 // if status == .No_Budget {
-// 	system.log("reader: this page is too large")
+// 	system.log(.Info, "reader: this page is too large")
 // }
 // ```
 arena_push :: proc "contextless" (arena: ^Arena, size: u64, alignment: u64, error: ^errors.Error_Record = nil) -> (result: rawptr, status: Status) {

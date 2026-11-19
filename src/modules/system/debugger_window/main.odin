@@ -535,7 +535,7 @@ attach :: proc "contextless" () {
 	thread_chosen, frame_chosen = 0, 0
 	place_count, memory_place_count = 0, 0
 	status_set(false, "attached to ", system.name_of(attached_row.process[:]), ": ", attached_row.threads, " threads, ", attached_row.described, " of ", attached_row.modules, " modules with a debug object")
-	system.log("debugger_window: attached to ", system.name_of(attached_row.process[:]))
+	system.log(.Info, "debugger_window: attached to ", system.name_of(attached_row.process[:]))
 	tables_read()
 }
 
@@ -543,7 +543,7 @@ detach :: proc "contextless" () {
 	rows: [1]Detached
 	if _, ok := call(.Detach, nil, bytes_of(rows[:])); ok {
 		status_set(false, "detached from ", system.name_of(rows[0].process[:]))
-		system.log("debugger_window: detached from ", system.name_of(rows[0].process[:]))
+		system.log(.Info, "debugger_window: detached from ", system.name_of(rows[0].process[:]))
 	}
 	attached = false
 	memory_place_count = 0
@@ -562,10 +562,10 @@ act :: proc "contextless" (export: Export, words: string) {
 		pending: string = count > 0 && scratch_rows[0].pending != 0 ? ": it runs, and its stop comes later" : ""
 		if export == .Continue_All {
 			status_set(false, words)
-			system.log("debugger_window: ", words)
+			system.log(.Info, "debugger_window: ", words)
 		} else {
 			status_set(false, words, " the thread ", number, pending)
-			system.log("debugger_window: ", words, " the thread ", number, pending)
+			system.log(.Info, "debugger_window: ", words, " the thread ", number, pending)
 		}
 	}
 	tables_read()
@@ -579,7 +579,7 @@ thread_choose :: proc "contextless" (index: int) {
 	}
 	thread_chosen, frame_chosen = index, 0
 	tables_read()
-	system.log("debugger_window: chose the thread ", thread_number())
+	system.log(.Info, "debugger_window: chose the thread ", thread_number())
 }
 
 // frame_choose chooses a frame of the chosen thread: a click on its row,
@@ -589,7 +589,7 @@ frame_choose :: proc "contextless" (index: int) {
 	frame_chosen = clamp(index, 0, max(frame_count - 1, 0))
 	tables_read()
 	if frame_chosen < frame_count {
-		system.log("debugger_window: the frame ", frame_rows[frame_chosen].frame, " of the thread ", thread_number(), ": ", system.name_of(frame_rows[frame_chosen].procedure[:]), ", ", u64(variable_count), " variables, ", u64(source_count), " source lines")
+		system.log(.Info, "debugger_window: the frame ", frame_rows[frame_chosen].frame, " of the thread ", thread_number(), ": ", system.name_of(frame_rows[frame_chosen].procedure[:]), ", ", u64(variable_count), " variables, ", u64(source_count), " source lines")
 	}
 }
 
@@ -602,7 +602,7 @@ break_at_place :: proc "contextless" (place: string) -> bool {
 	_, ok := call(.Break_At, arguments[:], bytes_of(rows[:]))
 	if ok {
 		status_set(false, "a breakpoint at ", place)
-		system.log("debugger_window: a breakpoint at ", place)
+		system.log(.Info, "debugger_window: a breakpoint at ", place)
 	}
 	tables_read()
 	return ok
@@ -640,7 +640,7 @@ break_remove :: proc "contextless" (number: i64) {
 	arguments := [1]isolated.Argument{{integer = u64(number)}}
 	if _, ok := call(.Break_Remove, arguments[:], bytes_of(rows[:])); ok {
 		status_set(false, "removed the breakpoint ", number)
-		system.log("debugger_window: removed the breakpoint ", number)
+		system.log(.Info, "debugger_window: removed the breakpoint ", number)
 	}
 	tables_read()
 }
@@ -704,7 +704,7 @@ place_watch :: proc "contextless" () {
 	arguments := [2]isolated.Argument{{text = transmute([]u8)place}, {integer = u64(length)}}
 	if _, ok := call(.Watch, arguments[:], bytes_of(rows[:])); ok {
 		status_set(false, "a watch of ", length, " bytes at ", place)
-		system.log("debugger_window: a watch of ", length, " bytes at ", place)
+		system.log(.Info, "debugger_window: a watch of ", length, " bytes at ", place)
 		place_count = 0
 	}
 	tables_read()
@@ -721,7 +721,7 @@ place_memory :: proc "contextless" () {
 	if memory_read() {
 		shown := string(memory_place[:memory_place_count])
 		status_set(false, "the memory at ", shown, ": ", u64(memory_count), " rows of 16 bytes")
-		system.log("debugger_window: the memory at ", shown, ": ", u64(memory_count), " rows of 16 bytes")
+		system.log(.Info, "debugger_window: the memory at ", shown, ": ", u64(memory_count), " rows of 16 bytes")
 	}
 }
 
@@ -769,7 +769,7 @@ key_act :: proc "contextless" (press: interface.Key_Press) {
 	case press.character == 'g':
 		registers_shown = !registers_shown
 		tables_read()
-		system.log("debugger_window: the card of the variables shows ", registers_shown ? "the registers" : "the variables", ": ", u64(registers_shown ? register_count : variable_count), " rows")
+		system.log(.Info, "debugger_window: the card of the variables shows ", registers_shown ? "the registers" : "the variables", ": ", u64(registers_shown ? register_count : variable_count), " rows")
 	}
 }
 
@@ -1233,10 +1233,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if problem := service_reach(ctx); problem != "" {
 		status_set(true, problem)
-		system.log("debugger_window: ", problem)
+		system.log(.Info, "debugger_window: ", problem)
 	} else {
 		ready = true
-		system.log("debugger_window: ok, connected to the service debugger; ", u64(len(Export)), " exports, each record with the size of its description")
+		system.log(.Info, "debugger_window: ok, connected to the service debugger; ", u64(len(Export)), " exports, each record with the size of its description")
 	}
 	for {
 		frame_build(&window)

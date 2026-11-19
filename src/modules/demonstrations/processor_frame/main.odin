@@ -246,7 +246,7 @@ frames_measure :: proc "contextless" (draw: proc "contextless" ()) -> (times: Fr
 measure_log :: proc "contextless" (part: string, times: Frame_Times) {
 	least, median := least_and_median(times)
 	frames := u64(1_000_000_000) / max(median, 1)
-	system.log("processor_frame: measure: ", part, ": least ", least / 1000, ".", least / 100 % 10, " us, median ", median / 1000, ".", median / 100 % 10, " us, ", frames, " frames in one second at the median, over ", u64(ROUNDS), " frames")
+	system.log(.Info, "processor_frame: measure: ", part, ": least ", least / 1000, ".", least / 100 % 10, " us, median ", median / 1000, ".", median / 100 % 10, " us, ", frames, " frames in one second at the median, over ", u64(ROUNDS), " frames")
 }
 
 // clear_and_present clears the frame, then copies it into the screen
@@ -474,7 +474,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	picture_canvas, ok = canvas_make(PICTURE_SIDE, 2 * PICTURE_SIDE)
 	made &&= ok
 	if !made {
-		system.log("processor_frame: wrong: the budget of this process gave no memory for its canvases")
+		system.log(.Info, "processor_frame: wrong: the budget of this process gave no memory for its canvases")
 		system.stop(1)
 	}
 	pictures = picture_canvas.pixels[:2 * PICTURE_PIXELS]
@@ -536,9 +536,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	tables_whole := !screen_table.full && !screen_table.refused && !desktop_table.full && !desktop_table.refused && u64(desktop_table.record_count) == record_count
 	if refusals == 0 && tables_whole && pixels_right[0] && pixels_right[1] && pixels_right[2] && pixels_right[3] {
-		system.log("processor_frame: ok, each part drew its pixels, the drawing module refused no call, and each table holds each of its records")
+		system.log(.Info, "processor_frame: ok, each part drew its pixels, the drawing module refused no call, and each table holds each of its records")
 		system.stop(0)
 	}
-	system.log("processor_frame: wrong: the pixels of the clear and present, the full frame, the frame in its damage and the draw table are right: ", pixels_right[0] ? "yes" : "no", ", ", pixels_right[1] ? "yes" : "no", ", ", pixels_right[2] ? "yes" : "no", ", ", pixels_right[3] ? "yes" : "no", "; the drawing module refused ", refusals, " calls; each table holds each of its records: ", tables_whole ? "yes" : "no")
+	system.log(.Info, "processor_frame: wrong: the pixels of the clear and present, the full frame, the frame in its damage and the draw table are right: ", pixels_right[0] ? "yes" : "no", ", ", pixels_right[1] ? "yes" : "no", ", ", pixels_right[2] ? "yes" : "no", ", ", pixels_right[3] ? "yes" : "no", "; the drawing module refused ", refusals, " calls; each table holds each of its records: ", tables_whole ? "yes" : "no")
 	system.stop(1)
 }

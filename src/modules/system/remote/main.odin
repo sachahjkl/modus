@@ -324,7 +324,7 @@ log_second: u64
 log_count: u64
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log("remote: ", text)
+	system.log(.Info, "remote: ", text)
 	system.stop(1)
 }
 
@@ -477,7 +477,7 @@ idle_end_log :: proc "contextless" (connection: ^quic.Connection, peer: quic.Rem
 	bound := quic.connection_idle_bound(connection) / 1000
 	held := silence >= idle_timeout
 	text: [40]u8
-	system.log("remote: ", address_text(text[:], peer), held ? ": the idle end held its bound: " : ": the idle end did NOT hold its bound: ", silence, " ms with no packet of the host, the idle timeout ", idle_timeout, " ms, the bound ", bound, " ms, ", silence - min(silence, bound), " ms after the bound")
+	system.log(.Info, "remote: ", address_text(text[:], peer), held ? ": the idle end held its bound: " : ": the idle end did NOT hold its bound: ", silence, " ms with no packet of the host, the idle timeout ", idle_timeout, " ms, the bound ", bound, " ms, ", silence - min(silence, bound), " ms after the bound")
 }
 
 // stream_refuse ends a call stream with a code: STOP_SENDING (the host stops
@@ -524,7 +524,7 @@ call_work :: proc "contextless" (connection: ^quic.Connection, peer: quic.Remote
 				stream_refuse(connection, call, .Too_Large, now)
 				counts.too_large += 1
 				if log_allowed() {
-					system.log("remote: ", address_text(text[:], peer), ", the stream ", call.identifier, ": a request of more than ", u64(remote.REQUEST_LIMIT), " bytes: reset with the code Too_Large, and no call")
+					system.log(.Info, "remote: ", address_text(text[:], peer), ", the stream ", call.identifier, ": a request of more than ", u64(remote.REQUEST_LIMIT), " bytes: reset with the code Too_Large, and no call")
 				}
 				return
 			case .Complete:
@@ -542,7 +542,7 @@ call_work :: proc "contextless" (connection: ^quic.Connection, peer: quic.Remote
 			stream_refuse(connection, call, .Timeout, now)
 			counts.timeouts += 1
 			if log_allowed() {
-				system.log("remote: ", address_text(text[:], peer), ", the stream ", call.identifier, ": no whole request in ", u64(REQUEST_TIME_LIMIT), " ms (", u64(call.received), " bytes came): reset with the code Timeout after ", elapsed, " ms of the machine; the bound of a request ", bound_verdict(elapsed, REQUEST_TIME_LIMIT))
+				system.log(.Info, "remote: ", address_text(text[:], peer), ", the stream ", call.identifier, ": no whole request in ", u64(REQUEST_TIME_LIMIT), " ms (", u64(call.received), " bytes came): reset with the code Timeout after ", elapsed, " ms of the machine; the bound of a request ", bound_verdict(elapsed, REQUEST_TIME_LIMIT))
 			}
 		}
 	case .Answering:
@@ -561,7 +561,7 @@ call_work :: proc "contextless" (connection: ^quic.Connection, peer: quic.Remote
 			stream_refuse(connection, call, .Timeout, now)
 			counts.timeouts += 1
 			if log_allowed() {
-				system.log("remote: ", address_text(text[:], peer), ", the stream ", call.identifier, ": the host did not take the answer in ", u64(ANSWER_TIME_LIMIT), " ms (", u64(call.answer_written), " of ", u64(call.answer_length), " bytes in the stream): reset with the code Timeout after ", elapsed, " ms of the machine; the bound of an answer ", bound_verdict(elapsed, ANSWER_TIME_LIMIT))
+				system.log(.Info, "remote: ", address_text(text[:], peer), ", the stream ", call.identifier, ": the host did not take the answer in ", u64(ANSWER_TIME_LIMIT), " ms (", u64(call.answer_written), " of ", u64(call.answer_length), " bytes in the stream): reset with the code Timeout after ", elapsed, " ms of the machine; the bound of an answer ", bound_verdict(elapsed, ANSWER_TIME_LIMIT))
 			}
 		}
 	case .Discarding:
@@ -577,7 +577,7 @@ call_work :: proc "contextless" (connection: ^quic.Connection, peer: quic.Remote
 				quic.connection_close(connection, u64(remote.Stream_Error.Timeout), now_microseconds())
 				counts.closed_held += 1
 				if log_allowed() {
-					system.log("remote: ", address_text(text[:], peer), ", the stream ", call.identifier, ": the host did not end it ", u64(RELEASE_TIME_LIMIT), " ms after its reset: the connection ends with the code Timeout after ", elapsed, " ms of the machine")
+					system.log(.Info, "remote: ", address_text(text[:], peer), ", the stream ", call.identifier, ": the host did not end it ", u64(RELEASE_TIME_LIMIT), " ms after its reset: the connection ends with the code Timeout after ", elapsed, " ms of the machine")
 				}
 			}
 			// The connection ends by its closing state; the next bound is
@@ -604,11 +604,11 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 	if log_allowed() {
 		text: [64]u8
 		if row >= 0 && rows[row].contested != 0 {
-			system.log("remote: refused the client key ", hex_text(text[:], proven[:]), ": it is contested: principal ", rows[row].principal, " and principal ", rows[row].contested - 1, " both allowed it, and it acts for neither until one of them revokes it; the handshake ends before any call")
+			system.log(.Info, "remote: refused the client key ", hex_text(text[:], proven[:]), ": it is contested: principal ", rows[row].principal, " and principal ", rows[row].contested - 1, " both allowed it, and it acts for neither until one of them revokes it; the handshake ends before any call")
 		} else if row >= 0 {
-			system.log("remote: refused the client key ", hex_text(text[:], proven[:]), ": the session of its principal ", rows[row].principal, " is locked; the handshake ends before any call")
+			system.log(.Info, "remote: refused the client key ", hex_text(text[:], proven[:]), ": the session of its principal ", rows[row].principal, " is locked; the handshake ends before any call")
 		} else {
-			system.log("remote: refused the client key ", hex_text(text[:], proven[:]), ": no principal allowed it; the handshake ends before any call")
+			system.log(.Info, "remote: refused the client key ", hex_text(text[:], proven[:]), ": no principal allowed it; the handshake ends before any call")
 		}
 	}
 	return false
@@ -627,13 +627,13 @@ client_bind :: proc "contextless" (connection: ^quic.Connection, client: ^Record
 		quic.connection_close(connection, u64(remote.Stream_Error.Revoked), now_microseconds())
 		counts.revoked += 1
 		if log_allowed() {
-			system.log("remote: ", address_text(text[:], peer), ": the grant of the client key ", hex_text(head[:], key[:8]), " ended during the handshake: the connection ends with the code Revoked, before any call")
+			system.log(.Info, "remote: ", address_text(text[:], peer), ": the grant of the client key ", hex_text(head[:], key[:8]), " ended during the handshake: the connection ends with the code Revoked, before any call")
 		}
 		return
 	}
 	client.bound, client.row, client.serial, client.principal, client.key = true, row, client_rows[row].serial, client_rows[row].principal, key
 	if log_allowed() {
-		system.log("remote: ", address_text(text[:], peer), " proved the client key ", hex_text(head[:], key[:8]), ": its calls act for principal ", client.principal)
+		system.log(.Info, "remote: ", address_text(text[:], peer), " proved the client key ", hex_text(head[:], key[:8]), ": its calls act for principal ", client.principal)
 	}
 }
 
@@ -653,9 +653,9 @@ client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: 
 	if log_allowed() {
 		place := client.row
 		if place >= 0 && place < remote.CLIENT_CAPACITY && client_rows[place].key == client.key && client_rows[place].contested != 0 {
-			system.log("remote: the client key ", hex_text(head[:], client.key[:8]), " of principal ", client.principal, " is contested: principal ", client_rows[place].contested - 1, " allowed it too, and it acts for neither; the connection from ", address_text(text[:], peer), " ends with the code Revoked")
+			system.log(.Info, "remote: the client key ", hex_text(head[:], client.key[:8]), " of principal ", client.principal, " is contested: principal ", client_rows[place].contested - 1, " allowed it too, and it acts for neither; the connection from ", address_text(text[:], peer), " ends with the code Revoked")
 		} else {
-			system.log("remote: the grant of the client key ", hex_text(head[:], client.key[:8]), " of principal ", client.principal, " ended (a revocation, or a lock of its session): the connection from ", address_text(text[:], peer), " ends with the code Revoked")
+			system.log(.Info, "remote: the grant of the client key ", hex_text(head[:], client.key[:8]), " of principal ", client.principal, " ended (a revocation, or a lock of its session): the connection from ", address_text(text[:], peer), " ends with the code Revoked")
 		}
 	}
 }
@@ -681,7 +681,7 @@ service_connections_of_ended_grants :: proc "contextless" () {
 		ended += 1
 	}
 	if ended > 0 && log_allowed() {
-		system.log("remote: the grants of ", u64(ended), " connections to services ended (a revocation, or a lock or an unlock of a session): their slots are free; ", u64(in_use), " of ", u64(SERVICE_CONNECTION_CAPACITY), " slots in use")
+		system.log(.Info, "remote: the grants of ", u64(ended), " connections to services ended (a revocation, or a lock or an unlock of a session): their slots are free; ", u64(in_use), " of ", u64(SERVICE_CONNECTION_CAPACITY), " slots in use")
 	}
 }
 
@@ -708,7 +708,7 @@ calls_work :: proc "contextless" () {
 		if record_log.generation != record.generation {
 			record_log^ = {generation = record.generation}
 			if log_allowed() {
-				system.log("remote: a connection from ", address_text(text[:], record.remote))
+				system.log(.Info, "remote: a connection from ", address_text(text[:], record.remote))
 			}
 		}
 		connection := &quic_connections[place]
@@ -742,7 +742,7 @@ calls_work :: proc "contextless" () {
 		if connection.state == .Closed && !record_log.end_logged {
 			record_log.end_logged = true
 			if log_allowed() {
-				system.log("remote: ", address_text(text[:], record.remote), " ended (", end_reason(connection), ", the code ", system.Hex(connection.close_error_code), connection.close_is_application ? " of the application" : "", "): in ", connection.data_consumed_total, " bytes, out ", connection.data_sent_total, " bytes")
+				system.log(.Info, "remote: ", address_text(text[:], record.remote), " ended (", end_reason(connection), ", the code ", system.Hex(connection.close_error_code), connection.close_is_application ? " of the application" : "", "): in ", connection.data_consumed_total, " bytes, out ", connection.data_sent_total, " bytes")
 				if connection.closed_by_idle_timeout {
 					idle_end_log(connection, record.remote)
 				}
@@ -941,9 +941,9 @@ refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service:
 	system.error_text(&writer, &error, "remote", field)
 	if counts.refused <= LOG_REFUSALS {
 		if counts.refused == LOG_REFUSALS {
-			system.log("remote: refused a request: ", system.written(&writer), "; the next refusals are counted only")
+			system.log(.Info, "remote: refused a request: ", system.written(&writer), "; the next refusals are counted only")
 		} else {
-			system.log("remote: refused a request: ", system.written(&writer))
+			system.log(.Info, "remote: refused a request: ", system.written(&writer))
 		}
 	}
 	answer := remote.Answer{status = .Refused, error = error, hash = hash}
@@ -1033,7 +1033,7 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 				return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused))
 			}
 			connection.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
-			system.log("remote: connected to the service ", name, ", for principal ", client.principal)
+			system.log(.Info, "remote: connected to the service ", name, ", for principal ", client.principal)
 			return connection, {}
 		}
 		wait: system.Wait
@@ -1098,7 +1098,7 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 			}
 		}
 		if state, _ := system.process_state(connection.process); state == .Stopped || state == .None {
-			system.log("remote: the service ", remote.name_text(&connection.name), " stopped during a call")
+			system.log(.Info, "remote: the service ", remote.name_text(&connection.name), " stopped during a call")
 			connection_end(connection, false)
 			return {}, errors.error_make(.State, .None, remote.FIELD_SERVICE, 0, 0, i64(state)), false
 		}
@@ -1107,7 +1107,7 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 			continue
 		}
 		if now := system.wait_end(&wait, limit); now >= limit {
-			system.log("remote: the service ", remote.name_text(&connection.name), " did not answer in ", u64(CALL_LIMIT), " ms: the connection ends")
+			system.log(.Info, "remote: the service ", remote.name_text(&connection.name), " did not answer in ", u64(CALL_LIMIT), " ms: the connection ends")
 			connection_end(connection, true)
 			return {}, errors.error_make(.Over_Limit, .Milliseconds, remote.FIELD_EXPORT, i64(now - start), CALL_LIMIT), false
 		}
@@ -1225,7 +1225,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// A seed under the least strength is an error that the process
 		// shows: no key, and no endpoint.
 		weak_seed = true
-		system.log("remote: the random seed of this process is weak: it makes no key, and listens on nothing")
+		system.log(.Info, "remote: the random seed of this process is weak: it makes no key, and listens on nothing")
 		for {
 			if has_window {
 				draw(&window)
@@ -1240,7 +1240,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	key_text: [64]u8
-	system.log("remote: the public key of this service: ", hex_text(key_text[:], public_key[:]))
+	system.log(.Info, "remote: the public key of this service: ", hex_text(key_text[:], public_key[:]))
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
 		fail("no endpoint: the process has no grant of the network")
@@ -1315,7 +1315,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log("remote: listening on the UDP port ", u64(listen_port), ", for the host 10.0.2.2 only, and for the client keys that a principal allowed: ", u64(CAPACITY), " connections, each with ", u64(STREAMS_PER_CONNECTION), " calls at one time")
+	system.log(.Info, "remote: listening on the UDP port ", u64(listen_port), ", for the host 10.0.2.2 only, and for the client keys that a principal allowed: ", u64(CAPACITY), " connections, each with ", u64(STREAMS_PER_CONNECTION), " calls at one time")
 
 	arrived: [RECEIVE_PLACES]ring.Record
 	drawn: u64
@@ -1386,8 +1386,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// to show (docs/DESIGN.md, section 7).
 				if !draw_logged && counts.calls >= 1000 {
 					draw_logged = true
-					system.log("remote: the window drew one picture in ", (system.nanoseconds() - start) / 1000, " us")
-					system.log("remote: the interface: ", u64(window_memory.drawing.now.record_count), " records, ", u64(window_memory.drawing.damage.count), " damage rectangles; build ", window_memory.drawing.build_time / 1000, " us, difference ", window_memory.drawing.difference_time / 1000, " us, draw ", window_memory.drawing.draw_time / 1000, " us")
+					system.log(.Info, "remote: the window drew one picture in ", (system.nanoseconds() - start) / 1000, " us")
+					system.log(.Info, "remote: the interface: ", u64(window_memory.drawing.now.record_count), " records, ", u64(window_memory.drawing.damage.count), " damage rectangles; build ", window_memory.drawing.build_time / 1000, " us, difference ", window_memory.drawing.difference_time / 1000, " us, draw ", window_memory.drawing.draw_time / 1000, " us")
 				}
 			}
 		}

@@ -159,7 +159,7 @@ twins_start :: proc "contextless" (processes: ^[TWIN_COUNT]system.Handle, table:
 	for &process, index in processes {
 		status: system.Status
 		if process, status = twin_start(TWIN_NAMES[index], .Wait, table); status != .Ok {
-			system.log("frames: cannot start a twin: status ", u64(status))
+			system.log(.Info, "frames: cannot start a twin: status ", u64(status))
 			return 0, 0, false
 		}
 	}
@@ -281,7 +281,7 @@ shared_code_cases :: proc "contextless" () {
 	for process in processes {
 		system.close(process)
 	}
-	system.log("frames: 4 twins: ", own_paid, " pages with a copy of the module each, ", shared_paid, " pages with the shared code (", shared_pages, " pages of the module, once)")
+	system.log(.Info, "frames: 4 twins: ", own_paid, " pages with a copy of the module each, ", shared_paid, " pages with the shared code (", shared_pages, " pages of the module, once)")
 }
 
 // The random generator of this process (src/library/support/random).
@@ -296,7 +296,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("frames: no random seed in the context")
+		system.log(.Info, "frames: no random seed in the context")
 		system.stop(1)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "frames")
@@ -311,18 +311,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	first_use_cases()
 	shared_code_cases()
-	system.log("frames: create and map 8192 pages: ", create_now, " us with each frame now, ", create_first_use, " us with pages on first use")
-	system.log("frames: the first use of a page: ", first_use, " ns; a write to a page that has its frame: ", write_present, " ns")
-	system.log("frames: start a twin: ", start_own, " us with its own copy of the module, ", start_shared, " us with the shared code")
+	system.log(.Info, "frames: create and map 8192 pages: ", create_now, " us with each frame now, ", create_first_use, " us with pages on first use")
+	system.log(.Info, "frames: the first use of a page: ", first_use, " ns; a write to a page that has its frame: ", write_present, " ns")
+	system.log(.Info, "frames: start a twin: ", start_own, " us with its own copy of the module, ", start_shared, " us with the shared code")
 	wrong: u64
 	for item in cases[:case_count] {
 		if !item.right {
 			wrong += 1
-			system.log("frames: wrong answer: ", item.text, ": ", item.answer)
+			system.log(.Info, "frames: wrong answer: ", item.text, ": ", item.answer)
 		}
 	}
 	if wrong == 0 {
-		system.log("frames: ok, ", u64(case_count), " cases")
+		system.log(.Info, "frames: ok, ", u64(case_count), " cases")
 	}
 
 	for {

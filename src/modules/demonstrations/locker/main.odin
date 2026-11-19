@@ -148,7 +148,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// refused with a line and a stop, never read as a mode.
 		mode, mode_ok := enum_word.member_of_word(lockers.Mode, u64(slot.mode))
 		if !mode_ok {
-			system.log("locker: the board names the mode ", u64(slot.mode), ", which names no mode")
+			system.log(.Info, "locker: the board names the mode ", u64(slot.mode), ", which names no mode")
 			system.stop(2)
 		}
 		start := slot.start

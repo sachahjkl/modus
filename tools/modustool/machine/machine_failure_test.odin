@@ -8,7 +8,7 @@ import "core:testing"
 @(test)
 a_lost_record_is_a_common_failure :: proc(t: ^testing.T) {
 	LOST :: "kernel: 12 records of the log did not reach the serial port"
-	LOG :: "[console] started\r\n" + LOST + "\r\n[root:processes] root: ok\r\n"
+	LOG :: "[console] started\r\n" + LOST + "\r\n[root] root: ok\r\n"
 	testing.expect_value(t, common_failure_line(LOG, 0), LOST)
 	testing.expect_value(t, common_failure_line("[console] started\r\nroot: ok\r\n", 0), "")
 }
@@ -37,6 +37,6 @@ a_common_failure_cut_by_two_reads_is_found :: proc(t: ^testing.T) {
 	first_read := len(BEFORE) + 20
 	testing.expect_value(t, common_failure_line(whole_log[:first_read], 0), "")
 	testing.expect_value(t, common_failure_line(whole_log, first_read), LOST)
-	LATER :: LOG + "[root:processes] root: a line after the lost records\r\n"
+	LATER :: LOG + "[root] root: a line after the lost records\r\n"
 	testing.expect_value(t, common_failure_line(LATER, len(LATER)), "")
 }

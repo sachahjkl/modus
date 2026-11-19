@@ -17,8 +17,7 @@
 //   `process_schedule_read`, `process_schedule_write`), the fault ring and the kernel events.
 // - `wait.odin`: the waits on words and the queues with waits (`send`,
 //   `receive`, `wait_begin`, `wait_end`).
-// - `text.odin`, `log.odin`: the log of a process (`log`, `log_in`,
-//   `format`).
+// - `text.odin`, `log.odin`: the log of a process (`log`, `format`).
 // - `load.odin`: the loader of modules and the start of processes
 //   (`process_start`, `Module_Space`).
 // - `calls.odin`, `service.odin`, `tables.odin`: the calls of exports, direct
@@ -809,7 +808,7 @@ handle_state :: proc "contextless" (handle: Handle, memory: Handle = 0) -> (kind
 // The kernel and this library come from one build: such a word is a fault
 // of the build, and no member stands in for it.
 kernel_word_refused :: proc "contextless" (what: string, word: u64) -> ! {
-	log_in("processes", .Error, "system: the kernel gave the word ", word, " for ", what, ", which names no member")
+	log(.Error, "system: the kernel gave the word ", word, " for ", what, ", which names no member")
 	stop(1)
 }
 

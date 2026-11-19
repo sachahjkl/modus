@@ -55,12 +55,12 @@ one :: #force_no_inline proc "contextless" (address: uintptr) {
 // kernel.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	system.log("fault: this process writes to address 0")
+	system.log(.Info, "fault: this process writes to address 0")
 	// The value 14: 0, as no starter writes it; the compiler cannot know it.
 	// (The values 9 to 12 are the random seed of the process, 16 the
 	// strength of the seed; 13 and 15 have no role.)
 	address := uintptr(ctx.values[14])
 	one(address)
-	system.log("fault: the write did not stop the process")
+	system.log(.Info, "fault: the write did not stop the process")
 	system.stop(1)
 }

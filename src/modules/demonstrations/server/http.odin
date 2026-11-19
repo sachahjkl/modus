@@ -330,12 +330,12 @@ request_finish :: proc "contextless" (index: int) {
 		request_log_count += 1
 		remote_text: [32]u8
 		method := web.request_method_name(request.method)
-		system.log_in("requests", .Info, "server: ", method == "" ? "-" : method, " ", string(record.target[:record.target_length]), " ", u64(session.answer_status), ", ", session.answer_bytes, " bytes, ", microseconds_taken, " us, ", address_text(remote_text[:], connection.remote_address, connection.remote_port))
+		system.log(.Info, "server: ", method == "" ? "-" : method, " ", string(record.target[:record.target_length]), " ", u64(session.answer_status), ", ", session.answer_bytes, " bytes, ", microseconds_taken, " us, ", address_text(remote_text[:], connection.remote_address, connection.remote_port))
 	} else {
 		requests_not_logged += 1
 	}
 	if session.answer_status == 200 && request.method == .Post {
-		system.log("server: received /sink: ", u64(session.body_bytes), " bytes, fnv1a64 ", system.Hex(session.body_hash), ", ", kilobytes_per_second(u64(session.body_bytes), now - session.request_started_at) / 1000, " MB/s")
+		system.log(.Info, "server: received /sink: ", u64(session.body_bytes), " bytes, fnv1a64 ", system.Hex(session.body_hash), ", ", kilobytes_per_second(u64(session.body_bytes), now - session.request_started_at) / 1000, " MB/s")
 	}
 	close_after := session.close_after
 	// The next request starts clean; the bytes after this head stay.
@@ -526,7 +526,7 @@ http_limits :: proc "contextless" (index: int, now: u64) {
 		if now - session.progress_at >= IDLE_LIMIT && !sending {
 			if connection_log_allowed() {
 				remote_text: [32]u8
-				system.log("server: ", address_text(remote_text[:], connection.remote_address, connection.remote_port), ": no request in 10 s, closed")
+				system.log(.Info, "server: ", address_text(remote_text[:], connection.remote_address, connection.remote_port), ": no request in 10 s, closed")
 			}
 			session.closing = true
 			tcp.close(&table, index)
@@ -553,7 +553,7 @@ keep_alive_measure :: proc "contextless" (index: int) {
 	best_keep_alive_rate = max(best_keep_alive_rate, per_second)
 	remote_text: [32]u8
 	connection := &connections[index]
-	system.log("server: ", u64(session.requests), " requests on one connection of ", address_text(remote_text[:], connection.remote_address, connection.remote_port), " in ", nanoseconds_taken / 1_000_000, " ms: ", per_second, " requests in one second")
+	system.log(.Info, "server: ", u64(session.requests), " requests on one connection of ", address_text(remote_text[:], connection.remote_address, connection.remote_port), " in ", nanoseconds_taken / 1_000_000, " ms: ", per_second, " requests in one second")
 }
 
 // second_measure ends a second of measure: the requests answered in it, and
@@ -568,7 +568,7 @@ second_measure :: proc "contextless" (now: u64) {
 		if new_connections >= second_requests * 9 / 10 {
 			best_new_connection_rate = max(best_new_connection_rate, second_requests)
 		}
-		system.log("server: ", second_requests, " requests answered in one second, on ", new_connections, " new connections")
+		system.log(.Info, "server: ", second_requests, " requests answered in one second, on ", new_connections, " new connections")
 	}
 	second_start = now
 	second_requests = 0
