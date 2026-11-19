@@ -416,11 +416,11 @@ Do not use: remote call, RPC, IPC call.
 
 ### Record description
 
-A record description is the part of the description of a module that gives the name, the size and the fields of one record that an export receives or gives.
+A record description is the part of the description of a module that gives the name, the size and the fields of one record type that the module names: in an export, a log fact, a record output or a record input.
 
-A field is an Integer (1, 2, 4 or 8 bytes), a Handle (4 bytes, with the rights that the export needs), or a Text of a fixed size. A record has 256 bytes at most and holds values only, never an address. Two record descriptions that are equal name the same record, in one module or in two: the check of a replacement and the console compare them field by field.
+The tool writes each record type once in the table `Records`, whichever declaration names it, and the description does not say which. A field is an Integer (1, 2, 4 or 8 bytes), a Handle (4 bytes, with the rights that the export needs), or a Text of a fixed size; each declaration refuses the kinds that it cannot carry. A record has 256 bytes at most and holds values only, never an address. Two equal record descriptions name the same record, in one module or in two: the check of a replacement, the wiring of a record output and the console compare them field by field.
 
-The design: `docs/MODULE_CONTRACT.md`, "Records and handles, as implemented".
+The design: `docs/MODULE_CONTRACT.md`, "Records and handles, as implemented"; for log facts, `src/md/features/log_facts.md`; for record outputs and record inputs, `src/md/features/module_outputs.md`.
 
 Do not use: struct type, schema, class.
 

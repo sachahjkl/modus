@@ -4,7 +4,7 @@ The words of this group name how the project is run and published: the documents
 
 ### Property
 
-A property is one of the 21 fundamental concepts of the system, each with its rule, its reasons and its costs, in `docs/PROPERTIES.md`.
+A property is one of the 22 fundamental concepts of the system, each with its rule, its reasons and its costs, in `docs/PROPERTIES.md`.
 
 The properties are the reference against which every proposal is measured: a proposal that contradicts one is named as such before any work on it. Each property has a number, a title ("10. One code module") and a status in the summary table of the document. The status page of the site shows each property with its status. A comment in a source never names a property by its number: it states the reason in words. `modustool check` refuses "(property 14)" as a comment breach.
 
