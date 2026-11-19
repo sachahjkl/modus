@@ -177,6 +177,44 @@ the_fact_keys_are_in_the_llvm_ir :: proc(t: ^testing.T) {
 	testing.expect_value(t, facts_ir_problem("", nil), "")
 }
 
+// The fact types that a compile reached: a fact type of a support package
+// whose key the IR lacks has no row, and the IR holds no failure for it; a
+// fact type of the package of the module whose key the IR lacks fails, also
+// with a slash after the folder of the module, and also when another fact
+// type is reached; an IR with every key keeps each fact type, in order.
+@(test)
+the_fact_types_of_a_module_are_those_that_its_code_reaches :: proc(t: ^testing.T) {
+	own := Fact_Description{key = fact_key("fact_probe", "Probe"), package_name = "fact_probe", type_name = "Probe", file = FACT_TEST_FOLDER + "/main.odin"}
+	support := Fact_Description{key = fact_key("fact_sample", "Sample"), package_name = "fact_sample", type_name = "Sample", file = FACT_TEST_SUPPORT_FOLDER + "/sample.odin"}
+	ir_of :: proc(keys: ..u64) -> string {
+		text := strings.builder_make(context.temp_allocator)
+		for key in keys {
+			fmt.sbprintfln(&text, "  store i64 %d, ptr %%fact.key, align 8", i64(key))
+		}
+		return strings.to_string(text)
+	}
+	// The own fact type is missing: a failure, with no list.
+	missing, missing_problem := facts_reached(ir_of(support.key), {own, support}, FACT_TEST_FOLDER)
+	testing.expect(t, missing_problem != "" && len(missing) == 0)
+	_, slash_problem := facts_reached(ir_of(support.key), {own, support}, FACT_TEST_FOLDER + "/")
+	testing.expect(t, slash_problem != "")
+	_, empty_problem := facts_reached("", {own}, FACT_TEST_FOLDER)
+	testing.expect(t, empty_problem != "")
+	// The fact type of a support package is missing: no row, no failure.
+	without_support, support_problem := facts_reached(ir_of(own.key), {own, support}, FACT_TEST_FOLDER)
+	testing.expect_value(t, support_problem, "")
+	testing.expect(t, len(without_support) == 1 && without_support[0].key == own.key)
+	none, none_problem := facts_reached("", {support}, FACT_TEST_FOLDER)
+	testing.expect(t, none_problem == "" && len(none) == 0)
+	// A module with no fact type at all.
+	nothing, nothing_problem := facts_reached("", nil, FACT_TEST_FOLDER)
+	testing.expect(t, nothing_problem == "" && len(nothing) == 0)
+	// Each key in the IR: each fact type, in its order.
+	both, both_problem := facts_reached(ir_of(support.key, own.key), {own, support}, FACT_TEST_FOLDER)
+	testing.expect_value(t, both_problem, "")
+	testing.expect(t, len(both) == 2 && both[0].key == own.key && both[1].key == support.key)
+}
+
 // A module file of one fact type, with its record, its template and its
 // package name, for the render: the record "Probe" with an unsigned
 // Integer "value" of 8 bytes and a hexadecimal "mark" of 4 bytes and a
@@ -285,6 +323,11 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	twin[module.HASH_SIZE - 1] = 0xFF
 	testing.expect(t, fact_catalog_add(&catalog, twin, "", file) != "")
 	testing.expect_value(t, len(catalog.modules), 1)
+	// A whole hash names its module only: the twin, which starts with the
+	// same 8 bytes, and the hash of zeros name none.
+	testing.expect(t, fact_catalog_file_of_hash(&catalog, twin) == nil)
+	testing.expect(t, fact_catalog_file_of_hash(&catalog, {}) == nil)
+	testing.expect(t, fact_catalog_file_of_hash(&catalog, hash) != nil)
 
 	sentence, rendered := fact_line_render(&catalog, line)
 	testing.expect(t, rendered)
@@ -308,6 +351,33 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	testing.expect_value(t, rest_lines, 1)
 	plain, plain_lines := fact_lines_render(&catalog, "[root] root: a text\r\n")
 	testing.expect(t, plain == "[root] root: a text\r\n" && plain_lines == 0)
+	// The place of a rendered line counts the bytes of its raw line, its
+	// end of line included, for the measure of the two forms.
+	places := make([dynamic]Fact_Line_Place, context.temp_allocator)
+	_, _ = fact_lines_render(&catalog, log, &places)
+	testing.expect_value(t, len(places), 1)
+	if len(places) == 1 {
+		testing.expect_value(t, places[0].raw_count, len("[log_reader] ") + len(line) + len("\r\n"))
+		testing.expect_value(t, places[0].end - places[0].start, len("[log_reader] probe: the value 42, the mark 0x4c4f4746 and the number 7; {braces}\r\n"))
+	}
+	// The render of the bytes of a record, as a row of log.fact_records
+	// gives them: a key that the file has no fact type for, a count of 0,
+	// one less and one more than the record are refused; the record whole
+	// is the sentence of its line.
+	file_of_line := fact_catalog_file(&catalog, hash_prefix_of(hash))
+	longer: [len(values) + 1]u8
+	copy(longer[:], values[:])
+	Refused_Values :: struct {
+		key:   u64,
+		count: int,
+	}
+	for item in ([?]Refused_Values{{FACT_RENDER_KEY + 1, len(values)}, {0, len(values)}, {FACT_RENDER_KEY, 0}, {FACT_RENDER_KEY, len(values) - 1}, {FACT_RENDER_KEY, len(values) + 1}}) {
+		_, values_rendered := fact_values_render(file_of_line, item.key, longer[:item.count])
+		testing.expectf(t, !values_rendered, "the key %x with %d value bytes is rendered", item.key, item.count)
+	}
+	whole_sentence, whole_rendered := fact_values_render(file_of_line, FACT_RENDER_KEY, values[:])
+	testing.expect(t, whole_rendered)
+	testing.expect_value(t, whole_sentence, sentence)
 }
 
 // A Text value of a fact is bytes of its writer, which the kernel does not

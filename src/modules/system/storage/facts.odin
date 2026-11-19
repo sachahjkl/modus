@@ -1,0 +1,302 @@
+package storage_service
+
+import format "modus:contract/store"
+import "modus:contract/value_kinds"
+
+// The log facts of the storage service (src/md/features/log_facts.md, "The
+// facts of the storage service and of the disk"): the lines of the disk,
+// the commits, the open and the stores that a reader groups or filters, as
+// records of fields. Each fact template is the sentence that the line
+// wrote before it was a fact, so a wait of a machine test on that sentence
+// reads it as before. A line whose sentence differs by its case (one
+// block or several, a share that reads only) is one fact type for each
+// case: the template has no condition. No field has the name of a column
+// of the head of facts(): number, time, process, level.
+//
+// A name is a Text field, and the last field: the serial line of a fact
+// stops at its last byte that is not zero, so the zeros after a short name
+// cost no byte. A store name has at most NAME_CAPACITY bytes, and an
+// object name at most format.ENTRY_NAME_CAPACITY: each field holds the
+// longest one and a zero byte, and ends the record on 8 bytes.
+
+// The bytes of the Text field of a store name.
+STORE_FIELD_BYTES :: 40
+// The bytes of the Text field of an object name.
+OBJECT_FIELD_BYTES :: 72
+// The bytes of the Text field of the cause of a silent disk: its longest
+// cause, and a zero byte.
+DISK_SILENT_CAUSE_BYTES :: 72
+
+// The disk does not answer: the service reads and changes nothing on the
+// disk until its next start. The cause is a Text field: Disk_Silence is an
+// enum of this module, whose members a reader cannot name, and one of its
+// sentences holds the bound of the wait. One fact type keeps the one event:
+// facts(storage_service.Disk_Silent) gives each silence.
+@(log_fact = "storage: the disk does not answer: {cause}; the service reads and changes nothing on the disk until its next start, and refuses each call that needs the disk")
+Disk_Silent :: struct {
+	cause: [72]u8,
+}
+
+// A node of a tree of a store has a wrong check or breaks a rule of the
+// format: the store is damaged.
+@(log_fact = "storage: a node of a tree of the store {store} has a wrong check or breaks a rule of the format: the service changes nothing more in the store")
+Tree_Node_Damaged :: struct {
+	store: [40]u8,
+}
+
+// A commit would take a count of names of a block below 0: a fault of the
+// engine, and the store changes no more until the next start.
+@(log_fact = "storage: a fault of the engine: a commit would take a count of names of a block below 0; the service makes no change in the store {store} until its next start, which counts again")
+Commit_Count_Below_Zero :: struct {
+	store: [40]u8,
+}
+
+// The read back of the blocks of a commit found one block that the disk did
+// not keep: the commit is refused before its root.
+@(log_fact = "storage: the read back of the commit of generation {generation} found 1 block with other bytes: the disk did not keep it; the commit is refused before its root, and the service goes on from generation {generation_before}")
+Commit_Block_Dropped :: struct {
+	generation:        u64,
+	generation_before: u64,
+}
+
+// The read back of the blocks of a commit found several blocks that the
+// disk did not keep.
+@(log_fact = "storage: the read back of the commit of generation {generation} found {blocks} blocks with other bytes: the disk did not keep them; the commit is refused before its root, and the service goes on from generation {generation_before}")
+Commit_Blocks_Dropped :: struct {
+	generation:        u64,
+	blocks:            u64,
+	generation_before: u64,
+}
+
+// The read back of the blocks of a commit failed on the device.
+@(log_fact = "storage: the read back of the commit of generation {generation} failed on the device: the commit is refused before its root")
+Commit_Read_Back_Failed :: struct {
+	generation: u64,
+}
+
+// The read back of the root of a commit found other bytes: the root before
+// stays the newest on the disk.
+@(log_fact = "storage: the read back of the root of the commit of generation {generation} found other bytes: the disk did not keep it; the commit is refused, and the service goes on from generation {generation_before}")
+Commit_Root_Dropped :: struct {
+	generation:        u64,
+	generation_before: u64,
+}
+
+// The write of the root of a commit failed on the device: the root can be
+// on the disk or not.
+@(log_fact = "storage: the root of the commit of generation {generation}: its write failed on the device; the commit is not taken, the open of the next start decides, and the service makes no change until then")
+Root_Write_Failed :: struct {
+	generation: u64,
+}
+
+// The read back of the root of a commit failed on the device: the root can
+// be on the disk or not.
+@(log_fact = "storage: the root of the commit of generation {generation}: its read back failed on the device; the commit is not taken, the open of the next start decides, and the service makes no change until then")
+Root_Read_Back_Failed :: struct {
+	generation: u64,
+}
+
+// The disk did not keep the root of ROOT_REFUSAL_LIMIT commits in a row: a
+// place of the root drops its writes.
+@(log_fact = "storage: the disk did not keep the root of {commits} commits in a row: a place of the root drops its writes; the service makes no change until its next start, and its objects can still be read")
+Root_Place_Drops_Writes :: struct {
+	commits: u64,
+}
+
+// A commit dropped version indexes or leaves with a wrong check.
+@(log_fact = "storage: the commit of generation {generation} dropped {dropped} version indexes or leaves with a wrong check in the store {store}: those versions are lost, the objects stay")
+Versions_Dropped_At_Commit :: struct {
+	generation: u64,
+	dropped:    u64,
+	store:      [40]u8,
+}
+
+// A connection made a share of its store, or of a tree of it.
+@(log_fact = "storage: a share of the store {store}, the share {share}")
+Share_Made :: struct {
+	share: u64,
+	store: [40]u8,
+}
+
+// A connection made a share that reads only.
+@(log_fact = "storage: a share of the store {store}, read only, the share {share}")
+Read_Only_Share_Made :: struct {
+	share: u64,
+	store: [40]u8,
+}
+
+// The connection that made a share ended it.
+@(log_fact = "storage: the share {share} ended")
+Share_Ended :: struct {
+	share: u64,
+}
+
+// The open found a disk with no commit, and formatted it.
+@(log_fact = "storage: ok, a new disk: generation 1, {blocks}")
+New_Disk_Formatted :: struct {
+	blocks: value_kinds.Size_In_Blocks,
+}
+
+// The open found a root with a wrong check, a write that a stop cut, and
+// uses the root before it.
+@(log_fact = "storage: the root of generation {generation} has a wrong check: a write that a stop cut; the service uses the root before it")
+Cut_Root_Skipped :: struct {
+	generation: u64,
+}
+
+// The open found blocks with a wrong check: the counts of the blocks, and of
+// the objects and the stores that they damage.
+@(log_fact = "storage: {blocks} blocks have a wrong check: {objects} objects and {stores} stores are damaged; the service serves the others, and a write or a remove replaces a damaged object")
+Blocks_Damaged :: struct {
+	blocks:  u64,
+	objects: u64,
+	stores:  u64,
+}
+
+// The open found versions with a wrong block.
+@(log_fact = "storage: {versions} versions have a wrong block: a read of them gives Damaged")
+Versions_Damaged :: struct {
+	versions: u64,
+}
+
+// The open counted the blocks of stores again, and the root gives other
+// counts.
+@(log_fact = "storage: the disk gives {stores_recounted} stores another count of blocks than the open counted; the service takes the counts of the open ({stores_with_wrong_count} stores with no damage have a wrong count: a fault of the engine that wrote it)")
+Store_Counts_Differ :: struct {
+	stores_recounted:        u64,
+	stores_with_wrong_count: u64,
+}
+
+// The open of a disk with data is done: what it found, and its time.
+@(log_fact = "storage: ok, generation {generation}: {stores} stores, {objects} objects, {trees} trees, {versions} versions, {in_use} in use, {shared} shared, {checked} blocks checked, {wrong} wrong, in {elapsed}")
+Disk_Opened :: struct {
+	generation: u64,
+	stores:     u64,
+	objects:    u64,
+	trees:      u64,
+	versions:   u64,
+	in_use:     value_kinds.Size_In_Blocks,
+	shared:     u64,
+	checked:    u64,
+	wrong:      u64,
+	elapsed:    value_kinds.Time_In_Milliseconds,
+}
+
+// The open found trees in the removal queues: the removal goes on.
+@(log_fact = "storage: {trees} trees wait to be freed: the removal continues")
+Trees_Wait_To_Be_Freed :: struct {
+	trees: u64,
+}
+
+// The first commit of a store at its limit since the start of the service
+// thinned one version.
+@(log_fact = "storage: the store {store} is at its limit of {limit}: the commit of generation {generation} thinned 1 version, the oldest of the store first")
+Store_At_Limit_Thinned_One_Version :: struct {
+	limit:      value_kinds.Size_In_Blocks,
+	generation: u64,
+	store:      [40]u8,
+}
+
+// The first commit of a store at its limit since the start of the service
+// thinned several versions.
+@(log_fact = "storage: the store {store} is at its limit of {limit}: the commit of generation {generation} thinned {thinned} versions, the oldest of the store first")
+Store_At_Limit_Thinned_Versions :: struct {
+	limit:      value_kinds.Size_In_Blocks,
+	generation: u64,
+	thinned:    u64,
+	store:      [40]u8,
+}
+
+// The erase of the versions of an object ended its one version.
+@(log_fact = "storage: the versions of {object} in the store {store} are erased: 1 version ended, {zeroed} blocks written with zeros, {kept} blocks kept that another state names, generation {generation}")
+Versions_Erased_One_Version :: struct {
+	zeroed:     u64,
+	kept:       u64,
+	generation: u64,
+	store:      [40]u8,
+	object:     [72]u8,
+}
+
+// The erase of the versions of an object ended several versions.
+@(log_fact = "storage: the versions of {object} in the store {store} are erased: {ended} versions ended, {zeroed} blocks written with zeros, {kept} blocks kept that another state names, generation {generation}")
+Versions_Erased :: struct {
+	ended:      u64,
+	zeroed:     u64,
+	kept:       u64,
+	generation: u64,
+	store:      [40]u8,
+	object:     [72]u8,
+}
+
+// The erase left damaged parts of versions with no zeros over them.
+@(log_fact = "storage: the erase of the versions of {object} in the store {store} ended {damaged} damaged version indexes, leaves or states with no zeros over them: their blocks keep their bytes, in use until the next start of the service and free after it")
+Erase_Damaged_Left :: struct {
+	damaged: u64,
+	store:   [40]u8,
+	object:  [72]u8,
+}
+
+// The removal of a tree stops: the removal queue gives no first tree.
+@(log_fact = "storage: the removal of a tree of the store {store} stops: the removal queue gives no first tree; the next change of the store tries again")
+Tree_Removal_No_First_Tree :: struct {
+	store: [40]u8,
+}
+
+// The removal of a tree stops: a step of its plan was refused.
+@(log_fact = "storage: the removal of a tree of the store {store} stops: a step was refused; the next change of the store tries again")
+Tree_Removal_Step_Refused :: struct {
+	store: [40]u8,
+}
+
+// The removal of a tree stops: its commit failed.
+@(log_fact = "storage: the removal of a tree of the store {store} stops: its commit failed; the next change of the store tries again")
+Tree_Removal_Commit_Failed :: struct {
+	store: [40]u8,
+}
+
+// The commit of the range writes of an object: what it changed, hashed and
+// wrote, and its time.
+@(log_fact = "storage: the commit of generation {generation} of {object}: {changed} blocks changed of {object_blocks}, {hashed_blocks} blocks and {hashed_nodes} object nodes hashed, {written} blocks written; the object holds {held}; in {elapsed}")
+Ranges_Committed :: struct {
+	generation:    u64,
+	changed:       u64,
+	object_blocks: u64,
+	hashed_blocks: u64,
+	hashed_nodes:  u64,
+	written:       u64,
+	held:          value_kinds.Size_In_Blocks,
+	elapsed:       value_kinds.Time_In_Milliseconds,
+	object:        [72]u8,
+}
+
+// The tool reads the length of a Text field as a literal: the constants
+// name the same bytes, and each holds its longest name and a zero byte.
+#assert(size_of(Tree_Node_Damaged) == STORE_FIELD_BYTES && STORE_FIELD_BYTES > NAME_CAPACITY)
+#assert(size_of(Erase_Damaged_Left) == 8 + STORE_FIELD_BYTES + OBJECT_FIELD_BYTES && OBJECT_FIELD_BYTES > format.ENTRY_NAME_CAPACITY)
+#assert(size_of(Disk_Silent) == DISK_SILENT_CAUSE_BYTES)
+
+// store_field gives the Text field of a store name.
+store_field :: proc "contextless" (name: string) -> [STORE_FIELD_BYTES]u8 {
+	return value_kinds.text_field(name, STORE_FIELD_BYTES)
+}
+
+// cause_field gives the Text field of the cause of a silent disk.
+cause_field :: proc "contextless" (words: string) -> [DISK_SILENT_CAUSE_BYTES]u8 {
+	return value_kinds.text_field(words, DISK_SILENT_CAUSE_BYTES)
+}
+
+// object_field gives the Text field of an object name.
+object_field :: proc "contextless" (name: string) -> [OBJECT_FIELD_BYTES]u8 {
+	return value_kinds.text_field(name, OBJECT_FIELD_BYTES)
+}
+
+// blocks_field gives a count of blocks as a field with its unit. A count of
+// the service is far below the largest i64.
+blocks_field :: proc "contextless" (count: u64) -> value_kinds.Size_In_Blocks {
+	return value_kinds.Size_In_Blocks(count)
+}
+
+// milliseconds_field gives a time in milliseconds as a field with its unit.
+milliseconds_field :: proc "contextless" (milliseconds: u64) -> value_kinds.Time_In_Milliseconds {
+	return value_kinds.Time_In_Milliseconds(milliseconds)
+}

@@ -69,6 +69,7 @@ import "modus:contract/block"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/pci"
 import "modus:support/system"
 import "modus:support/virtio"
@@ -348,9 +349,9 @@ stop_with_each_request_failed :: proc "contextless" (cause: Device_Stop) -> ! {
 	system.wake_reader(&clients.completions)
 	switch cause {
 	case .No_Answer:
-		system.log(.Error, "block: the device did not answer a request in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms: ", u64(in_flight), " requests in flight fail, and the service stops")
+		system.log_fact(.Error, Device_Silent{bound = value_kinds.Time_In_Milliseconds(system.ANSWER_BOUND_MILLISECONDS), in_flight = u64(in_flight)})
 	case .Needs_Reset:
-		system.log(.Error, "block: the device needs a reset: ", u64(in_flight), " requests in flight fail, and the service stops")
+		system.log_fact(.Error, Device_Needs_Reset{in_flight = u64(in_flight)})
 	}
 	system.stop(.Failed)
 }

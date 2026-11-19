@@ -81,7 +81,7 @@ appearance_presented_note :: proc "contextless" (drawing: ^Window_Drawing, windo
 
 // element_places_write writes on the log the element places of a frame
 // that the window draws, when they changed: a machine test presses an
-// element by its name from these lines.
+// element by its name from these facts.
 @(private = "file")
 element_places_write :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) {
 	title := string(window.title[:window.title_count])
@@ -89,7 +89,7 @@ element_places_write :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Fr
 		drawing.element_places_dropped_logged = true
 		system.log(.Warning, "interface: ", title, ": a frame names ", u64(frame.element_places.dropped), " elements that the window does not keep: empty, longer than ", u64(ELEMENT_NAME_CAPACITY), " bytes, or past ", u64(ELEMENT_PLACE_CAPACITY), "; they have no element line. A window writes this line one time")
 	}
-	element_places_publish(&drawing.element_places_written, &frame.element_places, "interface: ", title)
+	element_places_publish(&drawing.element_places_written, &frame.element_places, title)
 }
 
 // act_names_differ says if the act names of a frame differ from the set

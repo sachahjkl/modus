@@ -474,9 +474,9 @@ Do not use: field format, display hint, field style.
 
 ### Contract enum
 
-A contract enum is an enumeration of the contract whose members a field of the kind Status holds, named in the closed list `value_kinds.Contract_Enum`: `Status`, `Log_Level` and `Log_Record_Form`.
+A contract enum is an enumeration of the contract whose members a field of the kind Status holds, named in the closed list `value_kinds.Contract_Enum`: `Status`, `Log_Level`, `Log_Record_Form`, `Stop_Cause` and `Stop_Outcome`.
 
-Each reader compiles the contract in, so it writes the name of a member from the word of the field (`operation.contract_enum_member_name`), and writes the number of a word that names no member, never another name. The console reads a name back to its word in a condition (`level = Warning`). An enumeration of a module is no contract enum: the module file holds no names of its members, so its field stays a plain Integer. A new contract enum is a new member of the list, with its names in the contract.
+Each reader compiles the contract in, so it writes the name of a member (`operation.contract_enum_member_name`), and the number of a word that names no member. A condition names a member (`level = Warning`). The sentence of a log fact writes the words of a member (`contract_enum_member_words`): the name, or for a stop the words of a reader, `itself`, `done`. An enumeration of a module is no contract enum: the module file holds no names of its members, so its field stays a plain Integer.
 
 The design: `src/md/features/console_value_colors.md`.
 

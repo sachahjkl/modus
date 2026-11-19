@@ -1,0 +1,3 @@
+type: Changed
+
+**The root service writes log facts**: each start and each stop of a process, a connection made or ended (for a client key of `remote` too), a grant revoked or given to debug, and the start of a device service are records of fields, whose sentences are those of before. In the console, `log.records(0) |> facts(root.Process_Stopped) |> where(outcome = Done)` gives the clean stops of the processes, with the stop cause and the stop outcome as columns, and the window of the log writes each sentence. The two new contract enums `Stop_Cause` and `Stop_Outcome` name the members in a condition; a sentence writes the words of a stop, "itself, done".

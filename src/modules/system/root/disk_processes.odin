@@ -38,6 +38,7 @@ import "modus:support/random"
 import "modus:support/storage"
 import "modus:contract/root_ring"
 import "modus:support/system"
+import "modus:contract/value_kinds"
 
 // What the load that runs waits for.
 Disk_Load_Stage :: enum u8 {
@@ -531,17 +532,20 @@ disk_load_start :: proc "contextless" () {
 		}
 		return
 	}
-	grants_text := ", with no grant"
-	store_text := ""
 	process_buffer, store_buffer: [32]u8
-	if .Store in granted && principals.store_name_write(&store_buffer, disk_process.store_process_name(&process_buffer, name), principal, false) {
-		grants_text = ", with the grant store: the store "
-		store_text = system.name_of(store_buffer[:])
-	}
-	if principal == principals.MACHINE {
-		system.log(.Info, "root: started ", system.Module_Name{name}, " from the disk, hash ", system.Hash{found[:]}, grants_text, store_text)
-	} else {
-		system.log(.Info, "root: started ", system.Module_Name{name}, " from the disk, hash ", system.Hash{found[:]}, grants_text, store_text, ", in the session of principal ", principal, " \"", principal_name(principal), "\"")
+	with_store := .Store in granted && principals.store_name_write(&store_buffer, disk_process.store_process_name(&process_buffer, name), principal, false)
+	started_process := module_name_field(name)
+	hash := value_kinds.Hash_Field(found)
+	machine_principal := principal == principals.MACHINE
+	switch {
+	case machine_principal && !with_store:
+		system.log_fact(.Info, Disk_Process_Started{started_process = started_process, hash = hash})
+	case machine_principal && with_store:
+		system.log_fact(.Info, Disk_Process_Started_With_Store{started_process = started_process, hash = hash, store = store_buffer})
+	case !with_store:
+		system.log_fact(.Info, Disk_Process_Started_In_Session{started_process = started_process, hash = hash, principal = principal, principal_name = text_field(principal_name(principal), 24)})
+	case:
+		system.log_fact(.Info, Disk_Process_Started_With_Store_In_Session{started_process = started_process, hash = hash, store = store_buffer, principal = principal, principal_name = text_field(principal_name(principal), 24)})
 	}
 	disk_load_end(.Ok, {})
 }

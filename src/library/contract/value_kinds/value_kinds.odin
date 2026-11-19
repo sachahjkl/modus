@@ -362,6 +362,8 @@ Contract_Enum :: enum u8 {
 	Status    = 1, // operation.Status: the status of a kernel operation.
 	Log_Level = 2, // operation.Log_Level: the level of a log record.
 	Log_Record_Form = 3, // operation.Log_Record_Form: what a log record holds, a text or a fact.
+	Stop_Cause      = 4, // operation.Stop_Cause: why a process stopped, as the kernel recorded it.
+	Stop_Outcome    = 5, // operation.Stop_Outcome: what a process said of its work when it stopped itself.
 }
 
 // contract_enum_of_word is the border of the byte of a contract enum in a
@@ -385,6 +387,8 @@ CONTRACT_ENUM_TYPES := [Contract_Enum]Contract_Enum_Type {
 	.Status    = {package_name = "operation", name = "Status"},
 	.Log_Level = {package_name = "operation", name = "Log_Level"},
 	.Log_Record_Form = {package_name = "operation", name = "Log_Record_Form"},
+	.Stop_Cause      = {package_name = "operation", name = "Stop_Cause"},
+	.Stop_Outcome    = {package_name = "operation", name = "Stop_Outcome"},
 }
 
 // The types that a field of a record takes to state its field kind, in
@@ -409,6 +413,27 @@ MODULE_NAME_FIELD_BYTES :: 32
 // A Text field that holds the name of a module or of a process, with zero
 // bytes after it.
 Module_Name_Field :: distinct [MODULE_NAME_FIELD_BYTES]u8
+
+// module_name_field gives the field of a record that holds the name of a
+// module or of a process: its bytes, cut after MODULE_NAME_FIELD_BYTES - 1
+// bytes, then zero bytes. The last byte is always zero, so a reader finds
+// the end of the name in the field.
+//
+// Example: `module_name_field("storage")` is "storage" and 25 zero bytes.
+module_name_field :: proc "contextless" (name: string) -> (field: Module_Name_Field) {
+	copy(field[:MODULE_NAME_FIELD_BYTES - 1], name)
+	return
+}
+
+// text_field gives a Text field of N bytes: the text, cut after N - 1
+// bytes, then zero bytes. A writer of a log fact fills a field of a name
+// with it: the last byte is always zero.
+//
+// Example: `text_field("alice", 24)` is "alice" and 19 zero bytes.
+text_field :: proc "contextless" (text: string, $N: int) -> (field: [N]u8) where N >= 1 {
+	copy(field[:N - 1], text)
+	return
+}
 
 // The bytes of a hash of a module: the most bytes of a field of the kind
 // Hash. A shorter field holds the head of a hash.

@@ -20,20 +20,21 @@ A builder of [recipes.md](recipes.md) that runs on modus must write its output a
 
 ### 1. The module file writer
 
-A contract package, `modus:contract/module_file_writer`, writes a valid module file from its parts. Two bodies of code compile it in: the tool and the assembler module. It holds no kernel operation call and no allocator: it writes into memory that the caller gives, and gives the size that the file needs when the memory is too small.
+A contract package, `modus:contract/module_file_writer`, writes a valid module file from its parts. Two bodies of code compile it in: the tool and the assembler module. It holds no kernel operation call and no allocator: `file_size_needed` gives the size of the file, and `write` writes into memory that the caller gives, or gives that size when the memory is too small. The guide: [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "The module file writer".
 
-What moves out of the tool:
-
-- From `tools/modustool/build/convert.odin`: the layout of the file (the header, the table directory, the alignment of each table, the data of each segment on its own pages with its zero bytes at the end not stored); the tables `Segments`, `Imports`, `Slots`, `Exports`, `Rebases`, `Functions`, `Records`, `Fields`, `Facts`, `Own_Hash`, `Strings`, `Documentation` and `Budget`; `encode_rebases`; `segment_flags_after_the_relocations`; `module_export_name`; and the last check with `module.validate`.
-- From `tools/modustool/build/budget_count.odin`: the count of the budget that a module asks for, which is arithmetic on the parts that the source states.
+What moved out of `tools/modustool/build/convert.odin`: the layout of the file (the header with the entry and the memory size, the table directory, the alignment of each table, the data of each segment on its own pages with its zero bytes at the end not stored); the tables `Segments`, `Imports`, `Slots`, `Exports`, `Rebases`, `Functions`, `Records`, `Fields`, `Facts`, `Own_Hash`, `Strings`, `Documentation` and `Budget`; the encoding of the rebases; `segment_flags_after_the_relocations`; the records `Record_Description` and `Field_Description`, which the tool now names; and the last check with `module.validate`.
 
 What stays in the tool:
 
-- The read of the linked file of `lld` (`elf.odin`, and the part of `convert` that maps each ELF segment, section, symbol and relocation to a segment, an export, a slot or a rebase). ELF is the format of the host linker, not of modus.
+- The read of the linked file of `lld` (`elf.odin`, and the part of `convert` that maps each ELF segment, section, symbol and relocation to a segment, an export, a slot or a rebase, and finds the symbol of the own-hash place). ELF is the format of the host linker, not of modus.
 - The description of the exports from the Odin source (`describe.odin`), which uses the parser of the core library of Odin.
 - The debug object (`debug_object.odin`, `debug_information.odin`), which reads DWARF from LLVM.
+- The count of the budget (`budget_count.odin`): it reads the memory size of each import from its file of the build. The writer takes the request that the count gives. An assembler that states a budget needs the count too; it moves then, with the constants of the pages of a thread that it reads from `modus:contract/operation`.
+- `module_export_name`: it reads an export of a written file, it writes nothing. A program that binds a slot by name uses `module.export_find`.
 
-The input of the writer is one record of parts: the segments with their bytes and flags, the exports with their descriptions, the import hashes, the slots, the rebases, the records and their fields, the log facts, the own-hash place and the budget. Each program that writes a module fills that record in its own way: the tool from ELF, the assembler from its labels.
+The input of the writer is one record, `Module_Parts`: the segments with their bytes and flags before the relocations, the exports with their descriptions, the import hashes, the slots, the rebases in order, the records and their fields, the log facts in the order of their keys, the own-hash place, the documentation and the budget request. Each program that writes a module fills that record in its own way: the tool from ELF, the assembler from its labels.
+
+The writer refuses a part with a `Refusal_Record`: a member of the enum `Refusal`, the table of the part and its index in its list. It checks the count of each list before it reads one item, so a list past its bound is refused with no read past its memory. It refuses what a loader or a reader would refuse, at the writer, where the program that made the part still knows its name: a table past its bound, a name that is not a name, an export whose record has no description, two segments that overlap, and the rest of the list in the guide. It reads the written file last with `module.validate` and the readers of the descriptions, so a file that it writes is one that each reader takes.
 
 ### 2. An assembler module
 
@@ -78,13 +79,18 @@ For Odin, Rust and every other compiler that is not native, the guest builder of
 
 - **A second writer of the module format in each program.** Two writers drift apart; a fault of one gives files that the other never writes.
 - **The writer as a support package.** The tool cannot import a support package, which calls the kernel. The writer is pure, so it is a contract package.
+- **A writer that allocates the file.** The code of the system has no allocator of the language (property 14). The caller asks the size first, and gives the memory.
+- **Checks of the descriptions written again in the writer.** The writer reads the written file with `module.record_type`, `module.function` and `module.fact`, the checks of each reader. A second copy of those rules would drift from the readers.
+- **A writer that sorts its input.** It would change a list of the caller. It refuses rebases or facts out of order, and the caller sorts.
 - **TCC first.** It writes machine code, and a port needs a writer of the module format in it.
 - **A full libc first.** The paths, the standard streams and the environment of a full libc are the concepts that the system removed (property 16). The thin libc grows with each port.
 - **An ELF linker on modus.** The module format is the output; ELF is a format of the host.
 
 ## Subtle points and hazards
 
-- **The tool must give the same bytes after the move.** The writer that moves out of `convert.odin` is the same code. The comparison of the builds of `modustool check` proves it: no module changes its hash.
+- **The tool must give the same bytes after the move.** The writer writes the tables in the order of the old conversion, and the strings in the same order. The proof is the hashes of two builds: `modustool module-hashes write` before the move, `modustool module-hashes compare` after it ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The hashes of the modules of two builds").
+- **A rebase twice is refused.** The old encoder wrote a location that came twice as two words, and a loader then added the base two times. The writer refuses it (`Rebase_Not_Valid`).
+- **A refusal after the write.** A record that only `module.record_type` refuses is known after the bytes are written. The writer then sets them to zero, so no part of a refused file stays in the memory of the caller.
 - **A call to an import goes through a slot.** `chibicc` emits a direct call to a symbol that it does not define. The assembler turns it into a call through the slot of the import that exports it, because a module never patches its code (property 10).
 - **The subset of the assembler is a closed set.** An instruction past it is refused with its line, never assembled in part.
 - **`chibicc` never frees memory.** So a `free` that ends nothing costs it nothing; a later port that frees much needs more.
@@ -96,4 +102,4 @@ For Odin, Rust and every other compiler that is not native, the guest builder of
 
 ## State
 
-Designed, not built.
+Built: the module file writer, with its host tests, and the tool writes each module through it. Left: the count of the budget in the writer, the assembler module, the port of `chibicc`, the thin libc and the guest builder.

@@ -214,6 +214,6 @@ clipboard_client_remove :: proc "contextless" (index: int) {
 		system.log(.Info, "compositor: the clipboard is empty: ", system.name_of(clients[index].title[:]), " ended")
 	}
 	if clients[index].clipboard_refused != 0 {
-		system.log(.Info, "compositor: window ", system.name_of(clients[index].title[:]), " closed after ", clients[index].clipboard_refused, " clipboard records that no key of the principal started or that the border refused")
+		system.log_fact(.Info, Window_Closed_After_Refused_Clipboard_Records{window = window_field(clients[index].title[:]), refused = clients[index].clipboard_refused})
 	}
 }

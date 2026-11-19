@@ -6,6 +6,7 @@ import "core:time"
 
 import "modus:contract/glyph_cache"
 import "modus:support/graphics"
+import "modustool:build"
 import "modustool:foundation"
 
 // The read of a text off the screen (docs/TOOLS.md, "How a step reads a text off the screen"):
@@ -113,8 +114,10 @@ text_fills_its_box :: proc(text: string) -> bool {
 screen_text_read :: proc(machine: ^Machine, owner, element: string, index: int) -> (text: string, ok: bool) {
 	element_x, element_y, element_width, element_height: int
 	found := Element_Line.Absent
+	types: build.Element_Fact_Types
+	typed := false
 	for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
-		element_x, element_y, element_width, element_height, found = element_line_read(log_read(machine), owner, element)
+		element_x, element_y, element_width, element_height, found = element_place_read(machine, &types, &typed, owner, element)
 		if found == .Placed {
 			break
 		}
