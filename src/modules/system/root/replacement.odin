@@ -82,7 +82,7 @@ replacement_table_change :: proc "contextless" (asker: ^Started, name: string, b
 			if decision == .List_Not_Valid {
 				reason = replacement_list.list_problem_sentences[problem]
 			}
-			system.log_in("processes", .Warning, "root: refused the replacement of ", system.Module_Name{from_name}, " by ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, ": ", reason)
+			system.log(.Warning, "root: refused the replacement of ", system.Module_Name{from_name}, " by ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, ": ", reason)
 			return .No_Right, decision
 		}
 	}
@@ -90,9 +90,9 @@ replacement_table_change :: proc "contextless" (asker: ^Started, name: string, b
 		return written, .Accepted
 	}
 	if by == 0 {
-		system.log_in("processes", .Info, "root: no replacement of ", system.Module_Name{from_name})
+		system.log(.Info, "root: no replacement of ", system.Module_Name{from_name})
 	} else {
-		system.log_in("processes", .Info, "root: ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, " replaces ", system.Module_Name{from_name}, " in each load that follows")
+		system.log(.Info, "root: ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, " replaces ", system.Module_Name{from_name}, " in each load that follows")
 	}
 	return .Ok, .Accepted
 }

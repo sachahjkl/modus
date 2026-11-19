@@ -217,7 +217,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output_memory = ctx.handles[GRANT_RING]
 	status: system.Status
 	if output, status = system.ring_open(output_memory); status != .Ok {
-		system.log("input: no ring")
+		system.log(.Info, "input: no ring")
 		system.stop(.Failed)
 	}
 
@@ -238,7 +238,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.port_read_8(PORT_DATA)
 			bytes_drained += 1
 		case .No_Controller:
-			system.log("input: no PS/2 controller: no keyboard and no mouse")
+			system.log(.Info, "input: no PS/2 controller: no keyboard and no mouse")
 			system.stop(.Failed)
 		}
 	}
@@ -260,9 +260,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	mouse_command(MOUSE_ENABLE_REPORTING)
 	if keyboard_bytes_dropped_at_start > 0 {
-		system.log("input: ", keyboard_bytes_dropped_at_start, " bytes of the keyboard came during the start of the mouse and are lost")
+		system.log(.Info, "input: ", keyboard_bytes_dropped_at_start, " bytes of the keyboard came during the start of the mouse and are lost")
 	}
-	system.log("input: ok, the mouse has ", mouse_decoder.protocol == .Standard ? "no wheel" : "a wheel")
+	system.log(.Info, "input: ok, the mouse has ", mouse_decoder.protocol == .Standard ? "no wheel" : "a wheel")
 
 	held_before := false // The turn before left a byte in the controller.
 	for {
@@ -296,9 +296,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if held != held_before {
 			held_before = held
 			if held {
-				system.log("input: the input ring is full: the keyboard controller keeps its bytes")
+				system.log(.Info, "input: the input ring is full: the keyboard controller keeps its bytes")
 			} else {
-				system.log("input: the input ring has room again")
+				system.log(.Info, "input: the input ring has room again")
 			}
 		}
 		if held || pointer_backlog.count > 0 {
@@ -392,7 +392,7 @@ keyboard_byte :: proc "contextless" (value: u8) {
 key_record_send :: proc "contextless" (code: u32, character: rune, pressed: bool) {
 	if !system.send(&output.commands, ring.Record{kind = u32(display.Input.Key), values = {0 = u64(code), 1 = u64(character), 2 = u64(pressed), 3 = u64(modifiers), display.INPUT_KEY_READ_AT = system.nanoseconds()}}) {
 		key_records_refused += 1
-		system.log("input: the input ring refused a key record that had a place: ", key_records_refused, " key records are lost")
+		system.log(.Info, "input: the input ring refused a key record that had a place: ", key_records_refused, " key records are lost")
 	}
 }
 
@@ -416,6 +416,6 @@ mouse_byte :: proc "contextless" (value: u8) {
 		// The loop of entry reads a byte of the mouse only while an entry
 		// is free: this is a fault of this process, and it is in the log.
 		pointer_records_refused += 1
-		system.log("input: no entry for a change of a button of the pointer: ", pointer_records_refused, " pointer records are lost")
+		system.log(.Info, "input: no entry for a change of a button of the pointer: ", pointer_records_refused, " pointer records are lost")
 	}
 }

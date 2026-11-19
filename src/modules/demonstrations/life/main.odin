@@ -203,7 +203,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.draw_picture(frame.table, 0, 0, board, board_generation)
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		if !logged {
-			system.log("life: ok")
+			system.log(.Info, "life: ok")
 			logged = true
 		}
 		wait: system.Wait

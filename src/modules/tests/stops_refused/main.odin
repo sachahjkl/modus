@@ -18,6 +18,6 @@ import "modus:support/system"
 
 @(export, link_name = "entry")
 entry :: proc "c" (_: ^system.Context) -> ! {
-	system.log("stops_refused: it refuses its context on purpose")
+	system.log(.Info, "stops_refused: it refuses its context on purpose")
 	system.stop(.Refused)
 }

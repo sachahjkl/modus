@@ -210,11 +210,11 @@ run :: proc "contextless" (measure: ^Measure) {
 	measure.service = service * 100 / max(done, 1)
 	measure.done = true
 	if !measured {
-		system.log("disk: ", measure.write ? "write" : "read", ", ", measure.blocks, measure.blocks == 1 ? " block" : " blocks", " in each request, ", u64(measure.depth), " in flight: ", done, " requests, kernel entries for 100 requests: ", measure.client, " of this process, ", measure.service, " of the block service, ", measure.errors, " errors")
+		system.log(.Info, "disk: ", measure.write ? "write" : "read", ", ", measure.blocks, measure.blocks == 1 ? " block" : " blocks", " in each request, ", u64(measure.depth), " in flight: ", done, " requests, kernel entries for 100 requests: ", measure.client, " of this process, ", measure.service, " of the block service, ", measure.errors, " errors")
 		return
 	}
 	measure.rate = done * measure.blocks * 1000 / elapsed
-	system.log("disk: ", measure.write ? "write" : "read", ", ", measure.blocks, measure.blocks == 1 ? " block" : " blocks", " in each request, ", u64(measure.depth), " in flight: ", measure.rate, " blocks in one second, kernel entries for 100 requests: ", measure.client, " of this process, ", measure.service, " of the block service, ", measure.errors, " errors")
+	system.log(.Info, "disk: ", measure.write ? "write" : "read", ", ", measure.blocks, measure.blocks == 1 ? " block" : " blocks", " in each request, ", u64(measure.depth), " in flight: ", measure.rate, " blocks in one second, kernel entries for 100 requests: ", measure.client, " of this process, ", measure.service, " of the block service, ", measure.errors, " errors")
 }
 
 // check writes a pattern in 128 blocks after the blocks of the measures,
@@ -286,9 +286,9 @@ block_words_check :: proc "contextless" () {
 		after := call(.Info)
 		right := refused.kind == u32(block.Status.Bad_Command) && error.kind == i64(errors.Kind.Unsupported) && error.unit == i64(errors.Unit.None) && error.operation == i64(word) && error.argument == 0 && error.value == i64(word) && after.kind == u32(block.Status.Ok) && after.values[0] == disk_blocks
 		if right {
-			system.log("disk: the command word ", u64(word), " of the block ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must")
+			system.log(.Info, "disk: the command word ", u64(word), " of the block ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must")
 		} else {
-			system.log("disk: the command word ", u64(word), " of the block ring: WRONG: the status ", u64(refused.kind), ", the error kind ", u64(max(error.kind, 0)), ", the operation ", u64(max(error.operation, 0)), "; the next Info: the status ", u64(after.kind))
+			system.log(.Info, "disk: the command word ", u64(word), " of the block ring: WRONG: the status ", u64(refused.kind), ", the error kind ", u64(max(error.kind, 0)), ", the operation ", u64(max(error.operation, 0)), "; the next Info: the status ", u64(after.kind))
 		}
 	}
 }
@@ -313,11 +313,11 @@ window_words_check :: proc "contextless" (window: ^display.Window) {
 	for {
 		read := intrinsics.atomic_load_explicit(&counters.read, .Relaxed)
 		if i32(read - written) >= 0 {
-			system.log("disk: the window sent the command words ", u64(refused_window_words[0]), ", ", u64(refused_window_words[1]), " and ", u64(refused_window_words[2]), ": the compositor read the three: as it must")
+			system.log(.Info, "disk: the window sent the command words ", u64(refused_window_words[0]), ", ", u64(refused_window_words[1]), " and ", u64(refused_window_words[2]), ": the compositor read the three: as it must")
 			return
 		}
 		if system.time() >= deadline {
-			system.log("disk: the window sent the command words ", u64(refused_window_words[0]), ", ", u64(refused_window_words[1]), " and ", u64(refused_window_words[2]), ": WRONG: the compositor did not read them in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
+			system.log(.Info, "disk: the window sent the command words ", u64(refused_window_words[0]), ", ", u64(refused_window_words[1]), " and ", u64(refused_window_words[2]), ": WRONG: the compositor did not read them in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
 			return
 		}
 		list: system.Wait
@@ -426,13 +426,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_memory := ctx.handles[block.GRANT_RING]
 	status: system.Status
 	if blocks, status = system.ring_open(ring_memory); status != .Ok {
-		system.log("disk: no block ring")
+		system.log(.Info, "disk: no block ring")
 		system.stop(.Failed)
 	}
 	memory, memory_status := system.memory_create(REGION_PAGES, 0, {.Contiguous}) // The device reads and writes it.
 	address, map_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || map_status != .Ok {
-		system.log("disk: no data region")
+		system.log(.Info, "disk: no data region")
 		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)
@@ -448,17 +448,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if give_status != .Ok {
-		system.log("disk: the block service does not map the block ring")
+		system.log(.Info, "disk: the block service does not map the block ring")
 		system.stop(.Failed)
 	}
 	if attached := call(.Attach, {0 = u64(given)}); block.Status(attached.kind) != .Ok {
 		text: [240]u8
-		system.log("disk: the block service refused the data region: ", refusal_text(text[:], attached))
+		system.log(.Info, "disk: the block service refused the data region: ", refusal_text(text[:], attached))
 		system.stop(.Failed)
 	}
 	info := call(.Info)
 	disk_blocks = info.values[0]
-	system.log("disk: ok, the disk has ", disk_blocks, " blocks, ", info.values[1], " blocks in one request at most")
+	system.log(.Info, "disk: ok, the disk has ", disk_blocks, " blocks, ", info.values[1], " blocks in one request at most")
 	draw(&window)
 	error_count: u64
 	for &measure in measures {
@@ -474,15 +474,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	past_error := errors.completion_record(past.values)
 	text: [240]u8
 	past_right := block.Status(past.kind) == .Out_Of_Range && errors.Kind(past_error.kind) == .Out_Of_Range && past_error.argument == 1 && u64(past_error.value) == disk_blocks + 1 && u64(past_error.limit) == disk_blocks
-	system.log("disk: a read of 2 blocks from the last block: ", past_right ? "" : "WRONG: ", refusal_text(text[:], past))
+	system.log(.Info, "disk: a read of 2 blocks from the last block: ", past_right ? "" : "WRONG: ", refusal_text(text[:], past))
 	// Each of these writes its own line with "as it must" or "WRONG": the
 	// scenario of the tool waits for each line.
 	block_words_check()
 	window_words_check(&window)
 	if error_count == 0 && wrong == 0 {
-		system.log("disk: ok, ", u64(len(measures)), " runs, 0 errors, write then read back: 0 wrong")
+		system.log(.Info, "disk: ok, ", u64(len(measures)), " runs, 0 errors, write then read back: 0 wrong")
 	} else {
-		system.log("disk: wrong: ", error_count, " errors, ", wrong, " wrong bytes")
+		system.log(.Info, "disk: wrong: ", error_count, " errors, ", wrong, " wrong bytes")
 	}
 	for {
 		draw(&window)

@@ -69,16 +69,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	queue, ring_status := system.ring_open(ring_memory)
 	bytes, region_status := system.memory_map(region_memory)
 	if ring_status != .Ok {
-		system.log("host: no call ring or no call region")
+		system.log(.Info, "host: no call ring or no call region")
 		system.stop(system.stop_outcome_of_grant(ring_memory, ring_status))
 	}
 	if region_status != .Ok {
-		system.log("host: no call ring or no call region")
+		system.log(.Info, "host: no call ring or no call region")
 		system.stop(system.stop_outcome_of_grant(region_memory, region_status))
 	}
 	region_pages, size_status := system.memory_size(region_memory)
 	if size_status != .Ok {
-		system.log("host: the call region has no size")
+		system.log(.Info, "host: the call region has no size")
 		system.stop(.Failed)
 	}
 	region = ([^]u8)(bytes)[:region_pages * system.PAGE_SIZE]
@@ -106,12 +106,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		buffer: [512]u8
 		writer := system.Writer{buffer = buffer[:]}
 		system.load_error_text(&writer, error)
-		system.log("host: cannot load the module: ", system.written(&writer))
+		system.log(.Info, "host: cannot load the module: ", system.written(&writer))
 		system.send(&queue.completions, ring.Record{kind = u32(isolated.Status.Load_Failed)})
 		system.stop(.Failed)
 	}
 	base := space.modules[index].base
-	system.log("host: ready, ", u64(module.count(file, .Exports) - 1), " exports")
+	system.log(.Info, "host: ready, ", u64(module.count(file, .Exports) - 1), " exports")
 	system.send(&queue.completions, ring.Record{kind = u32(isolated.Status.Ok)})
 
 	for {

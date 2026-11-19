@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A process shows its own log records, with the time, the level, the channel and the value runs that the kernel keeps, without the right to read the whole machine. A starter, such as a test or a process that watches its children, also shows what its children wrote, with no more right. Before this design, the log service gave its tables to a caller that acts for the principal and to no other caller. A process that wanted its own records back had to hold a grant that also showed it every other process. The guide is [`docs/TOOLS.md`](../../../docs/TOOLS.md), "Who reads which records".
+A process shows its own log records, with the time, the level and the value runs that the kernel keeps, without the right to read the whole machine. A starter, such as a test or a process that watches its children, also shows what its children wrote, with no more right. Before this design, the log service gave its tables to a caller that acts for the principal and to no other caller. A process that wanted its own records back had to hold a grant that also showed it every other process. The guide is [`docs/TOOLS.md`](../../../docs/TOOLS.md), "Who reads which records".
 
 ## Constraints
 
@@ -51,8 +51,8 @@ The process `log_reader` starts two children, and reads its own records and the 
 
 ## Refused forms
 
-- **A grant that names a channel, for the records of every process.** A channel is a name that the writer chooses, not a fact that the kernel sets: each process can write each channel. A reader of the channel `devices` would receive each record that any process wrote in it, and a process cannot know who reads the name that it chose. The reader then sees other processes, which property 20 forbids for a process that does not manage the system. A reader that must see other processes holds the grant to act for the principal: it is rare, visible and revocable.
-- **Its own records, narrowed to some channels.** No border is there: the process wrote these records itself. A reader chooses its rows with `where(log.records(0), "channel", "...")`.
+- **A grant by a name that the writer chooses, for the records of every process.** Such a name, as the log channel that the record carried before and a fact type ([log_facts.md](log_facts.md), "Which reader sees which fields"), is a claim of the writer, not a fact that the kernel sets: each process can write each name. A reader of such a name would receive each record that any process wrote with it, and a process cannot know who reads the name that it chose. The reader then sees other processes, which property 20 forbids for a process that does not manage the system. A reader that must see other processes holds the grant to act for the principal: it is rare, visible and revocable.
+- **Its own records, narrowed by the grant.** No border is there: the process wrote these records itself. A reader chooses its rows by a field of the row, with `where(log.records(0), "level", "warning")`.
 - **The records of a process by its name.** A starter gives the name of a process. Another process can start a child with the same name, and a disk process has a nickname that its principal chose. A name is not the identity of a process.
 - **The records of a process slot, with no serial.** A new process in the slot would read the records of the process before it, while the ring keeps them.
 - **The number of the whole log for a reader of its own records, and a count of every lost record.** It tells the reader how many records the other processes wrote. See "A reader of its own records sees no number of the whole log".

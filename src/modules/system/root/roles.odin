@@ -95,8 +95,10 @@ process_roles := [?]Process_Role_Row {
 	// of the modules, and serves the same facts (docs/TOOLS.md).
 	{name = "inspect", grants = {.Inspect, .Image, .Serve, .Debug_Image}},
 	// It serves processes() and counts() to a caller that acts for the
-	// principal.
-	{name = "monitor", grants = {.Inspect, .Serve}},
+	// principal. It starts at its first connection, so the table of the
+	// processes needs no start of its own, in each start policy, the rescue
+	// included.
+	{name = "monitor", grants = {.Inspect, .Serve}, terms = {on_demand = true}},
 	// The debugger service (docs/TOOLS.md, "The debugger"):
 	// - **Serve**: its exports are the commands of the debugger.
 	// - **Debugger**: it asks this service for the handle of a process

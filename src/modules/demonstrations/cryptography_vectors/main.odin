@@ -112,7 +112,7 @@ same_as_hex :: proc "contextless" (bytes: []u8, text: string) -> bool {
 record_vector :: proc "contextless" (name, standard: string, passed: bool, checks := false, refused := false) {
 	vectors[vector_count] = {name = name, standard = standard, passed = passed, checks = checks, refused = refused}
 	vector_count += 1
-	system.log("cryptography_vectors: ", name, " (", standard, "): ", passed ? "passed" : "FAILED", checks ? (refused ? "; a bad input is refused with no byte given" : "; a bad input was NOT refused") : "")
+	system.log(.Info, "cryptography_vectors: ", name, " (", standard, "): ", passed ? "passed" : "FAILED", checks ? (refused ? "; a bad input is refused with no byte given" : "; a bad input was NOT refused") : "")
 }
 
 // no_byte_given says that a refused open left no byte of the text: the
@@ -298,9 +298,9 @@ speeds_run :: proc "contextless" () {
 	}
 	measure("Ed25519 verify, 32 bytes", 32, start)
 	for speed in speeds[:speed_count] {
-		system.log("cryptography_vectors: ", speed.name, ": ", speed.nanoseconds_of_call, " ns for ", u64(speed.bytes), " bytes, ", u64(speed.bytes) * 1000 / max(speed.nanoseconds_of_call, 1), " MB/s")
+		system.log(.Info, "cryptography_vectors: ", speed.name, ": ", speed.nanoseconds_of_call, " ns for ", u64(speed.bytes), " bytes, ", u64(speed.bytes) * 1000 / max(speed.nanoseconds_of_call, 1), " MB/s")
 	}
-	system.log("cryptography_vectors: one call of an export of the module, through its import slot: ", empty_call_nanoseconds, " ns")
+	system.log(.Info, "cryptography_vectors: one call of an export of the module, through its import slot: ", empty_call_nanoseconds, " ns")
 }
 
 hash_text :: proc "contextless" (builder: ^interface.Text_Builder, bytes: []u8) -> string {
@@ -405,7 +405,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	hash: interface.Text_Builder
-	system.log("cryptography_vectors: the module cryptography, BLAKE3 ", hash_text(&hash, module_hash[:16]), "...: ", u64(vector_count - failed), " of ", u64(vector_count), " vectors passed")
+	system.log(.Info, "cryptography_vectors: the module cryptography, BLAKE3 ", hash_text(&hash, module_hash[:16]), "...: ", u64(vector_count - failed), " of ", u64(vector_count), " vectors passed")
 	done = true
 	for {
 		draw(&window)

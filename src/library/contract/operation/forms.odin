@@ -49,7 +49,7 @@ Operation_Form :: struct {
 @(rodata)
 OPERATIONS := [Operation]Operation_Form {
 	.None = {name = "None"},
-	.Log = {"Log", {{"log", .Handle, .Log, {.Write}, 0}, {"address", .Address, .None, {}, 0}, {"length", .Count, .None, {}, LOG_TEXT_BYTES_MOST}, {"level", .Choice, .None, {}, u64(max(Log_Level))}, {"channel", .Value, .None, {}, 0}, {"channel", .Value, .None, {}, 0}, {"runs", .Count, .None, {}, LOG_CALL_RUN_LIMIT}}},
+	.Log = {"Log", {{"log", .Handle, .Log, {.Write}, 0}, {"address", .Address, .None, {}, 0}, {"length", .Count, .None, {}, LOG_TEXT_BYTES_MOST}, {"level", .Choice, .None, {}, u64(max(Log_Level))}, {"runs", .Count, .None, {}, LOG_CALL_RUN_LIMIT}, {}, {}}},
 	.Memory_Create = {"Memory_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"pages", .Count, .None, {}, MEMORY_PAGE_LIMIT}, {"flags", .Flags, .None, {}, MEMORY_FLAGS_KNOWN}, {}, {}, {}, {}}},
 	.Memory_Map = {"Memory_Map", {{"memory", .Handle, .Memory, {.Read}, 0}, {"process", .Handle_Or_Zero, .Process, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {"flags", .Flags, .None, {}, MAP_FLAGS_KNOWN}, {"first", .Count, .None, {}, 0}, {"pages", .Count, .None, {}, 0}, {}}},
 	.Memory_Unmap = {"Memory_Unmap", {{"process", .Handle_Or_Zero, .Process, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},

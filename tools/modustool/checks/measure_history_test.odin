@@ -12,7 +12,7 @@ measure_history_series_read_the_lines_of_the_record :: proc(t: ^testing.T) {
 		"[clock] clock: the time page: 1106119202 reads in one second, 0 kernel entries for one million reads",
 		"[scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 200581 wakes in one second (80106 turns ended on the processor of the waker, 85 by an interrupt, 430 moves)",
 		"[vector_glyphs] vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 3887 ns, scale 2 8568 ns, scale 3 16922 ns; from the glyph cache: 201 ns; Spleen 8x16: 22 ns",
-		"[compositor:surfaces] " + COMPOSITOR_FULL_FRAME + "with 17 windows in 2272 us",
+		"[compositor] " + COMPOSITOR_FULL_FRAME + "with 17 windows in 2272 us",
 		"[disk] disk: read, 1 block in each request, 32 in flight: 429355 blocks in one second, kernel entries for 100 requests: 10 of this process, 18 of the block service, 0 errors",
 		"[notes] notes: count 1000, stopped: 1000 commits in 8215 ms",
 		"[net] net: the header and the checksum of a datagram of 1472 bytes: 331 ns, in this process (no offload)",
@@ -27,7 +27,7 @@ measure_history_series_read_the_lines_of_the_record :: proc(t: ^testing.T) {
 		"[processor_frame] processor_frame: measure: the execution of a draw table of 1920x1080 with 339 records: 38 opaque rectangles and gradients, 120 texts in the font of the cells, 144 in the interface font, 12 opaque pictures, 25 rectangles and pictures with alpha: least 14800.3 us, median 15022.0 us, 66 frames in one second at the median, over 21 frames",
 		"[compositor] " + QUALITY_FRAME + ": least 812.4 us, median 9031.0 us, over 64 frames",
 		"[compositor] " + QUALITY_KEY + ": least 1203.7 us, median 14000.2 us, over 16 keys",
-		"[compositor:surfaces] " + QUALITY_WINDOW_START_LOCKS + "51234.5 us",
+		"[compositor] " + QUALITY_WINDOW_START_LOCKS + "51234.5 us",
 	}
 	expected := [len(measure_history_series)]string{"25399040", "1106119202", "200581", "3887", "2272", "429355", "8215", "331", "66", "89509", "112.4", "20.5", "2823", "2310.4", "9120.0", "310.2", "14800.3", "812.4", "1203.7", "51234.5"}
 	sentences := make(map[string]bool, context.temp_allocator)
@@ -68,10 +68,10 @@ measure_history_series_read_the_lines_of_the_record :: proc(t: ^testing.T) {
 @(test)
 measure_full_frame_takes_the_reference_screen_only :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(COMPOSITOR_FULL_FRAME, "1920x1080"))
-	OLD_SIZE :: "[compositor:surfaces] compositor: a full frame of 1024x768 with 17 windows in 2272 us\n"
-	LONGER_HEIGHT :: "[compositor:surfaces] compositor: a full frame of 1920x10800 with 17 windows in 2272 us\n"
-	OTHER_HEIGHT :: "[compositor:surfaces] compositor: a full frame of 1920x1200 with 17 windows in 2272 us\n"
-	REFERENCE_LINE :: "[compositor:surfaces] " + COMPOSITOR_FULL_FRAME + "with 17 windows in 3305 us"
+	OLD_SIZE :: "[compositor] compositor: a full frame of 1024x768 with 17 windows in 2272 us\n"
+	LONGER_HEIGHT :: "[compositor] compositor: a full frame of 1920x10800 with 17 windows in 2272 us\n"
+	OTHER_HEIGHT :: "[compositor] compositor: a full frame of 1920x1200 with 17 windows in 2272 us\n"
+	REFERENCE_LINE :: "[compositor] " + COMPOSITOR_FULL_FRAME + "with 17 windows in 3305 us"
 	for log_text in ([]string{"", OLD_SIZE, LONGER_HEIGHT, OTHER_HEIGHT, OLD_SIZE + LONGER_HEIGHT + OTHER_HEIGHT}) {
 		found, found_number, found_count := log_line_choose(log_text, COMPOSITOR_FULL_FRAME, .Last)
 		testing.expectf(t, found == "" && found_number == 0 && found_count == 0, "the log %q gave the full frame the line %q", log_text, found)

@@ -533,7 +533,7 @@ commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Rec
 		// One line for each store and each start of the service: the later
 		// commits at the limit thin the same way.
 		limit_reached[plan.store_index] = true
-		system.log("storage: the store ", store.name, " is at its limit of ", system.Size{store.limit, .Blocks}, ": the commit of generation ", generation, " thinned ", at_limit, at_limit == 1 ? string(" version") : string(" versions"), ", the oldest of the store first")
+		system.log(.Info, "storage: the store ", store.name, " is at its limit of ", system.Size{store.limit, .Blocks}, ": the commit of generation ", generation, " thinned ", at_limit, at_limit == 1 ? string(" version") : string(" versions"), ", the oldest of the store first")
 	}
 	return generation
 }
@@ -903,29 +903,29 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	case .Wrong:
 		// The root before the commit is still on the disk and names the
 		// freed blocks: no zeros. The next commit writes its root over it.
-		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the read back of the second root found other bytes: the disk did not keep it; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
+		system.log(.Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the read back of the second root found other bytes: the disk did not keep it; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
 		// No unit Dropped_Writes: its sentence says that the store keeps its
 		// state before, and the commit of the end is already on the disk.
 		return {}, errors.fail(error, failure(.Disk), .Device)
 	case .Device:
-		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the write or the read back of the second root failed on the device: it is not taken, the open of the next start decides, and the service makes no change until then; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
+		system.log(.Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the write or the read back of the second root failed on the device: it is not taken, the open of the next start decides, and the service makes no change until then; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
 		return {}, errors.fail(error, failure(.Disk), .Device)
 	}
 	zeroed, not_zeroed, zeros_written := freed_blocks_zero()
 	if !zeros_written {
-		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", root.generation, ", and a write, the Flush or the read back of the zeros failed: ", zeroed, " blocks read back as zeros and ", not_zeroed, " with other bytes; the others were not read back, and can keep their old bytes until a commit takes them")
+		system.log(.Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", root.generation, ", and a write, the Flush or the read back of the zeros failed: ", zeroed, " blocks read back as zeros and ", not_zeroed, " with other bytes; the others were not read back, and can keep their old bytes until a commit takes them")
 		return {}, errors.fail(error, failure(.Disk), .Device)
 	}
 	if not_zeroed != 0 {
 		// The versions are ended; the bytes of these free blocks stay on the
 		// disk. The row counts only the blocks that read back as zeros.
-		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", root.generation, ", and the read back of the zeros found ", not_zeroed, " blocks with other bytes: the disk did not keep those writes, and their old bytes stay in free blocks until a commit takes them")
+		system.log(.Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", root.generation, ", and the read back of the zeros found ", not_zeroed, " blocks with other bytes: the disk did not keep those writes, and their old bytes stay in free blocks until a commit takes them")
 	}
 	// The count of the zeros is the count of the blocks that read back as
 	// zeros: a block that the disk did not write is in the line above.
-	system.log("storage: the versions of ", object_name, " in the store ", store_name, " are erased: ", u64(ended), u64(ended) == 1 ? string(" version") : string(" versions"), " ended, ", zeroed, " blocks written with zeros, ", kept, " blocks kept that another state names, generation ", root.generation)
+	system.log(.Info, "storage: the versions of ", object_name, " in the store ", store_name, " are erased: ", u64(ended), u64(ended) == 1 ? string(" version") : string(" versions"), " ended, ", zeroed, " blocks written with zeros, ", kept, " blocks kept that another state names, generation ", root.generation)
 	if damaged != 0 {
-		system.log_in("storage", .Warning, "storage: the erase of the versions of ", object_name, " in the store ", store_name, " ended ", damaged, " damaged version indexes, leaves or states with no zeros over them: their blocks keep their bytes, in use until the next start of the service and free after it")
+		system.log(.Warning, "storage: the erase of the versions of ", object_name, " in the store ", store_name, " ended ", damaged, " damaged version indexes, leaves or states with no zeros over them: their blocks keep their bytes, in use until the next start of the service and free after it")
 	}
 	return {generation = i64(root.generation), versions = ended, zeroed = i64(zeroed), kept = i64(kept), damaged = i64(damaged)}, 0
 }
@@ -1226,7 +1226,7 @@ removal_step :: proc "contextless" () -> bool {
 
 removal_failed :: proc "contextless" (store_index: int, why: string) {
 	removal_stalled[store_index] = true
-	system.log_in("storage", .Warning, "storage: the removal of a tree of the store ", system.name_of(root.stores[store_index].name[:]), " stops: ", why, "; the next change of the store tries again")
+	system.log(.Warning, "storage: the removal of a tree of the store ", system.name_of(root.stores[store_index].name[:]), " stops: ", why, "; the next change of the store tries again")
 }
 
 // ---------------------------------------------------------------------

@@ -67,6 +67,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/storage"
 import "modus:support/system"
+import "modus:support/text_rendering"
 
 WIDTH :: 560
 HEIGHT :: 560
@@ -142,7 +143,7 @@ keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
 		storage.error_text(&writer, &store, &error)
-		system.log_in("processes", .Warning, "settings: the store did not keep the settings: ", system.written(&writer))
+		system.log(.Warning, "settings: the store did not keep the settings: ", system.written(&writer))
 		return false
 	}
 	return true
@@ -170,7 +171,7 @@ page_write :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: 
 	sentence_buffer: [192]u8
 	in_force, sentence := in_force_now(choice, sentence_buffer[:])
 	if always || !before_ok || before.appearance != choice.appearance || before.appearance_in_force != in_force {
-		system.log("settings: ", sentence)
+		system.log(.Info, "settings: ", sentence)
 	}
 	settings.write(page, choice, zone_offset_minutes, in_force)
 	system.word_wake(&page.change_count, 64)
@@ -182,7 +183,7 @@ page_write :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: 
 page_choice :: proc "contextless" () -> (choice: settings.Choice, ok: bool) {
 	choice, ok = settings.read(page)
 	if !ok && choice.change_count & 1 == 0 {
-		system.log_in("processes", .Warning, "settings: the settings page holds a value that its setting does not have, or was never stable: the defaults")
+		system.log(.Warning, "settings: the settings page holds a value that its setting does not have, or was never stable: the defaults")
 	}
 	return choice, ok
 }
@@ -201,11 +202,11 @@ change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32)
 	if !values_same {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
-		system.log("settings: ", values_text(&writer, choice), kept_text)
+		system.log(.Info, "settings: ", values_text(&writer, choice), kept_text)
 	}
 	if current.zone_offset_minutes != zone {
 		zone_buffer: [settings.ZONE_TEXT_SIZE]u8
-		system.log("settings: ", settings.TIME_ZONE_TITLE, " ", settings.zone_text(zone_buffer[:], zone), kept_text)
+		system.log(.Info, "settings: ", settings.TIME_ZONE_TITLE, " ", settings.zone_text(zone_buffer[:], zone), kept_text)
 	}
 	page_write(choice, zone)
 	return kept
@@ -384,7 +385,7 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 		}
 	}
 	page_write(choice, choice.zone_offset_minutes)
-	system.log("settings: kept ", u64(count), " records, one commit each")
+	system.log(.Info, "settings: kept ", u64(count), " records, one commit each")
 	return count
 }
 
@@ -432,7 +433,7 @@ boot_pass :: proc "contextless" () -> ! {
 	page_write(choice, zone_offset_minutes, always = true)
 	text: [256]u8
 	writer := system.Writer{buffer = text[:]}
-	system.log("settings: the boot pass: ", what, ": ", values_text(&writer, choice), "; in ", (system.nanoseconds() - start) / 1000, " us")
+	system.log(.Info, "settings: the boot pass: ", what, ": ", values_text(&writer, choice), "; in ", (system.nanoseconds() - start) / 1000, " us")
 	if store_refused {
 		system.stop(.Failed)
 	}
@@ -475,8 +476,8 @@ zone_row :: proc "contextless" (frame: ^interface.Frame, x, y: int, choice: sett
 }
 
 // draw builds the window: a row of buttons for each setting and for the
-// time zone, then the text of the system at its three sizes, then the facts
-// of the glyph caches.
+// time zone, then the text of the system at its three sizes, then the hash
+// of the font of the cells.
 draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	// A refused page shows the defaults: a press writes a whole page again.
 	choice, _ := settings.read(page)
@@ -527,7 +528,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 
 	top := 8 + 40 + rows_height + 32 + 8
 	vector := choice.font == .Vector && graphics.text_vector_drawn()
-	sample := interface.card(&frame, {8, top, WIDTH - 16, HEIGHT - top - 8 - interface.ACTION_BAR_ROW_HEIGHT}, "THE TEXT OF THE SYSTEM", vector ? "the vector font, from the glyph cache" : "Spleen 8x16, the fallback", graphics.colors.machine)
+	sample := interface.card(&frame, {8, top, WIDTH - 16, HEIGHT - top - 8 - interface.ACTION_BAR_ROW_HEIGHT}, "THE TEXT OF THE SYSTEM", vector ? "the vector font, drawn by this process" : "Spleen 8x16, the fallback", graphics.colors.machine)
 	lines := [?]string {
 		"> print(monitor.processes())   31 processes",
 		"compositor   12.4 ms   2 418 pages   runs",
@@ -539,21 +540,16 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	interface.draw_text(frame.table, sample.x, sample.y + 56, "EEVDF fair", graphics.colors.process, interface.FONT_MEDIUM)
 	after := interface.large_number(&frame, sample.x, sample.y + 88, "12 345", graphics.colors.text)
 	interface.draw_text(frame.table, after + 16, sample.y + 112, "wakes in one second", graphics.colors.dim)
-	// The sizes of the caches are in their headers; the hash is that of the
-	// font file, in the header of the cache that this process validated.
+	// The hash of the font file of the cells, which the record of the font
+	// outlines names and this process opened.
 	facts: interface.Text_Builder
-	with_grid_fit_size := display.glyph_cache_valid[.On] ? display.glyph_caches[.On].header.file_size : 0
-	without_grid_fit_size := display.glyph_cache_valid[.Off] ? display.glyph_caches[.Off].header.file_size : 0
-	if with_grid_fit_size == 0 || !graphics.text_state.has_cache {
-		interface.text_put(&facts, "no glyph cache: the text is Spleen 8x16")
+	cells_font := &text_rendering.state.fonts[.Paper_Mono]
+	if !cells_font.opened {
+		interface.text_put(&facts, "no font outlines: the text is Spleen 8x16")
 	} else {
-		interface.text_put(&facts, "glyph caches ")
-		interface.text_put_number(&facts, with_grid_fit_size)
-		interface.text_put(&facts, " and ")
-		interface.text_put_number(&facts, without_grid_fit_size)
-		interface.text_put(&facts, " bytes, font hash ")
+		interface.text_put(&facts, "the font of the cells: hash ")
 		hex := "0123456789abcdef"
-		for byte in graphics.text_state.cache.header.font_hash[:4] {
+		for byte in cells_font.hash[:4] {
 			interface.text_put(&facts, hex[byte >> 4:][:1])
 			interface.text_put(&facts, hex[byte & 15:][:1])
 		}
@@ -565,7 +561,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	if choice.change_count != drawn_change && drawn_change != 1 {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
-		system.log("settings: drawn with ", values_text(&writer, choice))
+		system.log(.Info, "settings: drawn with ", values_text(&writer, choice))
 	}
 	drawn_change = choice.change_count
 	return bar_result
@@ -604,7 +600,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	page_handle := ctx.handles[settings.GRANT_PAGE]
 	address, status := system.memory_map(page_handle)
 	if status != .Ok {
-		system.log("settings: no settings page: status ", u64(status))
+		system.log(.Info, "settings: no settings page: status ", u64(status))
 		system.stop(system.stop_outcome_of_grant(page_handle, status))
 	}
 	page = (^settings.Page)(address)
@@ -622,7 +618,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	buffer: [256]u8
 	writer := system.Writer{buffer = buffer[:]}
 	started, _ := settings.read(page)
-	system.log("settings: ok, ", values_text(&writer, started))
+	system.log(.Info, "settings: ok, ", values_text(&writer, started))
 	for {
 		wait := system.wait_begin()
 		display.wait_events(&wait, &window)

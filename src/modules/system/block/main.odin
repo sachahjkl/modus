@@ -54,7 +54,7 @@
 // 4096 bytes, a queue of <size>, <count> requests in flight at most, flush:
 // yes` on the log. A failure at the start, a request that the device does
 // not answer by its deadline, and a device that needs a reset write a line
-// at the level error on the channel `block` and stop the service.
+// at the level error and stop the service.
 //
 // **What it does not prove.** It drives virtio under QEMU only. On a
 // machine with no IOMMU the device can reach memory beyond the data region,
@@ -134,7 +134,7 @@ blocks_moved: u64
 interrupts: u64
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log_in("block", .Error, "block: ", text)
+	system.log(.Error, "block: ", text)
 	system.stop(.Failed)
 }
 
@@ -348,9 +348,9 @@ stop_with_each_request_failed :: proc "contextless" (cause: Device_Stop) -> ! {
 	system.wake_reader(&clients.completions)
 	switch cause {
 	case .No_Answer:
-		system.log_in("block", .Error, "block: the device did not answer a request in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms: ", u64(in_flight), " requests in flight fail, and the service stops")
+		system.log(.Error, "block: the device did not answer a request in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms: ", u64(in_flight), " requests in flight fail, and the service stops")
 	case .Needs_Reset:
-		system.log_in("block", .Error, "block: the device needs a reset: ", u64(in_flight), " requests in flight fail, and the service stops")
+		system.log(.Error, "block: the device needs a reset: ", u64(in_flight), " requests in flight fail, and the service stops")
 	}
 	system.stop(.Failed)
 }
@@ -405,7 +405,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the device has no virtio registers in the memory that it received")
 	}
 	start(ctx.handles[pci.GRANT_QUEUES])
-	system.log("block: ok, ", disk_blocks, " blocks of 4096 bytes, a queue of ", u64(queue.size), ", ", u64(slot_count), " requests in flight at most, flush: ", has_flush ? "yes" : "no")
+	system.log(.Info, "block: ok, ", disk_blocks, " blocks of 4096 bytes, a queue of ", u64(queue.size), ", ", u64(slot_count), " requests in flight at most, flush: ", has_flush ? "yes" : "no")
 
 	waiting: ring.Record
 	has_waiting := false // A command that waits for a place in the queue of the device.

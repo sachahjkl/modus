@@ -46,7 +46,7 @@ refused_kind_words := [3]u32{u32(terminal.Kind.None), u32(max(terminal.Kind)) + 
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output, ok := terminal.open(ctx)
 	if !ok {
-		system.log("hostile_terminal: no terminal")
+		system.log(.Info, "hostile_terminal: no terminal")
 		system.stop(.Refused)
 	}
 	// A tag of 0: a record whose kind names no record takes no byte of the
@@ -69,9 +69,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.sleep(system.time() + 1)
 	}
 	if i32(intrinsics.atomic_load_explicit(&counters.read, .Relaxed) - written) >= 0 {
-		system.log("hostile_terminal: the terminal read the kind words ", u64(refused_kind_words[0]), ", ", u64(refused_kind_words[1]), " and ", u64(refused_kind_words[2]), ", and the line after them: as it must")
+		system.log(.Info, "hostile_terminal: the terminal read the kind words ", u64(refused_kind_words[0]), ", ", u64(refused_kind_words[1]), " and ", u64(refused_kind_words[2]), ", and the line after them: as it must")
 	} else {
-		system.log("hostile_terminal: WRONG: the terminal did not read its records in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
+		system.log(.Info, "hostile_terminal: WRONG: the terminal did not read its records in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
 		system.stop(.Failed)
 	}
 	system.stop(.Done)

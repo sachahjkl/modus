@@ -319,7 +319,7 @@ The case "damaged" sends two segments by hand on a live connection, after a firs
 - **Limits** against a client that makes no progress (without them, one host could keep each record): 10 s with no request, 408 for a head after 10 s (also a head that starts after an answer), no byte of a body in 10 s, a body and the bytes to send under 4096 bytes in one second over a period of 10 s (also after this server closed), 24 connections for each remote address.
 - **The pages and their origin**: an answer of a page keeps the generation of its place, and a page that changes during it ends the connection with a RST. `put` and `remove` change the store first. The pages, `/` and `/counts.json` share one origin, and a page of the store runs script on it by design: the origin holds no secret, no cookie and no authority. Each answer says `X-Content-Type-Options: nosniff`.
 - **The Date field**: an answer has a field `Date` when the date page of the process (`src/library/contract/date`) knows the date. With no date known, the answer has no `Date`: RFC 9110 6.6.1 asks a server with no clock to send none.
-- **The pages and the requests that it keeps**: at most 16 pages (`PAGE_CAPACITY`), and the last 18 access records in its window (`ACCESS_HISTORY`), each with its time in microseconds. Its log line of a request, on the channel `requests`, has a value run for each of its numbers.
+- **The pages and the requests that it keeps**: at most 16 pages (`PAGE_CAPACITY`), and the last 18 access records in its window (`ACCESS_HISTORY`), each with its time in microseconds. Its log line of a request has a value run for each of its numbers.
 - **No TLS** over TCP: the TLS 1.3 of the system is the one of QUIC (`docs/QUIC.md`).
 
 ## The listen grant of UDP

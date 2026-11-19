@@ -3,10 +3,10 @@ package value_kinds
 
 import "core:testing"
 
-// A record of 152 bytes, as a log record holds (operation.LOG_TEXT_CAPACITY):
+// A record of 168 bytes, as a log record holds (operation.LOG_TEXT_CAPACITY):
 // this package does not import the operation contract, so the tests name
-// the number.
-TEST_RECORD_TEXT :: 152
+// the number. Each test derives its places from it.
+TEST_RECORD_TEXT :: 168
 TEST_RECORD_RUNS :: 8
 
 // A text with no value: no run in its record.
@@ -69,15 +69,19 @@ a_record_with_the_most_runs_and_more_parts :: proc(t: ^testing.T) {
 // start of each record.
 @(test)
 a_run_across_two_records :: proc(t: ^testing.T) {
-	runs := [?]Value_Run_In_Call{{start = 140, length = 20, kind = u8(Value_Kind.Version)}, {start = 200, length = 4, kind = u8(Value_Kind.Number)}}
-	testing.expect(t, value_runs_check(runs[:], 300))
+	// 12 bytes of the first run in the first record, 8 in the second.
+	BEFORE_THE_BOUND :: 12
+	AFTER_THE_BOUND :: 8
+	SECOND_RUN_START :: 48
+	runs := [?]Value_Run_In_Call{{start = TEST_RECORD_TEXT - BEFORE_THE_BOUND, length = BEFORE_THE_BOUND + AFTER_THE_BOUND, kind = u8(Value_Kind.Version)}, {start = TEST_RECORD_TEXT + SECOND_RUN_START, length = 4, kind = u8(Value_Kind.Number)}}
+	testing.expect(t, value_runs_check(runs[:], 2 * TEST_RECORD_TEXT))
 	first: [TEST_RECORD_RUNS]Value_Run
 	testing.expect_value(t, value_runs_of_record(runs[:], 0, TEST_RECORD_TEXT, first[:]), 1)
-	testing.expect_value(t, first[0], Value_Run{start = 140, length = 12, kind = u8(Value_Kind.Version)})
+	testing.expect_value(t, first[0], Value_Run{start = TEST_RECORD_TEXT - BEFORE_THE_BOUND, length = BEFORE_THE_BOUND, kind = u8(Value_Kind.Version)})
 	second: [TEST_RECORD_RUNS]Value_Run
 	testing.expect_value(t, value_runs_of_record(runs[:], TEST_RECORD_TEXT, TEST_RECORD_TEXT, second[:]), 2)
-	testing.expect_value(t, second[0], Value_Run{start = 0, length = 8, kind = u8(Value_Kind.Version)})
-	testing.expect_value(t, second[1], Value_Run{start = 48, length = 4, kind = u8(Value_Kind.Number)})
+	testing.expect_value(t, second[0], Value_Run{start = 0, length = AFTER_THE_BOUND, kind = u8(Value_Kind.Version)})
+	testing.expect_value(t, second[1], Value_Run{start = SECOND_RUN_START, length = 4, kind = u8(Value_Kind.Number)})
 }
 
 // The cut mark ends a text: no run colors the mark. The rest of a text that
@@ -114,7 +118,7 @@ hostile_runs_are_refused :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, value_runs_check(nil, 0))
 	// A reader of a record checks a run before it indexes the text.
-	_, _, _, ok := value_run_in_text({start = 150, length = 10, kind = u8(Value_Kind.Size)}, TEST_RECORD_TEXT)
+	_, _, _, ok := value_run_in_text({start = TEST_RECORD_TEXT - 2, length = 10, kind = u8(Value_Kind.Size)}, TEST_RECORD_TEXT)
 	testing.expect(t, !ok)
 }
 

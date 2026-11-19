@@ -428,8 +428,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		shown.records, shown.text_bytes = drawn.count, text.count
 		present(&window)
 	}
-	system.log("interface_through_module: one frame of ", shown.records, " draw records and ", shown.text_bytes, " text bytes in ", shown.calls, " element calls: ", shown.module_time, " ns through the module, ", shown.package_time, " ns with the package compiled in, the least of ", u64(BUILDS))
-	system.log("interface_through_module: the damage and the drawing through the module: ", shown.draw_time, " ns; interface_module has ", shown.module_code, " bytes of code")
+	system.log(.Info, "interface_through_module: one frame of ", shown.records, " draw records and ", shown.text_bytes, " text bytes in ", shown.calls, " element calls: ", shown.module_time, " ns through the module, ", shown.package_time, " ns with the package compiled in, the least of ", u64(BUILDS))
+	system.log(.Info, "interface_through_module: the damage and the drawing through the module: ", shown.draw_time, " ns; interface_module has ", shown.module_code, " bytes of code")
 	// A frame that does not fit: a draw table of 16 places. The module gives
 	// the count of the full frame; the process draws the 16 records that it
 	// holds, and says it.
@@ -440,14 +440,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The count is the count of the full answer, across the element calls
 	// (docs/MODULE_CONTRACT.md, "Did not fit, across calls"): the records of
 	// the whole frame.
-	system.log("interface_through_module: a draw table of 16 places: the frame did not fit, ", asked, " records asked, ", min(asked, 16), " drawn, ", asked == shown.records ? "the count of the full frame" : "not the count of the full frame")
+	system.log(.Info, "interface_through_module: a draw table of 16 places: the frame did not fit, ", asked, " records asked, ", min(asked, 16), " drawn, ", asked == shown.records ? "the count of the full frame" : "not the count of the full frame")
 	record_capacity_of_build = RECORD_CAPACITY
 	build_through_module(&texts)
 	present(&window)
 	if shown.equal && drawn.count <= RECORD_CAPACITY && shown.records > 0 {
-		system.log("interface_through_module: ok, the two draw tables are equal")
+		system.log(.Info, "interface_through_module: ok, the two draw tables are equal")
 	} else {
-		system.log("interface_through_module: wrong: the two draw tables differ")
+		system.log(.Info, "interface_through_module: wrong: the two draw tables differ")
 	}
 	// The proof of the same pixels in the machine: the frame of the package,
 	// drawn by the package and by the drawing module.
@@ -459,11 +459,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	refused: errors.Error_Record
 	if different, compared := canvases_compare(&package_table, &refused); !compared {
-		system.log("interface_through_module: the drawing module refused the frame, with the error kind ", u64(refused.kind), " of the argument ", u64(refused.argument), ": WRONG")
+		system.log(.Info, "interface_through_module: the drawing module refused the frame, with the error kind ", u64(refused.kind), " of the argument ", u64(refused.argument), ": WRONG")
 	} else if different == 0 && text_records > 0 {
-		system.log("interface_through_module: one frame drawn by the package compiled in and by the drawing module: ", u64(PROOF_WIDTH * PROOF_HEIGHT), " pixels, ", text_records, " text records, the same bytes: as it must")
+		system.log(.Info, "interface_through_module: one frame drawn by the package compiled in and by the drawing module: ", u64(PROOF_WIDTH * PROOF_HEIGHT), " pixels, ", text_records, " text records, the same bytes: as it must")
 	} else {
-		system.log("interface_through_module: one frame drawn by the package compiled in and by the drawing module: ", different, " of ", u64(PROOF_WIDTH * PROOF_HEIGHT), " pixels differ, ", text_records, " text records: WRONG")
+		system.log(.Info, "interface_through_module: one frame drawn by the package compiled in and by the drawing module: ", different, " of ", u64(PROOF_WIDTH * PROOF_HEIGHT), " pixels differ, ", text_records, " text records: WRONG")
 	}
 	for {
 		display.wait(&window)

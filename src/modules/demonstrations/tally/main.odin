@@ -223,7 +223,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(.Failed)
 	}
-	system.log("tally: ok")
+	system.log(.Info, "tally: ok")
 	for {
 		draw(&window, &service)
 		// A press on the item of the action bar added: the next turn

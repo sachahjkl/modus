@@ -1,0 +1,3 @@
+type: Removed
+
+**The log channel leaves, the first step of log facts**: a log record no longer carries a name that its writer chooses to group it, and the text of a record has 168 bytes in place of 152. `system.log` takes the level as its first argument, `system.log(.Warning, "storage: ...")`, and `system.log_in` is gone; the operation `Log` is `(log, address, length, level, runs)`, and its free last value lets it take a table of error details, as the other operations do. A line of a process on the serial port starts with `[name]`, the rows of `log.records` have no field `channel`, the step `Record` of a machine test reads the process and the level, the console groups the records of a line by process, and the window `log` counts the records of each process.

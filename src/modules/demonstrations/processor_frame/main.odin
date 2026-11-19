@@ -102,10 +102,12 @@ PROCESS_PAGES :: 180
 PAGE_TABLE_PAGES :: 32
 
 // The three canvases of the screen, the four surfaces, the pictures, the
-// process and its page tables. The tool reads a literal only, so the
-// assert ties it to the parts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8815, processes = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == 3 * SCREEN_PAGES + WINDOW_PAGES + PICTURE_PAGES + PROCESS_PAGES + PAGE_TABLE_PAGES)
+// process and its page tables, and the glyph memory of the copy of the
+// text rendering of the drawing module, which draws each glyph of its text
+// and reserves that memory at its first glyph. The tool reads a literal
+// only, so the assert ties it to the parts.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 9169, processes = 1, threads = 1}
+#assert(MODULE_BUDGET.working_memory_pages == 3 * SCREEN_PAGES + WINDOW_PAGES + PICTURE_PAGES + PROCESS_PAGES + PAGE_TABLE_PAGES + display.GLYPH_MEMORY_PAGES_IN_THE_BUDGETS)
 
 // The frame of a window and the bar, in the form of the compositor
 // (src/modules/system/compositor/main.odin, frame_records).
@@ -246,7 +248,7 @@ frames_measure :: proc "contextless" (draw: proc "contextless" ()) -> (times: Fr
 measure_log :: proc "contextless" (part: string, times: Frame_Times) {
 	least, median := least_and_median(times)
 	frames := u64(1_000_000_000) / max(median, 1)
-	system.log("processor_frame: measure: ", part, ": least ", least / 1000, ".", least / 100 % 10, " us, median ", median / 1000, ".", median / 100 % 10, " us, ", frames, " frames in one second at the median, over ", u64(ROUNDS), " frames")
+	system.log(.Info, "processor_frame: measure: ", part, ": least ", least / 1000, ".", least / 100 % 10, " us, median ", median / 1000, ".", median / 100 % 10, " us, ", frames, " frames in one second at the median, over ", u64(ROUNDS), " frames")
 }
 
 // clear_and_present clears the frame, then copies it into the screen
@@ -474,7 +476,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	picture_canvas, ok = canvas_make(PICTURE_SIDE, 2 * PICTURE_SIDE)
 	made &&= ok
 	if !made {
-		system.log("processor_frame: wrong: the budget of this process gave no memory for its canvases")
+		system.log(.Info, "processor_frame: wrong: the budget of this process gave no memory for its canvases")
 		system.stop(.Failed)
 	}
 	pictures = picture_canvas.pixels[:2 * PICTURE_PIXELS]
@@ -536,9 +538,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	tables_whole := !screen_table.full && !screen_table.refused && !desktop_table.full && !desktop_table.refused && u64(desktop_table.record_count) == record_count
 	if refusals == 0 && tables_whole && pixels_right[0] && pixels_right[1] && pixels_right[2] && pixels_right[3] {
-		system.log("processor_frame: ok, each part drew its pixels, the drawing module refused no call, and each table holds each of its records")
+		system.log(.Info, "processor_frame: ok, each part drew its pixels, the drawing module refused no call, and each table holds each of its records")
 		system.stop(.Done)
 	}
-	system.log("processor_frame: wrong: the pixels of the clear and present, the full frame, the frame in its damage and the draw table are right: ", pixels_right[0] ? "yes" : "no", ", ", pixels_right[1] ? "yes" : "no", ", ", pixels_right[2] ? "yes" : "no", ", ", pixels_right[3] ? "yes" : "no", "; the drawing module refused ", refusals, " calls; each table holds each of its records: ", tables_whole ? "yes" : "no")
+	system.log(.Info, "processor_frame: wrong: the pixels of the clear and present, the full frame, the frame in its damage and the draw table are right: ", pixels_right[0] ? "yes" : "no", ", ", pixels_right[1] ? "yes" : "no", ", ", pixels_right[2] ? "yes" : "no", ", ", pixels_right[3] ? "yes" : "no", "; the drawing module refused ", refusals, " calls; each table holds each of its records: ", tables_whole ? "yes" : "no")
 	system.stop(.Failed)
 }

@@ -117,6 +117,6 @@ log_long :: proc "c" (count: i64) -> i64 {
 	for index in 0 ..< body {
 		long_text[index] = u8('0' + index % 10)
 	}
-	system.log(string(long_text[:body]), END)
+	system.log(.Info, string(long_text[:body]), END)
 	return i64(size)
 }

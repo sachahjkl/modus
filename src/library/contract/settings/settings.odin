@@ -10,12 +10,12 @@
 // (ZII): an all-zero page is the vector font with the grid fit, red green
 // blue, the pointer theme of the owner when the boot image has it.
 //
-// The page holds the choices only. The glyph caches (the three of the font
-// of the cells, the two of the interface font) are not on the page: the
-// root service maps these resources of the boot image read-only in the
-// same processes, after it checked their hashes and their format, at the
-// fixed ranges of modus:contract/fixed_addresses, and sets the bit of each range
-// in the context of each process (glyph_cache_open). The process
+// The page holds the choices only. The font outlines, from which each
+// process draws its glyphs, are not on the page: the root service maps
+// that resource of the boot image read-only in the same processes, after
+// it checked its hash and its format, at its fixed range of
+// modus:contract/fixed_addresses, and sets the bit of the range in the
+// context of each process (modus:contract/font_outlines). The process
 // `settings` writes the page, so a field of the page can only change a
 // look: no process reads an address or a size from it.
 //
@@ -48,7 +48,6 @@ package settings
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
-import "modus:contract/glyph_cache"
 import op "modus:contract/operation"
 
 PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS // Where a process maps the settings page.
@@ -68,7 +67,7 @@ Setting :: enum u32 {
 
 // The values of each setting. 0 is the default.
 Font :: enum u32 {
-	Vector = 0, // The vector font of the glyph cache.
+	Vector = 0, // The vector fonts of the font outlines, through their faces.
 	Spleen = 1, // The bitmap font Spleen 8x16: the fallback, and a choice of the owner.
 }
 
@@ -88,7 +87,7 @@ Pointer_Theme :: enum u32 {
 // Whether the text of the system is fitted to the grid of pixels.
 Grid_Fit :: enum u32 {
 	On  = 0, // The baseline, the x-height and the cap height on whole pixels (docs/FONTS.md, "Grid fit").
-	Off = 1, // The shapes of the design: the glyph cache with no grid fit.
+	Off = 1, // The shapes of the design: the face of the cells with no grid fit.
 }
 
 // The layout of the keyboard: the character that the input service gives
@@ -219,42 +218,6 @@ Page :: struct {
 	zone_offset_minutes: i32, // The time zone. A reader keeps it through zone_offset_minutes_valid.
 }
 #assert(size_of(Page) <= 4096)
-
-// The glyph caches that a process with a surface or a terminal can
-// receive: the three of the font of the cells, and the two of the
-// interface font (docs/FONTS.md, section 12).
-Glyph_Cache :: enum u8 {
-	With_Grid_Fit, // The font of the cells, with grid fit.
-	Without_Grid_Fit, // The font of the cells, with no grid fit.
-	Bold, // Scale 1 only: the titles of the cards. Absent: the titles are the regular weight.
-	Interface, // B612 Regular: three positions at scale 1, one at the scales 2 and 3.
-	Interface_Bold, // B612 Bold: scale 1 only, three positions.
-}
-
-// The fixed range of each glyph cache.
-glyph_cache_ranges := [Glyph_Cache]fixed_addresses.Fixed_Range {
-	.With_Grid_Fit    = .Glyph_Cache,
-	.Without_Grid_Fit = .Glyph_Cache_Without_Grid_Fit,
-	.Bold             = .Glyph_Cache_Bold,
-	.Interface        = .Interface_Glyph_Cache,
-	.Interface_Bold   = .Interface_Glyph_Cache_Bold,
-}
-
-// glyph_cache_open validates a glyph cache of this process at its fixed
-// range. With the bit of the range clear in the context (the starter did
-// not map it), nothing is read and the problem is Not_Mapped. Else the
-// size comes from the header of the cache, bounded by the span of the
-// range (glyph_cache.validate_at). The bytes there are pages of the boot
-// image, mapped read-only, that no process can write (docs/FONTS.md,
-// section 5, "Who can write a cache").
-glyph_cache_open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, cache: Glyph_Cache) -> (glyph_cache.Cache, glyph_cache.Problem) {
-	range := glyph_cache_ranges[cache]
-	if range not_in fixed_addresses.ranges_mapped(values) {
-		return {}, {kind = .Not_Mapped, index = u32(range)}
-	}
-	place := fixed_addresses.range_of(range)
-	return glyph_cache.validate_at(uintptr(place.address), place.span)
-}
 
 // Choice: the values of a page, as one copy. Each value is the member of
 // its setting: the border of the page (choice_of_values) refused each word

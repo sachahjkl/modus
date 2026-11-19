@@ -58,8 +58,11 @@ import op "modus:contract/operation"
 import "modus:support/random"
 import "modus:support/system"
 
-// Itself and two processes that import calendar.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 808, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
+// Itself and two processes that import calendar: 808 pages. And the glyph
+// memory of the copy of the text rendering of the drawing module, which
+// draws its text: 354 pages (display.TEXT_MEMORY_PAGES). 808 + 354 =
+// 1162.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1162, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)
@@ -300,7 +303,7 @@ starter_records_check :: proc "contextless" () -> (found: Starter_Records) {
 			// A word that names no writer is not found: the case then fails.
 			writer, writer_ok := op.module_writer_of_word(item.writer)
 			if !writer_ok {
-				system.log("imports: the module record at ", item.base, " has the writer word ", item.writer, ", which names no writer")
+				system.log(.Info, "imports: the module record at ", item.base, " has the writer word ", item.writer, ", which names no writer")
 				continue
 			}
 			if item.base == op.PROCESS_BASE {
@@ -327,7 +330,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("imports: no random seed in the context")
+		system.log(.Info, "imports: no random seed in the context")
 		system.stop(.Refused)
 	}
 	// A process that this process started to share calendar: it waits.
@@ -470,27 +473,27 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	starter := starter_records_check()
 	starter_right := starter.refused == STARTER_CHANGES && starter.process_found && starter.process_writer == .Starter && starter.own_found && starter.own_writer == .Process && starter.released
 	note("the module record of the root service", starter_right, starter.refused, " of ", u64(STARTER_CHANGES), " changes refused; calendar loaded here: ", (starter.own_found ? op.module_writer_name(starter.own_writer) : "not found"))
-	system.log("imports: the module record of the root service: ", starter.refused, " of ", u64(STARTER_CHANGES), " changes refused with Starter_Module, writer ", (starter.process_found ? op.module_writer_name(starter.process_writer) : "not found"), "; calendar, loaded by this process: writer ", (starter.own_found ? op.module_writer_name(starter.own_writer) : "not found"))
+	system.log(.Info, "imports: the module record of the root service: ", starter.refused, " of ", u64(STARTER_CHANGES), " changes refused with Starter_Module, writer ", (starter.process_found ? op.module_writer_name(starter.process_writer) : "not found"), "; calendar, loaded by this process: writer ", (starter.own_found ? op.module_writer_name(starter.own_writer) : "not found"))
 
 	wrong: u64
 	for item in cases[:case_count] {
 		if !item.right {
 			wrong += 1
-			system.log("imports: wrong answer: ", item.text, ": ", item.answer)
+			system.log(.Info, "imports: wrong answer: ", item.text, ": ", item.answer)
 		}
 	}
 	if wrong == 0 {
-		system.log("imports: ok, ", u64(case_count), " cases")
+		system.log(.Info, "imports: ok, ", u64(case_count), " cases")
 	}
 	call_whole, call_tenth := tenths(call_direct, CALLS)
 	replaced_whole, replaced_tenth := tenths(call_replaced, CALLS)
-	system.log("imports: a call through an import slot: ", call_whole, ".", call_tenth, " ns to calendar, ", replaced_whole, ".", replaced_tenth, " ns to calendar_fixed in its place, the least of ", u64(MEASURE_RUNS), " runs of ", u64(CALLS), " calls")
+	system.log(.Info, "imports: a call through an import slot: ", call_whole, ".", call_tenth, " ns to calendar, ", replaced_whole, ".", replaced_tenth, " ns to calendar_fixed in its place, the least of ", u64(MEASURE_RUNS), " runs of ", u64(CALLS), " calls")
 	bind_whole, bind_tenth := tenths(bind_direct, BINDS)
 	checked_whole, checked_tenth := tenths(bind_replaced, BINDS)
 	load_whole, _ := tenths(load_direct, 1)
 	load_replaced_whole, _ := tenths(load_replaced, 1)
-	system.log("imports: the bind of agenda: ", bind_whole, ".", bind_tenth, " ns, and ", checked_whole, ".", checked_tenth, " ns with the check of the replacement; the load of agenda and its import: ", load_whole / 1000, " us, and ", load_replaced_whole / 1000, " us")
-	system.log("imports: two processes import calendar at two places: one copy of its code, ", shared_pages, " pages, mapped ", shared_mappings, " times")
+	system.log(.Info, "imports: the bind of agenda: ", bind_whole, ".", bind_tenth, " ns, and ", checked_whole, ".", checked_tenth, " ns with the check of the replacement; the load of agenda and its import: ", load_whole / 1000, " us, and ", load_replaced_whole / 1000, " us")
+	system.log(.Info, "imports: two processes import calendar at two places: one copy of its code, ", shared_pages, " pages, mapped ", shared_mappings, " times")
 
 	for {
 		frame := interface.window_frame_start(&window_memory, &window)

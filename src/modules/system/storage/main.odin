@@ -690,7 +690,7 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 	if len(result) > 0 {
 		result[0] = {share = number, ring = i64(given_ring), region = i64(given_region)}
 	}
-	system.log("storage: a share of the store ", caller.store.name, free.read_only ? string(", read only") : string(""), ", the share ", number)
+	system.log(.Info, "storage: a share of the store ", caller.store.name, free.read_only ? string(", read only") : string(""), ", the share ", number)
 	return 1
 }
 
@@ -727,7 +727,7 @@ unshare :: proc "c" (number: i64, error: ^errors.Error_Record) -> i64 {
 		return errors.fail(error, failure(.Place), .Absent, .Connections, 1, number)
 	}
 	share_end(item)
-	system.log("storage: the share ", number, " ended")
+	system.log(.Info, "storage: the share ", number, " ended")
 	return 0
 }
 
@@ -1231,7 +1231,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// of the key in the data of the module.
 	slot_key_generator: random.Generator
 	if !random.generator_from_context(&slot_key_generator, ctx) {
-		system.log_in("storage", .Error, "storage: no seed in the context of the process")
+		system.log(.Error, "storage: no seed in the context of the process")
 		system.stop(.Refused)
 	}
 	slot_key: [8]u8
@@ -1240,24 +1240,24 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	opened.hash_index.slot_key = intrinsics.unaligned_load((^u64)(&slot_key[0]))
 	ok: bool
 	if service, ok = system.service_open(ctx); !ok {
-		system.log_in("storage", .Error, "storage: no service ring")
+		system.log(.Error, "storage: no service ring")
 		system.stop(.Refused)
 	}
 	ring_memory := ctx.handles[block.GRANT_RING]
 	status: system.Status
 	if blocks, status = system.ring_open(ring_memory); status != .Ok {
-		system.log_in("storage", .Error, "storage: no block ring")
+		system.log(.Error, "storage: no block ring")
 		system.stop(.Failed)
 	}
 	block_service = ctx.handles[block.GRANT_SERVICE]
 	if kind, rights, _ := system.handle_state(block_service); kind != .Process || .Read not_in rights {
-		system.log_in("storage", .Error, "storage: no handle of the block service with the right Read: a wait for the disk would have no end")
+		system.log(.Error, "storage: no handle of the block service with the right Read: a wait for the disk would have no end")
 		system.stop(.Failed)
 	}
 	memory, memory_status := system.memory_create(REGION_BLOCKS, 0, {.Contiguous}) // The device reads and writes it.
 	address, map_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || map_status != .Ok {
-		system.log_in("storage", .Error, "storage: no data region")
+		system.log(.Error, "storage: no data region")
 		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)
@@ -1285,7 +1285,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// refuses each call with Device (disk_unopened_refusal).
 	if give_status != .Ok || block.Status(command(.Attach, {0 = u64(given)}).kind) != .Ok {
 		if !disk_silent {
-			system.log_in("storage", .Error, "storage: the block service refused the data region")
+			system.log(.Error, "storage: the block service refused the data region")
 			system.stop(.Failed)
 		}
 	}
@@ -1329,39 +1329,39 @@ disk_open :: proc "contextless" () {
 	}
 	switch {
 	case mounted.failed:
-		system.log_in("storage", .Error, "storage: no valid root on the disk: the service keeps the disk as it is, and serves nothing")
+		system.log(.Error, "storage: no valid root on the disk: the service keeps the disk as it is, and serves nothing")
 		system.stop(.Failed)
 	case mounted.needs_format:
 		if mounted.first_cut {
-			system.log_in("storage", .Warning, "storage: the first root of the disk has a wrong check and no commit followed it: a format that a stop cut; the service formats again")
+			system.log(.Warning, "storage: the first root of the disk has a wrong check and no commit followed it: a format that a stop cut; the service formats again")
 		}
-		system.log("storage: ok, a new disk: generation 1, ", system.Size{root.disk_blocks, .Blocks})
+		system.log(.Info, "storage: ok, a new disk: generation 1, ", system.Size{root.disk_blocks, .Blocks})
 	case:
 		if mounted.cut != 0 {
-			system.log_in("storage", .Warning, "storage: the root of generation ", mounted.cut, " has a wrong check: a write that a stop cut; the service uses the root before it")
+			system.log(.Warning, "storage: the root of generation ", mounted.cut, " has a wrong check: a write that a stop cut; the service uses the root before it")
 		}
 		if mounted.older {
-			system.log_in("storage", .Warning, "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used")
+			system.log(.Warning, "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used")
 		}
 		if mounted.wrong != 0 {
-			system.log_in("storage", .Warning, "storage: ", mounted.wrong, " blocks have a wrong check: ", mounted.damaged_objects, " objects and ", mounted.damaged_stores, " stores are damaged; the service serves the others, and a write or a remove replaces a damaged object")
+			system.log(.Warning, "storage: ", mounted.wrong, " blocks have a wrong check: ", mounted.damaged_objects, " objects and ", mounted.damaged_stores, " stores are damaged; the service serves the others, and a write or a remove replaces a damaged object")
 		}
 		if mounted.damaged_versions != 0 {
-			system.log_in("storage", .Warning, "storage: ", mounted.damaged_versions, " versions have a wrong block: a read of them gives Damaged")
+			system.log(.Warning, "storage: ", mounted.damaged_versions, " versions have a wrong block: a read of them gives Damaged")
 		}
 		if mounted.named_twice != 0 || mounted.named_by_two_stores != 0 || mounted.reference_overflow != 0 {
 			faulty: u64
 			for flag in opened.store_faulty {
 				faulty += u64(flag)
 			}
-			system.log_in("storage", .Error, "storage: a fault of the engine: ", mounted.named_twice, " blocks of one name named two times, ", mounted.named_by_two_stores, " blocks named from two stores, ", mounted.reference_overflow, " counts of names that pass their limit; the service makes no change in the ", faulty, faulty == 1 ? string(" store") : string(" stores"), " with such a block, and gives their objects")
+			system.log(.Error, "storage: a fault of the engine: ", mounted.named_twice, " blocks of one name named two times, ", mounted.named_by_two_stores, " blocks named from two stores, ", mounted.reference_overflow, " counts of names that pass their limit; the service makes no change in the ", faulty, faulty == 1 ? string(" store") : string(" stores"), " with such a block, and gives their objects")
 		}
 		if mounted.stores_recounted != 0 || mounted.stores_with_wrong_count != 0 {
-			system.log_in("storage", .Warning, "storage: the disk gives ", mounted.stores_recounted, " stores another count of blocks than the open counted; the service takes the counts of the open (", mounted.stores_with_wrong_count, " stores with no damage have a wrong count: a fault of the engine that wrote it)")
+			system.log(.Warning, "storage: the disk gives ", mounted.stores_recounted, " stores another count of blocks than the open counted; the service takes the counts of the open (", mounted.stores_with_wrong_count, " stores with no damage have a wrong count: a fault of the engine that wrote it)")
 		}
-		system.log("storage: ok, generation ", mounted.generation, ": ", mounted.stores, " stores, ", mounted.objects, " objects, ", mounted.trees, " trees, ", mounted.versions, " versions, ", system.Size{opened.in_use_count, .Blocks}, " in use, ", mounted.shared, " shared, ", mounted.checked, " blocks checked, ", mounted.wrong, " wrong, in ", system.Duration{elapsed, .Milliseconds})
+		system.log(.Info, "storage: ok, generation ", mounted.generation, ": ", mounted.stores, " stores, ", mounted.objects, " objects, ", mounted.trees, " trees, ", mounted.versions, " versions, ", system.Size{opened.in_use_count, .Blocks}, " in use, ", mounted.shared, " shared, ", mounted.checked, " blocks checked, ", mounted.wrong, " wrong, in ", system.Duration{elapsed, .Milliseconds})
 		if mounted.removing != 0 {
-			system.log("storage: ", mounted.removing, " trees wait to be freed: the removal continues")
+			system.log(.Info, "storage: ", mounted.removing, " trees wait to be freed: the removal continues")
 		}
 	}
 	disk_opened = true

@@ -144,8 +144,10 @@ import "modus:support/system"
 
 // One child at a time: 512 pages and 20 threads (17 that fault in a full
 // ring, its main thread and its handler); one thread of its own that spins
-// while a child tries to name it.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2385, processes = 2, threads = 22, window_width = WIDTH, window_height = HEIGHT}
+// while a child tries to name it: 2385 pages. And the glyph memory of the
+// copy of the text rendering of the drawing module, which draws its text:
+// 354 pages (display.TEXT_MEMORY_PAGES). 2385 + 354 = 2739.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2739, processes = 2, threads = 22, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 1000 // The window and its borders fit the window bound of 1024 columns.
@@ -408,7 +410,7 @@ results_and_stop :: proc "contextless" (bits: u32) -> ! {
 // step_failed ends a child at a step that is not the check of its case: the
 // line names the step, and the stop says only that it failed.
 step_failed :: proc "contextless" (step: string) -> ! {
-	system.log("fault_ring: a child: ", step, " failed")
+	system.log(.Info, "fault_ring: a child: ", step, " failed")
 	system.stop(.Failed)
 }
 
@@ -495,7 +497,7 @@ child_repairs :: proc "contextless" () -> ! {
 	if value == MAGIC + LAZY_PAGE {
 		bits |= 1
 	}
-	system.log("fault_ring: a read of a page that is not committed: the handler committed it and wrote ", system.Hex(MAGIC + LAZY_PAGE), "; the thread read ", system.Hex(value), value == MAGIC + LAZY_PAGE ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: a read of a page that is not committed: the handler committed it and wrote ", system.Hex(MAGIC + LAZY_PAGE), "; the thread read ", system.Hex(value), value == MAGIC + LAZY_PAGE ? string(": as it must") : string(": WRONG"))
 
 	// 2. A write to a read-only page.
 	intrinsics.volatile_store((^u64)(uintptr(read_only_base)), 42)
@@ -503,7 +505,7 @@ child_repairs :: proc "contextless" () -> ! {
 	if written == 42 {
 		bits |= 2
 	}
-	system.log("fault_ring: a write to a read-only page: the handler gave Write back; the page holds ", written, written == 42 ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: a write to a read-only page: the handler gave Write back; the page holds ", written, written == 42 ? string(": as it must") : string(": WRONG"))
 
 	// 3. A stack that grows down by one page at each fault.
 	least := max(u64)
@@ -518,13 +520,13 @@ child_repairs :: proc "contextless" () -> ! {
 		bits |= 4
 	}
 	intrinsics.volatile_store(&shared_page().least_fault_nanoseconds, least)
-	system.log("fault_ring: a stack that grows: ", u64(repairs), " pages of ", u64(STACK_PAGES), ", each one committed by the handler at its first touch; one repaired fault took ", least, " ns at least", repairs == STACK_PAGES ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: a stack that grows: ", u64(repairs), " pages of ", u64(STACK_PAGES), ", each one committed by the handler at its first touch; one repaired fault took ", least, " ns at least", repairs == STACK_PAGES ? string(": as it must") : string(": WRONG"))
 
 	// 4. The wrong serial of case 1.
 	if wrong_serial_refused {
 		bits |= 8
 	}
-	system.log("fault_ring: an answer with a wrong serial: ", wrong_serial_refused ? string("refused with Bad_State, then the right answer resumed the thread: as it must") : string("not refused: WRONG"))
+	system.log(.Info, "fault_ring: an answer with a wrong serial: ", wrong_serial_refused ? string("refused with Bad_State, then the right answer resumed the thread: as it must") : string("not refused: WRONG"))
 	results_and_stop(bits)
 }
 
@@ -671,7 +673,7 @@ child_word_leftover :: proc "contextless" () -> ! {
 	if leftover_answer == .Ok && value == MAGIC {
 		bits |= 4
 	}
-	system.log("fault_ring: a word wait, a fault, a decommit of the word: the waker woke ", u64(waker_woke), " thread; ", leftover_quiet ? string("no second record and no run before the answer") : string("the thread ran or faulted again with no answer: WRONG"), "; the answer: ", op.STATUS_NAMES[leftover_answer], ", the thread read ", system.Hex(value), bits == LEFTOVER_ALL ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: a word wait, a fault, a decommit of the word: the waker woke ", u64(waker_woke), " thread; ", leftover_quiet ? string("no second record and no run before the answer") : string("the thread ran or faulted again with no answer: WRONG"), "; the answer: ", op.STATUS_NAMES[leftover_answer], ", the thread read ", system.Hex(value), bits == LEFTOVER_ALL ? string(": as it must") : string(": WRONG"))
 	results_and_stop(bits)
 }
 
@@ -697,7 +699,7 @@ foreign_handler :: proc "c" (_: rawptr) -> ! {
 	if system.fault_answer(record, .Resume) == .Ok && wait_for(&resumed_threads) {
 		bits |= 4
 	}
-	system.log("fault_ring: an answer from another process: the parent answered for the thread ", record.thread, " and the serial ", record.serial, ": ", intrinsics.atomic_load(&shared_page().foreign_refused) == 1 ? string("refused with Bad_State") : string("not refused"), "; the thread still waited, and the answer of its own process resumed it", bits == FOREIGN_ALL ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: an answer from another process: the parent answered for the thread ", record.thread, " and the serial ", record.serial, ": ", intrinsics.atomic_load(&shared_page().foreign_refused) == 1 ? string("refused with Bad_State") : string("not refused"), "; the thread still waited, and the answer of its own process resumed it", bits == FOREIGN_ALL ? string(": as it must") : string(": WRONG"))
 	results_and_stop(bits)
 }
 
@@ -759,7 +761,7 @@ child_early_answer :: proc "contextless" () -> ! {
 	if right == EARLY_FAULTS {
 		bits |= 2
 	}
-	system.log("fault_ring: 10 000 answers given at once: ", answers, " faults resumed, ", right, " values right, of ", u64(EARLY_FAULTS), bits == EARLY_ALL ? string(": as it must") : string(": WRONG"), ", in ", elapsed, " ms")
+	system.log(.Info, "fault_ring: 10 000 answers given at once: ", answers, " faults resumed, ", right, " values right, of ", u64(EARLY_FAULTS), bits == EARLY_ALL ? string(": as it must") : string(": WRONG"), ", in ", elapsed, " ms")
 	results_and_stop(bits)
 }
 
@@ -858,7 +860,7 @@ child_breakpoint :: proc "contextless" () -> ! {
 	if intrinsics.volatile_load(&shared.records_seen) == 1 && intrinsics.volatile_load(&shared.record_kind) == u64(op.Fault_Kind.Breakpoint) && intrinsics.atomic_load(&shared.resume_status) == u32(system.Status.Ok) + 1 {
 		bits |= 2
 	}
-	system.log("fault_ring: a breakpoint, answered resume: ", intrinsics.volatile_load(&shared.records_seen), " record of the kind ", intrinsics.volatile_load(&shared.record_kind), "; the thread went on after the int3 and computed ", value, bits == BREAKPOINT_ALL ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: a breakpoint, answered resume: ", intrinsics.volatile_load(&shared.records_seen), " record of the kind ", intrinsics.volatile_load(&shared.record_kind), "; the thread went on after the int3 and computed ", value, bits == BREAKPOINT_ALL ? string(": as it must") : string(": WRONG"))
 	results_and_stop(bits)
 }
 
@@ -879,7 +881,7 @@ child_kinds_never_delivered :: proc "contextless" () -> ! {
 	}
 	asked := u64(len(vectors)) + 1
 	intrinsics.volatile_store(&shared_page().refused_arguments, refused)
-	system.log("fault_ring: the kinds never delivered: Fault_Handler_Set refused ", refused, " arguments of ", asked, " with Bad_Operation", refused == asked ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: the kinds never delivered: Fault_Handler_Set refused ", refused, " arguments of ", asked, " with Bad_Operation", refused == asked ? string(": as it must") : string(": WRONG"))
 	if system.fault_handler_set(kinds = {.Divide_Error}) != .Ok {
 		step_failed("Fault_Handler_Set with the divide errors")
 	}
@@ -901,7 +903,7 @@ kinds_case_right :: proc "contextless" (item: ^Case, cause: op.Stop_Cause, repor
 		}
 	}
 	right := cause == .Fault && report.vector == vector && page.records_seen == 1 && page.record_kind == u64(kind) && page.record_error_code == 0 && same_instruction && page.resume_status == u32(system.Status.Bad_State) + 1
-	system.log("fault_ring: ", item.name, ": ", page.records_seen, " record of the kind ", page.record_kind, ", the error code ", page.record_error_code, ", ", same_instruction ? string("the instruction of the stop report") : string("not the instruction of the stop report"), "; Resume got ", resume, right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: ", item.name, ": ", page.records_seen, " record of the kind ", page.record_kind, ", the error code ", page.record_error_code, ", ", same_instruction ? string("the instruction of the stop report") : string("not the instruction of the stop report"), "; Resume got ", resume, right ? string(": as it must") : string(": WRONG"))
 	return right
 }
 
@@ -997,7 +999,7 @@ child_controls :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x01
 	}
-	system.log("fault_ring: a stop of a thread that spins: ", inside ? string("the instruction address is inside its loop") : string("the instruction address is NOT inside its loop"), ", ", quiet ? string("and the loop did not turn while the thread was stopped") : string("and the loop turned while the thread was stopped"), right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: a stop of a thread that spins: ", inside ? string("the instruction address is inside its loop") : string("the instruction address is NOT inside its loop"), ", ", quiet ? string("and the loop did not turn while the thread was stopped") : string("and the loop turned while the thread was stopped"), right ? string(": as it must") : string(": WRONG"))
 
 	// 21. A write of a register that the thread then publishes.
 	registers.r12 = WRITTEN_VALUE
@@ -1014,7 +1016,7 @@ child_controls :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x02
 	}
-	system.log("fault_ring: a write of a register: the thread published ", system.Hex(intrinsics.atomic_load(&control_cells.value)), " from r12 after its Resume", right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: a write of a register: the thread published ", system.Hex(intrinsics.atomic_load(&control_cells.value)), " from r12 after its Resume", right ? string(": as it must") : string(": WRONG"))
 
 	// 22. Frames that a process cannot hold: each refused, nothing changed.
 	control(spinner.handle, 0, .Stop)
@@ -1039,14 +1041,14 @@ child_controls :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x04
 	}
-	system.log("fault_ring: a frame that a process cannot hold: ", refused, " writes of ", u64(len(hostile)), " refused with Bad_Operation (the code selector of the kernel, the I/O privilege level, interrupts off, an instruction address that is not canonical); ", ran ? string("the thread ran after its Resume") : string("the thread did not run after its Resume"), right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: a frame that a process cannot hold: ", refused, " writes of ", u64(len(hostile)), " refused with Bad_Operation (the code selector of the kernel, the I/O privilege level, interrupts off, an instruction address that is not canonical); ", ran ? string("the thread ran after its Resume") : string("the thread did not run after its Resume"), right ? string(": as it must") : string(": WRONG"))
 
 	// 23. Extended states that the processor refuses.
 	control(spinner.handle, 0, .Stop)
 	state, _ := system.call(.Thread_State, u64(spinner.handle))
 	layout, layout_known := enum_word.member_of_word(op.Extended_State_Layout, state[4])
 	if !layout_known {
-		system.log("fault_ring: Thread_State gave the layout ", state[4], ", which names no layout: WRONG")
+		system.log(.Info, "fault_ring: Thread_State gave the layout ", state[4], ", which names no layout: WRONG")
 	}
 	size, with_header := state[2], layout_known && layout == .With_Header
 	_, area_read := control(spinner.handle, 0, .Read_Extended_State, &extended_state_area, size)
@@ -1074,7 +1076,7 @@ child_controls :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x08
 	}
-	system.log("fault_ring: an extended state that faults: every hostile write refused with Bad_Operation, the area that was read accepted; ", ran ? string("the thread ran after its Resume") : string("the thread did not run after its Resume"), right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: an extended state that faults: every hostile write refused with Bad_Operation, the area that was read accepted; ", ran ? string("the thread ran after its Resume") : string("the thread did not run after its Resume"), right ? string(": as it must") : string(": WRONG"))
 
 	// 24. A stop of a thread that waits, then its wake.
 	waiter, waiter_started := system.thread_start(control_waiter, nil, 4)
@@ -1100,7 +1102,7 @@ child_controls :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x10
 	}
-	system.log("fault_ring: a stop of a thread that waits: its wait ended, ", did_not_run ? string("it did not run before its Resume") : string("it ran before its Resume"), ", ", ran_after ? string("and it ran after it") : string("and it did not run after it"), right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: a stop of a thread that waits: its wait ended, ", did_not_run ? string("it did not run before its Resume") : string("it ran before its Resume"), ", ", ran_after ? string("and it ran after it") : string("and it did not run after it"), right ? string(": as it must") : string(": WRONG"))
 
 	// 25. Two stops need two resumes.
 	first, _ := control(spinner.handle, 0, .Stop)
@@ -1114,7 +1116,7 @@ child_controls :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x20
 	}
-	system.log("fault_ring: two stops, two resumes: ", quiet ? string("still stopped after one Resume") : string("ran after one Resume"), ", ", ran ? string("running after the second") : string("not running after the second"), "; a third Resume got ", op.STATUS_NAMES[third], right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: two stops, two resumes: ", quiet ? string("still stopped after one Resume") : string("ran after one Resume"), ", ", ran ? string("running after the second") : string("not running after the second"), "; a third Resume got ", op.STATUS_NAMES[third], right ? string(": as it must") : string(": WRONG"))
 
 	// 26. The rights of a thread handle. A handle with Read and Control,
 	// the rights to read the state and to end the thread, neither holds the
@@ -1141,7 +1143,7 @@ child_controls :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x40
 	}
-	system.log("fault_ring: the rights of a thread handle: with Read and Control, Stop got ", op.STATUS_NAMES[ender_stop], ", Read_Registers ", op.STATUS_NAMES[ender_read], ", Write_Registers ", op.STATUS_NAMES[ender_write], "; with Inspect only, Stop, Read_Registers and Resume got ", inspector_stop == .Ok && inspector_read == .Ok && inspector_resume == .Ok ? string("Ok") : string("an error"), ", Write_Registers ", op.STATUS_NAMES[inspector_write], "; with Write only, Write_Registers got ", op.STATUS_NAMES[writer_write], "; the thread kept running", right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: the rights of a thread handle: with Read and Control, Stop got ", op.STATUS_NAMES[ender_stop], ", Read_Registers ", op.STATUS_NAMES[ender_read], ", Write_Registers ", op.STATUS_NAMES[ender_write], "; with Inspect only, Stop, Read_Registers and Resume got ", inspector_stop == .Ok && inspector_read == .Ok && inspector_resume == .Ok ? string("Ok") : string("an error"), ", Write_Registers ", op.STATUS_NAMES[inspector_write], "; with Write only, Write_Registers got ", op.STATUS_NAMES[writer_write], "; the thread kept running", right ? string(": as it must") : string(": WRONG"))
 
 	// 27. A divide error skipped by its handler.
 	handler_start(divide_handler)
@@ -1152,7 +1154,7 @@ child_controls :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x80
 	}
-	system.log("fault_ring: a divide error skipped by its handler: Resume before the write got ", op.STATUS_NAMES[divide_resume_before_write], "; after the write of the instruction address and rax, the thread went on with ", result, right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: a divide error skipped by its handler: Resume before the write got ", op.STATUS_NAMES[divide_resume_before_write], "; after the write of the instruction address and rax, the thread went on with ", result, right ? string(": as it must") : string(": WRONG"))
 	results_and_stop(bits)
 }
 
@@ -1170,7 +1172,7 @@ child_foreign_thread :: proc "contextless" () -> ! {
 	if _, status := control(system.Handle(intrinsics.volatile_load(&shared_page().parent_thread_handle)), 0, .Stop); status == .Bad_Handle {
 		refused += 1
 	}
-	system.log("fault_ring: the thread of another process: ", refused, " calls of ", tried, " refused; no number and no handle of this process names it", refused == tried ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: the thread of another process: ", refused, " calls of ", tried, " refused; no number and no handle of this process names it", refused == tried ? string(": as it must") : string(": WRONG"))
 	results_and_stop(refused == tried ? u32(FOREIGN_THREAD_ALL) : u32(0))
 }
 
@@ -1221,7 +1223,7 @@ entry_records_since :: proc "contextless" (start: u32) -> []op.Fault_Record {
 }
 
 entry_line :: proc "contextless" (name: string, sentence: string, right: bool) {
-	system.log("fault_ring: ", name, ": ", sentence, right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: ", name, ": ", sentence, right ? string(": as it must") : string(": WRONG"))
 }
 
 child_debug_entries :: proc "contextless" () -> ! {
@@ -1464,13 +1466,13 @@ cause_after_holder_stop: op.Stop_Cause
 child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle: system.Handle = 0) -> (cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome, report: op.Stop_Report, left_behind: bool, ran: bool, page: Shared_Page) {
 	shared_memory, created := system.memory_create(1)
 	if created != .Ok {
-		system.log("fault_ring: ", name, ": memory_create of the shared page failed: ", op.STATUS_NAMES[created])
+		system.log(.Info, "fault_ring: ", name, ": memory_create of the shared page failed: ", op.STATUS_NAMES[created])
 		return
 	}
 	defer system.close(shared_memory)
 	shared_address, mapped := system.memory_map(shared_memory)
 	if mapped != .Ok {
-		system.log("fault_ring: ", name, ": memory_map of the shared page failed: ", op.STATUS_NAMES[mapped])
+		system.log(.Info, "fault_ring: ", name, ": memory_map of the shared page failed: ", op.STATUS_NAMES[mapped])
 		return
 	}
 	defer system.memory_unmap(shared_address)
@@ -1487,7 +1489,7 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 		buffer: [512]u8
 		lines := system.Writer{buffer = buffer[:]}
 		system.load_error_text(&lines, &error)
-		system.log("fault_ring: ", name, ": process_start failed: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this process can give pages ", before.pages, ", processes ", before.processes, ", threads ", before.threads, ", and the child asks ", u64(CHILD_PAGES), ", 1, ", u64(CHILD_THREADS))
+		system.log(.Info, "fault_ring: ", name, ": process_start failed: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this process can give pages ", before.pages, ", processes ", before.processes, ", threads ", before.threads, ", and the child asks ", u64(CHILD_PAGES), ", 1, ", u64(CHILD_THREADS))
 		return
 	}
 	intrinsics.volatile_store(&in_parent.parent_thread_handle, u64(parent_thread_handle))
@@ -1513,7 +1515,7 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 			record := op.Fault_Record{thread = intrinsics.volatile_load(&in_parent.waiting_thread), serial = intrinsics.volatile_load(&in_parent.waiting_serial)}
 			answered := system.fault_answer(record, .Resume)
 			if answered != .Bad_State {
-				system.log("fault_ring: ", name, ": Fault_Answer of the parent gave ", op.STATUS_NAMES[answered], ", not Bad_State")
+				system.log(.Info, "fault_ring: ", name, ": Fault_Answer of the parent gave ", op.STATUS_NAMES[answered], ", not Bad_State")
 			}
 			intrinsics.atomic_store(&in_parent.foreign_refused, answered == .Bad_State ? u32(1) : u32(2))
 		}
@@ -1529,12 +1531,12 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 		answers := intrinsics.volatile_load(&in_parent.answers)
 		switch {
 		case role != .Early_Answer:
-			system.log("fault_ring: ", name, ": the child did not stop in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
+			system.log(.Info, "fault_ring: ", name, ": the child did not stop in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
 		case stall_deadline >= overall_deadline:
 			// The loop ends at the first of the two bounds: here, the overall one.
-			system.log("fault_ring: ", name, ": the child did not stop in ", u64(system.TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS), " ms: at step ", progress, " of ", u64(EARLY_FAULTS), ", ", answers, " answers, after ", elapsed, " ms")
+			system.log(.Info, "fault_ring: ", name, ": the child did not stop in ", u64(system.TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS), " ms: at step ", progress, " of ", u64(EARLY_FAULTS), ", ", answers, " answers, after ", elapsed, " ms")
 		case:
-			system.log("fault_ring: ", name, ": the child did not stop: no progress for ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms at step ", progress, " of ", u64(EARLY_FAULTS), ", ", answers, " answers, after ", elapsed, " ms")
+			system.log(.Info, "fault_ring: ", name, ": the child did not stop: no progress for ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms at step ", progress, " of ", u64(EARLY_FAULTS), ", ", answers, " answers, after ", elapsed, " ms")
 		}
 		system.close(process)
 		return
@@ -1565,9 +1567,9 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 	if left_behind {
 		// The numbers tell a slow release from a leak, and which amount it
 		// is: the next read comes after the line.
-		system.log("fault_ring: ", name, ": the budget of this process did not get back every page, thread and process of the child in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms: pages ", before.pages, " expected, ", after.pages, " after; threads ", before.threads, ", ", after.threads, "; processes ", before.processes, ", ", after.processes)
+		system.log(.Info, "fault_ring: ", name, ": the budget of this process did not get back every page, thread and process of the child in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms: pages ", before.pages, " expected, ", after.pages, " after; threads ", before.threads, ", ", after.threads, "; processes ", before.processes, ", ", after.processes)
 		later, _ := system.budget_read()
-		system.log("fault_ring: ", name, ": after the line: pages ", later.pages, ", threads ", later.threads, ", processes ", later.processes)
+		system.log(.Info, "fault_ring: ", name, ": after the line: pages ", later.pages, ", threads ", later.threads, ", processes ", later.processes)
 	}
 	page = in_parent^
 	ran = true
@@ -1631,7 +1633,7 @@ case_log :: proc "contextless" (item: ^Case, cause: op.Stop_Cause, stop_outcome:
 	buffer: [96]u8
 	writer := system.Writer{buffer = buffer[:]}
 	stop_text(&writer, cause, stop_outcome, report)
-	system.log("fault_ring: ", item.name, ": the child stopped: ", system.written(&writer), ", the address ", system.Hex(report.address), item.right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: ", item.name, ": the child stopped: ", system.written(&writer), ", the address ", system.Hex(report.address), item.right ? string(": as it must") : string(": WRONG"))
 }
 
 // bits_log writes the stop of a child of several cases, and its result
@@ -1641,7 +1643,7 @@ bits_log :: proc "contextless" (what: string, cause: op.Stop_Cause, stop_outcome
 	buffer: [96]u8
 	writer := system.Writer{buffer = buffer[:]}
 	stop_text(&writer, cause, stop_outcome, &report)
-	system.log("fault_ring: ", what, ": the child stopped: ", system.written(&writer), ", the result bits ", system.Hex(u64(bits)), right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: ", what, ": the child stopped: ", system.written(&writer), ", the result bits ", system.Hex(u64(bits)), right ? string(": as it must") : string(": WRONG"))
 }
 
 // entry is the entry of the parent and of each child: the value
@@ -1672,7 +1674,7 @@ bits_log :: proc "contextless" (what: string, cause: op.Stop_Cause, stop_outcome
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	role, role_ok := role_of(ctx.values[VALUE_ROLE])
 	if !role_ok {
-		system.log("fault_ring: the context names the role ", ctx.values[VALUE_ROLE] & 0xFFFF_FFFF, ", which names no role")
+		system.log(.Info, "fault_ring: the context names the role ", ctx.values[VALUE_ROLE] & 0xFFFF_FFFF, ", which names no role")
 		system.stop(.Refused)
 	}
 	if role != .Parent {
@@ -1683,7 +1685,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		child(role)
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log("fault_ring: no random seed in the context")
+		system.log(.Info, "fault_ring: no random seed in the context")
 		system.stop(.Refused)
 	}
 	log_handle = ctx.handles[op.CONTEXT_LOG]
@@ -1693,7 +1695,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		system.log("fault_ring: no boot image")
+		system.log(.Info, "fault_ring: no boot image")
 		system.stop(.Failed)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -1729,7 +1731,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			item.right = cause == .Not_Committed && !left
 		case .Stop_While_Waiting:
 			item.right = clean_end(cause, stop_outcome) && cause_after_holder_stop == .Itself && !left
-			system.log("fault_ring: ", item.name, ": stopped again by this process, the child keeps the stop cause ", op.STOP_CAUSE_TEXTS[cause_after_holder_stop], item.right ? string(": as it must") : string(": WRONG"))
+			system.log(.Info, "fault_ring: ", item.name, ": stopped again by this process, the child keeps the stop cause ", op.STOP_CAUSE_TEXTS[cause_after_holder_stop], item.right ? string(": as it must") : string(": WRONG"))
 		case .Handler_Ends, .Handler_Changed:
 			item.right = cause == .Fault_Unanswered && !left
 		case .Word_Leftover:
@@ -1748,7 +1750,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			item.right = with_all(cause, stop_outcome, &page, BREAKPOINT_ALL) && !left
 		case .Page_Faults_Only:
 			item.right = cause == .Fault && report.vector == u32(op.Fault_Kind.Divide_Error) && page.records_seen == 0 && !left
-			system.log("fault_ring: ", item.name, ": the handler read ", page.records_seen, " records; the stop report names the vector ", u64(report.vector), item.right ? string(": as it must") : string(": WRONG"))
+			system.log(.Info, "fault_ring: ", item.name, ": the handler read ", page.records_seen, " records; the stop report names the vector ", u64(report.vector), item.right ? string(": as it must") : string(": WRONG"))
 		case .Kinds_Never_Delivered:
 			item.right = cause == .Fault && report.vector == u32(op.Fault_Kind.Divide_Error) && page.refused_arguments == u64(len(NEVER_DELIVERED_VECTORS)) + 1 && !left
 		}
@@ -1777,9 +1779,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		kept_running := state[1] == 0 && grows(&parent_cells.count)
 		system.thread_end(parent_spinner)
 		foreign_case.right = ran && clean_end(cause, stop_outcome) && page.result_bits == FOREIGN_THREAD_ALL && kept_running && !left
-		system.log("fault_ring: ", foreign_case.name, ": the thread of the parent has the stop count ", state[1], " and ", kept_running ? string("kept running") : string("did not run"), foreign_case.right ? string(": as it must") : string(": WRONG"))
+		system.log(.Info, "fault_ring: ", foreign_case.name, ": the thread of the parent has the stop count ", state[1], " and ", kept_running ? string("kept running") : string("did not run"), foreign_case.right ? string(": as it must") : string(": WRONG"))
 	} else {
-		system.log("fault_ring: ", foreign_case.name, ": the thread of the parent did not start: ", op.STATUS_NAMES[spinner_started])
+		system.log(.Info, "fault_ring: ", foreign_case.name, ": the thread of the parent did not start: ", op.STATUS_NAMES[spinner_started])
 	}
 	foreign_case.ran = true
 	draw(&window)
@@ -1809,7 +1811,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else if stopped_by_the_kernel {
 		outcome = "the trap came at the stub of int1, and the kernel stopped the child as a fault of a debug exception with the instruction address 0"
 	}
-	system.log("fault_ring: mov ss, then int1, with the trap flag: the machine went on and the child gave back every page and every thread; on this processor ", outcome, lost_case.right ? string(": as it must") : string(": WRONG"))
+	system.log(.Info, "fault_ring: mov ss, then int1, with the trap flag: the machine went on and the child gave back every page and every thread; on this processor ", outcome, lost_case.right ? string(": as it must") : string(": WRONG"))
 	draw(&window)
 
 	right := 0
@@ -1819,9 +1821,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if right == len(cases) {
-		system.log("fault_ring: ok, ", u64(len(cases)), " cases: each fault was repaired, or stopped its process with the report of today, each control of a thread held, and each child gave back every page and every thread")
+		system.log(.Info, "fault_ring: ok, ", u64(len(cases)), " cases: each fault was repaired, or stopped its process with the report of today, each control of a thread held, and each child gave back every page and every thread")
 	} else {
-		system.log("fault_ring: failed: ", u64(len(cases) - right), " cases of ", u64(len(cases)))
+		system.log(.Info, "fault_ring: failed: ", u64(len(cases) - right), " cases of ", u64(len(cases)))
 	}
 	for {
 		draw(&window)

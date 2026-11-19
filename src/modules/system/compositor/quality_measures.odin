@@ -36,7 +36,7 @@ frame_started_at: u64
 // system drives no GPU, so it is the processor profile.
 quality_profile_log :: proc "contextless" () {
 	profile, reason := quality.profile_of(false)
-	system.log("compositor: the quality profile is ", quality.profile_sentences[profile], ": ", quality.reason_sentences[reason])
+	system.log(.Info, "compositor: the quality profile is ", quality.profile_sentences[profile], ": ", quality.reason_sentences[reason])
 }
 
 // quality_turn_start forgets the read of the turn before.
@@ -91,7 +91,7 @@ quality_present :: proc "contextless" (window: int, client: ^Client, first_pictu
 
 // quality_start_log writes the line of the start of a window.
 quality_start_log :: proc "contextless" (client: ^Client, span: u64) {
-	system.log("compositor: measure: the start of the window ", system.name_of(client.title[:]), ", from Process_Start to its first frame: ", span / 1000, ".", span / 100 % 10, " us")
+	system.log(.Info, "compositor: measure: the start of the window ", system.name_of(client.title[:]), ", from Process_Start to its first frame: ", span / 1000, ".", span / 100 % 10, " us")
 }
 
 // quality_window_started takes the record Client_Started: the time of the
@@ -121,7 +121,7 @@ quality_window_gone :: proc "contextless" (window: int) {
 quality_frame_line :: proc "contextless" () {
 	frames_since_line = 0
 	least, median, count := quality.samples_least_and_median(&frame_samples)
-	system.log("compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least ", least / 1000, ".", least / 100 % 10, " us, median ", median / 1000, ".", median / 100 % 10, " us, over ", u64(count), " frames")
+	system.log(.Info, "compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least ", least / 1000, ".", least / 100 % 10, " us, median ", median / 1000, ".", median / 100 % 10, " us, over ", u64(count), " frames")
 }
 
 // quality_frame_flipped ends the measures at the flip of a frame: the
@@ -139,13 +139,13 @@ quality_frame_flipped :: proc "contextless" () {
 		keys_since_line = 0
 		quality_frame_line()
 		least, median, count := quality.samples_least_and_median(&key_samples)
-		system.log("compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least ", least / 1000, ".", least / 100 % 10, " us, median ", median / 1000, ".", median / 100 % 10, " us, over ", u64(count), " keys")
+		system.log(.Info, "compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least ", least / 1000, ".", least / 100 % 10, " us, median ", median / 1000, ".", median / 100 % 10, " us, over ", u64(count), " keys")
 		quality.samples_clear(&key_samples)
 		// The measures that the table lost, and the serials that a window
 		// named past its keys, when they changed.
 		if key_table.lost != keys_lost_logged || key_table.refused != serials_refused_logged {
 			keys_lost_logged, serials_refused_logged = key_table.lost, key_table.refused
-			system.log("compositor: the measure of the keys to the screen: ", key_table.lost, " keys left the table before a flip showed them, and ", key_table.refused, " serials that a window named were past the keys that it got, since the start")
+			system.log(.Info, "compositor: the measure of the keys to the screen: ", key_table.lost, " keys left the table before a flip showed them, and ", key_table.refused, " serials that a window named were past the keys that it got, since the start")
 		}
 	} else if frames_since_line >= FRAMES_OF_A_LINE {
 		quality_frame_line()
