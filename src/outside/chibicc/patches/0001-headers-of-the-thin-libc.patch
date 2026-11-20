@@ -1,6 +1,14 @@
 --- a/chibicc.h
 +++ b/chibicc.h
-@@ -12,11 +12,6 @@
+@@ -2,7 +2,6 @@
+ #include <assert.h>
+ #include <ctype.h>
+ #include <errno.h>
+-#include <glob.h>
+ #include <libgen.h>
+ #include <stdarg.h>
+ #include <stdbool.h>
+@@ -12,11 +11,6 @@
  #include <stdnoreturn.h>
  #include <string.h>
  #include <strings.h>
