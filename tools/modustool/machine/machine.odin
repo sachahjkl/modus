@@ -1628,6 +1628,9 @@ scenario := [?]Step {
 	// The picture shows spin() that runs: the console entered it. The keys
 	// of the next line wait unseen until the line ends.
 	{kind = .Wait, text = "[console] > spin()"},
+	// The echo comes before the call: Escape stops the call only once it
+	// runs, and an Escape before it is a key of the next line.
+	{kind = .Wait, text = "probe: spin runs, and never returns"},
 	{kind = .Shot, text = "running"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "console: Escape stops the line after "},
@@ -1639,6 +1642,9 @@ scenario := [?]Step {
 	// exact line, and no queue of the path of a key wrote that a record is
 	// lost (docs/ARCHITECTURE.md, "The path of a key").
 	{kind = .Type, text = "spin()"},
+	// Escape must come once the call runs: the keys before it wait in any
+	// case, so the wait for the call comes before them.
+	{kind = .Wait, text = "probe: spin runs, and never returns"},
 	{kind = .Keys, text = KEYS_HELD_LINE},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "console: Escape stops the line after "},
@@ -1759,6 +1765,42 @@ scenario := [?]Step {
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module    hostile_exports"},
 	{kind = .Wait, text = "[console]   commands  4"},
+	// The first program of modus that writes a program
+	// (src/md/features/assembler.md): the module assemble, in a call host,
+	// writes a module file into a memory object of the console; the console
+	// isolates the module of that object, and calls its export. A text that
+	// the assembler refuses names its line and its column on the log.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "isolate(\"assemble\")"},
+	{kind = .Wait, text = "[assemble] host: ready, 1 exports"},
+	{kind = .Wait, text = "[console]   module     assemble"},
+	{kind = .Wait, text = "[console]   call       isolated"},
+	{kind = .Type, text = "f = buffer(4)"},
+	{kind = .Type, text = "assemble(\"add: movx %rdi, %rax\", f)"},
+	{kind = .Wait, text = "assemble: line 1, column 6: no instruction of the subset and no directive has this name"},
+	{kind = .Wait, text = "[console] error: assemble: "},
+	{kind = .Type, text = "n = assemble(\"export add(a: Integer, b: Integer) -> Integer; add: mov %rdi, %rax; add %rsi, %rax; ret\", f)"},
+	{kind = .Wait, text = "assemble: a module file of "},
+	{kind = .Type, text = "isolate_memory(\"adder\", f, n)"},
+	// The call host is ready before the console writes its line about the
+	// module: two processes, in either order.
+	{kind = .Wait, text = "[adder] host: ready, 1 exports", any_order = true},
+	{kind = .Wait, text = "console: adder is a module from memory: "},
+	{kind = .Wait, text = "[console]   module     adder"},
+	{kind = .Wait, text = "[console]   call       isolated"},
+	{kind = .Type, text = "add(2, 3)"},
+	{kind = .Wait, text = "[console] > add(2, 3)"},
+	{kind = .Wait, text = "[console] 5"},
+	// The record of unload names the module: a module from memory whose
+	// name the console lost gives the line of the memory with no name
+	// before it, and the step fails at once.
+	{kind = .Type, text = "unload(\"adder\")"},
+	{kind = .Wait, text = "[console]   module    adder", fails_on = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Type, text = "unload(\"assemble\")"},
+	{kind = .Wait, text = "[console]   module    assemble", fails_on = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Type, text = "release(f)"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "load(\"sample\")"},
 	{kind = .Wait, text = "[console]   module     sample"},

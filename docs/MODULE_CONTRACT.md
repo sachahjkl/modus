@@ -504,6 +504,58 @@ One package writes the bytes of a module file: the contract package `modus:contr
 
 The tool keeps what reads its input: the linked ELF file, the Odin sources and the DWARF of the debug object. It reads the record streams from the sources and the place of each variable from the symbols of the linked file (`record_stream_place_of_elf` in `convert.odin`), and passes both to the writer, so a program of modus that writes a module writes its streams through the same code. The design: `src/md/features/first_compiler.md`, "1. The module file writer".
 
+### The assembler
+
+The module `assemble` of the boot image is the assembler (`glossary/code.md`, "Assembler"): a program of modus that writes a module file. Its export:
+
+```
+assemble(source: Bytes, file: Handle) -> Integer
+```
+
+- `source` is the text, at most 64 KiB. `file` is a memory object that the caller lends with Read and Write. The result is the bytes of the file, which starts at the first byte of `file`.
+- The module has no entry: the console calls it in a call host, with no grant.
+
+```
+> isolate("assemble")
+> f = buffer(4)
+> n = assemble("export add(a: Integer, b: Integer) -> Integer; add: mov %rdi, %rax; add %rsi, %rax; ret", f)
+> isolate_memory("adder", f, n)
+> add(2, 3)
+5
+```
+
+**The text.** A statement ends at a new line or at `;`, so a whole program fits in one line of the console. `#` starts a comment to the end of the line. A label is a name and `:`. The instructions are in the syntax of AT&T: the source first, `%rax`, `$42`, `8(%rbp)`, `table(%rip)`, and the suffixes `q` and `l`.
+
+| Directive | What it does |
+|---|---|
+| `section code`, `section data` | The section of the next statements; `code` at the start. The code is at the offset 0 of the module, with Read and Execute; the data on the next page, with Read and Write |
+| `export name(a: Integer, b: Text) -> Integer` | The export `name` at the label `name`, described with the types: Integer and Text parameters, an Integer result or none, 12 parameters at most |
+| `byte 1, 0x41, -1` | Bytes from -128 to 255 |
+| `zero 4096` | Zero bytes, which the file does not store at the end of a section |
+
+| Instruction | Forms |
+|---|---|
+| `mov` | register, memory or immediate to a register; register or immediate to memory. A 64-bit immediate to a register only |
+| `add`, `sub`, `cmp` | the forms of `mov`, with an immediate of 32 bits at most |
+| `lea` | memory to a 64-bit register |
+| `push`, `pop` | a 64-bit register; `push` also an immediate |
+| `jmp`, `call`, `jo`, `jno`, `jb`, `jae`, `je`, `jne`, `jbe`, `ja`, `js`, `jns`, `jp`, `jnp`, `jl`, `jge`, `jle`, `jg` | a label of the code |
+| `ret` | none |
+
+The registers are those of 64 and 32 bits. A memory operand is a displacement of 32 bits and a base: a 64-bit register, or `%rip` with a label. Each form has one encoding, the encoding of the Intel manual, and a jump always takes 32 bits.
+
+**The refusals.** The assembler takes a text whole or not at all. Each refusal of `assembler.Refusal` has the line and the column of its first byte: an empty text, a text past 1 MiB or a line past 1024 bytes, a control byte, an unknown mnemonic, register, section or type, a form out of the subset, operands of two sizes or of no size, a value past its field, a label defined twice or never, a jump to the data, a label more than 2 GiB away, a section past 64 KiB of bytes or 1 TiB, more than 512 labels, 2048 references or 32 exports, a text with no instruction. The export gives the error record `Bad_Byte` for the argument `source`: the value is the offset of the byte, found is the byte. The log of the call host has the sentence:
+
+```
+assemble: line 1, column 6: no instruction of the subset and no directive has this name (refusal 5, value 0)
+```
+
+A memory object smaller than the file gives `Too_Small`, with the bytes of the file as the limit.
+
+**A module from memory.** `isolate_memory(name, memory, size)` (`glossary/code.md`, "Module from memory") copies the bytes into a memory object of the console, checks the copy with `module.validate`, writes its BLAKE3 hash on the log, and starts a call host with the copy as its one file. A module from memory takes no import.
+
+The design: `src/md/features/assembler.md`.
+
 ## 2. Loading
 
 The loader turns a module file into code that runs in a process. It is a library in user space (`src/library/support/system`, `load.odin`), not a part of the kernel: it asks the kernel only to create a process and to map memory. It finds each import by its hash among the files that it was granted, and it never searches a path.

@@ -38,12 +38,12 @@ The writer refuses a part with a `Refusal_Record`: a member of the enum `Refusal
 
 ### 2. An assembler module
 
-An assembler module reads a subset of x86-64 assembly and writes a module file through the module file writer. It is the first program of modus that writes a program.
+An assembler module reads a subset of x86-64 assembly and writes a module file through the module file writer. It is the first program of modus that writes a program. Its design, its syntax, its subset and its refusals are in [assembler.md](assembler.md).
 
 - An export is a label with its type: a directive gives the name, the parameters and their types, and the result, and the assembler writes the description of the export from it.
-- An import is an input of its recipe by name: a call of a symbol that the source does not define goes through a slot of that import, which the loader writes.
-- Its subset is what the C compiler of step 3 emits, and nothing more at first.
-- It is a builder: it exports `build`, takes the source tree as its input, and writes the module file into its store "out".
+- An import is an input of its recipe by name: a call of a symbol that the source does not define goes through a slot of that import, which the loader writes. The first subset refuses such a call.
+- Its subset is what the C compiler of step 3 emits, and nothing more at first. Its syntax is the syntax of AT&T that `chibicc` emits, with directives of modus.
+- It becomes a builder when the builders exist: it exports `build`, takes the source tree as its input, and writes the module file into its store "out". Until then its export `assemble` takes the text as Bytes and writes the file into a memory object that the caller lends; the console isolates the module of that object (`isolate_memory`).
 
 ### 3. `chibicc`, ported
 
@@ -98,8 +98,7 @@ For Odin, Rust and every other compiler that is not native, the guest builder of
 ## Open questions
 
 - **The debug object of an assembled module**: the assembler writes the lines of its labels, with a writer of the debug object format that moves out of the tool too, or none at first.
-- **The syntax of the assembler**: the AT&T syntax that `chibicc` emits, or a syntax of modus with a change of the emitter of `chibicc`.
 
 ## State
 
-Built: the module file writer, with its host tests, and the tool writes each module through it. Left: the count of the budget in the writer, the assembler module, the port of `chibicc`, the thin libc and the guest builder.
+Built: the module file writer, with its host tests, and the tool writes each module through it; the assembler module with its export `assemble`, its host tests and its machine step ([assembler.md](assembler.md), "State"). Left: the count of the budget in the writer, the export `build` of the assembler, the call of an import through a slot, the port of `chibicc`, the thin libc and the guest builder.
