@@ -2849,11 +2849,14 @@ scenario := [?]Step {
 	// output `log`"): log_flood has a log budget of 0, so the kernel
 	// refuses each of its calls, and its wired log holds each record. The
 	// log of the kernel must hold no line of log_flood: its first line
-	// before the line of output_wiring fails the step. A WRONG line of
+	// before the line of output_wiring fails the step. A line of the
+	// process starts with its name in brackets; the note of the kernel at
+	// its stop, "kernel: log_flood: N lines were refused", is expected and
+	// does not fail it. A WRONG line of
 	// output_wiring ends this wait at the hang bound. No step waits for a
 	// line of log_flood.
 	{kind = .Wait, text = "root: wired the record output log of log_flood to its asker output_wiring, wiring ", fails_on = "output_wiring: WRONG"},
-	{kind = .Wait, text = "output_wiring: the log of log_flood kept its 605 records in order while the kernel refused its 602 calls; then this asker closed its end, and log_flood, which its log held, stopped with Done: as it must", fails_on = "log_flood: "},
+	{kind = .Wait, text = "output_wiring: the log of log_flood kept its 605 records in order while the kernel refused its 602 calls; then this asker closed its end, and log_flood, which its log held, stopped with Done: as it must", fails_on = "[log_flood]"},
 	{kind = .Wait, text = "root: log_flood stopped: itself, done", any_order = true},
 	{kind = .Wait, text = "output_writer: large: 8 rings, each ended with the end word Revoked: as it must", fails_on = "output_writer: WRONG"},
 	{kind = .Wait, text = "output_wiring: 8 wirings, one past them refused with Wire and with a Start, each with its status and its error record and the budget unchanged, then the revocation of the grant wirings: as it must", fails_on = "output_wiring: WRONG"},
