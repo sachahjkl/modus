@@ -80,14 +80,14 @@ Source_Refused :: struct {
 @(log_fact = "assemble: the module file writer refused the parts: refusal {writer_refusal}, index {index}")
 Parts_Refused :: struct {
 	index:          u64,
-	writer_refusal: [32]u8,
+	writer_refusal: [WRITER_REFUSAL_FIELD_BYTES]u8,
 }
 
 // The writer of module files refused the file.
 @(log_fact = "assemble: the module file writer refused the file: refusal {writer_refusal}, index {index}")
 File_Refused :: struct {
 	index:          u64,
-	writer_refusal: [32]u8,
+	writer_refusal: [WRITER_REFUSAL_FIELD_BYTES]u8,
 }
 
 // The tool reads the length of a Text field as a literal: the constants
