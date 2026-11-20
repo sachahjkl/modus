@@ -159,6 +159,10 @@ Refused forms:
 - **A frame with more than 6 act names** sends the first 6; the window layer writes one line for the life of the window.
 - **Left and Right on a setting row** choose a value, so they do not move the caret of the typed part there; Home and End still do.
 
+## Any count of entries
+
+The list of the panel is already virtual: it draws only the rows on the screen. The bound is in the data: a provider writes a table of at most 256 entries (`palette_table.ENTRY_CAPACITY`), and the panel holds at most 512. The chosen form: a provider gives its entries in a memory object sized by their count, which the root service maps read-only in the compositor, and the panel keeps the ranking and the matches in memory sized by that count when the table changes, never at each frame. The rows of a machine with many modules, settings and windows are then all listed, and a new kind of entry needs no new bound. Refused: a larger fixed table, which moves the bound and costs its memory on each machine; pages of entries asked on a scroll, which make each scroll a request to the provider. Not built.
+
 ## The film
 
 A film of the palette needed a change of the tool: the old step that took pictures stopped the scenario, so a film had no key during its pictures. A worker thread now takes the pictures while the scenario types and waits for its conditions. The capture stays the screendump of QEMU: another capture path needs a display server of the host, and a window can open. See [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The film".
@@ -173,4 +177,4 @@ Left:
 - A Table result is not drawn in the panel: it opens in the console.
 - A second provider (a service that runs its own entries) waits for a real need.
 - The manual, the site and the signature that the console prints show the type of an Integer parameter with no unit: only the palette and the sentence of a failed check name it.
-- The values of the second field of `setting(name, value)` depend on the first field: the request for candidates carries no value of another field, so the field has no candidates.
+- The values of the second field of `setting(name, value)` depend on the first field: the request for candidates carries no value of another field, so the field has no candidates. The design that removes it: [enum_parameters.md](enum_parameters.md).
