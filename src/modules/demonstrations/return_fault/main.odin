@@ -47,6 +47,7 @@ package return_fault
 import "modus:contract/enum_word"
 import "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import sets "modus:support/instruction_sets"
@@ -151,10 +152,10 @@ child_nested_task :: proc "contextless" () -> ! {
 	after := syscall_with_nested_task(&before)
 	switch {
 	case before & NESTED_TASK == 0:
-		system.log(.Info, "return_fault: the child of the nested task: popfq did not set the flag, so the case did not run")
+		system.log_fact(.Info, Nested_Task_Not_Set{})
 		system.stop(.Failed)
 	case after & NESTED_TASK != 0:
-		system.log(.Info, "return_fault: the child of the nested task: the flag came back after the entry")
+		system.log_fact(.Info, Nested_Task_Came_Back{})
 		system.stop(.Failed)
 	}
 	system.stop(.Done)
@@ -196,14 +197,15 @@ case_run :: proc "contextless" (item: ^Case) {
 		item.right = cause == .Cannot_Return && report.address == 0x8000_0000_0000_0000
 	case .Parent:
 	}
-	verdict := item.right ? string(": as it must") : string(": WRONG")
+	verdict := item.right ? "as it must" : "WRONG"
+	address := value_kinds.Hexadecimal_Sixteen_Digits(item.address)
 	switch cause {
 	case .Itself:
-		system.log(.Info, "return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", ", op.STOP_OUTCOME_TEXTS[outcome], ", the address ", system.Hex(item.address), verdict)
+		system.log_fact(.Info, Child_Stopped_Itself{address = address, cause = cause, outcome = outcome, case_name = case_field(item.name), verdict = value_kinds.text_field(verdict, 16)})
 	case .Fault:
-		system.log(.Info, "return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", vector ", u64(report.vector), ", the address ", system.Hex(item.address), verdict)
+		system.log_fact(.Info, Child_Stopped_On_Fault{address = address, vector = u64(report.vector), cause = cause, case_name = case_field(item.name), verdict = value_kinds.text_field(verdict, 20)})
 	case .None, .Holder, .Last_Thread_Ended, .Handles_Closed, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
-		system.log(.Info, "return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", the address ", system.Hex(item.address), verdict)
+		system.log_fact(.Info, Child_Stopped{address = address, cause = cause, case_name = case_field(item.name), verdict = value_kinds.text_field(verdict, 20)})
 	}
 }
 
@@ -263,14 +265,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		child_nested_task()
 	case .Trap_Flag:
 		syscall_with_the_trap_flag()
-		system.log(.Info, "return_fault: the child of the trap flag: no trap came")
+		system.log_fact(.Info, No_Trap{})
 		system.stop(.Failed)
 	case .Stack_At_A_Syscall:
 		syscall_with_a_stack_that_is_not_canonical()
 	case .Parent:
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "return_fault: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "return_fault")
@@ -279,7 +281,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		system.log(.Info, "return_fault: no boot image")
+		system.log_fact(.Info, No_Boot_Image{})
 		system.stop(.Failed)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]

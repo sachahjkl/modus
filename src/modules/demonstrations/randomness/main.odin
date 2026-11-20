@@ -220,7 +220,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "randomness: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	report_ok: bool
@@ -238,7 +238,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if report.device_present {
 		system.log_fact(.Info, Entropy_Device_Shown{device_bytes = value_kinds.Size_In_Bytes(report.device_bytes), refused_reads = u64(report.device_reads_refused)})
 	} else {
-		system.log(.Info, "randomness: the entropy device: absent")
+		system.log_fact(.Info, Entropy_Device_Absent{})
 	}
 	draw(&window)
 
@@ -263,7 +263,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	measure_microseconds = took / 1000
 	megabytes_per_second_tenths = u64(MEASURE_SIZE) * 10_000 / took
 	measured = true
-	system.log(.Info, "randomness: the generator: 4 MiB in ", measure_microseconds, " us, ", megabytes_per_second_tenths / 10, ".", megabytes_per_second_tenths % 10, " MB/s")
+	// The log writes the rate with two decimals: a field of hundredths.
+	system.log_fact(.Info, Generator_Measured{elapsed = value_kinds.Time_In_Microseconds(measure_microseconds), rate = value_kinds.Hundredths(u64(MEASURE_SIZE) * 100_000 / took)})
 	deadline := system.time()
 	// The line of the first mix comes after the picture that shows it, so a
 	// test that waits for the line finds the row in the window.

@@ -76,7 +76,13 @@ a_field_kind_on_the_wrong_field_is_refused :: proc(t: ^testing.T) {
 	MODULE_NAME :: u8(value_kinds.Field_Kind.Module_Name)
 	HASH :: u8(value_kinds.Field_Kind.Hash)
 	FACT_VALUES :: u8(value_kinds.Field_Kind.Fact_Values)
+	SIXTEEN_DIGITS :: u8(value_kinds.Field_Kind.Hexadecimal_Sixteen_Digits)
+	HASH_HEAD :: u8(value_kinds.Field_Kind.Hash_Head)
+	HUNDREDTHS :: u8(value_kinds.Field_Kind.Hundredths)
+	NANOSECONDS :: u8(value_kinds.Field_Kind.Nanoseconds_As_Microseconds)
 	LEVEL :: u8(value_kinds.Contract_Enum.Log_Level)
+	ERROR_KIND :: u8(value_kinds.Contract_Enum.Error_Kind)
+	ERROR_UNIT :: u8(value_kinds.Contract_Enum.Error_Unit)
 	INTEGER :: u8(Type.Integer)
 	TEXT :: u8(Type.Text)
 	HANDLE :: u8(Type.Handle)
@@ -117,6 +123,40 @@ a_field_kind_on_the_wrong_field_is_refused :: proc(t: ^testing.T) {
 		{type = BYTES, detail = value_kinds.FACT_VALUES_FIELD_BYTES, kind = FACT_VALUES, contract_enum = LEVEL},
 		// Bytes with no kind: a reader has no form for them.
 		{type = BYTES, detail = 8},
+		// Hexadecimal_Sixteen_Digits: an unsigned Integer of 8 bytes only,
+		// with no unit and no enum.
+		{type = INTEGER, detail = 8, kind = SIXTEEN_DIGITS},
+		{type = INTEGER, detail = 4, unsigned = true, kind = SIXTEEN_DIGITS},
+		{type = INTEGER, detail = 1, unsigned = true, kind = SIXTEEN_DIGITS},
+		{type = INTEGER, detail = 8, unsigned = true, kind = SIXTEEN_DIGITS, integer_unit = value_kinds.size_in(.Bytes)},
+		{type = INTEGER, detail = 8, unsigned = true, kind = SIXTEEN_DIGITS, contract_enum = LEVEL},
+		{type = TEXT, detail = 8, kind = SIXTEEN_DIGITS},
+		{type = BYTES, detail = 8, kind = SIXTEEN_DIGITS},
+		// Hash_Head: Bytes of a whole hash only, with no enum.
+		{type = BYTES, detail = value_kinds.HASH_HEAD_BYTES, kind = HASH_HEAD},
+		{type = BYTES, detail = value_kinds.HASH_FIELD_BYTES - 1, kind = HASH_HEAD},
+		{type = BYTES, detail = value_kinds.HASH_FIELD_BYTES + 1, kind = HASH_HEAD},
+		{type = BYTES, detail = 0, kind = HASH_HEAD},
+		{type = BYTES, detail = value_kinds.HASH_FIELD_BYTES, kind = HASH_HEAD, contract_enum = LEVEL},
+		{type = TEXT, detail = value_kinds.HASH_FIELD_BYTES, kind = HASH_HEAD},
+		{type = INTEGER, detail = 8, kind = HASH_HEAD},
+		// Hundredths: an Integer only, with no unit and no enum.
+		{type = INTEGER, detail = 8, kind = HUNDREDTHS, integer_unit = value_kinds.time_in(.Seconds)},
+		{type = INTEGER, detail = 8, kind = HUNDREDTHS, contract_enum = LEVEL},
+		{type = TEXT, detail = 8, kind = HUNDREDTHS},
+		{type = BYTES, detail = 8, kind = HUNDREDTHS},
+		{type = HANDLE, kind = HUNDREDTHS},
+		// Nanoseconds_As_Microseconds: an unsigned Integer only, with no
+		// unit, since the kind states its unit.
+		{type = INTEGER, detail = 8, kind = NANOSECONDS},
+		{type = INTEGER, detail = 8, unsigned = true, kind = NANOSECONDS, integer_unit = value_kinds.time_in(.Nanoseconds)},
+		{type = INTEGER, detail = 8, unsigned = true, kind = NANOSECONDS, contract_enum = LEVEL},
+		{type = TEXT, detail = 8, kind = NANOSECONDS},
+		{type = BYTES, detail = 8, kind = NANOSECONDS},
+		// The enums of an error record: an unsigned Integer only.
+		{type = INTEGER, detail = 8, kind = STATUS, contract_enum = ERROR_KIND},
+		{type = TEXT, detail = 8, unsigned = true, kind = STATUS, contract_enum = ERROR_UNIT},
+		{type = INTEGER, detail = 8, unsigned = true, kind = HEXADECIMAL, contract_enum = ERROR_KIND},
 	}
 	for item in refused {
 		testing.expectf(t, !field_kind_valid(item), "the field %v is taken", item)
@@ -192,6 +232,17 @@ each_field_kind_on_its_type_is_taken :: proc(t: ^testing.T) {
 		{type = u8(Type.Bytes), detail = value_kinds.HASH_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Hash)},
 		{type = u8(Type.Bytes), detail = value_kinds.FACT_VALUES_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Fact_Values)},
 		{type = u8(Type.Integer), detail = 1, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Log_Record_Form)},
+		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Hexadecimal_Sixteen_Digits)},
+		{type = u8(Type.Integer), detail = 0, unsigned = true, kind = u8(value_kinds.Field_Kind.Hexadecimal_Sixteen_Digits)},
+		{type = u8(Type.Bytes), detail = value_kinds.HASH_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Hash_Head)},
+		{type = u8(Type.Bytes), detail = value_kinds.HASH_SIXTEEN_BYTES, kind = u8(value_kinds.Field_Kind.Hash)},
+		{type = u8(Type.Integer), detail = 8, kind = u8(value_kinds.Field_Kind.Hundredths)},
+		{type = u8(Type.Integer), detail = 2, unsigned = true, kind = u8(value_kinds.Field_Kind.Hundredths)},
+		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Nanoseconds_As_Microseconds)},
+		{type = u8(Type.Integer), detail = 4, unsigned = true, kind = u8(value_kinds.Field_Kind.Nanoseconds_As_Microseconds)},
+		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Error_Kind)},
+		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Error_Unit)},
+		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Status)},
 	}
 	for item in accepted {
 		testing.expectf(t, field_kind_valid(item), "the field %v is refused", item)

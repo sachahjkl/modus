@@ -2,8 +2,15 @@ package workers
 
 // The log facts of workers (src/md/features/log_facts.md): each fact
 // template is the line that the process wrote before it was a fact, so a
-// wait of a machine test on that sentence reads it as before. The lines
-// with no value stay text.
+// wait of a machine test on that sentence reads it as before.
+
+// The lock lost no addition: the number is the count of additions.
+@(log_fact = "workers: the lock lost no addition")
+No_Addition_Lost :: struct {}
+
+// The kernel refused a thread of the process.
+@(log_fact = "workers: cannot start a thread")
+Thread_Not_Started :: struct {}
 
 // Four threads added under the lock: the additions, the number, and the
 // waits for the lock.

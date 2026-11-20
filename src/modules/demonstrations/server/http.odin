@@ -336,7 +336,7 @@ request_finish :: proc "contextless" (index: int) {
 		requests_not_logged += 1
 	}
 	if session.answer_status == 200 && request.method == .Post {
-		system.log(.Info, "server: received /sink: ", u64(session.body_bytes), " bytes, fnv1a64 ", system.Hex(session.body_hash), ", ", kilobytes_per_second(u64(session.body_bytes), now - session.request_started_at) / 1000, " MB/s")
+		system.log_fact(.Info, Sink_Received{body_size = value_kinds.Size_In_Bytes(session.body_bytes), body_hash = value_kinds.Hexadecimal_Sixteen_Digits(session.body_hash), rate = kilobytes_per_second(u64(session.body_bytes), now - session.request_started_at) / 1000})
 	}
 	close_after := session.close_after
 	// The next request starts clean; the bytes after this head stay.

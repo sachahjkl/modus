@@ -1,6 +1,7 @@
 package machine
 
 import "core:fmt"
+import "core:os"
 import "modustool:foundation"
 import "modustool:build"
 import "modustool:checks"
@@ -99,9 +100,14 @@ measure_process_run :: proc(part: ^Test_Part_Run, process: Measure_Process) -> b
 	if !machine_test(part, steps[:], {volume = build.BOOT_VOLUME_MEASURE, output = output, exit_status = build.MACHINE_STOP_OK}) {
 		return false
 	}
-	log, read_problem := checks.measure_log_read(output)
-	if read_problem != "" {
-		fmt.eprintfln("modustool: %s: %s", output, read_problem)
+	data, read_error := os.read_entire_file(output, context.temp_allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: cannot read %s: %v", output, read_error)
+		return false
+	}
+	log, render_problem := checks.measure_log_rendered(string(data))
+	if render_problem != "" {
+		fmt.eprintfln("modustool: the facts of %s cannot be rendered: %s", output, render_problem)
 		return false
 	}
 	fmt.printfln("modustool: the measure run of %s (%s):", process.name, output)

@@ -446,9 +446,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	build_through_module(&texts)
 	present(&window)
 	if shown.equal && drawn.count <= RECORD_CAPACITY && shown.records > 0 {
-		system.log(.Info, "interface_through_module: ok, the two draw tables are equal")
+		system.log_fact(.Info, Draw_Tables_Equal{})
 	} else {
-		system.log(.Info, "interface_through_module: wrong: the two draw tables differ")
+		system.log_fact(.Info, Draw_Tables_Differ{})
 	}
 	// The proof of the same pixels in the machine: the frame of the package,
 	// drawn by the package and by the drawing module.

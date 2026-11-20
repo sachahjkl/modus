@@ -3,6 +3,7 @@ package machine
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 import info "modus:contract/boot_info"
 import debug_object "modus:contract/debug_object"
@@ -256,6 +257,23 @@ the_lines_of_a_log_are_read_whole :: proc(t: ^testing.T) {
 	testing.expect_value(t, operation_log_lines_from(path, scanned), "third\n")
 	testing.expect_value(t, operation_log_new_lines(path, &scanned), "third\n")
 	testing.expect_value(t, operation_log_new_lines(path, &scanned), "")
+}
+
+// The place in the log after a rendered end line counts the raw bytes of
+// the same lines: a rendered line of a fact is longer or shorter than its
+// raw line. No line, and a rendered text of more lines than the raw text
+// holds, are the edges; the lines of a fact and of a text last.
+@(test)
+the_raw_bytes_of_rendered_lines_are_counted :: proc(t: ^testing.T) {
+	raw := "[probe] #1a2b3c4d:fa0adf 0c\n[probe] probe: a text\n[probe] #1a2b3c4d:fa0adf 0d\n"
+	rendered := "[probe] probe: the block 12 has a wrong check\n[probe] probe: a text\n[probe] probe: the block 13 has a wrong check\n"
+	testing.expect_value(t, operation_raw_bytes_of_lines(raw, ""), 0)
+	testing.expect_value(t, operation_raw_bytes_of_lines("", rendered), 0)
+	testing.expect_value(t, operation_raw_bytes_of_lines(raw, rendered[:len("[probe] probe: a te")]), 0)
+	first_end := len("[probe] #1a2b3c4d:fa0adf 0c\n")
+	testing.expect_value(t, operation_raw_bytes_of_lines(raw, "[probe] probe: the block 12 has a wrong check\n"), first_end)
+	testing.expect_value(t, operation_raw_bytes_of_lines(raw, rendered), len(raw))
+	testing.expect_value(t, operation_raw_bytes_of_lines(raw, strings.concatenate({rendered, "more\n"}, context.temp_allocator)), len(raw))
 }
 
 // A Process_Create whose name in its area is a protected name gets another

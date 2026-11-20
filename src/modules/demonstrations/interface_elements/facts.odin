@@ -7,9 +7,6 @@ import "modus:contract/value_kinds"
 // a wait of a machine test on that sentence reads it as before. The Text
 // fields are the last fields: the serial line of a fact stops at its last
 // byte that is not zero.
-//
-// The measures of the damage by difference stay text: each writes a time in
-// microseconds with one decimal, which no field kind writes.
 
 // The bytes of the Text field of a name of the list: the longest,
 // "compositor", has 10 bytes.
@@ -20,6 +17,22 @@ TYPED_TEXT_FIELD_BYTES :: 40
 // The bytes of the Text field of the state of the damage overlay: "shown"
 // or "hidden".
 OVERLAY_FIELD_BYTES :: 8
+
+// The bytes of the Text field of the name of a measure of the damage: the
+// longest, "one number changed", has 18 bytes.
+MEASURE_NAME_FIELD_BYTES :: 24
+
+// A measure of the damage by difference: the records of the frame, its
+// damage rectangles and their part of the window, and the time of one
+// comparison.
+@(log_fact = "interface_elements: {measure}: {records} records, {rectangles} damage rectangles, {window_percent} % of the window, the difference in {difference}")
+Damage_Measured :: struct {
+	records:        u64,
+	rectangles:     u64,
+	window_percent: u64,
+	difference:     value_kinds.Nanoseconds_As_Microseconds,
+	measure:        [24]u8,
+}
 
 // The button was pressed: the count of its presses since the start.
 @(log_fact = "interface_elements: the button was pressed {presses} times")

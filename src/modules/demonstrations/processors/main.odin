@@ -152,7 +152,7 @@ run_together :: proc "contextless" () {
 		status: system.Status
 		thread, status = system.thread_start(spin, nil)
 		if status != .Ok {
-			system.log(.Info, "processors: cannot start a thread")
+			system.log_fact(.Info, Thread_Not_Started{})
 			system.stop(.Failed)
 		}
 	}
@@ -255,7 +255,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
 	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
-		system.log(.Info, "processors: no grant to inspect the machine")
+		system.log_fact(.Info, No_Inspect_Grant{})
 		system.stop(.Refused)
 	}
 	processor_count = report.processors
@@ -272,7 +272,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for &worker, index in workers {
 		worker.number = index
 		if _, status := system.thread_start(compute, &worker); status != .Ok {
-			system.log(.Info, "processors: cannot start a thread")
+			system.log_fact(.Info, Thread_Not_Started{})
 			system.stop(.Failed)
 		}
 	}

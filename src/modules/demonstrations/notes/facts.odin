@@ -1,5 +1,6 @@
 package notes
 
+import "modus:contract/errors"
 import "modus:contract/value_kinds"
 
 // The log facts of notes (src/md/features/log_facts.md): each fact template
@@ -8,11 +9,8 @@ import "modus:contract/value_kinds"
 // and the measure of the commits read it as before. A line whose sentence
 // differs by its case is one fact type for each case: the template has no
 // condition. The Text fields are the last fields: the serial line of a fact
-// stops at its last byte that is not zero.
-//
-// Lines stay text: the lines with no value, and the refusal of the storage
-// service, whose sentence of an error record of up to 256 bytes passes the
-// values of one fact.
+// stops at its last byte that is not zero. A refusal of the storage service
+// writes the fields of its error record.
 
 // The bytes of the Text field of a note: at most NOTE_CAPACITY bytes, and a
 // zero byte.
@@ -20,6 +18,35 @@ NOTE_FIELD_BYTES :: 64
 // The bytes of the Text field of the date of a version: "2026-11-20
 // 10:20:30" has 19 bytes.
 DATE_FIELD_BYTES :: 24
+
+// The storage service refused a write of the note: the fields of its error
+// record.
+@(log_fact = "notes: the storage service refused the object note: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Note_Write_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The storage service refused a write of the count.
+@(log_fact = "notes: the storage service refused the object count: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Count_Write_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The process has no store: it keeps nothing.
+@(log_fact = "notes: no store")
+No_Store :: struct {}
+
+// The store is new: no note, and the count 0.
+@(log_fact = "notes: a new store: no note, the count 0")
+New_Store :: struct {}
+
+// The storage service has the count and cannot give it: it is damaged.
+@(log_fact = "notes: WRONG: the storage service cannot give the count: the object is damaged")
+Count_Damaged :: struct {}
+
+// The three blocks of the count hold different counts.
+@(log_fact = "notes: WRONG: the 3 blocks of the count do not agree")
+Count_Blocks_Differ :: struct {}
+
+// The window presented its first picture.
+@(log_fact = "notes: ok, the first picture is presented")
+First_Picture_Presented :: struct {}
 
 // A version of the note that the window shows, with the date of its
 // commit.

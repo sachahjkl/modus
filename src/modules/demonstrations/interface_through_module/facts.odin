@@ -7,9 +7,15 @@ import "modus:contract/value_kinds"
 // process wrote before it was a fact, so a wait of a machine test on that
 // sentence reads it as before. The Text fields are the last fields: the
 // serial line of a fact stops at its last byte that is not zero.
-//
-// The two lines of the comparison of the draw tables have no value: they
-// stay text.
+
+// The draw table of the package and the draw table of the module are the
+// same bytes.
+@(log_fact = "interface_through_module: ok, the two draw tables are equal")
+Draw_Tables_Equal :: struct {}
+
+// The two draw tables differ.
+@(log_fact = "interface_through_module: wrong: the two draw tables differ")
+Draw_Tables_Differ :: struct {}
 
 // The bytes of the Text field that says whether the count of a frame that
 // did not fit is the count of the full frame: the longest, "not the count

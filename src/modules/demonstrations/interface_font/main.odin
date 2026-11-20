@@ -153,7 +153,6 @@ greek_lines_make :: proc "contextless" () {
 // process draws each glyph as its frame drew it, from its own private
 // glyph cache.
 fallback_lines_tell :: proc "contextless" () {
-	FAULT :: "interface_font: the fallback chain of the interface is wrong: "
 	if fallback_told {
 		return
 	}
@@ -162,7 +161,7 @@ fallback_lines_tell :: proc "contextless" () {
 	// The glyphs below come from the private glyph cache of this process,
 	// whose glyph memory the entry reserved.
 	if !display.text_memory_reserve() {
-		system.log(.Warning, FAULT, "this process has no glyph memory: each glyph is drawn band by band")
+		system.log_fact(.Warning, Fallback_Without_Glyph_Memory{})
 		return
 	}
 	drawn, missing: u64
@@ -340,14 +339,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	font_ok: bool
 	interface_faces, font_ok = display.interface_font_open(ctx)
 	if !font_ok {
-		system.log(.Info, "interface_font: the boot image gives no font outlines with the interface font")
+		system.log_fact(.Info, Font_Outlines_Missing{})
 		system.stop(.Failed)
 	}
 	// The glyphs of this copy come from its private glyph cache: its glyph
 	// memory before the measure, so that the measure draws no glyph band
 	// by band.
 	if !display.text_memory_reserve() {
-		system.log(.Warning, "interface_font: this process has no glyph memory: each glyph is drawn band by band")
+		system.log_fact(.Warning, Glyph_Memory_Missing{})
 	}
 	// The places from the font files, at the text sizes of the scales 1
 	// and 3; display.interface_font_open gave the faces only with both

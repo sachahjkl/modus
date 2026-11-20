@@ -8,19 +8,453 @@ import "modus:contract/value_kinds"
 // wait of a machine test on that sentence reads it as before. The Text
 // fields are the last fields: the serial line of a fact stops at its last
 // byte that is not zero. A status of the kernel is a field of the contract
-// enum, which a reader writes by its name, as the line did.
+// enum, which a reader writes by its name, as the line did; beside 8-byte
+// fields it is the 8-byte word op.Status_Word, so the record has no padding.
 //
-// Lines stay text:
-// - the line of each strategy, the measured line of the measure record,
-//   and the line of the written weights: they write shares in tenths of a
-//   percent with one decimal, which no field kind writes;
-// - the lines whose template passes the 256 bytes of a template: the
-//   stress, the own schedule of a thread, the refused writes of a
-//   schedule, the weight limit, the owing rounds, most cases of the
-//   placement and of the share policy;
-// - the line of a process that did not start, with the free text of its
-//   load error; the line of the shares of the policy, which a loop writes;
-// - the lines with no value.
+// A share is in hundredths of a percent, written with two decimals: the
+// lines wrote tenths, and no field kind writes one decimal of a number that
+// is not a time. The line of the written weights, which a loop wrote over
+// the strategies, is one fact for each strategy. A value that a line wrote
+// twice is two fields, as a template names each field once.
+//
+// The line of a process of the share policy that did not start stays text:
+// its load error is a sentence of module.Load_Error, whose names pass the
+// 144 bytes of one fact, and no contract form gives a load error as fields.
+
+// The line of one strategy is two facts, as one template holds at most 512
+// bytes: the two threads that wake each other, then the shares and the
+// costs in the kernel.
+
+// One strategy in a measure run: the wakes of two threads in one second
+// and the late wakes. The measure record reads the wakes after "a spinner
+// on each processor: ".
+@(log_fact = "scheduler: {strategy}: two threads that wake each other, a spinner on each processor: {wakes} wakes in one second ({local_turns} turns ended on the processor of the waker, {interrupt_turns} by an interrupt, {pair_moves} moves); a thread that sleeps 2 ms among 8 spinners: late by {late_middle} in the middle, {late_worst} at worst")
+Strategy_Wakes_Measured :: struct {
+	wakes:           u64,
+	local_turns:     u64,
+	interrupt_turns: u64,
+	pair_moves:      u64,
+	late_middle:     value_kinds.Time_In_Microseconds,
+	late_worst:      value_kinds.Time_In_Microseconds,
+	strategy:        [16]u8,
+}
+
+// One strategy in the check of a test: the turns of the check, with no
+// rate.
+@(log_fact = "scheduler: {strategy}: two threads that wake each other, a spinner on each processor: {turns} turns of the first thread and more ({local_turns} turns ended on the processor of the waker, {interrupt_turns} by an interrupt, {pair_moves} moves)")
+Strategy_Wakes_Checked :: struct {
+	turns:           u64,
+	local_turns:     u64,
+	interrupt_turns: u64,
+	pair_moves:      u64,
+	strategy:        [16]u8,
+}
+
+// One strategy in a measure run: the shares, the work, and the costs in
+// the kernel.
+@(log_fact = "scheduler: {strategy}: 8 spinners of one weight: shares {least_share} % to {most_share} %, work {work} million in one second; 12 spinners, weights 1 2 4: a spinner of each weight {weight_one_share} %, {weight_two_share} %, {weight_four_share} %; {wake_turns} turns ended by a wake, {moves} moves, one pick {pick}, one preemption by an interrupt {interrupt_preemption} in the kernel")
+Strategy_Shares_Measured :: struct {
+	least_share:          value_kinds.Hundredths,
+	most_share:           value_kinds.Hundredths,
+	work:                 u64,
+	weight_one_share:     value_kinds.Hundredths,
+	weight_two_share:     value_kinds.Hundredths,
+	weight_four_share:    value_kinds.Hundredths,
+	wake_turns:           u64,
+	moves:                u64,
+	pick:                 value_kinds.Time_In_Nanoseconds,
+	interrupt_preemption: value_kinds.Time_In_Nanoseconds,
+	strategy:             [16]u8,
+}
+
+// One strategy in the check of a test: the shares and the costs in the
+// kernel, with no work in one second.
+@(log_fact = "scheduler: {strategy}: 8 spinners of one weight: shares {least_share} % to {most_share} %; 12 spinners, weights 1 2 4: a spinner of each weight {weight_one_share} %, {weight_two_share} %, {weight_four_share} %; {wake_turns} turns ended by a wake, {moves} moves, one pick {pick}, one preemption by an interrupt {interrupt_preemption} in the kernel")
+Strategy_Shares_Checked :: struct {
+	least_share:          value_kinds.Hundredths,
+	most_share:           value_kinds.Hundredths,
+	weight_one_share:     value_kinds.Hundredths,
+	weight_two_share:     value_kinds.Hundredths,
+	weight_four_share:    value_kinds.Hundredths,
+	wake_turns:           u64,
+	moves:                u64,
+	pick:                 value_kinds.Time_In_Nanoseconds,
+	interrupt_preemption: value_kinds.Time_In_Nanoseconds,
+	strategy:             [16]u8,
+}
+
+// The shares of 12 spinners whose weights the machine handle wrote while
+// they ran, under one strategy.
+@(log_fact = "scheduler: 12 spinners that started with the full weight, the weights 1 2 4 written through the machine handle while they ran: a spinner of each weight {weight_one_share} %, {weight_two_share} %, {weight_four_share} % under {strategy}")
+Written_Weights_Shares :: struct {
+	weight_one_share:  value_kinds.Hundredths,
+	weight_two_share:  value_kinds.Hundredths,
+	weight_four_share: value_kinds.Hundredths,
+	strategy:          [16]u8,
+}
+
+// The stress: changes of strategy while threads start, wake and move.
+@(log_fact = "scheduler: stress: {changes} changes of strategy while {churned_threads} threads started and stopped, two threads woke each other {wakes} times and 8 spinners ran and moved; after the last change each thread ran: {each_thread_ran}; thread slots {thread_slots} of {thread_slots_at_start}; {schedule_writes} writes of a schedule through the machine handle, {refused_writes} refused")
+Stress_Done :: struct {
+	changes:               u64,
+	churned_threads:       u64,
+	wakes:                 u64,
+	each_thread_ran:       u64,
+	thread_slots:          u64,
+	thread_slots_at_start: u64,
+	schedule_writes:       u64,
+	refused_writes:        u64,
+}
+
+// A thread reads, lowers and tries to raise its own schedule; the first
+// thread reads the defaults.
+// half_weight and half_request are the values that the thread wrote;
+// weight_after and request_after the values that it then read.
+@(log_fact = "scheduler: a thread created with the weight {asked_weight} and the request {asked_request} us read its own schedule: weight {read_weight}, request {read_request} us; after it lowered them to {half_weight} and {half_request} us: weight {weight_after}, request {request_after} us; its own writes of the weight {raised_weight} and of the request {raised_request} us: {weight_raise} and {request_raise}, and the schedule stayed: {kept}; the first thread: weight {first_weight}, request {first_request} us: {verdict}")
+Own_Schedule_Read :: struct {
+	asked_weight:   u64,
+	asked_request:  u64,
+	read_weight:    u64,
+	read_request:   u64,
+	half_weight:    u64,
+	half_request:   u64,
+	weight_after:   u64,
+	request_after:  u64,
+	raised_weight:  u64,
+	raised_request: u64,
+	weight_raise:   op.Status_Word,
+	request_raise:  op.Status_Word,
+	kept:           u64,
+	first_weight:   u64,
+	first_request:  u64,
+	verdict:        [16]u8,
+}
+
+// The refused writes of a schedule, each with its status; control is the
+// status of a Thread_Control through the machine handle.
+@(log_fact = "scheduler: refused writes of a schedule: a weight above the full weight {too_heavy}, a request above the limit {too_long}, and the schedule stayed: {kept}; the machine handle with no right Schedule {no_schedule}; a read and a write through the machine handle with Schedule and no Inspect {no_inspect} and {blind_write}; a thread handle with Inspect and no Control {no_control}, and it reads: {reads}; another command with the machine handle {control}; the machine number of a thread that ended {ended}: {verdict}")
+Schedule_Writes_Refused :: struct {
+	too_heavy:   op.Status_Word,
+	too_long:    op.Status_Word,
+	kept:        u64,
+	no_schedule: op.Status_Word,
+	no_inspect:  op.Status_Word,
+	blind_write: op.Status_Word,
+	no_control:  op.Status_Word,
+	reads:       u64,
+	control:     op.Status_Word,
+	ended:       op.Status_Word,
+	verdict:     [16]u8,
+}
+
+// The weight limit that the machine handle wrote, and the first own writes
+// of the thread under it. The line was one with the rounds below: two facts,
+// as one template holds at most 512 bytes, each with its verdict.
+@(log_fact = "scheduler: the weight limit {limit} written through the machine handle: the thread has the weight {weight}; its own write of the full weight {raise}, the error record has the weight of the thread: {record_right}; its own write of the full limit changed nothing: {kept}: {verdict}")
+Weight_Limit_Written :: struct {
+	limit:        u64,
+	weight:       u64,
+	raise:        op.Status_Word,
+	record_right: u64,
+	kept:         u64,
+	verdict:      [16]u8,
+}
+
+// The rounds of the own writes of the thread under the weight limit.
+@(log_fact = "scheduler: under the weight limit {limit}, {rounds} rounds of its own writes of the weights {round_weight}, 1, 1024 and {last_round_weight}, then the weight {machine_weight} through the machine handle: {accepted} of its own accepted, {refused} refused, {machine_raises} raised by the machine handle, a wrong weight or limit {above} times: {verdict}")
+Weight_Limit_Rounds :: struct {
+	limit:             u64,
+	rounds:            u64,
+	round_weight:      u64,
+	last_round_weight: u64,
+	machine_weight:    u64,
+	accepted:          u64,
+	refused:           u64,
+	machine_raises:    u64,
+	above:             u64,
+	verdict:           [16]u8,
+}
+
+// A new thread under the weight limit, and the limit given back.
+@(log_fact = "scheduler: under the weight limit {limit}: a new thread with the weight {heavier_weight} {too_heavy}; a new thread with the weight 0 has the weight {child_weight} and the limit {child_limit}, and its own write of the full weight {child_raise}; after the machine handle wrote the full limit the first thread has the weight {restored_weight}: {verdict}")
+Under_Weight_Limit :: struct {
+	limit:           u64,
+	heavier_weight:  u64,
+	too_heavy:       op.Status_Word,
+	child_weight:    u64,
+	child_limit:     u64,
+	child_raise:     op.Status_Word,
+	restored_weight: u64,
+	verdict:         [16]u8,
+}
+
+// The rounds on a held spinner under EEVDF, until one had a lag below 0;
+// verdict_words says the verdict or why there is none.
+@(log_fact = "scheduler: at least {rounds} rounds on a held spinner under EEVDF, until one had a lag below 0: the spinner lowered to the weight 1 and ran a tick, a Stop, its own writes of the full weight and of the request 1 us, the full weight through the machine handle, a Resume: {raised} of its raises were not refused, the reported lag changed after {changed} of its writes, and was not 0 after {not_new} raises of the machine handle: {verdict_words}")
+Owing_Rounds_Done :: struct {
+	rounds:        u64,
+	raised:        u64,
+	changed:       u64,
+	not_new:       u64,
+	verdict_words: [64]u8,
+}
+
+// A thread reads and writes its own placement.
+@(log_fact = "scheduler: a thread read its own placement: each of the {processors} processors in its set and in its limit: {first_right}; its own write of the processor {processor} alone: {write}, and it then read that processor alone, with the same limit: {second_right}; in {samples} samples of its thread report, each after one more tick of its run, its home or its processor was another one {outside} times: {verdict}")
+Own_Placement_Read :: struct {
+	processors:   u64,
+	first_right:  u64,
+	processor:    u64,
+	write:        op.Status_Word,
+	second_right: u64,
+	samples:      u64,
+	outside:      u64,
+	verdict:      [16]u8,
+}
+
+// The refused sets of a placement.
+@(log_fact = "scheduler: refused sets of a placement, on a spinner that the machine handle keeps on the processor 0: through its thread handle a wider set {wider} and a processor that the machine does not have {nowhere}, with their error records: {process_records}; through the machine handle a limit of no processor of the machine {no_limit} and a set outside its limit {outside_limit}, with their error records: {machine_records}; the placement stayed: {unchanged}: {verdict}")
+Placement_Sets_Refused :: struct {
+	wider:           op.Status_Word,
+	nowhere:         op.Status_Word,
+	process_records: u64,
+	no_limit:        op.Status_Word,
+	outside_limit:   op.Status_Word,
+	machine_records: u64,
+	unchanged:       u64,
+	verdict:         [16]u8,
+}
+
+// The rights of a placement.
+@(log_fact = "scheduler: the rights of a placement: the machine handle with no right Schedule {no_schedule}; a read and a write through the machine handle with Schedule and no Inspect {no_inspect} and {blind_write}; a thread handle with Inspect and no Control {no_control}, and it reads: {reads}; the placement stayed: {stayed}; a read and a write by the machine number of a thread that ended {ended_read} and {ended_write}: {verdict}")
+Placement_Rights :: struct {
+	no_schedule: op.Status_Word,
+	no_inspect:  op.Status_Word,
+	blind_write: op.Status_Word,
+	no_control:  op.Status_Word,
+	reads:       u64,
+	stayed:      u64,
+	ended_read:  op.Status_Word,
+	ended_write: op.Status_Word,
+	verdict:     [16]u8,
+}
+
+// The limit of a placement that the machine handle wrote.
+@(log_fact = "scheduler: the limit of the processors 0 to {last_processor} written through the machine handle: the thread has that set: {limited}; its own write of each processor {widen}, the error record has the set of the thread: {record_right}; its own write of a wider limit changed nothing: {kept}: {verdict}")
+Placement_Limit_Written :: struct {
+	last_processor: u64,
+	limited:        u64,
+	widen:          op.Status_Word,
+	record_right:   u64,
+	kept:           u64,
+	verdict:        [16]u8,
+}
+
+// The rounds of the own writes of a thread under the limit of a placement.
+@(log_fact = "scheduler: under that limit, {rounds} rounds of the own writes of the thread, of the processor 0, of the set of the limit and of each processor, then the limit again through the machine handle: {accepted} of its own accepted, {refused} refused, {widened} widened by the machine handle, a wrong set or limit {wrong} times: {verdict}")
+Placement_Limit_Rounds :: struct {
+	rounds:   u64,
+	accepted: u64,
+	refused:  u64,
+	widened:  u64,
+	wrong:    u64,
+	verdict:  [16]u8,
+}
+
+// A new thread under the limit of a placement, and the limit given back.
+@(log_fact = "scheduler: under that limit: a new thread has the limit as its set and as its limit: {inherited}, its home is a processor of the limit: {home_inside}, and its own write of each processor {widen}; after the machine handle wrote the zero record the first thread has each processor in its set and in its limit: {restored}: {verdict}")
+Placement_Limit_Inherited :: struct {
+	inherited:   u64,
+	home_inside: u64,
+	widen:       op.Status_Word,
+	restored:    u64,
+	verdict:     [16]u8,
+}
+
+// A set without the home of a thread that waits and of a held spinner.
+@(log_fact = "scheduler: a set without the home of a thread, written through the machine handle: a thread that waits has a home of the set in the next report: {waiting_moved}, and after its wake it ran inside the set: {waiting_settled}, outside in {waiting_outside} reports; a spinner that a Stop holds has a home of the set in the next report: {held_moved}, and after the Resume it ran inside the set: {held_settled}, outside in {held_outside} reports: {verdict}")
+Set_Without_Home_Of_Thread :: struct {
+	waiting_moved:   u64,
+	waiting_settled: u64,
+	waiting_outside: u64,
+	held_moved:      u64,
+	held_settled:    u64,
+	held_outside:    u64,
+	verdict:         [16]u8,
+}
+
+// A set without the home of a spinner in a list and of a running spinner.
+@(log_fact = "scheduler: a set without the home of a spinner, written through the machine handle: a spinner in a list ran inside the set: {listed_settled}, outside in {listed_outside} reports after the first one inside; a spinner on a processor ran inside the set: {running_settled}, outside in {running_outside} reports after the first one inside: {verdict}")
+Set_Without_Home_Of_Spinner :: struct {
+	listed_settled:  u64,
+	listed_outside:  u64,
+	running_settled: u64,
+	running_outside: u64,
+	verdict:         [16]u8,
+}
+
+// The case of two groups does not run on a machine with one processor.
+@(log_fact = "scheduler: two groups of spinners with no common processor are not checked on a machine with one processor")
+Groups_Not_Checked :: struct {}
+
+// Two groups of spinners, each under the limit of its half of the
+// processors.
+@(log_fact = "scheduler: two groups of {group} spinners, each created under the limit of its group, the processors 0 to {first_group_last} and {second_group_first} to {second_group_last}: each spinner has that limit as its set and as its limit: {inherited}; each of the {processors} processors ran a spinner of its group: {each_seen}; in at least {samples} reports of the threads a spinner had a home or a processor of the other group {outside} times: {verdict}")
+Groups_Apart :: struct {
+	group:              u64,
+	first_group_last:   u64,
+	second_group_first: u64,
+	second_group_last:  u64,
+	inherited:          u64,
+	processors:         u64,
+	each_seen:          u64,
+	samples:            u64,
+	outside:            u64,
+	verdict:            [16]u8,
+}
+
+// The balance past a queue of threads of a budget with no processor time.
+@(log_fact = "scheduler: {blockers} threads of a budget with no processor time, in the queue of the processor 0, make it the busiest, and each processor from 2 runs a spinner of its own; two spinners of the queue of the processor 1 got the processors 1 to {last_processor}: a report showed the two on two processors at one time: {apart}: {verdict}")
+Balance_Past_Budget_Queue :: struct {
+	blockers:       u64,
+	last_processor: u64,
+	apart:          u64,
+	verdict:        [16]u8,
+}
+
+// The balance past a queue of spinners that only the processor 0 can run.
+@(log_fact = "scheduler: {blockers} spinners that only the processor 0 can run make its queue the busiest, and each processor from 2 runs a spinner of its own; two spinners of the queue of the processor 1 got the processors 1 to {last_processor}: a report showed the two on two processors at one time: {apart}: {verdict}")
+Balance_Past_Spinner_Queue :: struct {
+	blockers:       u64,
+	last_processor: u64,
+	apart:          u64,
+	verdict:        [16]u8,
+}
+
+// The case of the balance does not run on a machine with too few or too
+// many processors.
+@(log_fact = "scheduler: the balance past a queue of threads that a processor cannot take is not checked on a machine with {processors} processors: the case needs two processors for the two queues, two more for the first thread, and a spinner for each processor from 2, at most {processors_most} processors")
+Balance_Not_Checked :: struct {
+	processors:      u64,
+	processors_most: u64,
+}
+
+// The case of a set that gets an idle processor does not run on a machine
+// with one processor.
+@(log_fact = "scheduler: a set that gets an idle processor is not checked on a machine with one processor")
+Idle_Set_Not_Checked :: struct {}
+
+// The share policy is off.
+@(log_fact = "scheduler: the share policy is off: each thread has the weight that its process asked and the full weight limit")
+Share_Policy_Off :: struct {}
+
+// The share policy is not checked: no image or no own threads.
+@(log_fact = "scheduler: the share policy is not checked: no boot image, or the process did not find its own threads")
+Share_Policy_Without_Image :: struct {}
+
+// The share policy is not checked: a process of spinning threads did not
+// start.
+@(log_fact = "scheduler: the share policy is not checked: a process with spinning threads did not start, or its threads did not become ready")
+Share_Policy_Without_Processes :: struct {}
+
+// The three rounds of the share policy over the processes of 1, 2, 4 and 8
+// spinning threads.
+@(log_fact = "scheduler: the share policy, three rounds: each thread of the processes with 1, 2, 4 and 8 spinning threads has the weight and the weight limit {one_thread_weight}, {two_threads_weight}, {four_threads_weight} and {eight_threads_weight}, and the new-thread weight limit {new_thread_limit}; the weights of each process sum to {one_thread_sum}, {two_threads_sum}, {four_threads_sum} and {eight_threads_sum}; the third round wrote none of their threads: {steady}: {verdict}")
+Share_Policy_Rounds :: struct {
+	one_thread_weight:    u64,
+	two_threads_weight:   u64,
+	four_threads_weight:  u64,
+	eight_threads_weight: u64,
+	new_thread_limit:     u64,
+	one_thread_sum:       u64,
+	two_threads_sum:      u64,
+	four_threads_sum:     u64,
+	eight_threads_sum:    u64,
+	steady:               u64,
+	verdict:              [16]u8,
+}
+
+// The weights of the own threads of this process under the share policy.
+@(log_fact = "scheduler: under the share policy, a thread of this process created with the weight {asked_weight} has the weight {weight}, and the weight {lowered_weight} after it lowered itself to {lowered_to}; after this process started {more_threads} threads more, its {threads} threads have the weights {least} to {most}, which sum to {sum} of 1024: {verdict}")
+Own_Threads_Weights :: struct {
+	asked_weight:   u64,
+	weight:         u64,
+	lowered_weight: u64,
+	lowered_to:     u64,
+	more_threads:   u64,
+	threads:        u64,
+	least:          u64,
+	most:           u64,
+	sum:            u64,
+	verdict:        [16]u8,
+}
+
+// The weights after the share policy went off.
+@(log_fact = "scheduler: the share policy off: each thread of the 4 processes and the first thread of this process have the weight 1024 and the two full weight limits again, the thread that lowered itself has the weight {lowered_weight} and the two full weight limits, and no write of the policy was refused: {none_refused}: {verdict}")
+Share_Policy_Off_Weights :: struct {
+	lowered_weight: u64,
+	none_refused:   u64,
+	verdict:        [16]u8,
+}
+
+// The shares of the four processes, without and with the share policy.
+@(log_fact = "scheduler: shares of the processes with 1, 2, 4 and 8 spinning threads under EEVDF, by the ticks of the kernel: without the share policy {without_one} %, {without_two} %, {without_four} %, {without_eight} %; with it {with_one} %, {with_two} %, {with_four} %, {with_eight} %; the process with 8 threads got {without_ratio} % of the process with 1 thread without the policy, and {with_ratio} % with it (measures)")
+Process_Shares_Measured :: struct {
+	without_one:   value_kinds.Hundredths,
+	without_two:   value_kinds.Hundredths,
+	without_four:  value_kinds.Hundredths,
+	without_eight: value_kinds.Hundredths,
+	with_one:      value_kinds.Hundredths,
+	with_two:      value_kinds.Hundredths,
+	with_four:     value_kinds.Hundredths,
+	with_eight:    value_kinds.Hundredths,
+	without_ratio: u64,
+	with_ratio:    u64,
+}
+
+// The share policy is not checked against short threads: no image or no
+// own threads.
+@(log_fact = "scheduler: the share policy is not checked against short threads: no boot image, or the process did not find its own threads")
+Short_Threads_Without_Image :: struct {}
+
+// The share policy is not checked against short threads: a process did not
+// start.
+@(log_fact = "scheduler: the share policy is not checked against short threads: a process did not start, or its threads did not become ready")
+Short_Threads_Without_Processes :: struct {}
+
+// The threads of a process of short threads that no round saw.
+@(log_fact = "scheduler: the share policy and a process that keeps {alive} short threads alive, after one round: {checked} of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit {new_part}: {each_right}, and those of one read summed to under 1024: {sum_under}: {verdict}")
+Short_Threads_Unseen :: struct {
+	alive:      u64,
+	checked:    u64,
+	new_part:   u64,
+	each_right: u64,
+	sum_under:  u64,
+	verdict:    [16]u8,
+}
+
+// A new-thread weight limit of the first thread above the part of a
+// thread, and the new threads under it.
+@(log_fact = "scheduler: under the share policy the first thread of this process got through the machine handle a new-thread weight limit of its own above {above}: {first_open}, and the process has the new-thread weight limit {process_limit}; a new thread with the weight {heavier_weight} {between_status}, and the error record names {error_limit}; a new thread with the weight 0 has the weight, the weight limit and the new-thread weight limit {child_weight}, {child_limit} and {child_new_thread_limit}: {verdict}")
+Own_New_Thread_Limit :: struct {
+	above:                  u64,
+	first_open:             u64,
+	process_limit:          u64,
+	heavier_weight:         u64,
+	between_status:         op.Status_Word,
+	error_limit:            u64,
+	child_weight:           u64,
+	child_limit:            u64,
+	child_new_thread_limit: u64,
+	verdict:                [16]u8,
+}
+
+// A write that gives the full weight limits back was refused after the case
+// of the short threads.
+@(log_fact = "scheduler: after the case of the short threads, a write that gives the full weight limits back was refused")
+Full_Limits_Not_Given_Back :: struct {}
+
+#assert(size_of(Strategy_Shares_Measured) == 96 && size_of(Own_Schedule_Read) == 136)
 
 // The bytes of the Text field of the name of a strategy: the longest,
 // "round robin", has 11 bytes.

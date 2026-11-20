@@ -7,9 +7,6 @@ import "modus:contract/value_kinds"
 // wait of a machine test on that sentence, and its line that fails a step,
 // read it as before. The Text fields are the last fields: the serial line
 // of a fact stops at its last byte that is not zero.
-//
-// The three lines with no value stay text: no font outlines, and no glyph
-// memory, at the start and in the fallback chain.
 
 // The bytes of the Text field of the name of an outline font: the longest,
 // "paper_mono_semibold", has 19 bytes.
@@ -63,6 +60,20 @@ Missing_Character_Has_Advance :: struct {
 Replacement_Glyph_Drawn :: struct {
 	characters: u64,
 }
+
+// The fallback chain has no glyph memory to check: each glyph is drawn
+// band by band.
+@(log_fact = "interface_font: the fallback chain of the interface is wrong: this process has no glyph memory: each glyph is drawn band by band")
+Fallback_Without_Glyph_Memory :: struct {}
+
+// The boot image gives no font outlines: the window cannot draw.
+@(log_fact = "interface_font: the boot image gives no font outlines with the interface font")
+Font_Outlines_Missing :: struct {}
+
+// The process has no glyph memory for its measure: each glyph is drawn
+// band by band.
+@(log_fact = "interface_font: this process has no glyph memory: each glyph is drawn band by band")
+Glyph_Memory_Missing :: struct {}
 
 // The time of one line of B612: its shaping, its drawing from the glyph
 // cache, and its first drawing from the outlines.

@@ -4,8 +4,15 @@ import "modus:contract/value_kinds"
 
 // The log facts of processors (src/md/features/log_facts.md): each fact
 // template is the line that the process wrote before it was a fact, so a
-// wait of a machine test on that sentence reads it as before. The lines
-// with no value stay text.
+// wait of a machine test on that sentence reads it as before.
+
+// The kernel refused a thread of the process.
+@(log_fact = "processors: cannot start a thread")
+Thread_Not_Started :: struct {}
+
+// The process has no grant to inspect the machine.
+@(log_fact = "processors: no grant to inspect the machine")
+No_Inspect_Grant :: struct {}
 
 // Each processor that the process can use ran it at one time.
 @(log_fact = "processors: ok, {together} processors ran the process at the same time")

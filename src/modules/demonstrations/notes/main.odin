@@ -141,11 +141,12 @@ keep :: proc "contextless" (name: string, data: []u8) -> bool {
 	}
 	if status != .Ok || result < 0 {
 		gone = status == .Gone || result == -1
-		if !gone {
-			buffer: [256]u8
-			writer := system.Writer{buffer = buffer[:]}
-			storage.error_text(&writer, &client, &error)
-			system.log(.Info, "notes: the storage service refused the object ", name, ": ", system.written(&writer))
+		// The objects are two: the template of a refusal ends with the
+		// fields of its error record, so each object has its fact type.
+		if !gone && name == "note" {
+			system.log_fact(.Info, Note_Write_Refused(errors.error_record_fact_fields(error)))
+		} else if !gone {
+			system.log_fact(.Info, Count_Write_Refused(errors.error_record_fact_fields(error)))
 		}
 		return false
 	}
@@ -170,7 +171,7 @@ restore :: proc "contextless" () {
 	note_damaged := status == .Damaged
 	if status != .Ok && !note_damaged {
 		restored, gone = "no store: the process keeps nothing", true
-		system.log(.Info, "notes: no store")
+		system.log_fact(.Info, No_Store{})
 		return
 	}
 	if found {
@@ -179,7 +180,7 @@ restore :: proc "contextless" () {
 	bytes, has_count, count_status := storage.read(&client, storage.ROOT, "count", ([^]u8)(&words)[:size_of(words)])
 	if !found && !has_count && !note_damaged && count_status == .Ok {
 		restored, restored_good = "a new store: no note, the count 0", true
-		system.log(.Info, "notes: a new store: no note, the count 0")
+		system.log_fact(.Info, New_Store{})
 		return
 	}
 	agree := has_count && len(bytes) == size_of(words)
@@ -195,10 +196,10 @@ restore :: proc "contextless" () {
 	switch {
 	case count_status == .Damaged:
 		restored = "WRONG: the count is damaged on the disk: tab writes a new count"
-		system.log(.Info, "notes: WRONG: the storage service cannot give the count: the object is damaged")
+		system.log_fact(.Info, Count_Damaged{})
 	case !agree:
 		restored = "WRONG: the 3 blocks of the count do not agree"
-		system.log(.Info, "notes: WRONG: the 3 blocks of the count do not agree")
+		system.log_fact(.Info, Count_Blocks_Differ{})
 	case note_damaged:
 		restored = "WRONG: the note is damaged on the disk: a key writes a new note"
 		system.log_fact(.Info, Note_Damaged{count = count})
@@ -298,7 +299,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if client, ok = storage.open(ctx); !ok {
 		restored, gone = "no store: the process keeps nothing", true
-		system.log(.Info, "notes: no store")
+		system.log_fact(.Info, No_Store{})
 	} else {
 		restore()
 		history_read()
@@ -310,7 +311,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// knows from this line that the window shows the note.
 		if first_picture {
 			first_picture = false
-			system.log(.Info, "notes: ok, the first picture is presented")
+			system.log_fact(.Info, First_Picture_Presented{})
 		}
 		// A press on an item of the action bar runs its key, as the key
 		// does; the next turn draws what it changed.

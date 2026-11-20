@@ -226,7 +226,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Locked_Additions{additions = made_locked, sum = sum_locked, waits = u64(sum_lock.waits)})
 	system.log_fact(.Info, Free_Additions{additions = made_free, sum = sum_free})
 	if made_locked == sum_locked {
-		system.log(.Info, "workers: the lock lost no addition")
+		system.log_fact(.Info, No_Addition_Lost{})
 	}
 
 	queue.next = COLUMNS * ROWS
@@ -237,7 +237,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		status: system.Status
 		worker.thread, status = system.thread_start(compute, &worker)
 		if status != .Ok {
-			system.log(.Info, "workers: cannot start a thread")
+			system.log_fact(.Info, Thread_Not_Started{})
 			system.stop(.Failed)
 		}
 	}

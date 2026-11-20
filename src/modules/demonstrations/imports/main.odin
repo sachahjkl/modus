@@ -159,11 +159,25 @@ call_direct, call_replaced: u64 // For CALLS calls.
 load_direct, load_replaced: u64 // One load of agenda and its import.
 bind_direct, bind_replaced: u64 // For BINDS binds of agenda.
 
-// tenths gives a number of cycles as tenths of nanoseconds, for count times.
-tenths :: proc "contextless" (cycles: u64, count: u64) -> (whole, tenth: u64) {
+// microseconds_of_cycles gives a number of cycles as microseconds.
+microseconds_of_cycles :: proc "contextless" (cycles: u64) -> value_kinds.Time_In_Microseconds {
 	per_microsecond := max(boot.cycle_frequency / 1_000_000, 1)
-	value := cycles * 10_000 / per_microsecond / count
-	return value / 10, value % 10
+	return value_kinds.Time_In_Microseconds(cycles / per_microsecond)
+}
+
+// hundredths_of_nanoseconds gives the time of one of count operations in
+// cycles, in hundredths of a nanosecond: the log writes it with two
+// decimals.
+hundredths_of_nanoseconds :: proc "contextless" (cycles: u64, count: u64) -> value_kinds.Hundredths {
+	per_microsecond := max(boot.cycle_frequency / 1_000_000, 1)
+	return value_kinds.Hundredths(cycles * 100_000 / per_microsecond / count)
+}
+
+// hundredths_text writes a number of hundredths with two decimals, as the
+// field of the log writes it, so the window and the log agree.
+hundredths_text :: proc "contextless" (buffer: []u8, value: value_kinds.Hundredths) -> string {
+	whole := u64(value)
+	return system.format(buffer, whole / 100, ".", whole % 100 < 10 ? "0" : "", whole % 100)
 }
 
 measure_calls :: proc "contextless" (space: ^system.Module_Space, place: int) -> u64 {
@@ -331,7 +345,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "imports: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	// A process that this process started to share calendar: it waits.
@@ -480,20 +494,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for item in cases[:case_count] {
 		if !item.right {
 			wrong += 1
-			system.log(.Info, "imports: wrong answer: ", item.text, ": ", item.answer)
+			system.log_fact(.Info, Answer_Wrong{case_text = value_kinds.text_field(item.text, CASE_FIELD_BYTES), answer = value_kinds.text_field(item.answer, ANSWER_FIELD_BYTES)})
 		}
 	}
 	if wrong == 0 {
 		system.log_fact(.Info, Cases_Passed{cases = u64(case_count)})
 	}
-	call_whole, call_tenth := tenths(call_direct, CALLS)
-	replaced_whole, replaced_tenth := tenths(call_replaced, CALLS)
-	system.log(.Info, "imports: a call through an import slot: ", call_whole, ".", call_tenth, " ns to calendar, ", replaced_whole, ".", replaced_tenth, " ns to calendar_fixed in its place, the least of ", u64(MEASURE_RUNS), " runs of ", u64(CALLS), " calls")
-	bind_whole, bind_tenth := tenths(bind_direct, BINDS)
-	checked_whole, checked_tenth := tenths(bind_replaced, BINDS)
-	load_whole, _ := tenths(load_direct, 1)
-	load_replaced_whole, _ := tenths(load_replaced, 1)
-	system.log(.Info, "imports: the bind of agenda: ", bind_whole, ".", bind_tenth, " ns, and ", checked_whole, ".", checked_tenth, " ns with the check of the replacement; the load of agenda and its import: ", load_whole / 1000, " us, and ", load_replaced_whole / 1000, " us")
+	// The window writes the same measures as the log, with two decimals.
+	call := hundredths_of_nanoseconds(call_direct, CALLS)
+	replaced_call := hundredths_of_nanoseconds(call_replaced, CALLS)
+	bind := hundredths_of_nanoseconds(bind_direct, BINDS)
+	checked_bind := hundredths_of_nanoseconds(bind_replaced, BINDS)
+	load := microseconds_of_cycles(load_direct)
+	replaced_load := microseconds_of_cycles(load_replaced)
+	system.log_fact(.Info, Import_Call_Measured{call = call, replaced_call = replaced_call, runs = u64(MEASURE_RUNS), calls = u64(CALLS)})
+	system.log_fact(.Info, Import_Bind_Measured{bind = bind, checked_bind = checked_bind, load = load, replaced_load = replaced_load})
 	system.log_fact(.Info, Calendar_Code_Shared{pages = value_kinds.Size_In_Pages(shared_pages), mappings = shared_mappings})
 
 	for {
@@ -518,11 +533,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.cases_rest_line(&frame, {LEFT, CASES_Y - 3 + CASES_HEIGHT, WIDTH - 2 * LEFT, LINE}, not_shown, "the log has a line \"imports: \" for each")
 		y = MEASURES_Y
 		line: [112]u8
-		interface.draw_text(table, 12, y, system.format(line[:], "a call through the slot: ", call_whole, ".", call_tenth, " ns to calendar, ", replaced_whole, ".", replaced_tenth, " ns to calendar_fixed"), graphics.colors.dim)
+		first: [24]u8
+		second: [24]u8
+		interface.draw_text(table, 12, y, system.format(line[:], "a call through the slot: ", hundredths_text(first[:], call), " ns to calendar, ", hundredths_text(second[:], replaced_call), " ns to calendar_fixed"), graphics.colors.dim)
 		y += LINE
-		interface.draw_text(table, 12, y, system.format(line[:], "the bind of agenda: ", bind_whole, ".", bind_tenth, " ns; with the check of the replacement: ", checked_whole, ".", checked_tenth, " ns"), graphics.colors.dim)
+		interface.draw_text(table, 12, y, system.format(line[:], "the bind of agenda: ", hundredths_text(first[:], bind), " ns; with the check of the replacement: ", hundredths_text(second[:], checked_bind), " ns"), graphics.colors.dim)
 		y += LINE
-		interface.draw_text(table, 12, y, system.format(line[:], "the load of agenda and calendar: ", load_whole / 1000, " us; with the replacement: ", load_replaced_whole / 1000, " us"), graphics.colors.dim)
+		interface.draw_text(table, 12, y, system.format(line[:], "the load of agenda and calendar: ", u64(load), " us; with the replacement: ", u64(replaced_load), " us"), graphics.colors.dim)
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window)
 		for _ in display.next_event(&window) {

@@ -2,8 +2,11 @@ package threads
 
 // The log facts of threads (src/md/features/log_facts.md): each fact
 // template is the line that the process wrote before it was a fact, so a
-// wait of a machine test on that sentence reads it as before. The line with
-// no value stays text.
+// wait of a machine test on that sentence reads it as before.
+
+// The kernel refused a thread of the process.
+@(log_fact = "threads: cannot start a thread")
+Thread_Not_Started :: struct {}
 
 // A thread added the numbers up to 1000 and gave the sum to the first
 // thread.

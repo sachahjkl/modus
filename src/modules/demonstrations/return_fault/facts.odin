@@ -10,9 +10,59 @@ import "modus:contract/value_kinds"
 // byte that is not zero. A status of the kernel is a field of the contract
 // enum, which a reader writes by its name, as the line did.
 //
-// Lines stay text: the stop of each child, which writes its address in 16
-// hexadecimal digits with no "0x", which no field kind writes; and the
-// lines with no value.
+// The stop of a child writes its address in 16 hexadecimal digits, as
+// system.Hex wrote it, and its cause and its outcome by their words.
+
+// A child stopped itself.
+@(log_fact = "return_fault: {case_name}: the child stopped: {cause}, {outcome}, the address {address}: {verdict}")
+Child_Stopped_Itself :: struct {
+	address:   value_kinds.Hexadecimal_Sixteen_Digits,
+	cause:     op.Stop_Cause,
+	outcome:   op.Stop_Outcome,
+	case_name: [56]u8,
+	verdict:   [16]u8,
+}
+
+// A child stopped on its own fault: its vector.
+@(log_fact = "return_fault: {case_name}: the child stopped: {cause}, vector {vector}, the address {address}: {verdict}")
+Child_Stopped_On_Fault :: struct {
+	address:   value_kinds.Hexadecimal_Sixteen_Digits,
+	vector:    u64,
+	cause:     op.Stop_Cause,
+	case_name: [56]u8,
+	verdict:   [20]u8,
+}
+
+// A child stopped for another cause: the kernel cannot return to it, a
+// holder, its last thread.
+@(log_fact = "return_fault: {case_name}: the child stopped: {cause}, the address {address}: {verdict}")
+Child_Stopped :: struct {
+	address:   value_kinds.Hexadecimal_Sixteen_Digits,
+	cause:     op.Stop_Cause,
+	case_name: [56]u8,
+	verdict:   [20]u8,
+}
+
+// The child of the nested task could not set the flag: the case did not
+// run.
+@(log_fact = "return_fault: the child of the nested task: popfq did not set the flag, so the case did not run")
+Nested_Task_Not_Set :: struct {}
+
+// The flag of the nested task came back after the entry.
+@(log_fact = "return_fault: the child of the nested task: the flag came back after the entry")
+Nested_Task_Came_Back :: struct {}
+
+// The child of the trap flag came past its instruction with no trap.
+@(log_fact = "return_fault: the child of the trap flag: no trap came")
+No_Trap :: struct {}
+
+// The context of the process holds no random seed.
+@(log_fact = "return_fault: no random seed in the context")
+No_Random_Seed :: struct {}
+
+// The process has no boot image.
+@(log_fact = "return_fault: no boot image")
+No_Boot_Image :: struct {}
 
 // The bytes of the Text field of the name of a case: the longest, "a stack
 // address that is not canonical at a syscall", has 50 bytes.

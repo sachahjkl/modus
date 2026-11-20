@@ -9,8 +9,65 @@ import "modus:support/system"
 // fields are the last fields: the serial line of a fact stops at its last
 // byte that is not zero.
 //
-// The measure lines stay text: each writes a time in microseconds with one
-// decimal, which no field kind writes. So do the lines with no value.
+// The measure lines are read by the measure record and by
+// processor_frame_lines_check, in their sentence: a time is a field of
+// nanoseconds that the reader writes as microseconds with one decimal, as
+// the line did. Each part has its fact type, since a part names its own
+// counts.
+
+// The budget of the process gave no memory for its canvases.
+@(log_fact = "processor_frame: wrong: the budget of this process gave no memory for its canvases")
+No_Canvas_Memory :: struct {}
+
+// Each part drew its pixels, the drawing module refused no call, and each
+// table holds its records.
+@(log_fact = "processor_frame: ok, each part drew its pixels, the drawing module refused no call, and each table holds each of its records")
+Parts_Drawn :: struct {}
+
+// A clear and a present of a frame of the reference screen: the least and
+// the median time of the frames.
+@(log_fact = "processor_frame: measure: a clear and a present of 1920x1080: least {least}, median {median}, {frames} frames in one second at the median, over {rounds} frames")
+Clear_And_Present_Measured :: struct {
+	least:  value_kinds.Nanoseconds_As_Microseconds,
+	median: value_kinds.Nanoseconds_As_Microseconds,
+	frames: u64,
+	rounds: u64,
+}
+
+// A full frame of the compositor with 4 windows.
+@(log_fact = "processor_frame: measure: a full frame of the compositor at 1920x1080 with 4 windows: least {least}, median {median}, {frames} frames in one second at the median, over {rounds} frames")
+Full_Frame_Measured :: struct {
+	least:  value_kinds.Nanoseconds_As_Microseconds,
+	median: value_kinds.Nanoseconds_As_Microseconds,
+	frames: u64,
+	rounds: u64,
+}
+
+// A frame of the compositor in its damage of 2 rectangles.
+@(log_fact = "processor_frame: measure: a frame of the compositor at 1920x1080 with 4 windows in its damage of 2 rectangles, {pixels} pixels: least {least}, median {median}, {frames} frames in one second at the median, over {rounds} frames")
+Damage_Frame_Measured :: struct {
+	pixels: u64,
+	least:  value_kinds.Nanoseconds_As_Microseconds,
+	median: value_kinds.Nanoseconds_As_Microseconds,
+	frames: u64,
+	rounds: u64,
+}
+
+// The execution of the draw table of a desktop, with the count of each
+// kind of record.
+@(log_fact = "processor_frame: measure: the execution of a draw table of 1920x1080 with {records} records: {opaque_rectangles} opaque rectangles and gradients, {cell_texts} texts in the font of the cells, {interface_texts} in the interface font, {opaque_pictures} opaque pictures, {with_alpha} rectangles and pictures with alpha: least {least}, median {median}, {frames} frames in one second at the median, over {rounds} frames")
+Draw_Table_Measured :: struct {
+	records:           u64,
+	opaque_rectangles: u64,
+	cell_texts:        u64,
+	interface_texts:   u64,
+	opaque_pictures:   u64,
+	with_alpha:        u64,
+	least:             value_kinds.Nanoseconds_As_Microseconds,
+	median:            value_kinds.Nanoseconds_As_Microseconds,
+	frames:            u64,
+	rounds:            u64,
+}
 
 // The bytes of the Text field of the four answers of the pixels: the
 // longest, "yes, yes, yes, yes", has 18 bytes.

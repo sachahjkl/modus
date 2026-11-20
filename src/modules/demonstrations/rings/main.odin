@@ -172,7 +172,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "rings: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "rings")

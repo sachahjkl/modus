@@ -38,6 +38,7 @@ package processor_frame
 import "modus:contract/draw_record"
 import "modus:contract/errors"
 import "modus:contract/reference_screen"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -243,12 +244,13 @@ frames_measure :: proc "contextless" (draw: proc "contextless" ()) -> (times: Fr
 	return times
 }
 
-// measure_log writes the line of one part. The tool reads its form
-// (tools/modustool/checks/processor_frame_measure.odin): change both together.
-measure_log :: proc "contextless" (part: string, times: Frame_Times) {
-	least, median := least_and_median(times)
-	frames := u64(1_000_000_000) / max(median, 1)
-	system.log(.Info, "processor_frame: measure: ", part, ": least ", least / 1000, ".", least / 100 % 10, " us, median ", median / 1000, ".", median / 100 % 10, " us, ", frames, " frames in one second at the median, over ", u64(ROUNDS), " frames")
+// part_measure gives the numbers of the line of one part: the least and the
+// median time, and the frames in one second at the median. The tool reads
+// the form of the line (tools/modustool/checks/processor_frame_measure.odin):
+// change both together.
+part_measure :: proc "contextless" (times: Frame_Times) -> (least, median: value_kinds.Nanoseconds_As_Microseconds, frames: u64) {
+	least_time, median_time := least_and_median(times)
+	return value_kinds.Nanoseconds_As_Microseconds(least_time), value_kinds.Nanoseconds_As_Microseconds(median_time), u64(1_000_000_000) / max(median_time, 1)
 }
 
 // clear_and_present clears the frame, then copies it into the screen
@@ -476,7 +478,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	picture_canvas, ok = canvas_make(PICTURE_SIDE, 2 * PICTURE_SIDE)
 	made &&= ok
 	if !made {
-		system.log(.Info, "processor_frame: wrong: the budget of this process gave no memory for its canvases")
+		system.log_fact(.Info, No_Canvas_Memory{})
 		system.stop(.Failed)
 	}
 	pictures = picture_canvas.pixels[:2 * PICTURE_PIXELS]
@@ -509,7 +511,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	screen_page.pixels[last_pixel] = graphics.colors.background ~ 0xFFFFFF
 
 	// 1. The clear and the present.
-	measure_log("a clear and a present of 1920x1080", frames_measure(clear_and_present))
+	{
+		least, median, frames := part_measure(frames_measure(clear_and_present))
+		system.log_fact(.Info, Clear_And_Present_Measured{least = least, median = median, frames = frames, rounds = u64(ROUNDS)})
+	}
 	pixels_right[0] = screen_page.pixels[last_pixel] == graphics.colors.background
 
 	// 2. The frame of the compositor, in full and in its damage. The pixel
@@ -518,11 +523,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	#assert(FRONT_WINDOW_WIDTH / 2 < PRESENT_WIDTH && FRONT_WINDOW_HEIGHT / 2 < PRESENT_HEIGHT)
 	screen_pixel := (front_top + middle_y) * SCREEN_WIDTH + front_left + middle_x
 	surface_pixel := front.surface.pixels[middle_y * front.surface.stride + middle_x]
-	measure_log("a full frame of the compositor at 1920x1080 with 4 windows", frames_measure(compositor_frame_full))
+	{
+		least, median, frames := part_measure(frames_measure(compositor_frame_full))
+		system.log_fact(.Info, Full_Frame_Measured{least = least, median = median, frames = frames, rounds = u64(ROUNDS)})
+	}
 	pixels_right[1] = screen_page.pixels[screen_pixel] == surface_pixel
 	screen_page.pixels[screen_pixel] = surface_pixel ~ 0xFFFFFF
-	damage_part: [160]u8
-	measure_log(system.format(damage_part[:], "a frame of the compositor at 1920x1080 with 4 windows in its damage of 2 rectangles, ", damage_pixels, " pixels"), frames_measure(compositor_frame_in_its_damage))
+	{
+		least, median, frames := part_measure(frames_measure(compositor_frame_in_its_damage))
+		system.log_fact(.Info, Damage_Frame_Measured{pixels = damage_pixels, least = least, median = median, frames = frames, rounds = u64(ROUNDS)})
+	}
 	pixels_right[2] = screen_page.pixels[screen_pixel] == surface_pixel
 
 	// 3. The draw table of a desktop. The pixel is the first one of the
@@ -532,13 +542,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	frame.pixels[picture_pixel] = opaque_picture.pixels[0] ~ 0xFFFFFF
 	counts := desktop_counts
 	record_count := counts.opaque_rectangles + counts.cell_texts + counts.interface_texts + counts.opaque_pictures + counts.with_alpha
-	desktop_part: [256]u8
-	measure_log(system.format(desktop_part[:], "the execution of a draw table of 1920x1080 with ", record_count, " records: ", counts.opaque_rectangles, " opaque rectangles and gradients, ", counts.cell_texts, " texts in the font of the cells, ", counts.interface_texts, " in the interface font, ", counts.opaque_pictures, " opaque pictures, ", counts.with_alpha, " rectangles and pictures with alpha"), frames_measure(desktop_draw))
+	{
+		least, median, frames := part_measure(frames_measure(desktop_draw))
+		system.log_fact(.Info, Draw_Table_Measured{records = record_count, opaque_rectangles = counts.opaque_rectangles, cell_texts = counts.cell_texts, interface_texts = counts.interface_texts, opaque_pictures = counts.opaque_pictures, with_alpha = counts.with_alpha, least = least, median = median, frames = frames, rounds = u64(ROUNDS)})
+	}
 	pixels_right[3] = frame.pixels[picture_pixel] == opaque_picture.pixels[0]
 
 	tables_whole := !screen_table.full && !screen_table.refused && !desktop_table.full && !desktop_table.refused && u64(desktop_table.record_count) == record_count
 	if refusals == 0 && tables_whole && pixels_right[0] && pixels_right[1] && pixels_right[2] && pixels_right[3] {
-		system.log(.Info, "processor_frame: ok, each part drew its pixels, the drawing module refused no call, and each table holds each of its records")
+		system.log_fact(.Info, Parts_Drawn{})
 		system.stop(.Done)
 	}
 	system.log_fact(.Info, Parts_Wrong{refused_calls = refusals, pixels_right = pixels_right_field(pixels_right), tables_whole = answer_field(tables_whole)})

@@ -230,7 +230,7 @@ measure :: proc "contextless" (name: string, number_before, number_now: u64, mov
 	moved = false
 	bounds := interface.damage_bounds(&damage)
 	area := u64(max(bounds.right - bounds.left, 0) * max(bounds.bottom - bounds.top, 0))
-	system.log(.Info, "interface_elements: ", name, ": ", u64(now.record_count), " records, ", rectangles, " damage rectangles, ", area * 100 / (WIDTH * HEIGHT), " % of the window, the difference in ", difference / ROUNDS / 100 / 10, ".", difference / ROUNDS / 100 % 10, " us")
+	system.log_fact(.Info, Damage_Measured{records = u64(now.record_count), rectangles = rectangles, window_percent = area * 100 / (WIDTH * HEIGHT), difference = value_kinds.Nanoseconds_As_Microseconds(difference / ROUNDS), measure = value_kinds.text_field(name, MEASURE_NAME_FIELD_BYTES)})
 }
 
 // measure_fonts gives the time of one whole frame of the window, built and

@@ -1,6 +1,9 @@
 package build
 
+import "modus:contract/errors"
 import op "modus:contract/operation"
+import "modus:support/sentence"
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"
@@ -14,7 +17,11 @@ import "modustool:foundation"
 // max(u64); a time or a size 0, 1 and max(i64), the largest that its
 // signed field holds; a signed value below 0; each member of a status and
 // each words of a choice; the longest text of a Text field and a short one.
-// The helpers are in fact_test_helpers_test.odin.
+// A few sentences changed with the facts, and each is compared with its new
+// sentence: a status by its name where a line wrote its number, a measure
+// with one decimal as a field of hundredths with two, a long line or a
+// loop as several facts, an error record as its seven fields. The helpers
+// are in fact_test_helpers_test.odin.
 
 @(private = "file")
 DEMONSTRATION_EDGE_COUNTS := [3]u64{0, 1, max(u64)}
@@ -54,30 +61,30 @@ the_texts_of_the_demonstration_facts_come_last_and_whole :: proc(t: ^testing.T) 
 		texts:  []Demonstration_Text_Most,
 	}
 	modules := [?]Module_Texts {
-		{"imports", {{"process_writer", len("not found")}, {"own_writer", len("not found")}}},
-		{"interface_elements", {{"chosen_name", len("compositor")}, {"typed_text", 32}, {"overlay", len("hidden")}}},
+		{"imports", {{"process_writer", len("not found")}, {"own_writer", len("not found")}, {"case_text", 52}, {"answer", 87}}},
+		{"interface_elements", {{"chosen_name", len("compositor")}, {"typed_text", 32}, {"overlay", len("hidden")}, {"measure", 18}}},
 		{"interface_font", {{"font", len("paper_mono_semibold")}}},
 		{"interface_through_module", {{"full_count", len("not the count of the full frame")}}},
 		{"kernel_events", {{"child", len("the child that faults")}, {"verdict", len("as it must")}, {"operation", len("an unknown operation")}}},
 		{"limits", {}},
 		{"locker", {}},
-		{"locks", {}},
-		{"net", {{"problem", 128}}},
+		{"locks", {{"lock", 7}}},
+		{"net", {{"problem", 128}, {"address", len("255.255.255.255")}, {"link", len("down")}, {"hardware", len("ff:ff:ff:ff:ff:ff")}, {"remote", len("255.255.255.255")}, {"wrong_mark", len(" (WRONG)")}}},
 		{"notes", {{"date", len("2026-11-20 10:20:30")}, {"note_text", 60}}},
 		{"origin", {{"case_text", len("revoke a handle that the process does not have")}}},
-		{"pointers", {{"theme", 31}, {"theme_name", 32}, {"license", 32}, {"shape", len("resize_left_right")}}},
+		{"pointers", {{"theme", 31}, {"theme_name", 32}, {"license", 32}, {"shape", len("resize_left_right")}, {"part", 17}, {"field", 27}, {"rule", 60}}},
 		{"processor_frame", {{"pixels_right", len("yes, yes, yes, yes")}, {"tables_whole", len("yes")}}},
 		{"processors", {}},
-		{"quic_echo", {{"cause", len("the module cryptography refused to make the public key")}, {"peer", len(LONGEST_PEER)}, {"public_key", 64}}},
+		{"quic_echo", {{"cause", len("the module cryptography refused to make the public key")}, {"peer", len(LONGEST_PEER)}, {"public_key", 64}, {"end_cause", 22}, {"client_reason", 48}}},
 		{"randomness", {{"strength", len("weak (the cycle counter only)")}, {"first_bytes", len("00112233 44556677 8899aabb ccddeeff")}}},
-		{"return_fault", {{"case_name", len("a stack address that is not canonical at a syscall")}}},
-		{"rights", {}},
+		{"return_fault", {{"case_name", len("a stack address that is not canonical at a syscall")}, {"verdict", len("as it must")}}},
+		{"rights", {{"attempt", 44}}},
 		{"rings", {{"cause", len("no grant to read the boot image")}}},
-		{"scheduler", {{"verdict", len("as it must")}, {"strategy", len("round robin")}, {"previous_strategy", len("round robin")}, {"problem", 103}}},
+		{"scheduler", {{"verdict", len("as it must")}, {"strategy", len("round robin")}, {"previous_strategy", len("round robin")}, {"problem", 103}, {"verdict_words", len("no round had a lag below 0, so nothing was checked: WRONG")}}},
 		{"server", {{"cause", len("no endpoint: the process has no grant of the network")}, {"method", len("OPTIONS")}, {"target", 48}, {"peer", len(LONGEST_PEER)}, {"how", len("aborted: an answer under 4096 bytes in one second")}, {"page", 39}}},
-		{"tables", {{"direct", len("refused")}, {"call_host", len("refused")}, {"service", len("refused")}, {"way", len("call host, memory object")}}},
+		{"tables", {{"direct", len("refused")}, {"call_host", len("refused")}, {"service", len("refused")}, {"way", len("call host, memory object")}, {"case_name", 37}, {"call_way", 11}, {"answer", 87}}},
 		{"threads", {}},
-		{"tone", {{"case_name", len("a record past the end of the region")}, {"status", len("Out_Of_Range")}}},
+		{"tone", {{"case_name", len("a record past the end of the region")}, {"status", len("Out_Of_Range")}, {"command", 6}}},
 		{"twin", {}},
 		{"vector_glyphs", {{"font", len("Paper Mono (default)")}, {"font_problem", 66}, {"cache_problem", 103}}},
 		{"workers", {}},
@@ -658,5 +665,431 @@ the_facts_of_tables_threads_tone_twin_vector_glyphs_and_workers_write_the_lines_
 	}
 	for time in DEMONSTRATION_EDGE_TIMES {
 		facts_expect_line(t, fact_test_render(t, tone, "tone", "Stream_Started", {{"held", time}}), line_of_before("tone: the stream started; the service holds ", time, " ns of frames"))
+	}
+}
+
+// The facts with no value of these demonstrations write the line of
+// before.
+@(test)
+the_facts_with_no_value_of_the_demonstrations_write_the_lines_of_before :: proc(t: ^testing.T) {
+	Empty_Fact :: struct {
+		folder:    string,
+		type_name: string,
+		line:      string,
+	}
+	facts := [?]Empty_Fact {
+		{"imports", "No_Random_Seed", "imports: no random seed in the context"},
+		{"interface_font", "Fallback_Without_Glyph_Memory", "interface_font: the fallback chain of the interface is wrong: this process has no glyph memory: each glyph is drawn band by band"},
+		{"interface_font", "Font_Outlines_Missing", "interface_font: the boot image gives no font outlines with the interface font"},
+		{"interface_font", "Glyph_Memory_Missing", "interface_font: this process has no glyph memory: each glyph is drawn band by band"},
+		{"interface_through_module", "Draw_Tables_Equal", "interface_through_module: ok, the two draw tables are equal"},
+		{"interface_through_module", "Draw_Tables_Differ", "interface_through_module: wrong: the two draw tables differ"},
+		{"kernel_events", "Faulter_Not_Started", "kernel_events: the child that faults did not start: the cases 3 to 8 do not run"},
+		{"kernel_events", "Table_Given", "kernel_events: the table is given; waiting for the revocation of the grant machine"},
+		{"kernel_events", "No_Random_Seed", "kernel_events: no random seed in the context"},
+		{"kernel_events", "No_Boot_Image", "kernel_events: no boot image"},
+		{"kernel_events", "Load_Child_Not_Started", "kernel_events: the load child did not start: the cases 3 to 12 do not run"},
+		{"life", "Running", "life: ok"},
+		{"locks", "No_Random_Seed", "locks: no random seed in the context"},
+		{"locks", "No_Boot_Image_Or_Memory", "locks: no boot image or no memory"},
+		{"locks", "Checks_Passed", "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped process returned its pages, its slot and its threads"},
+		{"net", "Key_Datagram_Unanswered", "net: a datagram to 10.0.2.2 port 7 after a key: no answer of the network service"},
+		{"net", "Key_Datagram_Answered", "net: a datagram to 10.0.2.2 port 7 after a key: sent, and answer"},
+		{"net", "Key_Datagram_Sent_Without_Answer", "net: a datagram to 10.0.2.2 port 7 after a key: sent, and no answer"},
+		{"net", "No_Endpoint", "net: no endpoint: the process has no grant of the network"},
+		{"net", "No_Datagram_Region", "net: no datagram region"},
+		{"net", "Measures_Done", "net: the measures are done"},
+		{"notes", "No_Store", "notes: no store"},
+		{"notes", "New_Store", "notes: a new store: no note, the count 0"},
+		{"notes", "Count_Damaged", "notes: WRONG: the storage service cannot give the count: the object is damaged"},
+		{"notes", "Count_Blocks_Differ", "notes: WRONG: the 3 blocks of the count do not agree"},
+		{"notes", "First_Picture_Presented", "notes: ok, the first picture is presented"},
+		{"paint", "Running", "paint: ok"},
+		{"plasma", "Running", "plasma: ok"},
+		{"pointers", "No_Boot_Image", "pointers: no boot image"},
+		{"pointers", "No_Pointer_Theme", "pointers: the boot image has no pointer theme"},
+		{"pointers", "Owner_Theme_Hash_Differs", "pointers: pointers_posy is not valid: the bytes do not have the hash of the entry of the resource"},
+		{"pointers", "System_Theme_Hash_Differs", "pointers: pointers_system is not valid: the bytes do not have the hash of the entry of the resource"},
+		{"processor_frame", "No_Canvas_Memory", "processor_frame: wrong: the budget of this process gave no memory for its canvases"},
+		{"processor_frame", "Parts_Drawn", "processor_frame: ok, each part drew its pixels, the drawing module refused no call, and each table holds each of its records"},
+		{"processors", "Thread_Not_Started", "processors: cannot start a thread"},
+		{"processors", "No_Inspect_Grant", "processors: no grant to inspect the machine"},
+		{"quic_echo", "Seed_Weak", "quic_echo: the random seed of this process is weak: it makes no key of a server, and listens on nothing"},
+		{"randomness", "No_Random_Seed", "randomness: no random seed in the context"},
+		{"randomness", "Entropy_Device_Absent", "randomness: the entropy device: absent"},
+		{"return_fault", "Nested_Task_Not_Set", "return_fault: the child of the nested task: popfq did not set the flag, so the case did not run"},
+		{"return_fault", "Nested_Task_Came_Back", "return_fault: the child of the nested task: the flag came back after the entry"},
+		{"return_fault", "No_Trap", "return_fault: the child of the trap flag: no trap came"},
+		{"return_fault", "No_Random_Seed", "return_fault: no random seed in the context"},
+		{"return_fault", "No_Boot_Image", "return_fault: no boot image"},
+		{"rings", "No_Random_Seed", "rings: no random seed in the context"},
+		{"sample", "No_Service_Ring", "sample: no service ring"},
+		{"sample", "Serving", "sample: serves its exports"},
+		{"server", "No_Random_Seed", "server: no random seed in the context"},
+		{"server", "No_Private_Store", "server: no private store: it serves no page of a store"},
+		{"server", "New_Store", "server: a new store: no page"},
+		{"tables", "No_Random_Seed", "tables: no random seed in the context"},
+		{"tally", "Running", "tally: ok"},
+		{"threads", "Thread_Not_Started", "threads: cannot start a thread"},
+		{"tone", "Stream_Ring_Full", "tone: the stream ring is full"},
+		{"tone", "No_Stream_Ring", "tone: no stream ring"},
+		{"tone", "No_Sample_Region", "tone: no sample region"},
+		{"tone", "Stream_Ring_Not_Mapped", "tone: the sound service does not map the stream ring"},
+		{"tone", "Tone_Not_Ended", "tone: the tone did not end before the hang bound"},
+		{"tone", "Tone_At_Its_Frame", "tone: the tone played at the frame of its time: as it must"},
+		{"workers", "No_Addition_Lost", "workers: the lock lost no addition"},
+		{"workers", "Thread_Not_Started", "workers: cannot start a thread"},
+	}
+	for fact in facts {
+		file, ok := facts_file_of_demonstration(t, fact.folder)
+		if !ok {
+			continue
+		}
+		facts_expect_line(t, fact_test_render(t, file, fact.folder, fact.type_name, {}), fact.line)
+	}
+}
+
+// demonstration_error_record_line gives the words of an error record as a
+// fact of an error record writes them after its own words.
+@(private = "file")
+demonstration_error_record_line :: proc(head: string, kind: errors.Kind, unit: errors.Unit, signed: i64) -> string {
+	return line_of_before(head, "kind ", errors.KIND_NAMES[kind], ", unit ", errors.UNIT_MEMBER_NAMES[unit], ", operation ", signed, ", argument ", -signed, ", value ", signed, ", limit ", -signed, ", found ", signed)
+}
+
+// Each fact of an error record of these demonstrations writes its own
+// words, then each field of the record: each kind and each unit by its
+// name, a signed field below 0 and at its edges.
+@(test)
+the_facts_of_error_records_of_the_demonstrations_write_each_field :: proc(t: ^testing.T) {
+	Record_Fact :: struct {
+		folder:    string,
+		type_name: string,
+		head:      string,
+	}
+	facts := [?]Record_Fact {
+		{"net", "Other_Port_Refused", "net: UDP to 10.0.2.2 port 9: refused: "},
+		{"net", "Other_Port_Refused_Wrong", "net: UDP to 10.0.2.2 port 9: WRONG: "},
+		{"net", "Other_Address_Echo_Refused", "net: ICMP echo to 10.0.2.3: refused: "},
+		{"net", "Other_Address_Echo_Refused_Wrong", "net: ICMP echo to 10.0.2.3: WRONG: "},
+		{"net", "Large_Datagram_Refused", "net: UDP of 2000 bytes: refused, no fragment: "},
+		{"net", "Large_Datagram_Refused_Wrong", "net: UDP of 2000 bytes: WRONG: "},
+		{"net", "Key_Datagram_Refused", "net: a datagram to 10.0.2.2 port 7 after a key: refused, the endpoint has no grant now: "},
+		{"net", "Key_Datagram_Refused_Otherwise", "net: a datagram to 10.0.2.2 port 7 after a key: refused: "},
+		{"notes", "Note_Write_Refused", "notes: the storage service refused the object note: "},
+		{"notes", "Count_Write_Refused", "notes: the storage service refused the object count: "},
+		{"tables", "Memory_Object_To_Service_Refused", "tables: a memory object to the service: "},
+		{"tables", "Memory_Object_To_Service_Wrong", "tables: wrong answer: a memory object to the service: "},
+		{"tables", "Budget_As_Table_Memory_Refused", "tables: a budget as the memory of a table: "},
+		{"tables", "Budget_As_Table_Memory_Wrong", "tables: wrong answer: a budget as the memory of a table: "},
+		{"tables", "Count_Past_Its_Bound_Refused", "tables: a count of 2^40 rows: "},
+		{"tables", "Count_Past_Its_Bound_Wrong", "tables: wrong answer: a count of 2^40 rows: "},
+		{"tables", "Start_That_Wraps_Refused", "tables: a start that wraps: "},
+		{"tables", "Start_That_Wraps_Wrong", "tables: wrong answer: a start that wraps: "},
+	}
+	signed_values := [4]i64{0, 1, -1, max(i64)}
+	for fact in facts {
+		file, ok := facts_file_of_demonstration(t, fact.folder)
+		if !ok {
+			continue
+		}
+		for kind in errors.Kind {
+			for unit in errors.Unit {
+				for signed in signed_values {
+					written := fact_test_render(t, file, fact.folder, fact.type_name, {{"kind", u64(kind)}, {"unit", u64(unit)}, {"operation", signed_bits(signed)}, {"argument", signed_bits(-signed)}, {"value", signed_bits(signed)}, {"limit", signed_bits(-signed)}, {"found", signed_bits(signed)}})
+					facts_expect_line(t, written, demonstration_error_record_line(fact.head, kind, unit, signed))
+				}
+			}
+		}
+		// The least i64 is written whole, with its sign.
+		facts_expect_line(t, fact_test_render(t, file, fact.folder, fact.type_name, {{"value", signed_bits(min(i64))}}), line_of_before(fact.head, "kind None, unit None, operation 0, argument 0, value ", min(i64), ", limit 0, found 0"))
+	}
+}
+
+// demonstration_hundredths_text gives a number of hundredths with two
+// decimals, as a field Hundredths writes it.
+@(private = "file")
+demonstration_hundredths_text :: proc(hundredths: u64) -> string {
+	return fmt.tprintf("%d.%02d", hundredths / 100, hundredths % 100)
+}
+
+// demonstration_tenth_of_microsecond_text gives a time in nanoseconds as
+// microseconds with one decimal, cut, as a field
+// Nanoseconds_As_Microseconds writes it.
+@(private = "file")
+demonstration_tenth_of_microsecond_text :: proc(nanoseconds: u64) -> string {
+	return fmt.tprintf("%d.%d us", nanoseconds / 1000, nanoseconds / 100 % 10)
+}
+
+// The measures that were lines with one decimal are fields of hundredths
+// with two decimals now; the measures of microseconds with one decimal
+// write the line of before.
+@(test)
+the_measures_of_the_demonstrations_write_their_decimals :: proc(t: ^testing.T) {
+	imports, imports_ok := facts_file_of_demonstration(t, "imports")
+	randomness, randomness_ok := facts_file_of_demonstration(t, "randomness")
+	elements, elements_ok := facts_file_of_demonstration(t, "interface_elements")
+	frame, frame_ok := facts_file_of_demonstration(t, "processor_frame")
+	net, net_ok := facts_file_of_demonstration(t, "net")
+	if !imports_ok || !randomness_ok || !elements_ok || !frame_ok || !net_ok {
+		return
+	}
+	// None, one hundredth, a zero after the point, and the largest that
+	// the signed field holds.
+	hundredths := [4]u64{0, 1, 1205, u64(max(i64))}
+	for value in hundredths {
+		text := demonstration_hundredths_text(value)
+		for time in DEMONSTRATION_EDGE_TIMES {
+			facts_expect_line(t, fact_test_render(t, imports, "imports", "Import_Call_Measured", {{"call", value}, {"replaced_call", value}, {"runs", time}, {"calls", max(u64)}}), line_of_before("imports: a call through an import slot: ", text, " ns to calendar, ", text, " ns to calendar_fixed in its place, the least of ", time, " runs of ", max(u64), " calls"))
+			facts_expect_line(t, fact_test_render(t, imports, "imports", "Import_Bind_Measured", {{"bind", value}, {"checked_bind", value}, {"load", time}, {"replaced_load", u64(max(i64)) - time}}), line_of_before("imports: the bind of agenda: ", text, " ns, and ", text, " ns with the check of the replacement; the load of agenda and its import: ", time, " us, and ", u64(max(i64)) - time, " us"))
+			facts_expect_line(t, fact_test_render(t, randomness, "randomness", "Generator_Measured", {{"elapsed", time}, {"rate", value}}), line_of_before("randomness: the generator: 4 MiB in ", time, " us, ", text, " MB/s"))
+		}
+		facts_expect_line(t, fact_test_render(t, net, "net", "Burst_Entries_Measured", {{"this_process", value}, {"network_service", value}, {"frame_service", value}}), line_of_before("net: kernel entries for each datagram: ", text, " of this process, ", text, " of the network service, ", text, " of the frame service"))
+	}
+	// A time of 812 499 ns is 812.4 us: the tenth is cut, not rounded.
+	nanoseconds := [4]u64{0, 99, 812_499, u64(max(i64))}
+	names := [2]string{strings.repeat("m", 18, context.temp_allocator), "a whole frame"}
+	for value in nanoseconds {
+		text := demonstration_tenth_of_microsecond_text(value)
+		for name in names {
+			for count in DEMONSTRATION_EDGE_COUNTS {
+				facts_expect_line(t, fact_test_render(t, elements, "interface_elements", "Damage_Measured", {{"records", count}, {"rectangles", max(u64) - count}, {"window_percent", count}, {"difference", value}, {"measure", name}}), line_of_before("interface_elements: ", name, ": ", count, " records, ", max(u64) - count, " damage rectangles, ", count, " % of the window, the difference in ", text))
+			}
+		}
+		for count in DEMONSTRATION_EDGE_COUNTS {
+			other := max(u64) - count
+			tail := line_of_before(": least ", text, ", median ", text, ", ", count, " frames in one second at the median, over ", other, " frames")
+			measures := []Fact_Test_Field{{"least", value}, {"median", value}, {"frames", count}, {"rounds", other}}
+			facts_expect_line(t, fact_test_render(t, frame, "processor_frame", "Clear_And_Present_Measured", measures), strings.concatenate({"processor_frame: measure: a clear and a present of 1920x1080", tail}, context.temp_allocator))
+			facts_expect_line(t, fact_test_render(t, frame, "processor_frame", "Full_Frame_Measured", measures), strings.concatenate({"processor_frame: measure: a full frame of the compositor at 1920x1080 with 4 windows", tail}, context.temp_allocator))
+			facts_expect_line(t, fact_test_render(t, frame, "processor_frame", "Damage_Frame_Measured", {{"pixels", other}, {"least", value}, {"median", value}, {"frames", count}, {"rounds", other}}), line_of_before("processor_frame: measure: a frame of the compositor at 1920x1080 with 4 windows in its damage of 2 rectangles, ", other, " pixels", tail))
+			facts_expect_line(t, fact_test_render(t, frame, "processor_frame", "Draw_Table_Measured", {{"records", count}, {"opaque_rectangles", other}, {"cell_texts", count}, {"interface_texts", other}, {"opaque_pictures", count}, {"with_alpha", other}, {"least", value}, {"median", value}, {"frames", count}, {"rounds", other}}), line_of_before("processor_frame: measure: the execution of a draw table of 1920x1080 with ", count, " records: ", other, " opaque rectangles and gradients, ", count, " texts in the font of the cells, ", other, " in the interface font, ", count, " opaque pictures, ", other, " rectangles and pictures with alpha", tail))
+		}
+	}
+}
+
+// Each fact of kernel_events, locks, quic_echo, return_fault, rights,
+// server and tone that replaced a line with a value writes the line of
+// before, or its new sentence: a status by its name where the line wrote
+// its number, a long line as several facts.
+@(test)
+the_facts_of_the_demonstrations_with_statuses_and_addresses_write_their_lines :: proc(t: ^testing.T) {
+	events, events_ok := facts_file_of_demonstration(t, "kernel_events")
+	locks, locks_ok := facts_file_of_demonstration(t, "locks")
+	quic, quic_ok := facts_file_of_demonstration(t, "quic_echo")
+	return_fault, return_fault_ok := facts_file_of_demonstration(t, "return_fault")
+	rights, rights_ok := facts_file_of_demonstration(t, "rights")
+	server, server_ok := facts_file_of_demonstration(t, "server")
+	tone, tone_ok := facts_file_of_demonstration(t, "tone")
+	if !events_ok || !locks_ok || !quic_ok || !return_fault_ok || !rights_ok || !server_ok || !tone_ok {
+		return
+	}
+	addresses := [3]u64{0, 0xffff_8000_0000_1000, max(u64)}
+	case_names := [2]string{strings.repeat("c", 52, context.temp_allocator), "the trap flag at a syscall"}
+	for address in addresses {
+		hex := sentence.Hex(address)
+		for verdict in DEMONSTRATION_VERDICTS {
+			for cause in op.Stop_Cause {
+				for outcome in op.Stop_Outcome {
+					facts_expect_line(t, fact_test_render(t, events, "kernel_events", "Fault_Once_Stopped", {{"records", u64(1)}, {"vector", u64(14)}, {"address", address}, {"cause", u64(cause)}, {"outcome", u64(outcome)}, {"verdict", verdict}}), line_of_before("kernel_events: a child that faults once: ", u64(1), " record of a fault that stopped it, vector ", u64(14), ", address ", hex, ", stopped: ", op.STOP_CAUSE_TEXTS[cause], ", ", op.STOP_OUTCOME_TEXTS[outcome], ": ", verdict))
+					for name in case_names {
+						facts_expect_line(t, fact_test_render(t, return_fault, "return_fault", "Child_Stopped_Itself", {{"address", address}, {"cause", u64(cause)}, {"outcome", u64(outcome)}, {"case_name", name}, {"verdict", verdict}}), line_of_before("return_fault: ", name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", ", op.STOP_OUTCOME_TEXTS[outcome], ", the address ", hex, ": ", verdict))
+					}
+				}
+				facts_expect_line(t, fact_test_render(t, events, "kernel_events", "Fault_Once_Stopped_Without_Outcome", {{"records", max(u64)}, {"vector", u64(0)}, {"address", address}, {"cause", u64(cause)}, {"verdict", verdict}}), line_of_before("kernel_events: a child that faults once: ", max(u64), " record of a fault that stopped it, vector ", u64(0), ", address ", hex, ", stopped: ", op.STOP_CAUSE_TEXTS[cause], ": ", verdict))
+				for name in case_names {
+					facts_expect_line(t, fact_test_render(t, return_fault, "return_fault", "Child_Stopped_On_Fault", {{"address", address}, {"vector", max(u64)}, {"cause", u64(cause)}, {"case_name", name}, {"verdict", verdict}}), line_of_before("return_fault: ", name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", vector ", max(u64), ", the address ", hex, ": ", verdict))
+					facts_expect_line(t, fact_test_render(t, return_fault, "return_fault", "Child_Stopped", {{"address", address}, {"cause", u64(cause)}, {"case_name", name}, {"verdict", verdict}}), line_of_before("return_fault: ", name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", the address ", hex, ": ", verdict))
+				}
+			}
+			for count in DEMONSTRATION_EDGE_COUNTS {
+				facts_expect_line(t, fact_test_render(t, events, "kernel_events", "Fault_Address_In_A_Record", {{"page_faults", count}, {"with_address", max(u64) - count}, {"address", address}, {"verdict", verdict}}), line_of_before("kernel_events: the address of a fault: a rule for every process: ", count, " page faults, ", max(u64) - count, " with an address; a rule that names the child: its first use at ", hex, " is in a record: ", verdict))
+				facts_expect_line(t, fact_test_render(t, events, "kernel_events", "Fault_Address_In_No_Record", {{"page_faults", count}, {"with_address", max(u64) - count}, {"address", address}, {"verdict", verdict}}), line_of_before("kernel_events: the address of a fault: a rule for every process: ", count, " page faults, ", max(u64) - count, " with an address; a rule that names the child: its first use at ", hex, " is in no record: ", verdict))
+			}
+		}
+		for count in DEMONSTRATION_EDGE_COUNTS {
+			facts_expect_line(t, fact_test_render(t, events, "kernel_events", "Record_After_End", {{"end", count}, {"offset", address}}), line_of_before("kernel_events: 1000 gives and ends under load: WRONG: after the end ", count, ", the word at the offset ", hex, " of the memory object of the rings changed: a record written after the end"))
+			for time in DEMONSTRATION_EDGE_TIMES {
+				facts_expect_line(t, fact_test_render(t, server, "server", "Sink_Received", {{"body_size", time}, {"body_hash", address}, {"rate", count}}), line_of_before("server: received /sink: ", time, " bytes, fnv1a64 ", hex, ", ", count, " MB/s"))
+			}
+		}
+	}
+	// The cost line of kernel_events is one fact for each rule.
+	for count in DEMONSTRATION_EDGE_COUNTS {
+		other := max(u64) - count
+		for time in DEMONSTRATION_EDGE_TIMES {
+			head :: "kernel_events: kernel entries in one second of the load child (its own count and time): "
+			facts_expect_line(t, fact_test_render(t, events, "kernel_events", "Cost_Without_Rule", {{"rate", count}, {"operations", other}, {"elapsed", time}}), line_of_before(head, "no rule ", count, " (", other, " operations in ", time, " ns)"))
+			counted := []Fact_Test_Field{{"rate", count}, {"operations", other}, {"elapsed", time}, {"records", count}, {"lost", other}}
+			facts_expect_line(t, fact_test_render(t, events, "kernel_events", "Cost_Rule_Of_Another_Process", counted), line_of_before(head, "a rule that names another process ", count, " (", other, " operations in ", time, " ns; ", count, " records + ", other, " lost, of 0)"))
+			facts_expect_line(t, fact_test_render(t, events, "kernel_events", "Cost_Rule_Matching_Nothing", counted), line_of_before(head, "a rule for every process that matches nothing ", count, " (", other, " operations in ", time, " ns; ", count, " records + ", other, " lost, of 0)"))
+			for verdict in DEMONSTRATION_VERDICTS {
+				facts_expect_line(t, fact_test_render(t, events, "kernel_events", "Cost_Rule_Of_Each_Operation", {{"rate", count}, {"operations", other}, {"elapsed", time}, {"records", count}, {"lost", other}, {"total", count}, {"expected", other}, {"verdict", verdict}}), line_of_before(head, "a rule that accepts each of its operations ", count, " (", other, " operations in ", time, " ns; ", count, " records + ", other, " lost = ", count, ", of ", other, "): ", verdict))
+			}
+		}
+		facts_expect_line(t, fact_test_render(t, locks, "locks", "Stress_Done", {{"started", count}, {"stopped", other}, {"closed_only", count}, {"pages", other}, {"pages_at_start", count}, {"processes", other}, {"processes_at_start", count}, {"threads", other}, {"threads_at_start", count}, {"free_pages", other}, {"budget_pages", count}, {"reserved_pages", other}}), line_of_before("locks: stress: ", count, " processes started, ", other, " stopped by this process (some by a thread while another thread closed the last handle), ", count, " only by the close of their last handle, while their threads ran and they stopped each other; budget: pages ", other, " of ", count, ", processes ", other, " of ", count, ", threads ", other, " of ", count, "; free pages ", other, ", in budgets ", count, ", reserved ", other))
+		// The lock waits are one fact for each lock, and the frame caches
+		// one fact for each processor.
+		for lock in op.Lock_Kind {
+			name := op.LOCK_KIND_NAMES[lock]
+			facts_expect_line(t, fact_test_render(t, locks, "locks", "Entry_Lock_Waits", {{"waits", count}, {"takes", other}, {"lock", name}}), line_of_before("locks: lock waits of takes, 4 lockers, kernel entries: ", name, " ", count, " of ", other))
+			facts_expect_line(t, fact_test_render(t, locks, "locks", "Fault_Lock_Waits", {{"waits", count}, {"takes", other}, {"lock", name}}), line_of_before("locks: lock waits of takes, 4 lockers, pages on first use: ", name, " ", count, " of ", other))
+			facts_expect_line(t, fact_test_render(t, locks, "locks", "Pair_Lock_Waits", {{"waits", count}, {"takes", other}, {"lock", name}}), line_of_before("locks: lock waits of takes, word wait with 2 lockers: ", name, " ", count, " of ", other))
+		}
+		facts_expect_line(t, fact_test_render(t, locks, "locks", "Frame_Cache_Shown", {{"processor", count}, {"frames", other}, {"batches_taken", count}, {"batches_given", other}, {"drains", count}}), line_of_before("locks: frame caches after the measures (frames now, batches taken, batches given, drains): processor ", count, ": ", other, ", ", count, ", ", other, ", ", count))
+		// The counts of quic_echo are two facts: one template holds at most
+		// 512 bytes.
+		facts_expect_line(t, fact_test_render(t, quic, "quic_echo", "Server_Counts", {{"accepted", count}, {"ended", other}, {"retries", count}, {"tokens_refused", other}, {"not_authentic", count}, {"too_small", other}, {"refused_by_limit", count}, {"refused_full", other}}), line_of_before("quic_echo: accepted ", count, ", ended ", other, ", Retries ", count, ", tokens refused ", other, ", not authentic ", count, ", too small ", other, ", Initials refused by a limit (each try of a client counts) ", count, ", Initials refused with a full table ", other))
+		facts_expect_line(t, fact_test_render(t, quic, "quic_echo", "Server_Budget_Counts", {{"over_budget", count}, {"over_address_budget", other}, {"address_table_full", count}, {"tokens_used_again", other}, {"version_negotiations", count}, {"sends_refused", other}, {"last_send_status", count}}), line_of_before("quic_echo: over the budget ", count, ", over the budget of an address ", other, ", new addresses with no place in the table of address budgets ", count, ", tokens used again ", other, ", version negotiations ", count, ", Sends refused by the network service ", other, " (the last status ", count, ")"))
+		facts_expect_line(t, fact_test_render(t, tone, "tone", "Tag_Unknown", {{"tag", count}}), line_of_before("tone: a completion with the tag ", count, " came, and no command has it"))
+		facts_expect_line(t, fact_test_render(t, tone, "tone", "Status_Word_Unknown", {{"tag", count}, {"word", other}}), line_of_before("tone: the sound service answered the tag ", count, " with the word ", other, ", which names no status"))
+		facts_expect_line(t, fact_test_render(t, tone, "tone", "Sample_Region_Refused", {{"status_word", count}}), line_of_before("tone: the sound service refused the sample region with the status ", count))
+		facts_expect_line(t, fact_test_render(t, tone, "tone", "Start_Refused", {{"status_word", count}}), line_of_before("tone: the sound service refused Start with the status ", count))
+		facts_expect_line(t, fact_test_render(t, tone, "tone", "Format_Unknown", {{"format", count}}), line_of_before("tone: the stream has the format ", count))
+		facts_expect_line(t, fact_test_render(t, tone, "tone", "Tone_Refused", {{"status_word", count}}), line_of_before("tone: the sound service refused the tone with the status ", count))
+		for time in DEMONSTRATION_EDGE_TIMES {
+			facts_expect_line(t, fact_test_render(t, tone, "tone", "Tone_At_Another_Frame", {{"frame", count}, {"played_time", time}, {"expected_frame", other}, {"expected_time", u64(max(i64)) - time}}), line_of_before("tone: the tone played from the frame ", count, " at ", time, " ns; its time names the frame ", other, " at ", u64(max(i64)) - time, " ns"))
+		}
+	}
+	commands := [2]string{"Attach", "Tone"}
+	for command in commands {
+		facts_expect_line(t, fact_test_render(t, tone, "tone", "Completion_Missing", {{"command", command}}), line_of_before("tone: no completion of ", command, " before the hang bound"))
+	}
+	// A status is written by its name, where the lines of locks, rights and
+	// tone wrote its number.
+	attempts := [2]string{strings.repeat("a", 44, context.temp_allocator), "map the memory with no right Map"}
+	for status in op.Status {
+		name := op.STATUS_NAMES[status]
+		facts_expect_line(t, fact_test_render(t, locks, "locks", "Locker_Not_Started", {{"status", u64(status)}}), line_of_before("locks: cannot start a locker: status ", name))
+		facts_expect_line(t, fact_test_render(t, tone, "tone", "Second_Give_Refused", {{"status", u64(status)}}), line_of_before("tone: the second give of the region gave the status ", name))
+		for attempt in attempts {
+			facts_expect_line(t, fact_test_render(t, rights, "rights", "Attempt_Wrong", {{"status", u64(status)}, {"attempt", attempt}}), line_of_before("rights: wrong answer: ", attempt, ": status ", name))
+		}
+	}
+	// A word that names no status is written as its number.
+	facts_expect_line(t, fact_test_render(t, locks, "locks", "Locker_Not_Started", {{"status", u64(max(u32))}}), line_of_before("locks: cannot start a locker: status ", u64(max(u32))))
+	tone_cases := [2]string{strings.repeat("r", 35, context.temp_allocator), "a record at the frame 0"}
+	signed_values := [4]i64{0, 1, -1, max(i64)}
+	for name in tone_cases {
+		for kind in errors.Kind {
+			for unit in errors.Unit {
+				for signed in signed_values {
+					facts_expect_line(t, fact_test_render(t, tone, "tone", "Case_Answered_Wrong", {{"status_word", u64(7)}, {"kind", u64(kind)}, {"unit", u64(unit)}, {"argument", signed_bits(signed)}, {"case_name", name}}), line_of_before("tone: ", name, " got the status ", u64(7), ", the kind ", errors.KIND_NAMES[kind], ", the unit ", errors.UNIT_MEMBER_NAMES[unit], ", the argument ", signed))
+				}
+			}
+		}
+	}
+	// The end of a connection by the application: the longest peer, end
+	// cause and reason of a client, and short ones.
+	peers := [2]string{strings.repeat("p", 26, context.temp_allocator), "10.0.2.2 port 7100"}
+	end_causes := [2]string{strings.repeat("e", 22, context.temp_allocator), "closed by the client"}
+	reasons := [2]string{strings.repeat("r", 48, context.temp_allocator), ""}
+	for peer in peers {
+		for end_cause in end_causes {
+			for reason in reasons {
+				for time in DEMONSTRATION_EDGE_TIMES {
+					facts_expect_line(t, fact_test_render(t, quic, "quic_echo", "Connection_Ended_By_Application", {{"code", max(u64)}, {"frame_type", u64(0x1d)}, {"bytes_in", time}, {"bytes_out", u64(max(i64)) - time}, {"round_trip", time}, {"peer", peer}, {"end_cause", end_cause}, {"client_reason", reason}}), line_of_before("quic_echo: ", peer, " ended (", end_cause, ", the code ", sentence.Hex(max(u64)), " of the application, the frame type ", sentence.Hex(0x1d), ", the reason of the client \"", reason, "\"): in ", time, " bytes, out ", u64(max(i64)) - time, " bytes, srtt ", time, " us"))
+				}
+			}
+		}
+	}
+}
+
+// Each fact of net, pointers and tables that replaced a line with a text
+// writes its sentence: the longest text of each Text field and a short
+// one, and the mark of a wrong answer.
+@(test)
+the_facts_of_net_pointers_and_tables_write_their_texts :: proc(t: ^testing.T) {
+	net, net_ok := facts_file_of_demonstration(t, "net")
+	pointers, pointers_ok := facts_file_of_demonstration(t, "pointers")
+	tables, tables_ok := facts_file_of_demonstration(t, "tables")
+	imports, imports_ok := facts_file_of_demonstration(t, "imports")
+	if !net_ok || !pointers_ok || !tables_ok || !imports_ok {
+		return
+	}
+	marks := [2]string{"", " (WRONG)"}
+	addresses := [2]string{"255.255.255.255", "10.0.2.15"}
+	hardware_texts := [2]string{"ff:ff:ff:ff:ff:ff", "52:54:00:12:34:56"}
+	for mark in marks {
+		for address in addresses {
+			for hardware in hardware_texts {
+				for link in ([2]string{"up", "down"}) {
+					facts_expect_line(t, fact_test_render(t, net, "net", "Link_And_Address", {{"address", address}, {"link", link}, {"hardware", hardware}, {"wrong_mark", mark}}), line_of_before("net: the link and the address: ", address, "/24, the link is ", link, ", ", hardware, mark))
+				}
+			}
+			for time in DEMONSTRATION_EDGE_TIMES {
+				facts_expect_line(t, fact_test_render(t, net, "net", "Echo_Server_Answered", {{"remote_port", u64(7)}, {"took", time}, {"remote", address}, {"wrong_mark", mark}}), line_of_before("net: UDP to 10.0.2.2 port 7, 41 bytes: the same 41 bytes came back from ", address, " port ", u64(7), " in ", time, " us", mark))
+			}
+		}
+		for time in DEMONSTRATION_EDGE_TIMES {
+			for hardware in hardware_texts {
+				facts_expect_line(t, fact_test_render(t, net, "net", "Gateway_Resolved", {{"took", time}, {"hardware", hardware}, {"wrong_mark", mark}}), line_of_before("net: ARP: who has 10.0.2.2: the gateway answered ", hardware, " in ", time, " us", mark))
+			}
+			facts_expect_line(t, fact_test_render(t, net, "net", "Gateway_Echoed", {{"took", time}, {"time_to_live", u64(64)}, {"wrong_mark", mark}}), line_of_before("net: ICMP echo to 10.0.2.2, 56 bytes: the echo reply came in ", time, " us, time to live ", u64(64), mark))
+		}
+		for count in DEMONSTRATION_EDGE_COUNTS {
+			other := max(u64) - count
+			facts_expect_line(t, fact_test_render(t, net, "net", "Source_Port_Refused", {{"found_port", count}, {"local_port", other}, {"wrong_mark", mark}}), line_of_before("net: UDP from the source port 1234: refused: the source port ", count, " of the header is not the local port of this endpoint, ", other, mark))
+			facts_expect_line(t, fact_test_render(t, net, "net", "Length_Field_Refused", {{"field_bytes", count}, {"send_bytes", other}, {"wrong_mark", mark}}), line_of_before("net: UDP with a wrong length field: refused: the length field of the header says ", count, " bytes, the Send has ", other, mark))
+			facts_expect_line(t, fact_test_render(t, net, "net", "Short_Datagram_Refused", {{"send_bytes", count}, {"least_bytes", other}, {"wrong_mark", mark}}), line_of_before("net: UDP of 7 bytes: refused: the Send has ", count, " bytes, a datagram has ", other, " bytes at least, its header", mark))
+			facts_expect_line(t, fact_test_render(t, net, "net", "Wrong_Checksum_Dropped", {{"datagrams", count}, {"wrong_mark", mark}}), line_of_before("net: UDP from 10.0.2.2 port 7 with a wrong checksum: dropped by this process: ", count, " datagram; the network service gave it to the endpoint of its port", mark))
+			facts_expect_line(t, fact_test_render(t, net, "net", "Wrong_Checksums_Dropped", {{"datagrams", count}, {"wrong_mark", mark}}), line_of_before("net: UDP from 10.0.2.2 port 7 with a wrong checksum: dropped by this process: ", count, " datagrams; the network service gave it to the endpoint of its port", mark))
+			facts_expect_line(t, fact_test_render(t, net, "net", "Endpoint_Row_Found", {{"from_port", count}, {"wrong_mark", mark}}), line_of_before("net: UDP from 10.0.2.2 port 9 to this endpoint: refused: from port ", count, "; a row of this endpoint", mark))
+			facts_expect_line(t, fact_test_render(t, net, "net", "Machine_Rows_Found", {{"refused", count}, {"kinds", other}, {"found", count}, {"expected", other}, {"wrong_mark", mark}}), line_of_before("net: malformed frames from the wire: ", count, " refused in ", other, " kinds, ", count, " of ", other, " expected; no fault", mark))
+			facts_expect_line(t, fact_test_render(t, net, "net", "Echo_Request_Answered", {{"requests", count}, {"wrong_mark", mark}}), line_of_before("net: ICMP echo from 10.0.2.2 to this machine: the network service answered ", count, " request", mark))
+			facts_expect_line(t, fact_test_render(t, net, "net", "Echo_Requests_Answered", {{"requests", count}, {"wrong_mark", mark}}), line_of_before("net: ICMP echo from 10.0.2.2 to this machine: the network service answered ", count, " requests", mark))
+		}
+		facts_expect_line(t, fact_test_render(t, net, "net", "Machine_Rows_Not_Shown", {{"wrong_mark", mark}}), line_of_before("net: malformed frames from the wire: not shown: the grant has no right Inspect", mark))
+		facts_expect_line(t, fact_test_render(t, net, "net", "Echo_Requests_Not_Shown", {{"wrong_mark", mark}}), line_of_before("net: ICMP echo from 10.0.2.2 to this machine: not shown: the grant has no right Inspect", mark))
+	}
+	// The faults of a pointer theme, for each theme and each place.
+	Theme :: struct {
+		name:            string,
+		whole, entry, pixel: string,
+	}
+	themes := [2]Theme{{"pointers_posy", "Owner_Theme_Not_Valid", "Owner_Theme_Entry_Not_Valid", "Owner_Theme_Pixel_Not_Valid"}, {"pointers_system", "System_Theme_Not_Valid", "System_Theme_Entry_Not_Valid", "System_Theme_Pixel_Not_Valid"}}
+	parts := [2]string{strings.repeat("p", 17, context.temp_allocator), "the header"}
+	fields := [2]string{strings.repeat("f", 27, context.temp_allocator), "width"}
+	rules := [2]string{strings.repeat("r", 60, context.temp_allocator), "is above its limit"}
+	for theme in themes {
+		head := line_of_before("pointers: ", theme.name, " is not valid: ")
+		for part in parts {
+			for field in fields {
+				for rule in rules {
+					for count in DEMONSTRATION_EDGE_COUNTS {
+						other := max(u64) - count
+						tail := line_of_before(": ", field, " ", rule, " (value ", count, ", limit ", other, ")")
+						facts_expect_line(t, fact_test_render(t, pointers, "pointers", theme.whole, {{"value", count}, {"limit", other}, {"part", part}, {"field", field}, {"rule", rule}}), strings.concatenate({head, part, tail}, context.temp_allocator))
+						facts_expect_line(t, fact_test_render(t, pointers, "pointers", theme.entry, {{"index", other}, {"value", count}, {"limit", other}, {"part", part}, {"field", field}, {"rule", rule}}), line_of_before(head, part, ", entry ", other, tail))
+						facts_expect_line(t, fact_test_render(t, pointers, "pointers", theme.pixel, {{"index", other}, {"value", count}, {"limit", other}, {"part", part}, {"field", field}, {"rule", rule}}), line_of_before(head, part, ", pixel ", other, tail))
+					}
+				}
+			}
+		}
+	}
+	// The answers of the cases of tables and imports.
+	table_cases := [2]string{strings.repeat("c", 37, context.temp_allocator), "a count of 0 rows"}
+	answers := [2]string{strings.repeat("a", 87, context.temp_allocator), "Ok"}
+	call_ways := [2]string{"call host", "direct"}
+	for name in table_cases {
+		for answer in answers {
+			facts_expect_line(t, fact_test_render(t, tables, "tables", "Hostile_Answer", {{"case_name", name}, {"answer", answer}}), line_of_before("tables: ", name, ": ", answer))
+			facts_expect_line(t, fact_test_render(t, tables, "tables", "Hostile_Answer_Wrong", {{"case_name", name}, {"answer", answer}}), line_of_before("tables: wrong answer: ", name, ": ", answer))
+			for way in call_ways {
+				facts_expect_line(t, fact_test_render(t, tables, "tables", "Answer_Wrong", {{"case_name", name}, {"call_way", way}, {"answer", answer}}), line_of_before("tables: wrong answer: ", name, ", ", way, ": ", answer))
+			}
+		}
+	}
+	import_cases := [2]string{strings.repeat("c", 52, context.temp_allocator), "an import of a module that is not in the image"}
+	for name in import_cases {
+		for answer in answers {
+			facts_expect_line(t, fact_test_render(t, imports, "imports", "Answer_Wrong", {{"case_text", name}, {"answer", answer}}), line_of_before("imports: wrong answer: ", name, ": ", answer))
+		}
+	}
+	measure_ways := [2]string{strings.repeat("w", 24, context.temp_allocator), "direct call"}
+	for way in measure_ways {
+		for count in DEMONSTRATION_EDGE_COUNTS {
+			other := max(u64) - count
+			facts_expect_line(t, fact_test_render(t, tables, "tables", "Measure_Call_Refused", {{"rows", count}, {"call", other}, {"status_word", count}, {"way", way}}), line_of_before("tables: ", way, ", ", count, " rows: call ", other, " gave the status ", count))
+		}
 	}
 }

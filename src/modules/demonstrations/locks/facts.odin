@@ -1,16 +1,101 @@
 package locks
 
+import op "modus:contract/operation"
+import "modus:contract/value_kinds"
+
 // The log facts of locks (src/md/features/log_facts.md): each fact template
 // is the line that the process wrote before it was a fact, so a wait of a
 // machine test on that sentence, and the measure that the tool reads from
 // it, read it as before. A line whose sentence differs by its case, a
 // measure run or the check of a test, is one fact type for each case: the
 // template has no condition.
-//
-// Lines stay text: the lines with no value; a status written as its number;
-// the line of the stress, whose template passes the bound of one fact; and
-// the lines that a loop writes, over the kinds of lock and over the
-// processors, whose sentence has no fixed form.
+
+// The lines of the lock waits and of the frame caches were each one line
+// that a loop wrote, over the kinds of lock and over the processors: each
+// is now one fact for each kind and for each processor, whose sentence is
+// the head of the line and the part of that kind or processor. A status
+// that the line wrote as its number writes the name of its member.
+
+// The bytes of the Text field of the name of a kind of lock: the longest,
+// "control" and "process", have 7 bytes.
+LOCK_FIELD_BYTES :: 8
+
+// The context of the process holds no random seed.
+@(log_fact = "locks: no random seed in the context")
+No_Random_Seed :: struct {}
+
+// The process has no boot image, or no memory for the board.
+@(log_fact = "locks: no boot image or no memory")
+No_Boot_Image_Or_Memory :: struct {}
+
+// The kernel refused the start of a locker.
+@(log_fact = "locks: cannot start a locker: status {status}")
+Locker_Not_Started :: struct {
+	status: op.Status,
+}
+
+// The stress of the starts and the stops: the processes, how each one
+// stopped, and the budget and the free pages after it.
+@(log_fact = "locks: stress: {started} processes started, {stopped} stopped by this process (some by a thread while another thread closed the last handle), {closed_only} only by the close of their last handle, while their threads ran and they stopped each other; budget: pages {pages} of {pages_at_start}, processes {processes} of {processes_at_start}, threads {threads} of {threads_at_start}; free pages {free_pages}, in budgets {budget_pages}, reserved {reserved_pages}")
+Stress_Done :: struct {
+	started:            u64,
+	stopped:            u64,
+	closed_only:        u64,
+	pages:              u64,
+	pages_at_start:     u64,
+	processes:          u64,
+	processes_at_start: u64,
+	threads:            u64,
+	threads_at_start:   u64,
+	free_pages:         u64,
+	budget_pages:       u64,
+	reserved_pages:     u64,
+}
+
+// The waits of the locks of one kind, over the takes, while 4 lockers
+// entered the kernel.
+@(log_fact = "locks: lock waits of takes, 4 lockers, kernel entries: {lock} {waits} of {takes}")
+Entry_Lock_Waits :: struct {
+	waits: u64,
+	takes: u64,
+	lock:  [8]u8,
+}
+
+// The waits of the locks of one kind while 4 lockers used pages for the
+// first time.
+@(log_fact = "locks: lock waits of takes, 4 lockers, pages on first use: {lock} {waits} of {takes}")
+Fault_Lock_Waits :: struct {
+	waits: u64,
+	takes: u64,
+	lock:  [8]u8,
+}
+
+// The waits of the locks of one kind during the word wait with 2 lockers.
+@(log_fact = "locks: lock waits of takes, word wait with 2 lockers: {lock} {waits} of {takes}")
+Pair_Lock_Waits :: struct {
+	waits: u64,
+	takes: u64,
+	lock:  [8]u8,
+}
+
+// The frame cache of one processor after the measures.
+@(log_fact = "locks: frame caches after the measures (frames now, batches taken, batches given, drains): processor {processor}: {frames}, {batches_taken}, {batches_given}, {drains}")
+Frame_Cache_Shown :: struct {
+	processor:     u64,
+	frames:        u64,
+	batches_taken: u64,
+	batches_given: u64,
+	drains:        u64,
+}
+
+// Each check passed.
+@(log_fact = "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped process returned its pages, its slot and its threads")
+Checks_Passed :: struct {}
+
+// lock_field gives the Text field of the name of a kind of lock.
+lock_field :: proc "contextless" (kind: op.Lock_Kind) -> [LOCK_FIELD_BYTES]u8 {
+	return value_kinds.text_field(op.LOCK_KIND_NAMES[kind], LOCK_FIELD_BYTES)
+}
 
 // A locker counted another number of kernel entries than the kernel.
 @(log_fact = "locks: locker {locker} counted {operations} operations and {entries} entries, the kernel {kernel_entries}")

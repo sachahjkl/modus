@@ -182,27 +182,20 @@ measure_record_number_from_log :: proc(number: ^Measure_Record_Number, measure: 
 	return true
 }
 
-// measure_log_read gives the text of the log of a machine with the line of
-// each log fact rendered by the module files of the build. QEMU writes the
-// raw line of a fact; a measure, its check and the page read the sentence
-// that the fact template writes from the fields, which is the line that the
-// writer wrote as text before (src/md/features/measure_history.md, "The
-// number that a chart follows"). A log with no fact is read as it is, and
-// needs no module file: a record of the host is such a log.
-measure_log_read :: proc(path: string) -> (text: string, problem: string) {
-	data, read_error := os.read_entire_file(path, context.temp_allocator)
-	if read_error != nil {
-		return "", fmt.tprintf("cannot read: %v", read_error)
-	}
-	if !strings.contains(string(data), build.FACT_LINE_MARK) {
-		return string(data), ""
-	}
-	catalog, catalog_problem := build.fact_catalog_of_build(context.temp_allocator)
-	if catalog_problem != "" {
-		return "", fmt.tprintf("the facts cannot be rendered: %s", catalog_problem)
-	}
-	rendered, _ := build.fact_lines_render(&catalog, string(data))
-	return rendered, ""
+// measure_log_rendered gives the text of a log with the line of each fact
+// rendered by the module files of the build. QEMU writes the raw line of a
+// fact, and a measured line that became a fact keeps its sentence as the
+// identity of its measure (src/md/features/log_facts.md, "The machine
+// tests"): the record keeps the sentence, which the history reads as
+// before. A log with no fact line stays as it is, and reads no module file.
+// Each reader of a measured log calls it: the measure record, the page of
+// the measured numbers, the checks of the lines of a measure run, the lines
+// that a measure run prints and the frame of the test of the sound. The
+// catalog of the module files is the one that the run of the tool keeps
+// (build.fact_lines_render_of_build), so the logs of one measure record
+// read each module file once.
+measure_log_rendered :: proc(content: string) -> (rendered: string, problem: string) {
+	return build.fact_lines_render_of_build(content)
 }
 
 // measure_record_number_read reads one number from the logs of the run. A
@@ -224,9 +217,14 @@ measure_record_number_read :: proc(measure: Measure_Entry, started: time.Time, n
 			append(&reasons, fmt.tprintf("%s: written before the start of the run", path))
 			continue
 		}
-		data, read_problem := measure_log_read(path)
-		if read_problem != "" {
-			append(&reasons, fmt.tprintf("%s: %s", path, read_problem))
+		content, read_error := os.read_entire_file(path, context.temp_allocator)
+		if read_error != nil {
+			append(&reasons, fmt.tprintf("%s: cannot read: %v", path, read_error))
+			continue
+		}
+		data, render_problem := measure_log_rendered(string(content))
+		if render_problem != "" {
+			append(&reasons, fmt.tprintf("%s: the facts cannot be rendered: %s", path, render_problem))
 			continue
 		}
 		if measure_record_number_from_log(&number, measure, path, data, names) {
@@ -542,7 +540,7 @@ COMPOSITOR_FULL_FRAME :: "compositor: a full frame of 1920x1080 "
 measure_entries := [?]Measure_Entry {
 	{sentence = "Kernel entries in one second, with 1, 2 and 4 processes that each take the locks of their own objects", files = {TEST_OUTPUT_MEASURE, ""}, pattern = "locks: kernel entries in one second", choice = .First, accent = graphics.DARK_KERNEL, place = .Numbers, required = true, reading = "Each locker is a process that enters the kernel again and again and takes only the locks of its own objects, so no two lockers wait for one lock. A count that grows with the lockers shows that the kernel serves several processors at once. It does not say what happens when processes share one object."},
 	{sentence = "Reads of the time in one second from the time page, with no kernel entry", files = {TEST_OUTPUT_MEASURE_CLOCK, ""}, pattern = "clock: the time page:", choice = .First, accent = graphics.DARK_KERNEL, place = .Numbers, required = true, reading = "A process reads the time from a page that the kernel keeps up to date. The part that matters is the second one: **0 kernel entries for one million reads**, so the time costs a read of memory. The count of reads follows the speed of the host processor."},
-	{sentence = "Wakes in one second of two threads that wake each other on a busy machine, under the strategy EEVDF", files = {TEST_OUTPUT_MEASURE_SCHEDULER, ""}, pattern = "scheduler: EEVDF: two threads that wake each other", choice = .First, accent = graphics.DARK_KERNEL, place = .Numbers, required = true, reading = "Two threads wake each other while a spinner keeps each processor busy: the count is their wakes in one second. The same line gives how late a thread that sleeps 2 ms wakes among spinners, and the share of the processor of each spinner of one weight. It shows the scheduler under load; it compares no other strategy."},
+	{sentence = "Wakes in one second of two threads that wake each other on a busy machine, under the strategy EEVDF", files = {TEST_OUTPUT_MEASURE_SCHEDULER, ""}, pattern = "scheduler: EEVDF: two threads that wake each other", choice = .First, accent = graphics.DARK_KERNEL, place = .Numbers, required = true, reading = "Two threads wake each other while a spinner keeps each processor busy: the count is their wakes in one second. The same line gives how late a thread that sleeps 2 ms wakes among spinners; the next line gives the share of the processor of each spinner of one weight. It shows the scheduler under load; it compares no other strategy."},
 	{sentence = "One glyph of the vector font, from its outline and from the glyph cache", files = {TEST_OUTPUT, ""}, pattern = "vector_glyphs: one glyph from its outline", choice = .First, accent = graphics.DARK_PROCESS, place = .Numbers, required = true, reading = "The time to draw one glyph of the vector font from its outline at three scales, the time to copy it from the private glyph cache of the process, and the time of one glyph of the bitmap font. A process draws each glyph from its outline once, then copies it at each frame."},
 	{sentence = COMPOSITOR_FULL_FRAME_SENTENCE, files = {TEST_OUTPUT, ""}, pattern = COMPOSITOR_FULL_FRAME, choice = .Last, accent = graphics.DARK_PROCESS, place = .Numbers, required = false, reading = "The time to draw the whole reference screen with its windows, on the processor: the system has no graphics device. The compositor prints it only when a frame redraws the whole screen, so the number is not required. Most frames redraw their damage rectangles only, and cost less. The sentence names the size of the screen: a frame of another size is another measure, with a series of its own."},
 	{sentence = "A clear and a present of a frame of 1920 x 1080 on the processor", files = {TEST_OUTPUT_MEASURE, ""}, pattern = PROCESSOR_FRAME_CLEAR_AND_PRESENT, choice = .First, accent = graphics.DARK_MEMORY, place = .Numbers, required = true, reading = "The process `processor_frame` fills a canvas of 1920 x 1080 with one color, then copies it into a second canvas, as the compositor copies its frame into a screen page: 8.3 MB written, then 8.3 MB read and written. It is the bound of the memory bandwidth for a frame of the reference screen with no GPU. The least and the median of 21 frames; the frames in one second come from the median."},

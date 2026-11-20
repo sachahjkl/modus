@@ -8,6 +8,7 @@ import "modus:contract/byte_order"
 import "modus:contract/timed_stream"
 import "modustool:foundation"
 import "modustool:build"
+import "modustool:checks"
 
 // Sound, the first timed stream: one machine with a virtio sound device
 // whose output goes to a wave file (src/md/features/timed_stream.md, "The
@@ -63,8 +64,14 @@ sound_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	// The line of the frame is a log fact: its sentence is in the rendered
 	// log, not in the raw lines that QEMU wrote.
-	machine_log, log_read := log_file_rendered(TEST_OUTPUT_SOUND)
-	if !log_read {
+	raw_log, log_error := os.read_entire_file(TEST_OUTPUT_SOUND, context.temp_allocator)
+	if log_error != nil {
+		fmt.eprintfln("modustool: cannot read %s: %v", TEST_OUTPUT_SOUND, log_error)
+		return false
+	}
+	machine_log, render_problem := checks.measure_log_rendered(string(raw_log))
+	if render_problem != "" {
+		fmt.eprintfln("modustool: the facts of %s cannot be rendered: %s", TEST_OUTPUT_SOUND, render_problem)
 		return false
 	}
 	frame, named := tone_frame_of_log(machine_log)

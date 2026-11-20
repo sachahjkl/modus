@@ -357,7 +357,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	image_size := ctx.values[system.GRANT_VALUE_IMAGE_SIZE]
 	address, status := system.memory_map(image_handle, {}) // Read only.
 	if status != .Ok || image_size == 0 {
-		system.log(.Info, "pointers: no boot image")
+		system.log_fact(.Info, No_Boot_Image{})
 		system.stop(.Failed)
 	}
 	image := ([^]u8)(address)[:image_size]
@@ -385,11 +385,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			head := pointer_pictures.header(theme.file)
 			system.log_fact(.Info, Theme_Valid{shapes = u64(head.shape_count), pictures = u64(head.picture_count), file_size = value_kinds.Size_In_Bytes(entry.size), check = value_kinds.Time_In_Microseconds(theme.check_time / 1000), theme = resource_field(name), theme_name = theme_text_field(pointer_pictures.text_of(head.theme_name[:])), license = theme_text_field(pointer_pictures.text_of(head.license[:]))})
 		} else {
-			system.log(.Info, "pointers: ", name, " is not valid: ", string(theme.problem[:theme.problem_count]))
+			theme_not_valid_log(name, theme.hash != entry.hash, problem)
 		}
 	}
 	if theme_count == 0 {
-		system.log(.Info, "pointers: the boot image has no pointer theme")
+		system.log_fact(.Info, No_Pointer_Theme{})
 		system.stop(.Failed)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "pointers")

@@ -109,13 +109,13 @@ pages_load :: proc "contextless" (ctx: ^system.Context) {
 	page_memory = ([^]u8)(address)[:PAGE_MEMORY_PAGES * system.PAGE_SIZE]
 	store_client, store_connected = storage.open(ctx)
 	if !store_connected {
-		system.log(.Info, "server: no private store: it serves no page of a store")
+		system.log_fact(.Info, No_Private_Store{})
 		return
 	}
 	index: [PAGE_CAPACITY * web.PAGE_INDEX_ENTRY_SIZE]u8
 	bytes, found, status := storage.read(&store_client, storage.ROOT, PAGE_INDEX_NAME, index[:])
 	if status != .Ok || !found || len(bytes) != size_of(index) {
-		system.log(.Info, "server: a new store: no page")
+		system.log_fact(.Info, New_Store{})
 		return
 	}
 	// The store is hostile input too: each name

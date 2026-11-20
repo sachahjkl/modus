@@ -390,7 +390,19 @@ echo_work :: proc "contextless" () {
 				// alert is 0x100 plus the alert.
 				reason: [quic.CLOSE_REASON_KEPT]u8
 				reason_text := printable_text(reason[:], connection.close_reason_of_peer[:connection.close_reason_of_peer_length])
-				system.log(.Info, "quic_echo: ", address_text(text[:], record.remote), " ended (", end_reason(connection), ", the code ", system.Hex(connection.close_error_code), connection.close_is_application ? " of the application" : "", ", the frame type ", system.Hex(connection.close_frame_type), ", the reason of the client \"", reason_text, "\"): in ", connection.data_consumed_total, " bytes, out ", connection.data_sent_total, " bytes, srtt ", connection.smoothed_round_trip, " us")
+				peer := value_kinds.text_field(address_text(text[:], record.remote), 27)
+				cause := value_kinds.text_field(end_reason(connection), 23)
+				client_reason := value_kinds.text_field(reason_text, 54)
+				code := value_kinds.Hexadecimal_Sixteen_Digits(connection.close_error_code)
+				frame_type := value_kinds.Hexadecimal_Sixteen_Digits(connection.close_frame_type)
+				bytes_in := value_kinds.Size_In_Bytes(connection.data_consumed_total)
+				bytes_out := value_kinds.Size_In_Bytes(connection.data_sent_total)
+				round_trip := value_kinds.Time_In_Microseconds(connection.smoothed_round_trip)
+				if connection.close_is_application {
+					system.log_fact(.Info, Connection_Ended_By_Application{code = code, frame_type = frame_type, bytes_in = bytes_in, bytes_out = bytes_out, round_trip = round_trip, peer = peer, end_cause = cause, client_reason = client_reason})
+				} else {
+					system.log_fact(.Info, Connection_Ended{code = code, frame_type = frame_type, bytes_in = bytes_in, bytes_out = bytes_out, round_trip = round_trip, peer = peer, end_cause = cause, client_reason = client_reason})
+				}
 				if connection.closed_by_idle_timeout {
 					idle_end_log(connection, record.remote)
 				}
@@ -451,7 +463,8 @@ counters_log :: proc "contextless" () {
 	counters_second = second
 	counters_logged = server.counters
 	sends_refused_logged = sends_refused
-	system.log(.Info, "quic_echo: accepted ", counters.accepted, ", ended ", counters.ended, ", Retries ", counters.retries, ", tokens refused ", counters.tokens_refused + counters.tokens_expired, ", not authentic ", counters.not_authentic, ", too small ", counters.too_small, ", Initials refused by a limit (each try of a client counts) ", counters.refused_remote_limit + counters.refused_handshake_limit, ", Initials refused with a full table ", counters.refused_full, ", over the budget ", counters.over_budget, ", over the budget of an address ", counters.over_address_budget, ", new addresses with no place in the table of address budgets ", counters.address_table_full, ", tokens used again ", counters.tokens_used_again, ", version negotiations ", counters.version_negotiations, ", Sends refused by the network service ", sends_refused, " (the last status ", u64(send_refusal_last), ")")
+	system.log_fact(.Info, Server_Counts{accepted = counters.accepted, ended = counters.ended, retries = counters.retries, tokens_refused = counters.tokens_refused + counters.tokens_expired, not_authentic = counters.not_authentic, too_small = counters.too_small, refused_by_limit = counters.refused_remote_limit + counters.refused_handshake_limit, refused_full = counters.refused_full})
+	system.log_fact(.Info, Server_Budget_Counts{over_budget = counters.over_budget, over_address_budget = counters.over_address_budget, address_table_full = counters.address_table_full, tokens_used_again = counters.tokens_used_again, version_negotiations = counters.version_negotiations, sends_refused = sends_refused, last_send_status = u64(send_refusal_last)})
 }
 
 // exchange gives the server the datagrams that arrived, runs its timers,
@@ -583,7 +596,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The rule on a weak seed: the process chooses what it
 		// accepts, and a seed under it is an error that it shows.
 		weak_seed = true
-		system.log(.Info, "quic_echo: the random seed of this process is weak: it makes no key of a server, and listens on nothing")
+		system.log_fact(.Info, Seed_Weak{})
 		for {
 			draw(&window)
 			display.wait(&window, system.time() + 1000)

@@ -171,7 +171,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		worker.number = index
 		worker.canvas = square_pictures[index]
 		if !worker_start(index) {
-			system.log(.Info, "threads: cannot start a thread")
+			system.log_fact(.Info, Thread_Not_Started{})
 			system.stop(.Failed)
 		}
 	}

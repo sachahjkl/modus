@@ -67,8 +67,9 @@ stream: ring.Ring
 tone_completion: ring.Record
 tone_completed: bool
 
-fail :: proc "contextless" (parts: ..system.Part) -> ! {
-	system.log(.Info, ..parts)
+// fail stops the process after the log fact that its caller wrote: the
+// fact says why.
+fail :: proc "contextless" () -> ! {
 	system.stop(.Failed)
 }
 
@@ -116,7 +117,8 @@ receive_tag :: proc "contextless" (tag: u32) -> (record: ring.Record, ok: bool) 
 				}
 				continue
 			}
-			fail("tone: a completion with the tag ", u64(received.tag), " came, and no command has it")
+			system.log_fact(.Info, Tag_Unknown{tag = u64(received.tag)})
+			fail()
 		}
 		if tag == TAG_TONE && tone_completed {
 			return tone_completion, true
@@ -132,11 +134,13 @@ receive_tag :: proc "contextless" (tag: u32) -> (record: ring.Record, ok: bool) 
 // call sends one command and waits for its completion.
 call :: proc "contextless" (command: timed_stream.Command, tag: u32, values: [7]u64 = {}) -> ring.Record {
 	if !system.send(&stream.commands, ring.Record{kind = u32(command), tag = tag, values = values}) {
-		fail("tone: the stream ring is full")
+		system.log_fact(.Info, Stream_Ring_Full{})
+		fail()
 	}
 	record, ok := receive_tag(tag)
 	if !ok {
-		fail("tone: no completion of ", timed_stream.COMMAND_NAMES[command], " before the hang bound")
+		system.log_fact(.Info, Completion_Missing{command = value_kinds.text_field(timed_stream.COMMAND_NAMES[command], COMMAND_FIELD_BYTES)})
+		fail()
 	}
 	return record
 }
@@ -147,7 +151,8 @@ call :: proc "contextless" (command: timed_stream.Command, tag: u32, values: [7]
 status_of :: proc "contextless" (record: ring.Record) -> timed_stream.Status {
 	status, known := timed_stream.status_of_completion_word(record.kind)
 	if !known {
-		fail("tone: the sound service answered the tag ", u64(record.tag), " with the word ", u64(record.kind), ", which names no status")
+		system.log_fact(.Info, Status_Word_Unknown{tag = u64(record.tag), word = u64(record.kind)})
+		fail()
 	}
 	return status
 }
@@ -168,7 +173,8 @@ case_check :: proc "contextless" (tag: u32, command: timed_stream.Command, refus
 	record := call(command, tag, refused.values)
 	error := errors.completion_record(record.values)
 	if status_of(record) != refused.status || error.kind != i64(refused.kind) || error.unit != i64(refused.unit) || error.argument != refused.argument || error.operation != i64(command) {
-		fail("tone: ", refused.name, " got the status ", u64(record.kind), ", the kind ", error.kind, ", the unit ", error.unit, ", the argument ", error.argument)
+		system.log_fact(.Info, Case_Answered_Wrong{status_word = u64(record.kind), kind = errors.Kind_Word(error.kind), unit = errors.Unit_Word(error.unit), argument = error.argument, case_name = value_kinds.text_field(refused.name, CASE_FIELD_BYTES)})
+		fail()
 	}
 	system.log_fact(.Info, Case_Refused{case_name = value_kinds.text_field(refused.name, CASE_FIELD_BYTES), status = status_field(refused.status)})
 }
@@ -202,12 +208,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_memory := ctx.handles[timed_stream.GRANT_RING]
 	status: system.Status
 	if stream, status = system.ring_open(ring_memory); status != .Ok {
-		fail("tone: no stream ring")
+		system.log_fact(.Info, No_Stream_Ring{})
+		fail()
 	}
 	memory, memory_status := system.memory_create(REGION_PAGES)
 	address, map_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || map_status != .Ok {
-		fail("tone: no sample region")
+		system.log_fact(.Info, No_Sample_Region{})
+		fail()
 	}
 	tone_write(([^]u32)(address))
 
@@ -222,34 +230,40 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if give_status != .Ok {
-		fail("tone: the sound service does not map the stream ring")
+		system.log_fact(.Info, Stream_Ring_Not_Mapped{})
+		fail()
 	}
 	if attached := call(.Attach, TAG_ATTACH, {0 = u64(given)}); status_of(attached) != .Ok {
-		fail("tone: the sound service refused the sample region with the status ", u64(attached.kind))
+		system.log_fact(.Info, Sample_Region_Refused{status_word = u64(attached.kind)})
+		fail()
 	}
 	// A second region is refused, and the service closes the handle that
 	// it got, as it keeps it not; a damaged Start is refused, and the
 	// stream does not start.
 	second, second_status := system.give(ring_memory, memory, {.Read})
 	if second_status != .Ok {
-		fail("tone: the second give of the region gave the status ", second_status)
+		system.log_fact(.Info, Second_Give_Refused{status = second_status})
+		fail()
 	}
 	case_check(TAG_SECOND_ATTACH, .Attach, {"a second sample region", {0 = u64(second)}, .Bad_Command, .State, .None, 0})
 	case_check(TAG_DAMAGED_START, .Start, {"a Start with a value", {0 = 1}, .Bad_Command, .Bad_Value, .None, 1})
 	started := call(.Start, TAG_START)
 	if status_of(started) != .Ok {
-		fail("tone: the sound service refused Start with the status ", u64(started.kind))
+		system.log_fact(.Info, Start_Refused{status_word = u64(started.kind)})
+		fail()
 	}
 	anchor := timed_stream.Anchor{frame = 0, time = started.values[0]}
 	if started.values[2] != u64(timed_stream.Format.Signed_16_Stereo_48000) {
-		fail("tone: the stream has the format ", started.values[2])
+		system.log_fact(.Info, Format_Unknown{format = started.values[2]})
+		fail()
 	}
 	system.log_fact(.Info, Stream_Started{held = value_kinds.Time_In_Nanoseconds(started.values[1])})
 
 	tone_time := anchor.time + TONE_OFFSET_NANOSECONDS
 	format := u64(timed_stream.Format.Signed_16_Stereo_48000)
 	if !system.send(&stream.commands, ring.Record{kind = u32(timed_stream.Command.Play), tag = TAG_TONE, values = {0 = tone_time, 1 = format, 2 = TONE_FRAMES, 3 = 0}}) {
-		fail("tone: the stream ring is full")
+		system.log_fact(.Info, Stream_Ring_Full{})
+		fail()
 	}
 
 	// The refusals first; the tone is the case that plays.
@@ -267,10 +281,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	tone, ok := receive_tag(TAG_TONE)
 	if !ok {
-		fail("tone: the tone did not end before the hang bound")
+		system.log_fact(.Info, Tone_Not_Ended{})
+		fail()
 	}
 	if status_of(tone) != .Ok {
-		fail("tone: the sound service refused the tone with the status ", u64(tone.kind))
+		system.log_fact(.Info, Tone_Refused{status_word = u64(tone.kind)})
+		fail()
 	}
 	played_time, frame, underruns := tone.values[0], tone.values[1], tone.values[2]
 	expected_frame, _ := timed_stream.frame_of_time(anchor, tone_time)
@@ -279,9 +295,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// A record keeps its frames: an underrun moves its time, never its
 	// frame. With no underrun, its time is the time of that frame.
 	if frame != expected_frame || (underruns == 0 && played_time != expected_time) {
-		fail("tone: the tone played from the frame ", frame, " at ", played_time, " ns; its time names the frame ", expected_frame, " at ", expected_time, " ns")
+		system.log_fact(.Info, Tone_At_Another_Frame{frame = frame, played_time = value_kinds.Time_In_Nanoseconds(played_time), expected_frame = expected_frame, expected_time = value_kinds.Time_In_Nanoseconds(expected_time)})
+		fail()
 	}
-	system.log(.Info, "tone: the tone played at the frame of its time: as it must")
+	system.log_fact(.Info, Tone_At_Its_Frame{})
 
 	for {
 		system.sleep(system.WAIT_FOREVER)

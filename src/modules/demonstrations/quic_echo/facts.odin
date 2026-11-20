@@ -11,11 +11,6 @@ import "modus:support/quic"
 // fields are the last fields: the serial line of a fact stops at its last
 // byte that is not zero. The fields of an idle end have the names of the
 // fact of remote that says the same.
-//
-// Lines stay text: the end of a connection, which writes its codes in 16
-// hexadecimal digits with no "0x", which no field kind writes; the counts
-// of the server, whose template passes the bound of one fact; and the line
-// with no value.
 
 // The bytes of the Text field of the address of a host: the longest,
 // "255.255.255.255 port 65535", has 26 bytes.
@@ -26,6 +21,72 @@ PEER_FIELD_BYTES :: 32
 CAUSE_FIELD_BYTES :: 64
 // The bytes of the Text field of the public key: 64 hexadecimal digits.
 PUBLIC_KEY_FIELD_BYTES :: 72
+
+// The end of a connection writes its code and its frame type in 16
+// hexadecimal digits, as system.Hex wrote them. Its fields fill the 144
+// bytes of one fact: the Text fields have the bytes of their longest text
+// and a zero byte, the address 26, the cause of the end 22, the reason of
+// the client its 48 kept bytes (quic.CLOSE_REASON_KEPT), with 5 to spare.
+
+// The random seed of the process is weak: it makes no key and listens on
+// nothing.
+@(log_fact = "quic_echo: the random seed of this process is weak: it makes no key of a server, and listens on nothing")
+Seed_Weak :: struct {}
+
+// A connection ended with a code of the application.
+@(log_fact = "quic_echo: {peer} ended ({end_cause}, the code {code} of the application, the frame type {frame_type}, the reason of the client \"{client_reason}\"): in {bytes_in}, out {bytes_out}, srtt {round_trip}")
+Connection_Ended_By_Application :: struct {
+	code:          value_kinds.Hexadecimal_Sixteen_Digits,
+	frame_type:    value_kinds.Hexadecimal_Sixteen_Digits,
+	bytes_in:      value_kinds.Size_In_Bytes,
+	bytes_out:     value_kinds.Size_In_Bytes,
+	round_trip:    value_kinds.Time_In_Microseconds,
+	peer:          [27]u8,
+	end_cause:     [23]u8,
+	client_reason: [54]u8,
+}
+
+// A connection ended with a code of the transport.
+@(log_fact = "quic_echo: {peer} ended ({end_cause}, the code {code}, the frame type {frame_type}, the reason of the client \"{client_reason}\"): in {bytes_in}, out {bytes_out}, srtt {round_trip}")
+Connection_Ended :: struct {
+	code:          value_kinds.Hexadecimal_Sixteen_Digits,
+	frame_type:    value_kinds.Hexadecimal_Sixteen_Digits,
+	bytes_in:      value_kinds.Size_In_Bytes,
+	bytes_out:     value_kinds.Size_In_Bytes,
+	round_trip:    value_kinds.Time_In_Microseconds,
+	peer:          [27]u8,
+	end_cause:     [23]u8,
+	client_reason: [54]u8,
+}
+
+// The counts of the server, written when one of them changed in a second:
+// two facts, the connections and the Initials, then the budgets and the
+// Sends, as one template holds at most 512 bytes.
+@(log_fact = "quic_echo: accepted {accepted}, ended {ended}, Retries {retries}, tokens refused {tokens_refused}, not authentic {not_authentic}, too small {too_small}, Initials refused by a limit (each try of a client counts) {refused_by_limit}, Initials refused with a full table {refused_full}")
+Server_Counts :: struct {
+	accepted:         u64,
+	ended:            u64,
+	retries:          u64,
+	tokens_refused:   u64,
+	not_authentic:    u64,
+	too_small:        u64,
+	refused_by_limit: u64,
+	refused_full:     u64,
+}
+
+// The counts of the budgets of the server and of its refused Sends.
+@(log_fact = "quic_echo: over the budget {over_budget}, over the budget of an address {over_address_budget}, new addresses with no place in the table of address budgets {address_table_full}, tokens used again {tokens_used_again}, version negotiations {version_negotiations}, Sends refused by the network service {sends_refused} (the last status {last_send_status})")
+Server_Budget_Counts :: struct {
+	over_budget:          u64,
+	over_address_budget:  u64,
+	address_table_full:   u64,
+	tokens_used_again:    u64,
+	version_negotiations: u64,
+	sends_refused:        u64,
+	last_send_status:     u64,
+}
+
+#assert(size_of(Connection_Ended) == 144 && 54 > quic.CLOSE_REASON_KEPT)
 
 // The process stops at its start, for a cause that it names.
 @(log_fact = "quic_echo: {cause}")

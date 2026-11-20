@@ -985,21 +985,64 @@ Operation_Qemu :: struct {
 	kernel_object: []u8, // The debug object of the kernel of the volume, or nil.
 	header:        ^operation_sequence.Mailbox_Header,
 	results:       ^operation_sequence.Runner_Results,
+	// The module files of the build, whose facts the reads of the log
+	// render: made at the first line of a fact, kept for each life.
+	fact_catalog:      build.Fact_Catalog,
+	fact_catalog_made: bool,
+}
+
+// operation_log_rendered gives lines of the log with the line of each fact
+// rendered by the module files of the build: QEMU writes the raw line of a
+// fact, and each reader of the log here reads sentences, as a step of a
+// machine test does. Lines with no fact are given as they are, and read no
+// module file. When the catalog cannot be made, the cause is printed once,
+// and a line of a fact stays raw, as for a reader with no module file.
+@(private = "file")
+operation_log_rendered :: proc(state: ^Operation_Qemu, raw: string) -> string {
+	if !strings.contains(raw, build.FACT_LINE_MARK) {
+		return raw
+	}
+	if !state.fact_catalog_made {
+		catalog, problem := build.fact_catalog_of_build(context.allocator)
+		if problem != "" {
+			fmt.eprintfln("modustool: fuzz operations: the lines of facts of the log stay raw: %s", problem)
+		}
+		state.fact_catalog, state.fact_catalog_made = catalog, true
+	}
+	rendered, _ := build.fact_lines_render(&state.fact_catalog, raw)
+	return rendered
+}
+
+// operation_raw_bytes_of_lines gives the bytes of the raw lines that hold
+// as many lines as a rendered text: the render writes one line for each
+// line, so the count of the ends of lines names the same lines in both.
+// A rendered text whose lines the raw text does not hold gives all of it.
+operation_raw_bytes_of_lines :: proc(raw: string, rendered: string) -> int {
+	lines := strings.count(rendered, "\n")
+	place := 0
+	for _ in 0 ..< lines {
+		end := strings.index_byte(raw[place:], '\n')
+		if end < 0 {
+			return len(raw)
+		}
+		place += end + 1
+	}
+	return place
 }
 
 @(private = "file")
-operation_log_whole :: proc() -> string {
+operation_log_whole :: proc(state: ^Operation_Qemu) -> string {
 	bytes, error := os.read_entire_file(OPERATION_FUZZING_OUTPUT, context.temp_allocator)
 	if error != nil {
 		return ""
 	}
-	return string(bytes)
+	return operation_log_rendered(state, string(bytes))
 }
 
 @(private = "file")
 operation_stop_fault :: proc(state: ^Operation_Qemu, exit_code: int) -> Operation_Fault {
 	state.exited = true
-	log := operation_log_whole()
+	log := operation_log_whole(state)
 	signature, text := operation_stop_signature(exit_code, log, state.kernel_object)
 	return {kind = .Stop, signature = signature, text = text, log = log}
 }
@@ -1064,7 +1107,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 	state.monitor_read, state.monitor_write = monitor_read, monitor_write
 	state.running, state.exited, state.mailbox_open, state.log_scanned = true, false, false, 0
 	for started := time.tick_now(); time.tick_since(started) < BOOT_HANG_BOUND; {
-		if address, found := number_after(operation_log_new_lines(OPERATION_FUZZING_OUTPUT, &state.log_scanned), OPERATION_MAILBOX_LINE); found {
+		if address, found := number_after(operation_log_rendered(state, operation_log_new_lines(OPERATION_FUZZING_OUTPUT, &state.log_scanned)), OPERATION_MAILBOX_LINE); found {
 			mailbox, problem := operation_mailbox_open(OPERATION_FUZZING_MEMORY_FILE, address)
 			if problem != "" {
 				fmt.eprintfln("modustool: fuzz operations: %s", problem)
@@ -1103,12 +1146,12 @@ operation_machine_execute :: proc(data: rawptr, sequence: ^operation_sequence.Se
 	case .Machine_Ended:
 		return operation_stop_fault(state, ended.exit_code)
 	case .Stalled:
-		if line := operation_isolation_line(operation_log_lines_from(OPERATION_FUZZING_OUTPUT, state.log_scanned)); line != "" {
-			return operation_isolation_fault(line, operation_log_whole())
+		if line := operation_isolation_line(operation_log_rendered(state, operation_log_lines_from(OPERATION_FUZZING_OUTPUT, state.log_scanned))); line != "" {
+			return operation_isolation_fault(line, operation_log_whole(state))
 		}
-		return {kind = .Hang, signature = operation_hang_signature(sequence, operation_runner_step_started(&state.mailbox)), text = problem, log = operation_log_whole()}
+		return {kind = .Hang, signature = operation_hang_signature(sequence, operation_runner_step_started(&state.mailbox)), text = problem, log = operation_log_whole(state)}
 	case .Mailbox_Broken:
-		return {kind = .Mailbox, signature = "mailbox: the counts of the mailbox are not the counts that the tool wrote", text = problem, log = operation_log_whole()}
+		return {kind = .Mailbox, signature = "mailbox: the counts of the mailbox are not the counts that the tool wrote", text = problem, log = operation_log_whole(state)}
 	case .Tool_Error:
 		return {kind = .Tool, text = problem}
 	}
@@ -1116,10 +1159,12 @@ operation_machine_execute :: proc(data: rawptr, sequence: ^operation_sequence.Se
 	lines := ""
 	found := false
 	for started := time.tick_now(); time.tick_since(started) < foundation.HANG_BOUND; {
-		text := operation_log_lines_from(OPERATION_FUZZING_OUTPUT, state.log_scanned)
+		raw := operation_log_lines_from(OPERATION_FUZZING_OUTPUT, state.log_scanned)
+		text := operation_log_rendered(state, raw)
 		if through, has_end := operation_end_line_through(text, number); has_end {
 			lines = text[:through]
-			state.log_scanned += i64(through)
+			// The place in the file counts the raw bytes of the same lines.
+			state.log_scanned += i64(operation_raw_bytes_of_lines(raw, lines))
 			found = true
 			break
 		}
@@ -1129,13 +1174,13 @@ operation_machine_execute :: proc(data: rawptr, sequence: ^operation_sequence.Se
 		time.sleep(CONDITION_POLL_PERIOD)
 	}
 	if !found {
-		return {kind = .Hang, signature = OPERATION_END_LINE_HANG_SIGNATURE, text = fmt.tprintf("operation_fuzzing counted the sequence %d and wrote no line \"%s%d%s\" within %v", number, operation_sequence.SEQUENCE_END_LINE_START, number, operation_sequence.SEQUENCE_END_LINE_END, foundation.HANG_BOUND), log = operation_log_whole()}
+		return {kind = .Hang, signature = OPERATION_END_LINE_HANG_SIGNATURE, text = fmt.tprintf("operation_fuzzing counted the sequence %d and wrote no line \"%s%d%s\" within %v", number, operation_sequence.SEQUENCE_END_LINE_START, number, operation_sequence.SEQUENCE_END_LINE_END, foundation.HANG_BOUND), log = operation_log_whole(state)}
 	}
 	if line := operation_isolation_line(lines); line != "" {
-		return operation_isolation_fault(line, operation_log_whole())
+		return operation_isolation_fault(line, operation_log_whole(state))
 	}
 	if outcome, known := enum_word.member_of_word(operation_sequence.Execution_Outcome, state.header.outcome); known && outcome == .Hung {
-		return {kind = .Hang, signature = operation_hang_signature(sequence, state.results.step_started), text = fmt.tprintf("operation_fuzzing stopped the runner after its hang bound, at the step %d", state.results.step_started), log = operation_log_whole()}
+		return {kind = .Hang, signature = operation_hang_signature(sequence, state.results.step_started), text = fmt.tprintf("operation_fuzzing stopped the runner after its hang bound, at the step %d", state.results.step_started), log = operation_log_whole(state)}
 	}
 	if findings := operation_findings(sequence, state.header, state.results, &state.grammar); len(findings) > 0 {
 		return {kind = .Oracle, signature = operation_oracle_signature(findings[0], sequence, state.header), text = operation_findings_text(findings)}
@@ -1153,8 +1198,8 @@ operation_machine_drain :: proc(data: rawptr) -> Operation_Fault {
 		return {}
 	}
 	for started := time.tick_now(); time.tick_since(started) < OPERATION_LOG_DRAIN_BOUND; {
-		if line := operation_isolation_line(operation_log_lines_from(OPERATION_FUZZING_OUTPUT, state.log_scanned)); line != "" {
-			return operation_isolation_fault(line, operation_log_whole())
+		if line := operation_isolation_line(operation_log_rendered(state, operation_log_lines_from(OPERATION_FUZZING_OUTPUT, state.log_scanned))); line != "" {
+			return operation_isolation_fault(line, operation_log_whole(state))
 		}
 		if fault, stopped := operation_machine_stopped(state); stopped {
 			return fault

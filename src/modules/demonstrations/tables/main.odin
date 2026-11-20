@@ -297,10 +297,13 @@ run_cases :: proc "contextless" () {
 	}
 }
 
-// The hostile cases, through the call host.
+// The hostile cases, through the call host. A case whose answer is an error
+// record keeps the record: its log fact writes the fields of the record.
 Hostile :: struct {
-	name:   string,
-	answer: Answer,
+	name:         string,
+	answer:       Answer,
+	refusal_case: Refusal_Case,
+	refusal:      errors.Error_Record,
 }
 hostile: [12]Hostile
 hostile_count: int
@@ -334,11 +337,13 @@ raw_call :: proc "contextless" (connection: ^system.Call_Connection, export: u32
 }
 
 // refusal_add adds a case whose answer is the sentence of an error record.
-refusal_add :: proc "contextless" (name: string, right: bool, refusal: ^errors.Error_Record, export: string, parameter: string) {
+refusal_add :: proc "contextless" (name: string, right: bool, refusal: ^errors.Error_Record, export: string, parameter: string, refusal_case: Refusal_Case) {
 	buffer: [ANSWER_SIZE]u8
 	writer := system.Writer{buffer = buffer[:]}
 	system.error_text(&writer, refusal, export, parameter)
 	hostile_add(name, right, system.written(&writer))
+	hostile[hostile_count - 1].refusal_case = refusal_case
+	hostile[hostile_count - 1].refusal = refusal^
 }
 
 run_hostile :: proc "contextless" () {
@@ -364,7 +369,7 @@ run_hostile :: proc "contextless" () {
 		arguments[0].table = {records = bytes_of(raw_data(large), 64 * 40), count = 64, memory_handle = u64(large_memory)}
 		refusal: errors.Error_Record
 		_, service_status := system.call_isolated(&service, sample_file, index, arguments[:1], &refusal, true)
-		refusal_add("a memory object to the service", service_status == .Refused && refusal.argument == 1, &refusal, "sum_values", "readings")
+		refusal_add("a memory object to the service", service_status == .Refused && refusal.argument == 1, &refusal, "sum_values", "readings", .Memory_Object_To_Service)
 	}
 
 	// A Change table in a memory object that this process lends with Read
@@ -401,7 +406,7 @@ run_hostile :: proc "contextless" () {
 	}
 	system.handle_revoke(budget_copy)
 	system.close(budget_copy)
-	refusal_add("a budget as the memory of a table", refused == u32(isolated.Status.Bad_Handle) && errors.Kind(refusal.kind) == .Handle_Kind, &refusal, "sum_values", "readings")
+	refusal_add("a budget as the memory of a table", refused == u32(isolated.Status.Bad_Handle) && errors.Kind(refusal.kind) == .Handle_Kind, &refusal, "sum_values", "readings", .Budget_As_Table_Memory)
 
 	// A count larger than the call region, written by hand: the refusal is
 	// an error record, so that the caller learns which argument and why.
@@ -413,7 +418,7 @@ run_hostile :: proc "contextless" () {
 	if encoded {
 		refused, refusal = raw_call(&host, index, size)
 	}
-	refusal_add("a count of 2^40 rows", refused == u32(isolated.Status.Bad_Arguments) && errors.Kind(refusal.kind) == .Too_Long && refusal.argument == 1, &refusal, "sum_values", "readings")
+	refusal_add("a count of 2^40 rows", refused == u32(isolated.Status.Bad_Arguments) && errors.Kind(refusal.kind) == .Too_Long && refusal.argument == 1, &refusal, "sum_values", "readings", .Count_Past_Its_Bound)
 
 	// A start that wraps.
 	_, size, _, _, encoded = isolated.encode(sample_file, function, arguments[:1], host.region)
@@ -422,7 +427,7 @@ run_hostile :: proc "contextless" () {
 	if encoded {
 		refused, refusal = raw_call(&host, index, size)
 	}
-	refusal_add("a start that wraps", refused == u32(isolated.Status.Bad_Arguments) && errors.Kind(refusal.kind) == .Out_Of_Range && refusal.argument == 1, &refusal, "sum_values", "readings")
+	refusal_add("a start that wraps", refused == u32(isolated.Status.Bad_Arguments) && errors.Kind(refusal.kind) == .Out_Of_Range && refusal.argument == 1, &refusal, "sum_values", "readings", .Start_That_Wraps)
 
 	// A direct call of an export with a Table result: call_direct does not
 	// do it, and says so: else it gives the address of the error record
@@ -487,7 +492,7 @@ measure :: proc "contextless" () {
 					result, status := system.call_isolated(connection, sample_file, index, arguments[:], nil, way == .Memory_Object)
 					intrinsics.volatile_store(&sink, result)
 					if status != .Ok && ok {
-						system.log(.Info, "tables: ", measure_names[way], ", ", u64(size), " rows: call ", u64(call_number), " gave the status ", u64(status))
+						system.log_fact(.Info, Measure_Call_Refused{rows = u64(size), call = u64(call_number), status_word = u64(status), way = value_kinds.text_field(measure_names[way], MEASURE_WAY_FIELD_BYTES)})
 					}
 					ok &&= status == .Ok
 				}
@@ -670,7 +675,7 @@ process_generator: random.Generator
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "tables: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	window, opened := display.open(ctx, WIDTH, HEIGHT, "tables")
@@ -740,18 +745,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for way in Way {
 			if !item.answers[way].right {
 				wrong += 1
-				system.log(.Info, "tables: wrong answer: ", item.name, ", ", way_names[way], ": ", answer_text(&item.answers[way]))
+				system.log_fact(.Info, Answer_Wrong{case_name = case_field(item.name), call_way = value_kinds.text_field(way_names[way], WAY_FIELD_BYTES), answer = answer_field(&item.answers[way])})
 			}
 		}
 	}
 	for &item in hostile[:hostile_count] {
 		if !item.answer.right {
 			wrong += 1
-			system.log(.Info, "tables: wrong answer: ", item.name, ": ", answer_text(&item.answer))
+			hostile_log(&item, true)
 		}
 	}
 	for &item in hostile[:hostile_count] {
-		system.log(.Info, "tables: ", item.name, ": ", answer_text(&item.answer))
+		hostile_log(&item, false)
 	}
 	for way in Measure_Way {
 		system.log_fact(.Info, Sum_Values_Measured{small_table = value_kinds.Time_In_Nanoseconds(measures[way][0]), medium_table = value_kinds.Time_In_Nanoseconds(measures[way][1]), large_table = value_kinds.Time_In_Nanoseconds(measures[way][2]), way = value_kinds.text_field(measure_names[way], MEASURE_WAY_FIELD_BYTES)})

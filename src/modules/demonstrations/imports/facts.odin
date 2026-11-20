@@ -8,9 +8,47 @@ import "modus:contract/value_kinds"
 // fields are the last fields: the serial line of a fact stops at its last
 // byte that is not zero.
 //
-// Four lines stay text: the line with no value, the wrong answer of a case,
-// whose answer is a free text of the case, and the two measures of a call
-// and of a bind, which write nanoseconds with one decimal.
+// The measures of a call and of a bind write nanoseconds with two decimals,
+// a field of hundredths: the lines wrote one decimal, which no field kind
+// writes for a time in nanoseconds.
+
+// A call through an import slot, to calendar and to its replacement: the
+// least of the runs, in nanoseconds.
+@(log_fact = "imports: a call through an import slot: {call} ns to calendar, {replaced_call} ns to calendar_fixed in its place, the least of {runs} runs of {calls} calls")
+Import_Call_Measured :: struct {
+	call:          value_kinds.Hundredths,
+	replaced_call: value_kinds.Hundredths,
+	runs:          u64,
+	calls:         u64,
+}
+
+// The bind of agenda, with and with no check of a replacement, and its
+// load.
+@(log_fact = "imports: the bind of agenda: {bind} ns, and {checked_bind} ns with the check of the replacement; the load of agenda and its import: {load}, and {replaced_load}")
+Import_Bind_Measured :: struct {
+	bind:          value_kinds.Hundredths,
+	checked_bind:  value_kinds.Hundredths,
+	load:          value_kinds.Time_In_Microseconds,
+	replaced_load: value_kinds.Time_In_Microseconds,
+}
+
+// The bytes of the Text fields of a wrong answer: the name of a case has at
+// most 52 bytes, and the answer that note writes at most 87 when each count
+// in it has at most 10 digits (the longest is the answer of the shared
+// code, 34 bytes of words and three counts).
+CASE_FIELD_BYTES :: 56
+ANSWER_FIELD_BYTES :: 88
+
+// The context of the process holds no random seed.
+@(log_fact = "imports: no random seed in the context")
+No_Random_Seed :: struct {}
+
+// A case of the loader gave another answer than the one it must give.
+@(log_fact = "imports: wrong answer: {case_text}: {answer}")
+Answer_Wrong :: struct {
+	case_text: [56]u8,
+	answer:    [88]u8,
+}
 
 // The bytes of the Text field of the word of a module writer: the longest,
 // "not found", has 9 bytes.

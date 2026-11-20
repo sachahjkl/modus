@@ -32,8 +32,11 @@ Fact :: struct {
 }
 #assert(size_of(Fact) == 32)
 
-// The bytes of a fact template, at most.
-FACT_TEMPLATE_BYTES_MOST :: 256
+// The bytes of a fact template, at most. The template is in the string
+// table of the module file once for each fact type, never in a record, so
+// a longer template costs bytes of the file and nothing of the log
+// (src/md/features/log_facts.md, "The fact template").
+FACT_TEMPLATE_BYTES_MOST :: 512
 
 // The fields of the record of a fact, at most: record_type refuses a record
 // with more fields, so the check of a template holds one mark for each.
@@ -296,8 +299,8 @@ fact_template_valid :: proc "contextless" (file: []u8, value: Fact, description:
 
 // The bytes of the buffer in which a reader writes the sentence of one
 // fact. A sentence that does not fit is refused, and the reader shows the
-// raw form: a template of 256 bytes with values of 144 bytes fits in most
-// cases, and a cut sentence would say another thing.
+// raw form: a template of FACT_TEMPLATE_BYTES_MOST bytes with values of 144
+// bytes fits in most cases, and a cut sentence would say another thing.
 FACT_SENTENCE_BYTES_MOST :: 1024
 
 // The value runs of the sentence of one fact that a reader keeps: one for
@@ -371,6 +374,79 @@ sentence_hexadecimal_byte :: proc "contextless" (sentence: []u8, written: ^int, 
 	sentence_byte(sentence, written, digit(value & 0xF))
 }
 
+// field_kind_value_write writes the value of a field whose field kind
+// alone decides its form: 16 hexadecimal digits, the head of a hash,
+// hundredths, nanoseconds as microseconds. It gives the value kind, and
+// false for a field of another kind, which it does not write. record has
+// the size of the description; field_kind_valid took the field.
+@(private = "file")
+field_kind_value_write :: proc "contextless" (sentence: []u8, written: ^int, record: []u8, item: Field) -> (value_kind: value_kinds.Value_Kind, ok: bool) {
+	kind := field_kind(item) or_return
+	switch kind {
+	case .Hexadecimal_Sixteen_Digits:
+		// As system.Hex writes it: each digit of 8 bytes, no "0x".
+		value := u64(field_integer(record, item))
+		for index := 7; index >= 0; index -= 1 {
+			sentence_hexadecimal_byte(sentence, written, u8(value >> (8 * u64(index))))
+		}
+		return .Number, true
+	case .Hash_Head:
+		bytes := field_bytes(record, item)
+		if len(bytes) < value_kinds.HASH_HEAD_BYTES {
+			return .None, false
+		}
+		for value in bytes[:value_kinds.HASH_HEAD_BYTES] {
+			sentence_hexadecimal_byte(sentence, written, value)
+		}
+		sentence_text(sentence, written, value_kinds.HASH_HEAD_MARK)
+		return .Version, true
+	case .Hundredths:
+		value := field_integer(record, item)
+		magnitude := u64(value)
+		if !(item.unsigned && field_size(item) == 8) && value < 0 {
+			sentence_byte(sentence, written, '-')
+			// The opposite of the least i64 does not fit in an i64: the
+			// bits do.
+			magnitude = ~u64(value) + 1
+		}
+		sentence_unsigned(sentence, written, magnitude / 100)
+		sentence_byte(sentence, written, '.')
+		sentence_byte(sentence, written, '0' + u8(magnitude % 100 / 10))
+		sentence_byte(sentence, written, '0' + u8(magnitude % 10))
+		return .Number, true
+	case .Nanoseconds_As_Microseconds:
+		// The tenth is cut, not rounded, as the lines of the measures
+		// wrote it before the facts: 812_499 ns is 812.4 us.
+		value := u64(field_integer(record, item))
+		sentence_unsigned(sentence, written, value / 1000)
+		sentence_byte(sentence, written, '.')
+		sentence_byte(sentence, written, '0' + u8(value / 100 % 10))
+		sentence_text(sentence, written, value_kinds.DURATION_UNIT_TEXTS[.Microseconds])
+		return .Time, true
+	case .Plain, .Hexadecimal, .Status, .Module_Name, .Hash, .Fact_Values:
+		// Each of them takes its form from its type too: fact_value_write
+		// and each reader write them.
+	}
+	return .None, false
+}
+
+// field_kind_text writes in buffer the text of a field whose field kind
+// alone decides its form (Hexadecimal_Sixteen_Digits, Hash_Head,
+// Hundredths, Nanoseconds_As_Microseconds), as the sentence of a fact
+// writes it: a reader that shows a field in a column writes the same text.
+// ok is false for a field of another kind, and for a text that the buffer
+// cannot hold whole.
+//
+// Example: a field Hundredths of the value -50 gives "-0.50".
+field_kind_text :: proc "contextless" (buffer: []u8, record: []u8, item: Field) -> (text: string, value_kind: value_kinds.Value_Kind, ok: bool) {
+	written := 0
+	value_kind = field_kind_value_write(buffer, &written, record, item) or_return
+	if written > len(buffer) {
+		return "", .None, false
+	}
+	return string(buffer[:written]), value_kind, true
+}
+
 // fact_value_write writes the value of one field of a fact by its type and
 // its field kind, as log_facts.md says ("The fact template"), and gives its
 // value kind: None for a plain Text, which has no color of its own. values
@@ -384,6 +460,9 @@ fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: [
 		// here has none.
 		sentence_byte(sentence, written, '?')
 		return .None
+	}
+	if value_kind, written_by_kind := field_kind_value_write(sentence, written, values, item); written_by_kind {
+		return value_kind
 	}
 	switch type {
 	case .Integer:
@@ -407,8 +486,10 @@ fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: [
 			// another member.
 			sentence_unsigned(sentence, written, u64(value))
 			return .Number
-		case .Plain, .Module_Name, .Hash, .Fact_Values:
-			// field_kind_valid refuses the three last on an Integer.
+		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head:
+			// field_kind_valid refuses each of them but Plain on an Integer.
+		case .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds:
+			// field_kind_value_write wrote them above.
 		}
 		if item.unsigned && field_size(item) == 8 {
 			sentence_unsigned(sentence, written, u64(value))

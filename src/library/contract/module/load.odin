@@ -476,9 +476,17 @@ field_integer_unit_valid :: proc "contextless" (item: Field) -> bool {
 // - Status: an unsigned Integer with no unit and an enum that is not None.
 // - Module_Name: a Text with no enum.
 // - Hash: Bytes of 1 to value_kinds.HASH_FIELD_BYTES bytes, with no enum.
+// - Fact_Values: Bytes of value_kinds.FACT_VALUES_FIELD_BYTES, with no enum.
+// - Hexadecimal_Sixteen_Digits: an unsigned Integer of 8 bytes with no
+//   unit and no enum: its 16 digits are the digits of 8 bytes.
+// - Hash_Head: Bytes of value_kinds.HASH_FIELD_BYTES, with no enum: the
+//   field holds a whole hash.
+// - Hundredths: an Integer with no unit and no enum.
+// - Nanoseconds_As_Microseconds: an unsigned Integer with no unit and no
+//   enum: the field states its own unit.
 //
-// A Bytes field is a Hash and nothing else: a reader has no form for other
-// bytes.
+// A Bytes field is a hash, its head or the values of a fact, and nothing
+// else: a reader has no form for other bytes.
 field_kind_valid :: proc "contextless" (item: Field) -> bool {
 	kind, kind_ok := field_kind(item)
 	which, which_ok := field_contract_enum(item)
@@ -504,6 +512,14 @@ field_kind_valid :: proc "contextless" (item: Field) -> bool {
 		// The values of one fact, whole: a reader renders them with the
 		// description of the fact type, which needs every byte.
 		return type == .Bytes && item.detail == value_kinds.FACT_VALUES_FIELD_BYTES
+	case .Hexadecimal_Sixteen_Digits:
+		return type == .Integer && item.unsigned && field_size(item) == 8 && item.integer_unit == {}
+	case .Hash_Head:
+		return type == .Bytes && item.detail == value_kinds.HASH_FIELD_BYTES
+	case .Hundredths:
+		return type == .Integer && item.integer_unit == {}
+	case .Nanoseconds_As_Microseconds:
+		return type == .Integer && item.unsigned && item.integer_unit == {}
 	}
 	return false
 }

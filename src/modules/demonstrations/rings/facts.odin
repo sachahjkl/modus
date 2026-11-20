@@ -6,7 +6,11 @@ import "modus:contract/value_kinds"
 // template is the line that the process wrote before it was a fact, so a
 // wait of a machine test on that sentence reads it as before. The Text
 // fields are the last fields: the serial line of a fact stops at its last
-// byte that is not zero. The line with no value stays text.
+// byte that is not zero.
+
+// The context of the process holds no random seed.
+@(log_fact = "rings: no random seed in the context")
+No_Random_Seed :: struct {}
 
 // The bytes of the Text field of the cause of a stop at the start: the
 // longest, "no grant to read the boot image", has 31 bytes.

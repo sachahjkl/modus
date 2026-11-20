@@ -8,9 +8,24 @@ import "modus:contract/value_kinds"
 // from it, read it as before. The Text fields are the last fields: the
 // serial line of a fact stops at its last byte that is not zero.
 //
-// Lines stay text: the lines with no value, and the measure of the
-// generator, which writes megabytes in one second with one decimal, which
-// no field kind writes.
+// The rate of the generator is a field of hundredths of megabytes in one
+// second, written with two decimals: the line wrote one decimal, which no
+// field kind writes for a number that is not a time.
+
+// The time of 4 MiB from the generator, and its rate.
+@(log_fact = "randomness: the generator: 4 MiB in {elapsed}, {rate} MB/s")
+Generator_Measured :: struct {
+	elapsed: value_kinds.Time_In_Microseconds,
+	rate:    value_kinds.Hundredths,
+}
+
+// The context of the process holds no random seed.
+@(log_fact = "randomness: no random seed in the context")
+No_Random_Seed :: struct {}
+
+// The machine has no entropy device.
+@(log_fact = "randomness: the entropy device: absent")
+Entropy_Device_Absent :: struct {}
 
 // The bytes of the Text field of the name of a seed strength: the longest,
 // "weak (the cycle counter only)", has 29 bytes.

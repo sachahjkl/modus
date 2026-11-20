@@ -183,10 +183,10 @@ Result :: struct {
 	pair_local, pair_interrupts, pair_moves: u64,
 	median:      u64, // Microseconds: a measure run only.
 	worst:       u64,
-	shares:      [EQUAL_COUNT]u64, // Tenths of a percent of the work of the spinners.
+	shares:      [EQUAL_COUNT]u64, // Hundredths of a percent of the work of the spinners.
 	work:        u64, // Increments in one second, all the spinners: a measure run only.
-	weighted:    [3]u64, // Tenths of a percent: the mean share of a spinner of each weight.
-	weighted_least: u64, // The least share of the 12, tenths of a percent.
+	weighted:    [3]u64, // Hundredths of a percent: the mean share of a spinner of each weight.
+	weighted_least: u64, // The least share of the 12, hundredths of a percent.
 	// The same for 12 spinners that started with the full weight and got
 	// their weights through the machine handle while they ran.
 	written:         [3]u64,
@@ -466,7 +466,7 @@ share_interval :: proc "contextless" (first, count: int) -> (before, after: [SPI
 
 // weighted_shares measures the 12 spinners that run now, in three classes
 // (the spinner n is of the class n modulo 3): the mean share of a spinner
-// of each class and the least share of the 12, in tenths of a percent; if
+// of each class and the least share of the 12, in hundredths of a percent; if
 // the class of the heaviest weight did more work than the class of the
 // lightest; if a spinner starved (it has a sixteenth of its equal part or
 // less, or it did not run the ticks of the check). The shares are a
@@ -482,17 +482,17 @@ weighted_shares :: proc "contextless" () -> (shares: [3]u64, least: u64, heavier
 		total += last[spinner] - first[spinner]
 	}
 	class_sum: [3]u64
-	least = 1000
+	least = 10_000
 	for spinner in 0 ..< WEIGHTED_COUNT {
 		part := last[spinner] - first[spinner]
 		class_sum[spinner % 3] += part
-		least = min(least, share_tenths(part, total))
+		least = min(least, share_hundredths(part, total))
 		if part * 16 * WEIGHTED_COUNT <= total {
 			starved = true
 		}
 	}
 	for class in 0 ..< 3 {
-		shares[class] = share_tenths(class_sum[class], total * (WEIGHTED_COUNT / 3))
+		shares[class] = share_hundredths(class_sum[class], total * (WEIGHTED_COUNT / 3))
 	}
 	return shares, least, class_sum[2] > class_sum[0], starved
 }
@@ -600,6 +600,12 @@ share_tenths :: proc "contextless" (part, total: u64) -> u64 {
 	return total == 0 ? 0 : part * 1000 / total
 }
 
+// share_hundredths gives the hundredths of a percent of a part of a total:
+// the shares that the log writes with two decimals.
+share_hundredths :: proc "contextless" (part, total: u64) -> u64 {
+	return total == 0 ? 0 : part * 10_000 / total
+}
+
 // measure runs the four cases under one strategy.
 measure :: proc "contextless" (index: int, processors: u64) {
 	result := &results[index]
@@ -703,7 +709,7 @@ measure :: proc "contextless" (index: int, processors: u64) {
 		total += last[spinner] - first[spinner]
 	}
 	for spinner in 0 ..< EQUAL_COUNT {
-		result.shares[spinner] = share_tenths(last[spinner] - first[spinner], total)
+		result.shares[spinner] = share_hundredths(last[spinner] - first[spinner], total)
 		// No spinner starved: each one has more than a sixteenth of its
 		// equal part.
 		if (last[spinner] - first[spinner]) * 16 * EQUAL_COUNT <= total {
@@ -774,98 +780,38 @@ measure :: proc "contextless" (index: int, processors: u64) {
 	result.measured = true
 }
 
-tenths_part :: proc "contextless" (writer: ^system.Writer, value: u64) {
-	system.write_unsigned(writer, value / 10)
-	system.write_part(writer, ".")
-	system.write_unsigned(writer, value % 10)
-	system.write_part(writer, " %")
+// share_field gives a share in hundredths of a percent as the field that
+// the log writes with two decimals.
+share_field :: proc "contextless" (hundredths: u64) -> value_kinds.Hundredths {
+	return value_kinds.Hundredths(hundredths)
 }
 
+// log_result writes the line of one strategy: in a measure run, with the
+// rates and the late wakes; in a test, with the counts of its check.
 log_result :: proc "contextless" (index: int) {
 	result := &results[index]
-	least, most := u64(1000), u64(0)
+	least, most := u64(10_000), u64(0)
 	for share in result.shares {
 		least, most = min(least, share), max(most, share)
 	}
-	buffer: [800]u8
-	writer := system.Writer{buffer = buffer[:]}
-	system.write_part(&writer, "scheduler: ")
-	system.write_part(&writer, op.STRATEGY_NAMES[strategies[index]])
-	// The rates and the late wakes are in the line of a measure run only.
-	measured := system.measure_run()
-	system.write_part(&writer, ": two threads that wake each other, a spinner on each processor: ")
-	if measured {
-		system.write_unsigned(&writer, result.wakes)
-		system.write_part(&writer, " wakes in one second (")
+	strategy := strategy_field(strategies[index])
+	if system.measure_run() {
+		system.log_fact(.Info, Strategy_Wakes_Measured{wakes = result.wakes, local_turns = result.pair_local, interrupt_turns = result.pair_interrupts, pair_moves = result.pair_moves, late_middle = value_kinds.Time_In_Microseconds(result.median), late_worst = value_kinds.Time_In_Microseconds(result.worst), strategy = strategy})
+		system.log_fact(.Info, Strategy_Shares_Measured{least_share = share_field(least), most_share = share_field(most), work = result.work / 1_000_000, weight_one_share = share_field(result.weighted[0]), weight_two_share = share_field(result.weighted[1]), weight_four_share = share_field(result.weighted[2]), wake_turns = result.preemptions, moves = result.moves, pick = value_kinds.Time_In_Nanoseconds(result.pick), interrupt_preemption = value_kinds.Time_In_Nanoseconds(result.interrupt_preemption), strategy = strategy})
 	} else {
-		system.write_unsigned(&writer, PAIR_ROUNDS_CHECKED)
-		system.write_part(&writer, " turns of the first thread and more (")
+		system.log_fact(.Info, Strategy_Wakes_Checked{turns = u64(PAIR_ROUNDS_CHECKED), local_turns = result.pair_local, interrupt_turns = result.pair_interrupts, pair_moves = result.pair_moves, strategy = strategy})
+		system.log_fact(.Info, Strategy_Shares_Checked{least_share = share_field(least), most_share = share_field(most), weight_one_share = share_field(result.weighted[0]), weight_two_share = share_field(result.weighted[1]), weight_four_share = share_field(result.weighted[2]), wake_turns = result.preemptions, moves = result.moves, pick = value_kinds.Time_In_Nanoseconds(result.pick), interrupt_preemption = value_kinds.Time_In_Nanoseconds(result.interrupt_preemption), strategy = strategy})
 	}
-	system.write_unsigned(&writer, result.pair_local)
-	system.write_part(&writer, " turns ended on the processor of the waker, ")
-	system.write_unsigned(&writer, result.pair_interrupts)
-	system.write_part(&writer, " by an interrupt, ")
-	system.write_unsigned(&writer, result.pair_moves)
-	system.write_part(&writer, " moves); ")
-	if measured {
-		system.write_part(&writer, "a thread that sleeps 2 ms among 8 spinners: late by ")
-		system.write_unsigned(&writer, result.median)
-		system.write_part(&writer, " us in the middle, ")
-		system.write_unsigned(&writer, result.worst)
-		system.write_part(&writer, " us at worst; ")
-	}
-	system.write_part(&writer, "8 spinners of one weight: shares ")
-	tenths_part(&writer, least)
-	system.write_part(&writer, " to ")
-	tenths_part(&writer, most)
-	if measured {
-		system.write_part(&writer, ", work ")
-		system.write_unsigned(&writer, result.work / 1_000_000)
-		system.write_part(&writer, " million in one second")
-	}
-	system.write_part(&writer, "; 12 spinners, weights 1 2 4: a spinner of each weight ")
-	tenths_part(&writer, result.weighted[0])
-	system.write_part(&writer, ", ")
-	tenths_part(&writer, result.weighted[1])
-	system.write_part(&writer, ", ")
-	tenths_part(&writer, result.weighted[2])
-	system.write_part(&writer, "; ")
-	system.write_unsigned(&writer, result.preemptions)
-	system.write_part(&writer, " turns ended by a wake, ")
-	system.write_unsigned(&writer, result.moves)
-	system.write_part(&writer, " moves, one pick ")
-	system.write_unsigned(&writer, result.pick)
-	system.write_part(&writer, " ns, one preemption by an interrupt ")
-	system.write_unsigned(&writer, result.interrupt_preemption)
-	system.write_part(&writer, " ns in the kernel")
-	log_whole(system.written(&writer))
 }
 
-// log_whole writes one text on the log in one Log call: a text can be
-// longer than the buffer of system.log (512 bytes).
-log_whole :: proc "contextless" (text: string) {
-	system.call(.Log, u64(system.context_record().handles[op.CONTEXT_LOG]), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0)
-}
-
-// log_written writes the two lines of the weights written through the
-// machine handle: the shares under each strategy, which are a measure of
-// this host; then if the heavier weight got more under the two strategies
-// that use weights.
+// log_written writes the shares of the weights written through the machine
+// handle, one fact for each strategy, which are a measure of this host;
+// then if the heavier weight got more under the two strategies that use
+// weights.
 log_written :: proc "contextless" () {
-	buffer: [800]u8
-	writer := system.Writer{buffer = buffer[:]}
-	system.write_part(&writer, "scheduler: 12 spinners that started with the full weight, the weights 1 2 4 written through the machine handle while they ran: a spinner of each weight")
 	for index in 0 ..< STRATEGY_COUNT {
-		system.write_part(&writer, index == 0 ? " " : "; ")
-		tenths_part(&writer, results[index].written[0])
-		system.write_part(&writer, ", ")
-		tenths_part(&writer, results[index].written[1])
-		system.write_part(&writer, ", ")
-		tenths_part(&writer, results[index].written[2])
-		system.write_part(&writer, " under ")
-		system.write_part(&writer, op.STRATEGY_NAMES[strategies[index]])
+		system.log_fact(.Info, Written_Weights_Shares{weight_one_share = share_field(results[index].written[0]), weight_two_share = share_field(results[index].written[1]), weight_four_share = share_field(results[index].written[2]), strategy = strategy_field(strategies[index])})
 	}
-	log_whole(system.written(&writer))
 	ordered := results[1].measured && results[2].measured && results[1].written_ordered && results[2].written_ordered
 	system.log_fact(.Info, Written_Weights_Ordered{verdict = verdict_field(ordered)})
 }
@@ -1025,7 +971,7 @@ stress :: proc "contextless" () {
 	}
 	stress_done = true
 	system.log_fact(.Info, Strategy_Set_Measured{least = value_kinds.Time_In_Nanoseconds(change_least), middle = value_kinds.Time_In_Nanoseconds(change_middle), worst = value_kinds.Time_In_Nanoseconds(change_worst)})
-	system.log(.Info, "scheduler: stress: ", changer.changes, " changes of strategy while ", stress_churned, " threads started and stopped, two threads woke each other ", stress_wakes, " times and 8 spinners ran and moved; after the last change each thread ran: ", u64(ran), "; thread slots ", after.threads, " of ", at_start.threads, "; ", schedule_writer.writes, " writes of a schedule through the machine handle, ", schedule_writer.refused, " refused")
+	system.log_fact(.Info, Stress_Done{changes = changer.changes, churned_threads = stress_churned, wakes = stress_wakes, each_thread_ran = u64(ran), thread_slots = after.threads, thread_slots_at_start = at_start.threads, schedule_writes = schedule_writer.writes, refused_writes = schedule_writer.refused})
 	system.log_fact(.Info, Schedule_Writes_During_Changes{verdict = verdict_field(ran && schedules_right && changer.changes == CHANGES)})
 }
 
@@ -1076,7 +1022,7 @@ own_schedules :: proc "contextless" () -> bool {
 	as_it_must &&= own_schedule.written == lowered && own_schedule.last == lowered
 	as_it_must &&= own_schedule.weight_raise == .Bad_Operation && own_schedule.request_raise == .Bad_Operation
 	as_it_must &&= first == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
-	system.log(.Info, "scheduler: a thread created with the weight ", u64(OWN_WEIGHT), " and the request ", u64(OWN_REQUEST), " us read its own schedule: weight ", u64(own_schedule.created.weight), ", request ", u64(own_schedule.created.request), " us; after it lowered them to ", u64(OWN_WEIGHT / 2), " and ", u64(OWN_REQUEST / 2), " us: weight ", u64(own_schedule.written.weight), ", request ", u64(own_schedule.written.request), " us; its own writes of the weight ", u64(OWN_WEIGHT), " and of the request ", u64(OWN_REQUEST), " us: ", op.STATUS_NAMES[own_schedule.weight_raise], " and ", op.STATUS_NAMES[own_schedule.request_raise], ", and the schedule stayed: ", u64(own_schedule.last == lowered), "; the first thread: weight ", u64(first.weight), ", request ", u64(first.request), as_it_must ? string(" us: as it must") : string(" us: WRONG"))
+	system.log_fact(.Info, Own_Schedule_Read{asked_weight = u64(OWN_WEIGHT), asked_request = u64(OWN_REQUEST), read_weight = u64(own_schedule.created.weight), read_request = u64(own_schedule.created.request), half_weight = u64(OWN_WEIGHT / 2), half_request = u64(OWN_REQUEST / 2), weight_after = u64(own_schedule.written.weight), request_after = u64(own_schedule.written.request), raised_weight = u64(OWN_WEIGHT), raised_request = u64(OWN_REQUEST), weight_raise = op.Status_Word(own_schedule.weight_raise), request_raise = op.Status_Word(own_schedule.request_raise), kept = u64(own_schedule.last == lowered), first_weight = u64(first.weight), first_request = u64(first.request), verdict = verdict_field(as_it_must)})
 	return as_it_must
 }
 
@@ -1124,7 +1070,7 @@ schedule_refusals :: proc "contextless" () -> bool {
 	spinners_stop(0, 1)
 	ended := system.thread_schedule_write(machine, numbers[0], {weight = 1})
 	as_it_must := too_heavy == .Bad_Operation && too_long == .Bad_Operation && unchanged && no_schedule == .No_Right && no_inspect == .No_Right && blind_write == .No_Right && no_control == .No_Right && reads && other_command == .Bad_Handle && ended == .Bad_State
-	system.log(.Info, "scheduler: refused writes of a schedule: a weight above the full weight ", op.STATUS_NAMES[too_heavy], ", a request above the limit ", op.STATUS_NAMES[too_long], ", and the schedule stayed: ", u64(unchanged), "; the machine handle with no right Schedule ", op.STATUS_NAMES[no_schedule], "; a read and a write through the machine handle with Schedule and no Inspect ", op.STATUS_NAMES[no_inspect], " and ", op.STATUS_NAMES[blind_write], "; a thread handle with Inspect and no Control ", op.STATUS_NAMES[no_control], ", and it reads: ", u64(reads), "; another command with the machine handle ", op.STATUS_NAMES[other_command], "; the machine number of a thread that ended ", op.STATUS_NAMES[ended], as_it_must ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Schedule_Writes_Refused{too_heavy = op.Status_Word(too_heavy), too_long = op.Status_Word(too_long), kept = u64(unchanged), no_schedule = op.Status_Word(no_schedule), no_inspect = op.Status_Word(no_inspect), blind_write = op.Status_Word(blind_write), no_control = op.Status_Word(no_control), reads = u64(reads), control = op.Status_Word(other_command), ended = op.Status_Word(ended), verdict = verdict_field(as_it_must)})
 	return as_it_must
 }
 
@@ -1232,7 +1178,8 @@ weight_limits :: proc "contextless" () -> bool {
 		}
 	}
 	rounds_right := accepted == 2 * LIMIT_ROUNDS && refused == 2 * LIMIT_ROUNDS && machine_raises == LIMIT_ROUNDS && above == 0
-	system.log(.Info, "scheduler: the weight limit ", u64(LIMIT), " written through the machine handle: the thread has the weight ", u64(now.weight), "; its own write of the full weight ", op.STATUS_NAMES[raise], ", the error record has the weight of the thread: ", u64(record_right), "; its own write of the full limit changed nothing: ", u64(kept == limited), "; ", u64(LIMIT_ROUNDS), " rounds of its own writes of the weights ", u64(LIMIT), ", 1, 1024 and ", u64(LIMIT), ", then the weight ", u64(LIMIT), " through the machine handle: ", accepted, " of its own accepted, ", refused, " refused, ", machine_raises, " raised by the machine handle, a wrong weight or limit ", above, " times", first_right && rounds_right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Weight_Limit_Written{limit = u64(LIMIT), weight = u64(now.weight), raise = op.Status_Word(raise), record_right = u64(record_right), kept = u64(kept == limited), verdict = verdict_field(first_right)})
+	system.log_fact(.Info, Weight_Limit_Rounds{limit = u64(LIMIT), rounds = u64(LIMIT_ROUNDS), round_weight = u64(LIMIT), last_round_weight = u64(LIMIT), machine_weight = u64(LIMIT), accepted = accepted, refused = refused, machine_raises = machine_raises, above = above, verdict = verdict_field(rounds_right)})
 
 	// A new thread: a weight above the limit is refused; with the weight
 	// 0 it has the limit as its weight and as its limit.
@@ -1248,7 +1195,7 @@ weight_limits :: proc "contextless" () -> bool {
 	raised := system.thread_schedule_write(machine, self_machine_number, {})
 	restored, restored_status := system.thread_schedule_read(0, number)
 	restored_right := raised == .Ok && restored_status == .Ok && restored == full
-	system.log(.Info, "scheduler: under the weight limit ", u64(LIMIT), ": a new thread with the weight ", u64(LIMIT + 1), " ", op.STATUS_NAMES[too_heavy], "; a new thread with the weight 0 has the weight ", u64(limited_child.schedule.weight), " and the limit ", u64(limited_child.schedule.weight_limit), ", and its own write of the full weight ", op.STATUS_NAMES[limited_child.raise], "; after the machine handle wrote the full limit the first thread has the weight ", u64(restored.weight), child_right && restored_right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Under_Weight_Limit{limit = u64(LIMIT), heavier_weight = u64(LIMIT + 1), too_heavy = op.Status_Word(too_heavy), child_weight = u64(limited_child.schedule.weight), child_limit = u64(limited_child.schedule.weight_limit), child_raise = op.Status_Word(limited_child.raise), restored_weight = u64(restored.weight), verdict = verdict_field(child_right && restored_right)})
 	return first_right && rounds_right && child_right && restored_right
 }
 
@@ -1406,16 +1353,16 @@ owing_kept :: proc "contextless" (processors: u64) -> bool {
 	system.strategy_set(machine, before)
 	ran_all := started && wrong_rounds == 0 && result.rounds >= OWING_ROUNDS
 	as_it_must := ran_all && result.owing != 0 && result.changed == 0 && result.raised == 0 && result.not_new == 0
-	ending := string(": as it must")
+	ending := "as it must"
 	switch {
 	case !ran_all:
-		ending = ": a round did not run: WRONG"
+		ending = "a round did not run: WRONG"
 	case result.owing == 0:
-		ending = ": no round had a lag below 0, so nothing was checked: WRONG"
+		ending = "no round had a lag below 0, so nothing was checked: WRONG"
 	case !as_it_must:
-		ending = ": WRONG"
+		ending = "WRONG"
 	}
-	system.log(.Info, "scheduler: at least ", u64(OWING_ROUNDS), " rounds on a held spinner under EEVDF, until one had a lag below 0: the spinner lowered to the weight 1 and ran a tick, a Stop, its own writes of the full weight and of the request 1 us, the full weight through the machine handle, a Resume: ", result.raised, " of its raises were not refused, the reported lag changed after ", result.changed, " of its writes, and was not 0 after ", result.not_new, " raises of the machine handle", ending)
+	system.log_fact(.Info, Owing_Rounds_Done{rounds = u64(OWING_ROUNDS), raised = result.raised, changed = result.changed, not_new = result.not_new, verdict_words = value_kinds.text_field(ending, 64)})
 	system.log_fact(.Info, Lag_Measured{rounds = result.rounds, owing = result.owing, owed = result.owed, largest = result.largest})
 	return as_it_must
 }
@@ -1775,11 +1722,11 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 			continue
 		}
 		for share, spinner in results[index].shares {
-			full := int(min(share, 250) * 36 / 250) // 25 %: the full height.
+			full := int(min(share, 2500) * 36 / 2500) // 25 %: the full height.
 			fill(inside, x + spinner * 24, y, 16, 36, graphics.colors.track)
 			block(inside, x + spinner * 24, y + 36 - full, 16, full, graphics.shade(strategy_color(index), 125), graphics.shade(strategy_color(index), 78))
 		}
-		fill(inside, x, y + 36 - 125 * 36 / 250, 8 * 24 - 8, 1, graphics.colors.text) // 12.5 %: the equal part.
+		fill(inside, x, y + 36 - 1250 * 36 / 2500, 8 * 24 - 8, 1, graphics.colors.text) // 12.5 %: the equal part.
 	}
 	y += CHART
 	write(inside, 0, y, "12 spinners, weights 1 2 4", graphics.colors.dim)
@@ -1792,13 +1739,13 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		}
 		for class in 0 ..< 3 {
 			share := results[index].weighted[class]
-			full := int(min(share, 200) * 36 / 200) // 20 %: the full height.
+			full := int(min(share, 2000) * 36 / 2000) // 20 %: the full height.
 			fill(inside, x + class * 48, y, 40, 36, graphics.colors.track)
 			block(inside, x + class * 48, y + 36 - full, 40, full, graphics.shade(strategy_color(index), 125), graphics.shade(strategy_color(index), 78))
 			write(inside, x + class * 48 + 16, y + 20, class == 0 ? "1" : class == 1 ? "2" : "4", graphics.colors.background)
 		}
 		least := results[index].weighted_least
-		write(inside, x + 152, y + 20, system.format(line[:], least / 10, ".", least % 10, " %"), graphics.colors.dim)
+		write(inside, x + 152, y + 20, system.format(line[:], least / 100, ".", least % 100 < 10 ? "0" : "", least % 100, " %"), graphics.colors.dim)
 		write(inside, x + 152, y + 4, "least", graphics.colors.dim)
 	}
 	y += CHART

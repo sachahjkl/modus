@@ -12,11 +12,122 @@ import "modus:contract/value_kinds"
 // a field of the contract enum, which a reader writes by its name, as the
 // line did; a stop cause and a stop outcome write the words of the line.
 //
-// Lines stay text: the lines with no value; the three lines that write an
-// address in 16 hexadecimal digits with no "0x", which no field kind
-// writes; the refused start of a child, with the free text of its load
-// error; and the line of the cost of the rules, whose fields and template
-// pass the bounds of one fact.
+// The cost of the rules was one line of 20 values, more than the 144 bytes
+// of one fact: it is one fact for each rule, in the order of the line.
+//
+// The refused start of a child stays text: its load error is a sentence of
+// module.Load_Error, whose names of modules and of an export pass the 144
+// bytes of one fact, and no contract form gives a load error as fields.
+
+// The child that faults did not start: the cases that need it do not run.
+@(log_fact = "kernel_events: the child that faults did not start: the cases 3 to 8 do not run")
+Faulter_Not_Started :: struct {}
+
+// The table is given; the process waits for the revocation of its grant.
+@(log_fact = "kernel_events: the table is given; waiting for the revocation of the grant machine")
+Table_Given :: struct {}
+
+// The context of the process holds no random seed.
+@(log_fact = "kernel_events: no random seed in the context")
+No_Random_Seed :: struct {}
+
+// The process has no boot image.
+@(log_fact = "kernel_events: no boot image")
+No_Boot_Image :: struct {}
+
+// The load child did not start: the cases that need it do not run.
+@(log_fact = "kernel_events: the load child did not start: the cases 3 to 12 do not run")
+Load_Child_Not_Started :: struct {}
+
+// Case 5: the child that faults once stopped itself; its fault record.
+@(log_fact = "kernel_events: a child that faults once: {records} record of a fault that stopped it, vector {vector}, address {address}, stopped: {cause}, {outcome}: {verdict}")
+Fault_Once_Stopped :: struct {
+	records: u64,
+	vector:  u64,
+	address: value_kinds.Hexadecimal_Sixteen_Digits,
+	cause:   op.Stop_Cause,
+	outcome: op.Stop_Outcome,
+	verdict: [16]u8,
+}
+
+// Case 5: the child that faults once stopped for another cause than
+// itself.
+@(log_fact = "kernel_events: a child that faults once: {records} record of a fault that stopped it, vector {vector}, address {address}, stopped: {cause}: {verdict}")
+Fault_Once_Stopped_Without_Outcome :: struct {
+	records: u64,
+	vector:  u64,
+	address: value_kinds.Hexadecimal_Sixteen_Digits,
+	cause:   op.Stop_Cause,
+	verdict: [20]u8,
+}
+
+// Case 9: a rule that names the child gives the address of its fault, and
+// a record holds it.
+@(log_fact = "kernel_events: the address of a fault: a rule for every process: {page_faults} page faults, {with_address} with an address; a rule that names the child: its first use at {address} is in a record: {verdict}")
+Fault_Address_In_A_Record :: struct {
+	page_faults:  u64,
+	with_address: u64,
+	address:      value_kinds.Hexadecimal_Sixteen_Digits,
+	verdict:      [16]u8,
+}
+
+// Case 9: no record holds the address of the first use.
+@(log_fact = "kernel_events: the address of a fault: a rule for every process: {page_faults} page faults, {with_address} with an address; a rule that names the child: its first use at {address} is in no record: {verdict}")
+Fault_Address_In_No_Record :: struct {
+	page_faults:  u64,
+	with_address: u64,
+	address:      value_kinds.Hexadecimal_Sixteen_Digits,
+	verdict:      [16]u8,
+}
+
+// Case 10 fails: a record came after the end of a table.
+@(log_fact = "kernel_events: 1000 gives and ends under load: WRONG: after the end {end}, the word at the offset {offset} of the memory object of the rings changed: a record written after the end")
+Record_After_End :: struct {
+	end:    u64,
+	offset: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// Case 11: the kernel entries of the load child with no rule.
+@(log_fact = "kernel_events: kernel entries in one second of the load child (its own count and time): no rule {rate} ({operations} operations in {elapsed})")
+Cost_Without_Rule :: struct {
+	rate:       u64,
+	operations: u64,
+	elapsed:    value_kinds.Time_In_Nanoseconds,
+}
+
+// Case 11: with a rule that names another process.
+@(log_fact = "kernel_events: kernel entries in one second of the load child (its own count and time): a rule that names another process {rate} ({operations} operations in {elapsed}; {records} records + {lost} lost, of 0)")
+Cost_Rule_Of_Another_Process :: struct {
+	rate:       u64,
+	operations: u64,
+	elapsed:    value_kinds.Time_In_Nanoseconds,
+	records:    u64,
+	lost:       u64,
+}
+
+// Case 11: with a rule for every process that matches nothing.
+@(log_fact = "kernel_events: kernel entries in one second of the load child (its own count and time): a rule for every process that matches nothing {rate} ({operations} operations in {elapsed}; {records} records + {lost} lost, of 0)")
+Cost_Rule_Matching_Nothing :: struct {
+	rate:       u64,
+	operations: u64,
+	elapsed:    value_kinds.Time_In_Nanoseconds,
+	records:    u64,
+	lost:       u64,
+}
+
+// Case 11: with a rule that accepts each operation of the load child; the
+// verdict of the four.
+@(log_fact = "kernel_events: kernel entries in one second of the load child (its own count and time): a rule that accepts each of its operations {rate} ({operations} operations in {elapsed}; {records} records + {lost} lost = {total}, of {expected}): {verdict}")
+Cost_Rule_Of_Each_Operation :: struct {
+	rate:       u64,
+	operations: u64,
+	elapsed:    value_kinds.Time_In_Nanoseconds,
+	records:    u64,
+	lost:       u64,
+	total:      u64,
+	expected:   u64,
+	verdict:    [16]u8,
+}
 
 // The bytes of the Text field of the name of a child: the longest, "the
 // child that faults", has 21 bytes.

@@ -14,9 +14,29 @@ import "modus:support/web"
 // `requests` holds it. The row of the window that shows the last requests
 // is Access_Row.
 //
-// Lines stay text: the body of /sink, which writes its hash in 16
-// hexadecimal digits with no "0x" and a rate with no unit field; and the
-// lines with no value.
+// The body of /sink writes its hash in 16 hexadecimal digits, as
+// system.Hex wrote it.
+
+// The body that a POST to /sink sent: its bytes, its FNV-1a hash and its
+// rate in megabytes in one second.
+@(log_fact = "server: received /sink: {body_size}, fnv1a64 {body_hash}, {rate} MB/s")
+Sink_Received :: struct {
+	body_size: value_kinds.Size_In_Bytes,
+	body_hash: value_kinds.Hexadecimal_Sixteen_Digits,
+	rate:      u64,
+}
+
+// The context of the process holds no random seed.
+@(log_fact = "server: no random seed in the context")
+No_Random_Seed :: struct {}
+
+// The process has no private store: it serves no page of a store.
+@(log_fact = "server: no private store: it serves no page of a store")
+No_Private_Store :: struct {}
+
+// The private store is new: it has no page.
+@(log_fact = "server: a new store: no page")
+New_Store :: struct {}
 
 // The bytes of the Text field of the address of a host: the longest,
 // "255.255.255.255 port 65535", has 26 bytes.

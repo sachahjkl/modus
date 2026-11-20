@@ -536,9 +536,13 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "net: ARP: who has 10.0.2.2: the gateway answered 52:55:0a:00:02:02 in "},
 	{kind = .Wait, text = "net: ICMP echo to 10.0.2.2, 56 bytes: the echo reply came in "},
 	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 7, 41 bytes: the same 41 bytes came back from 10.0.2.2 port 7 in "},
-	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 9: refused: datagram.Send: the argument address, 10.0.2.2 port 9, is refused: the grant names 10.0.2.2 port 7 only"},
-	{kind = .Wait, text = "net: ICMP echo to 10.0.2.3: refused: datagram.Echo: the argument address, 10.0.2.3, is refused: the grant names 10.0.2.2 port 7 only"},
-	{kind = .Wait, text = "net: UDP of 2000 bytes: refused, no fragment: datagram.Send: the argument count has 2000 bytes; it can have at most 1480 bytes"},
+	// The refusals write the fields of their error record: the operation
+	// Send is 2 and Echo 5, and a remote is errors.endpoint_pack of its
+	// address and its port (10.0.2.2 port 9 is 10995149963273, port 7
+	// 10995149963271, 10.0.2.3 10995150028800).
+	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 9: refused: kind No_Grant, unit Endpoint, operation 2, argument 3, value 10995149963273, limit 10995149963271, found "},
+	{kind = .Wait, text = "net: ICMP echo to 10.0.2.3: refused: kind No_Grant, unit Endpoint, operation 5, argument 1, value 10995150028800, limit "},
+	{kind = .Wait, text = "net: UDP of 2000 bytes: refused, no fragment: kind Too_Long, unit Bytes, operation 2, argument 2, value 2000, limit 1480, found 0"},
 	// The process writes the UDP header: the network service checks the
 	// source port in its own copy of it.
 	{kind = .Wait, text = "net: UDP from the source port 1234: refused: the source port 1234 of the header is not the local port of this endpoint, 49152"},
@@ -587,7 +591,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "network: the grant of the endpoint of net changed: none"},
 	{kind = .Front, text = "net"},
 	{kind = .Key, text = "spc"},
-	{kind = .Wait, text = "net: a datagram to 10.0.2.2 port 7 after a key: refused, the endpoint has no grant now: datagram.Send: the argument address, 10.0.2.2 port 7, is refused: the grant names no remote"},
+	{kind = .Wait, text = "net: a datagram to 10.0.2.2 port 7 after a key: refused, the endpoint has no grant now: kind No_Grant, unit Endpoint, operation 2, argument 3, value 10995149963271, limit 0, found "},
 	{kind = .Close, text = "net"},
 	{kind = .Wait, text = "root: net stopped: a holder"},
 	// The end of the endpoint, by the process that owned it.
@@ -2093,7 +2097,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "scheduler: a thread created with the weight 300 and the request 700 us read its own schedule: weight 300, request 700 us; after it lowered them to 150 and 350 us: weight 150, request 350 us; its own writes of the weight 300 and of the request 700 us: Bad_Operation and Bad_Operation, and the schedule stayed: 1; the first thread: weight 1024, request 3000 us: as it must"},
 	{kind = .Wait, text = "scheduler: refused writes of a schedule: a weight above the full weight Bad_Operation, a request above the limit Bad_Operation, and the schedule stayed: 1; the machine handle with no right Schedule No_Right; a read and a write through the machine handle with Schedule and no Inspect No_Right and No_Right; a thread handle with Inspect and no Control No_Right, and it reads: 1; another command with the machine handle Bad_Handle; the machine number of a thread that ended Bad_State: as it must"},
 	{kind = .Wait, text = "scheduler: a thread of another process, the root service, found by its name and its serial: through the machine handle its schedule was read, written, read back and written back: as it must"},
-	{kind = .Wait, text = "scheduler: the weight limit 256 written through the machine handle: the thread has the weight 256; its own write of the full weight Bad_Operation, the error record has the weight of the thread: 1; its own write of the full limit changed nothing: 1; 1000 rounds of its own writes of the weights 256, 1, 1024 and 256, then the weight 256 through the machine handle: 2000 of its own accepted, 2000 refused, 1000 raised by the machine handle, a wrong weight or limit 0 times: as it must"},
+	{kind = .Wait, text = "scheduler: the weight limit 256 written through the machine handle: the thread has the weight 256; its own write of the full weight Bad_Operation, the error record has the weight of the thread: 1; its own write of the full limit changed nothing: 1: as it must"},
+	{kind = .Wait, text = "scheduler: under the weight limit 256, 1000 rounds of its own writes of the weights 256, 1, 1024 and 256, then the weight 256 through the machine handle: 2000 of its own accepted, 2000 refused, 1000 raised by the machine handle, a wrong weight or limit 0 times: as it must"},
 	{kind = .Wait, text = "scheduler: under the weight limit 256: a new thread with the weight 257 Bad_Operation; a new thread with the weight 0 has the weight 256 and the limit 256, and its own write of the full weight Bad_Operation; after the machine handle wrote the full limit the first thread has the weight 1024: as it must"},
 	{kind = .Wait, text = "scheduler: at least 100 rounds on a held spinner under EEVDF, until one had a lag below 0: the spinner lowered to the weight 1 and ran a tick, a Stop, its own writes of the full weight and of the request 1 us, the full weight through the machine handle, a Resume: 0 of its raises were not refused, the reported lag changed after 0 of its writes, and was not 0 after 0 raises of the machine handle: as it must"},
 	{kind = .Wait, text = "scheduler: a thread read its own placement: each of the 4 processors in its set and in its limit: 1; its own write of the processor 3 alone: Ok, and it then read that processor alone, with the same limit: 1; in 50 samples of its thread report, each after one more tick of its run, its home or its processor was another one 0 times: as it must"},

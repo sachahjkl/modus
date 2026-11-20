@@ -478,7 +478,7 @@ cases_of_refusal :: proc "contextless" () {
 cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) -> (faulter: Child, faulter_started: bool) {
 	faulter, faulter_started = child_start(.Faulter, "the child that faults", WAITER_AMOUNTS)
 	if !faulter_started {
-		system.log(.Info, "kernel_events: the child that faults did not start: the cases 3 to 8 do not run")
+		system.log_fact(.Info, Faulter_Not_Started{})
 		return
 	}
 	memory_size := u64(op.Operation.Memory_Size)
@@ -512,11 +512,14 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	system.log_fact(.Info, Sleeps_Counted{switches = tally.kinds[.Switch], verdict = verdict_field(16, right)})
 	case_end(3, right, tally.kinds[.Switch], " switches to it, at least 20", right ? string(": as it must") : string(": WRONG"))
 	_, faulter_cause, faulter_outcome := system.process_state(faulter.process)
-	stop_buffer: [64]u8
-	stop_text := system.Writer{buffer = stop_buffer[:]}
-	system.stop_write(&stop_text, faulter_cause, faulter_outcome)
 	right = faulted && faulter_cause == .Fault && tally.faults_stopped == 1 && tally.fault_detail == 14 && tally.fault_address == FAULT_ADDRESS
-	system.log(.Info, "kernel_events: a child that faults once: ", tally.faults_stopped, " record of a fault that stopped it, vector ", tally.fault_detail, ", address ", system.Hex(tally.fault_address), ", stopped: ", system.written(&stop_text), right ? string(": as it must") : string(": WRONG"))
+	// The words of system.stop_write: the outcome follows the cause Itself
+	// only.
+	if faulter_cause == .Itself {
+		system.log_fact(.Info, Fault_Once_Stopped{records = tally.faults_stopped, vector = tally.fault_detail, address = value_kinds.Hexadecimal_Sixteen_Digits(tally.fault_address), cause = faulter_cause, outcome = faulter_outcome, verdict = verdict_field(16, right)})
+	} else {
+		system.log_fact(.Info, Fault_Once_Stopped_Without_Outcome{records = tally.faults_stopped, vector = tally.fault_detail, address = value_kinds.Hexadecimal_Sixteen_Digits(tally.fault_address), cause = faulter_cause, verdict = verdict_field(20, right)})
+	}
 	case_end(4, right, tally.faults_stopped, " record, vector ", tally.fault_detail, right ? string(": as it must") : string(": WRONG"))
 	interface_draw(window)
 
@@ -571,7 +574,11 @@ case_of_the_fault_address :: proc "contextless" (load: ^Child) {
 	named_tally.fault_address_wanted = intrinsics.atomic_load(&load.shared.first_use_address)
 	rings_read(&named_tally)
 	right := ran && all_tally.kinds[.Fault] >= 1 && all_tally.faults_with_address == 0 && named_tally.fault_address_wanted != 0 && named_tally.fault_address_found
-	system.log(.Info, "kernel_events: the address of a fault: a rule for every process: ", all_tally.kinds[.Fault], " page faults, ", all_tally.faults_with_address, " with an address; a rule that names the child: its first use at ", system.Hex(named_tally.fault_address_wanted), named_tally.fault_address_found ? string(" is in a record") : string(" is in no record"), right ? string(": as it must") : string(": WRONG"))
+	if named_tally.fault_address_found {
+		system.log_fact(.Info, Fault_Address_In_A_Record{page_faults = all_tally.kinds[.Fault], with_address = all_tally.faults_with_address, address = value_kinds.Hexadecimal_Sixteen_Digits(named_tally.fault_address_wanted), verdict = verdict_field(16, right)})
+	} else {
+		system.log_fact(.Info, Fault_Address_In_No_Record{page_faults = all_tally.kinds[.Fault], with_address = all_tally.faults_with_address, address = value_kinds.Hexadecimal_Sixteen_Digits(named_tally.fault_address_wanted), verdict = verdict_field(16, right)})
+	}
 	case_end(8, right, all_tally.faults_with_address, " addresses for every process; the named one ", named_tally.fault_address_found ? string("given") : string("missing"), right ? string(": as it must") : string(": WRONG"))
 }
 
@@ -621,7 +628,7 @@ case_of_the_ends_under_load :: proc "contextless" (load: ^Child, window: ^displa
 	stopped := round_run(load, .Loaders_Stop)
 	right := ran && stopped && loaders >= 1 && rounds == STRESS_ROUNDS && broken_round < 0 && written_sum != 0
 	if broken_round >= 0 {
-		system.log(.Info, "kernel_events: 1000 gives and ends under load: WRONG: after the end ", u64(broken_round), ", the word at the offset ", system.Hex(broken_offset), " of the memory object of the rings changed: a record written after the end")
+		system.log_fact(.Info, Record_After_End{end = u64(broken_round), offset = value_kinds.Hexadecimal_Sixteen_Digits(broken_offset)})
 	}
 	system.log_fact(.Info, Ends_Under_Load{ends = u64(rounds), loaders = u64(loaders), records = written_sum, lost = lost_sum, verdict = verdict_field(16, right)})
 	case_end(9, right, u64(rounds), " ends, ", u64(loaders), " loaders, the pattern whole", right ? string(": as it must") : string(": WRONG"))
@@ -638,7 +645,7 @@ case_of_the_revoked_right :: proc "contextless" (load: ^Child) {
 	rules := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, process = u64(load.process), detail = u64(op.Operation.Memory_Size)}}
 	ran := table_give(rules[:], RING_RECORDS) == .Ok && round_run(load, .Before_Revocation)
 	written_before, lost_before, _ := heads()
-	system.log(.Info, "kernel_events: the table is given; waiting for the revocation of the grant machine")
+	system.log_fact(.Info, Table_Given{})
 	// The wait for the principal has no bound: the principal takes the time that
 	// they take, and the machine test bounds each of its own steps.
 	revoked := false
@@ -740,7 +747,10 @@ case_of_the_cost :: proc "contextless" (load: ^Child, other: ^Child) {
 	nothing_agrees := measures[2].written + measures[2].lost == 0
 	each_agrees := measures[3].written + measures[3].lost == measures[3].count
 	right := ran && other_agrees && nothing_agrees && each_agrees
-	system.log(.Info, "kernel_events: kernel entries in one second of the load child (its own count and time): no rule ", measures[0].rate, " (", measures[0].count, " operations in ", measures[0].nanoseconds, " ns); a rule that names another process ", measures[1].rate, " (", measures[1].count, " operations in ", measures[1].nanoseconds, " ns; ", measures[1].written, " records + ", measures[1].lost, " lost, of 0); a rule for every process that matches nothing ", measures[2].rate, " (", measures[2].count, " operations in ", measures[2].nanoseconds, " ns; ", measures[2].written, " records + ", measures[2].lost, " lost, of 0); a rule that accepts each of its operations ", measures[3].rate, " (", measures[3].count, " operations in ", measures[3].nanoseconds, " ns; ", measures[3].written, " records + ", measures[3].lost, " lost = ", measures[3].written + measures[3].lost, ", of ", measures[3].count, ")", right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Cost_Without_Rule{rate = measures[0].rate, operations = measures[0].count, elapsed = value_kinds.Time_In_Nanoseconds(measures[0].nanoseconds)})
+	system.log_fact(.Info, Cost_Rule_Of_Another_Process{rate = measures[1].rate, operations = measures[1].count, elapsed = value_kinds.Time_In_Nanoseconds(measures[1].nanoseconds), records = measures[1].written, lost = measures[1].lost})
+	system.log_fact(.Info, Cost_Rule_Matching_Nothing{rate = measures[2].rate, operations = measures[2].count, elapsed = value_kinds.Time_In_Nanoseconds(measures[2].nanoseconds), records = measures[2].written, lost = measures[2].lost})
+	system.log_fact(.Info, Cost_Rule_Of_Each_Operation{rate = measures[3].rate, operations = measures[3].count, elapsed = value_kinds.Time_In_Nanoseconds(measures[3].nanoseconds), records = measures[3].written, lost = measures[3].lost, total = measures[3].written + measures[3].lost, expected = measures[3].count, verdict = verdict_field(16, right)})
 	case_end(10, right, measures[0].rate, ", ", measures[1].rate, ", ", measures[2].rate, ", ", measures[3].rate, right ? string(": as it must") : string(": WRONG"))
 
 	// What every process does while this one sleeps 200 ms: shown, not
@@ -911,7 +921,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		child_role_run(role)
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "kernel_events: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
@@ -921,7 +931,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		system.log(.Info, "kernel_events: no boot image")
+		system.log_fact(.Info, No_Boot_Image{})
 		system.stop(.Failed)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -977,7 +987,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		case_of_the_revoked_right(&load)
 		child_end(&load, "the load child")
 	} else {
-		system.log(.Info, "kernel_events: the load child did not start: the cases 3 to 12 do not run")
+		system.log_fact(.Info, Load_Child_Not_Started{})
 	}
 
 	right := 0

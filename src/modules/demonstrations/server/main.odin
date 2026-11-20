@@ -466,7 +466,7 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "server: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	date_page = date.page_of(ctx)
