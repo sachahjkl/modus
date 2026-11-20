@@ -9,7 +9,7 @@ import "core:testing"
 import "core:time"
 import "modus:contract/blake3"
 import "modus:contract/font_outlines"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "modus:support/vector_font"
 
 @(private = "file")
@@ -687,43 +687,120 @@ golden_forms := [Face]Golden_Form {
 	.Cells_Bold             = {1, {1, 0, 0}},
 }
 
+// Why golden_bytes_of gives no bytes.
+Golden_Problem :: enum {
+	None,
+	Unknown_Face, // A face that names no member, and the face None.
+	Size_Refused, // A size that size_check refuses.
+	No_Golden_Row, // A valid size that golden_forms does not hash for the face: no stored hash names it.
+}
+
+// golden_bytes_of gives the bytes of the golden hash of the 192
+// characters of a face at a text size (golden_bytes_append), at each
+// position of the face, in bytes, which it empties first. The outlines are
+// open in the state of the package. It refuses a face that names no
+// member, a size that size_check refuses, and a size that has no golden
+// hash for the face, and then leaves bytes empty.
+golden_bytes_of :: proc(t: ^testing.T, face: Face, size: int, bytes: ^[dynamic]u8) -> Golden_Problem {
+	clear(bytes)
+	if _, known := face_of_word(i64(face)); !known {
+		return .Unknown_Face
+	}
+	if size_check(size) != .None {
+		return .Size_Refused
+	}
+	hashed := false
+	for scale in 1 ..= golden_forms[face].scale_count {
+		if size_of_scale(scale) == size {
+			hashed = true
+		}
+	}
+	if !hashed {
+		return .No_Golden_Row
+	}
+	form := face_forms[face]
+	for position in 0 ..< positions_of(face) {
+		for index in 0 ..< font_characters.CHARACTER_COUNT {
+			character, _ := font_characters.character_of_index(index)
+			glyph_index, glyph_problem := vector_font.glyph_of(&state.fonts[form.primary].file, character)
+			testing.expectf(t, glyph_problem == .None, "%v U+%04X: a glyph of its font", face, int(character))
+			box, raster_problem := glyph_raster(face, form.primary, glyph_index, size, position)
+			testing.expectf(t, raster_problem == .None, "%v U+%04X at size %v: %v", face, int(character), size, raster_problem)
+			golden_bytes_append(bytes, box)
+		}
+	}
+	return .None
+}
+
 // The 192 characters keep their pixels: for each face, each scale of its
 // golden hashes and each position, the glyphs that this package draws at
 // the text size of the scale give the stored golden hash. A changed pixel,
 // box or word fails with the face, the size and the hash found. The hashes
 // come from a build whose test compared each of these words with the
-// glyph caches of the boot image, so the pixels of the desktop stay those
-// of the caches that left.
+// glyph caches that the boot image held then, so the pixels of the desktop
+// stay those of the caches that left.
 @(test)
 the_192_characters_keep_their_golden_hashes :: proc(t: ^testing.T) {
 	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
+	golden_bytes := make([dynamic]u8)
+	defer delete(golden_bytes)
 	for face in Face {
 		if face == .None {
 			continue
 		}
-		form := face_forms[face]
 		for scale in 1 ..= golden_forms[face].scale_count {
 			text_size := size_of_scale(scale)
-			golden_bytes := make([dynamic]u8)
-			defer delete(golden_bytes)
-			for position in 0 ..< positions_of(face) {
-				for index in 0 ..< glyph_cache.CHARACTER_COUNT {
-					character, _ := glyph_cache.character_of_index(index)
-					glyph_index, glyph_problem := vector_font.glyph_of(&state.fonts[form.primary].file, character)
-					testing.expectf(t, glyph_problem == .None, "%v U+%04X: a glyph of its font", face, int(character))
-					box, raster_problem := glyph_raster(face, form.primary, glyph_index, text_size, position)
-					testing.expectf(t, raster_problem == .None, "%v U+%04X at size %v: %v", face, int(character), text_size, raster_problem)
-					golden_bytes_append(&golden_bytes, box)
-				}
-			}
+			testing.expect_value(t, golden_bytes_of(t, face, text_size, &golden_bytes), Golden_Problem.None)
 			found := golden_hash_text(blake3.hash(golden_bytes[:]))
 			fmt.printfln("text_rendering: the golden hash of %v at the size %v: %s", face, text_size, found)
 			golden_hash_check(t, face, text_size, .The_192_Characters, found)
 		}
 	}
+}
+
+// The golden hash refuses what it does not name, and sees one pixel. A
+// face that names no member and the face None, the sizes that size_check
+// refuses (0, one under TEXT_SIZE_MINIMUM, one past TEXT_SIZE_LIMIT, a
+// negative size, the largest int) and a valid size that no row names (a
+// line of 20 pixels for the cells, the scale 2 of the bold weight) give no
+// bytes. Then one bit of the last word of the 192 characters of the face
+// Cells at the size 1 024 changed: the hash is no longer the stored hash;
+// changed back, it is again.
+@(test)
+a_golden_hash_refuses_and_sees_one_pixel :: proc(t: ^testing.T) {
+	test_state_take()
+	fonts := repository_fonts()
+	_, words := outlines_open(t, fonts[:])
+	defer delete(words)
+	bytes := make([dynamic]u8)
+	defer delete(bytes)
+	unknown_word := u8(max(Face)) + 1
+	for face in ([2]Face{.None, Face(unknown_word)}) {
+		append(&bytes, 1)
+		testing.expect_value(t, golden_bytes_of(t, face, TEXT_SIZE_OF_SCALE_ONE, &bytes), Golden_Problem.Unknown_Face)
+		testing.expect_value(t, len(bytes), 0)
+	}
+	for size in ([5]int{0, TEXT_SIZE_MINIMUM - 1, TEXT_SIZE_LIMIT + 1, -TEXT_SIZE_OF_SCALE_ONE, max(int)}) {
+		testing.expectf(t, golden_bytes_of(t, .Cells, size, &bytes) == .Size_Refused, "the size %v is refused", size)
+		testing.expect_value(t, len(bytes), 0)
+	}
+	testing.expect_value(t, golden_bytes_of(t, .Cells, 20 * SUBPIXEL, &bytes), Golden_Problem.No_Golden_Row)
+	testing.expect_value(t, golden_bytes_of(t, .Interface_Bold, size_of_scale(2), &bytes), Golden_Problem.No_Golden_Row)
+	testing.expect_value(t, len(bytes), 0)
+
+	testing.expect_value(t, golden_bytes_of(t, .Cells, TEXT_SIZE_OF_SCALE_ONE, &bytes), Golden_Problem.None)
+	stored, stored_found := golden_hash_stored(.Cells, TEXT_SIZE_OF_SCALE_ONE, .The_192_Characters)
+	testing.expect(t, stored_found && stored != GOLDEN_HASH_NOT_STORED)
+	testing.expect_value(t, golden_hash_text(blake3.hash(bytes[:])), stored)
+	// The last byte: the coverage of the whole pixel of the last word of
+	// the euro sign, the last of the 192 characters.
+	bytes[len(bytes) - 1] ~= 1
+	testing.expect(t, golden_hash_text(blake3.hash(bytes[:])) != stored, "a pixel changed, and the golden hash did not")
+	bytes[len(bytes) - 1] ~= 1
+	testing.expect_value(t, golden_hash_text(blake3.hash(bytes[:])), stored)
 }
 
 // golden_bytes_append adds a glyph that glyph_raster drew, as the golden
@@ -808,18 +885,27 @@ golden_hashes := [?]Golden_Hash {
 // golden hash of its face, size and characters. A row with no stored hash
 // fails, and gives the hash to store.
 golden_hash_check :: proc(t: ^testing.T, face: Face, size: int, characters: Golden_Characters, found: string) {
-	for row in golden_hashes {
-		if row.face != face || row.size != size || row.characters != characters {
-			continue
-		}
-		if row.hash == GOLDEN_HASH_NOT_STORED {
-			testing.expectf(t, false, "%v at the size %v, %v: no golden hash is stored; store %s in golden_hashes", face, size, characters, found)
-			return
-		}
-		testing.expectf(t, row.hash == found, "%v at the size %v, %v: the golden hash is %s, and the stored one %s", face, size, characters, found, row.hash)
-		return
+	stored, has_row := golden_hash_stored(face, size, characters)
+	switch {
+	case !has_row:
+		testing.expectf(t, false, "%v at the size %v, %v: golden_hashes has no row, and the hash is %s", face, size, characters, found)
+	case stored == GOLDEN_HASH_NOT_STORED:
+		testing.expectf(t, false, "%v at the size %v, %v: no golden hash is stored; store %s in golden_hashes", face, size, characters, found)
+	case:
+		testing.expectf(t, stored == found, "%v at the size %v, %v: the golden hash is %s, and the stored one %s", face, size, characters, found, stored)
 	}
-	testing.expectf(t, false, "%v at the size %v, %v: golden_hashes has no row, and the hash is %s", face, size, characters, found)
+}
+
+// golden_hash_stored gives the stored golden hash of a face, a size and a
+// set of characters; has_row is false when golden_hashes has no row for
+// them.
+golden_hash_stored :: proc(face: Face, size: int, characters: Golden_Characters) -> (hash: string, has_row: bool) {
+	for row in golden_hashes {
+		if row.face == face && row.size == size && row.characters == characters {
+			return row.hash, true
+		}
+	}
+	return "", false
 }
 
 // The table of the golden hashes: one row for each face, size and set of
@@ -988,10 +1074,9 @@ the_raster_time_of_one_glyph :: proc(t: ^testing.T) {
 }
 
 // The time of the measure of 100 lines of the interface font at a line of
-// 16 pixels: from the font file (measure_ranges, as each process measures
-// now), and from the tables of advances and pairs of a glyph cache, as the
-// shaper measured before. The least of 200 rounds; the two give the same
-// widths. A measure, never a test of a speed.
+// 16 pixels from the font file (measure_ranges, as each process measures).
+// The least of 200 rounds; each width is the width of its line alone. A
+// measure, never a test of a speed.
 @(test)
 the_measure_time_of_a_hundred_lines :: proc(t: ^testing.T) {
 	if !MEASURE {
@@ -1001,48 +1086,6 @@ the_measure_time_of_a_hundred_lines :: proc(t: ^testing.T) {
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
-	render := new(vector_font.Render_Memory)
-	defer free(render)
-	out := make([]u64, vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT / 8)
-	defer delete(out)
-	file := ([^]u8)(raw_data(out))[:vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT]
-	font, problem := vector_font.font_open(b612_file)
-	testing.expect_value(t, problem, vector_font.Font_Problem.None)
-	positions := [3]int{3, 1, 1}
-	size: int
-	size, problem = vector_font.glyph_cache_build_proportional(&font, b612_file, "b612", true, render, file, positions[:])
-	testing.expect_value(t, problem, vector_font.Font_Problem.None)
-	cache, refused := glyph_cache.validate(file[:size])
-	testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
-	advances := glyph_cache.advances_of(&cache, 1)
-	pairs := glyph_cache.pairs_of(&cache, 1)
-	// The width of a text from the tables of the cache: the advance of
-	// each character and the pair with the next, each from its table.
-	table_width :: proc(advances: []i32, pairs: []glyph_cache.Pair_Entry, text: []u8) -> (width: i64) {
-		for index in 0 ..< len(text) {
-			left, _ := glyph_cache.character_index(rune(text[index]))
-			width += i64(advances[left])
-			if index + 1 < len(text) {
-				right, _ := glyph_cache.character_index(rune(text[index + 1]))
-				key := u32(left) << 8 | u32(right)
-				low, high := 0, len(pairs)
-				for low < high {
-					middle := low + (high - low) / 2
-					pair_key := u32(pairs[middle].left) << 8 | u32(pairs[middle].right)
-					switch {
-					case pair_key == key:
-						width += i64(pairs[middle].adjustment)
-						low = high
-					case pair_key < key:
-						low = middle + 1
-					case:
-						high = middle
-					}
-				}
-			}
-		}
-		return width
-	}
 	LINES :: 100
 	sample := [?]string{"Settings", "To AVATAR", "The interface takes it for titles, labels and buttons", "LT Wave", "processor_frame", "42 windows"}
 	bytes := make([dynamic]u8)
@@ -1056,23 +1099,17 @@ the_measure_time_of_a_hundred_lines :: proc(t: ^testing.T) {
 	}
 	spacing, ok := spacing_of(.Interface, TEXT_SIZE_OF_SCALE_ONE)
 	testing.expect(t, ok)
-	least_file, least_tables := max(i64), max(i64)
+	least_file := max(i64)
 	for _ in 0 ..< 200 {
 		start := time.tick_now()
 		_, _, _ = measure_ranges(&spacing, bytes[:], ranges)
 		least_file = min(least_file, i64(time.tick_since(start)))
-		start = time.tick_now()
-		sum: i64
-		for range in ranges {
-			sum += table_width(advances, pairs, bytes[range.start:][:range.count])
-		}
-		least_tables = min(least_tables, i64(time.tick_since(start)))
-		testing.expect(t, sum > 0)
 	}
 	for range in ranges {
-		testing.expect_value(t, range.width, table_width(advances, pairs, bytes[range.start:][:range.count]))
+		alone, alone_ok := text_width(&spacing, bytes[range.start:][:range.count])
+		testing.expect(t, alone_ok && range.width == alone)
 	}
-	fmt.printfln("text_rendering: the measure of %v lines of B612 at a line of 16 pixels, the least of 200: %v ns from the font file, %v ns from the tables of a glyph cache", LINES, least_file, least_tables)
+	fmt.printfln("text_rendering: the measure of %v lines of B612 at a line of 16 pixels, the least of 200: %v ns from the font file", LINES, least_file)
 }
 
 // A change of a setting in the middle of a frame: the grid fit and the

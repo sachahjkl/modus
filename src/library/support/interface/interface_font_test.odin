@@ -4,7 +4,6 @@ package interface
 import "base:runtime"
 import "modus:contract/draw_record"
 import "modus:contract/font_outlines"
-import "modus:contract/glyph_cache"
 import "modus:contract/settings"
 import "core:slice"
 import "core:sync"
@@ -491,7 +490,7 @@ each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
 						free(memory)
 						continue
 					}
-					pixel, position := glyph_cache.position_of(place, 3)
+					pixel, position := text_rendering.position_of(place, text_rendering.POSITION_LIMIT)
 					origin := pixel * 64 + i64(position) * 64 / 3
 					clear_all({drawn, parts, expected})
 					execute(&table, canvas_of(drawn))

@@ -5,7 +5,6 @@ import "core:fmt"
 import "core:os"
 import "core:testing"
 import "core:time"
-import "modus:contract/glyph_cache"
 
 // The cost of a glyph that a process draws for itself, past the glyph
 // cache (src/md/features/glyphs_on_demand.md, "The measures"): the time of
@@ -105,7 +104,7 @@ measure_glyphs :: proc(sample: ^Measure_Sample, scale: int, memory: ^Render_Memo
 
 @(private = "file")
 measure_print :: proc(sample: ^Measure_Sample, memory: ^Render_Memory) {
-	for scale in 1 ..= glyph_cache.SIZE_LIMIT {
+	for scale in 1 ..= 3 {
 		result := measure_glyphs(sample, scale, memory)
 		mean_words := f64(result.words) / f64(max(result.glyphs, 1))
 		mean_bytes := mean_words * 4 + MEASURE_ENTRY_BYTES

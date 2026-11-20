@@ -5,7 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "modus:contract/font_outlines"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "modus:support/vector_font"
 import "modustool:foundation"
 
@@ -13,9 +13,9 @@ import "modustool:foundation"
 //
 // The command "vector_fonts" reads the font files of the candidates from
 // the build inputs of flake.nix (VECTOR_FONT_SOURCES), and writes for each
-// one a subset in resources/fonts: the characters of a glyph cache (ASCII
-// 32 to 126, the Latin-1 Supplement and the added characters,
-// glyph_cache.character_index) and
+// one a subset in resources/fonts: the characters with a character index
+// (ASCII 32 to 126, the Latin-1 Supplement and the added characters,
+// font_characters.character_index) and
 // the glyph .notdef, each glyph a simple glyph with no hinting
 // instructions. A font that lacks one of them is refused. The subsets of
 // the regular weight of the interface font and of the two weights of the
@@ -175,12 +175,12 @@ Subset_Report :: struct {
 // the order of their character index: the glyph of the index i is i + 1.
 // The characters past the glyph cache of a subset, if it has some, come
 // after these.
-SUBSET_GLYPHS :: 1 + glyph_cache.CHARACTER_COUNT
+SUBSET_GLYPHS :: 1 + font_characters.CHARACTER_COUNT
 
 // subset_character gives the character of a glyph of a subset, past
 // .notdef.
 subset_character :: proc(glyph: int) -> rune {
-	character, _ := glyph_cache.character_of_index(glyph - 1)
+	character, _ := font_characters.character_of_index(glyph - 1)
 	return character
 }
 
@@ -398,7 +398,7 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 	append(&tables, Subset_Table{"post", post})
 	subset = sfnt_write(tables[:])
 	added := strings.builder_make(context.temp_allocator)
-	for character in glyph_cache.added_characters {
+	for character in font_characters.added_characters {
 		fmt.sbprintf(&added, " U+%04X", int(character))
 	}
 	past_cache := strings.builder_make(context.temp_allocator)
@@ -523,10 +523,10 @@ character_map_write :: proc(past_cache_characters: []rune) -> []u8 {
 		delta:       int,
 	}
 	segments := make([dynamic]Character_Map_Segment, context.temp_allocator)
-	append(&segments, Character_Map_Segment{first = glyph_cache.ASCII_FIRST, last = glyph_cache.ASCII_LAST, delta = 1 - glyph_cache.ASCII_FIRST})
-	append(&segments, Character_Map_Segment{first = glyph_cache.LATIN_FIRST, last = glyph_cache.LATIN_LAST, delta = 1 + glyph_cache.ASCII_COUNT - glyph_cache.LATIN_FIRST})
-	for character, offset in glyph_cache.added_characters {
-		append(&segments, Character_Map_Segment{first = u16(character), last = u16(character), delta = 1 + glyph_cache.ADDED_FIRST_INDEX + offset - int(character)})
+	append(&segments, Character_Map_Segment{first = font_characters.ASCII_FIRST, last = font_characters.ASCII_LAST, delta = 1 - font_characters.ASCII_FIRST})
+	append(&segments, Character_Map_Segment{first = font_characters.LATIN_FIRST, last = font_characters.LATIN_LAST, delta = 1 + font_characters.ASCII_COUNT - font_characters.LATIN_FIRST})
+	for character, offset in font_characters.added_characters {
+		append(&segments, Character_Map_Segment{first = u16(character), last = u16(character), delta = 1 + font_characters.ADDED_FIRST_INDEX + offset - int(character)})
 	}
 	// The characters past the glyph cache: one segment for each run of code points
 	// that follow each other, as their glyphs do.
@@ -742,32 +742,6 @@ append_u16 :: proc(out: ^[dynamic]u8, value: u16) {
 append_u32 :: proc(out: ^[dynamic]u8, value: u32) {
 	append_u16(out, u16(value >> 16))
 	append_u16(out, u16(value))
-}
-
-// glyph_cache_of draws the characters of a glyph cache of a font file at the three
-// scales of the grid, and gives the glyph cache file (src/library/contract/glyph_cache),
-// in memory aligned on 8 bytes: the picture of the candidates draws each
-// candidate from it. No glyph cache is a resource of the boot image.
-glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scale_count := 3) -> (cache: []u8, ok: bool) {
-	font, problem := vector_font.font_open(font_bytes)
-	memory := new(vector_font.Render_Memory, context.temp_allocator)
-	words := make([]u64, vector_font.GLYPH_CACHE_LIMIT / 8, context.temp_allocator)
-	out := ([^]u8)(raw_data(words))[:vector_font.GLYPH_CACHE_LIMIT]
-	size := 0
-	if problem == .None {
-		size, problem = vector_font.glyph_cache_build(&font, font_bytes, font_name, grid_fit, memory, out, scale_count)
-	}
-	if problem != .None {
-		fmt.eprintfln("modustool: the font %s: %s", font_name, vector_font.font_problem_names[problem])
-		return nil, false
-	}
-	// The reader of the modules checks the cache here too: a cache that it
-	// refuses is found at the build, not at the boot.
-	if _, refused := glyph_cache.validate(out[:size]); refused.kind != .None {
-		fmt.eprintfln("modustool: the glyph cache of %s is refused: %s, value %d, limit %d", font_name, glyph_cache.problem_sentences[refused.kind], refused.value, refused.limit)
-		return nil, false
-	}
-	return out[:size], true
 }
 
 FONT_OUTLINES_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/font_outlines.bin"

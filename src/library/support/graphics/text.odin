@@ -1,6 +1,6 @@
 package graphics
 
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "modus:contract/text_encoding"
 import "modus:support/text_rendering"
 
@@ -121,17 +121,43 @@ face_glyph_draw :: #force_no_inline proc "contextless" (face: text_rendering.Fac
 		if !started {
 			return false
 		}
-		for {
-			first_row, row_count, band_words := text_rendering.band_next(&job)
-			if row_count == 0 {
-				break
-			}
-			band := glyph_cache.Glyph_Entry{first_row = u16(first_row), row_count = u16(row_count), left = i16(-job.origin_column), width = u16(job.columns)}
-			glyph_words_draw(band, band_words, square_root, tables, order, canvas, x, y, color, alpha)
-		}
+		glyph_bands_draw(&job, square_root, tables, order, canvas, x, y, color, alpha)
 		return true
 	}
 	return false
+}
+
+// glyph_bands_draw draws the bands of a glyph that text_rendering started
+// (glyph_bands, glyph_bands_in), each band blended as it is drawn.
+@(private)
+glyph_bands_draw :: proc "contextless" (job: ^text_rendering.Raster_Job, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32) {
+	for {
+		first_row, row_count, band_words := text_rendering.band_next(job)
+		if row_count == 0 {
+			break
+		}
+		band := text_rendering.Glyph_Entry{first_row = u16(first_row), row_count = u16(row_count), left = i16(-job.origin_column), width = u16(job.columns)}
+		glyph_words_draw(band, band_words, square_root, tables, order, canvas, x, y, color, alpha)
+	}
+}
+
+// character_of_set draws a character of a face of a set of fonts that the
+// caller opened (text_rendering.font_file_open) in the cell at (x, y), at
+// a text size, with the blend and the order of the stripes of the text
+// state, and gives true; false when the set has no glyph for it. The glyph
+// is drawn band by band at each call: the private glyph cache keys no set.
+// The candidate fonts of the demonstration vector_glyphs and of the picture
+// of the tool draw with it, through the rasterizer of each face.
+character_of_set :: proc "contextless" (set: ^text_rendering.Font_Set, face: text_rendering.Face, canvas: Canvas, x, y: int, character: rune, color: Color, size: int) -> bool {
+	if text_state.square_root[4095] == 0 {
+		square_root_table_fill(&text_state.square_root)
+	}
+	job, started := text_rendering.glyph_bands_in(set, face, character, size, 0)
+	if !started {
+		return false
+	}
+	glyph_bands_draw(&job, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, x, y, color, OPAQUE)
+	return true
 }
 
 // paint fills a rectangle of a glyph drawn by its pixels (Spleen, the
@@ -204,10 +230,10 @@ text :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color
 
 // cell_font_draws says if Spleen has a glyph for a character: ASCII 32 to
 // 126, the Latin-1 Supplement and the added characters
-// (glyph_cache.character_index), the characters of each font of the
+// (font_characters.character_index), the characters of each font of the
 // system.
 cell_font_draws :: #force_inline proc "contextless" (character: rune) -> bool {
-	_, found := glyph_cache.character_index(character)
+	_, found := font_characters.character_index(character)
 	return found
 }
 
@@ -342,19 +368,6 @@ text_width :: proc "contextless" (characters: string) -> int {
 	return text_encoding.character_count(transmute([]u8)characters) * CELL_WIDTH
 }
 
-// character_vector_with draws one character of a glyph cache file that
-// the caller drew and validated, with the fast blend: the same pixels as
-// character_vector_reference. The text of the system never reads such a
-// file; the demonstration vector_glyphs draws its candidate fonts with it,
-// and the tests of the blend take their glyphs from it.
-character_vector_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, value: rune, color: Color, scale: int, alpha: u32 = OPAQUE) {
-	_, entry, found := glyph_cache.glyph(cache, value, scale)
-	if !found || entry.row_count == 0 {
-		return
-	}
-	glyph_words_draw(entry, raw_data(cache.words[entry.word_offset:]), square_root, tables, order, canvas, x, y, color, alpha)
-}
-
 // glyph_words_draw draws one glyph from its first word with the fast
 // blend, its origin at the whole pixel x, the top of its line at y, cut to
 // the canvas: an entry of the private glyph cache, which this process
@@ -362,7 +375,7 @@ character_vector_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_r
 // rows of width words. The text of cells and the text of a proportional
 // font both draw through it, so both have the same blend.
 @(private)
-glyph_words_draw :: proc "contextless" (entry: glyph_cache.Glyph_Entry, words: [^]u32, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32 = OPAQUE) #no_bounds_check {
+glyph_words_draw :: proc "contextless" (entry: text_rendering.Glyph_Entry, words: [^]u32, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32 = OPAQUE) #no_bounds_check {
 	if entry.row_count == 0 {
 		return
 	}
@@ -381,38 +394,10 @@ glyph_words_draw :: proc "contextless" (entry: glyph_cache.Glyph_Entry, words: [
 	blend_glyph_rows(canvas.pixels[(y + int(entry.first_row)) * canvas.stride + column_x:], canvas.stride, words, width, first_row, last_row, first_column, last_column, color, order, square_root, tables, alpha)
 }
 
-// character_vector_reference draws one character of a glyph cache that
-// glyph_cache.validate accepted, with the blend of one row at a time: the
-// reference of the fast blend in the tests. Each entry and each word is
-// inside the file, so the loop has no bounds check (the rows and the
-// columns are cut to the canvas here).
-character_vector_reference :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: rune, color: Color, scale: int, alpha: u32 = OPAQUE) #no_bounds_check {
-	_, entry, found := glyph_cache.glyph(cache, value, scale)
-	if !found || entry.row_count == 0 {
-		return
-	}
-	// The words of a row start at the column left of the cell: 0, and the
-	// width of the cell, in the cache of a monospace font.
-	column_x := x + int(entry.left)
-	width := int(entry.width)
-	first_column := max(0, -column_x)
-	last_column := min(width, canvas.width - column_x)
-	first_row := max(0, -(y + int(entry.first_row)))
-	last_row := min(int(entry.row_count), canvas.height - y - int(entry.first_row))
-	if first_column >= last_column || first_row >= last_row {
-		return
-	}
-	words := raw_data(cache.words[entry.word_offset:])
-	for row in first_row ..< last_row {
-		line := canvas.pixels[(y + int(entry.first_row) + row) * canvas.stride + column_x:]
-		blend_coverage_row(line, words[row * width:], first_column, last_column, color, order, square_root, alpha)
-	}
-}
-
 // character_spleen draws one character of Spleen 8x16 at its native size.
 // With an alpha below 255, each pixel of the glyph blends once.
 character_spleen :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: Color, alpha: u32 = OPAQUE, square_root: ^[4096]u8 = nil) {
-	index, found := glyph_cache.character_index(value)
+	index, found := font_characters.character_index(value)
 	if !found {
 		return
 	}
@@ -451,7 +436,7 @@ character_spleen :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, 
 // character_spleen_enlarged draws one character of Spleen with each pixel
 // as a square of scale pixels: the large sizes when the setting is Spleen.
 character_spleen_enlarged :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: Color, scale: int, alpha: u32 = OPAQUE, square_root: ^[4096]u8 = nil) {
-	index, found := glyph_cache.character_index(value)
+	index, found := font_characters.character_index(value)
 	if !found {
 		return
 	}
@@ -508,16 +493,17 @@ text_proportional_with :: proc "contextless" (face: text_rendering.Face, square_
 		case glyph.glyph >= text_rendering.FALLBACK_GLYPH_FIRST:
 			character = rune(glyph.glyph - text_rendering.FALLBACK_GLYPH_FIRST)
 		case:
-			indexed, found := glyph_cache.character_of_index(int(glyph.glyph))
+			indexed, found := font_characters.character_of_index(int(glyph.glyph))
 			if !found {
 				continue
 			}
 			character = indexed
 		}
-		pixel, position := glyph_cache.position_of(place + i64(glyph.x), position_count)
+		pixel, position := text_rendering.position_of(place + i64(glyph.x), position_count)
 		// A glyph far outside the canvas: its pixel does not fit an int of
-		// the canvas, and it draws nothing.
-		if pixel < -i64(glyph_cache.GLYPH_WIDTH_LIMIT) || pixel > i64(canvas.width) {
+		// the canvas, and it draws nothing. No glyph is wider than the
+		// widest work row of the rasterizer.
+		if pixel < -i64(text_rendering.WORK_COLUMN_LIMIT) || pixel > i64(canvas.width) {
 			continue
 		}
 		if replacement || !face_glyph_draw(face, character, size, position, square_root, tables, order, canvas, int(pixel), y, color, alpha) {

@@ -4,7 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "modustool:foundation"
 
 // The bitmap font of the system is Spleen, a font that is drawn for each
@@ -13,8 +13,8 @@ import "modustool:foundation"
 // 16x32 and 32x64, the cells of the boot display at 12, 16 and 32 eighths
 // (src/md/features/boot_display_scale.md, "The text"). The results are in
 // the repository, so that a build does not need the BDF files. Each holds
-// the characters of a glyph cache, in the order of their character index
-// (glyph_cache.character_index): ASCII 32 to 126, then the Latin-1
+// the characters with a character index, in the order of that index
+// (font_characters.character_index): ASCII 32 to 126, then the Latin-1
 // Supplement, then the added characters. A character that a BDF file lacks
 // stops the command.
 
@@ -27,7 +27,7 @@ BOOT_DISPLAY_FONT_SIZES :: [3][2]int{{12, 24}, {16, 32}, {32, 64}}
 // The widest row of a size that a table keeps: 32 bits.
 FONT_ROW_BITS_MOST :: 32
 
-// bdf_glyphs_read reads the glyphs of the characters of a glyph cache from
+// bdf_glyphs_read reads the glyphs of the characters with a character index from
 // a BDF file of one size: rows gets height rows for each character index,
 // each row as the BDF file writes it (the left pixel in the high bit of its
 // bytes). Every glyph must have the box of the size, at the offsets of the
@@ -49,7 +49,7 @@ bdf_glyphs_read :: proc(path: string, width, height: int, rows: []u32) -> bool {
 		case strings.has_prefix(line, "ENCODING "):
 			encoding, _ := strconv.parse_int(line[len("ENCODING "):])
 			index = -1
-			if character_index, in_font := glyph_cache.character_index(rune(encoding)); in_font && encoding >= 0 {
+			if character_index, in_font := font_characters.character_index(rune(encoding)); in_font && encoding >= 0 {
 				index = character_index
 			}
 		case strings.has_prefix(line, "BBX "):
@@ -81,8 +81,8 @@ bdf_glyphs_read :: proc(path: string, width, height: int, rows: []u32) -> bool {
 			row += 1
 		}
 	}
-	if found != glyph_cache.CHARACTER_COUNT {
-		fmt.eprintfln("modustool: %s has %d of the %d characters", path, found, glyph_cache.CHARACTER_COUNT)
+	if found != font_characters.CHARACTER_COUNT {
+		fmt.eprintfln("modustool: %s has %d of the %d characters", path, found, font_characters.CHARACTER_COUNT)
 		return false
 	}
 	return true
@@ -101,7 +101,7 @@ run_font :: proc(args: []string) -> int {
 	}
 
 	// 8x16, the font of the cells: one byte for each row.
-	glyphs := make([]u32, glyph_cache.CHARACTER_COUNT * FONT_HEIGHT, context.temp_allocator)
+	glyphs := make([]u32, font_characters.CHARACTER_COUNT * FONT_HEIGHT, context.temp_allocator)
 	if !bdf_glyphs_read(bdf_path(folder, FONT_WIDTH, FONT_HEIGHT), FONT_WIDTH, FONT_HEIGHT, glyphs) {
 		return foundation.EXIT_FAILURE
 	}
@@ -112,23 +112,23 @@ run_font :: proc(args: []string) -> int {
 	fmt.sbprintln(&out, "// Its license is BSD 2-Clause: see " + SPLEEN_LICENSE_FILE + ".")
 	fmt.sbprintln(&out, "package graphics")
 	fmt.sbprintln(&out)
-	fmt.sbprintln(&out, "import \"modus:contract/glyph_cache\"")
+	fmt.sbprintln(&out, "import \"modus:contract/font_characters\"")
 	fmt.sbprintln(&out)
 	fmt.sbprintln(&out, "// One glyph is one byte per line, from the top. Bit 7 is the left pixel.")
-	fmt.sbprintln(&out, "// The glyphs are in the order of glyph_cache.character_index: the comment")
+	fmt.sbprintln(&out, "// The glyphs are in the order of font_characters.character_index: the comment")
 	fmt.sbprintln(&out, "// of each glyph is its code point.")
 	fmt.sbprintfln(&out, "CELL_WIDTH :: %d", FONT_WIDTH)
 	fmt.sbprintfln(&out, "CELL_HEIGHT :: %d", FONT_HEIGHT)
 	fmt.sbprintln(&out)
 	fmt.sbprintln(&out, "@(rodata)")
-	fmt.sbprintln(&out, "font := [glyph_cache.CHARACTER_COUNT][CELL_HEIGHT]u8 {")
+	fmt.sbprintln(&out, "font := [font_characters.CHARACTER_COUNT][CELL_HEIGHT]u8 {")
 	glyph_rows_write(&out, glyphs, FONT_HEIGHT, 2)
 	fmt.sbprintln(&out, "}")
 	if write_err := os.write_entire_file(foundation.FONT_OUTPUT, strings.to_string(out)); write_err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", foundation.FONT_OUTPUT, write_err)
 		return foundation.EXIT_FAILURE
 	}
-	fmt.printfln("modustool: wrote %s: %d characters of %dx%d pixels", foundation.FONT_OUTPUT, glyph_cache.CHARACTER_COUNT, FONT_WIDTH, FONT_HEIGHT)
+	fmt.printfln("modustool: wrote %s: %d characters of %dx%d pixels", foundation.FONT_OUTPUT, font_characters.CHARACTER_COUNT, FONT_WIDTH, FONT_HEIGHT)
 
 	// 12x24 and 16x32, the cells of the boot display: 16 bits for each row,
 	// the left pixel in bit 15. A row of the BDF file of a width of 9 to 16
@@ -140,12 +140,12 @@ run_font :: proc(args: []string) -> int {
 	fmt.sbprintln(&sizes, "// Its license is BSD 2-Clause: see " + SPLEEN_LICENSE_FILE + ".")
 	fmt.sbprintln(&sizes, "package bootscreen")
 	fmt.sbprintln(&sizes)
-	fmt.sbprintln(&sizes, "import \"modus:contract/glyph_cache\"")
+	fmt.sbprintln(&sizes, "import \"modus:contract/font_characters\"")
 	fmt.sbprintln(&sizes)
 	fmt.sbprintln(&sizes, "// One glyph is one row per line, from the top: 16 bits for a width up to")
 	fmt.sbprintln(&sizes, "// 16, with the left pixel in bit 15, and 32 bits for 32x64, with the left")
 	fmt.sbprintln(&sizes, "// pixel in bit 31. The glyphs are in the order of")
-	fmt.sbprintln(&sizes, "// glyph_cache.character_index: the comment of each glyph is its code point.")
+	fmt.sbprintln(&sizes, "// font_characters.character_index: the comment of each glyph is its code point.")
 	boot_display_sizes := BOOT_DISPLAY_FONT_SIZES
 	for size in boot_display_sizes {
 		width, height := size[0], size[1]
@@ -156,7 +156,7 @@ run_font :: proc(args: []string) -> int {
 			fmt.eprintfln("modustool: a size of %dx%d does not take rows of 16 or 32 bits", width, height)
 			return foundation.EXIT_FAILURE
 		}
-		rows := make([]u32, glyph_cache.CHARACTER_COUNT * height, context.temp_allocator)
+		rows := make([]u32, font_characters.CHARACTER_COUNT * height, context.temp_allocator)
 		if !bdf_glyphs_read(bdf_path(folder, width, height), width, height, rows) {
 			return foundation.EXIT_FAILURE
 		}
@@ -166,7 +166,7 @@ run_font :: proc(args: []string) -> int {
 		fmt.sbprintln(&sizes)
 		fmt.sbprintln(&sizes, "@(rodata)")
 		// The brace is written apart: a format holds none.
-		fmt.sbprint(&sizes, fmt.tprintf("spleen_%dx%d := [glyph_cache.CHARACTER_COUNT][SPLEEN_%dX%d_HEIGHT]u%d ", width, height, width, height, row_bits))
+		fmt.sbprint(&sizes, fmt.tprintf("spleen_%dx%d := [font_characters.CHARACTER_COUNT][SPLEEN_%dX%d_HEIGHT]u%d ", width, height, width, height, row_bits))
 		fmt.sbprintln(&sizes, "{")
 		glyph_rows_write(&sizes, rows, height, row_bits / 4)
 		fmt.sbprintln(&sizes, "}")
@@ -175,14 +175,14 @@ run_font :: proc(args: []string) -> int {
 		fmt.eprintfln("modustool: cannot write %s: %v", foundation.BOOT_DISPLAY_FONT_OUTPUT, write_err)
 		return foundation.EXIT_FAILURE
 	}
-	fmt.printfln("modustool: wrote %s: %d characters of 12x24, 16x32 and 32x64 pixels", foundation.BOOT_DISPLAY_FONT_OUTPUT, glyph_cache.CHARACTER_COUNT)
+	fmt.printfln("modustool: wrote %s: %d characters of 12x24, 16x32 and 32x64 pixels", foundation.BOOT_DISPLAY_FONT_OUTPUT, font_characters.CHARACTER_COUNT)
 	return 0
 }
 
 // glyph_rows_write writes one line for each glyph: its rows in hexadecimal
 // with two, four or eight digits, then its code point as a comment.
 glyph_rows_write :: proc(out: ^strings.Builder, rows: []u32, height, digits: int) {
-	for glyph_index in 0 ..< glyph_cache.CHARACTER_COUNT {
+	for glyph_index in 0 ..< font_characters.CHARACTER_COUNT {
 		fmt.sbprint(out, "\t{")
 		for line in 0 ..< height {
 			bits := rows[glyph_index * height + line]
@@ -196,7 +196,7 @@ glyph_rows_write :: proc(out: ^strings.Builder, rows: []u32, height, digits: int
 				fmt.sbprintf(out, "%s0x%08X", separator, bits)
 			}
 		}
-		character, _ := glyph_cache.character_of_index(glyph_index)
+		character, _ := font_characters.character_of_index(glyph_index)
 		fmt.sbprintfln(out, "}, // %d", int(character))
 	}
 }

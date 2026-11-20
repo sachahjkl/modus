@@ -1,7 +1,7 @@
 package text_rendering
 
 import "base:intrinsics"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "modus:contract/text_encoding"
 
 // Text shaping (docs/FONTS.md, "12.3 The text shaping module"): the characters of a
@@ -26,7 +26,7 @@ import "modus:contract/text_encoding"
 // out of the file; each advance and each pair is kept in its bound at its
 // read, so no sum wraps.
 
-CHARACTER_COUNT :: glyph_cache.CHARACTER_COUNT // The characters of a glyph cache: ASCII 32 to 126, the Latin-1 Supplement and the added characters.
+CHARACTER_COUNT :: font_characters.CHARACTER_COUNT // The characters with a character index: ASCII 32 to 126, the Latin-1 Supplement and the added characters.
 // The glyph of a character that no font of the chain has, and of each
 // invalid sequence of the text: the reader draws the replacement glyph in
 // its place (graphics.character_replacement), so that a reader sees that a
@@ -34,7 +34,7 @@ CHARACTER_COUNT :: glyph_cache.CHARACTER_COUNT // The characters of a glyph cach
 // REPLACEMENT_ADVANCE_CHARACTER, and no pair.
 REPLACEMENT_GLYPH :: max(u32)
 REPLACEMENT_ADVANCE_CHARACTER :: '0'
-// The glyph of a character past the glyph cache that the fallback chain
+// The glyph of a character with no character index that the fallback chain
 // has is FALLBACK_GLYPH_FIRST plus its code point: past each character
 // index, and below REPLACEMENT_GLYPH.
 FALLBACK_GLYPH_FIRST :: u32(1) << 24
@@ -55,7 +55,7 @@ CELL_ADVANCE_LIMIT :: TEXT_SIZE_LIMIT
 // the text; advance includes the pair adjustment with the next character;
 // so the x of a glyph is the sum of the advances before it.
 Placed_Glyph :: struct {
-	glyph:   u32, // The character index of the character (glyph_cache.character_index); FALLBACK_GLYPH_FIRST plus the code point: a character past them that the fallback chain has; REPLACEMENT_GLYPH: a character that no font of the chain has.
+	glyph:   u32, // The character index of the character (font_characters.character_index); FALLBACK_GLYPH_FIRST plus the code point: a character past them that the fallback chain has; REPLACEMENT_GLYPH: a character that no font of the chain has.
 	x:       i32, // In 1/64 of a pixel.
 	advance: i32, // In 1/64 of a pixel.
 	cluster: u32, // The first byte of the character in the text.
@@ -108,7 +108,7 @@ cell_spacing :: proc "contextless" (cell_width: int) -> Spacing {
 // glyph_of gives the glyph of a character in a grid of cells: its
 // character index, or REPLACEMENT_GLYPH.
 glyph_of :: #force_inline proc "contextless" (character: rune) -> u32 {
-	index, found := glyph_cache.character_index(character)
+	index, found := font_characters.character_index(character)
 	if !found {
 		return REPLACEMENT_GLYPH
 	}
@@ -148,7 +148,7 @@ resolve :: proc "contextless" (spacing: ^Spacing, character: rune, valid: bool) 
 		resolved.advance, _ = glyph_advance_in(set, spacing.face, zero_font, zero_index, spacing.size)
 		return resolved
 	}
-	if character_index, in_cache := glyph_cache.character_index(character); in_cache {
+	if character_index, in_cache := font_characters.character_index(character); in_cache {
 		resolved.glyph = u32(character_index)
 	} else {
 		resolved.glyph = FALLBACK_GLYPH_FIRST + u32(character)

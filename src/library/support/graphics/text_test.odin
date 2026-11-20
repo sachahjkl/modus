@@ -1,14 +1,13 @@
 #+build !freestanding
 package graphics
 
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "core:fmt"
 import "core:math"
 import "core:sync"
 import "core:testing"
 import "core:time"
 import "modus:support/text_rendering"
-import "modus:support/vector_font"
 
 // The blend in linear light with a gamma of 2 (blend_coverage_row) against
 // the curve of sRGB, for the text of the rules on a card: light text on a
@@ -60,8 +59,8 @@ blend_error_against_srgb :: proc(t: ^testing.T) {
 	testing.expect_value(t, line[0], Color(0x0000FF))
 }
 
-// With no glyph cache, text draws Spleen 8x16, at each scale: the fallback.
-// The text state is the zero state: no cache yet.
+// With no face, text draws Spleen 8x16, at each scale: the fallback. The
+// text state is the zero state: no face yet.
 @(test)
 text_without_cache_is_spleen :: proc(t: ^testing.T) {
 	// The tests of the fallback open the outlines in the state of the
@@ -129,46 +128,41 @@ text_of_the_latin_supplement_is_drawn :: proc(t: ^testing.T) {
 	text(a, 0, 0, "ā", DARK_TEXT) // U+0101, past the Latin-1 Supplement.
 	testing.expect(t, drawn == replacement)
 	testing.expect_value(t, text_width("été"), 3 * CELL_WIDTH)
-	for character in rune(glyph_cache.LATIN_FIRST) ..= glyph_cache.LATIN_LAST {
+	for character in rune(font_characters.LATIN_FIRST) ..= font_characters.LATIN_LAST {
 		testing.expect(t, cell_font_draws(character))
 	}
-	testing.expect(t, !cell_font_draws(glyph_cache.ASCII_LAST + 1))
-	testing.expect(t, !cell_font_draws(glyph_cache.LATIN_FIRST - 1))
+	testing.expect(t, !cell_font_draws(font_characters.ASCII_LAST + 1))
+	testing.expect(t, !cell_font_draws(font_characters.LATIN_FIRST - 1))
 	// The euro sign, an added character, draws its glyph of Spleen: ink,
 	// and not the replacement glyph.
-	testing.expect(t, cell_font_draws(glyph_cache.EURO_SIGN))
+	testing.expect(t, cell_font_draws(font_characters.EURO_SIGN))
 	drawn, glyph = {}, {}
 	testing.expect_value(t, text(a, 0, 0, "€", DARK_TEXT), CELL_WIDTH)
-	character_spleen(b, 0, 0, glyph_cache.EURO_SIGN, DARK_TEXT)
+	character_spleen(b, 0, 0, font_characters.EURO_SIGN, DARK_TEXT)
 	testing.expect(t, drawn == glyph)
 	testing.expect(t, drawn != replacement)
 	no_ink: [8 * 16]Color
 	testing.expect(t, drawn != no_ink)
 }
 
-// The cost of one glyph from the glyph cache against one glyph of Spleen,
-// on the host: the same order is the target (docs/FONTS.md, "Measures").
+// The cost of one glyph of the face of the cells, drawn from its words
+// with the blend of one row at a time, against one glyph of Spleen, on
+// the host: the same order is the target (docs/FONTS.md, "Measures").
 @(test)
 glyph_draw_cost :: proc(t: ^testing.T) {
-	bytes := #load("../../../../resources/fonts/jetbrains_mono.ttf")
-	font, _ := vector_font.font_open(bytes)
-	memory := new(vector_font.Render_Memory)
-	defer free(memory)
-	out := make([]u64, vector_font.GLYPH_CACHE_LIMIT / 8)
-	defer delete(out)
-	file := ([^]u8)(raw_data(out))[:vector_font.GLYPH_CACHE_LIMIT]
-	size, problem := vector_font.glyph_cache_build(&font, bytes, "jetbrains_mono", true, memory, file)
-	testing.expect_value(t, problem, vector_font.Font_Problem.None)
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
+	glyphs := test_glyphs_of(t, .Cells)
+	defer test_glyphs_free(glyphs)
 	state: Text_State
 	pixels: [64 * 48]Color
 	canvas := Canvas{pixels = raw_data(pixels[:]), width = 64, height = 48, stride = 64}
-	cache, _ := glyph_cache.validate(file[:size])
 	square_root_table_fill(&state.square_root)
 	sample := "Rag{0}%e"
 	REPEAT :: 200_000
 	start := time.tick_now()
 	for index in 0 ..< REPEAT {
-		character_vector_reference(&cache, &state.square_root, .Red_Green_Blue, canvas, 8, 8, rune(sample[index % len(sample)]), DARK_TEXT, 1)
+		test_glyph_reference_draw(glyphs, &state.square_root, .Red_Green_Blue, canvas, 8, 8, rune(sample[index % len(sample)]), DARK_TEXT, 1)
 	}
 	vector := time.duration_nanoseconds(time.tick_since(start)) / REPEAT
 	start = time.tick_now()
@@ -176,23 +170,19 @@ glyph_draw_cost :: proc(t: ^testing.T) {
 		character_spleen(canvas, 8, 8, rune(sample[index % len(sample)]), DARK_TEXT)
 	}
 	spleen := time.duration_nanoseconds(time.tick_since(start)) / REPEAT
-	fmt.printfln("graphics: one glyph on the host: from the glyph cache %v ns, Spleen 8x16 %v ns", vector, spleen)
+	fmt.printfln("graphics: one glyph on the host: from its words %v ns, Spleen 8x16 %v ns", vector, spleen)
 }
 
 // The fast blend gives the pixels of the reference blend, bit for bit, for
-// each character at each scale, each order of the stripes, several colors,
-// over a flat color, the gradient of a card, a gradient across, and noise.
+// each character of the face of the cells at each scale, each order of the
+// stripes, several colors, over a flat color, the gradient of a card, a
+// gradient across, and noise.
 @(test)
 fast_blend_is_the_reference :: proc(t: ^testing.T) {
-	bytes := #load("../../../../resources/fonts/jetbrains_mono.ttf")
-	font, _ := vector_font.font_open(bytes)
-	memory := new(vector_font.Render_Memory)
-	defer free(memory)
-	out := make([]u64, vector_font.GLYPH_CACHE_LIMIT / 8)
-	defer delete(out)
-	file := ([^]u8)(raw_data(out))[:vector_font.GLYPH_CACHE_LIMIT]
-	size, _ := vector_font.glyph_cache_build(&font, bytes, "jetbrains_mono", true, memory, file)
-	cache, _ := glyph_cache.validate(file[:size])
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
+	glyphs := test_glyphs_of(t, .Cells)
+	defer test_glyphs_free(glyphs)
 	table: [4096]u8
 	square_root_table_fill(&table)
 	tables := new(Blend_Tables)
@@ -217,8 +207,8 @@ fast_blend_is_the_reference :: proc(t: ^testing.T) {
 					for _ in 0 ..< 2 {
 						for character in 32 ..< 127 {
 							x := (character - 32) * 8 * scale % (WIDTH - 24)
-							character_vector_reference(&cache, &table, order, a, x, 0, rune(character), color, scale)
-							character_vector_with(&cache, &table, tables, order, b, x, 0, rune(character), color, scale)
+							test_glyph_reference_draw(glyphs, &table, order, a, x, 0, rune(character), color, scale)
+							test_glyph_fast_draw(glyphs, &table, tables, order, b, x, 0, rune(character), color, scale)
 						}
 					}
 					for pixel, index in first {
@@ -240,15 +230,10 @@ fast_blend_is_the_reference :: proc(t: ^testing.T) {
 // edges. Alpha 0 draws nothing.
 @(test)
 fast_blend_with_alpha_is_the_reference :: proc(t: ^testing.T) {
-	bytes := #load("../../../../resources/fonts/jetbrains_mono.ttf")
-	font, _ := vector_font.font_open(bytes)
-	memory := new(vector_font.Render_Memory)
-	defer free(memory)
-	out := make([]u64, vector_font.GLYPH_CACHE_LIMIT / 8)
-	defer delete(out)
-	file := ([^]u8)(raw_data(out))[:vector_font.GLYPH_CACHE_LIMIT]
-	size, _ := vector_font.glyph_cache_build(&font, bytes, "jetbrains_mono", true, memory, file)
-	cache, _ := glyph_cache.validate(file[:size])
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
+	glyphs := test_glyphs_of(t, .Cells)
+	defer test_glyphs_free(glyphs)
 	table: [4096]u8
 	square_root_table_fill(&table)
 	tables := new(Blend_Tables)
@@ -272,12 +257,12 @@ fast_blend_with_alpha_is_the_reference :: proc(t: ^testing.T) {
 					background_fill(b, background)
 					for character in 32 ..< 127 {
 						x := (character - 32) * 8 * scale % (WIDTH - 24)
-						character_vector_reference(&cache, &table, order, a, x, 0, rune(character), DARK_TEXT, scale, alpha)
-						character_vector_with(&cache, &table, tables, order, b, x, 0, rune(character), DARK_TEXT, scale, alpha)
+						test_glyph_reference_draw(glyphs, &table, order, a, x, 0, rune(character), DARK_TEXT, scale, alpha)
+						test_glyph_fast_draw(glyphs, &table, tables, order, b, x, 0, rune(character), DARK_TEXT, scale, alpha)
 						// The opaque color of the same channels between, so
 						// both share the tables.
-						character_vector_with(&cache, &table, tables, order, b, x + 1, 24, rune(character), DARK_TEXT, scale)
-						character_vector_reference(&cache, &table, order, a, x + 1, 24, rune(character), DARK_TEXT, scale)
+						test_glyph_fast_draw(glyphs, &table, tables, order, b, x + 1, 24, rune(character), DARK_TEXT, scale)
+						test_glyph_reference_draw(glyphs, &table, order, a, x + 1, 24, rune(character), DARK_TEXT, scale)
 					}
 					for pixel, index in first {
 						differences += int(pixel != second[index])
@@ -294,7 +279,7 @@ fast_blend_with_alpha_is_the_reference :: proc(t: ^testing.T) {
 		untouched[index] = pixel
 	}
 	for character in 32 ..< 127 {
-		character_vector_with(&cache, &table, tables, .Red_Green_Blue, a, (character - 32) * 8, 0, rune(character), DARK_TEXT, 1, 0)
+		test_glyph_fast_draw(glyphs, &table, tables, .Red_Green_Blue, a, (character - 32) * 8, 0, rune(character), DARK_TEXT, 1, 0)
 	}
 	testing.expect(t, slice_equal_colors(first, untouched), "a text of alpha 0 draws")
 }

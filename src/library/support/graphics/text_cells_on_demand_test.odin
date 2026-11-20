@@ -5,10 +5,8 @@ import "core:mem"
 import "core:sync"
 import "core:testing"
 import "modus:contract/font_outlines"
-import "modus:contract/glyph_cache"
 import "base:runtime"
 import "modus:support/text_rendering"
-import "modus:support/vector_font"
 
 // The tests of this package that read or write the text state of the
 // process (text_state, and the state and the private glyph cache of
@@ -39,8 +37,8 @@ fallback_open_for_test :: proc(t: ^testing.T) -> (words: []u64) {
 	outlines, problem := font_outlines.validate(bytes)
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	text_rendering.state = {}
-	// The glyph memory that a process reserves at its first glyph past the
-	// glyph caches: all zero at each open. It comes from the heap of the
+	// The glyph memory that a process reserves at its first glyph: all zero
+	// at each open. It comes from the heap of the
 	// process, not from the allocator of the test: the runner frees all that
 	// a test allocated at its end, and the next test would get the same
 	// bytes while the package still draws into them.
@@ -77,30 +75,16 @@ cell_ink_count :: proc(pixels: []Color, width, left, scale: int) -> (inside, out
 // A cell draws its glyph from the face of the cells, with the blend of
 // each cell, into the private glyph cache of the process. First what draws
 // the replacement glyph: no outlines open, a character that no font has,
-// and the setting Spleen with a character that Spleen lacks. Then 'A' from
-// the face of the cells gives the pixels of 'A' from a glyph cache that the
-// build of the same font file draws, at each scale: the pixels of the
-// glyph caches that left the boot image. Last, a box-drawing character of
-// Paper Mono and a Greek letter of B612, the second font of the chain,
-// each stay in their cell.
+// and the setting Spleen with a character that Spleen lacks. Then 'A' in a
+// cell gives the pixels of the glyph of the face, which the golden hashes
+// of the text rendering hold, drawn by hand at the left of the cell, at
+// each scale. Last, a box-drawing character of Paper Mono and a Greek
+// letter of B612, the second font of the chain, each stay in their cell.
 @(test)
-a_cell_of_a_face_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
+a_cell_of_a_face_draws_its_glyph :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
 	defer sync.mutex_unlock(&fallback_test_lock)
 	defer text_rendering.state = {}
-	font_bytes := #load("../../../../resources/fonts/paper_mono.ttf")
-	render := new(vector_font.Render_Memory)
-	defer free(render)
-	font, problem := vector_font.font_open(font_bytes)
-	testing.expect_value(t, problem, vector_font.Font_Problem.None)
-	memory := make([]u64, vector_font.GLYPH_CACHE_LIMIT / 8)
-	defer delete(memory)
-	file := ([^]u8)(raw_data(memory))[:vector_font.GLYPH_CACHE_LIMIT]
-	size: int
-	size, problem = vector_font.glyph_cache_build(&font, font_bytes, "paper_mono", true, render, file)
-	testing.expect_value(t, problem, vector_font.Font_Problem.None)
-	cache, refused := glyph_cache.validate(file[:size])
-	testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
 
 	saved := text_state
 	defer text_state = saved
@@ -141,7 +125,7 @@ a_cell_of_a_face_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	}
 	text_choice_set(.Vector, .Red_Green_Blue)
 
-	// 'A' from the face of the cells and from the glyph cache of the build.
+	// 'A' in a cell of the face and its glyph drawn by hand.
 	words := fallback_open_for_test(t)
 	defer delete(words)
 	text_faces_use(.Cells, .Cells_Bold)
@@ -150,11 +134,12 @@ a_cell_of_a_face_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	for scale in 1 ..= 3 {
 		clear(built, DARK_CARD_BOTTOM)
 		clear(drawn, DARK_CARD_BOTTOM)
-		character_vector_with(&cache, &text_state.square_root, &text_state.blend_tables, text_state.order, built, CELL_WIDTH * scale, 0, 'A', DARK_TEXT, scale)
 		text_scaled(drawn, CELL_WIDTH * scale, 0, "A", DARK_TEXT, scale)
-		_, _, source := text_rendering.glyph(.Cells, 'A', text_rendering.size_of_scale(scale), 0)
+		entry, glyph_words, source := text_rendering.glyph(.Cells, 'A', text_rendering.size_of_scale(scale), 0)
 		testing.expect_value(t, source, text_rendering.Glyph_Source.Private_Cache)
-		testing.expectf(t, built_pixels == fallback_pixels, "scale %v: the cell of the face has the pixels of the glyph cache", scale)
+		testing.expectf(t, entry.left == 0 && int(entry.width) == CELL_WIDTH * scale && entry.row_count > 0, "scale %v: a glyph of cells fills its cell from its left side", scale)
+		glyph_words_draw(entry, glyph_words, &text_state.square_root, &text_state.blend_tables, text_state.order, built, CELL_WIDTH * scale, 0, DARK_TEXT)
+		testing.expectf(t, built_pixels == fallback_pixels, "scale %v: the cell has the pixels of the glyph of the face", scale)
 	}
 	// A face that the outlines do not open, and a proportional face, are
 	// not faces of the cells: the text is Spleen, and the titles the

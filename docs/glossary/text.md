@@ -102,9 +102,9 @@ Do not use: hinting (alone), autohint.
 
 ### Glyph cache
 
-A glyph cache is a file that holds the glyphs of one font already drawn, as words of coverage, for each character 32 to 126, each character U+00A0 to U+00FF and the euro sign at each scale of the grid.
+A glyph cache was a file that held the glyphs of one font already drawn, at each scale of the grid; it left the system.
 
-Its format is `src/library/contract/glyph_cache`, and `vector_font.glyph_cache_build` draws it. The boot image holds none: each process draws its glyphs from the font outlines into its private glyph cache. The demonstration `vector_glyphs` and the picture of the candidate fonts draw each candidate from one, and the tests of the blend take their glyphs from one. It is not an atlas of a GPU and not a cache that fills on demand.
+The boot image held five, and the candidate fonts and the tests of the blend drew from one. Each glyph now comes from a face: a process draws it from the font outlines into its private glyph cache, a candidate font draws through the face of the cells of a font set of its own, and the golden hashes of the faces prove the pixels. The word names only that file of before; the cache of a process is the private glyph cache.
 
 The design: `docs/FONTS.md`, "5. The glyph cache".
 
@@ -112,9 +112,9 @@ Do not use: atlas, texture cache, glyph bitmap.
 
 ### Added character
 
-An added character is a character past U+00FF that each font of the system draws, named one by one in a list of the glyph cache contract.
+An added character is a character past U+00FF that each font of the system draws, named one by one in a list of the contract `font_characters`.
 
-The fonts hold two ranges, ASCII 32 to 126 and the Latin-1 Supplement, and the added characters. Today the list `glyph_cache.added_characters` holds the euro sign U+20AC alone, which AltGr with `e` types on the layout of France. A character joins the list only if each font of the system has a glyph for it, and each change of the list is a new version of the glyph cache. The build refuses a font that lacks one: no font draws it with the glyph of another character.
+The fonts hold two ranges, ASCII 32 to 126 and the Latin-1 Supplement, and the added characters. Today the list `font_characters.added_characters` holds the euro sign U+20AC alone, which AltGr with `e` types on the layout of France. A character joins the list only if each font of the system has a glyph for it, and each change of the list moves the character index of each character after it. The build refuses a font that lacks one: no font draws it with the glyph of another character.
 
 The design: `src/md/data/text_encoding.md`.
 
@@ -124,21 +124,11 @@ Do not use: extra character, extended range.
 
 A character index is the number of a character in each table of a font of the system: 0 to 94 for the characters 32 to 126, then 95 to 190 for U+00A0 to U+00FF, then 191 and up for the added characters.
 
-The fonts hold these two ranges and the added characters, so the numbers name each character that a font draws, with no hole: the control characters 127 to 159 have none. A glyph cache keys its glyphs, its advances and its pairs by it, and so do the Spleen data and a placed glyph. `glyph_cache.character_index` gives the number of a code point, and `glyph_cache.character_of_index` the code point of a number. Another code point has no character index: it is a glyph of its fallback chain, or the replacement glyph.
+The fonts hold these two ranges and the added characters, so the numbers name each character that a font draws, with no hole: the control characters 127 to 159 have none. The Spleen data, a placed glyph and the subsets of the fonts key by it. `font_characters.character_index` gives the number of a code point, and `font_characters.character_of_index` the code point of a number. Another code point has no character index: it is a glyph of its fallback chain, or the replacement glyph.
 
 The design: `src/md/data/text_encoding.md`.
 
 Do not use: glyph id (for this), glyph number, character offset.
-
-### Proportional cache
-
-A proportional cache is a glyph cache of a proportional font: each character has its own advance, each glyph is the box of its ink at each subpixel position, and the cache holds the pair adjustments.
-
-The header flag `FLAG_PROPORTIONAL` marks it. One format serves both kinds of font, and the flag says which rules `validate` applies. A proportional cache keeps three subpixel positions at scale 1, the box of the ink of each glyph, the advance of the font in 1/64 of a pixel, and the sorted pairs. The boot image holds none; the tests compare the text of the face `Interface` with the one that `vector_font.glyph_cache_build_proportional` draws from B612.
-
-The design: `docs/FONTS.md`, "12.4 The glyph cache with subpixel positions".
-
-Do not use: proportional font cache.
 
 ### Font outlines
 
@@ -414,7 +404,7 @@ Do not use: bleed, overhang (for this).
 
 A subpixel position is the fraction of a pixel where a glyph starts: 0, 1/3 or 2/3 of a pixel for a glyph of a proportional face.
 
-A glyph of a proportional font rarely starts on a whole pixel. With subpixel bands, the finest step that the screen shows is one third of a pixel, so a proportional face draws each glyph at three positions, at each size. The draw rounds the x of each placed glyph to the nearest third (`glyph_cache.position_of`): the error is at most 1/6 of a pixel and does not add up along a text. A face of cells has one position.
+A glyph of a proportional font rarely starts on a whole pixel. With subpixel bands, the finest step that the screen shows is one third of a pixel, so a proportional face draws each glyph at three positions, at each size. The draw rounds the x of each placed glyph to the nearest third (`text_rendering.position_of`): the error is at most 1/6 of a pixel and does not add up along a text. A face of cells has one position.
 
 The design: `src/md/features/text_rendering.md`, "The rasterizer".
 

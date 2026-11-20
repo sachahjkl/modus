@@ -4,7 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "modus:support/vector_font"
 
 // Each source font of VECTOR_FONT_SOURCES has a glyph for each character
@@ -57,7 +57,7 @@ each_source_font_has_the_characters_of_a_cache :: proc(t: ^testing.T) {
 				fmt.sbprintf(&lacks, " U+%04X (drawn as U+%04X)", int(character), int(taken_from))
 			}
 		}
-		fmt.printfln("modustool: %s: the %d characters of a cache; it lacks:%s", name, glyph_cache.CHARACTER_COUNT, strings.builder_len(lacks) == 0 ? " none" : strings.to_string(lacks))
+		fmt.printfln("modustool: %s: the %d characters of a cache; it lacks:%s", name, font_characters.CHARACTER_COUNT, strings.builder_len(lacks) == 0 ? " none" : strings.to_string(lacks))
 		// The characters past the glyph cache that its subset holds: each
 		// one with its own glyph, as no equivalent is such a character.
 		past_cache_characters := past_cache_characters_of(name)

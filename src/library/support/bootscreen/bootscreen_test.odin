@@ -5,7 +5,7 @@ import "core:fmt"
 import "core:sync"
 import "core:testing"
 import info "modus:contract/boot_info"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "modus:support/graphics"
 
 // The scale of the boot display (src/md/features/boot_display_scale.md):
@@ -197,7 +197,7 @@ m_has_the_pixels_of_each_size :: proc(t: ^testing.T) {
 	largest_cell := 2 * SPLEEN_32X64_WIDTH
 	pixels := make([]graphics.Color, largest_cell * 2 * largest_cell)
 	defer delete(pixels)
-	index, _ := glyph_cache.character_index('M')
+	index, _ := font_characters.character_index('M')
 	// ink gives the bit of the table of a size, at a pixel of its cell.
 	ink :: proc(size: Spleen_Size, index, row, column: int) -> bool {
 		switch size {

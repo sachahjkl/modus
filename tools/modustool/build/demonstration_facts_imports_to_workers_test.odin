@@ -92,7 +92,7 @@ the_texts_of_the_demonstration_facts_come_last_and_whole :: proc(t: ^testing.T) 
 		{"threads", {}},
 		{"tone", {{"case_name", len("a record past the end of the region")}, {"status", len("Out_Of_Range")}, {"command", 6}}},
 		{"twin", {}},
-		{"vector_glyphs", {{"font", len("Paper Mono (default)")}, {"font_problem", 66}, {"cache_problem", 103}}},
+		{"vector_glyphs", {{"font", len("Paper Mono (default)")}, {"font_problem", 66}}},
 		{"workers", {}},
 	}
 	for item in modules {
@@ -653,16 +653,12 @@ the_facts_of_tables_threads_tone_twin_vector_glyphs_and_workers_write_the_lines_
 	}
 	fonts := [2]string{"Paper Mono (default)", "Iosevka"}
 	font_problems := [2]string{strings.repeat("f", 66, context.temp_allocator), "the font has no table cmap"}
-	cache_problems := [2]string{strings.repeat("c", 103, context.temp_allocator), "the file is too short"}
 	for font in fonts {
 		for problem in font_problems {
 			facts_expect_line(t, fact_test_render(t, glyphs, "vector_glyphs", "Font_Refused", {{"font", font}, {"font_problem", problem}}), line_of_before("vector_glyphs: the font ", font, " is refused: ", problem))
 		}
-		for problem in cache_problems {
-			facts_expect_line(t, fact_test_render(t, glyphs, "vector_glyphs", "Cache_Refused", {{"font", font}, {"cache_problem", problem}}), line_of_before("vector_glyphs: the cache of ", font, " is refused: ", problem))
-		}
 		for time in DEMONSTRATION_EDGE_TIMES {
-			facts_expect_line(t, fact_test_render(t, glyphs, "vector_glyphs", "Cache_Built", {{"build", time}, {"cache_size", u64(max(i64)) - time}, {"font", font}}), line_of_before("vector_glyphs: the cache of ", font, ": 95 characters at 3 scales built in ", time, " us, ", u64(max(i64)) - time, " bytes"))
+			facts_expect_line(t, fact_test_render(t, glyphs, "vector_glyphs", "Font_Opened", {{"open_time", time}, {"font", font}}), line_of_before("vector_glyphs: the font ", font, " opened in ", time, " us"))
 		}
 	}
 	for count in DEMONSTRATION_EDGE_COUNTS {
@@ -674,7 +670,7 @@ the_facts_of_tables_threads_tone_twin_vector_glyphs_and_workers_write_the_lines_
 		facts_expect_line(t, fact_test_render(t, threads, "threads", "Threads_Drawing", {{"threads", count}}), line_of_before("threads: ok, ", count, " threads draw in one surface"))
 		facts_expect_line(t, fact_test_render(t, tone, "tone", "Tone_Played", {{"frame", count}, {"frames", other}, {"underruns", count}}), line_of_before("tone: the tone of 440 Hz played from the frame ", count, " of the stream for ", other, " frames; underruns before its end: ", count))
 		facts_expect_line(t, fact_test_render(t, twin, "twin", "Mode_Word_Unknown", {{"mode_word", count}}), line_of_before("twin: the mode ", count, " names no mode of a twin: nothing is done"))
-		facts_expect_line(t, fact_test_render(t, glyphs, "vector_glyphs", "Glyph_Measured", {{"scale_one", count}, {"scale_two", other}, {"scale_three", count}, {"glyph_cache", other}, {"spleen", count}}), line_of_before("vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 ", count, " ns, scale 2 ", other, " ns, scale 3 ", count, " ns; from the private glyph cache: ", other, " ns; Spleen 8x16: ", count, " ns"))
+		facts_expect_line(t, fact_test_render(t, glyphs, "vector_glyphs", "Glyph_Measured", {{"scale_one", count}, {"scale_two", other}, {"scale_three", count}, {"private_cache", other}, {"spleen", count}}), line_of_before("vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 ", count, " ns, scale 2 ", other, " ns, scale 3 ", count, " ns; from the private glyph cache: ", other, " ns; Spleen 8x16: ", count, " ns"))
 		facts_expect_line(t, fact_test_render(t, glyphs, "vector_glyphs", "Candidates_Ready", {{"candidates", count}}), line_of_before("vector_glyphs: ok, ", count, " candidates beside Spleen 8x16"))
 		facts_expect_line(t, fact_test_render(t, workers, "workers", "Locked_Additions", {{"additions", count}, {"sum", other}, {"waits", count}}), line_of_before("workers: with the lock, 4 threads made ", count, " additions: the number is ", other, ", ", count, " waits"))
 		facts_expect_line(t, fact_test_render(t, workers, "workers", "Free_Additions", {{"additions", count}, {"sum", other}}), line_of_before("workers: with no lock, 4 threads made ", count, " additions: the number is ", other))

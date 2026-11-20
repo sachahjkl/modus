@@ -28,7 +28,6 @@
 package text_rendering
 
 import "modus:contract/font_outlines"
-import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 import "modus:support/vector_font"
 
@@ -37,7 +36,7 @@ import "modus:support/vector_font"
 // The text size is the height of the line of a face, in 1/64 of a pixel:
 // a line of 16 pixels is the size 1 024. The places and the advances of a
 // text are in the same unit.
-SUBPIXEL :: glyph_cache.SUBPIXEL
+SUBPIXEL :: 64
 // The size of a line of 16 pixels: the line of the grid of cells at scale 1.
 TEXT_SIZE_OF_SCALE_ONE :: 16 * SUBPIXEL
 // The smallest size: a line of 4 pixels. Below it a glyph has no form that
@@ -164,8 +163,20 @@ face_of_word :: proc "contextless" (word: i64) -> (face: Face, ok: bool) {
 // The positions of a glyph across a pixel: the step of the color stripes.
 // A proportional glyph is at the nearest third of a pixel at each size; a
 // glyph of cells is at a whole pixel.
-POSITION_LIMIT :: glyph_cache.POSITION_LIMIT
-#assert(POSITION_LIMIT == 3)
+POSITION_LIMIT :: 3
+#assert(POSITION_LIMIT == vector_font.PLACED_POSITION_LIMIT)
+
+// position_of gives the whole pixel and the position of a place of text in
+// 1/64 of a pixel, with position_count positions in a pixel: the nearest
+// position, so the error is at most half of a step. A position_count under
+// 1 is taken as 1.
+position_of :: proc "contextless" (place: i64, position_count: int) -> (pixel: i64, position: int) {
+	count := i64(max(position_count, 1))
+	steps := place * count + SUBPIXEL / 2
+	nearest := steps >= 0 ? steps / SUBPIXEL : -((-steps + SUBPIXEL - 1) / SUBPIXEL)
+	pixel = nearest >= 0 ? nearest / count : -((-nearest + count - 1) / count)
+	return pixel, int(nearest - pixel * count)
+}
 
 // The form of a face: its first font, its chain, its frame and the grid
 // fit.
@@ -317,29 +328,50 @@ fonts_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outli
 			if font_outlines.name_of(record) != name {
 				continue
 			}
-			opened := &set.fonts[font]
-			problem: vector_font.Font_Problem
-			opened.file, problem = vector_font.font_open(font_outlines.font_bytes(outlines, index))
-			if problem == .None {
-				opened.own, problem = vector_font.font_measures_of_outline(&opened.file, outline)
-			}
-			if problem == .None {
-				opened.stated, problem = vector_font.proportional_measures(&opened.file, opened.own)
-			}
-			if problem == .None {
-				pair_problem: vector_font.Font_Problem
-				opened.pairs, pair_problem = vector_font.pair_table_open(&opened.file)
-				if pair_problem != .None {
-					opened.pairs = {}
-				}
-				opened.hash = record.hash
-				opened.opened = true
+			if font_file_open(set, font, font_outlines.font_bytes(outlines, index), outline) == .None {
+				set.fonts[font].hash = record.hash
 				missing -= {font}
 			}
 		}
 	}
 	set.opened = true
 	return missing
+}
+
+// font_file_open opens one font file as a font of a set, with the memory
+// of one outline for its measures, and marks the set open. A font that the
+// parser refuses stays closed, and the problem says why. A candidate font
+// that is not in the font outlines draws through the faces with it: the
+// demonstration vector_glyphs and the picture of the tool open each
+// candidate as the font Paper_Mono of a set of their own, so the faces of
+// the cells of that set draw the candidate (glyph_bands_in).
+font_file_open :: proc "contextless" (set: ^Font_Set, font: Outline_Font, bytes: []u8, outline: ^vector_font.Outline) -> (problem: vector_font.Font_Problem) {
+	set.opened = true
+	if font == .None {
+		return .Unknown_Format
+	}
+	opened := &set.fonts[font]
+	opened^ = {}
+	file: vector_font.Font_File
+	file, problem = vector_font.font_open(bytes)
+	if problem != .None {
+		return problem
+	}
+	own, stated: vector_font.Font_Measures
+	own, problem = vector_font.font_measures_of_outline(&file, outline)
+	if problem != .None {
+		return problem
+	}
+	stated, problem = vector_font.proportional_measures(&file, own)
+	if problem != .None {
+		return problem
+	}
+	pairs, pair_problem := vector_font.pair_table_open(&file)
+	if pair_problem != .None {
+		pairs = {}
+	}
+	opened^ = {opened = true, file = file, own = own, stated = stated, pairs = pairs}
+	return .None
 }
 
 // face_opened says if this copy can draw a face: the outlines are open and
@@ -497,7 +529,8 @@ measures_in_frame_of :: proc "contextless" (set: ^Font_Set, face: Face, font: Ou
 // text size, in a frame of units_per_cell units for the width of a cell:
 // units * (size / 2) / units_per_cell, rounded to the nearest integer, a
 // half up (vector_font.divide_rounded). A cell is half the line, so at the
-// sizes of the glyph caches it is vector_font.units_to_subpixels.
+// size of a scale s it is units * 8 * s * 64 / units_per_cell: the advance
+// of the scales of the grid.
 units_at_size :: #force_inline proc "contextless" (units, size, units_per_cell: int) -> i64 {
 	return vector_font.divide_rounded(i64(units) * i64(size), 2 * i64(max(units_per_cell, 1)))
 }
@@ -582,7 +615,7 @@ coverage :: proc "contextless" (face: Face, script: Script) -> (drawn, total: in
 // entry.width words from words + row * entry.width. source is Missing for
 // a face, a size, a position or a character that has no glyph, and for an
 // outline that the renderer refuses.
-glyph :: proc "contextless" (face: Face, character: rune, size, position: int) -> (entry: glyph_cache.Glyph_Entry, words: [^]u32, source: Glyph_Source) {
+glyph :: proc "contextless" (face: Face, character: rune, size, position: int) -> (entry: Glyph_Entry, words: [^]u32, source: Glyph_Source) {
 	if face == .None || size_check(size) != .None || position < 0 || position >= positions_of(face) {
 		return {}, nil, .Missing
 	}

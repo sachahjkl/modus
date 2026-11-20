@@ -25,9 +25,10 @@ Glyph_Style :: struct {
 	filter:                  Stripe_Filter,
 }
 
-// The version of the renderer: a glyph cache keeps it, and a change of the
-// pixels that the renderer gives is a new version: the cache is a function
-// of the font file and of the renderer, and the same two give the same bytes.
+// The version of the renderer: a change of the pixels that the renderer
+// gives is a new version, with new golden hashes in the tests. A glyph is
+// a function of the font file and of the renderer, and the same two give
+// the same bytes.
 RENDERER_VERSION :: 1
 
 // The largest cell: scale 3 of the grid.

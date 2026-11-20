@@ -2,16 +2,18 @@ package resources
 
 import "core:fmt"
 import "core:os"
-import "modus:contract/glyph_cache"
 import "modus:support/graphics"
+import "modus:support/text_rendering"
 import "modustool:foundation"
 
 // The picture of the choice of the font (docs/FONTS.md, "The font file"):
 // the same lines of the system in each candidate and in Spleen, at the
 // scales 1, 2 and 3, then one word of each enlarged 5 times so that the
 // pixels and the color stripes show. src/library/support/graphics draws it
-// with the blend of the system, each candidate from a glyph cache that the
-// renderer of the system draws from its font file.
+// with the blend of the system, each candidate through the face of the
+// cells of a font set that holds it (text_rendering.font_file_open): the
+// rasterizer of the text of the system, as if it were the font of the
+// system.
 
 CANDIDATE_LINES := [?]string {
 	"> print(monitor.processes())   31 processes, 4 processors, 1 204 pages",
@@ -26,31 +28,37 @@ CROP_SCALE :: 5
 CROP_TEXT :: "Rag{0}%"
 
 Picture_Font :: struct {
-	label:    string,
-	cache:    []u8, // nil: Spleen.
-	grid_fit: bool,
+	label: string,
+	bytes: []u8, // The font file; nil: Spleen.
+	face:  text_rendering.Face, // Cells, or Cells_Without_Grid_Fit.
 }
 
-// The cache of the font that picture_text draws from, validated by
-// picture_font_use; none: Spleen.
+// The font set of the font that picture_text draws, opened by
+// picture_font_use: the candidate as the font of the cells. Not opened:
+// Spleen.
 @(private = "file")
-picture_cache: glyph_cache.Cache
+picture_set: text_rendering.Font_Set
 @(private = "file")
-picture_cache_valid: bool
+picture_outline: text_rendering.Outline_Memory
+@(private = "file")
+picture_face: text_rendering.Face
 
 // picture_text draws a text in cells of 8 x 16 pixels times the scale, in
-// the font of picture_font_use: from its cache, with the fast blend of the
-// system, or in Spleen.
+// the font of picture_font_use: through the face of its set, with the fast
+// blend of the system, or in Spleen. A character that the candidate lacks
+// draws the replacement glyph.
 @(private = "file")
 picture_text :: proc(canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int = 1) {
-	if !picture_cache_valid {
+	if !picture_set.fonts[.Paper_Mono].opened {
 		graphics.text_scaled(canvas, x, y, text, color, scale)
 		return
 	}
-	state := &graphics.text_state
 	cell := 0
 	for character in text {
-		graphics.character_vector_with(&picture_cache, &state.square_root, &state.blend_tables, state.order, canvas, x + cell * graphics.CELL_WIDTH * scale, y, character, color, scale)
+		at := x + cell * graphics.CELL_WIDTH * scale
+		if !graphics.character_of_set(&picture_set, picture_face, canvas, at, y, character, color, text_rendering.size_of_scale(scale)) {
+			graphics.character_replacement(canvas, at, y, color, scale)
+		}
 		cell += 1
 	}
 }
@@ -61,12 +69,10 @@ candidates_picture_write :: proc() -> bool {
 	for candidate in vector_font_candidates {
 		path := foundation.join(VECTOR_FONT_FOLDER, "/", candidate.name, ".ttf")
 		bytes := foundation.read_file(path) or_return
-		cache := glyph_cache_of(bytes, candidate.name, true) or_return
 		label := fmt.tprintf("%s%s", candidate.family, candidate.name == DEFAULT_VECTOR_FONT ? " (default)" : "")
-		append(&fonts, Picture_Font{label = label, cache = cache, grid_fit = true})
+		append(&fonts, Picture_Font{label = label, bytes = bytes, face = .Cells})
 		if candidate.name == DEFAULT_VECTOR_FONT {
-			no_fit := glyph_cache_of(bytes, candidate.name, false) or_return
-			append(&fonts, Picture_Font{label = fmt.tprintf("%s, no grid fit", candidate.family), cache = no_fit})
+			append(&fonts, Picture_Font{label = fmt.tprintf("%s, no grid fit", candidate.family), bytes = bytes, face = .Cells_Without_Grid_Fit})
 		}
 	}
 	rows := (len(fonts) + 1) / 2
@@ -79,7 +85,7 @@ candidates_picture_write :: proc() -> bool {
 	saved := graphics.text_state
 	defer graphics.text_state = saved
 	for font, index in fonts {
-		picture_font_use(font)
+		picture_font_use(font) or_return
 		x := 8 + (index % 2) * (BLOCK_WIDTH + 8)
 		y := 8 + (index / 2) * BLOCK_HEIGHT
 		graphics.block(canvas, x, y, BLOCK_WIDTH, BLOCK_HEIGHT - 8, graphics.DARK_CARD_TOP, graphics.DARK_CARD_BOTTOM)
@@ -98,7 +104,7 @@ candidates_picture_write :: proc() -> bool {
 	// The crops: one word at scale 1, each pixel as a square of CROP_SCALE.
 	crop_top := 8 + rows * BLOCK_HEIGHT
 	for font, index in fonts {
-		picture_font_use(font)
+		picture_font_use(font) or_return
 		small: [8 * len(CROP_TEXT) * 16]graphics.Color
 		small_canvas := graphics.Canvas{pixels = raw_data(small[:]), width = 8 * len(CROP_TEXT), height = 16, stride = 8 * len(CROP_TEXT)}
 		graphics.clear(small_canvas, graphics.DARK_CARD_BOTTOM)
@@ -112,7 +118,7 @@ candidates_picture_write :: proc() -> bool {
 			}
 		}
 	}
-	picture_font_use({})
+	_ = picture_font_use({})
 	rgb := make([]u8, 3 * len(pixels), context.temp_allocator)
 	for color, index in pixels {
 		rgb[3 * index] = u8(color >> 16)
@@ -131,19 +137,21 @@ candidates_picture_write :: proc() -> bool {
 	return true
 }
 
+// picture_font_use makes a font the font of picture_text. false: the
+// renderer refuses its font file, and the picture is not written.
 @(private = "file")
-picture_font_use :: proc(font: Picture_Font) {
+picture_font_use :: proc(font: Picture_Font) -> bool {
 	graphics.text_choice_set(.Spleen, .Red_Green_Blue)
 	graphics.text_state_start()
-	picture_cache_valid = false
-	if font.cache == nil {
-		return
+	picture_set = {}
+	picture_face = font.face
+	if font.bytes == nil {
+		return true
 	}
-	problem: glyph_cache.Problem
-	picture_cache, problem = glyph_cache.validate(font.cache)
-	if problem.kind != .None {
-		fmt.eprintfln("modustool: a glyph cache of the picture is refused: %v", problem)
-		return
+	outline := text_rendering.outline_of(&picture_outline)
+	if problem := text_rendering.font_file_open(&picture_set, .Paper_Mono, font.bytes, &outline); problem != .None {
+		fmt.eprintfln("modustool: the font %s of the picture is refused: %v", font.label, problem)
+		return false
 	}
-	picture_cache_valid = true
+	return true
 }
