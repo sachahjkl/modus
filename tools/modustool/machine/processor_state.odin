@@ -531,12 +531,22 @@ processors_report :: proc(machine: ^Machine, output, volume: string, firmware: M
 	// A stop gives the registers of each processor at one moment; the
 	// machine runs again after the reads, as it did before.
 	was_running := false
+	// The run state of QEMU: a machine that QEMU stopped itself (a write
+	// error of a disk, an internal error, a guest panic) is in another state
+	// than "running", and its processors stand still with no fault of the
+	// system.
+	run_state := "unknown: QEMU did not answer query-status"
 	if status, answered := qmp_command(&machine.qmp, "{\"execute\":\"query-status\"}", false); answered {
 		// The value of the reply is the object of the status.
 		if parsed, error := json.parse_string(status, .JSON, false, context.temp_allocator); error == .None {
 			if object, is_object := parsed.(json.Object); is_object {
 				running, _ := object["running"].(json.Boolean)
 				was_running = bool(running)
+				if state_name, has_state := object["status"].(json.String); has_state {
+					run_state = string(state_name)
+				} else {
+					run_state = "unknown: the reply of query-status has no status"
+				}
 			}
 		}
 	}
@@ -550,7 +560,7 @@ processors_report :: proc(machine: ^Machine, output, volume: string, firmware: M
 		_, _ = qmp_command(&machine.qmp, "{\"execute\":\"cont\"}", false)
 	}
 	if !registers_answered || !list_answered {
-		fmt.eprintfln("modustool: the processors of %s at the failure: none: QEMU did not answer \"%s\" and \"%s\"", output, REGISTERS_OF_ALL_PROCESSORS_LINE, PROCESSOR_LIST_LINE)
+		fmt.eprintfln("modustool: the processors of %s at the failure: none: QEMU did not answer \"%s\" and \"%s\", QEMU in the state %s", output, REGISTERS_OF_ALL_PROCESSORS_LINE, PROCESSOR_LIST_LINE, run_state)
 		return
 	}
 	registers_text, registers_decoded := monitor_text_decode(registers_value)
@@ -564,9 +574,9 @@ processors_report :: proc(machine: ^Machine, output, volume: string, firmware: M
 	// same time do not come between them.
 	report := strings.builder_make(context.temp_allocator)
 	if written {
-		fmt.sbprintfln(&report, "modustool: the processors of %s at the failure: %s", output, path)
+		fmt.sbprintfln(&report, "modustool: the processors of %s at the failure, QEMU in the state %s: %s", output, run_state, path)
 	} else {
-		fmt.sbprintfln(&report, "modustool: the processors of %s at the failure: %s could not be written", output, path)
+		fmt.sbprintfln(&report, "modustool: the processors of %s at the failure, QEMU in the state %s: %s could not be written", output, run_state, path)
 	}
 	states: []Processor_State
 	fault := Processor_Read_Fault.Not_A_Monitor_Text

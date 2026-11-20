@@ -52,21 +52,71 @@ test_parts_are_distinct_and_whole :: proc(t: ^testing.T) {
 	}
 }
 
-// The count of the parts that run at once: one for each MACHINE_PROCESSOR_COUNT
-// processors, at least one, and never more than the parts.
+// The count of the parts that run at once by processors: one for each
+// MACHINE_PROCESSOR_COUNT processors, at least one, and never more than
+// the parts. The memory is ample here, so it bounds nothing.
 @(test)
 test_parts_at_once_follows_the_processors :: proc(t: ^testing.T) {
-	testing.expect_value(t, test_parts_at_once(0, 64), 1)
-	testing.expect_value(t, test_parts_at_once(1, 64), 1)
-	testing.expect_value(t, test_parts_at_once(30, 0), 1)
-	testing.expect_value(t, test_parts_at_once(30, 1), 1)
-	testing.expect_value(t, test_parts_at_once(30, -1), 1)
-	testing.expect_value(t, test_parts_at_once(30, MACHINE_PROCESSOR_COUNT - 1), 1)
-	testing.expect_value(t, test_parts_at_once(30, MACHINE_PROCESSOR_COUNT), 1)
-	testing.expect_value(t, test_parts_at_once(30, MACHINE_PROCESSOR_COUNT * 2 - 1), 1)
-	testing.expect_value(t, test_parts_at_once(30, MACHINE_PROCESSOR_COUNT * 2), 2)
-	testing.expect_value(t, test_parts_at_once(3, MACHINE_PROCESSOR_COUNT * 16), 3)
-	testing.expect_value(t, test_parts_at_once(len(test_parts), max(int)), len(test_parts))
+	ample := max(u64)
+	part := u64(MACHINE_MEMORY_MIB)
+	testing.expect_value(t, test_parts_at_once(0, 64, ample, part), 1)
+	testing.expect_value(t, test_parts_at_once(1, 64, ample, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, 0, ample, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, 1, ample, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, -1, ample, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, min(int), ample, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, MACHINE_PROCESSOR_COUNT - 1, ample, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, MACHINE_PROCESSOR_COUNT, ample, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, MACHINE_PROCESSOR_COUNT * 2 - 1, ample, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, MACHINE_PROCESSOR_COUNT * 2, ample, part), 2)
+	testing.expect_value(t, test_parts_at_once(3, MACHINE_PROCESSOR_COUNT * 16, ample, part), 3)
+	testing.expect_value(t, test_parts_at_once(len(test_parts), max(int), ample, part), len(test_parts))
+}
+
+// The bound by memory: the available memory less HOST_MEMORY_MARGIN_MIB,
+// divided by the largest part, and the smaller of the two bounds. A part
+// larger than the memory, and a memory of 0, still run one part.
+@(test)
+test_parts_at_once_follows_the_memory :: proc(t: ^testing.T) {
+	part := u64(MACHINE_MEMORY_MIB)
+	many_processors := MACHINE_PROCESSOR_COUNT * 64
+	// A memory of 0, and a memory at or below the margin.
+	testing.expect_value(t, test_parts_at_once(30, many_processors, 0, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, many_processors, HOST_MEMORY_MARGIN_MIB - 1, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, many_processors, HOST_MEMORY_MARGIN_MIB, part), 1)
+	// A part larger than the memory past the margin.
+	testing.expect_value(t, test_parts_at_once(30, many_processors, HOST_MEMORY_MARGIN_MIB + part - 1, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, many_processors, HOST_MEMORY_MARGIN_MIB + 1, max(u64)), 1)
+	// The edges of one part, then two.
+	testing.expect_value(t, test_parts_at_once(30, many_processors, HOST_MEMORY_MARGIN_MIB + part, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, many_processors, HOST_MEMORY_MARGIN_MIB + 2 * part - 1, part), 1)
+	testing.expect_value(t, test_parts_at_once(30, many_processors, HOST_MEMORY_MARGIN_MIB + 2 * part, part), 2)
+	// One part: the memory never gives more than the parts.
+	testing.expect_value(t, test_parts_at_once(1, many_processors, max(u64), part), 1)
+	testing.expect_value(t, test_parts_at_once(1, many_processors, 0, part), 1)
+	// The host of the failure that this bound answers: 16 processors give
+	// 4 parts, and 6 GiB of available memory gives 2.
+	testing.expect_value(t, test_parts_at_once(30, 16, HOST_MEMORY_MARGIN_MIB + 2048, part), 2)
+	// The processor bound smaller than the memory bound: the processors
+	// decide.
+	testing.expect_value(t, test_parts_at_once(30, MACHINE_PROCESSOR_COUNT * 3, HOST_MEMORY_MARGIN_MIB + 10 * part, part), 3)
+	testing.expect_value(t, test_parts_at_once(30, MACHINE_PROCESSOR_COUNT * 3, max(u64), part), 3)
+	// Parts that start no machine have no bound by memory.
+	testing.expect_value(t, test_parts_at_once(30, MACHINE_PROCESSOR_COUNT * 3, 0, 0), 3)
+}
+
+// The memory of a part is the -m of its machines, or none for a part that
+// starts no QEMU; each row that says "No machine" in the guide declares
+// it, and no other row does.
+@(test)
+test_parts_declare_their_memory :: proc(t: ^testing.T) {
+	for part in test_parts {
+		says_no_machine := strings.has_prefix(part.does, "No machine")
+		testing.expectf(t, part.starts_no_machine == says_no_machine, "the part %s starts no machine in its row only when its sentence says so", part.name)
+		testing.expect_value(t, test_part_memory_mib(part), says_no_machine ? 0 : u64(MACHINE_MEMORY_MIB))
+	}
+	testing.expect_value(t, test_parts_largest_memory_mib(nil), 0)
+	testing.expect_value(t, test_parts_largest_memory_mib(test_parts[:]), u64(MACHINE_MEMORY_MIB))
 }
 
 // The parts that run at once share no data disk, and a run keeps the

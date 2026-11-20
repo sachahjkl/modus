@@ -51,8 +51,8 @@ SERIAL_INPUT_SUFFIX :: "_serial_input.fifo"
 ENTROPY_SOURCE_SOCKET_SUFFIX :: "_entropy_source.socket"
 
 // The processors of each machine (`-smp`). The whole test starts at most
-// one part for each of these counts of processors of the host
-// (test_parts_at_once).
+// one part for each of these counts of processors of the host, and fewer
+// when the memory of the host holds fewer (test_parts_at_once).
 MACHINE_PROCESSOR_COUNT :: 4
 
 // The data disk of the three machines of the test of persistence: new
@@ -120,7 +120,8 @@ firmware_files :: proc(firmware: Machine_Firmware) -> (code_variable, variables_
 }
 
 // The memory of a test machine, in MiB. Below the hole of PCI of q35, so an
-// offset in the memory file of a machine is a physical address.
+// offset in the memory file of a machine is a physical address. The bound
+// by memory of the parts at once reads it (test_part_memory_mib).
 MACHINE_MEMORY_MIB :: 1024
 
 // The video memory of the standard VGA of a test machine, in MiB: the
