@@ -4713,6 +4713,16 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 			passed = false
 		}
 	}
+	// The counted kernel runs only from the volume of the fuzzing, which no
+	// machine test boots: its counts and its stack are not those of the
+	// kernel that ships.
+	if passed && volume != build.BOOT_VOLUME_OPERATION_FUZZING {
+		log, _ := os.read_entire_file(output, context.temp_allocator)
+		if strings.contains(string(log), OPERATION_COUNTERS_LINE_START) {
+			fmt.eprintfln("modustool: test failed: the machine of %s ran the counted kernel: \"%s\"", volume, OPERATION_COUNTERS_LINE_START)
+			passed = false
+		}
+	}
 	if !passed {
 		log, _ := os.read_entire_file(output, context.temp_allocator)
 		lines := strings.split_lines(string(log), context.temp_allocator)

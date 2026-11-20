@@ -96,6 +96,11 @@ module_builds := [?]Module_Build {
 	// only: its boot volume is BOOT_VOLUME_WITHOUT_RETURN_CHECK, and
 	// machine_test refuses the line of this kernel in every other machine.
 	{name = "kernel_without_return_check", source = SOURCE_FOLDER_KERNEL, kernel = true, defines = {"TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true"}},
+	// The counted kernel: an edge counter at each edge, which counts the
+	// code of the runner of the operation sequences, for `fuzz operations`
+	// only. Its boot volume is BOOT_VOLUME_OPERATION_FUZZING
+	// (src/md/infrastructure/kernel_fuzzing.md, "The test kernel").
+	{name = KERNEL_EDGE_COUNTERS_MODULE, source = SOURCE_FOLDER_KERNEL, kernel = true, defines = {KERNEL_EDGE_COUNTERS_DEFINE}},
 	{name = "root", source = SYSTEM_MODULE_SOURCES + "root", entry = true, image = true},
 	{name = "input", source = SYSTEM_MODULE_SOURCES + "input", entry = true, image = true},
 	// The drawing of a window, for each module below that imports it.
@@ -237,6 +242,26 @@ module_builds := [?]Module_Build {
 	// A start policy in the store `module_files` only: principal 0 chooses
 	// it, and the next start runs it (src/md/features/start_policy.md).
 	{name = DISK_START_POLICY_MODULE, source = TEST_MODULE_SOURCES + DISK_START_POLICY_MODULE, entry = true, image = true, disk = true},
+}
+
+// The counted kernel and its setting. Each other kernel gets the setting
+// false (build/modules.odin, module_compile_command).
+KERNEL_EDGE_COUNTERS_MODULE :: "kernel_edge_counters"
+KERNEL_EDGE_COUNTERS_SETTING :: "KERNEL_EDGE_COUNTERS"
+KERNEL_EDGE_COUNTERS_DEFINE :: KERNEL_EDGE_COUNTERS_SETTING + "=true"
+
+// module_counts_kernel_edges says if a module of the table is a counted
+// kernel: a kernel with the setting of the edge counters.
+module_counts_kernel_edges :: proc(build: Module_Build) -> bool {
+	if !build.kernel {
+		return false
+	}
+	for define in build.defines {
+		if define == KERNEL_EDGE_COUNTERS_DEFINE {
+			return true
+		}
+	}
+	return false
 }
 
 // module_in_boot_image says if the boot image holds the file of a module.

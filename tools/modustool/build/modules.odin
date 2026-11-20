@@ -69,6 +69,9 @@ build_modules :: proc() -> bool {
 		fmt.eprintfln("modustool: %s", problem)
 		return false
 	}
+	// The release refuses a test kernel by a text of its bytes: the kernel
+	// that ships must not hold it, and each test kernel must.
+	kernel_test_texts_check() or_return
 	library_modules_measure_print()
 	kernel_stack_measure_print()
 	// The steps below run at each build: each one reads outputs of the
@@ -229,6 +232,11 @@ module_compile_command :: proc(build: foundation.Module_Build) -> []string {
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_LOCK_ORDER=true" : "-define:TEST_BUILD_CHECKS_LOCK_ORDER=false")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_PLACEMENT=true" : "-define:TEST_BUILD_CHECKS_PLACEMENT=false")
+		// Each kernel but the counted kernel says that it has no edge
+		// counter: the default of the source never decides.
+		if !foundation.module_counts_kernel_edges(build) {
+			append(&compile, "-define:" + foundation.KERNEL_EDGE_COUNTERS_SETTING + "=false")
+		}
 	}
 	return compile[:]
 }
@@ -267,7 +275,14 @@ module_object_command :: proc(build: foundation.Module_Build) -> []string {
 module_assembly_files :: proc(build: foundation.Module_Build) -> (files: []string, ok: bool) {
 	assembly := make([dynamic]string, context.temp_allocator)
 	append(&assembly, RUNTIME_MEMORY)
-	append(&assembly, ..(foundation.files_with_suffix(build.source, ".asm") or_return))
+	own_files := foundation.files_with_suffix(build.source, ".asm") or_return
+	for source in own_files {
+		// The callback of the edge counters: the counted kernel only.
+		if source == KERNEL_EDGE_COUNTERS_ASSEMBLY && !foundation.module_counts_kernel_edges(build) {
+			continue
+		}
+		append(&assembly, source)
+	}
 	if build.image {
 		append(&assembly, ..(foundation.files_with_suffix(foundation.SYSTEM_LIBRARY_FOLDER, ".asm") or_return))
 	}
@@ -422,6 +437,12 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 			return false
 		}
 	}
+	// The counted kernel: the edge counters, after each check of the IR of
+	// the source, and the count of its guards for nasm.
+	edge_count := 0
+	if foundation.module_counts_kernel_edges(build) {
+		edge_count = kernel_edge_counters_instrument(build) or_return
+	}
 	foundation.run(module_object_command(build)) or_return
 	{
 		// No unwind table in the object. No part of the system reads one:
@@ -439,6 +460,9 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 		if build.kernel && source == RUNTIME_MEMORY {
 			// The kernel form of the copies: no vector register.
 			foundation.run({"nasm", "-f", "elf64", "-DWITHOUT_VECTOR_REGISTERS", "-o", foundation.join(objects, "/", name, ".o"), source}) or_return
+		} else if source == KERNEL_EDGE_COUNTERS_ASSEMBLY {
+			// The array of the counters has the count of the guards.
+			foundation.run({"nasm", "-f", "elf64", fmt.tprintf("-DEDGE_COUNT=%d", edge_count), "-o", foundation.join(objects, "/", name, ".o"), source}) or_return
 		} else {
 			foundation.run({"nasm", "-f", "elf64", "-o", foundation.join(objects, "/", name, ".o"), source}) or_return
 		}

@@ -338,20 +338,74 @@ release_test_module_problem :: proc(image: []u8, image_name: string) -> string {
 	return ""
 }
 
+// The start of the boot line of each test kernel: the counted kernel, the
+// kernel with the check of the return skipped. The kernel that ships holds
+// no such text, because each such line is under a setting that is false
+// there (src/md/infrastructure/kernel_fuzzing.md, "The test kernel").
+TEST_KERNEL_TEXT :: "kernel: TEST BUILD:"
+
+// release_test_kernel_problem says why the bytes of a kernel module are the
+// bytes of a test kernel, or gives "": they hold TEST_KERNEL_TEXT. A test
+// kernel built under the name kernel has the hash that the description
+// names, and is still refused.
+release_test_kernel_problem :: proc(kernel_module: []u8) -> string {
+	if strings.contains(string(kernel_module), TEST_KERNEL_TEXT) {
+		return fmt.tprintf("the kernel module of the build holds the text \"%s\": it is a kernel of a test, such as the counted kernel, and a release never publishes it", TEST_KERNEL_TEXT)
+	}
+	return ""
+}
+
+// kernel_test_text_problem says why the bytes of a kernel module of the
+// table break the rule of the text of the test kernels, or gives "": the
+// module kernel holds no TEST_KERNEL_TEXT, and each other kernel holds it.
+// The release refuses a kernel by this text, so each build proves the text
+// on the real kernels, not only in a release.
+kernel_test_text_problem :: proc(name: string, kernel_module: []u8) -> string {
+	holds := strings.contains(string(kernel_module), TEST_KERNEL_TEXT)
+	if name == system_description.KERNEL_ENTRY_NAME && holds {
+		return fmt.tprintf("the kernel module %s holds the text \"%s\": a line of a test kernel is outside its setting, and the release would refuse the kernel that ships", name, TEST_KERNEL_TEXT)
+	}
+	if name != system_description.KERNEL_ENTRY_NAME && !holds {
+		return fmt.tprintf("the kernel module %s, a kernel of a test, holds no text \"%s\": the release would not refuse it by its bytes", name, TEST_KERNEL_TEXT)
+	}
+	return ""
+}
+
+// kernel_test_texts_check reads the module of each kernel of the table
+// after the build, and checks the text of the test kernels.
+kernel_test_texts_check :: proc() -> bool {
+	for row in foundation.module_builds {
+		if !row.kernel {
+			continue
+		}
+		module_bytes := foundation.read_file(foundation.module_path(row.name)) or_return
+		if problem := kernel_test_text_problem(row.name, module_bytes); problem != "" {
+			fmt.eprintfln("modustool: %s", problem)
+			return false
+		}
+	}
+	return true
+}
+
 // release_volume_problem says why a boot volume must not be packaged, or
 // gives "". build_image is the boot image of the build (build/boot.image),
-// and kernel_hash the BLAKE3 hash of its kernel module. The boot image of
-// the volume must hold each module and resource of build_image, with the
-// same name and the same bytes, in the same order, then only the three
-// resources that the build of a volume adds; its signed system description
-// must name kernel_hash for the kernel. So the boot image of the test of
-// the seal (another root service under the name root), the boot image of a
-// measure run (one resource more), a module that a test changed, and a
-// changed kernel are refused. The check reads the signed boot image beside
-// the volume, which the same build of the volume wrote: the boot image
-// inside the volume is in the boot program, and the tool has no reader of
-// a boot program.
-release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging, build_image: []u8, kernel_hash: blake3.Hash) -> string {
+// and kernel_module the bytes of its kernel module, which must not be a
+// test kernel (release_test_kernel_problem). The boot image of the volume
+// must hold each module and resource of build_image, with the same name and
+// the same bytes, in the same order, then only the three resources that the
+// build of a volume adds; its signed system description must name the
+// BLAKE3 hash of kernel_module for the kernel. So the boot image of the test
+// of the seal (another root service under the name root), the boot image of
+// a measure run (one resource more), a module that a test changed, a
+// changed kernel and the kernel of a test are refused. The check reads the
+// signed boot image beside the volume, which the same build of the volume
+// wrote: the boot image inside the volume is in the boot program, and the
+// tool has no reader of a boot program.
+release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging, build_image: []u8, kernel_module: []u8) -> string {
+	if problem := release_test_kernel_problem(kernel_module); problem != "" {
+		return problem
+	}
+	kernel_hash := blake3.hash(kernel_module)
 	signed_by, signed_by_error := os.read_entire_file(signed_by_file_path(volume_path), context.temp_allocator)
 	if signed_by_error != nil {
 		return fmt.tprintf("%s has no file %s that says which key signed it", volume_path, signed_by_file_path(volume_path))
@@ -669,7 +723,7 @@ release_disk_partition :: proc(disk: []u8) -> (partition: []u8, problem: string)
 release_files_write :: proc(volume_path, release_number, disk_folder, output_folder: string, release_seed: []u8, packaging: Release_Packaging) -> (files: Release_Files, ok: bool) {
 	build_image := foundation.read_file(BOOT_IMAGE) or_return
 	kernel_module := foundation.read_file(foundation.module_path(system_description.KERNEL_ENTRY_NAME)) or_return
-	if problem := release_volume_problem(volume_path, packaging, build_image, blake3.hash(kernel_module)); problem != "" {
+	if problem := release_volume_problem(volume_path, packaging, build_image, kernel_module); problem != "" {
 		fmt.eprintfln("modustool: release: %s", problem)
 		return
 	}

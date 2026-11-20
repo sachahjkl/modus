@@ -61,7 +61,7 @@ BOOT_PROGRAM_OBJECT_FILE_NAME :: "boot.obj"
 // The name of the main volume: the name of its object folder.
 MAIN_BOOT_VOLUME_NAME :: "main"
 
-// boot_volumes gives every boot volume of the build: 18 fixed ones and one
+// boot_volumes gives every boot volume of the build: 19 fixed ones and one
 // for each test of the kernel on itself. The list is new at each call: the
 // path of a self test volume is a text of the temporary memory.
 boot_volumes :: proc() -> []Boot_Volume {
@@ -75,6 +75,8 @@ boot_volumes :: proc() -> []Boot_Volume {
 	// The operation sequences on the kernel that ships: the image that
 	// holds the module operation_fuzzing and its runner.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_OPERATION_SEQUENCES, image = foundation.BOOT_IMAGE_OPERATION_SEQUENCES, kernel = "kernel"})
+	// The same image on the counted kernel, for `fuzz operations`.
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_OPERATION_FUZZING, image = foundation.BOOT_IMAGE_OPERATION_SEQUENCES, kernel = foundation.KERNEL_EDGE_COUNTERS_MODULE})
 	// A measure run: the modules of the test, and the resource that tells
 	// the root service that the machine runs for a measure.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_MEASURE, image = BOOT_IMAGE_MEASURE, kernel = "kernel"})
@@ -209,6 +211,11 @@ boot_volume_system_key_write :: proc(volume: Boot_Volume) -> bool {
 // security version or key number, would ship numbers that no line of the
 // repository gives.
 boot_volume_release_problem :: proc(volume: Boot_Volume) -> string {
+	// A test kernel, such as the counted kernel, is another module of the
+	// table: the release ships the module kernel only.
+	if volume.kernel != system_description.KERNEL_ENTRY_NAME {
+		return fmt.tprintf("%s holds the kernel %s, a kernel of a test: a release holds the module %s", volume.path, volume.kernel, system_description.KERNEL_ENTRY_NAME)
+	}
 	if volume.key_number_raised != 0 {
 		return fmt.tprintf("%s has a key number raised by %d for a test", volume.path, volume.key_number_raised)
 	}
@@ -845,7 +852,8 @@ command_volumes := [?]Volumes_Of_Part {
 	{part = "screenshots", procedures = {"measure_runs_of_the_record", "measure_process_run"}, volumes = {BOOT_VOLUME_MEASURE}},
 	{part = "film", procedures = {"run_film"}, volumes = {BOOT_VOLUME}},
 	{part = OPERATION_REPLAY_COMMAND, procedures = {"operation_sequences_replay"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
-	{part = OPERATION_FUZZING_COMMAND, procedures = {"operation_machine_start", "operation_machine_kernel_object"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
+	{part = OPERATION_FUZZING_COMMAND, procedures = {"operation_fuzzing_run"}, volumes = {BOOT_VOLUME_OPERATION_FUZZING}},
+	{part = OPERATION_REGRESSION_COMMAND, procedures = {"operation_regression_add"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
 }
 
 // boot_volumes_of_command gives the volumes that a command of
@@ -915,6 +923,10 @@ BOOT_VOLUME_WITHOUT_RETURN_CHECK :: foundation.BUILD_FOLDER + "/boot_volume_with
 // the kernel that ships.
 BOOT_VOLUME_OPERATION_SEQUENCES :: foundation.BUILD_FOLDER + "/boot_volume_operation_sequences.img"
 
+// The machine of `fuzz operations`: the image of the operation sequences on
+// the counted kernel (src/md/infrastructure/kernel_fuzzing.md).
+BOOT_VOLUME_OPERATION_FUZZING :: foundation.BUILD_FOLDER + "/boot_volume_operation_fuzzing.img"
+
 BOOT_VOLUME_SELF_TEST :: foundation.BUILD_FOLDER + "/boot_volume_self_test_%d.img"
 
 // The volumes of `test trusted_boot` (trusted_boot_scenario.odin): one byte
@@ -964,6 +976,27 @@ OPERATION_FUZZING_COMMAND :: "operation_fuzzing"
 // The command `fuzz replay operations`, as the table of the volumes of the
 // commands names it.
 OPERATION_REPLAY_COMMAND :: "operation_replay"
+
+// The command `fuzz regression operations`, as the table of the volumes of
+// the commands names it: a regression input holds the answers of the kernel
+// that ships.
+OPERATION_REGRESSION_COMMAND :: "operation_regression"
+
+// boot_volume_counts_kernel_edges says if the kernel of a volume of the
+// table is a counted kernel.
+boot_volume_counts_kernel_edges :: proc(path: string) -> bool {
+	for volume in boot_volumes() {
+		if volume.path != path {
+			continue
+		}
+		for row in foundation.module_builds {
+			if row.name == volume.kernel {
+				return foundation.module_counts_kernel_edges(row)
+			}
+		}
+	}
+	return false
+}
 
 // The module that the volumes of machines 1 and 5 change: the root service
 // starts it at each boot: with no check, the machine runs it.

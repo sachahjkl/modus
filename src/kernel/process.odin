@@ -2130,6 +2130,12 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			thread.frame.error = debug_status_take()
 		}
 	}
+	when KERNEL_EDGE_COUNTERS {
+		// The counted kernel counts the code that a counted process asked
+		// for: its commands and its exceptions, and not a tick, a device
+		// or the scheduler (edge_counters.odin).
+		edge_counting_set(from_process && edge_counted_processes[thread.process] && (frame.vector == VECTOR_KERNEL_ENTER || frame.vector < VECTOR_INTERRUPT_BASE || frame.vector == VECTOR_DEBUG_FRAME_LOST))
+	}
 	switch {
 	case frame.vector == VECTOR_DEBUG_FRAME_LOST:
 		// The process ran int1 with a held debug trap, and the second trap
@@ -2257,6 +2263,11 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 				event_record(cpu, .Fault, thread.process, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Stopped))
 			}
 		}
+	}
+	when KERNEL_EDGE_COUNTERS {
+		// Before the return, the wait and the scheduler, which run the
+		// code of other threads.
+		edge_counting_set(false)
 	}
 	if !from_process {
 		return // The processor was idle: it looks for a thread itself.

@@ -6,7 +6,6 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
-import "modus:contract/blake3"
 import "modus:contract/pointer_pictures"
 import "modus:contract/replacement_list"
 import "modus:contract/system_description"
@@ -165,39 +164,132 @@ a_volume_of_a_test_is_never_packaged :: proc(t: ^testing.T) {
 	defer os.remove_all(folder)
 	volume := foundation.join(folder, "/boot_volume_test.img")
 	root_text, console_text, kernel_text: string = "the module root of the build", "the module console of the build", "the kernel of the build"
-	kernel_hash := blake3.hash(transmute([]u8)kernel_text)
+	kernel_module := transmute([]u8)kernel_text
 	build_files := release_test_files(root_text, console_text, "fonts")
 	build_image := boot_image_encode(build_files, RELEASE_TEST_MODULE_COUNT)
 
 	release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, build_files, kernel_text)
-	testing.expect_value(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_hash), "")
+	testing.expect_value(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_module), "")
 
 	release_test_volume_write(volume, SIGNED_BY_TEST_KEY_TEXT, build_files, kernel_text)
-	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_hash) != "", "the test signing key is refused")
-	testing.expect_value(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_hash), "")
+	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_module) != "", "the test signing key is refused")
+	testing.expect_value(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_module), "")
 
 	release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, release_test_files("a root service of another build", console_text, "fonts"), kernel_text)
-	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_hash) != "", "another root service is refused")
-	testing.expect(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_hash) != "", "another root service is refused in a test too")
+	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_module) != "", "another root service is refused")
+	testing.expect(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_module) != "", "another root service is refused in a test too")
 
 	release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, release_test_files(root_text, "a console that a test changed", "fonts"), kernel_text)
-	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_hash) != "", "a changed module is refused")
+	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_module) != "", "a changed module is refused")
 
 	measure_files := make([dynamic]Image_File, context.temp_allocator)
 	append(&measure_files, ..build_files)
 	measure_run_text: string = MEASURE_RUN_RESOURCE_NAME
 	append(&measure_files, Image_File{name = MEASURE_RUN_RESOURCE_NAME, file = transmute([]u8)measure_run_text})
 	release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, measure_files[:], kernel_text)
-	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_hash) != "", "the boot image of a measure run is refused")
+	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_module) != "", "the boot image of a measure run is refused")
 
 	release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, build_files, "a kernel that a test changed")
-	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_hash) != "", "a changed kernel is refused")
+	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_module) != "", "a changed kernel is refused")
 
 	release_test_volume_write(volume, "another text\n", build_files, kernel_text)
-	testing.expect(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_hash) != "", "an unknown signer is refused")
+	testing.expect(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_module) != "", "an unknown signer is refused")
 
 	_ = os.remove(signed_by_file_path(volume))
-	testing.expect(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_hash) != "", "a volume that does not say who signed it is refused")
+	testing.expect(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_module) != "", "a volume that does not say who signed it is refused")
+}
+
+// The bytes of a counted kernel in the tests below: code, then its boot
+// line, whose start is the text of each test kernel.
+@(private = "file")
+COUNTED_KERNEL_TEXT :: "the code of the counted kernel, " + TEST_KERNEL_TEXT + " edge counters at "
+
+// release_problem_with_files_unchanged gives the problem of a volume, and
+// checks that the check changed no file beside the volume and no byte of
+// the kernel module.
+@(private = "file")
+release_problem_with_files_unchanged :: proc(t: ^testing.T, volume: string, packaging: Release_Packaging, build_image, kernel_module: []u8) -> string {
+	image_before, _ := os.read_entire_file(signed_image_path(volume), context.temp_allocator)
+	signer_before, _ := os.read_entire_file(signed_by_file_path(volume), context.temp_allocator)
+	kernel_before := strings.clone(string(kernel_module), context.temp_allocator)
+	problem := release_volume_problem(volume, packaging, build_image, kernel_module)
+	image_after, _ := os.read_entire_file(signed_image_path(volume), context.temp_allocator)
+	signer_after, _ := os.read_entire_file(signed_by_file_path(volume), context.temp_allocator)
+	testing.expect(t, string(image_after) == string(image_before), "the check changed the boot image beside the volume")
+	testing.expect(t, string(signer_after) == string(signer_before), "the check changed the file of the signer")
+	testing.expect(t, string(kernel_module) == kernel_before, "the check changed the kernel module")
+	return problem
+}
+
+// A counted kernel never reaches a release, by each of three ways alone:
+// its hash, which is not the hash of the kernel of the build; the test
+// signing key of its volume; and its bytes, also when it is built under
+// the name kernel and the description names its hash. No refusal changes
+// a file.
+@(test)
+a_counted_kernel_is_never_packaged :: proc(t: ^testing.T) {
+	folder, error := os.make_directory_temp("", "release_image_test_*", context.temp_allocator)
+	testing.expect_value(t, error, nil)
+	defer os.remove_all(folder)
+	volume := foundation.join(folder, "/boot_volume_test.img")
+	root_text, console_text, kernel_text: string = "the module root of the build", "the module console of the build", "the kernel of the build"
+	counted_text: string = COUNTED_KERNEL_TEXT
+	kernel_module := transmute([]u8)kernel_text
+	counted_module := transmute([]u8)counted_text
+	build_files := release_test_files(root_text, console_text, "fonts")
+	build_image := boot_image_encode(build_files, RELEASE_TEST_MODULE_COUNT)
+
+	// The volume of the kernel of the build passes: the cases below differ
+	// from it by one fact each.
+	release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, build_files, kernel_text)
+	testing.expect_value(t, release_problem_with_files_unchanged(t, volume, .Publisher_Keys_Only, build_image, kernel_module), "")
+
+	// By its hash: a volume whose description names the counted kernel,
+	// signed by the publisher, beside the kernel of the build.
+	release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, build_files, counted_text)
+	by_hash := release_problem_with_files_unchanged(t, volume, .Publisher_Keys_Only, build_image, kernel_module)
+	testing.expectf(t, strings.contains(by_hash, "does not name the kernel module of the build"), "by its hash: %s", by_hash)
+	testing.expect(t, release_problem_with_files_unchanged(t, volume, .Test_Keys_Allowed, build_image, kernel_module) != "", "by its hash, in a test too")
+
+	// By its signature: the volume of the counted kernel, signed by the test
+	// signing key, as each test volume is. The signer is read first.
+	release_test_volume_write(volume, SIGNED_BY_TEST_KEY_TEXT, build_files, counted_text)
+	by_signature := release_problem_with_files_unchanged(t, volume, .Publisher_Keys_Only, build_image, kernel_module)
+	testing.expectf(t, strings.contains(by_signature, "test signing key"), "by its signature: %s", by_signature)
+
+	// By its bytes: the counted kernel is the kernel module of the build,
+	// and the description of a volume signed by the publisher names its
+	// hash. Only its bytes say what it is.
+	release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, build_files, counted_text)
+	by_bytes := release_problem_with_files_unchanged(t, volume, .Publisher_Keys_Only, build_image, counted_module)
+	testing.expectf(t, strings.contains(by_bytes, TEST_KERNEL_TEXT), "by its bytes: %s", by_bytes)
+	testing.expect(t, release_problem_with_files_unchanged(t, volume, .Test_Keys_Allowed, build_image, counted_module) != "", "by its bytes, in a test too")
+
+	// The text at the first and at the last byte of the module, and the
+	// text alone.
+	at_start := strings.concatenate({TEST_KERNEL_TEXT, kernel_text}, context.temp_allocator)
+	at_end := strings.concatenate({kernel_text, TEST_KERNEL_TEXT}, context.temp_allocator)
+	for text in ([]string{at_start, at_end, TEST_KERNEL_TEXT}) {
+		testing.expectf(t, release_test_kernel_problem(transmute([]u8)text) != "", "the text of a test kernel in %q", text)
+	}
+	// Near misses are no text of a test kernel: with no colon, with two
+	// spaces, cut by its last byte, and an empty module.
+	for text in ([]string{"kernel: TEST BUILD the line", "kernel:  TEST BUILD: the line", "kernel: TEST BUILD", ""}) {
+		testing.expectf(t, release_test_kernel_problem(transmute([]u8)text) == "", "the near miss %q is taken for a test kernel", text)
+	}
+}
+
+// After each build, the kernel that ships must hold no text of a test
+// kernel and each test kernel must hold it: the check names the module
+// that breaks the rule either way.
+@(test)
+the_text_of_the_test_kernels_is_checked_on_each_kernel :: proc(t: ^testing.T) {
+	shipped, counted: string = "the kernel that ships", COUNTED_KERNEL_TEXT
+	testing.expect_value(t, kernel_test_text_problem(system_description.KERNEL_ENTRY_NAME, transmute([]u8)shipped), "")
+	testing.expect_value(t, kernel_test_text_problem(foundation.KERNEL_EDGE_COUNTERS_MODULE, transmute([]u8)counted), "")
+	testing.expect(t, kernel_test_text_problem(system_description.KERNEL_ENTRY_NAME, transmute([]u8)counted) != "", "the kernel that ships with the text of a test kernel is taken")
+	testing.expect(t, kernel_test_text_problem(foundation.KERNEL_EDGE_COUNTERS_MODULE, transmute([]u8)shipped) != "", "a test kernel with no text of a test kernel is taken")
+	testing.expect(t, kernel_test_text_problem("kernel_without_return_check", nil) != "", "an empty test kernel is taken")
 }
 
 // release_test_pointer_theme makes a pointer theme file of one shape under
@@ -223,7 +315,7 @@ a_release_holds_the_pointer_theme_of_the_system_only :: proc(t: ^testing.T) {
 	defer os.remove_all(folder)
 	volume := foundation.join(folder, "/boot_volume_test.img")
 	root_text, console_text, kernel_text: string = "the module root of the build", "the module console of the build", "the kernel of the build"
-	kernel_hash := blake3.hash(transmute([]u8)kernel_text)
+	kernel_module := transmute([]u8)kernel_text
 	repository_license, license_found := repository_license_read()
 	testing.expect(t, license_found, "LICENSE names an SPDX identifier")
 	owner_text: string = "any bytes under the name of the theme of the owner"
@@ -246,10 +338,10 @@ a_release_holds_the_pointer_theme_of_the_system_only :: proc(t: ^testing.T) {
 		files[2] = Image_File{name = item.resource_name, file = item.file}
 		build_image := boot_image_encode(files, RELEASE_TEST_MODULE_COUNT)
 		release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, files, kernel_text)
-		problem := release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_hash)
+		problem := release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_module)
 		testing.expectf(t, (problem == "") == item.accepted, "%s: accepted is %v, the problem is \"%s\"", item.about, item.accepted, problem)
 		release_test_volume_write(volume, SIGNED_BY_TEST_KEY_TEXT, files, kernel_text)
-		testing.expect_value(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_hash), "")
+		testing.expect_value(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_module), "")
 	}
 }
 

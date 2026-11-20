@@ -8,6 +8,7 @@ import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
+import "modustool:build"
 import "modustool:foundation"
 import "modustool:fuzz"
 
@@ -22,6 +23,8 @@ import "modustool:fuzz"
 // fault. The test part `operation_sequences` runs each one and checks the
 // answers, so it checks the refusal itself, not only the oracles. Only the
 // tool reads the file, so its format is a part of the tool, not a contract.
+// A reach input is a choice sequence that `fuzz operations` keeps on the
+// counted kernel and writes at the end of its run (operation_fuzzing.odin).
 
 // The folders of the corpus of the kernel operations and of its two parts,
 // which the fuzzing on machines writes.
@@ -219,7 +222,7 @@ operation_regression_add :: proc(folder: string) -> int {
 		fmt.eprintfln("modustool: fuzz regression operations: the signature has %d bytes, past %d", len(signature), fuzz.OPERATION_REGRESSION_SIGNATURE_BYTES_MOST)
 		return foundation.EXIT_USAGE
 	}
-	state := operation_qemu_open()
+	state := operation_qemu_open(build.OPERATION_REGRESSION_COMMAND)
 	if state == nil {
 		return foundation.EXIT_FAILURE
 	}

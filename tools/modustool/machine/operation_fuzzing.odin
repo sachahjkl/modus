@@ -14,15 +14,26 @@ import "modustool:foundation"
 import "modustool:build"
 import "modustool:fuzz"
 
-// The loop of the kernel fuzzing with no counters
-// (src/md/infrastructure/kernel_fuzzing.md, "The loop and the speed";
+// The loop of the kernel fuzzing (src/md/infrastructure/kernel_fuzzing.md,
+// "The loop and the speed", "The engine guided by the counters";
 // docs/TOOLS.md, "The fuzzing of the kernel operations"): generated
-// operation sequences on machines of the kernel that ships, one machine at
-// a time, a new machine after each fault, each fault kept one time for its
-// signature and minimized by machine lives and by steps.
+// operation sequences on machines of the counted kernel, one machine at a
+// time, a new machine after each fault, each fault kept one time for its
+// signature and minimized by machine lives and by steps. With the counters
+// of the kernel, the engine keeps each choice sequence that reached a new
+// feature in two runs, and mutates the kept ones; with no counters, each
+// sequence is a new draw.
 //
 // The loop and the minimizer reach a machine through Operation_Machine
 // only, so a host test runs them on a fake machine.
+
+// The start of the boot line of the counted kernel, which the machine test
+// refuses in each other machine (machine.odin).
+OPERATION_COUNTERS_LINE_START :: fuzz.KERNEL_EDGE_COUNTERS_LINE_START
+
+// One draw in this count is a new draw of choices, not a mutation of a
+// kept input.
+OPERATION_NEW_DRAW_ONE_IN :: 4
 
 // The files of a run, which git ignores: the repository never holds a
 // finding of a run. The findings of a run are in a folder of its seed.
@@ -426,6 +437,10 @@ Operation_Machine :: struct {
 	drain:   proc(data: rawptr) -> Operation_Fault,
 	// Ends the machine, whatever its state.
 	end:     proc(data: rawptr),
+	// Optional: the edge counters of the counted kernel after the last
+	// sequence, which the machine set to zero before it. A problem is an
+	// error of the tool. nil: a machine with no counters.
+	counters: proc(data: rawptr) -> (counts: []u8, problem: string),
 }
 
 Operation_Life_Outcome :: struct {
@@ -739,16 +754,174 @@ operation_signature_kept :: proc(kept: []Operation_Kept_Fault, signature: string
 	return false
 }
 
+// ---------------------------------------------------------------------
+// The engine guided by the counters.
+
+// The state of the engine guided by the counters of the kernel. Each slice
+// and array is in the allocator of the context.
+Operation_Guide :: struct {
+	edges:     fuzz.Kernel_Edge_Map, // Made at the first counters, with their count.
+	entries:   [dynamic]fuzz.Operation_Reach_Entry, // The kept inputs, in the order of their keep.
+	seeds:     [][]u8, // The reach inputs of the corpus, which run first.
+	seeds_run: int,
+	// A choice sequence that gave a new feature, while repeat_waiting: its
+	// second run is the next execution. Its own flag, because an empty
+	// sequence of choices can be nil.
+	repeat:         []u8,
+	repeat_waiting: bool,
+	first:     []u8, // The counters of the first run of `repeat`.
+	stable:    []u8, // The part of the two runs that agrees.
+	choices:   [dynamic]u8, // The choices of the execution that runs.
+	read:      int, // The bytes of choices that the generator read.
+	repeats:   int, // The second runs, a measure.
+}
+
+// operation_guide_make gives a guide that runs the reach inputs of a
+// folder first, in the order of their names.
+operation_guide_make :: proc(reach_folder: string) -> Operation_Guide {
+	stored := fuzz.fuzz_inputs_read(reach_folder, context.temp_allocator)
+	seeds := make([][]u8, len(stored))
+	for input, place in stored {
+		seeds[place] = slice.clone(input.bytes)
+	}
+	return {entries = make([dynamic]fuzz.Operation_Reach_Entry), seeds = seeds, choices = make([dynamic]u8)}
+}
+
+operation_guide_free :: proc(guide: ^Operation_Guide) {
+	fuzz.kernel_edge_map_destroy(&guide.edges)
+	for entry in guide.entries {
+		delete(entry.choices)
+		delete(entry.features)
+	}
+	delete(guide.entries)
+	for seed in guide.seeds {
+		delete(seed)
+	}
+	delete(guide.seeds)
+	delete(guide.repeat)
+	delete(guide.first)
+	delete(guide.stable)
+	delete(guide.choices)
+	guide^ = {}
+}
+
+// operation_guide_next writes the choices of the next execution: the
+// second run that waits, then each reach input of the corpus, then one new
+// draw in OPERATION_NEW_DRAW_ONE_IN, else a kept input with 1, 2, 4 or 8
+// mutations, from the newest eighth for half of the draws.
+operation_guide_next :: proc(guide: ^Operation_Guide, random: ^fuzz.Fuzz_Random) {
+	clear(&guide.choices)
+	switch {
+	case guide.repeat_waiting:
+		append(&guide.choices, ..guide.repeat)
+	case guide.seeds_run < len(guide.seeds):
+		append(&guide.choices, ..guide.seeds[guide.seeds_run])
+		guide.seeds_run += 1
+	case len(guide.entries) == 0 || fuzz.fuzz_random_one_in(random, OPERATION_NEW_DRAW_ONE_IN):
+		resize(&guide.choices, fuzz.OPERATION_CHOICE_BYTES)
+		for place := 0; place < len(guide.choices); place += 8 {
+			word := fuzz.fuzz_random_next(random)
+			for index in 0 ..< min(8, len(guide.choices) - place) {
+				guide.choices[place + index] = u8(word >> (8 * u64(index)))
+			}
+		}
+	case:
+		count := len(guide.entries)
+		place := fuzz.fuzz_random_below(random, count)
+		if fuzz.fuzz_random_one_in(random, 2) {
+			place = count - 1 - fuzz.fuzz_random_below(random, max(count / 8, 1))
+		}
+		append(&guide.choices, ..guide.entries[place].choices)
+		other := guide.entries[fuzz.fuzz_random_below(random, count)].choices
+		mutations := 1 << uint(fuzz.fuzz_random_below(random, 4))
+		for _ in 0 ..< mutations {
+			fuzz.operation_choices_mutate(random, &guide.choices, other)
+		}
+	}
+}
+
+// operation_guide_after reads the counters of an execution that broke no
+// oracle. A first run that gives a new feature waits for its second run; a
+// second run keeps its input when the part that agrees with the first run
+// gives a new feature, and marks that part. A problem is an error of the
+// tool: counters of another count than the first ones.
+operation_guide_after :: proc(guide: ^Operation_Guide, counts: []u8) -> (problem: string) {
+	if guide.edges.edge_count == 0 {
+		edges, made := fuzz.kernel_edge_map_make(len(counts))
+		if !made {
+			return fmt.tprintf("the counted kernel gave %d counters, and the tool takes 1 to %d", len(counts), fuzz.KERNEL_EDGES_MOST)
+		}
+		guide.edges = edges
+		guide.first = make([]u8, len(counts))
+		guide.stable = make([]u8, len(counts))
+	}
+	if guide.repeat_waiting {
+		defer operation_guide_fault(guide)
+		guide.repeats += 1
+		if !fuzz.kernel_edge_counters_stable(guide.first, counts, guide.stable) {
+			return fmt.tprintf("the counted kernel gave %d counters, after %d", len(counts), len(guide.first))
+		}
+		fresh, _ := fuzz.kernel_edge_features_new(&guide.edges, guide.stable)
+		if fresh == 0 {
+			return ""
+		}
+		_, _ = fuzz.kernel_edge_features_mark(&guide.edges, guide.stable)
+		append(&guide.entries, fuzz.Operation_Reach_Entry{choices = slice.clone(guide.repeat), features = fuzz.kernel_edge_features_of(guide.stable)})
+		return ""
+	}
+	fresh, same_count := fuzz.kernel_edge_features_new(&guide.edges, counts)
+	if !same_count {
+		return fmt.tprintf("the counted kernel gave %d counters, after %d", len(counts), guide.edges.edge_count)
+	}
+	if fresh > 0 {
+		copy(guide.first, counts)
+		guide.repeat = slice.clone(guide.choices[:guide.read])
+		guide.repeat_waiting = true
+	}
+	return ""
+}
+
+// operation_guide_fault forgets the second run that waits: after that run,
+// or when a run gave a fault, whose input is a finding and not a reach
+// input.
+operation_guide_fault :: proc(guide: ^Operation_Guide) {
+	delete(guide.repeat)
+	guide.repeat = nil
+	guide.repeat_waiting = false
+}
+
+// operation_guide_reach_write writes the reach inputs of the corpus from
+// the kept inputs of a run: the smallest set that gives each of their
+// features, in the room of the bounds of the corpus. A run that did not run
+// each reach input of the corpus changes nothing: its kept inputs do not
+// hold their features.
+operation_guide_reach_write :: proc(guide: ^Operation_Guide, corpus_folder: string) -> (written, left_out: int, changed, ok: bool) {
+	if guide.seeds_run < len(guide.seeds) {
+		return 0, 0, false, true
+	}
+	cover := fuzz.operation_reach_cover(guide.entries[:], context.temp_allocator)
+	inputs := make([][]u8, len(cover), context.temp_allocator)
+	for place, index in cover {
+		inputs[index] = guide.entries[place].choices
+	}
+	written, left_out, ok = fuzz.operation_reach_inputs_write(corpus_folder, inputs)
+	return written, left_out, true, ok
+}
+
 // operation_fuzzing_loop runs generated sequences on machines, one machine
 // at a time, until the count of executions, the bound of the findings, an
 // error of the tool, or two boots in a row with no mailbox. A machine life
 // ends at its bound of sequences, at the end of the run, or at a fault;
 // before a life ends with no fault, the machine drains its log, and a fault
 // found there belongs to the last sequence. A fault with a new signature is
-// minimized and kept, a fault with a known one is only counted. ok is
-// false at an error of the build or of the tool. The loop frees the
-// temporary memory after each execution: the caller keeps nothing there.
-operation_fuzzing_loop :: proc(machine: ^Operation_Machine, generate: Operation_Generator, seed: u64, bounds: Operation_Run_Bounds, keeper: Operation_Fault_Keeper = nil) -> (run: Operation_Run, ok: bool) {
+// minimized and kept, a fault with a known one is only counted. With a
+// guide and a machine with counters, the guide gives the choices of each
+// sequence and reads the counters after each one that broke no oracle;
+// else `generate` draws each sequence. ok is false at an error of the build
+// or of the tool. The loop frees the temporary memory after each
+// execution: the caller keeps nothing there.
+operation_fuzzing_loop :: proc(machine: ^Operation_Machine, generate: Operation_Generator, seed: u64, bounds: Operation_Run_Bounds, keeper: Operation_Fault_Keeper = nil, guide: ^Operation_Guide = nil) -> (run: Operation_Run, ok: bool) {
+	guided := guide != nil && machine.counters != nil
 	random := fuzz.Fuzz_Random{state = seed}
 	life := make([dynamic][]u8)
 	defer {
@@ -789,7 +962,12 @@ operation_fuzzing_loop :: proc(machine: ^Operation_Machine, generate: Operation_
 			}
 			clear(&life)
 		}
-		generate(&random, generated)
+		if guided {
+			operation_guide_next(guide, &random)
+			guide.read = fuzz.operation_sequence_of_choices(guide.choices[:], generated)
+		} else {
+			generate(&random, generated)
+		}
 		bytes, accepted := fuzz.operation_sequence_encode(generated)
 		if !accepted || operation_sequence.check(bytes, checked).problem != .None {
 			fmt.eprintln("modustool: fuzz operations: the generator built a sequence that check refuses: a fault of the tool")
@@ -804,6 +982,19 @@ operation_fuzzing_loop :: proc(machine: ^Operation_Machine, generate: Operation_
 		life_ends := len(life) >= bounds.life_sequences || run.executions >= bounds.executions
 		if fault.kind == .None && life_ends {
 			fault = machine.drain(machine.data)
+		}
+		// The counters, before the end of the machine: a fault, the drain
+		// too, belongs to the sequence, which keeps no input then.
+		if guided && fault.kind == .None {
+			counts, problem := machine.counters(machine.data)
+			if problem == "" {
+				problem = operation_guide_after(guide, counts)
+			}
+			if problem != "" {
+				fault = {kind = .Tool, text = problem}
+			}
+		} else if guided {
+			operation_guide_fault(guide)
 		}
 		if fault.kind == .Tool {
 			fmt.eprintfln("modustool: fuzz operations: an error of the tool, not a finding: %s", fault.text)
@@ -985,6 +1176,41 @@ Operation_Qemu :: struct {
 	kernel_object: []u8, // The debug object of the kernel of the volume, or nil.
 	header:        ^operation_sequence.Mailbox_Header,
 	results:       ^operation_sequence.Runner_Results,
+	volume:        string, // The boot volume of the command: a constant of the build.
+	// The kernel of the volume is a counted kernel: its boot line names its
+	// counters, which the tool sets to zero before each sequence and reads
+	// after it.
+	counted:          bool,
+	counters_found:   bool, // This machine wrote the boot line of its counters.
+	counters_address: u64, // Their physical address: their offset in the memory file.
+	counts:           []u8, // The counters after the last sequence.
+	zeros:            []u8, // As many zeros, written after each read of the counters.
+	// The guards that the link of the counted kernel kept: the counters
+	// past them must stay 0.
+	linked_guards:    int,
+}
+
+// operation_counters_problem says why counters that must be 0 are not:
+// the counted kernel counted code that it must not count. "": each is 0.
+operation_counters_problem :: proc(counts: []u8, from: int, what: string) -> string {
+	start := min(max(from, 0), len(counts))
+	for count, edge in counts[start:] {
+		if count != 0 {
+			return fmt.tprintf("a fault of the counted kernel, not a finding: the counter of the edge %d is %d %s", edge + start, count, what)
+		}
+	}
+	return ""
+}
+
+// operation_counters_read reads the counters of the counted kernel from
+// the memory file into state.counts.
+@(private = "file")
+operation_counters_read :: proc(state: ^Operation_Qemu) -> (problem: string) {
+	read, error := os.read_at(state.mailbox.file, state.counts, i64(state.counters_address))
+	if error != nil || read != len(state.counts) {
+		return fmt.tprintf("cannot read the %d counters at %d of the memory file: %v", len(state.counts), state.counters_address, error)
+	}
+	return ""
 }
 
 @(private = "file")
@@ -1014,11 +1240,11 @@ operation_machine_stopped :: proc(state: ^Operation_Qemu) -> (fault: Operation_F
 	return {}, false
 }
 
-// operation_machine_kernel_object reads the debug object of the kernel of
-// the volume, which names the procedure of the address of a report.
-operation_machine_kernel_object :: proc() -> []u8 {
+// operation_machine_kernel_object reads the debug object of the kernel of a
+// volume, which names the procedure of the address of a report.
+operation_machine_kernel_object :: proc(volume: string) -> []u8 {
 	for row in build.boot_volumes() {
-		if row.path != build.BOOT_VOLUME_OPERATION_SEQUENCES || row.kernel == "" {
+		if row.path != volume || row.kernel == "" {
 			continue
 		}
 		object, error := os.read_entire_file(build.debug_object_path(row.kernel), context.allocator)
@@ -1041,7 +1267,7 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 	_ = os.remove(OPERATION_FUZZING_MEMORY_FILE)
 	_ = os.remove(OPERATION_FUZZING_OUTPUT)
 	clock := machine_clock_of(time.time_to_unix(time.now()))
-	command, made := machine_command(build.BOOT_VOLUME_OPERATION_SEQUENCES, OPERATION_FUZZING_OUTPUT, state.part.data_disk, &state.peer, clock_argument = clock.argument, memory_file = OPERATION_FUZZING_MEMORY_FILE)
+	command, made := machine_command(state.volume, OPERATION_FUZZING_OUTPUT, state.part.data_disk, &state.peer, clock_argument = clock.argument, memory_file = OPERATION_FUZZING_MEMORY_FILE)
 	if !made {
 		return false
 	}
@@ -1063,8 +1289,41 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 	state.host_process = host_process
 	state.monitor_read, state.monitor_write = monitor_read, monitor_write
 	state.running, state.exited, state.mailbox_open, state.log_scanned = true, false, false, 0
+	state.counters_found = false
+	memory_bytes := u64(MACHINE_MEMORY_MIB) * 1024 * 1024
 	for started := time.tick_now(); time.tick_since(started) < BOOT_HANG_BOUND; {
-		if address, found := number_after(operation_log_new_lines(OPERATION_FUZZING_OUTPUT, &state.log_scanned), OPERATION_MAILBOX_LINE); found {
+		lines := operation_log_new_lines(OPERATION_FUZZING_OUTPUT, &state.log_scanned)
+		// The counted kernel writes the line of its counters at its start,
+		// before the root service starts operation_fuzzing.
+		if state.counted && !state.counters_found {
+			counters_address, count, found, problem := fuzz.kernel_edge_counters_line_read(lines, memory_bytes)
+			if problem != "" {
+				fmt.eprintfln("modustool: fuzz operations: an error of the build: %s", problem)
+				operation_machine_end(state)
+				return false
+			}
+			if found && state.linked_guards > count {
+				fmt.eprintfln("modustool: fuzz operations: an error of the build: the linked kernel has %d guards, and its boot line %d counters", state.linked_guards, count)
+				operation_machine_end(state)
+				return false
+			}
+			if found {
+				state.counters_found = true
+				state.counters_address = counters_address
+				if len(state.counts) != count {
+					delete(state.counts)
+					delete(state.zeros)
+					state.counts = make([]u8, count)
+					state.zeros = make([]u8, count)
+				}
+			}
+		}
+		if address, found := number_after(lines, OPERATION_MAILBOX_LINE); found {
+			if state.counted && !state.counters_found {
+				fmt.eprintfln("modustool: fuzz operations: the counted kernel of %s wrote no line \"%s\" before the line of the mailbox", state.volume, OPERATION_COUNTERS_LINE_START)
+				operation_machine_end(state)
+				return false
+			}
 			mailbox, problem := operation_mailbox_open(OPERATION_FUZZING_MEMORY_FILE, address)
 			if problem != "" {
 				fmt.eprintfln("modustool: fuzz operations: %s", problem)
@@ -1072,6 +1331,20 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 				return false
 			}
 			state.mailbox, state.mailbox_open = mailbox, true
+			// The start ran the root service and operation_fuzzing, their
+			// kernel entries and many ticks, and no counted process: each
+			// counter is 0.
+			if state.counted {
+				counted_problem := operation_counters_read(state)
+				if counted_problem == "" {
+					counted_problem = operation_counters_problem(state.counts, 0, "before the first sequence")
+				}
+				if counted_problem != "" {
+					fmt.eprintfln("modustool: fuzz operations: %s", counted_problem)
+					operation_machine_end(state)
+					return false
+				}
+			}
 			return true
 		}
 		if ended, wait_error := os.process_wait(host_process, 0); wait_error == nil && ended.exited {
@@ -1097,6 +1370,19 @@ operation_machine_start :: proc(data: rawptr) -> bool {
 @(private = "file")
 operation_machine_execute :: proc(data: rawptr, sequence: ^operation_sequence.Sequence, bytes: []u8) -> Operation_Fault {
 	state := (^Operation_Qemu)(data)
+	// The counters count this sequence only: the read of the sequence
+	// before wrote their zeros, or the start found them at 0, and no
+	// counted process ran since, through the ticks and the kernel entries
+	// of operation_fuzzing between the two sequences.
+	if state.counted {
+		counted_problem := operation_counters_read(state)
+		if counted_problem == "" {
+			counted_problem = operation_counters_problem(state.counts, 0, "while no sequence ran")
+		}
+		if counted_problem != "" {
+			return {kind = .Tool, text = counted_problem}
+		}
+	}
 	end, ended, problem := operation_execute_watched(&state.mailbox, bytes, state.header, state.results, &state.host_process)
 	switch end {
 	case .Counted:
@@ -1164,6 +1450,30 @@ operation_machine_drain :: proc(data: rawptr) -> Operation_Fault {
 	return {}
 }
 
+// operation_machine_counters reads the counters of the counted kernel from
+// the memory file, after the end line of the sequence: the runner and its
+// children stopped then. The bytes come from the machine; the guide checks
+// their count, and each byte is a count.
+@(private = "file")
+operation_machine_counters :: proc(data: rawptr) -> (counts: []u8, problem: string) {
+	state := (^Operation_Qemu)(data)
+	if !state.counters_found || !state.mailbox_open {
+		return nil, "the machine wrote no line of its counters"
+	}
+	if problem = operation_counters_read(state); problem != "" {
+		return nil, problem
+	}
+	// No call of the callback names a guard that the link dropped.
+	if problem = operation_counters_problem(state.counts, state.linked_guards, "past the guards of the linked kernel"); problem != "" {
+		return nil, problem
+	}
+	// The zeros for the next sequence, which checks that they stay.
+	if written, error := os.write_at(state.mailbox.file, state.zeros, i64(state.counters_address)); error != nil || written != len(state.zeros) {
+		return nil, fmt.tprintf("cannot write the zeros of the counters at %d of the memory file: %v", state.counters_address, error)
+	}
+	return state.counts, ""
+}
+
 // operation_machine_end ends QEMU through its monitor, or kills it past
 // the hang bound, and removes its memory file.
 operation_machine_end :: proc(data: rawptr) {
@@ -1190,12 +1500,13 @@ operation_machine_end :: proc(data: rawptr) {
 	state.running = false
 }
 
-// operation_qemu_open builds the volume of the operation sequences, then
-// prepares the machine of a command: the grammar of the oracles, the debug
-// object of the kernel, the data disk and the peer. nil: an error, which it
-// printed. The commands `fuzz operations` and `fuzz regression operations`
-// share it, so a regression input is written by the machine that finds it.
-operation_qemu_open :: proc() -> ^Operation_Qemu {
+// operation_qemu_open builds the one volume of a command of the table of
+// the volumes, then prepares its machine: the grammar of the oracles, the
+// debug object of the kernel, the data disk and the peer. nil: an error,
+// which it printed. `fuzz operations` boots the counted kernel, and `fuzz
+// regression operations` the kernel that ships, on the same image, with the
+// same mailbox and the same oracles.
+operation_qemu_open :: proc(command: string) -> ^Operation_Qemu {
 	if !fuzz.fuzz_operation_sequence_start() {
 		return nil
 	}
@@ -1203,7 +1514,12 @@ operation_qemu_open :: proc() -> ^Operation_Qemu {
 	if !grammar_read {
 		return nil
 	}
-	if code := build.build_system(build.boot_volumes_of_command(build.OPERATION_FUZZING_COMMAND)); code != 0 {
+	volumes := build.boot_volumes_of_command(command)
+	if len(volumes) != 1 {
+		fmt.eprintfln("modustool: the command %s has %d boot volumes in the table of the volumes, and its machine boots one", command, len(volumes))
+		return nil
+	}
+	if code := build.build_system(volumes); code != 0 {
 		return nil
 	}
 	if !foundation.make_folder(OPERATION_FUZZING_FOLDER) {
@@ -1213,11 +1529,27 @@ operation_qemu_open :: proc() -> ^Operation_Qemu {
 	state.grammar = grammar
 	state.header = new(operation_sequence.Mailbox_Header)
 	state.results = new(operation_sequence.Runner_Results)
-	state.kernel_object = operation_machine_kernel_object()
+	state.volume = volumes[0]
+	state.counted = build.boot_volume_counts_kernel_edges(state.volume)
+	if state.counted {
+		for row in build.boot_volumes() {
+			if row.path != state.volume {
+				continue
+			}
+			guards, counted := build.kernel_linked_guard_count(row.kernel)
+			if !counted {
+				fmt.eprintfln("modustool: fuzz operations: the linked file of the counted kernel %s has no section of guards that the tool reads", row.kernel)
+				operation_qemu_close(state)
+				return nil
+			}
+			state.linked_guards = guards
+		}
+	}
+	state.kernel_object = operation_machine_kernel_object(state.volume)
 	if state.kernel_object == nil {
 		fmt.println("modustool: fuzz operations: no debug object of the kernel: a signature of a stop names no procedure")
 	}
-	state.part = test_part_run_make(build.OPERATION_FUZZING_COMMAND)
+	state.part = test_part_run_make(command)
 	if !test_part_run_start(&state.part) || !peer_start(&state.peer) {
 		operation_qemu_close(state)
 		return nil
@@ -1239,11 +1571,17 @@ operation_qemu_close :: proc(state: ^Operation_Qemu) {
 	free(state.header)
 	free(state.results)
 	delete(state.kernel_object)
+	delete(state.counts)
+	delete(state.zeros)
 	free(state)
 }
 
 operation_qemu_machine :: proc(state: ^Operation_Qemu) -> Operation_Machine {
-	return {data = state, start = operation_machine_start, execute = operation_machine_execute, drain = operation_machine_drain, end = operation_machine_end}
+	machine := Operation_Machine{data = state, start = operation_machine_start, execute = operation_machine_execute, drain = operation_machine_drain, end = operation_machine_end}
+	if state.counted {
+		machine.counters = operation_machine_counters
+	}
+	return machine
 }
 
 // operation_fuzzing_run is `fuzz operations <executions> [<seed>]`
@@ -1258,17 +1596,35 @@ operation_fuzzing_run :: proc(args: []string) -> int {
 	if !arguments.seed_given {
 		seed = fuzz.fuzz_sources_seed() ~ u64(time.time_to_unix_nano(time.now()))
 	}
-	state := operation_qemu_open()
+	state := operation_qemu_open(build.OPERATION_FUZZING_COMMAND)
 	if state == nil {
 		return foundation.EXIT_FAILURE
 	}
 	defer operation_qemu_close(state)
 	machine := operation_qemu_machine(state)
-	fmt.printfln("modustool: fuzz operations: %d executions from the seed %d, one machine at a time, at most %d sequences in a machine life", arguments.executions, seed, OPERATION_MACHINE_SEQUENCES_MOST)
+	fmt.printfln("modustool: fuzz operations: %d executions from the seed %d, one machine at a time, at most %d sequences in a machine life, on %s", arguments.executions, seed, OPERATION_MACHINE_SEQUENCES_MOST, state.volume)
+	// The engine guided by the counters of the counted kernel, which runs
+	// the reach inputs of the corpus first.
+	guide := operation_guide_make(OPERATION_REACH_FOLDER)
+	defer operation_guide_free(&guide)
 	run_started := time.tick_now()
 	bounds := Operation_Run_Bounds{executions = arguments.executions, life_sequences = OPERATION_MACHINE_SEQUENCES_MOST, findings_most = OPERATION_FINDINGS_MOST}
-	run, completed := operation_fuzzing_loop(&machine, operation_sequence_generate_random, seed, bounds, operation_fault_write)
+	run, completed := operation_fuzzing_loop(&machine, operation_sequence_generate_random, seed, bounds, operation_fault_write, &guide)
 	defer operation_run_free(&run)
+	if machine.counters != nil {
+		fmt.printfln("modustool: fuzz operations: %d inputs kept for a new feature of the counted kernel, %d features of %d edges; %d second runs", len(guide.entries), guide.edges.feature_count, guide.edges.edge_count, guide.repeats)
+	}
+	if completed && machine.counters != nil {
+		written, left_out, changed, reach_written := operation_guide_reach_write(&guide, OPERATION_CORPUS_FOLDER)
+		switch {
+		case !reach_written:
+			return foundation.EXIT_FAILURE
+		case !changed:
+			fmt.printfln("modustool: fuzz operations: the run ended before it ran each of the %d reach inputs of the corpus: %s does not change", len(guide.seeds), OPERATION_REACH_FOLDER)
+		case:
+			fmt.printfln("modustool: fuzz operations: %d reach inputs in %s, %d left out past the bounds of the corpus: read the change before the commit", written, OPERATION_REACH_FOLDER, left_out)
+		}
+	}
 	run_seconds := time.duration_seconds(time.tick_since(run_started))
 	sequence_seconds := time.duration_seconds(run.sequence_time)
 	fmt.printfln("modustool: measure: fuzz operations: %d executions in %d machine lives; %.1f executions in one second of the sequences (%.1f s), %.1f in one second of the whole run with the boots and the minimizations (%.1f s, the boots of the lives %.1f s)", run.executions, run.lives, sequence_seconds > 0 ? f64(run.executions) / sequence_seconds : 0, sequence_seconds, run_seconds > 0 ? f64(run.executions) / run_seconds : 0, run_seconds, time.duration_seconds(run.boot_time))
