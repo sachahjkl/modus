@@ -49,13 +49,17 @@ The code is `src/library/private/console/lex_parser` (the parser: the syntax tre
 line       = name "=" pipeline | pipeline
 pipeline   = expression { "|>" stage }
 stage      = name | name "(" arguments ")"
-expression = term { ("+" | "-") term }
+expression = sum { "with" sum }
+sum        = term { ("+" | "-") term }
 term       = factor { ("*" | "/" | "%") factor }
 factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" pipeline ")"
-arguments  = pipeline { "," pipeline }
+           | "{" [ name "=" pipeline { "," name "=" pipeline } ] "}"
+           | "let" name "=" pipeline { "," name "=" pipeline } "in" pipeline
+arguments  = argument { "," argument }
+argument   = [ name "=" ] pipeline
 ```
 
-- **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each.
+- **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each. `let`, `in`, `with` and `_` alone are words of Lex, never names: a variable, a field, a binding or a named argument with one of them is refused.
 - **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/private/console/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. A text has no escape, so it cannot hold a quote.
 - **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them; `+` on two tables of equal record descriptions gives the rows of the left one, then the rows of the right one, and refuses two tables of different records. A division by zero is an error. So is the one division whose result does not fit: the least integer `/` `-1`. Its remainder fits: the least integer `%` `-1` is 0. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
@@ -140,6 +144,24 @@ The bounds:
 ### Records
 
 A record is a group of named fields, as a module describes it. The command with the name of a record makes one from its fields, in the order of its description. `variable.field` reads one field: an integer, a text or a handle.
+
+**A record literal** writes a record by its fields, in any order: `{x = 0, y = 0, width = 3, height = 4}`. It has no type of its own: the parameter that receives it gives it one, a Record parameter of an export. A field that the record does not have, a field that the literal does not give, a field given twice, and a value of another kind than its field are refused, each with the field. The names are checked when the call starts, before its arguments run; the values when they are known, before the call runs. A field has no default: a literal gives each field. A literal that nothing receives, as the value of a line or of a variable, is refused: it has no type.
+
+**A named argument** gives a parameter by its name: `grow(r, by = 2)`. The names are those of the description of an export, or the fields of a command that makes a record; a command of the console has none. After a named argument, each argument is named. A name that names no parameter, a parameter given twice, and a parameter that the call does not give are refused. Inside `where`, `=` stays the operator of a condition.
+
+**`with`** gives a record with some of its fields changed: `r with {width = 10}`. On its right, a record literal of fields of that record, or a record of the same description. It composes two records only, and has the lowest priority but `|>`.
+
+**`let`** names values for one expression: `let s = {x = 0, y = 0, width = 6, height = 7} in area(s) + area(s)`. A binding can name another binding, also a later one, and an inner `let` hides an outer one. The console computes each binding once, from the left, also a binding that the body does not read, then the body. A binding that needs its own value is refused. `s.width` reads a field of a binding.
+
+```
+> area({x = 0, y = 0, width = 11, height = 3})
+33
+> area(r with {width = 10})
+40
+> grow(r, by = 2)
+> let s = {x = 0, y = 0, width = 6, height = 7} in area(s) + area(s)
+84
+```
 
 ### Tables as values
 
@@ -335,6 +357,8 @@ They are `where(processes(), name = "server")`, `columns(where(processes(), name
 - **From the left.** `x |> h |> g(1) |> f` is `f(g(h(x), 1))`.
 - **A variable** keeps the value of the whole line: `t = processes() |> rows` is `t = rows(processes())`.
 - **On the right**: the name of a command, alone or with its arguments. The call takes one argument more than the arguments in its parentheses, at most 12 in all.
+- **The placeholder `_`** puts the value on the left in another place: `3 |> grow(r, _)` is `grow(r, 3)`, and `x |> f(by = _)` is `f(by = x)`. The `_` is a whole argument of the call on the right, at most one in that call, and in no call nested in it; a `_` with no `|>` before its call is refused. The value on the left runs where the call reads it: in `g() |> f(h(), _)`, `h()` runs before `g()`.
+- **In a named argument, a field and a `let`**: `f(n = x |> g)` is `f(n = g(x))`, `{a = x |> g}` is `{a = g(x)}`, and `let a = x |> g in a |> h` is `let a = g(x) in h(a)`.
 
 **Sugar only.** The operator adds no meaning and no kind. Before any call, the console writes the line with calls in calls (`pipe_nested_form`, `src/library/private/console/console_language/pipe.odin`), and its parser reads that line, which has no `|>`. So a line with `|>` checks and runs as the same line with calls in calls, with the same errors.
 
@@ -372,6 +396,19 @@ A line that fails has one result: its error. The first error ends the line: the 
 | An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8), then the values of the record |
 | The root service refuses | `error: root.Stop: the argument name names a process of the system: ...`: the sentence of the error record of the root ring, then its values |
 | A call in an isolated process that faults | `error: the process agenda stopped: a fault, invalid instruction`, then the instruction and the frames of its stop report, each after `error: ` |
+| A field that the record of a literal does not have | `error: Rectangle has no field widht; its fields are x, y, width, height` |
+| A field that a literal does not give | `error: Rectangle needs the field height, which has no default` |
+| A value of a literal of another kind than its field | `error: Rectangle: the field x is Integer, the value is Text` |
+| A literal that nothing types | `error: a record literal takes the type of the parameter that receives it, and nothing receives this one` |
+| A named argument that names no parameter | `error: grow has no parameter bye; its parameters are rectangle, by` |
+| A parameter that a call with named arguments does not give | `error: grow needs the parameter rectangle, which has no default` |
+| `with` on another value than a record | `error: "with" composes a record with a record literal or a record, not Integer with a record literal` |
+| A binding of a `let` that needs its own value | `error: the binding a needs its own value: a let cannot read a binding in its own value` |
+| A word of Lex as a name | `error: with is a word of Lex, not a name` |
+| A `_` that is no whole argument of the call on the right of `\|>` | `error: \|>: _ is a whole argument of f, not a part of an expression` |
+| Two `_` in one call | `error: \|>: f has two _; the value on the left takes one place` |
+| A `_` in a call nested in the call on the right | `error: \|>: _ names an argument of f, not of g inside it` |
+| A `_` with no `\|>` before its call | `error: _ is a place of the call on the right of \|>; this call has no \|> before it` |
 | A line past the evaluation budget, which no line of the console reaches | `error: the line needs more than 1048576 steps of the evaluator: it stopped at column 12`, with an error record `Over_Limit` |
 
 An overflow has an error record of the kind `Over_Limit`: `value` is the left value, `found` the right value, and `limit` the largest integer.
@@ -662,6 +699,8 @@ The console completes the name at the caret from what it knows at that moment: i
 | The fact name of `facts(`, with or without `\|>` before it | The fact names, `package.Type`; after a package and a dot, its record types | The fact tables of the module files of the boot image, read once at the start of the console |
 | A field of a condition of `where(`, just after `\|>` | The fields of the record on the left, when the console knows it before the run ("Conditions") | The description of an export, or of the table of `facts(...)` |
 | After the operator of a condition on a status field | The members of its enum: `Info`, `Debug`, `Warning`, `Error` | The names of the contract enums |
+| A field inside the braces of a record literal, an argument of an export | The fields of the record of its parameter, by its place or by the name before `= {` | The description of the export |
+| The start of an argument of a call | The names of its parameters, for a named argument, with the other names | The description of an export, or the fields of a command that makes a record |
 
 Not completed: the second argument of a call (the grant names of `revoke`), the fields of a record variable (`r.x`), the common start of several names (the list replaces it). After `|>`, the hint line marks the parameter by the count of the arguments in the parentheses: one place before the parameter that takes the argument at the caret.
 
@@ -772,10 +811,10 @@ The edit line, the line that the console writes back when Enter is pressed, and 
 | Function | The name of a command or an export, in a call or at the start of a row | Name | `0x58D878` | 10.45 | 8.90 |
 | Module | A module or a service, before the dot of its export | none: the text color | | | |
 | Type | `Integer`, `Text`, `Table`, `Bytes`, `Handle`, a record, and what the parentheses of a type hold | Type | `0x9E8FCB` | 6.58 | 5.60 |
-| Parameter | The name of a parameter, before its `:`; a field of a condition and a member after its operator (`level = Warning`) | none | | | |
-| Variable | A variable, also before `=` and before `.field` | none | | | |
+| Parameter | The name of a parameter, before its `:`; a field of a condition and a member after its operator (`level = Warning`); a field of a record literal and a named argument, before its `=` | none | | | |
+| Variable | A variable, also before `=` and before `.field`; a binding of a `let`, where it is bound and where it is read | none | | | |
 | Number, Text, Text_Unfinished | A number; a text in quotes; a text with no end quote yet | Literal | `0x38C0B0` | 8.47 | 7.22 |
-| Operator, Arrow | `+ - * / % = ( ) , : . { } < > !`, `\|>`, and `->` | Punctuation | `0xB0B8C1` | 9.51 | 8.10 |
+| Operator, Arrow | `+ - * / % = ( ) , : . { } < > !`, `\|>`, `->`, and the words `let`, `in`, `with` and `_` | Punctuation | `0xB0B8C1` | 9.51 | 8.10 |
 | Words | The words of a row that are not code: "export of", "command", "3 lines ago" | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 | Unknown | A name that is no command, module or variable; a byte that Lex does not take | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 

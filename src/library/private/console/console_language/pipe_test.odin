@@ -235,3 +235,110 @@ pipe_tokens_and_runs :: proc(t: ^testing.T) {
 	expect_runs(t, text, runs[:count], []Expected_Run{{"x", .Variable}, {"|>", .Operator}, {"length", .Function}, {"|", .Unknown}, {"length", .Function}})
 	expect_cover(t, text, runs[:count])
 }
+
+// The placeholder: each '_' out of its place is refused before any call,
+// with the call that it names; a '_' in its place gives its argument, and
+// the value on the left takes its place in the nested form.
+@(test)
+pipe_placeholders :: proc(t: ^testing.T) {
+	memory: [256]u8
+	stages: [PIPE_STAGE_CAPACITY]Pipe_Stage
+	Case :: struct {
+		text:    string,
+		refusal: Pipe_Refusal,
+		call:    string,
+		inner:   string,
+	}
+	cases := [?]Case {
+		// No "|>" before the call of the '_': with no "|>" in the line, on
+		// the left of "|>", in a call that is not on the right of "|>".
+		{"_", .Placeholder_Without_Pipe, "", ""},
+		{"f(_)", .Placeholder_Without_Pipe, "", ""},
+		{"f(1, g(_))", .Placeholder_Without_Pipe, "", ""},
+		{"_ |> f", .Placeholder_Without_Pipe, "", ""},
+		{"f(_) |> g", .Placeholder_Without_Pipe, "", ""},
+		{"x = _ + 1", .Placeholder_Without_Pipe, "", ""},
+		// No whole argument: in an expression, in a group, in a literal,
+		// twice in one piece, before "=".
+		{"x |> f(_ + 1)", .Placeholder_Not_Whole, "f", ""},
+		{"x |> f(1 + _)", .Placeholder_Not_Whole, "f", ""},
+		{"x |> f((_))", .Placeholder_Not_Whole, "f", ""},
+		{"x |> f({a = _})", .Placeholder_Not_Whole, "f", ""},
+		{"x |> f(_ _)", .Placeholder_Not_Whole, "f", ""},
+		{"x |> f(_ = 1)", .Placeholder_Not_Whole, "f", ""},
+		{"x |> f(n = _ + 1)", .Placeholder_Not_Whole, "f", ""},
+		// Two in one call.
+		{"x |> f(_, _)", .Placeholder_Twice, "f", ""},
+		{"x |> f(_, n = _)", .Placeholder_Twice, "f", ""},
+		// In a call nested in the call on the right.
+		{"x |> f(g(_))", .Placeholder_Nested, "f", "g"},
+		{"x |> f(1, g(h(_)))", .Placeholder_Nested, "f", "h"},
+	}
+	for item in cases {
+		form := nested_of(item.text, memory[:], stages[:])
+		found := item.text[form.found_start:form.found_end]
+		call := item.text[form.call_start:form.call_end]
+		inner := item.text[form.inner_start:form.inner_end]
+		testing.expectf(t, form.refusal == item.refusal && found == "_" && call == item.call && inner == item.inner && form.nested == "", "%q: %v %q %q %q, not %v %q %q", item.text, form.refusal, found, call, inner, item.refusal, item.call, item.inner)
+	}
+
+	Place :: struct {
+		text:     string,
+		nested:   string,
+		argument: int,
+		named:    bool,
+	}
+	places := [?]Place {
+		{"x |> f(_)", "f(x)", 0, false},
+		{"x |> f(b, _)", "f(b, x)", 1, false},
+		{"x |> f(b, _, c)", "f(b, x, c)", 1, false},
+		{"x |> f(n = _)", "f(n = x)", 0, true},
+		{"x |> f(a, n = _)", "f(a, n = x)", 1, true},
+		{"f(x |> g(_), y)", "f(g(x), y)", 0, false},
+		{"f(x |> g(1, _)) |> h(_)", "h(f(g(1, x)))", 0, false},
+	}
+	for item in places {
+		form := nested_of(item.text, memory[:], stages[:])
+		testing.expectf(t, form.refusal == .None && form.nested == item.nested, "%q: %v %q, not %q", item.text, form.refusal, form.nested, item.nested)
+		testing.expectf(t, form.stage_count >= 1 && stages[0].placeholder_argument == item.argument && stages[0].placeholder_named == item.named && item.text[stages[0].placeholder_start:][:1] == "_", "%q: the first stage has its '_' at %d, argument %d, named %v", item.text, stages[0].placeholder_start, stages[0].placeholder_argument, stages[0].placeholder_named)
+	}
+
+	// With no '_', the value on the left is the first argument; a name '_'
+	// in the place of the call is left to the parser, which refuses it.
+	form := nested_of("x |> f(b)", memory[:], stages[:])
+	testing.expect(t, form.refusal == .None && stages[0].placeholder_start == -1 && stages[0].placeholder_argument == -1)
+	form = nested_of("x |> _", memory[:], stages[:])
+	testing.expect_value(t, form.refusal, Pipe_Refusal.None)
+	testing.expect_value(t, form.nested, "_(x)")
+	// A name that holds '_' is a name.
+	form = nested_of("sum_values(x_y) |> f", memory[:], stages[:])
+	testing.expect_value(t, form.nested, "f(sum_values(x_y))")
+}
+
+// The pieces of a call and of a literal end at the ',' outside braces and
+// outside the bindings of a let; a named piece nests its value only.
+@(test)
+pipe_pieces_of_the_forms_of_records :: proc(t: ^testing.T) {
+	memory: [256]u8
+	stages: [PIPE_STAGE_CAPACITY]Pipe_Stage
+	cases := [?][2]string {
+		{"x |> f({a = 1, b = 2})", "f(x, {a = 1, b = 2})"},
+		{"f(n = x |> g)", "f(n = g(x))"},
+		{"{a = x |> g, b = 2}", "{a = g(x), b = 2}"},
+		{"let a = x |> g in a |> h", "let a = g(x) in h(a)"},
+		{"let a = 1, b = x |> g in a", "let a = 1, b = g(x) in a"},
+		{"x |> f(let a = 1, b = 2 in a)", "f(x, let a = 1, b = 2 in a)"},
+		{"r with {a = 1} |> f", "f(r with {a = 1})"},
+	}
+	for item in cases {
+		form := nested_of(item[0], memory[:], stages[:])
+		testing.expectf(t, form.refusal == .None && form.nested == item[1], "%q: %v %q, not %q", item[0], form.refusal, form.nested, item[1])
+	}
+	form := nested_of("x |> f({a = 1, b = 2}, 3)", memory[:], stages[:])
+	testing.expect_value(t, stages[0].argument_count, 2)
+	form = nested_of("x |> f(let a = 1, b = 2 in a, 3)", memory[:], stages[:])
+	testing.expect_value(t, stages[0].argument_count, 2)
+	// A '}' that nothing opened, in a line with "|>".
+	form = nested_of("x} |> f", memory[:], stages[:])
+	testing.expect_value(t, form.refusal, Pipe_Refusal.Unmatched_Close)
+}

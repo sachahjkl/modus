@@ -1052,8 +1052,11 @@ scenario := [?]Step {
 	// The kernel refuses a stop code past one byte, and the machine runs on.
 	{kind = .Wait, text = "root: Machine_Stop refused the codes 256 and 18446744073709551615 with Bad_Operation and the record Bad_Value of the code, limit 255, and the machine runs on: as it must"},
 	// The virtual mouse of QEMU answers the IntelliMouse sequence: its
-	// packets have the wheel.
-	{kind = .Wait, text = "input: ok, the mouse has a wheel"},
+	// packets have the wheel. The input service and the compositor run
+	// on their own processors, so the line of the compositor can come
+	// before this one: an ordered wait here would move the place of the
+	// log past it, and the step of the screen pages would never see it.
+	{kind = .Wait, text = "input: ok, the mouse has a wheel", any_order = true},
 	// The date: the process `date` starts after the input service and reads the real-time clock of the machine,
 	// which QEMU takes from the clock of the host. The date must be within a
 	// few seconds of the host.
@@ -1689,6 +1692,25 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 120"},
 	{kind = .Type, text = "grow(r, 5)"},
 	{kind = .Wait, text = "[console]   height  14"},
+	// The forms of Lex for records (docs/CONSOLE.md, "Records"): a record
+	// literal typed by the parameter that receives it, a named argument,
+	// `with`, `let`, and the placeholder `_` of "|>". A field that the
+	// record does not have, and one that the literal does not give, are
+	// refused before the call runs.
+	{kind = .Type, text = "area({x = 0, y = 0, width = 11, height = 3})"},
+	{kind = .Wait, text = "[console] 33"},
+	{kind = .Type, text = "area(r with {width = 10})"},
+	{kind = .Wait, text = "[console] 40"},
+	{kind = .Type, text = "grow(r, by = 2)"},
+	{kind = .Wait, text = "[console]   height  8"},
+	{kind = .Type, text = "3 |> grow(r, _)"},
+	{kind = .Wait, text = "[console]   height  10"},
+	{kind = .Type, text = "let s = {x = 0, y = 0, width = 6, height = 7} in area(s) + area(s)"},
+	{kind = .Wait, text = "[console] 84"},
+	{kind = .Type, text = "area({x = 1, y = 2, widht = 3, height = 4})"},
+	{kind = .Wait, text = "[console] error: Rectangle has no field widht; its fields are x, y, width, height"},
+	{kind = .Type, text = "area({x = 1, y = 2, width = 3})"},
+	{kind = .Wait, text = "[console] error: Rectangle needs the field height, which has no default"},
 	{kind = .Type, text = "b = buffer(1)"},
 	{kind = .Type, text = "fill(b, 3)"},
 	{kind = .Wait, text = "[console] 4096"},
@@ -2830,12 +2852,18 @@ scenario := [?]Step {
 	// output `log`"): log_flood has a log budget of 0, so the kernel
 	// refuses each of its calls, and its wired log holds each record. The
 	// log of the kernel must hold no line of log_flood: its first line
-	// before the line of output_wiring fails the step. A WRONG line of
+	// before the line of output_wiring fails the step. A line of the
+	// process starts with its name in brackets; the note of the kernel at
+	// its stop, "kernel: log_flood: N lines were refused", is expected and
+	// does not fail it. A WRONG line of
 	// output_wiring ends this wait at the hang bound. No step waits for a
 	// line of log_flood.
 	{kind = .Wait, text = "root: wired the record output log of log_flood to its asker output_wiring, wiring ", fails_on = "output_wiring: WRONG"},
-	{kind = .Wait, text = "output_wiring: the log of log_flood kept its 605 records in order while the kernel refused its 602 calls; then this asker closed its end, and log_flood, which its log held, stopped with Done: as it must", fails_on = "log_flood: "},
+	// The asker reads the stop of log_flood before it writes its line, so
+	// the stop of the root service comes first: the wait for it does not
+	// move the place, and the line of the asker is looked for from there.
 	{kind = .Wait, text = "root: log_flood stopped: itself, done", any_order = true},
+	{kind = .Wait, text = "output_wiring: the log of log_flood kept its 605 records in order while the kernel refused its 602 calls; then this asker closed its end, and log_flood, which its log held, stopped with Done: as it must", fails_on = "[log_flood]"},
 	{kind = .Wait, text = "output_writer: large: 8 rings, each ended with the end word Revoked: as it must", fails_on = "output_writer: WRONG"},
 	{kind = .Wait, text = "output_wiring: 8 wirings, one past them refused with Wire and with a Start, each with its status and its error record and the budget unchanged, then the revocation of the grant wirings: as it must", fails_on = "output_wiring: WRONG"},
 	// A side that writes its own words in its wiring ring: the root
