@@ -1,0 +1,99 @@
+package counters
+
+import op "modus:contract/operation"
+
+// The log facts of the demonstration counters (src/md/features/log_facts.md,
+// "The facts of the demonstrations"): its cases, its failures and its
+// measures, as records of fields. Each fact template is the sentence that
+// the line wrote before it was a fact, so a wait of a machine test on that
+// sentence, and the check of the tool after the run, read it as before. A
+// Text field comes last, and holds its longest text and a zero byte.
+//
+// The status of a failure is the number of its word, as the line wrote it:
+// `status_word` is a plain Integer. The status that a case expected is the
+// name of its member, as the line wrote it: a field of the contract enum.
+
+// A step gave a status that stops the demonstration.
+@(log_fact = "counters: failed: {step} gave {status_word}")
+Step_Failed :: struct {
+	status_word: op.Status_Word,
+	step:        [56]u8,
+}
+
+// A step that the kernel must refuse gave another status than the
+// refusal.
+@(log_fact = "counters: failed: {refused_step} gave {status_word}, not {expected}")
+Step_Not_Refused :: struct {
+	status_word:  op.Status_Word,
+	expected:     op.Status,
+	refused_step: [68]u8,
+}
+
+// The loop of known length retired fewer instructions than its stores.
+@(log_fact = "counters: failed: a loop of {turns} turns retired {instructions} instructions, fewer than {least_instructions}; {cycles} cycles, {cache_misses} cache misses, {branch_misses} branch misses")
+Loop_Too_Short :: struct {
+	turns:              u64,
+	instructions:       u64,
+	least_instructions: u64,
+	cycles:             u64,
+	cache_misses:       u64,
+	branch_misses:      u64,
+}
+
+// The two orders of the reads read other words.
+@(log_fact = "counters: failed: the two orders read other words: {sum_in_order} and {sum_by_page}")
+Orders_Read_Other_Words :: struct {
+	sum_in_order: u64,
+	sum_by_page:  u64,
+}
+
+// The loop of known length retired at least its stores.
+@(log_fact = "counters: a loop of {turns} turns retired at least {least_instructions} instructions: as it must")
+Loop_Retired :: struct {
+	turns:              u64,
+	least_instructions: u64,
+}
+
+// The two orders of the reads read the same words.
+@(log_fact = "counters: {reads} reads of {word_bytes} bytes in {region_pages} pages, in order and by page, read the same words: as it must")
+Orders_Read_Same_Words :: struct {
+	reads:        u64,
+	word_bytes:   u64,
+	region_pages: u64,
+}
+
+// The four counts of one measure: the loop, the reads in order, the reads
+// by page.
+@(log_fact = "counters: {measure} (a measure): {instructions} instructions retired, {cycles} cycles, {cache_misses} cache misses, {branch_misses} branch misses")
+Counts_Measured :: struct {
+	instructions:  u64,
+	cycles:        u64,
+	cache_misses:  u64,
+	branch_misses: u64,
+	measure:       [24]u8,
+}
+
+// The cases with no value: each sentence is its fact type.
+
+@(log_fact = "counters: Start_Counters with a copy of the machine handle with no right gave No_Right: as it must")
+Start_Without_Right_Refused :: struct {}
+
+@(log_fact = "counters: Read_Counters and Start_Counters gave Bad_Operation with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must")
+Counters_Unsupported :: struct {}
+
+@(log_fact = "counters: Read_Counters before Start_Counters gave Bad_State: as it must")
+Read_Before_Start_Refused :: struct {}
+
+@(log_fact = "counters: failed: a second read gave a count below the first")
+Second_Read_Below_First :: struct {}
+
+@(log_fact = "counters: a second read gave no count below the first: as it must")
+Second_Read_Not_Below :: struct {}
+
+@(log_fact = "counters: Stop_Counters with no handle gave Ok, and Read_Counters after it gave Bad_State: as it must")
+Stop_Without_Handle_Checked :: struct {}
+
+// Each case held, or the machine has no counters and the demonstration
+// ends there.
+@(log_fact = "counters: ok")
+Counters_Held :: struct {}

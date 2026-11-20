@@ -222,12 +222,13 @@ kernel_events_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	if !machine_test(part, steps[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_KERNEL_EVENTS, exit_status = build.MACHINE_STOP_OK}) {
 		return false
 	}
-	log, read_err := os.read_entire_file(TEST_OUTPUT_KERNEL_EVENTS, context.temp_allocator)
-	if read_err != nil {
-		fmt.eprintfln("modustool: cannot read %s for the thread counters: %v", TEST_OUTPUT_KERNEL_EVENTS, read_err)
+	// The lines of the process counters are facts: the check reads their
+	// sentences, which the module files of the build render.
+	log, rendered := log_file_rendered(TEST_OUTPUT_KERNEL_EVENTS)
+	if !rendered {
 		return false
 	}
-	counted, missing, ok := thread_counters_outcome_check(string(log))
+	counted, missing, ok := thread_counters_outcome_check(log)
 	gives, reason := host_gives_thread_counters()
 	if !ok {
 		fmt.eprintfln("modustool: the thread counters: the line \"%s\" did not come (the kernel %s; the host: %s)", missing, counted ? "found its counters" : "found no counters", reason)

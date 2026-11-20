@@ -1114,7 +1114,7 @@ The lines of `modustool measure`, which starts a measure run (`docs/TOOLS.md`, "
 - `locks: kernel entries in one second, each locker on its own objects: ...`: entries with no switch.
 - `locks: word wait, two threads wake each other: ...`: each wake is a switch.
 - `extended_state: a hand-over between two threads by the word wait (...): ...`: one switch with x87 and SSE in use, then with the ymm high halves in use.
-- `extended_state: the parts of a save and a restore, each alone in this process, ...` and `each instruction alone ...`: the cycles of each instruction of the save and the restore, measured by the process on its own area (`fxsave`, `xsave`, `xsaveopt` and `xrstor` are not privileged).
+- `extended_state: a part of a save and a restore, alone in this process: ...` and `extended_state: an instruction alone, the loop included: ...`, one line for each part: the cycles of each instruction of the save and the restore, and their time in nanoseconds, with two decimals, measured by the process on its own area (`fxsave`, `xsave`, `xsaveopt` and `xrstor` are not privileged).
 - `extended_state: an empty kernel entry, 100000 times: ...`: with xmm, ymm or zmm in use.
 
 ### 5. A hostile process

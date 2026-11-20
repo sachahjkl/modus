@@ -224,7 +224,12 @@ measure_record_number_read :: proc(measure: Measure_Entry, started: time.Time, n
 			append(&reasons, fmt.tprintf("%s: cannot read: %v", path, read_error))
 			continue
 		}
-		if measure_record_number_from_log(&number, measure, path, string(data), names) {
+		content, render_problem := measure_log_rendered(string(data))
+		if render_problem != "" {
+			append(&reasons, fmt.tprintf("%s: the facts cannot be rendered: %s", path, render_problem))
+			continue
+		}
+		if measure_record_number_from_log(&number, measure, path, content, names) {
 			return number
 		}
 		append(&reasons, fmt.tprintf("%s: no line with \"%s\"", path, measure.pattern))

@@ -42,6 +42,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 import "base:intrinsics"
 
@@ -302,10 +303,10 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 	measure.done = true
 	if measured {
 		measure.rate = read * 1000 / max(end - begin, 1)
-		system.log(.Info, "crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", written, " written, ", read, " read, ", measure.wrong, " wrong")
+		system.log_fact(.Info, Run_Measured{writers = u64(measure.writers), readers = u64(measure.readers), records_in_one_second = measure.rate, kernel_entries = measure.entries, written_records = written, read_records = read, wrong_records = measure.wrong, queue = value_kinds.text_field(measure.with_lock ? "queue with a lock" : "shared queue", 24)})
 		return read != 0 && written == read && measure.together == u64(count)
 	}
-	system.log(.Info, "crowd: ", measure.with_lock ? "queue with a lock, " : "shared queue, ", u64(measure.writers), " writers, ", u64(measure.readers), " readers: ", written, " written, ", read, " read, ", measure.wrong, " wrong, ", measure.entries, " kernel entries for one million records")
+	system.log_fact(.Info, Run_Checked{writers = u64(measure.writers), readers = u64(measure.readers), written_records = written, read_records = read, wrong_records = measure.wrong, kernel_entries = measure.entries, queue = value_kinds.text_field(measure.with_lock ? "queue with a lock" : "shared queue", 24)})
 	return written == u64(measure.writers) * RECORDS_CHECKED && written == read && measure.together == u64(count)
 }
 
@@ -391,9 +392,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		draw(&window)
 	}
 	if wrong || total_wrong != 0 {
-		system.log(.Info, "crowd: wrong: ", total_wrong, " records lost, in disorder or read two times")
+		system.log_fact(.Info, Crowd_Wrong{wrong_records = total_wrong})
 	} else {
-		system.log(.Info, "crowd: ok, ", u64(len(measures)), " runs, each record written is read one time, each event started all the threads")
+		system.log_fact(.Info, Crowd_Held{runs = u64(len(measures))})
 	}
 	for {
 		draw(&window)
