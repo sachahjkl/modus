@@ -273,7 +273,10 @@ scenario_tcp_real := [?]Step {
 	{kind = .Http, text = "requests 16"},
 	{kind = .Wait, text = "requests_pace: the fast reader read the 80 records; it waits for the stop of server", fails_on = "requests_pace: WRONG"},
 	// The tool has the answer of each request: the principal stops server,
-	// and the readers read the end of their rings.
+	// and the readers read the end of their rings. The window of the server
+	// that requests_pace started is in front since its start: the console
+	// comes in front first, or the keys of the command go to the server.
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"server\")"},
 	{kind = .Wait, text = "root: server stopped: "},
 	{kind = .Wait, text = "requests_reader: held, of the pace Always_Holds_Writer: the joined record of 0 and the 80 records in order, no gap, with a ring of 32 that held the server twice: as it must", fails_on = "requests_reader: WRONG", any_order = true},

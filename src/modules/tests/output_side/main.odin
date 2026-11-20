@@ -69,7 +69,7 @@ command_wait :: proc "contextless" () -> ring.Record {
 			return record
 		}
 		if system.time() >= deadline {
-			wrong("no end came within the hang bound", 0)
+			wrong("no end came within the hang bound, in milliseconds:", system.TEST_HANG_BOUND_MILLISECONDS)
 		}
 		system.wait_records(&wait, &wiring.commands)
 		system.wait_end(&wait, deadline)
@@ -142,5 +142,5 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait := system.wait_begin()
 		system.wait_end(&wait, deadline)
 	}
-	wrong("the asker did not stop this process within the hang bound", 0)
+	wrong("the asker did not stop this process within the hang bound, in milliseconds:", system.TEST_HANG_BOUND_MILLISECONDS)
 }

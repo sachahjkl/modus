@@ -128,7 +128,10 @@ end_read :: proc "contextless" (stream: ^system.Record_Input(Access_Record), nam
 	record: Access_Record
 	item, status := system.input_read(stream, &record, hang_deadline())
 	if status != .Ended || item.end_word != .Writer_Stopped {
-		system.log(.Error, "requests_reader: WRONG: ", name, ": after the last request, the status word ", u64(status), " and the end word ", output.end_word_names[item.end_word])
+		// No_Record: the writer neither stopped nor ended the stream within
+		// the hang bound.
+		meaning := status == .No_Record ? " (No_Record: no end within the hang bound)" : ""
+		system.log(.Error, "requests_reader: WRONG: ", name, ": after the last request, the status word ", u64(status), meaning, " and the end word ", output.end_word_names[item.end_word])
 		system.stop(.Failed)
 	}
 }
@@ -138,7 +141,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	deadline := hang_deadline()
 	for !system.input_has_writer(&held) || !system.input_has_writer(&gapped) {
 		if system.time() >= deadline {
-			wrong("held and gapped had no writer within the hang bound", 0)
+			wrong("held and gapped had no writer within the hang bound, in milliseconds:", system.TEST_HANG_BOUND_MILLISECONDS)
 		}
 		system.wiring_wait(deadline)
 	}
