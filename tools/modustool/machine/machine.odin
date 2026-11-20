@@ -5389,9 +5389,13 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					}
 					joined := strings.builder_make(context.temp_allocator)
 					number, _ := strconv.parse_i64(table_value(&table, row, "number"))
+					last_number, _ := strconv.parse_i64(table_value(&table, last, "number"))
 					if table_value(&table, row, "form") == "Fact" {
-						fact_sentence, has_sentence := fact_sentences[number]
-						if !has_sentence && number > fact_read_through {
+						// The rows of a fact of several records are one
+						// group, and its sentence is in the place of its last
+						// record (fact_record_rows_sentences).
+						fact_sentence, has_sentence := fact_sentences[last_number]
+						if !has_sentence && last_number > fact_read_through {
 							// The answer of fact_records did not reach this
 							// fact: read again from it, as for a text that
 							// goes on.
@@ -5407,7 +5411,6 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 							strings.write_string(&joined, table_value(&table, part, "text"))
 						}
 					}
-					last_number, _ := strconv.parse_i64(table_value(&table, last, "number"))
 					if table_value(&table, row, "process") == step.process && table_value(&table, row, "level") == step.level && strings.contains(strings.to_string(joined), step.text) {
 						found = true
 						machine.record_found, machine.record_found_any = number, true

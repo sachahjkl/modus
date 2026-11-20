@@ -31,9 +31,9 @@ import "base:intrinsics"
 
 // One row of the log: records(). A row has 256 bytes, the most that a
 // record of a description has, and holds one log record: its text has the
-// 168 bytes of the text of a log record. A row says that its text goes on in
-// the next row (continues), as a log record says that its text goes on in
-// the next log record (Log_Record.more). The level and the form are members
+// 168 bytes of the text of a log record. A row says that its text, or its
+// fact of several records, goes on in the next row (continues), as a log
+// record says it of the next log record (Log_Record.more). The level and the form are members
 // of contract enums, so a reader compares a member and parses no text
 // (src/md/features/log_facts.md, "The reader path").
 Record :: struct {
@@ -44,7 +44,7 @@ Record :: struct {
 	level:     op.Log_Level, // Info, Debug, Warning or Error.
 	form:      op.Log_Record_Form, // Text, or Fact: fact_records() gives the fact, and the text is empty.
 	lost:      i64, // The first row only: the log records after `after` that the kernel wrote over before this call read them.
-	continues: i64, // 1: the text goes on in the next row.
+	continues: i64, // 1: the text, or the fact of several records, goes on in the next row.
 	runs:      i64, // The count of the value runs of the text: value_runs() gives them.
 	text:      [168]u8, // op.LOG_TEXT_CAPACITY: the tool that reads the descriptions needs the number.
 }
@@ -99,11 +99,14 @@ own_records_read :: proc "contextless" (scope: log_scope.Scope, after: i64) -> (
 row_fill :: proc "contextless" (row: ^Record, number: i64, record: ^op.Log_Record, form: op.Log_Record_Form, level: op.Log_Level) {
 	row^ = {number = number, time = i64(record.time), slot = i64(record.process), level = level, form = form}
 	copy(row.process[:len(row.process) - 1], system.name_of(record.name[:]))
+	// `more` joins the records of a long text and the records of a fact of
+	// several records alike: a reader that groups the rows by it reads a
+	// whole fact, never one part as a fact.
+	row.continues = record.more != 0 ? 1 : 0
 	switch form {
 	case .Text:
 		text_count := min(int(record.text_count), len(record.text))
 		copy(row.text[:], record.text[:text_count])
-		row.continues = record.more != 0 ? 1 : 0
 		row.runs = i64(min(int(record.run_count), len(record.runs)))
 	case .Fact:
 	}
@@ -205,7 +208,8 @@ scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^err
 // a member of `Log_Level`: `Info`, `Debug`, `Warning` or `Error`; `form`,
 // `Text`, or `Fact` for a [log fact](term:log-fact), whose text is empty
 // and whose values `fact_records` gives; `lost`, in the first row only;
-// `continues`, 1 when the text goes on in the next row; `runs`, the count of
+// `continues`, 1 when the text, or the fact of several records, goes on in
+// the next row; `runs`, the count of
 // its value runs; `text`, at most 168 bytes.
 //
 // **The result** counts the rows of the scope from `after` to the last
