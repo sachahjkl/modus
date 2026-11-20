@@ -400,6 +400,9 @@ dropped_file_readers := [?]string {
 	"build_file_of_module",
 	// A test of the build that `check` runs after its build.
 	"test_debug_objects",
+	// The guards of the counted kernel, read by the opt-in fuzz command on
+	// the host, which no test part runs.
+	"kernel_linked_guard_count",
 }
 
 // undeclared_reads_problems gives, for the rows of a table of parts and the
