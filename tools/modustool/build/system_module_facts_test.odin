@@ -70,7 +70,7 @@ system_module_text_bytes_most :: proc() -> map[string]u32 {
 	most["export"] = module.NAME_SIZE
 	most["nickname"] = 23
 	most["refusal_sentence"] = 119
-	most["writer_refusal"] = len("Segment_Written_And_Executed")
+	most["writer_refusal"] = len("Record_Stream_Without_Description")
 	most["diagnostic"] = 143
 	return most
 }
@@ -755,7 +755,7 @@ the_late_facts_of_round_two_write_the_lines_of_before :: proc(t: ^testing.T) {
 	}
 	// A refusal of the writer of module files is the name of its member: the
 	// longest name, and a short one, at the edges of the index.
-	writer_refusals := [2]string{"Segment_Written_And_Executed", "None"}
+	writer_refusals := [3]string{"Record_Stream_Without_Description", "Segment_Written_And_Executed", "None"}
 	indexes := [3]u64{0, 1, max(u64)}
 	for writer_refusal in writer_refusals {
 		for index in indexes {

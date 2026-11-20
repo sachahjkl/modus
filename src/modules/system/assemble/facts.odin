@@ -27,7 +27,7 @@ import "modus:private/assemble/assembler"
 REFUSAL_SENTENCE_FIELD_BYTES :: 124
 // The bytes of the Text field of the name of a refusal of the writer: the
 // longest, "Segment_Written_And_Executed", has 28 bytes, and a zero byte.
-WRITER_REFUSAL_FIELD_BYTES :: 32
+WRITER_REFUSAL_FIELD_BYTES :: 40
 
 // The name of each refusal of the writer of module files, as its member.
 @(rodata)
@@ -53,6 +53,10 @@ WRITER_REFUSAL_NAMES := [module_file_writer.Refusal]string {
 	.Own_Hash_Place_Not_Writable  = "Own_Hash_Place_Not_Writable",
 	.Output_Too_Small             = "Output_Too_Small",
 	.Written_File_Not_Valid       = "Written_File_Not_Valid",
+	.Record_Streams_Past_Bound    = "Record_Streams_Past_Bound",
+	.Record_Stream_Without_Description = "Record_Stream_Without_Description",
+	.Record_Stream_Place_Not_Writable  = "Record_Stream_Place_Not_Writable",
+	.Record_Streams_Not_Valid     = "Record_Streams_Not_Valid",
 }
 
 // A module file written whole.
