@@ -70,7 +70,7 @@ Condition_Terms_Field :: enum i64 {
 	Text_Count      = 4,
 	Integer         = 5,
 	Text            = 6,
-	Reserved        = 7,
+	Reserved_First  = 7,
 	Reserved_Second = 8,
 }
 
@@ -167,7 +167,7 @@ writer_condition_of_terms :: proc "contextless" (bytes: []u8, file: []u8, descri
 	terms: Condition_Terms
 	intrinsics.mem_copy_non_overlapping(&terms, raw_data(bytes), size_of(terms))
 	if terms.reserved_first != 0 {
-		return {}, terms_refusal(.Reserved, i64(terms.reserved_first), 0), false
+		return {}, terms_refusal(.Reserved_First, i64(terms.reserved_first), 0), false
 	}
 	if terms.reserved_second != 0 {
 		return {}, terms_refusal(.Reserved_Second, i64(terms.reserved_second), 0), false

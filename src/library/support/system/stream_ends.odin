@@ -750,6 +750,18 @@ output_write_any :: proc "contextless" (stream: ^Record_Output(Any_Record, $pair
 	return output_write_bytes(state, bytes, wait, deadline)
 }
 
+// output_size_known says if the library knows the record size of a record
+// output: always for a record type, after output_size_set for a generic
+// one.
+@(private = "file")
+output_size_known :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)) -> bool {
+	when Record_Type == Any_Record {
+		return stream.state.record_size != 0
+	} else {
+		return true
+	}
+}
+
 // output_ends_live gives the live ends of a record output with the size of
 // its record: the size of its type, or for a generic record output the size
 // that output_size_set gave. A generic record output with no size yet opens
@@ -934,6 +946,11 @@ output_end :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)
 	if state.ended {
 		return .Ended
 	}
+	// A generic record output with no size opens no ring: its end would
+	// reach no reader, so it is refused, not given as done.
+	if !output_size_known(stream) {
+		return .Bad_Record
+	}
 	output_ends_live(stream)
 	status := output.Stream_Status.Ok
 	index := stream_index_read(&state.index)
@@ -999,6 +1016,10 @@ output_gap :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)
 	}
 	if count == 0 {
 		return .Ok
+	}
+	// A generic record output with no size cannot say the loss to a ring.
+	if !output_size_known(stream) {
+		return .Bad_Record
 	}
 	if output_ends_live(stream) == 0 {
 		state.next_serial += count

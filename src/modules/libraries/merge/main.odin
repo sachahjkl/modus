@@ -84,6 +84,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		case .Ended:
 			seen = true
+			// The record size of the ring comes with each item: a source
+			// that ends before any record still gives merged its size, so
+			// its end record reaches its readers.
+			system.output_size_set(&merged, item.record_size)
 			// An end record with its error record, or an end word.
 			error := item.error
 			if item.end_word != .None {
@@ -94,6 +98,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		case .Bad_Record:
 			seen = true
+			system.output_size_set(&merged, item.record_size)
 			if !ended_with_error {
 				first_error, ended_with_error = item.refusal, true
 			}

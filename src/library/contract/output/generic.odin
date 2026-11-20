@@ -27,13 +27,34 @@ generic_reader_step_of :: proc "contextless" (record: u32, wirings: module.Wirin
 	if record != 0 {
 		return .Compare_Declared
 	}
-	switch wirings {
-	case .Many_Types:
+	if wirings == .Many_Types {
 		return .Take_Each
-	case .One, .Many:
-		return fixed ? .Compare_Fixed : .Fix
 	}
-	return .Take_Each
+	return fixed ? .Compare_Fixed : .Fix
+}
+
+// generic_reader_keeps says if a wiring of a reader step keeps the type of
+// its generic record input once it reached its reader: the row that fixed
+// it and each row that compared with it. A list is whole or refused, but
+// a row can still end at its delivery (a give that fails); each delivered
+// row of the type keeps it, so a reader that reads records of a type
+// always has that type kept, whichever row was delivered.
+generic_reader_keeps :: proc "contextless" (step: Generic_Reader_Step) -> bool {
+	return step == .Fix || step == .Compare_Fixed
+}
+
+// generic_type_room_of says if a process that keeps kept types can keep one
+// more, beside the other_listed types that other rows of the same list fix
+// for its other generic record inputs, under the bound most.
+//
+// Example: with the bound 4, a process that keeps 3 has room for one; one
+// that keeps 3 while another row of the list fixes a fourth has none.
+generic_type_room_of :: proc "contextless" (kept: int, other_listed: int, most: int) -> bool {
+	if kept < 0 || other_listed < 0 || kept >= most {
+		return false
+	}
+	// No sum: a count past the bound must not wrap into room.
+	return other_listed < most - kept
 }
 
 // What the type check of a wiring takes on the side of its writer.

@@ -276,6 +276,18 @@ refusals_case :: proc "contextless" (source, filter: system.Handle) {
 		status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply)})
 		refused("a Wire of filter.kept with no fixed type", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Record_Types, 0, i64(output.Description_Difference.Not_Fixed), 0, 1))
 	}
+	// 2b. A refused list into the running generic record input
+	// filter.source keeps no type: a Wire of other, of the record Other,
+	// passes the step that fixes the type, then the terms of no size are
+	// refused. The chain below then wires a Probe into filter.source, which
+	// a kept Other would refuse.
+	{
+		handles := [2]u32{lend(source), lend(filter)}
+		rows := [1]output.Wiring{row(.Started, 1, SOURCE_OTHER, .Started, 2, FILTER_SOURCE)}
+		list_write(rows[:], handles[:])
+		status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply)})
+		refused("a Wire of Other into filter.source with no terms", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Wiring_Field.Terms_Count), 0, size_of(output.Condition_Terms), 1))
+	}
 	// 3. A condition on merge.merged that names no field of Probe: the
 	// row 3 is resolved after the rows that fix the type of
 	// merge.sources, against Probe.
@@ -300,7 +312,7 @@ refusals_case :: proc "contextless" (source, filter: system.Handle) {
 		status, answer := start_listed("merge", true)
 		refused("one source past the wirings of an asker", before, status, answer, .No_Slot, fail(.Start, .Full, .Wirings, 0, output.WIRINGS_OF_AN_ASKER_MOST + 1, output.WIRINGS_OF_AN_ASKER_MOST))
 	}
-	system.log(.Info, "generic_wiring: a second source of another record, a generic output with no fixed type, a condition on no field and one source past the wirings of an asker: refused, each with its status and its error record and the budget unchanged: as it must")
+	system.log(.Info, "generic_wiring: a second source of another record, a generic output with no fixed type, a record of no terms into a running generic input, a condition on no field and one source past the wirings of an asker: refused, each with its status and its error record and the budget unchanged: as it must")
 }
 
 // chain_case: source.left and source.right to merge, merge to filter with
@@ -357,7 +369,7 @@ chain_case :: proc "contextless" (source, filter: system.Handle) {
 	for process in processes {
 		system.close(process)
 	}
-	system.log(.Info, "generic_wiring: generic_source to merge to filter with mark = 1 to this asker, in one start list: the joined record of 0, the ", u64(kept), " probes of mark 1 of the two sides, each side in its order, then a clean end: as it must")
+	system.log(.Info, "generic_wiring: generic_source to merge to filter with mark = 1 to this asker, in one start list, after a refused Wire of Other into filter.source kept no type: the joined record of 0, the ", u64(kept), " probes of mark 1 of the two sides, each side in its order, then a clean end: as it must")
 }
 
 // no_field_case: filter with the terms of the field 0 ends kept at once

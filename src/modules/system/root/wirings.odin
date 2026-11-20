@@ -149,9 +149,11 @@ Wiring_Plan :: struct {
 	deferred:           bool,
 	resolved:           bool,
 	// The reader is a generic record input of the count One or Many with
-	// no fixed type: this row fixes it, to the record of its writer, when
-	// the list reaches its processes.
+	// no fixed type: this row fixes it, to the record of its writer.
 	fixes:              bool,
+	// The reader step fixes or compares with the type of a generic record
+	// input: the row keeps that type when it reaches its reader.
+	keeps_type:         bool,
 }
 
 // One type that a wiring fixed for a generic record input of the count One
@@ -557,9 +559,11 @@ wiring_row_resolve :: proc "contextless" (work: ^Wiring_Work, number: u32, first
 			return .Ok
 		}
 		if output_row.record == 0 {
-			input_index, input_wirings := generic_input_of(plan.writer_file)
+			// A module with no generic record input names no type: the
+			// contract check of its file refuses it, and so does this.
+			input_index, input_wirings, has_input := generic_input_of(plan.writer_file)
 			fixed_file, fixed_description, fixed := generic_type_fixed(work, number, plan.writer, input_index)
-			switch output.generic_writer_step_of(0, pairing, input_wirings, fixed) {
+			switch output.generic_writer_step_of(0, pairing, input_wirings, fixed && has_input) {
 			case .Declared:
 			case .Fixed_Type:
 				plan.writer_file, plan.description = fixed_file, fixed_description
@@ -596,15 +600,21 @@ wiring_row_resolve :: proc "contextless" (work: ^Wiring_Work, number: u32, first
 		// each wiring. The reader receives the record of the writer in its
 		// description file in each case.
 		fixed_file, fixed_description, fixed := generic_type_fixed(work, number, plan.reader, row.reader_index)
-		switch output.generic_reader_step_of(input_row.record, wirings, fixed) {
+		step := output.generic_reader_step_of(input_row.record, wirings, fixed)
+		// Each delivered row of a fixed type keeps it, not only the row
+		// that fixed it: that row can end at its delivery while this one
+		// reaches its reader.
+		plan.keeps_type = output.generic_reader_keeps(step)
+		switch step {
 		case .Compare_Declared:
 		case .Compare_Fixed:
 			reader_file, reader_description = fixed_file, fixed_description
 		case .Take_Each:
 			reader_file, reader_description = plan.writer_file, plan.description
 		case .Fix:
-			if generic_types_needed(work, number, plan.reader) > GENERIC_TYPES_OF_A_PROCESS_MOST {
-				return wiring_refuse(work, .No_Slot, .Full, .Wirings, 0, i64(generic_types_needed(work, number, plan.reader)), GENERIC_TYPES_OF_A_PROCESS_MOST, found)
+			listed := generic_types_listed(work, number, plan.reader)
+			if !output.generic_type_room_of(plan.reader.generic_type_count, listed, GENERIC_TYPES_OF_A_PROCESS_MOST) {
+				return wiring_refuse(work, .No_Slot, .Full, .Wirings, 0, i64(plan.reader.generic_type_count + listed + 1), GENERIC_TYPES_OF_A_PROCESS_MOST, found)
 			}
 			reader_file, reader_description = plan.writer_file, plan.description
 			plan.fixes = true
@@ -640,16 +650,17 @@ wiring_row_resolve :: proc "contextless" (work: ^Wiring_Work, number: u32, first
 
 // generic_input_of gives the one generic record input of a module and its
 // count: module.record_streams_check refused a module with a generic
-// record output and no generic record input, or two. 0: none.
+// record output and no generic record input, or two. ok is false for a
+// module with none.
 @(private = "file")
-generic_input_of :: proc "contextless" (file: []u8) -> (index: u32, wirings: module.Wiring_Count) {
+generic_input_of :: proc "contextless" (file: []u8) -> (index: u32, wirings: module.Wiring_Count, ok: bool) {
 	for row in 1 ..= module.count(file, .Record_Inputs) {
-		value, row_wirings, _, _, ok := module.record_input(file, row)
-		if ok && value.record == 0 {
-			return row, row_wirings
+		value, row_wirings, _, _, row_ok := module.record_input(file, row)
+		if row_ok && value.record == 0 {
+			return row, row_wirings, true
 		}
 	}
-	return 0, .One
+	return 0, {}, false
 }
 
 // generic_type_fixed gives the type that a wiring fixed for the record
@@ -681,28 +692,32 @@ generic_type_fixed :: proc "contextless" (work: ^Wiring_Work, number: u32, proce
 @(private = "file")
 deferred_type_fixed :: proc "contextless" (work: ^Wiring_Work, number: u32) -> bool {
 	plan := &work.plans[number - 1]
-	index, _ := generic_input_of(plan.writer_file)
+	index, _, has_input := generic_input_of(plan.writer_file)
+	if !has_input {
+		return false
+	}
 	_, _, fixed := generic_type_fixed(work, number, plan.writer, index)
 	return fixed
 }
 
-// generic_types_needed gives the types that a process keeps once the list
-// reached it with the row number fixing one more: those that it keeps, those
-// that other rows of the list fix, and this one.
+// generic_types_listed gives the types that the other rows of the list fix
+// for a process: one for each of its other generic record inputs, as a
+// second row of the same record input compares and fixes nothing.
 @(private = "file")
-generic_types_needed :: proc "contextless" (work: ^Wiring_Work, number: u32, process: ^Started) -> int {
-	needed := process.generic_type_count + 1
+generic_types_listed :: proc "contextless" (work: ^Wiring_Work, number: u32, process: ^Started) -> (listed: int) {
 	for other in 1 ..= work.list.row_count {
 		plan := &work.plans[other - 1]
 		if other != number && plan.fixes && plan.reader == process {
-			needed += 1
+			listed += 1
 		}
 	}
-	return needed
+	return listed
 }
 
-// generic_type_keep keeps the type that a row fixed, when the row reached
-// its processes: generic_types_needed checked the room at the resolve.
+// generic_type_keep keeps the type of a row that reached its reader, when
+// its reader step keeps it (output.generic_reader_keeps): the row that
+// fixed it, or one that compared with it. output.generic_type_room_of
+// checked the room at the resolve; a type kept already stays.
 @(private = "file")
 generic_type_keep :: proc "contextless" (plan: ^Wiring_Plan) {
 	process := plan.reader
@@ -1219,9 +1234,11 @@ wiring_list_deliver :: proc "contextless" (work: ^Wiring_Work) {
 		if status == .Ok {
 			plan.kept.reader_counted = true
 			plan.reader.ends_given += 1
-			// The type that this row fixed lasts until the stop of the
-			// reader: a later wiring of its generic record output takes it.
-			if plan.fixes {
+			// The type of this row lasts until the stop of the reader: a
+			// later wiring of its generic record output takes it. Each
+			// delivered row of the type keeps it, so the row that fixed it
+			// can end at its own delivery.
+			if plan.keeps_type {
 				generic_type_keep(plan)
 			}
 		}

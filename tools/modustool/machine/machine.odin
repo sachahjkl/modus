@@ -2868,11 +2868,11 @@ scenario := [?]Step {
 	// generic_source, merge and filter in one list, then a filter whose
 	// condition names no field. Each process writes a few lines only.
 	{kind = .Type, text = "start(\"generic_wiring\")"},
-	{kind = .Wait, text = "generic_wiring: a second source of another record, a generic output with no fixed type, a condition on no field and one source past the wirings of an asker: refused, each with its status and its error record and the budget unchanged: as it must", fails_on = "generic_wiring: WRONG"},
+	{kind = .Wait, text = "generic_wiring: a second source of another record, a generic output with no fixed type, a record of no terms into a running generic input, a condition on no field and one source past the wirings of an asker: refused, each with its status and its error record and the budget unchanged: as it must", fails_on = "generic_wiring: WRONG"},
 	{kind = .Wait, text = "generic_source: wrote 20 probes into left and into right, and ended both", fails_on = "generic_source: WRONG", any_order = true},
-	{kind = .Wait, text = "generic_wiring: generic_source to merge to filter with mark = 1 to this asker, in one start list: the joined record of 0, the 20 probes of mark 1 of the two sides, each side in its order, then a clean end: as it must", fails_on = "generic_wiring: WRONG"},
+	{kind = .Wait, text = "generic_wiring: generic_source to merge to filter with mark = 1 to this asker, in one start list, after a refused Wire of Other into filter.source kept no type: the joined record of 0, the 20 probes of mark 1 of the two sides, each side in its order, then a clean end: as it must", fails_on = "generic_wiring: WRONG"},
 	{kind = .Wait, text = "generic_wiring: filter with a condition on the field 0 ended kept at once with the error record of that field: as it must", fails_on = "generic_wiring: WRONG"},
-	{kind = .Wait, text = "generic_wiring: ok, after 4 refusals"},
+	{kind = .Wait, text = "generic_wiring: ok, after 5 refusals"},
 	{kind = .Wait, text = "root: generic_wiring stopped: itself, done", any_order = true},
 	// The streams of the console (src/md/features/module_outputs.md, "The
 	// console form"): the console starts output_counter and reads its

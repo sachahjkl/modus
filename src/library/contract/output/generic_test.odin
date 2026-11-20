@@ -46,6 +46,43 @@ a_generic_record_input_fixes_its_type_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, generic_reader_step_of(0, .One, false), Generic_Reader_Step.Fix)
 }
 
+// Which delivered row keeps the type: the row that compared with the fixed
+// type keeps it as the row that fixed it does, so a list whose fixing row
+// ended at its delivery still leaves the type of the records that its
+// reader reads. A declared record and Many_Types keep none.
+@(test)
+each_delivered_row_of_a_fixed_type_keeps_it :: proc(t: ^testing.T) {
+	testing.expect(t, !generic_reader_keeps(.Compare_Declared))
+	testing.expect(t, !generic_reader_keeps(.Take_Each))
+	testing.expect(t, generic_reader_keeps(.Compare_Fixed))
+	testing.expect(t, generic_reader_keeps(.Fix))
+	// The scenario: row 1 fixes, row 2 compares; row 1 ends at its
+	// delivery, row 2 reaches its reader and must keep the type.
+	first := generic_reader_step_of(0, .Many, false)
+	second := generic_reader_step_of(0, .Many, true)
+	testing.expect(t, first == .Fix && second == .Compare_Fixed && generic_reader_keeps(second))
+}
+
+// The bound of the types that a process keeps: refusals first, at the
+// bound and past it, a negative count, a bound of 0; then the room under
+// the bound.
+@(test)
+the_types_of_a_process_have_a_bound :: proc(t: ^testing.T) {
+	MOST :: 4
+	testing.expect(t, !generic_type_room_of(4, 0, MOST))
+	testing.expect(t, !generic_type_room_of(5, 0, MOST))
+	testing.expect(t, !generic_type_room_of(3, 1, MOST))
+	testing.expect(t, !generic_type_room_of(0, 4, MOST))
+	testing.expect(t, !generic_type_room_of(0, 0, 0))
+	testing.expect(t, !generic_type_room_of(-1, 0, MOST))
+	testing.expect(t, !generic_type_room_of(0, -1, MOST))
+	testing.expect(t, !generic_type_room_of(max(int), max(int), MOST))
+	testing.expect(t, generic_type_room_of(3, 0, MOST))
+	testing.expect(t, generic_type_room_of(0, 3, MOST))
+	testing.expect(t, generic_type_room_of(0, 0, MOST))
+	testing.expect(t, generic_type_room_of(1, 2, MOST))
+}
+
 // The wait of a reader: the ends of a process fit one wait; the most rings
 // that fit, and one past them, which does not.
 @(test)
