@@ -145,6 +145,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The look of the system as a style of gui_toolkit.** A rich module can show the grid of points, the cards, the folded gap and the colors of the concepts of the system. [Design](src/md/features/desktop_to_browser.md)
 - **WebAssembly modules.** A module in WebAssembly, named by its hash, runs on any machine of the system, confined to its process with only the imports that it was given. [Design](src/md/features/desktop_to_browser.md)
 - **The browser wren whole in a Linux guest.** A principal runs wren, with no port, in a Linux guest that shows it in a window of the system. [Design](src/md/features/desktop_to_browser.md)
+- **An SSH client.** A principal opens a session on a remote host from a terminal of the system, with a key that the principal holds, and the host key checked against the hosts that the principal knows. The cryptography that it needs (x25519, ed25519, ChaCha20-Poly1305, AES, SHA-2) and TCP are in the system already; the terminal reads the escape sequences of the remote host.
 
 ## Maybe
 
