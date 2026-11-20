@@ -128,6 +128,13 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		fmt.eprintfln("modustool: test failed: the outside modules of the disk: %s", problem)
 		return false
 	}
+	// The machine renders their facts beside those of the build: copies
+	// that live after the steps, which free the temporary memory.
+	rendered_outsider := slice.clone(outsider_file)
+	defer delete(rendered_outsider)
+	rendered_fault := slice.clone(fault_file)
+	defer delete(rendered_fault)
+	rendered_outside_modules := [?]build.Fact_Catalog_Module{{hash = blake3.hash(rendered_outsider), file = rendered_outsider}, {hash = blake3.hash(rendered_fault), file = rendered_fault}}
 	forged: disk_process.Grant_Table
 	if disk_process.table_allow(&forged, foundation.DISK_MODULE_NAME, blake3.hash(module_file), .Store) != .None {
 		fmt.eprintln("modustool: the table of the disk of the disk processes takes no row")
@@ -240,7 +247,7 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	served_bytes := slice.clone(module_file)
 	defer delete(served_bytes)
 	served := [?]Listener_File{{path = "/" + foundation.DISK_MODULE_NAME, bytes = served_bytes}, {path = STORE_LIBRARY_CHANGED_PATH, bytes = changed_library_file}}
-	machine_test(part, steps[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROCESSES, 1), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_MODULES_DISK, user_network = true, served_files = served[:]}) or_return
+	machine_test(part, steps[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROCESSES, 1), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_MODULES_DISK, user_network = true, served_files = served[:], fact_outside_modules = rendered_outside_modules[:]}) or_return
 
 	// The second machine, on the same disk.
 	again := make([dynamic]Step)

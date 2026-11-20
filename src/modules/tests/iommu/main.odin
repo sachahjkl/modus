@@ -20,26 +20,26 @@ import "modus:support/system"
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	blocks, status := system.ring_open(ctx.handles[block.GRANT_RING])
 	if status != .Ok {
-		system.log(.Error, "iommu: no block ring")
+		system.log_fact(.Error, No_Block_Ring{})
 		system.stop(.Failed)
 	}
 	if !system.send(&blocks.commands, ring.Record{kind = u32(block.Command.Info), tag = 1}) {
-		system.log(.Error, "iommu: the block ring has no room")
+		system.log_fact(.Error, Block_Ring_Full{})
 		system.stop(.Failed)
 	}
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		if record, ok := system.receive(&blocks.completions); ok {
 			if record.tag == 1 && block.Status(record.kind) == .Ok {
-				system.log(.Info, "iommu: the test device service answered after its read into a page that was not declared: the machine goes on: as it must")
+				system.log_fact(.Info, Machine_Goes_On{})
 			} else {
-				system.log(.Info, "iommu: the test device service gave the status ", u64(record.kind), " to Info")
+				system.log_fact(.Info, Info_Refused{status = block.Status_Word(record.kind)})
 				system.stop(.Failed)
 			}
 			system.stop(.Done)
 		}
 		if system.time() >= deadline {
-			system.log(.Info, "iommu: the test device service did not answer before the hang bound")
+			system.log_fact(.Info, Device_Service_Silent{})
 			system.stop(.Failed)
 		}
 		wait: system.Wait

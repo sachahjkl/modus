@@ -51,7 +51,7 @@ sequence_copy: [operation_sequence.SEQUENCE_BYTES_MOST]u8
 sequence: operation_sequence.Sequence
 
 failed :: proc "contextless" (text: string, status: system.Status) -> ! {
-	system.log(.Info, "operation_fuzzing: failed: ", text, ": status ", status)
+	system.log_fact(.Info, Failed{status = status, cause = cause_field(text)})
 	system.stop(.Failed)
 }
 
@@ -89,7 +89,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	header.format = operation_sequence.MAILBOX_FORMAT
 	intrinsics.atomic_store(&header.magic, operation_sequence.MAILBOX_MAGIC)
-	system.log(.Info, "operation_fuzzing: mailbox at ", results[0], ", ", u64(operation_sequence.MAILBOX_PAGES), " pages")
+	system.log_fact(.Info, Mailbox_Ready{mailbox_address = results[0], mailbox_pages = u64(operation_sequence.MAILBOX_PAGES)})
 	for {
 		executions := intrinsics.atomic_load(&header.executions)
 		if intrinsics.atomic_load(&header.sequences_written) == executions {
@@ -102,7 +102,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// Before the count: the tool reads the results at the count, then
 		// waits for this line, which comes after each line of the kernel
 		// that the sequence caused.
-		system.log(.Info, operation_sequence.SEQUENCE_END_LINE_START, executions + 1, operation_sequence.SEQUENCE_END_LINE_END)
+		system.log_fact(.Info, Sequence_Ended{sequence = executions + 1})
 		intrinsics.atomic_store(&header.executions, executions + 1)
 	}
 }

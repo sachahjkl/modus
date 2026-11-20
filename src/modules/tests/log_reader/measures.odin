@@ -52,6 +52,45 @@ Measured_Connected :: struct {
 	service:   value_kinds.Module_Name_Field,
 }
 
+// The measure of the write of one line: the least and the median of each
+// series, in nanoseconds, as numbers: the sentence says the unit once.
+@(log_fact = "log_reader: measure: the write of one line, in ns, the least and the median of {calls} calls: a bad block as text {bad_block_text_least} and {bad_block_text_median}, as a fact {bad_block_fact_least} and {bad_block_fact_median}; a connection as text {connected_text_least} and {connected_text_median}, as a fact {connected_fact_least} and {connected_fact_median}")
+Write_Measured :: struct {
+	calls:                 u64,
+	bad_block_text_least:  u64,
+	bad_block_text_median: u64,
+	bad_block_fact_least:  u64,
+	bad_block_fact_median: u64,
+	connected_text_least:  u64,
+	connected_text_median: u64,
+	connected_fact_least:  u64,
+	connected_fact_median: u64,
+}
+
+// The measure of the operation Log: the least and the median of each
+// series, in nanoseconds.
+@(log_fact = "log_reader: measure: the operation Log, in ns from the call to the return, the least and the median of {calls} calls: the text of a bad block {text_least} and {text_median}, its fact {fact_least} and {fact_median}, a call that the kernel refuses at the border of the form {refused_least} and {refused_median}")
+Log_Operation_Measured :: struct {
+	calls:          u64,
+	text_least:     u64,
+	text_median:    u64,
+	fact_least:     u64,
+	fact_median:    u64,
+	refused_least:  u64,
+	refused_median: u64,
+}
+
+// The measure of the render of a log fact, in nanoseconds, and the rows of
+// the window of the log at the median.
+@(log_fact = "log_reader: measure: the render of a log fact by module.fact_sentence_write, in ns, the least and the median of {renders} renders of two fact types of this module: {render_least} and {render_median}; {window_rows} rows of the window of the log at the median: {window_rows_time} ns")
+Render_Measured :: struct {
+	renders:          u64,
+	render_least:     u64,
+	render_median:    u64,
+	window_rows:      u64,
+	window_rows_time: u64,
+}
+
 // What one series writes or renders.
 Measured_Call :: enum {
 	Bad_Block_Text, // system.log of the line of a bad block: the support library formats it.
@@ -145,8 +184,8 @@ log_measures :: proc "contextless" (ctx: ^system.Context) -> string {
 	for call in Measured_Call {
 		least[call], median[call] = measured_series(call, log)
 	}
-	system.log(.Info, "log_reader: measure: the write of one line, in ns, the least and the median of ", u64(MEASURE_CALLS), " calls: a bad block as text ", least[.Bad_Block_Text], " and ", median[.Bad_Block_Text], ", as a fact ", least[.Bad_Block_Fact], " and ", median[.Bad_Block_Fact], "; a connection as text ", least[.Connected_Text], " and ", median[.Connected_Text], ", as a fact ", least[.Connected_Fact], " and ", median[.Connected_Fact])
-	system.log(.Info, "log_reader: measure: the operation Log, in ns from the call to the return, the least and the median of ", u64(MEASURE_CALLS), " calls: the text of a bad block ", least[.Log_Text], " and ", median[.Log_Text], ", its fact ", least[.Log_Fact], " and ", median[.Log_Fact], ", a call that the kernel refuses at the border of the form ", least[.Log_Refused], " and ", median[.Log_Refused])
+	system.log_fact(.Info, Write_Measured{calls = u64(MEASURE_CALLS), bad_block_text_least = least[.Bad_Block_Text], bad_block_text_median = median[.Bad_Block_Text], bad_block_fact_least = least[.Bad_Block_Fact], bad_block_fact_median = median[.Bad_Block_Fact], connected_text_least = least[.Connected_Text], connected_text_median = median[.Connected_Text], connected_fact_least = least[.Connected_Fact], connected_fact_median = median[.Connected_Fact]})
+	system.log_fact(.Info, Log_Operation_Measured{calls = u64(MEASURE_CALLS), text_least = least[.Log_Text], text_median = median[.Log_Text], fact_least = least[.Log_Fact], fact_median = median[.Log_Fact], refused_least = least[.Log_Refused], refused_median = median[.Log_Refused]})
 
 	// The render: the module file of this process from the boot image that
 	// check mapped, checked once, as a reader checks each module that it
@@ -173,6 +212,6 @@ log_measures :: proc "contextless" (ctx: ^system.Context) -> string {
 		}
 	}
 	render_least, render_median := least_and_median(MEASURE_RENDERS)
-	system.log(.Info, "log_reader: measure: the render of a log fact by module.fact_sentence_write, in ns, the least and the median of ", u64(MEASURE_RENDERS), " renders of two fact types of this module: ", render_least, " and ", render_median, "; ", u64(MEASURE_WINDOW_ROWS), " rows of the window of the log at the median: ", u64(MEASURE_WINDOW_ROWS) * render_median, " ns")
+	system.log_fact(.Info, Render_Measured{renders = u64(MEASURE_RENDERS), render_least = render_least, render_median = render_median, window_rows = u64(MEASURE_WINDOW_ROWS), window_rows_time = u64(MEASURE_WINDOW_ROWS) * render_median})
 	return ""
 }

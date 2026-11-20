@@ -71,10 +71,10 @@ texts := [?]string {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output, ok := terminal.open(ctx)
 	if !ok {
-		system.log(.Info, "flood: no terminal")
+		system.log_fact(.Info, No_Terminal{})
 		system.stop(.Refused)
 	}
-	system.log(.Info, "flood: ok")
+	system.log_fact(.Info, Running{})
 	digits: [10]u8
 	for &digit in digits {
 		digit = '0'
@@ -89,10 +89,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					if paused {
 						terminal.status(&output, "lines written", number % ROUND, ROUND, {tone = u8(terminal.Tone.Warning)})
 						terminal.edit(&output, "the lines wait: the key Space continues", style = {tone = u8(terminal.Tone.Warning)})
-						system.log(.Info, "flood: Space: no more lines after ", number - 1)
+						system.log_fact(.Info, Lines_Paused{last_line = number - 1})
 					} else {
 						terminal.edit(&output, "")
-						system.log(.Info, "flood: Space: the lines continue")
+						system.log_fact(.Info, Lines_Continue{})
 					}
 				}
 				if has_key {
