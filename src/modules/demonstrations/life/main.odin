@@ -40,6 +40,18 @@ import "modus:support/system"
 COLUMNS :: 96
 ROWS :: 64
 CELL :: 5
+// Literals, so the tool reads the window of the budget; the assertions
+// keep them the size of the grid.
+WIDTH :: 480
+#assert(WIDTH == COLUMNS * CELL)
+HEIGHT :: 320
+#assert(HEIGHT == ROWS * CELL)
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (300 pages): its module, its
+// stack, its grids and its glyph memory. The tool counts the window at the
+// window bound (docs/MODULE_CONTRACT.md, "The budget that a module asks
+// for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1748, window_width = WIDTH, window_height = HEIGHT}
 STEP_INTERVAL :: 80
 
 cells: [2][ROWS][COLUMNS]u8
@@ -154,7 +166,7 @@ board_draw :: proc "contextless" () {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
-	window, ok := display.open(ctx, COLUMNS * CELL, ROWS * CELL, "life")
+	window, ok := display.open(ctx, WIDTH, HEIGHT, "life")
 	if !ok {
 		system.stop(.Failed)
 	}
@@ -188,7 +200,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					cells[shown][y][x] = 1
 					board_generation += 1
 				}
-			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
+			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Surface_Answer:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

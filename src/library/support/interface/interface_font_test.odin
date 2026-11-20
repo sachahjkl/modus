@@ -4,6 +4,7 @@ package interface
 import "base:runtime"
 import "modus:contract/draw_record"
 import "modus:contract/font_outlines"
+import "modus:contract/scale_factor"
 import "modus:contract/settings"
 import "core:slice"
 import "core:sync"
@@ -720,7 +721,7 @@ the_interface_text_follows_the_setting_of_the_font :: proc(t: ^testing.T) {
 	}
 	cases := [?]Case{{.Spleen, .Cells_8x16}, {.Vector, .Interface}, {.Spleen, .Cells_8x16}}
 	for each in cases {
-		settings.write(page, settings.Choice{font = each.font}, 0, .Dark)
+		settings.write(page, settings.Choice{font = each.font, scale = scale_factor.DEFAULT}, 0, .Dark)
 		testing.expectf(t, display.text_settings_apply(), "%v: the change of the font is told", each.font)
 		testing.expectf(t, !display.text_settings_apply(), "%v: a read with no change tells a change", each.font)
 		testing.expect_value(t, font_in_use(&table, FONT_INTERFACE, 5).kind, each.kind)
@@ -735,7 +736,7 @@ the_interface_text_follows_the_setting_of_the_font :: proc(t: ^testing.T) {
 	// interface font with vector.
 	for each in cases[:2] {
 		page.change_count = 0
-		settings.write(page, settings.Choice{font = each.font}, 0, .Dark)
+		settings.write(page, settings.Choice{font = each.font, scale = scale_factor.DEFAULT}, 0, .Dark)
 		_ = display.text_settings_apply()
 		memory^ = {}
 		table = font_table_of(memory, &font.font)

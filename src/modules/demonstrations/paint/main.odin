@@ -32,6 +32,12 @@ import "modus:support/system"
 
 WIDTH :: 480
 HEIGHT :: 320
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (300 pages): its module, its
+// stack, its tables and its glyph memory. The tool counts the window at
+// the window bound (docs/MODULE_CONTRACT.md, "The budget that a module
+// asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1748, window_width = WIDTH, window_height = HEIGHT}
 PALETTE_HEIGHT :: 24
 PALETTE_CELL :: 40
 COLOR_PAPER :: 0xF4F1EA
@@ -250,7 +256,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					graphics.line(paper(), last_x, last_y - PALETTE_HEIGHT, event.x, y - PALETTE_HEIGHT, erase ? 12 : 3, erase ? COLOR_PAPER : color)
 				}
 				last_x, last_y, drawing = event.x, y, true
-			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
+			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Surface_Answer:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

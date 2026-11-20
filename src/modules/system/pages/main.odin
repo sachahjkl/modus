@@ -39,6 +39,7 @@ package pages
 import info "modus:contract/boot_info"
 import "modus:support/display"
 import "modus:support/graphics"
+import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:support/system"
@@ -52,8 +53,24 @@ MARGIN :: 12
 // stack of processor " and a number of three digits (35 characters).
 RIGHTS_X :: MARGIN + 16 + (16 + 2 + 9) * graphics.CELL_WIDTH
 PART_X :: RIGHTS_X + (32 + 1) * graphics.CELL_WIDTH
-WIDTH :: PART_X + 35 * graphics.CELL_WIDTH + MARGIN
+// A literal, so the tool reads the window of the budget; the assertion
+// keeps it the width of the layout.
+WIDTH :: 800
+#assert(WIDTH == PART_X + 35 * graphics.CELL_WIDTH + MARGIN)
 HEIGHT :: 668
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (1044 pages): its module, its
+// stack, its tables and its glyph memory. And the picture of the logical
+// size in which it draws by hand (interface.Hand_Picture): 800 x 668
+// pixels of 4 bytes, 522 pages. 1004 + 522 = 1526. The tool counts the
+// window at the window bound (docs/MODULE_CONTRACT.md, "The budget that a
+// module asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1526, window_width = WIDTH, window_height = HEIGHT}
+
+// The picture of the window, in its logical pixels: the window draws by
+// hand, and the drawing module puts the picture on the screen at the scale
+// (interface.Hand_Picture).
+hand_picture: interface.Hand_Picture
 LINE :: 16
 KERNEL_ROWS :: 22
 PROCESS_ROWS :: 10
@@ -258,7 +275,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "pages")
-	if !ok {
+	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Ok {
 		system.stop(.Failed)
 	}
 	machine := ctx.handles[system.GRANT_MACHINE]
@@ -269,8 +286,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The canvas is the picture that the compositor does not read,
 		// after it took the picture before: the whole canvas is drawn.
 		if display.canvas_wait(&window) {
-			draw(window.canvas)
-			display.present(&window)
+			draw(hand_picture.canvas)
+			interface.hand_picture_show(&hand_picture, &window)
 		}
 		if !logged {
 			logged = true

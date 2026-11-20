@@ -419,7 +419,9 @@ divide_down :: proc "contextless" (dividend, divisor: int) -> int {
 // holds draws nothing.
 text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: Text_Grid) {
 	font := grid_font(grid)
-	if !grid_valid(grid) || !font_size_valid(font) {
+	// The size of a grid here is its size on the screen, which the border
+	// of the record kept at most the largest size of the rasterizer.
+	if !grid_valid(grid) || text_rendering.size_check(font_text_size(font)) != .None {
 		return
 	}
 	size := font_text_size(font)

@@ -45,6 +45,10 @@ text_settings_create :: proc "contextless" () {
 		fail("cannot create the settings page", status)
 	}
 	settings_page = (^settings.Page)(address)
+	// The defaults before any process maps the page: the word 0 names no
+	// scale, so an all-zero page would be refused by each reader until the
+	// boot pass of `settings` writes it.
+	settings.page_defaults_write(settings_page)
 	if mapping, _, given := resource_mapping(font_outlines.RESOURCE_NAME, font_outlines.ADDRESS, "each process with a surface"); given {
 		entry := system.image_resource_find(image, font_outlines.RESOURCE_NAME)
 		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size]); problem.kind == .None {

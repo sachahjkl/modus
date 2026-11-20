@@ -270,6 +270,11 @@ palette_table_write :: proc "contextless" () {
 			if count == palette_table.ENTRY_CAPACITY {
 				break
 			}
+			// A value that the border of the setting refuses has no entry:
+			// the scales past the window bound.
+			if !settings.value_valid(setting, settings.word_of_value(setting, int(value))) {
+				continue
+			}
 			entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Setting), setting = u8(setting), setting_value = u8(value), result = u8(palette_table.Value_Kind.Integer)}
 			name := system.Writer{buffer = entry.name[:]}
 			system.write_part(&name, "set ")

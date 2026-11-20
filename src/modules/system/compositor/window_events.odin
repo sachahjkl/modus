@@ -1,5 +1,6 @@
 package compositor
 
+import "modus:private/compositor/bar"
 import "modus:support/display"
 import "modus:support/key_path"
 import "modus:contract/ring"
@@ -76,6 +77,20 @@ window_event_send :: proc "contextless" (client: ^Client, kind: display.Event_Ki
 	index := client_index(client)
 	queue := &window_queues[index]
 	target := &client.ring.completions
+	// An answer of a surface request never goes lost: the window waits for
+	// it, and draws nothing while it waits for a release. It goes to the
+	// ring, or else to the one slot of the window, which window_events_pass
+	// empties first. It can pass older events of the queue: the serial of
+	// the answer, not its place, tells the window which request it ends.
+	if kind == .Surface_Answer {
+		if !client.answer_due.due && ring.push(target, record) {
+			queue.delivered += 1
+			system.wake_reader(target)
+		} else if !bar.answer_slot_keep(&client.answer_due, record) {
+			other_records_refused += 1
+		}
+		return
+	}
 	if ring.count(target) == ring.capacity(target) {
 		window_queue_memory_open(index)
 	}
@@ -85,7 +100,7 @@ window_event_send :: proc "contextless" (client: ^Client, kind: display.Event_Ki
 		class = .Pointer
 	case .Key:
 		class = .Key
-	case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
+	case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Surface_Answer:
 		// The other events wait in order behind the keys; None is never
 		// sent, and the reader refuses it.
 		class = .Other
@@ -120,6 +135,20 @@ window_event_send :: proc "contextless" (client: ^Client, kind: display.Event_Ki
 // of the compositor calls it one time in each turn: it reads one count for
 // each client, and it writes only for a window that had a full ring.
 window_events_pass :: proc "contextless" () {
+	// The answers due go first, before the records of the queues.
+	for &client in clients {
+		if !client.answer_due.due || client.ring.head == nil {
+			continue
+		}
+		target := &client.ring.completions
+		if record, send := bar.answer_slot_send(&client.answer_due, ring.count(target) < ring.capacity(target)); send {
+			if ring.push(target, record) {
+				system.wake_reader(target)
+			} else {
+				_ = bar.answer_slot_keep(&client.answer_due, record)
+			}
+		}
+	}
 	for &queue, index in window_queues {
 		if !key_path.window_queue_waits(&queue) && !queue.loss.open {
 			continue
@@ -153,6 +182,10 @@ window_events_wait :: proc "contextless" (wait: ^system.Wait) {
 			continue
 		}
 		target := &client.ring.completions
+		// An answer due wakes the loop when the window read its ring.
+		if client.answer_due.due && key_path.queue_is_exactly_full(target) {
+			system.wait_room(wait, target)
+		}
 		for _ in 0 ..< TRIES {
 			if !key_path.window_queue_waits(&queue) {
 				break

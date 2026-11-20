@@ -54,6 +54,12 @@ import "modus:support/system"
 LINE :: interface.TABLE_LINE
 WIDTH :: 896
 HEIGHT :: 584 // One more line for the fresh bytes than the cards had: the bars keep their height.
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (1022 pages): its module, its
+// stack, its tables, its measure and its glyph memory. The tool counts the
+// window at the window bound (docs/MODULE_CONTRACT.md, "The budget that a
+// module asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1026, window_width = WIDTH, window_height = HEIGHT}
 MEASURE_SIZE :: 4 << 20 // The bytes of the measure of the speed.
 HISTOGRAM_SIZE :: 1 << 20 // The bytes whose values the window counts.
 

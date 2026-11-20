@@ -779,12 +779,19 @@ remote_display_case_run :: proc(machine: ^Machine, name: string) -> (passed: boo
 		if !queued {
 			return false, fmt.tprintf("the pointer did not go: %s", peer_display_end_text(state))
 		}
+		// The compositor moves the pointer to the logical pixel that holds
+		// the pixel of the viewer, and names the pixel of the screen of that
+		// logical pixel: the place to wait for.
+		logical_x, _ := logical_place_of_screen(int(x), MACHINE_SCALE)
+		logical_y, _ := logical_place_of_screen(int(y), MACHINE_SCALE)
+		shown_x, _ := screen_place_of_logical(logical_x, MACHINE_SCALE)
+		shown_y, _ := screen_place_of_logical(logical_y, MACHINE_SCALE)
 		start := time.tick_now()
 		for time.tick_since(start) < foundation.HANG_BOUND {
 			sync.mutex_lock(&state.lock)
 			place, frames := state.shown_pointer, state.frames_taken
 			sync.mutex_unlock(&state.lock)
-			if place.x == x && place.y == y {
+			if int(place.x) == shown_x && int(place.y) == shown_y {
 				return peer_display_compare_run(machine, state, frames)
 			}
 			time.sleep(CONDITION_POLL_PERIOD)

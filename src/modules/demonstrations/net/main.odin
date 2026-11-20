@@ -129,8 +129,17 @@ CASE_CAPACITY :: 15 // The cases of cases_run, and one more after a key.
 // the line that counts the cases with no room.
 CASES_HEIGHT :: CASE_CAPACITY * LINE + 9 * graphics.LINE_HEIGHT
 MEASURES_Y :: 16 + 2 * LINE + CASES_HEIGHT + LINE + LINE / 2
-HEIGHT :: MEASURES_Y + 3 * LINE + graphics.LINE_HEIGHT + 8 // The three measures, one of them on two lines.
+// The three measures, one of them on two lines. A literal, so the tool
+// reads the window of the budget.
+HEIGHT :: 700
+#assert(HEIGHT == MEASURES_Y + 3 * LINE + graphics.LINE_HEIGHT + 8)
 #assert(HEIGHT <= 712) // The window bound of 768 lines, less the bar and the title of the window.
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (1357 pages): its module, its
+// stack, its tables and its glyph memory. The tool counts the window at
+// the window bound (docs/MODULE_CONTRACT.md, "The budget that a module
+// asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 691, window_width = WIDTH, window_height = HEIGHT}
 
 
 Case :: struct {

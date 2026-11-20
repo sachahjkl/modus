@@ -48,8 +48,13 @@ import "modus:support/vector_font"
 // glyph of the system and the candidates, and the one of the drawing
 // module, which draws its labels: each reserves its memory at its first
 // glyph, 2 x 354 pages (display.TEXT_MEMORY_PAGES) = 708 pages.
-// 1023 + 708 = 1731.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1731, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// And the picture of its window, which it draws by hand at its logical
+// size: 1008 x 704 pixels of 4 bytes, 693 pages
+// (interface.hand_picture_pages). 1023 + 708 + 693 = 2424.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2424, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+
+// The picture of the window, in its logical pixels (interface.Hand_Picture).
+hand_picture: interface.Hand_Picture
 
 WIDTH :: 1008
 HEIGHT :: 704
@@ -159,11 +164,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	// The lines below are drawn by hand over the frame, in the same
 	// picture of the surface, before the present.
-	if !interface.window_frame_end_without_present(&window_memory.drawing, &frame, window) {
+	if !interface.window_frame_end_into_picture(&window_memory.drawing, &frame, window, &hand_picture) {
 		return
 	}
 
-	canvas := window.canvas
+	canvas := hand_picture.canvas
 	system_state := graphics.text_state
 	for index in 0 ..= len(candidates) {
 		y := content.y + LIST_TOP - 8 + index * ROW_HEIGHT
@@ -186,7 +191,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		candidate_text(canvas, x + 560, y - 16, "12 345", graphics.colors.process, 2)
 		enlarged(canvas, place, top, true)
 	}
-	display.present(window)
+	interface.hand_picture_show(&hand_picture, window)
 }
 
 // The entry of vector_glyphs: it measures the three sources of a glyph,
@@ -199,7 +204,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "vector_glyphs")
-	if !ok {
+	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Ok {
 		system.stop(.Failed)
 	}
 

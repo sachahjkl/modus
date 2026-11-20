@@ -6,9 +6,14 @@
 // mapped (clear: the process has no page, and its text is Spleen).
 //
 // Each setting is one value of the page and one row of `descriptions`: its
-// name and the names of its values. Value 0 of each setting is its default
-// (ZII): an all-zero page is the vector font with the grid fit, red green
-// blue, the pointer theme of the owner when the boot image has it.
+// name, the names of its values and the word of its first value. The word
+// of a value is its place in the names plus the first word: the place for
+// each setting but the scale, whose word is its count of eighths
+// (modus:contract/scale_factor). The first value of each setting is its
+// default: the vector font with the grid fit, red green blue, the pointer
+// theme of the owner when the boot image has it, the scale 1.25. The word
+// 0 names no scale, so the root service writes the defaults into the page
+// that it creates (page_defaults_write), and an all-zero page is refused.
 //
 // The page holds the choices only. The font outlines, from which each
 // process draws its glyphs, are not on the page: the root service maps
@@ -49,6 +54,7 @@ import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
+import "modus:contract/scale_factor"
 
 PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS // Where a process maps the settings page.
 GRANT_PAGE :: 12 // The handle of the context of the process `settings`: the page, with Read and Write.
@@ -63,6 +69,7 @@ Setting :: enum u32 {
 	Grid_Fit       = 3, // Whether the glyphs sit on whole pixels: `Grid_Fit`.
 	Keyboard_Layout = 4, // Which character each key of the keyboard gives: `Keyboard_Layout`.
 	Appearance      = 5, // Which appearance the desktop has, or the rule of the day: `Appearance`.
+	Scale           = 6, // The scale factor of the desktop, in eighths: `scale_factor.Scale`.
 }
 
 // The values of each setting. 0 is the default.
@@ -114,25 +121,93 @@ Appearance_In_Force :: enum u32 {
 }
 
 SETTING_CAPACITY :: 8 // The page and the kept record have room for 8 values.
-VALUE_NAME_CAPACITY :: 4 // The most values of one setting.
+VALUE_NAME_CAPACITY :: 8 // The most values of one setting.
 
-// Description: the name of a setting and the names of its values, for the
-// exports and the window of `settings`.
+// Description: the name of a setting, the names of its values and the word
+// of the first one, for the exports, the window of `settings` and the
+// palette.
 Description :: struct {
 	name:        string, // The name in the exports and in the console: "subpixel_order".
 	title:       string, // For the window.
-	value_names: [VALUE_NAME_CAPACITY]string, // The name of each value, by its number.
+	value_names: [VALUE_NAME_CAPACITY]string, // The name of each value, by its place.
 	value_count: u32, // The values of the setting.
+	first_word:  u32, // The word of the value at the place 0: the word of a value is its place plus this.
 }
 
-// The description of each setting.
+// The description of each setting. The scale names each count of eighths
+// of its range; the border refuses the ones past the window bound
+// (scale_factor.scale_of_word), and the window of `settings` shows only the
+// others.
 descriptions := [Setting]Description {
-	.Font           = {"font", "font", {"vector", "spleen", "", ""}, len(Font)},
-	.Subpixel_Order = {"subpixel_order", "subpixel order", {"rgb", "bgr", "none", ""}, len(Subpixel_Order)},
-	.Pointer_Theme  = {"pointer_theme", "pointer theme", {"owner", "system", "", ""}, len(Pointer_Theme)},
-	.Grid_Fit       = {"grid_fit", "grid fit", {"on", "off", "", ""}, len(Grid_Fit)},
-	.Keyboard_Layout = {"keyboard_layout", "keyboard layout", {"us", "french", "", ""}, len(Keyboard_Layout)},
-	.Appearance      = {"appearance", "appearance", {"auto", "dark", "light", ""}, len(Appearance)},
+	.Font            = {"font", "font", {"vector", "spleen", "", "", "", "", "", ""}, len(Font), 0},
+	.Subpixel_Order  = {"subpixel_order", "subpixel order", {"rgb", "bgr", "none", "", "", "", "", ""}, len(Subpixel_Order), 0},
+	.Pointer_Theme   = {"pointer_theme", "pointer theme", {"owner", "system", "", "", "", "", "", ""}, len(Pointer_Theme), 0},
+	.Grid_Fit        = {"grid_fit", "grid fit", {"on", "off", "", "", "", "", "", ""}, len(Grid_Fit), 0},
+	.Keyboard_Layout = {"keyboard_layout", "keyboard layout", {"us", "french", "", "", "", "", "", ""}, len(Keyboard_Layout), 0},
+	.Appearance      = {"appearance", "appearance", {"auto", "dark", "light", "", "", "", "", ""}, len(Appearance), 0},
+	.Scale           = {"scale", "scale", {"1.25", "1.375", "1.5", "1.625", "1.75", "1.875", "2", ""}, len(scale_factor.Scale), u32(scale_factor.Scale.Ten_Eighths)},
+}
+
+// word_of_value gives the word of the value at a place of a setting. A
+// place past the values of the setting gives a word that its border
+// refuses: the first word plus the place.
+word_of_value :: proc "contextless" (setting: Setting, place: int) -> u32 {
+	return first_word_of(setting) + u32(max(place, 0))
+}
+
+// value_place_of_word gives the place of the value of a word, or ok false
+// for a word under the first word or past the values of the setting.
+value_place_of_word :: proc "contextless" (setting: Setting, word: u32) -> (place: int, ok: bool) {
+	first := first_word_of(setting)
+	if word < first || word - first >= value_counts(setting) {
+		return 0, false
+	}
+	return int(word - first), true
+}
+
+// value_name_of gives the name of the value of a word of a setting, or ""
+// for a word that names no value of it.
+value_name_of :: proc "contextless" (setting: Setting, word: u32) -> string {
+	place, ok := value_place_of_word(setting, word)
+	if !ok {
+		return ""
+	}
+	return descriptions[setting].value_names[place]
+}
+
+// first_word_of and value_counts give the first word and the count of the
+// values of a setting from the enumerations, not from `descriptions`, so
+// the two never disagree with the members.
+@(private)
+first_word_of :: proc "contextless" (setting: Setting) -> u32 {
+	switch setting {
+	case .Font, .Subpixel_Order, .Pointer_Theme, .Grid_Fit, .Keyboard_Layout, .Appearance:
+		return 0
+	case .Scale:
+		return u32(scale_factor.Scale.Ten_Eighths)
+	}
+	return 0
+}
+
+@(private)
+value_counts :: proc "contextless" (setting: Setting) -> u32 {
+	switch setting {
+	case .Font:
+		return len(Font)
+	case .Subpixel_Order:
+		return len(Subpixel_Order)
+	case .Pointer_Theme:
+		return len(Pointer_Theme)
+	case .Grid_Fit:
+		return len(Grid_Fit)
+	case .Keyboard_Layout:
+		return len(Keyboard_Layout)
+	case .Appearance:
+		return len(Appearance)
+	case .Scale:
+		return len(scale_factor.Scale)
+	}
+	return 0
 }
 
 // The time zone: a fixed offset from UTC, in minutes, with no summer time
@@ -229,13 +304,29 @@ Choice :: struct {
 	grid_fit:            Grid_Fit,
 	keyboard_layout:     Keyboard_Layout,
 	appearance:          Appearance, // The setting of the appearance: Auto, Dark or Light.
+	scale:               scale_factor.Scale, // The scale factor of the desktop, up to scale_factor.WINDOW_BOUND.
 	appearance_in_force: Appearance_In_Force, // The appearance that each process draws now.
 	zone_offset_minutes: i32, // The time zone that the principal chose, kept valid.
 	change_count:        u32, // The change count of the page at the copy.
 }
 
+// choice_default gives the choice of a principal who set nothing: the
+// first value of each setting, and the scale 1.25. A Choice of all zero is
+// not it: the zero of the scale names no member.
+choice_default :: proc "contextless" () -> Choice {
+	return {scale = scale_factor.DEFAULT}
+}
+
+// page_defaults_write writes the defaults into a page that the root
+// service created, before any reader maps it: the word 0 of the scale names
+// no scale, so an all-zero page is refused.
+page_defaults_write :: proc "contextless" (page: ^Page) {
+	write(page, choice_default(), 0, .Dark)
+}
+
 // value_valid says if a word names a value of a setting: the word of a
-// member of the enumeration of the setting.
+// member of the enumeration of the setting, and for the scale a member
+// that scale_factor.scale_of_word takes.
 value_valid :: proc "contextless" (setting: Setting, word: u32) -> bool {
 	switch setting {
 	case .Font:
@@ -256,6 +347,9 @@ value_valid :: proc "contextless" (setting: Setting, word: u32) -> bool {
 	case .Appearance:
 		_, ok := enum_word.member_of_word(Appearance, u64(word))
 		return ok
+	case .Scale:
+		_, problem := scale_factor.scale_of_word(u64(word))
+		return problem == .None
 	}
 	return false
 }
@@ -264,8 +358,10 @@ value_valid :: proc "contextless" (setting: Setting, word: u32) -> bool {
 // of the members, or ok false with the first setting whose word names no
 // value of it (a page or a record that a broken writer wrote). The word is
 // refused, never read as the default: the caller keeps what it had, or
-// refuses the whole page or record. The time zone, the appearance in force
-// and the count are not set.
+// refuses the whole page or record. The choice of a refusal is the
+// defaults. The time zone, the appearance in force and the count are not
+// set. A scale word past the window bound is refused as a word that names
+// no scale: scale_factor.scale_of_word on the word says which.
 //
 // The members come from the enumerations, and not from `descriptions`:
 // that table holds names, so it has addresses that a loader writes, and a
@@ -279,6 +375,8 @@ choice_of_values :: proc "contextless" (values: [Setting]u32) -> (choice: Choice
 	choice.grid_fit, grid_ok = enum_word.member_of_word(Grid_Fit, u64(values[.Grid_Fit]))
 	choice.keyboard_layout, layout_ok = enum_word.member_of_word(Keyboard_Layout, u64(values[.Keyboard_Layout]))
 	choice.appearance, appearance_ok = enum_word.member_of_word(Appearance, u64(values[.Appearance]))
+	scale_problem: scale_factor.Scale_Problem
+	choice.scale, scale_problem = scale_factor.scale_of_word(u64(values[.Scale]))
 	member_ok := [Setting]bool {
 		.Font            = font_ok,
 		.Subpixel_Order  = order_ok,
@@ -286,10 +384,11 @@ choice_of_values :: proc "contextless" (values: [Setting]u32) -> (choice: Choice
 		.Grid_Fit        = grid_ok,
 		.Keyboard_Layout = layout_ok,
 		.Appearance      = appearance_ok,
+		.Scale           = scale_problem == .None,
 	}
 	for setting in Setting {
 		if !member_ok[setting] {
-			return {}, setting, false
+			return choice_default(), setting, false
 		}
 	}
 	return choice, {}, true
@@ -305,6 +404,7 @@ values_of :: proc "contextless" (choice: Choice) -> (values: [Setting]u32) {
 	values[.Grid_Fit] = u32(choice.grid_fit)
 	values[.Keyboard_Layout] = u32(choice.keyboard_layout)
 	values[.Appearance] = u32(choice.appearance)
+	values[.Scale] = u32(choice.scale)
 	return values
 }
 
@@ -356,13 +456,22 @@ read :: proc "contextless" (page: ^Page) -> (choice: Choice, ok: bool) {
 		choice, _, values_ok = choice_of_values(values)
 		choice.appearance_in_force, in_force_ok = enum_word.member_of_word(Appearance_In_Force, u64(in_force_word))
 		if !values_ok || !in_force_ok {
-			return {change_count = before}, false
+			return refused_read(before), false
 		}
 		choice.zone_offset_minutes = zone_offset_minutes_valid(zone_word)
 		choice.change_count = before
 		return choice, true
 	}
-	return {change_count = before}, false
+	return refused_read(before), false
+}
+
+// refused_read gives the choice of a page that read refused: the defaults,
+// with the count that the read saw.
+@(private)
+refused_read :: proc "contextless" (change_count: u32) -> Choice {
+	choice := choice_default()
+	choice.change_count = change_count
+	return choice
 }
 
 // write changes the values of the page, the time zone and the appearance in
@@ -423,19 +532,21 @@ kept_of :: proc "contextless" (choice: Choice, zone_offset_minutes: i32) -> (kep
 // not a record of this version, and for a record with a word that names no
 // value of its setting: such a record is refused whole, as a record of
 // another version is, and never read as the default of that one setting. A
-// setting past the count of the record has its default: the record did not
-// hold it. A zone that is not valid is UTC. The choice holds no appearance
-// in force and no count.
+// setting past the count of the record has its default, the word of its
+// first value: the record did not hold it. A record of the six settings
+// before the scale then reads with the scale 1.25, and keeps the other
+// settings of the principal. A zone that is not valid is UTC. The choice
+// holds no appearance in force and no count; a refusal gives the defaults.
 kept_read :: proc "contextless" (bytes: []u8) -> (choice: Choice, zone_offset_minutes: i32, ok: bool) {
 	if len(bytes) != size_of(Kept_Settings) {
-		return {}, 0, false
+		return choice_default(), 0, false
 	}
 	kept: Kept_Settings // A copy: the bytes can be at any alignment.
 	intrinsics.mem_copy_non_overlapping(&kept, raw_data(bytes), size_of(kept))
 	if kept.magic != KEPT_MAGIC || kept.version != KEPT_VERSION || kept.count > SETTING_CAPACITY {
-		return {}, 0, false
+		return choice_default(), 0, false
 	}
-	values: [Setting]u32
+	values := values_of(choice_default())
 	for setting in Setting {
 		if u32(setting) < kept.count {
 			values[setting] = kept.values[setting]
@@ -444,7 +555,7 @@ kept_read :: proc "contextless" (bytes: []u8) -> (choice: Choice, zone_offset_mi
 	values_ok: bool
 	choice, _, values_ok = choice_of_values(values)
 	if !values_ok {
-		return {}, 0, false
+		return choice_default(), 0, false
 	}
 	return choice, zone_offset_minutes_valid(kept.zone_offset_minutes), true
 }

@@ -58,12 +58,14 @@ screen_text_expand :: proc(text: string, kept: string, before: string) -> string
 }
 
 // cells_text reads cells of Spleen 8x16 from the pixels of a picture, 3
-// bytes each, line after line: count cells from (x, y), on one line. The
-// background is the color of the pixel just left of the first cell. ok is
-// false for a place out of the picture, or a cell that is no glyph of the
-// font.
-cells_text :: proc(pixels: []u8, width, height: int, x, y: int, count: int) -> (text: string, ok: bool) {
-	if x < 1 || y < 0 || count <= 0 || x + count * graphics.CELL_WIDTH > width || y + graphics.CELL_HEIGHT > height || len(pixels) < width * height * 3 {
+// bytes each, line after line: count glyphs on one line, the first one at
+// (x, y), each step pixels after the one before: a cell of the body at the
+// scale of the desktop is wider than the glyph, which is in its middle
+// (spleen_cells_of). The background is the color of the pixel just left of
+// the first glyph. ok is false for a place out of the picture, a step
+// under the width of a glyph, or a cell that is no glyph of the font.
+cells_text :: proc(pixels: []u8, width, height: int, x, y: int, count: int, step: int = graphics.CELL_WIDTH) -> (text: string, ok: bool) {
+	if x < 1 || y < 0 || count <= 0 || step < graphics.CELL_WIDTH || x + (count - 1) * step + graphics.CELL_WIDTH > width || y + graphics.CELL_HEIGHT > height || len(pixels) < width * height * 3 {
 		return "", false
 	}
 	pixel :: proc(picture: []u8, picture_width, column_x, row_y: int) -> [3]u8 {
@@ -76,7 +78,7 @@ cells_text :: proc(pixels: []u8, width, height: int, x, y: int, count: int) -> (
 		rows: [graphics.CELL_HEIGHT]u8
 		for row in 0 ..< graphics.CELL_HEIGHT {
 			for column in 0 ..< graphics.CELL_WIDTH {
-				if pixel(pixels, width, x + cell * graphics.CELL_WIDTH + column, y + row) != background {
+				if pixel(pixels, width, x + cell * step + column, y + row) != background {
 					rows[row] |= u8(0x80) >> uint(column)
 				}
 			}
@@ -132,8 +134,18 @@ screen_text_read :: proc(machine: ^Machine, owner, element: string, index: int) 
 		fmt.eprintfln("modustool: test failed: step %d: the log does not have the place of the window %s", index + 1, owner)
 		return "", false
 	}
-	x := window_x + WINDOW_BORDER + element_x
-	y := window_y + WINDOW_TITLE_HEIGHT + element_y
+	// The places are logical pixels; the picture is pixels of the screen at
+	// the scale of the machine. The surface of the window is copied at the
+	// pixel of the screen of its corner, and the element is at its place
+	// on the surface at the same scale; the glyph is in the middle of its
+	// cell.
+	cells := spleen_cells_of(MACHINE_SCALE)
+	surface_x, _ := screen_place_of_logical(window_x + WINDOW_BORDER, MACHINE_SCALE)
+	surface_y, _ := screen_place_of_logical(window_y + WINDOW_TITLE_HEIGHT, MACHINE_SCALE)
+	in_surface_x, _ := screen_place_of_logical(element_x, MACHINE_SCALE)
+	in_surface_y, _ := screen_place_of_logical(element_y, MACHINE_SCALE)
+	x := surface_x + in_surface_x + cells.glyph_x
+	y := surface_y + in_surface_y + cells.glyph_y
 	// The element line comes from the layout of a frame, before its
 	// picture reaches the screen. With no remote service, a settled screen
 	// means only that two pictures in a row were the same, so a process that
@@ -145,7 +157,7 @@ screen_text_read :: proc(machine: ^Machine, owner, element: string, index: int) 
 	for {
 		dump := screen_dump_settled(machine, element) or_return
 		read: bool
-		text, read = cells_text(dump.pixels, dump.width, dump.height, x, y, element_width / graphics.CELL_WIDTH)
+		text, read = cells_text(dump.pixels, dump.width, dump.height, x, y, element_width / graphics.CELL_WIDTH, cells.step)
 		delete(dump.file)
 		if read && text_fills_its_box(text) {
 			break

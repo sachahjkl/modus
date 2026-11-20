@@ -73,8 +73,16 @@ LEFT :: 16
 // 10.0.2.100 port 80": 37 characters.
 ANSWER_X :: 40 * graphics.CELL_WIDTH
 // The height: the two lines of the head, each case with an answer of two
-// lines, and the line that counts the cases with no room.
-HEIGHT :: 16 + 2 * LINE + CASE_CAPACITY * (LINE + graphics.LINE_HEIGHT) + LINE + 16
+// lines, and the line that counts the cases with no room. A literal, so the
+// tool reads the window of the budget.
+HEIGHT :: 504
+#assert(HEIGHT == 16 + 2 * LINE + CASE_CAPACITY * (LINE + graphics.LINE_HEIGHT) + LINE + 16)
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (961 pages): its module, its
+// stack, its tables, its window memory and its glyph memory. The tool
+// counts the window at the window bound (docs/MODULE_CONTRACT.md, "The
+// budget that a module asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1087, window_width = WIDTH, window_height = HEIGHT}
 
 Case :: struct {
 	text:   string,

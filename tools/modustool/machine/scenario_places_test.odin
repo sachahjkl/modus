@@ -5,29 +5,34 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "modus:contract/reference_screen"
+import "modus:contract/scale_factor"
 import "modus:private/compositor/bar"
 import "modus:private/compositor/palette"
 import "modustool:build"
 
 // The places of the scenarios that name an edge of the screen are on the
-// reference screen: the corner is inside it and under the bar, the place
-// that shows the title bar only keeps its height under the rule of the
-// compositor, and the point of the palette is inside the panel that
-// palette.panel_place gives, in the part that each step of the palette
-// names. The point x = 400 of a screen of 1024 x 768 is outside it.
+// reference screen in logical pixels at the scale of the machine: the
+// corner is inside it and under the bar, the place that shows the title
+// bar only keeps its height under the rule of the compositor, and the
+// point of the palette is inside the panel that palette.panel_place gives,
+// in the part that each step of the palette names. The point x = 400 of a
+// screen of 1024 x 768 is outside it.
 @(test)
 scenario_places_are_on_the_reference_screen :: proc(t: ^testing.T) {
-	testing.expect(t, SCREEN_CORNER_X > 0 && SCREEN_CORNER_X < reference_screen.WIDTH && SCREEN_CORNER_Y > bar.HEIGHT && SCREEN_CORNER_Y < reference_screen.HEIGHT)
+	logical_width, logical_height := scale_factor.logical_screen(MACHINE_SCALE)
+	testing.expect_value(t, i64(LOGICAL_SCREEN_WIDTH), logical_width)
+	testing.expect_value(t, i64(LOGICAL_SCREEN_HEIGHT), logical_height)
+	testing.expect(t, SCREEN_CORNER_X > 0 && SCREEN_CORNER_X < LOGICAL_SCREEN_WIDTH && SCREEN_CORNER_Y > bar.HEIGHT && SCREEN_CORNER_Y < LOGICAL_SCREEN_HEIGHT)
 
 	frame := bar.Window_Frame{outer_width = 1004, border = WINDOW_BORDER, close_size = 24, title_height = WINDOW_TITLE_HEIGHT}
-	_, kept_y := bar.window_place_kept(64, WINDOW_TITLE_ONLY_Y, frame, reference_screen.WIDTH, reference_screen.HEIGHT)
+	_, kept_y := bar.window_place_kept(64, WINDOW_TITLE_ONLY_Y, frame, LOGICAL_SCREEN_WIDTH, LOGICAL_SCREEN_HEIGHT)
 	testing.expect_value(t, kept_y, WINDOW_TITLE_ONLY_Y)
-	testing.expect_value(t, WINDOW_TITLE_ONLY_Y + WINDOW_TITLE_HEIGHT, reference_screen.HEIGHT)
+	testing.expect_value(t, WINDOW_TITLE_ONLY_Y + WINDOW_TITLE_HEIGHT, LOGICAL_SCREEN_HEIGHT)
 	// The drag holds the title at WINDOW_GRAB_Y: the pointer of the move
 	// stays on the screen, which the move of the tool requires.
-	testing.expect(t, WINDOW_TITLE_ONLY_Y + WINDOW_GRAB_Y < reference_screen.HEIGHT)
+	testing.expect(t, WINDOW_TITLE_ONLY_Y + WINDOW_GRAB_Y < LOGICAL_SCREEN_HEIGHT)
 
-	panel_x, panel_y := palette.panel_place(reference_screen.WIDTH)
+	panel_x, panel_y := palette.panel_place(LOGICAL_SCREEN_WIDTH)
 	testing.expect_value(t, PALETTE_LEFT, panel_x)
 	parts := [?]struct {
 		y:    int,
@@ -37,6 +42,51 @@ scenario_places_are_on_the_reference_screen :: proc(t: ^testing.T) {
 		testing.expectf(t, palette.part_at(panel_x, panel_y, PALETTE_POINT_X, item.y) == item.part, "the point %d,%d of the scenario is not in the part %v of the palette", PALETTE_POINT_X, item.y, item.part)
 	}
 	testing.expect_value(t, palette.part_at(panel_x, panel_y, 400, 120), palette.Part.Outside)
+}
+
+// The helper from a logical place of a scenario to a pixel of the screen,
+// at its edges: 0, 1, -1, the edges of the logical screen, which reach
+// the edges of the reference screen, the limit on each side, and one past
+// it, which is refused and never wraps. Each pixel of the screen goes back
+// to the logical pixel that holds it.
+@(test)
+the_place_of_a_scenario_on_the_screen :: proc(t: ^testing.T) {
+	for scale in scale_factor.Scale {
+		zero, zero_ok := screen_place_of_logical(0, scale)
+		testing.expect(t, zero_ok && zero == 0)
+		one, _ := screen_place_of_logical(1, scale)
+		testing.expectf(t, one >= 1 && one <= 2, "1 logical pixel at %d eighths is %d", u8(scale), one)
+		minus_one, minus_ok := screen_place_of_logical(-1, scale)
+		testing.expectf(t, minus_ok && minus_one <= -1 && minus_one >= -2, "-1 logical pixel at %d eighths is %d", u8(scale), minus_one)
+		_, past_ok := screen_place_of_logical(LOGICAL_PLACE_LIMIT + 1, scale)
+		testing.expect(t, !past_ok)
+		_, before_ok := screen_place_of_logical(-LOGICAL_PLACE_LIMIT - 1, scale)
+		testing.expect(t, !before_ok)
+		_, largest_ok := screen_place_of_logical(max(int), scale)
+		testing.expect(t, !largest_ok)
+		_, smallest_ok := screen_place_of_logical(min(int), scale)
+		testing.expect(t, !smallest_ok)
+		limit, limit_ok := screen_place_of_logical(LOGICAL_PLACE_LIMIT, scale)
+		testing.expect(t, limit_ok && limit > LOGICAL_PLACE_LIMIT)
+		_, screen_past_ok := logical_place_of_screen(LOGICAL_PLACE_LIMIT + 1, scale)
+		testing.expect(t, !screen_past_ok)
+		for pixel in -40 ..= reference_screen.WIDTH + 40 {
+			place, ok := logical_place_of_screen(pixel, scale)
+			left, _ := screen_place_of_logical(place, scale)
+			right, _ := screen_place_of_logical(place + 1, scale)
+			testing.expectf(t, ok && left <= pixel && pixel < right, "the pixel %d at %d eighths", pixel, u8(scale))
+		}
+	}
+	// The machine: the logical screen ends at the edges of the screen.
+	right, _ := screen_place_of_logical(LOGICAL_SCREEN_WIDTH, MACHINE_SCALE)
+	bottom, _ := screen_place_of_logical(LOGICAL_SCREEN_HEIGHT, MACHINE_SCALE)
+	testing.expect(t, right <= reference_screen.WIDTH && bottom <= reference_screen.HEIGHT)
+	past_right, _ := screen_place_of_logical(LOGICAL_SCREEN_WIDTH + 1, MACHINE_SCALE)
+	testing.expect(t, past_right > reference_screen.WIDTH)
+	// The cells of Spleen of the body: 10 by 20 at 1.25 with the glyph at
+	// 1, 2; 11 by 22 at 1.375 with the glyph at 1, 3.
+	testing.expect_value(t, spleen_cells_of(.Ten_Eighths), Spleen_Cells{step = 10, glyph_x = 1, glyph_y = 2})
+	testing.expect_value(t, spleen_cells_of(.Eleven_Eighths), Spleen_Cells{step = 11, glyph_x = 1, glyph_y = 3})
 }
 
 // The line of the reference screen reads back as the size of the contract,

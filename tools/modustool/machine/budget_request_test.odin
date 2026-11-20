@@ -123,9 +123,22 @@ budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 	// area, 4 pages of the own log ring; each other one: 16 pages of stack
 	// and 3 of thread area.
 	testing.expect_value(t, counted.thread_pages, 72 + 2 * 19)
-	// 1000 x 704 pixels of 4 bytes, two pictures: 5632000 bytes, 1375 pages.
-	testing.expect_value(t, counted.window_pages, 1375)
-	testing.expect_value(t, counted.request, module.Budget_Request{pages = 2536 + 190 + 110 + 1375, processes = 2, threads = 3})
+	// 1000 x 704 logical pixels at the window bound of the scale, 1.375:
+	// 1375 x 968 pixels of the screen of 4 bytes, two pictures: 10648000
+	// bytes, 2600 pages.
+	testing.expect_value(t, counted.window_pages, 2600)
+	testing.expect_value(t, counted.request, module.Budget_Request{pages = 2536 + 190 + 110 + 2600, processes = 2, threads = 3})
+
+	// A window part past the limit is refused, also when the source did
+	// not go through the describe step; the limit itself is counted.
+	_, past_ok := build.budget_count({window_width = build.BUDGET_WINDOW_PART_LIMIT + 1, window_height = 1}, 0, nil)
+	testing.expect(t, !past_ok)
+	_, largest_ok := build.budget_count({window_width = ~u64(0), window_height = ~u64(0)}, 0, nil)
+	testing.expect(t, !largest_ok)
+	at_limit, at_limit_ok := build.budget_count({window_width = build.BUDGET_WINDOW_PART_LIMIT, window_height = build.BUDGET_WINDOW_PART_LIMIT}, 0, nil)
+	testing.expect(t, at_limit_ok)
+	// 2048 logical pixels are 2816 pixels of the screen at 1.375.
+	testing.expect_value(t, at_limit.window_pages, u64(2816 * 2816 * 8 / 4096))
 
 	// No part of threads: the tool counts the first thread, and the table
 	// leaves the part to the starter. No window: no pictures.
