@@ -494,8 +494,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the device has no virtio registers in the memory that it received")
 	}
 	start(ctx.handles[pci.GRANT_QUEUES])
-	text: [24]u8
-	system.log(.Info, "frame: ok, the hardware address ", hardware_text(text[:]), ", the link is ", link_up() ? "up" : "down", ", queues of ", u64(receive_queue.size), " and ", u64(send_queue.size), ", ", u64(receive_slot_count), " places for frames that arrive")
+	if link_up() {
+		system.log_fact(.Info, Device_Ready_Link_Up{receive_queue = u64(receive_queue.size), send_queue = u64(send_queue.size), places = u64(receive_slot_count), hardware_address = hardware_address_field()})
+	} else {
+		system.log_fact(.Info, Device_Ready_Link_Down{receive_queue = u64(receive_queue.size), send_queue = u64(send_queue.size), places = u64(receive_slot_count), hardware_address = hardware_address_field()})
+	}
 
 	waiting: ring.Record
 	has_waiting := false // A Send that waits for a place in the queue of the device.

@@ -376,11 +376,12 @@ if result.ran {
 - **The list** opens upward over the content, its right edge on the right edge of the bar, never above `Action_Bar_Options.top`. The rows that the room does not hold are not shown: `Action_Bar_Result.list_rows_not_shown` counts them. While it is open: Up and Down choose a row, Enter runs it, Escape closes the list, another key closes it and stays for the process, a press on a row runs it, and a press outside it closes it and does nothing else.
 - **The state** (`Action_Bar_State`) is memory of the process, one for each bar: the list, its chosen row, the keys of its rows, the places of the last frame, the held press. The interface state does not hold it.
 - **The order of a frame.** `action_bar_input_take` comes right after the frame begins: it takes the keys of an open list, and hides from the elements the press while the list is open or on the bar, the release of a press that the bar holds, and the pointer over the bar or the list. `action_bar` comes last, so that its list is over the content.
-- **A process that reads its keys** (`manual`, the terminal, `notes`, `unlock`, `tally`, `rings`, `paint`) gives each key to `action_bar_key` first, and acts on it when the result says that the bar did not take it. It does not act on a press for which `action_bar_takes_pointer` says yes. When it draws only after a change, `action_bar_wants_frame` says if a pointer event needs a frame.
+- **A process that reads its keys** (`manual`, the terminal, `notes`, `edit`, `unlock`, `tally`, `rings`, `paint`) gives each key to `action_bar_key` first, and acts on it when the result says that the bar did not take it. It does not act on a press for which `action_bar_takes_pointer` says yes. When it draws only after a change, `action_bar_wants_frame` says if a pointer event needs a frame.
 - **The measure** is a pure procedure, `action_bar_layout(table, area, items, options)`: the box of each item, the items of the list, the box of the button. `action_bar_list_place` gives the place of the list. Host tests run them with no frame (`action_bar_test.odin`).
 
 | Window | Items | Overflow |
 |---|---|---|
+| `edit` | Ctrl+Z, Ctrl+Y | All in one row |
 | `interface_elements` | Tab, Shift+Tab, Enter, Up, Down | All in one row |
 | The debugger window | 14 with a process attached; 2 with none | The list: detach has the lowest priority |
 | `manual` | 10 | The list: the keys that move the text, which the scroll bar moves too, go first |

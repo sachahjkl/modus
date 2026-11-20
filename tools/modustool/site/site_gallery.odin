@@ -96,6 +96,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "desktop_moved.png", group = .Desktop, guide = "docs/INTERFACE.md", caption = "Windows after a move with the pointer: plasma, paint, life and monitor where the pointer put them."},
 	{file = "menu.png", group = .Desktop, guide = "docs/INTERFACE.md", caption = "The start menu: the button of the bar opens it."},
 	{file = "windows.png", group = .Desktop, guide = "docs/INTERFACE.md", caption = "The menu of the windows: a press on a line brings the window to the front."},
+	{file = "edit.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The editor: two lines with their numbers, and a selection over two lines after an undo and a redo."},
 	{file = "disk_process_windows.png", group = .Desktop, guide = "docs/MODULE_CONTRACT.md", caption = "The process of a module from a disk in the menu of the windows and in the monitor: its nickname, with the hash prefix of its file faded beside it."},
 	{file = "palette.png", group = .Desktop, home = true, guide = "docs/DESIGN.md", film = "docs/films/palette.webm", caption = "The palette: the key super opens one list of the processes, the windows, the commands and the settings, which narrows at each typed key."},
 	{file = "palette_open.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The palette with no letter typed: the windows first, then the processes, each with the icon of its kind."},

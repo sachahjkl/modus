@@ -169,7 +169,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the device has no virtio registers in the memory that it received")
 	}
 	start(ctx.handles[pci.GRANT_QUEUES])
-	system.log(.Info, "entropy: ok, a queue of ", u64(queue.size))
+	system.log_fact(.Info, Device_Ready{queue_size = u64(queue.size)})
 
 	in_flight := false
 	in_flight_tag: u32

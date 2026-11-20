@@ -520,6 +520,9 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "net"},
 	{kind = .Wait, text = "root: started frame for the device at the place 18 of the bus"},
+	// The device found, by its hardware address: the step reads the field,
+	// the wait the sentence.
+	{kind = .Fact, process = "frame", fact = "frame_service.Device_Ready_Link_Up", condition = "hardware_address = \"52:54:00:12:34:56\"", any_order = true},
 	{kind = .Wait, text = "frame: ok, the hardware address 52:54:00:12:34:56, the link is up", any_order = true},
 	{kind = .Wait, text = "root: started network"},
 	{kind = .Wait, text = "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up", any_order = true},
@@ -587,6 +590,8 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "net: a datagram to 10.0.2.2 port 7 after a key: refused, the endpoint has no grant now: datagram.Send: the argument address, 10.0.2.2 port 7, is refused: the grant names no remote"},
 	{kind = .Close, text = "net"},
 	{kind = .Wait, text = "root: net stopped: a holder"},
+	// The end of the endpoint, by the process that owned it.
+	{kind = .Fact, process = "network", fact = "network_service.Endpoint_Ended", condition = "owner = \"net\"", any_order = true},
 	{kind = .Wait, text = "network: the endpoint of net ended: "},
 	// The passes of the network service over the bytes of the datagrams of
 	// `net`: a measure, then the structural count: one copy on receive, on
@@ -632,6 +637,8 @@ scenario_network := [?]Step {
 	// An Integer, with the measure of a small call.
 	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4", repeat = 1000},
 	{kind = .Wait, text = "root: connected remote to the service monitor, acting for principal 0, for the client key ", any_order = true},
+	// The connection of remote to a service, by the service.
+	{kind = .Fact, process = "remote", fact = "remote_service.Service_Connected", condition = "service = \"monitor\"", any_order = true},
 	{kind = .Wait, text = "remote: connected to the service monitor, for principal 0"},
 	{kind = .Wait, text = "remote: the window drew one picture in ", any_order = true},
 	// A Table: the row of the remote service is there, and the count of the
@@ -3088,6 +3095,31 @@ scenario := [?]Step {
 	{kind = .Wait, text = "01234567890123456789the end of a long result"},
 	{kind = .Type, text = "stop(\"notes\")"},
 	{kind = .Wait, text = "root: notes stopped"},
+	// The editor: each group of changes is a commit, and undo walks the
+	// versions of the store. The space after "first", the line end and
+	// the space after "second" each end a group; Ctrl+Z commits the last
+	// word, then restores the version before it; Ctrl+Y restores that
+	// word again. Shift with Up then selects from the end of the text to
+	// the end of the first line, which is shorter: 12 bytes, with the line
+	// end, over 2 lines.
+	{kind = .Type, text = "start(\"edit\")"},
+	{kind = .Wait, text = "edit: a new store: an empty text", any_order = true},
+	{kind = .Wait, text = "compositor: surface edit"},
+	{kind = .Wait, text = "edit: ok, the first picture is presented"},
+	{kind = .Front, text = "edit"},
+	{kind = .Keys, text = "first line"},
+	{kind = .Key, text = "ret"},
+	{kind = .Keys, text = "second line"},
+	{kind = .Key, text = "ctrl-z"},
+	{kind = .Wait, text = "edit: undo: the text has 18 bytes, the caret at byte 18, the version of generation "},
+	{kind = .Key, text = "ctrl-y"},
+	{kind = .Wait, text = "edit: redo: the text has 22 bytes, the caret at byte 22, the version of generation "},
+	{kind = .Key, text = "shift-up"},
+	{kind = .Wait, text = "edit: the selection has 12 bytes, from byte 10 to byte 22, over 2 lines"},
+	{kind = .Shot, text = "edit"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "stop(\"edit\")"},
+	{kind = .Wait, text = "root: edit stopped"},
 	// Errors that diagnose: each case makes an error for real, and the
 	// window shows the sentence of its error record. The process fault
 	// stops three calls deep: the tool names the functions of its stack
