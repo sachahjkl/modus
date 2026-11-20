@@ -523,6 +523,7 @@ Window :: struct {
 	rescale:     Rescale_Machine, // The scale and the serial of the surface, and the phase of a change of the scale (scale.odin).
 	rescale_due: Rescale_Action, // A record of the rescale that the full command ring did not take yet.
 	before_resize: Kept_Surface, // The surface before a resize, kept until the answer of the compositor (scale.odin).
+	presented_serial: u64, // The surface serial of the last Present: 0 before the first one (picture_owed).
 	canvas:      graphics.Canvas, // Where the drawing module draws now, in pixels of the screen. A process that draws by hand draws in a logical picture of its own (interface.Hand_Picture).
 	pictures:    [2]graphics.Canvas, // The two pictures of the surface, in pixels of the screen.
 	picture:     int, // The index of canvas in pictures.
@@ -703,6 +704,7 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 		return false
 	}
 	window.presented = window.ring.commands.counters.write
+	window.presented_serial = window.rescale.serial
 	window.picture = 1 - window.picture
 	window.canvas = window.pictures[window.picture]
 	// The compositor ends the due picture at the Present.

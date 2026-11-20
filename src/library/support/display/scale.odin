@@ -188,6 +188,23 @@ resize_end_of :: proc "contextless" (before: Rescale_Machine, input: Rescale_Inp
 	return .None
 }
 
+// picture_owed_of says if a window owes the compositor a picture: it holds
+// a surface that it may draw, and no Present named its serial yet. Until
+// that Present, the compositor shows the frame of the window with the
+// background, or the surface before a resize, and a change of the scale
+// does not settle. A process that draws only when its own state changes
+// draws while this holds (picture_owed).
+picture_owed_of :: proc "contextless" (machine: Rescale_Machine, presented_serial: u64) -> bool {
+	phase_machine := machine
+	return rescale_draws(&phase_machine) && presented_serial != machine.serial
+}
+
+// picture_owed is picture_owed_of for a window: a process that draws on a
+// change of its own state asks it at each turn, and draws when it holds.
+picture_owed :: proc "contextless" (window: ^Window) -> bool {
+	return picture_owed_of(window.rescale, window.presented_serial)
+}
+
 // rescale_draws says if the window draws in its phase: in Steady, Offered
 // and Resizing. In Releasing and Released the compositor holds no surface
 // that a Present of the window could name.
