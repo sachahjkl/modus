@@ -1784,10 +1784,15 @@ scenario := [?]Step {
 	{kind = .Type, text = "add(2, 3)"},
 	{kind = .Wait, text = "[console] > add(2, 3)"},
 	{kind = .Wait, text = "[console] 5"},
+	// The record of unload names the module: a module from memory whose
+	// name the console lost gives the line of the memory with no name
+	// before it, and the step fails at once.
 	{kind = .Type, text = "unload(\"adder\")"},
-	{kind = .Wait, text = "[console]   module    adder"},
+	{kind = .Wait, text = "[console]   module    adder", fails_on = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
 	{kind = .Type, text = "unload(\"assemble\")"},
-	{kind = .Wait, text = "[console]   module    assemble"},
+	{kind = .Wait, text = "[console]   module    assemble", fails_on = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
 	{kind = .Type, text = "release(f)"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "load(\"sample\")"},

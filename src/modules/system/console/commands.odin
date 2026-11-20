@@ -164,7 +164,7 @@ LOADED_CAPACITY :: 8
 // A module that the console loaded.
 Loaded :: struct {
 	hash:    [32]u8,
-	name:    string, // In the boot image.
+	name:    string, // In the boot image; for a module from memory, in its sandbox, which unload sets to zero.
 	file:    []u8, // In the boot image.
 	place:   int, // A direct load: the place of the module in `space`.
 	sandbox: int, // Not 0: the module is in sandboxes[sandbox - 1].
@@ -1450,7 +1450,9 @@ unload_module :: proc "contextless" (arguments: []Value) -> Value {
 		columns := [3]Column{text_column("module", 32), integer_column("commands"), text_column("memory", 40)}
 		table, made := made_table("Unloaded", columns[:])
 		row := made_row(&table)
-		made_text(&table, row, 0, item.name)
+		// The argument, not item.name: the name of a module from memory is
+		// a view of its sandbox, which is all zero bytes now.
+		made_text(&table, row, 0, name)
 		made_integer(&table, row, 1, i64(removed))
 		made_text(&table, row, 2, memory)
 		loaded[index] = loaded[loaded_count - 1]
