@@ -14,6 +14,7 @@ package root
 // modus:support/disk_process (import_scan.odin).
 
 import "modus:contract/blake3"
+import "modus:contract/storage_status"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:support/disk_process"
@@ -136,7 +137,7 @@ disk_import_list_ask :: proc "contextless" () -> bool {
 	load.arguments[2].table = {records = ([^]u8)(&imports.rows)[:size_of(imports.rows)], count = 0}
 	load.arguments[3].table = {records = imports.names[:], count = 0}
 	load.argument_count = 4
-	status: storage.Status
+	status: storage_status.Status
 	load.sent, status = storage.call_send(&load.client, "list", load.arguments[:load.argument_count])
 	return status == .Ok
 }
@@ -155,7 +156,7 @@ disk_import_ask :: proc "contextless" (export: string, offset: u64, with_offset:
 		load.arguments[2].integer = offset
 		load.argument_count = 3
 	}
-	status: storage.Status
+	status: storage_status.Status
 	load.sent, status = storage.call_send(&load.client, export, load.arguments[:load.argument_count])
 	return status == .Ok
 }

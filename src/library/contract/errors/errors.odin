@@ -298,7 +298,7 @@ Unit :: enum i64 {
 }
 
 // The name of each error kind, as the contract names it: a column of a
-// table and a log fact write it (operation.contract_enum_member_name).
+// table and a log fact write it (module.contract_enum_member_name).
 @(rodata)
 KIND_NAMES := [Kind]string {
 	.None              = "None",

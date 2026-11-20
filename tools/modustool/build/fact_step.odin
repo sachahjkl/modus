@@ -2,6 +2,7 @@ package build
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:private/console/console_condition"
 import "modus:support/sentence"
 import "core:fmt"
@@ -111,13 +112,17 @@ fact_line_of_types :: proc(types: []Fact_Step_Type, line: Fact_Line) -> (type: F
 			continue
 		}
 		size := int(entry.description.size)
-		if line.value_count > size || size > op.LOG_FACT_VALUE_CAPACITY {
+		most := fact_values_most(entry.file, entry.description)
+		if line.value_count > most || size > op.LOG_FACT_VALUE_CAPACITY {
 			return {}, nil, false
 		}
-		// A parameter cannot be sliced: its bytes are copied first.
+		// A parameter cannot be sliced: its bytes are copied first. The
+		// values are the record, and the whole out-of-line area of a record
+		// with a text view: the line cut the last zeros of the values, which
+		// can be the last bytes of a text of the area.
 		line_values := line.values
-		values = make([]u8, size, context.temp_allocator)
-		copy(values, line_values[:size])
+		values = make([]u8, most, context.temp_allocator)
+		copy(values, line_values[:len(values)])
 		return entry, values, true
 	}
 	return {}, nil, false
@@ -301,15 +306,35 @@ fact_step_matches :: proc(step: Fact_Step, place: Fact_Line_Place) -> bool {
 			continue
 		}
 		size := int(entry.description.size)
-		if place.line.value_count > size {
+		most := fact_values_most(entry.file, entry.description)
+		if place.line.value_count > most {
 			return false
 		}
 		if !step.has_condition {
 			return true
 		}
 		values := place.line.values
-		value, has_value := console_condition.field_value_of(values[:size], entry.field)
+		record := values[:size]
+		// The whole area: the line cut its last zeros, which can be the
+		// last bytes of a text.
+		area := values[size:most]
+		if entry.field.kind == u8(value_kinds.Field_Kind.Text_View) {
+			// The head of the view first: the area is read only when the
+			// length and the prefix are those of the condition.
+			holds, _, decided := console_condition.text_view_condition_holds(record, entry.field, area, step.condition)
+			return decided && holds
+		}
+		value, has_value := console_condition.field_value_of(record, entry.field, area)
 		return has_value && console_condition.condition_holds(value, step.condition)
 	}
 	return false
+}
+
+// fact_values_most gives the most value bytes of a fact of a record: the
+// record, and the out-of-line area of a record with a text view.
+fact_values_most :: proc(file: []u8, description: module.Record) -> int {
+	if module.record_has_text_view(file, description) {
+		return int(description.size) + op.LOG_FACT_TEXT_AREA_BYTES_MOST
+	}
+	return int(description.size)
 }

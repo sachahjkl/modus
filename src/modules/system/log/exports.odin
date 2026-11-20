@@ -419,12 +419,13 @@ value_runs_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, r
 Fact_Row :: struct {
 	number:      i64, // The number of the log record, as in records().
 	form:        op.Log_Record_Form, // Fact for each row, as the field form of records() names it: the same enum in the two tables.
-	continues:   i64, // The byte `more` of the record: 0 for a fact.
+	continues:   i64, // The byte `more` of the record: 1 for a record of a fact before its last.
 	key:         value_kinds.Hexadecimal_64, // The fact key that the writer gave.
 	module_hash: value_kinds.Hash_Field, // The module hash that the writer gave: its own-hash place.
-	value_count: i64, // The value bytes of the fact, as the kernel counted them from the length.
-	reserved:    value_kinds.Hexadecimal_64, // The 6 reserved bytes of the fact, as a number: 0, which the kernel writes.
-	values:      value_kinds.Fact_Values_Field, // The value bytes, each of them: the bytes past value_count are 0.
+	value_count: i64, // The value bytes of this record, as the kernel counted them from the length.
+	part:        u32, // The place of the record among the records of its fact, from 0, which the kernel writes.
+	part_count:  u32, // The records of its fact, 1 to op.LOG_FACT_RECORDS_MOST, which the kernel writes.
+	values:      value_kinds.Fact_Values_Field, // The value bytes of this record, each of them: the bytes past value_count are 0.
 }
 #assert(size_of(Fact_Row) == 224)
 // A reader that reads records and fact_records from one number, in call
@@ -446,13 +447,8 @@ fact_row_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result:
 	}
 	fact := op.log_record_fact(record)
 	row := &result[count^]
-	row^ = {number = number, form = .Fact, continues = i64(record.more), key = value_kinds.Hexadecimal_64(fact.key), value_count = i64(fact.value_count)}
+	row^ = {number = number, form = .Fact, continues = i64(record.more), key = value_kinds.Hexadecimal_64(fact.key), value_count = i64(fact.value_count), part = u32(fact.part), part_count = u32(fact.part_count)}
 	copy(row.module_hash[:], fact.module_hash[:])
-	reserved: u64
-	for value, index in fact.reserved {
-		reserved |= u64(value) << (8 * u64(index))
-	}
-	row.reserved = value_kinds.Hexadecimal_64(reserved)
 	// The bytes past the count that the kernel wrote are the zeros of the
 	// record, so a value never carries bytes of an older record.
 	copy(row.values[:min(int(fact.value_count), len(row.values))], fact.values[:])
