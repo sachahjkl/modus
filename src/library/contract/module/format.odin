@@ -1,4 +1,4 @@
-// The module format, version 3 (docs/MODULE_CONTRACT.md, sections 1 and 2).
+// The module format, version 5 (docs/MODULE_CONTRACT.md, sections 1 and 2).
 //
 // A module is one file:
 //
@@ -27,6 +27,8 @@
 //   (`budget_request`).
 // - `Fact`, `Own_Hash_Place` (`facts.odin`): the log facts that the module
 //   writes, and the place where a loader writes the hash of the module.
+// - `Record_Output`, `Record_Input` (`record_streams.odin`): the record
+//   outputs and the record inputs that the module declares.
 // - `Load_Error`, `Load_Stage`, `Difference` (`error.odin`) and `Error`
 //   (`load.odin`): why a load failed.
 //
@@ -37,7 +39,7 @@ import "modus:contract/enum_word"
 import "modus:contract/value_kinds"
 
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
-VERSION :: 3 // The version of the format that this code reads and writes. A file of another version is refused. 3: the own-hash place, which a loader must write.
+VERSION :: 5 // The version of the format that this code reads and writes. A file of another version is refused. 5: the place of the variable of each record output and record input.
 PAGE_SIZE :: 4096 // The alignment of each segment in the file and in memory: one page of the processor.
 HASH_SIZE :: 32 // The bytes of a BLAKE3 hash: the name of a module.
 
@@ -56,7 +58,7 @@ Machine :: enum u32 {
 // the file when one field is not one that it takes (`validate`).
 //
 // Example: the header of a module with an entry starts with the bytes "MODULE", the
-// version 3, the machine `X86_64`, and `entry_export` the index of its
+// version 5, the machine `X86_64`, and `entry_export` the index of its
 // export `main`.
 Header :: struct {
 	magic:           u64, // `MAGIC`.
@@ -87,6 +89,8 @@ Table_Kind :: enum u32 {
 	Budget        = 11, // One `Budget_Request` record, at index 1: the budget that the module asks for.
 	Facts         = 12, // `Fact` records: the log facts that the module writes, sorted by fact key.
 	Own_Hash      = 13, // One `Own_Hash_Place` record, at index 1: where a loader writes the hash of the module.
+	Record_Outputs = 14, // `Record_Output` records: the record outputs that the module declares, sorted by name.
+	Record_Inputs  = 15, // `Record_Input` records: the record inputs that the module declares, sorted by name.
 }
 // The tables that this version of the format knows.
 TABLE_COUNT :: len(Table_Kind)

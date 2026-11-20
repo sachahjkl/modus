@@ -124,8 +124,11 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 	// A parameter that the parser reads as a name (a condition, a fact
 	// name) has no field of the form of the panel: the console line calls
 	// that command.
-	for form in item.parameter_forms[:item.parameter_count] {
-		if form != .Expression {
+	// A parameter that the parser reads as a name, and one that takes a
+	// typed name of a record stream, has no field of the form either.
+	given_count := item.optional_last ? item.parameter_count - 1 : item.parameter_count
+	for index in 0 ..< given_count {
+		if item.parameter_forms[index] != .Expression || item.parameters[index] == .Stream || item.parameters[index] == .Record_Input {
 			return {}, false
 		}
 	}
@@ -138,7 +141,9 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 			}
 		}
 	}
-	entry.parameter_count = u8(item.parameter_count)
+	// The form asks for the parameters that a call needs: the palette
+	// starts a process with no wiring list.
+	entry.parameter_count = u8(given_count)
 	for kind, index in item.parameters[:entry.parameter_count] {
 		entry.parameters[index] = u8(kind)
 		// What the number counts, where the command or the description of
@@ -972,7 +977,7 @@ palette_line_ended :: proc "contextless" () {
 			}
 		case .Record:
 			console_results.draw_record(&sink, value.file, value.detail, value.record)
-		case .Handle, .Table, .Bytes:
+		case .Handle, .Table, .Bytes, .Stream, .Record_Input:
 			// The panel has no drawer for these: the console window shows them.
 			writer.fits = false
 		}

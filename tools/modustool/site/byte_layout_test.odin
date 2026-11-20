@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import draw_record "modus:contract/draw_record"
 import module "modus:contract/module"
+import "modus:contract/output"
 import "modustool:foundation"
 
 // One field as the compiler places it, written with offset_of and size_of,
@@ -33,6 +34,12 @@ expected_fields :: proc() -> []Expected_Field {
 	budget: module.Budget_Request
 	fact: module.Fact
 	own_hash_place: module.Own_Hash_Place
+	record_output: module.Record_Output
+	record_input: module.Record_Input
+	compartment_word: output.Compartment_Word
+	end_words: output.End_Words
+	list_head: output.Wiring_List_Head
+	wiring: output.Wiring
 	draw: draw_record.Draw_Record
 	rectangle: draw_record.Rectangle_Fields
 	gradient: draw_record.Gradient_Fields
@@ -115,6 +122,48 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Fact", "package_count", offset_of(module.Fact, package_count), size_of(fact.package_count)},
 		{"module.Fact", "reserved", offset_of(module.Fact, reserved), size_of(fact.reserved)},
 		{"module.Own_Hash_Place", "memory_offset", offset_of(module.Own_Hash_Place, memory_offset), size_of(own_hash_place.memory_offset)},
+		{"module.Record_Output", "name_offset", offset_of(module.Record_Output, name_offset), size_of(record_output.name_offset)},
+		{"module.Record_Output", "name_count", offset_of(module.Record_Output, name_count), size_of(record_output.name_count)},
+		{"module.Record_Output", "about_offset", offset_of(module.Record_Output, about_offset), size_of(record_output.about_offset)},
+		{"module.Record_Output", "about_count", offset_of(module.Record_Output, about_count), size_of(record_output.about_count)},
+		{"module.Record_Output", "text_offset", offset_of(module.Record_Output, text_offset), size_of(record_output.text_offset)},
+		{"module.Record_Output", "text_count", offset_of(module.Record_Output, text_count), size_of(record_output.text_count)},
+		{"module.Record_Output", "record", offset_of(module.Record_Output, record), size_of(record_output.record)},
+		{"module.Record_Output", "pairing", offset_of(module.Record_Output, pairing), size_of(record_output.pairing)},
+		{"module.Record_Output", "reserved", offset_of(module.Record_Output, reserved), size_of(record_output.reserved)},
+		{"module.Record_Output", "place", offset_of(module.Record_Output, place), size_of(record_output.place)},
+		{"module.Record_Input", "name_offset", offset_of(module.Record_Input, name_offset), size_of(record_input.name_offset)},
+		{"module.Record_Input", "name_count", offset_of(module.Record_Input, name_count), size_of(record_input.name_count)},
+		{"module.Record_Input", "about_offset", offset_of(module.Record_Input, about_offset), size_of(record_input.about_offset)},
+		{"module.Record_Input", "about_count", offset_of(module.Record_Input, about_count), size_of(record_input.about_count)},
+		{"module.Record_Input", "text_offset", offset_of(module.Record_Input, text_offset), size_of(record_input.text_offset)},
+		{"module.Record_Input", "text_count", offset_of(module.Record_Input, text_count), size_of(record_input.text_count)},
+		{"module.Record_Input", "record", offset_of(module.Record_Input, record), size_of(record_input.record)},
+		{"module.Record_Input", "terms", offset_of(module.Record_Input, terms), size_of(record_input.terms)},
+		{"module.Record_Input", "wirings", offset_of(module.Record_Input, wirings), size_of(record_input.wirings)},
+		{"module.Record_Input", "reserved", offset_of(module.Record_Input, reserved), size_of(record_input.reserved)},
+		{"module.Record_Input", "place", offset_of(module.Record_Input, place), size_of(record_input.place)},
+		{"output.Compartment_Word", "kind", offset_of(output.Compartment_Word, kind), size_of(compartment_word.kind)},
+		{"output.Compartment_Word", "serial", offset_of(output.Compartment_Word, serial), size_of(compartment_word.serial)},
+		{"output.End_Words", "end", offset_of(output.End_Words, end), size_of(end_words.end)},
+		{"output.End_Words", "stop_cause", offset_of(output.End_Words, stop_cause), size_of(end_words.stop_cause)},
+		{"output.End_Words", "stop_outcome", offset_of(output.End_Words, stop_outcome), size_of(end_words.stop_outcome)},
+		{"output.End_Words", "reserved", offset_of(output.End_Words, reserved), size_of(end_words.reserved)},
+		{"output.Wiring_List_Head", "row_count", offset_of(output.Wiring_List_Head, row_count), size_of(list_head.row_count)},
+		{"output.Wiring_List_Head", "handle_count", offset_of(output.Wiring_List_Head, handle_count), size_of(list_head.handle_count)},
+		{"output.Wiring_List_Head", "reserved", offset_of(output.Wiring_List_Head, reserved), size_of(list_head.reserved)},
+		{"output.Wiring", "writer_end", offset_of(output.Wiring, writer_end), size_of(wiring.writer_end)},
+		{"output.Wiring", "writer_handle", offset_of(output.Wiring, writer_handle), size_of(wiring.writer_handle)},
+		{"output.Wiring", "writer_stream", offset_of(output.Wiring, writer_stream), size_of(wiring.writer_stream)},
+		{"output.Wiring", "writer_index", offset_of(output.Wiring, writer_index), size_of(wiring.writer_index)},
+		{"output.Wiring", "reader_end", offset_of(output.Wiring, reader_end), size_of(wiring.reader_end)},
+		{"output.Wiring", "reader_handle", offset_of(output.Wiring, reader_handle), size_of(wiring.reader_handle)},
+		{"output.Wiring", "reader_index", offset_of(output.Wiring, reader_index), size_of(wiring.reader_index)},
+		{"output.Wiring", "pace", offset_of(output.Wiring, pace), size_of(wiring.pace)},
+		{"output.Wiring", "capacity", offset_of(output.Wiring, capacity), size_of(wiring.capacity)},
+		{"output.Wiring", "terms_offset", offset_of(output.Wiring, terms_offset), size_of(wiring.terms_offset)},
+		{"output.Wiring", "terms_count", offset_of(output.Wiring, terms_count), size_of(wiring.terms_count)},
+		{"output.Wiring", "reserved", offset_of(output.Wiring, reserved), size_of(wiring.reserved)},
 		{"draw_record.Draw_Record", "kind", offset_of(draw_record.Draw_Record, kind), size_of(draw.kind)},
 		{"draw_record.Draw_Record", "reserved", offset_of(draw_record.Draw_Record, reserved), size_of(draw.reserved)},
 		{"draw_record.Draw_Record", "element", offset_of(draw_record.Draw_Record, element), size_of(draw.element)},

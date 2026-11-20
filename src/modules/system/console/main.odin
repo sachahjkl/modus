@@ -58,6 +58,10 @@
 // - Replacements: `replace(module, other)`, `replacements()`.
 // - Tables: `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`,
 //   `row`. `where` takes a condition on a field: `where(t, block = 12)`.
+// - Record streams: a typed name, `output_counter.counts`, reads a record
+//   output of a process that the console started; `where`, `first` and
+//   `table` take it, and `record_outputs(module)` lists them
+//   (docs/CONSOLE.md, "Streams").
 // - Log facts: `facts(table, package.Type)`, the fields of one fact type
 //   of the rows of `log.records` as columns.
 // - Others: `help()`, `describe(name)`, `memory()`, `locks()`, `time()`,
@@ -74,7 +78,7 @@
 // **The keys** (docs/CONSOLE.md, "1. The keys"): Enter runs the line; Tab
 // and the typed name open the [completion list](term:completion-list); Up
 // and Down walk the [line history](term:line-history); Escape stops an
-// isolated call that does not return.
+// isolated call that does not return, and the read of a record stream.
 //
 // **The two threads.** The first thread reads the keys and owns the
 // [edit line](term:edit-line), the line history and the completion list.
@@ -486,7 +490,7 @@ edit_show :: proc "contextless" () {
 		system.write_part(&writer, elapsed / 1000)
 		system.write_part(&writer, ".")
 		system.write_part(&writer, elapsed / 100 % 10)
-		system.write_part(&writer, " s. Escape stops an isolated call. Keys that wait: ")
+		system.write_part(&writer, " s. Escape stops a call or a record stream. Keys that wait: ")
 		for waiting in pending[:pending_count] {
 			shown_key: rune = '^' // A key with no character: an arrow key, Control with a key.
 			switch {

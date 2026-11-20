@@ -61,7 +61,7 @@ import "base:intrinsics"
 // they work on each table of each service. Example:
 //
 // ```
-// > columns(where(manual.running(), module = "calendar_fixed"), "process slot module replaces")
+// > columns(where(manual.running(), module = "calendar_fixed"), process, slot, module, replaces)
 // ```
 //
 // **A variable keeps a value** for the lines after it: `t = readings(4)`,
@@ -97,6 +97,12 @@ Command :: struct {
 	// table of error details. The console gives the table; the input does
 	// not write it, so parameter_count does not count it.
 	details_parameter: int,
+	// A command of the console whose first parameter, a Table, takes a
+	// Stream too: it reads each row as it comes (where, first, table).
+	takes_stream: bool,
+	// A command whose last parameter a call may leave out: start(name) and
+	// start(name, list).
+	optional_last: bool,
 }
 
 // The places of the table of error details that the console gives to an
@@ -268,8 +274,8 @@ commands_start :: proc "contextless" () {
 	// nickname.
 	//
 	// ```
-	// > columns(where(processes(), state = "waiting"), "slot name threads")
-	// > columns(where(processes(), name = "visitor"), "name hash")
+	// > columns(where(processes(), state = "waiting"), slot, name, threads)
+	// > columns(where(processes(), name = "visitor"), name, hash)
 	// ```
 	//
 	// Errors: those of `connect("monitor")` when the service does not run,
@@ -461,10 +467,31 @@ commands_start :: proc "contextless" () {
 	// those (the reference page of the grants lists them). `processes()`
 	// then has its row.
 	//
+	// - `list`: a wiring list, which the call may leave out: a `Table` of
+	//   `Wiring`, as `wire(from, to)` gives it and `+` joins it. Each row
+	//   names the module at one end; the root service makes each wiring
+	//   before the first instruction of the process, so its first record
+	//   reaches each reader.
+	//
+	// When the module declares a record output, the console keeps the
+	// handle of the process while it runs, and a line reads each record
+	// output by its typed name: `output_counter.counts` (docs/CONSOLE.md,
+	// "Streams").
+	//
+	// ```
+	// > start("output_count_reader", wire(where(output_counter.counts, status = 404), output_count_reader.counts))
+	// ```
+	//
 	// Errors: the error record of the root service when it refuses (no
-	// module has the name, the process runs already, no slot is free), and
-	// "the root service did not answer" after 3 seconds.
-	command("start", {.Text}, .None, "start a process, by module name", start_process)
+	// module has the name, the process runs already, no slot is free, a
+	// row of the list, a record input of the count One wired twice), and
+	// "the root service did not answer" after 3 seconds; a list that is no
+	// Table of Wiring, a row that names no end of the module or names it
+	// twice, an end that does not run, a list past its 32 rows or its 16
+	// lent handles; the console keeps the handles of 8 started processes
+	// with a record output at most.
+	command("start", {.Text, .Table}, .None, "start a process, by module name, with a wiring list or none", start_process)
+	commands[command_count - 1].optional_last = true
 	// Asks the root service to start a disk process: a process whose module
 	// file is an object of the store `module_files` of the storage service, and
 	// not a file of the boot image. It gives nothing.
@@ -1741,6 +1768,7 @@ services_check :: proc "contextless" () {
 			}
 		}
 	}
+	stream_owners_check()
 }
 
 // callable_by_console says if the console has a value for each parameter and
@@ -1855,10 +1883,11 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 			integers[index] = u64(uintptr(&argument.text))
 		case .Record:
 			integers[index] = u64(uintptr(raw_data(argument.record)))
-		case .None, .Integer, .Handle, .Table, .Bytes:
+		case .None, .Integer, .Handle, .Table, .Bytes, .Stream, .Record_Input:
 			// The check of the line gave each other kind its integer: a
 			// handle is its number, and a Table or Bytes parameter took its
-			// place above.
+			// place above. An export takes no Stream: argument_accepted
+			// refused it.
 			integers[index] = u64(argument.integer)
 		}
 	}
@@ -1922,9 +1951,9 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
 	case .Table:
 		return table_take(item, &table, results[0])
-	case .None, .Handle, .Bytes:
+	case .None, .Handle, .Bytes, .Stream, .Record_Input:
 		// None gives no value; callable_by_console refuses an export with
-		// a Handle or a Bytes result.
+		// a Handle or a Bytes result, and no export gives a Stream.
 	}
 	return {}
 }
@@ -2410,9 +2439,10 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 					}
 					copy(bytes, rows)
 					return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
-				case .None, .Handle, .Bytes:
+				case .None, .Handle, .Bytes, .Stream, .Record_Input:
 					// None gives no value; callable_by_console refuses an
-					// export with a Handle or a Bytes result.
+					// export with a Handle or a Bytes result, and no export
+					// gives a Stream.
 				}
 				return {}
 			case .Bad_Export:
@@ -2732,7 +2762,30 @@ start_process :: proc "contextless" (arguments: []Value) -> Value {
 	// The log service can be the process that starts: the console tries
 	// its connection again.
 	line_records_try_again()
-	return request(.Start, arguments[0].text)
+	name := arguments[0].text
+	// The ring holds a name of 31 bytes: request refuses a longer one, as
+	// a cut name can be the name of another process.
+	if len(name) >= len(system.Name) {
+		return request(.Start, name)
+	}
+	if len(arguments) == 2 {
+		return start_with_list(name, arguments[1])
+	}
+	// The console asks for the process handle: it names the process as
+	// the end Started of a wiring, and its record outputs by their typed
+	// names (streams.odin).
+	packed := system.name_pack(name)
+	completion, answered := disk_request(.Start, {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(root_ring.Start_Wiring_List.None), 5 = u64(root_ring.Start_Answer.Process_Handle)}, 3000)
+	if !answered {
+		return fail_no_answer()
+	}
+	if status, _ := system.status_of_word(completion.kind); status != .Ok {
+		return fail_root("", completion)
+	}
+	if !stream_owner_keep(name, system.Handle(completion.values[0])) {
+		return fail("start: ", name, " runs, and has no typed name: the console names the record outputs of ", u64(STREAM_OWNER_CAPACITY), " processes that it started at most, until one of them stops")
+	}
+	return {}
 }
 
 // How long the console waits for the completion of Start_From_Disk, in
@@ -3428,8 +3481,9 @@ list_variables :: proc "contextless" (arguments: []Value) -> Value {
 			buffer = value_buffer[:],
 		}
 		switch value.kind {
-		case .None, .Bytes:
+		case .None, .Bytes, .Stream, .Record_Input:
 			// No value, and bytes with no description: the cell stays empty.
+			// No variable keeps a Stream.
 		case .Integer:
 			system.write_part(&value_writer, value.integer)
 		case .Handle:

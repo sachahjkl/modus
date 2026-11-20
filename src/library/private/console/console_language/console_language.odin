@@ -142,6 +142,7 @@ Name_Role :: enum u8 {
 	Record   = 2, // A command that makes a record: its name is a type.
 	Module   = 3, // A module or a service.
 	Variable = 4, // A variable of the console.
+	Stream   = 5, // A typed name of a record output, "owner.output": the owner, then the record output.
 }
 
 // The console gives the roles of its names. The package keeps no table of
@@ -149,12 +150,32 @@ Name_Role :: enum u8 {
 Name_Lookup :: struct {
 	data:    rawptr, // The state of the console.
 	role_of: proc "contextless" (data: rawptr, name: string) -> Name_Role, // Gives the role of a name.
+	// Gives the number from 0 of the first argument of a command from which
+	// each argument is the name of a field (columns(t, a, b): 1), or -1.
+	field_names_from: proc "contextless" (data: rawptr, command: string) -> int,
 }
 
 // role_of gives the role of a name through a lookup. A lookup with no
 // procedure knows no name.
 role_of :: proc "contextless" (lookup: Name_Lookup, name: string) -> Name_Role {
 	return lookup.role_of == nil ? .Unknown : lookup.role_of(lookup.data, name)
+}
+
+// field_names_from gives the first argument of a command that is a name of
+// a field, or -1: a lookup with no procedure knows none.
+field_names_from :: proc "contextless" (lookup: Name_Lookup, command: string) -> int {
+	return lookup.field_names_from == nil ? -1 : lookup.field_names_from(lookup.data, command)
+}
+
+// The calls that line_runs follows inside each other, at most: past them
+// a name has its role, with no field.
+CALL_DEPTH_MOST :: 16
+
+// One call that line_runs is inside of.
+@(private = "file")
+Open_Call :: struct {
+	names_from: int, // The first argument that is a name of a field, or -1.
+	argument:   int, // The argument that the scanner is in, from 0; after a "|>", from 1.
 }
 
 // run_add writes the run text[start:end] of a kind after count runs. A
@@ -213,6 +234,13 @@ line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: N
 	first_token := true
 	assignment_operator := -1 // The '=' after the name of a variable, at the start of the line.
 	after_comparison := false // The token before is the last byte of an operator of a condition.
+	// The calls that the scanner is inside of, for the arguments that are
+	// names of fields: columns(t, slot, name).
+	calls: [CALL_DEPTH_MOST]Open_Call
+	depth := 0
+	pending_call := Open_Call{names_from = -1}
+	pending := false // The token before is the name of a call, whose "(" comes now.
+	after_pipe := false // The token before is "|>".
 	for count < len(runs) {
 		token := token_next(text, position)
 		if token.kind == .None {
@@ -220,6 +248,43 @@ line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: N
 		}
 		position = token.end
 		comparison_before := after_comparison
+		// The calls: a "(" after a name opens one, "," moves to the next
+		// argument, ")" closes it.
+		if token.kind == .Operator {
+			switch text[token.start] {
+			case '(':
+				call := pending ? pending_call : Open_Call{names_from = -1}
+				if depth < CALL_DEPTH_MOST {
+					calls[depth] = call
+				}
+				depth += 1
+			case ')':
+				depth = max(depth - 1, 0)
+			case ',':
+				if depth > 0 && depth <= CALL_DEPTH_MOST {
+					calls[depth - 1].argument += 1
+				}
+			}
+		}
+		pipe_before := after_pipe
+		after_pipe = token.kind == .Pipe
+		pending = false
+		if token.kind == .Name {
+			next := token_next(text, token.end)
+			if next.kind == .Operator && text[next.start] == '(' {
+				pending = true
+				pending_call = {names_from = field_names_from(lookup, text[token.start:token.end]), argument = pipe_before ? 1 : 0}
+			} else if depth > 0 && depth <= CALL_DEPTH_MOST && calls[depth - 1].names_from >= 0 && calls[depth - 1].argument >= calls[depth - 1].names_from {
+				// A name of a field, which the console checks against the
+				// record of the table when the line runs.
+				if !(caret != NO_CARET && (token.end == caret || token.end == len(text))) {
+					count = run_add(runs, count, token.start, token.end, .Parameter)
+				}
+				first_token = false
+				after_comparison = false
+				continue
+			}
+		}
 		// The last byte of an operator of a condition: "=" ends "=", "!=",
 		// "<=" and ">="; "<" and ">" end themselves when no "=" follows.
 		after_comparison = false
@@ -303,6 +368,15 @@ name_runs :: proc "contextless" (text: string, token: Token, being_typed, assign
 		return run_add(runs, written, token.start, token.end, .Module)
 	case .Variable:
 		return run_add(runs, written, token.start, token.end, .Variable)
+	case .Stream:
+		// server.requests: the owner, the dot, and the record output, which
+		// is a value of the line as a variable is.
+		if first_dot <= 0 {
+			return run_add(runs, written, token.start, token.end, .Variable)
+		}
+		written = run_add(runs, written, token.start, token.start + first_dot, .Module)
+		written = run_add(runs, written, token.start + first_dot, token.start + first_dot + 1, .Operator)
+		return run_add(runs, written, token.start + first_dot + 1, token.end, .Variable)
 	case .Unknown:
 	}
 	if assigned {
@@ -311,7 +385,7 @@ name_runs :: proc "contextless" (text: string, token: Token, being_typed, assign
 	if first_dot > 0 {
 		owner := name[:first_dot]
 		switch role_of(lookup, owner) {
-		case .Unknown, .Function, .Record:
+		case .Unknown, .Function, .Record, .Stream:
 			// No field and no export follows such a name: the whole token is unknown below.
 		case .Variable:
 			// variable.field: the console checks the field when the line runs.

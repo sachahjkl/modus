@@ -499,8 +499,8 @@ text_size :: proc(type: ^ast.Expr) -> (size: u32, is_text, ok: bool) {
 
 // struct_record gives the number of the description of a struct, by its
 // type name. 0 and is_record false: the name is no struct that the tool
-// knows.
-@(private = "file")
+// knows. The extraction of a record output and a record input reads its
+// record so.
 struct_record :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> (number: u32, is_record, ok: bool) {
 	key, record_name := struct_name(state, type)
 	return struct_record_named(state, key, record_name, result)

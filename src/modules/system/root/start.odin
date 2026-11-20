@@ -8,6 +8,7 @@ import info "modus:contract/boot_info"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/settings"
@@ -52,32 +53,115 @@ Start_Work :: struct {
 	endpoint_region: system.Handle,
 	clock_ports:    system.Handle,
 	shared:         [2]system.Handle, // The ring to the compositor; or the terminal ring and the text region.
+	// The wiring of the child before its first instruction, and what the
+	// start gives back: its wiring ring and a handle of its budget.
+	wiring:         system.Start_Wiring,
+	// The wiring list of the Start, or nil (wirings.odin).
+	wiring_work:    ^Wiring_Work,
+	// Where a refusal that names its cause writes its error record, or nil:
+	// the completion of the command that asked for the start. A start that
+	// this one starts first writes there too.
+	refusal:        ^[7]u64,
 }
 
 // start starts a process of the boot image that shows a surface or has a
-// terminal, in the session of a principal (principals.odin).
-start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) -> system.Status {
+// terminal, in the session of a principal (principals.odin). asker is the
+// process that asked for the start with Start, or nil; wiring_work its
+// wiring list, which a refusal of the start ends whole; place, when not
+// nil, receives the place of the process; refusal, when not nil, receives
+// the error record of a refusal that names its cause, which the state
+// after the start no longer shows.
+start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, wiring_work: ^Wiring_Work = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil) -> system.Status {
 	work := Start_Work {
-		name      = name,
-		principal = principal,
+		name        = name,
+		principal   = principal,
+		wiring_work = wiring_work,
+		refusal     = refusal,
 	}
 	defer start_handles_close(&work)
+	// The handles of the start, its rows included, are free before any is
+	// made: the table of prepared modules gives back its parts used least
+	// recently (own_tables.odin).
+	rows := 0
+	if wiring_work != nil {
+		rows = int(wiring_work.list.row_count)
+	}
+	handles_room_make(start_handles_needed(rows))
 	if status := start_prepare(&work); status != .Ok {
+		// A device service that start_prepare started before its refusal
+		// stops: else its device stays held until the machine restarts.
+		start_abandon(&work)
 		return status
 	}
 	if status := start_place_take(&work); status != .Ok {
 		start_abandon(&work)
 		return status
 	}
+	work.slot.asker = asker
 	status := start_context_build(&work)
+	if status == .Ok && wiring_work != nil {
+		// The list is resolved against the file and the place of the
+		// child before the child exists. Its rings and its pages are made
+		// in process_start, after the load of the modules of the child
+		// (wiring_child_ends_make): the loader prepares each module with
+		// none of them in the handle table of this service.
+		wiring_work.child = work.slot
+		wiring_work.child_file = work.file
+		status = wiring_list_resolve(wiring_work)
+		if status == .Ok {
+			work.wiring.ends_make = wiring_child_ends_make
+			work.wiring.ends_data = wiring_work
+		}
+	}
 	if status == .Ok {
 		status = start_process_load(&work)
+		if status != .Ok && wiring_work != nil {
+			wiring_list_unmake(wiring_work)
+		}
 	}
 	if status != .Ok {
 		start_abandon(&work)
 		return status
 	}
-	return start_finish(&work)
+	start_wiring_keep(&work)
+	if place != nil {
+		place^ = work.slot
+	}
+	status = start_finish(&work)
+	if wiring_work != nil {
+		// The other ends go out only after the whole start: a refused start
+		// delivers nothing, and the child that stops held its own ends
+		// only. The list is whole or refused.
+		if status == .Ok {
+			wiring_list_deliver(wiring_work)
+		} else {
+			wiring_list_unmake(wiring_work)
+		}
+	}
+	return status
+}
+
+// start_wiring_keep keeps what the start of a process gave this service:
+// its module file, the budget handle of a process that can send Wire, and
+// the handle of its wiring ring.
+start_wiring_keep :: proc "contextless" (work: ^Start_Work) {
+	slot := work.slot
+	slot.file = work.file
+	slot.budget = work.wiring.budget
+	slot.wiring_memory = work.wiring.wiring_memory
+	// The ring is mapped only for a child that took ends in its start: their
+	// answers come there. A child with no end costs this service no
+	// mapping until a Wire gives it one (wiring_ring_hold).
+	if slot.wiring_memory != 0 && len(work.wiring.ends) != 0 {
+		mapped, status := system.ring_open(slot.wiring_memory)
+		if status == .Ok {
+			slot.wiring = mapped
+		} else {
+			// The answers of the ends of the start are then not read; a
+			// later Wire maps the ring again (wiring_ring_hold).
+			system.log(.Warning, "root: cannot map the wiring ring of ", system.Module_Name{work.name}, ": status ", status)
+		}
+	}
 }
 
 // start_prepare finds the file of the process, refuses a name that start()
@@ -116,6 +200,13 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		grant_slot_refused(name, slot)
 		return .Bad_State
 	}
+	// The rings of the process are queues of the wait of the loop of this
+	// service: past the bound, the start is refused before any service
+	// starts for it and before any ring is made (wait_words.odin).
+	if record, refused := waited_queues_refusal(.Start, start_waited_queues(grants, work.file)); refused {
+		start_refusal_keep(work, record)
+		return .No_Slot
+	}
 	// A process with an endpoint: the network service starts first.
 	if .Network in grants {
 		network_service() or_return
@@ -129,7 +220,9 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 			}
 		}
 		if !running {
-			start("storage") or_return
+			// A refusal of that start that names its cause is the cause of
+			// this one.
+			start("storage", refusal = work.refusal) or_return
 		}
 	}
 	// A client of a block service: the service of its disk starts first.
@@ -153,6 +246,28 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		work.driver, work.device_ring, status = driver_start(place, DRIVER_SOUND)
 	}
 	return status
+}
+
+// wiring_child_ends_make makes the rings and the pages of the wiring list
+// of a start, and gives the ends of the child: process_start calls it
+// after the load of the modules of the child. A refusal keeps its error
+// record in the list; start then ends what it made (wiring_list_unmake).
+wiring_child_ends_make :: proc "contextless" (data: rawptr) -> (ends: []output.Given_End, status: system.Status) {
+	wiring_work := (^Wiring_Work)(data)
+	wiring_list_make(wiring_work) or_return
+	return wiring_child_ends(wiring_work), .Ok
+}
+
+// start_refusal_keep writes the error record of a refusal that names its
+// cause where the asker of the start reads it: the completion of its
+// command, and the record of its wiring list.
+start_refusal_keep :: proc "contextless" (work: ^Start_Work, record: [7]u64) {
+	if work.refusal != nil {
+		work.refusal^ = record
+	}
+	if work.wiring_work != nil {
+		work.wiring_work.refusal = record
+	}
 }
 
 // start_place_take takes a free place of the table of the processes, and
@@ -496,7 +611,13 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	// module, its hash and Process_Start are in it
 	// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
 	started_at := system.nanoseconds()
-	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error)
+	// Only a process that can send Wire asks for a wiring, which its budget
+	// pays: this service keeps a handle of that budget for it alone. Each
+	// other process with a root ring (Connect, Principals, Debugger) holds
+	// no handle of this service for its budget: the handle table of this
+	// service holds one handle for each process that it keeps one for.
+	work.wiring.keep_budget = root_ring.sender_allowed(.Wire, work.role.grants)
+	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring)
 	if status == .Ok {
 		// A process with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.
@@ -509,6 +630,12 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		}
 		return .Ok
 	}
+	// The wiring list refused in process_start, with the record of its
+	// cause, which goes to the asker: the budget that refused is the
+	// budget of the asker, not of the child, and no line names the child.
+	if work.wiring_work != nil && work.wiring_work.refusal != ([7]u64{}) {
+		return status
+	}
 	// A budget of no page: the start failed before process_start.
 	if status == .No_Budget && process_budget.pages != 0 {
 		budget_refusal_log(name, process_budget, 0, "this service")
@@ -519,6 +646,12 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": ", system.written(&writer))
 	} else {
 		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": status ", status)
+	}
+	// No_Slot is a full table, of the child or of this service, which
+	// prepares the module: the line of the tables of this service tells
+	// which.
+	if status == .No_Slot {
+		own_tables_log(name)
 	}
 	return status
 }

@@ -267,6 +267,14 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	if slot == nil {
 		return .No_Slot
 	}
+	// Its root ring is one more queue of the wait of the loop. The status
+	// No_Slot alone reads as a table with no free place: the line names
+	// the queues.
+	if record, refused := waited_queues_refusal(.Start_Policy_Choice, 1); refused {
+		words := errors.completion_record(record)
+		system.log(.Error, "root: cannot start the start policy ", system.Module_Name{name}, ": its root ring makes ", u64(words.value), " words of the wait of the loop of this service, past its ", u64(words.limit), "; the queues of the wait are full")
+		return .No_Slot
+	}
 	slot^ = {}
 	copy(slot.name[:len(slot.name) - 1], name)
 	slot.principal = principals.MACHINE

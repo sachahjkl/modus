@@ -221,7 +221,7 @@ fact_template_check :: proc "contextless" (template: string, names: []string) ->
 				return .Unclosed_Brace, at
 			}
 			name := template[start:closing]
-			if !fact_field_name_valid(name) {
+			if !source_name_valid(name) {
 				return .Not_A_Field_Name, start
 			}
 			found := -1
@@ -251,11 +251,11 @@ fact_template_check :: proc "contextless" (template: string, names: []string) ->
 	return .None, 0
 }
 
-// fact_field_name_valid says if a text is a name of a field as a record
-// type of the source has it: a letter of ASCII or "_", then letters,
-// digits and "_".
-@(private = "file")
-fact_field_name_valid :: proc "contextless" (name: string) -> bool {
+// source_name_valid says if a text is a name as the source has it, the
+// name of a field of a record type or of a package variable: a letter of
+// ASCII or "_", then letters, digits and "_".
+@(private)
+source_name_valid :: proc "contextless" (name: string) -> bool {
 	if len(name) == 0 {
 		return false
 	}

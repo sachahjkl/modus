@@ -41,7 +41,7 @@ The console owns the line that the input edits: its bytes, the caret, the line h
 
 A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No process receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between processes").
 
-The code is `src/modules/system/console/language.odin` (the parser and the values), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line), `src/modules/system/console/facts.odin` (the log facts), `src/library/private/console/console_results` (the drawers) and `src/library/private/console/console_condition` (the conditions of `where`).
+The code is `src/modules/system/console/language.odin` (the parser and the values), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line), `src/modules/system/console/facts.odin` (the log facts), `src/library/private/console/console_results` (the drawers), `src/library/private/console/console_condition` (the conditions of `where`), `src/modules/system/console/streams.odin` and `src/library/private/console/console_stream` (the streams).
 
 ### The form of a line
 
@@ -58,7 +58,7 @@ arguments  = pipeline { "," pipeline }
 - **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each.
 - **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/private/console/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. A text has no escape, so it cannot hold a quote.
-- **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them. A division by zero is an error. So is the one division whose result does not fit: the least integer by `-1`. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
+- **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them; `+` on two tables of equal record descriptions gives the rows of the left one, then the rows of the right one, and refuses two tables of different records. A division by zero is an error. So is the one division whose result does not fit: the least integer by `-1`. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
 
 Examples:
 
@@ -83,6 +83,9 @@ Each value has one kind. The kinds are those of the module contract (`MODULE_CON
 | `Handle` | A handle that the console holds | `Handle 65541: Memory (Give, Read, Write)`: the kind of the object and the rights, which the console asks of the kernel |
 | `Table` | Records of one description, one after the other | A line of the names of the fields, a line for each row, then the count: `2 rows of Import` |
 | `Bytes` | Bytes with no description | Rows of 16 bytes: the place of the row, the bytes in hexadecimal, their characters; then the count |
+| `Stream` | A record output of a process, by its typed name: `output_counter.counts` | A line of the names of the fields, then a line for each record as it comes, until the end of the record stream or Escape ("Streams") |
+
+`Stream` is a kind of the console only: no export takes or gives one, and no variable keeps one.
 
 A parameter of the kind `Bytes` takes a `Text` value as its argument, or the `Bytes` of a memory object that `bytes(memory, first, count)` read: `assemble(bytes(t, 0, n), f)` gives the text that `compile` wrote to the assembler. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
 
@@ -103,7 +106,7 @@ When two commands have one name, the command added last runs.
 **The check before the call.** The console checks the count of the arguments and the kind of each one against the description of the parameters, before the call. A record or a table argument must have a description equal to the description of the parameter: equal records of two modules agree. A wrong argument is refused with its number and the two types, and the call does not run:
 
 ```
-> sum_values(columns(t, "sensor value"))
+> sum_values(columns(t, sensor, value))
 error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)
 ```
 
@@ -129,6 +132,7 @@ The bounds:
 - A name of 16 bytes at most, and a text value of 96 bytes at most.
 - A table of 32 KiB of rows at most (`TABLE_KEPT`).
 - No `Bytes` value: "error: a variable keeps no Bytes value".
+- No `Stream`: a Stream is a wiring, and a variable outlives its line ("Streams").
 - An expression with no value (a call of a command with no result) cannot be kept: "error: the expression has no value".
 
 `variables()` gives them as a table: the name, the type and the value as a text. A variable lives in the memory of the console: it does not survive a stop of the console.
@@ -146,7 +150,7 @@ A table is the records of one description, one after the other. An export with a
 | `where(table, field = value)` | The rows whose field passes a condition ("Conditions") |
 | `sort(table, field)` | The rows in the increasing order of a field: integers by value, texts byte by byte. Rows with one value keep their order, so two sorts give an order by two fields |
 | `join(left, right, field)` | One row for each pair of rows with one value of the field. The new record has the fields of the left record, then the fields of the right one that the left one does not have, at most 40; its name is `<left>_<right>` |
-| `columns(table, "a b c")` | The rows with only the fields that the text names, in its order. The record keeps its name |
+| `columns(table, a, b, c)` | The rows with only the fields that the names choose, in their order: names of fields, never a variable or a text. The record keeps its name |
 | `first(table, count)` | The first rows, at most the count |
 | `skip(table, count)` | The rows after the first rows |
 | `rows(table)` | The count of rows, as an `Integer` |
@@ -211,14 +215,80 @@ error: where: the field level holds a member of Log_Level, and a member is a nam
 
 Errors: a name that names no fact type; a fact type with a field named as a column of the head; a table that is not rows of `log.records`; no connection to the service `log`.
 
+### Streams
+
+A record output of a process is a value of the line: its [typed name](glossary/communication.md), `owner.output`, gives a [record stream](glossary/communication.md) of the kind `Stream`, as `Stream(Counted)`. The owner is a process that the console started with `start`, or a service that it connected with `connect`. The console reads the record outputs and their record descriptions in the module file of the owner, so the completion list offers the record outputs after `owner.`, and the fields of a condition after a typed name are checked before the line runs.
+
+```
+> start("output_counter")
+> record_outputs("output_counter")
+output  record   about
+counts  Counted  One record each time the writer counts, while a reader is wired.
+1 row of Record_Output
+> output_counter.counts |> where(status = 404) |> first(3)
+serial  status
+     2     404
+     5     404
+     8     404
+3 rows of Counted
+```
+
+**When a record stream is wired.** A typed name holds no wiring. The first command that reads it sends `Wire` to the root service, with the console as the asker and the reader, and the console pays the ring from its budget. Each record stream that a line wired ends with the line: the console closes its end, and the writer reads the end word `Side_Closed`. A line that fails before its read wires nothing.
+
+| Command | On a `Stream` |
+|---|---|
+| `where(stream, field = value)` | The same record stream with one more condition ("Conditions"), at most four. The console checks each condition on each record as it reads it |
+| `first(stream, count)` | A `Table` of the first rows that pass the conditions, once the count came or the record stream ended |
+| `table(stream)` | A `Table` of the rows that pass the conditions, at the end of the record stream; at most 32 KiB of rows (`TABLE_KEPT`) |
+| A `Stream` at the end of a line | The line of the names of the fields, then each row as it comes, until the end of the record stream or Escape |
+
+`first` and `table` keep the rows only. Each other command that takes a table refuses a `Stream`, before any call, and so does a variable:
+
+```
+> sort(output_counter.counts, "serial")
+error: sort takes a Table; a Stream has no end: first(s, n) or table(s) makes one
+> kept = output_counter.counts
+error: a variable keeps no Stream: a Stream is a wiring, and a variable outlives its line; first(s, n) or table(s) makes a Table
+> output_counter.count
+error: output_counter declares no record output count; its record outputs are counts
+```
+
+**The draw of a record stream.** The width of each column is the widest text that its field can hold, from its record description: the digits of the largest value of an Integer of its size, the longest member of a status, the bytes of a Text. So a row never moves the rows above it. A row that is not a record is one dim line: "joined after 9 records" when the console joined the record stream after its start ([joined record](glossary/communication.md)), "3 records are missing here" for a [gap record](glossary/communication.md), and the end: the end record, or the end word of the wiring ("the stream ended: the writer stopped"). Escape ends the wait at once and closes the record stream, and the last line says "Escape closed the stream after 12 rows". `first` and `table` stop at Escape too, and the line fails with the count of the rows that came.
+
+**The condition goes to the writer.** The first condition of a `Stream` goes with its wiring: the root service checks it against the record of the record output, and gives the writer the place of the field, so the writer writes into the ring of the console only the records that pass it. The console still checks each condition on each record, with the same test. A record that fails the first one is a fault of the writer: the line fails with an error record (`Bad_Value` of the unit `Wiring_Terms`, the serial of the record as its value) and the console closes the record stream; a record that fails another condition is only left out. A condition that the writer does not filter fails the line before any wiring: an order on a Text or a status, a field of a handle, a Text of more than 64 bytes.
+
+**The fields that a row shows.** `columns(stream, a, b)` gives a `Stream` whose rows hold those fields; its conditions still read the whole record.
+
+```
+> output_counter.counts |> columns(status) |> first(2)
+status
+   404
+   200
+2 rows of Counted
+```
+
+**The counts of the writer.** `stream_counts(stream)` wires the record output, waits for the first compartment of the ring, the joined record, which the writer writes at its next write even when the condition leaves that record out, and gives the `Record` `Writer_Counts`: the records `written`, `discarded` (no reader, or the condition of each reader left them out) and `refused` as `Full`, as the writer published them at its last write before the read. They are the claim of the writer, not a fact that the console checks.
+
+**A record input, and a wiring list.** A typed name also names a record input: `output_count_reader.counts` is a value of the kind `Record_Input`, which only `wire` takes. A typed name may name a module that does not run yet: its module file in the boot image gives its record outputs and its record inputs, for the list of its own start. `wire(from, to)` gives a `Table` of one `Wiring`: `writer`, `output`, `reader`, `input`, the `condition` as a text, and its terms. `+` joins two of them, and `start(module, list)` starts the module with the wirings of the list, made before its first instruction:
+
+```
+> start("output_count_reader", wire(where(output_counter.counts, status = 404), output_count_reader.counts))
+```
+
+| Refused by | What |
+|---|---|
+| `wire` | a first argument that is no `Stream`, a second that is no `Record_Input`; two records that differ; one process at both ends; a `Stream` with more than one condition, or that `columns` cut |
+| `start` with a list | a list that is no `Table` of `Wiring`; a row that names no end of the module, or names it at both ends; an end that does not run; more than 32 rows or 16 lent handles; each check comes before the console lends a handle |
+| the root service | each refusal of the list, with the row in its error record: a record input of the count `One` wired twice among them |
+
 ### How a line composes
 
 A line composes by calls in calls. The console evaluates each argument before its call, from left to right, and the innermost call runs first. Each step takes a typed value and gives one:
 
 ```
 > connect("manual")
-> columns(where(manual.running(), module = "calendar_fixed"), "process slot module replaces")
-> join(columns(manual.running(), "process hash"), columns(manual.modules(), "hash name code exports"), "hash")
+> columns(where(manual.running(), module = "calendar_fixed"), process, slot, module, replaces)
+> join(columns(manual.running(), process, hash), columns(manual.modules(), hash, name, code, exports), "hash")
 > rows(manual.exports("")) - rows(manual.exporters("show"))
 ```
 
@@ -230,7 +300,7 @@ The first line lists the processes that run a module, keeps the rows of one modu
 > where(grants("notes"), state = "held")
 > sort(where(processes(), state = "waiting"), "name")
 > rows(where(help(), name = "repeat"))
-> columns(where(loaded(), call = "direct"), "module imported_by in_place_of")
+> columns(where(loaded(), call = "direct"), module, imported_by, in_place_of)
 ```
 
 ### The pipe operator
@@ -239,11 +309,11 @@ The first line lists the processes that run a module, keeps the rows of one modu
 
 ```
 > processes() |> where(name = "server")
-> processes() |> where(name = "server") |> columns("name slot")
+> processes() |> where(name = "server") |> columns(name, slot)
 > rows(help() |> first(3)) |> text
 ```
 
-They are `where(processes(), name = "server")`, `columns(where(processes(), name = "server"), "name slot")` and `text(rows(first(help(), 3)))`.
+They are `where(processes(), name = "server")`, `columns(where(processes(), name = "server"), name, slot)` and `text(rows(first(help(), 3)))`.
 
 - **The lowest priority.** The whole expression on the left is the value: `1 + 2 |> text` is `text(1 + 2)`. A `,` and the parentheses around it end it: `where(x |> f, a = 1)` is `where(f(x), a = 1)`, and `(x |> f) + 1` is `(f(x)) + 1`.
 - **From the left.** `x |> h |> g(1) |> f` is `f(g(h(x), 1))`.
@@ -320,7 +390,7 @@ Memory
   memory                256 MiB
   free                  201 MiB
   ...
-> columns(where(processes(), name = "console"), "name slot threads resident time started")
+> columns(where(processes(), name = "console"), name, slot, threads, resident, time, started)
 name     slot  threads  resident (pages)  time (ms)  started (us)
 console     4        3               412         38       1830211
 1 row of Process
@@ -378,7 +448,7 @@ When the export has a table of error details and wrote more than one detail, one
 |---|---|---|
 | `help()` | Table of `Command` | One row for each command: `name`, `signature`, `about` |
 | `describe(name)` | Text | The signature and the whole help of one command |
-| `processes()` | Table of `Process` | The export `monitor.processes()` ("The built-in commands and the services"). A disk process has its nickname as its `name` and the hash of its file in `hash`: `columns(where(processes(), name = "visitor"), "name hash")` |
+| `processes()` | Table of `Process` | The export `monitor.processes()` ("The built-in commands and the services"). A disk process has its nickname as its `name` and the hash of its file in `hash`: `columns(where(processes(), name = "visitor"), name, hash)` |
 | `debug(process)`, `detach()` | Table | One row: the exports `debugger.attach()` and `debugger.detach()` ("The commands of the debugger") |
 | `threads()`, `hold(thread)`, `resume(thread)`, `continue_all()`, `step(thread)`, `step_line(thread)`, `step_over(thread)` | Table of `Thread_Row` | The threads of the debugged process: `thread`, `state`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
 | `registers(thread)` | Table of `Register_Row` | `name`, `value`, `about` |
@@ -398,7 +468,11 @@ When the export has a table of error details and wrote more than one detail, one
 | `isolate_memory(name, memory, size)` | Record `Loaded` | A module from memory: the console copies `size` bytes of the memory object, checks them as a module file, and isolates them, with the call `isolated` (`MODULE_CONTRACT.md`, "The assembler") |
 | `unload(name)` | Record `Unloaded` | `module`, `commands`, `memory`: what became of the memory of the module |
 | `loaded()` | Table of `Loaded_Module` | The modules and the services whose exports are commands, and the imports of the modules: `module`, `call`, `imported_by`, `in_place_of`, `hash_head` |
-| `start(name)`, `stop(name)` | none | |
+| `start(name)`, `start(name, list)`, `stop(name)` | none | `start` takes a wiring list that `wire` gives, or none. When the module declares a record output, `start` keeps the handle of the process while it runs, for its typed names ("Streams") |
+| `wire(from, to)` | Table of `Wiring` | One row of a wiring list: `writer`, `output`, `reader`, `input`, `condition`, and the terms `field`, `comparison`, `value_kind`, `integer`, `text` ("Streams") |
+| `stream_counts(stream)` | Record `Writer_Counts` | `written`, `discarded`, `refused`, as the writer published them at its last write before the read, after the first compartment of the ring ("Streams") |
+| `record_outputs(module)` | Table of `Record_Output` | One row for each record output of a module of the boot image: `output`, `record` (`any record` for a generic one), `about` |
+| `table(stream)` | Table | The rows of a `Stream` until its end ("Streams") |
 | `start_from_disk(name, hash)` | none | A disk process: its module file is an object of the store `module_files`, and `hash` is 64 hexadecimal digits, or empty for the file of the row of the nickname (`MODULE_CONTRACT.md`, "A module from a disk") |
 | `allow(nickname, grant)`, `disallow(nickname, grant)` | none | A grant of the disk grant table to the file that a nickname names, from its next start: `store` only (`MODULE_CONTRACT.md`, "The grants of a disk process") |
 | `nickname_move(nickname, hash)` | none | Points a nickname to another file; its grants and its store follow |
@@ -487,7 +561,7 @@ A fact that a service holds is an export of that service, and the console calls 
 
 ### The commands of the debugger
 
-The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console holds no state of a debugging and has no code that draws one: each command of the debugger is a short name of one export of the service, and the drawers draw the table that the export gives. So a table of the debugger composes as each other table: `columns(stack(0), "frame procedure line")`, `where(locals(0, 1), name = "total")`.
+The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console holds no state of a debugging and has no code that draws one: each command of the debugger is a short name of one export of the service, and the drawers draw the table that the export gives. So a table of the debugger composes as each other table: `columns(stack(0), frame, procedure, line)`, `where(locals(0, 1), name = "total")`.
 
 | Command | Export of `debugger` |
 |---|---|
@@ -550,7 +624,7 @@ While a line runs, each key waits, in order, and the edit line shows them (`|` E
 
 One state loses a key. While Escape can stop a call of the line, the console must read each key to find that Escape. With 128 keys waiting, it then has no place for a key that is not Escape, and that key is lost. The console counts each such key. The log has `console: 128 keys wait for the end of the line, and the console reads on to find an Escape: a new key is lost` at the first one, and `console: the line ended: N keys were lost while it ran` when the line ends. After the Escape that stops the call, the console reads on only while a key has a place.
 
-Escape has one more meaning, and only in one state: while the line waits in a call of a sandboxed process or of a service, Escape stops that call at once, also when keys wait. While the line is in no such call (a built-in command, a direct call, the drawing of the result), Escape waits as each key, and then closes the list that the keys before it opened. So `clear()`, then `mcnt`, Escape and Tab typed before `clear()` ended, give what they give when typed slowly: the list opens at `m`, Escape closes it, Tab opens it again.
+Escape has one more meaning, and only in one state: while the line waits in a call of a sandboxed process or of a service, or for the next record of a record stream ("Streams"), Escape stops that wait at once, also when keys wait. While the line is in no such call (a built-in command, a direct call, the drawing of the result), Escape waits as each key, and then closes the list that the keys before it opened. So `clear()`, then `mcnt`, Escape and Tab typed before `clear()` ended, give what they give when typed slowly: the list opens at `m`, Escape closes it, Tab opens it again.
 
 The rules are `line_editor.running_key_action` and `line_editor.running_key_can_be_taken` (`src/library/support/line_editor/running_keys.odin`), with their host tests. A direct call that does not return cannot be stopped: the module runs in the thread of the lines; `isolate` such a module.
 

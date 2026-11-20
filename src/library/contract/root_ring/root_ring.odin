@@ -48,6 +48,16 @@ Root_Command :: enum u32 {
 	// with `Exists` (unit `Processes`), and values[0] of the completion is a
 	// handle of the process with the right Read, whose stop ends a wait of
 	// the start policy.
+	//
+	// values[4]: a Start_Wiring_List. With In_The_List_Page, the wiring list
+	// is in the list page of the sender, which Wire with List_Page gave it
+	// (modus:contract/output, Wiring_List_Head): the root service applies it
+	// before the first instruction of the process, whole or not at all
+	// (src/md/features/module_outputs.md, "The wiring list of a start").
+	// values[5]: a Start_Answer. With Process_Handle, values[0] of
+	// the completion is a handle of the process with the right Read, which
+	// a Wire names; values[1..6] are the rings of the rows whose reader is
+	// the sender, in the order of the rows. values[6] is 0.
 	Start      = 1,
 	// Stop the process with this name. The compositor and the terminal are
 	// refused with `Reserved`; a name that runs no process with `Absent`.
@@ -380,6 +390,69 @@ Root_Command :: enum u32 {
 	// grant store; with `Full` (unit `Grants`) for a full table; and with
 	// `Refused` while the table takes no change.
 	Start_Policy_Choice = 28,
+	// Wire joins one record output of one process to one record input of
+	// another, or to the sender (src/md/features/module_outputs.md, "The
+	// wiring and its rights"). values[0] is a Wire_Step; values[1..6] are
+	// 0. Its name is not read.
+	//
+	// List_Page gives the list page of the sender: a memory object of
+	// output.WIRING_LIST_PAGES_MOST pages that the root service makes once
+	// from the budget of the sender and keeps. The completion: values[0] a
+	// handle of it with Read and Write, given through the root ring. The
+	// sender writes a wiring list there (modus:contract/output,
+	// Wiring_List_Head); the root service copies the page from its own
+	// handle, which a revocation by the sender does not reach.
+	//
+	// Apply applies the wiring list of one row in the list page. An end
+	// Started names a process whose start the sender asked for, an end
+	// Connected a service to which it holds a connection and for which it
+	// acts for the principal; each by a process handle lent through the
+	// root ring, whose number the list holds. The completion: values[0]
+	// the output ring for a reader Asker, else 0; values[1] the number of
+	// the wiring; values[2] the index of the record description in the
+	// module file of the writer; values[3..6] the hash of that file. The
+	// refusals and their error records: src/md/features/module_outputs.md,
+	// "Errors".
+	Wire = 29,
+}
+
+// values[0] of a Wire: what it does.
+Wire_Step :: enum u64 {
+	None      = 0, // Refused.
+	List_Page = 1, // Give the list page of the sender.
+	Apply     = 2, // Apply the list of one row in the list page.
+}
+
+// wire_step_of_word is the border of values[0] of a Wire: None and a word
+// that names no member are refused.
+wire_step_of_word :: proc "contextless" (word: u64) -> (step: Wire_Step, ok: bool) {
+	member, known := enum_word.member_of_word(Wire_Step, word)
+	if !known || member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// values[4] of a Start: where its wiring list is.
+Start_Wiring_List :: enum u64 {
+	None             = 0, // The start wires nothing.
+	In_The_List_Page = 1, // The list page of the sender holds the wiring list of the child.
+}
+
+// start_wiring_list_of_word is the border of values[4] of a Start.
+start_wiring_list_of_word :: proc "contextless" (word: u64) -> (place: Start_Wiring_List, ok: bool) {
+	return enum_word.member_of_word(Start_Wiring_List, word)
+}
+
+// values[5] of a Start: what its completion gives.
+Start_Answer :: enum u64 {
+	Nothing        = 0, // No handle. values[0] of the completion is 0.
+	Process_Handle = 1, // values[0] of the completion: the process, with the right Read.
+}
+
+// start_answer_of_word is the border of values[5] of a Start.
+start_answer_of_word :: proc "contextless" (word: u64) -> (answer: Start_Answer, ok: bool) {
+	return enum_word.member_of_word(Start_Answer, word)
 }
 
 // The enumerations below are words of the root ring: each value is the
@@ -518,6 +591,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Remote_Client          = .Root_Ring,
 	.Machine_Usable         = .Start_Policy,
 	.Start_Policy_Choice    = .Root_Ring,
+	.Wire                   = .Root_Ring_Or_Start_Policy,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -693,6 +767,7 @@ ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
 	.Remote_Client          = .Command,
 	.Machine_Usable         = .Command,
 	.Start_Policy_Choice    = .Command,
+	.Wire                   = .Command,
 }
 
 // The step at which the dispatch of one record ends, in the order of the
@@ -865,6 +940,7 @@ root_command_names := [Root_Command]string {
 	.Remote_Client          = "Remote_Client",
 	.Machine_Usable         = "Machine_Usable",
 	.Start_Policy_Choice    = "Start_Policy_Choice",
+	.Wire                   = "Wire",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -900,6 +976,7 @@ root_first_argument_names := [Root_Command]string {
 	.Remote_Client          = "key",
 	.Machine_Usable         = "name",
 	.Start_Policy_Choice    = "nickname",
+	.Wire                   = "step",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -936,6 +1013,7 @@ root_second_argument_names := [Root_Command]string {
 	.Remote_Client          = "action",
 	.Machine_Usable         = "",
 	.Start_Policy_Choice    = "hash",
+	.Wire                   = "",
 }
 
 // command_of_record reads the command that an error record names: the

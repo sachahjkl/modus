@@ -409,13 +409,13 @@ Each command is an export of the service under a short name (`bound_call`, `CONS
 | `debug_memory(place, count)` | `memory` | `memory` gives the memory of the machine |
 | `events()`, `wait_stop(milliseconds)` | The same names | |
 
-A table of the debugger is a table as any other: `columns(stack(0), "frame procedure line")`, `where(locals(0, 1), name = "total")`.
+A table of the debugger is a table as any other: `columns(stack(0), frame, procedure, line)`, `where(locals(0, 1), name = "total")`.
 
 ```
 > debug("debug_target")
 > break_at("debug_target::add_step")
 > wait_stop(3000)
-> columns(stack(0), "frame procedure")
+> columns(stack(0), frame, procedure)
 frame  procedure
     0  debug_target::add_step
     1  debug_target::count_rounds
@@ -599,6 +599,20 @@ A link is a claim of its author: `modustool site` stops on a link whose target n
 A module carries the same text, with its marks, and the process `manual` reads them in the system (`MODULE_CONTRACT.md`, "Description tables"): a bold word is in the bold weight, a word in italics has a thin line under it, a code span is in the font of the cells, a list item has its mark and its indentation, an example is a block, and a link is a colored name. The help of an export is the first sentence of the comment with the marks removed: the console prints it as one plain line. So the first sentence of a comment must read well with no mark.
 
 The documentation of the kernel operations is the model: for each operation, one sentence that says what it does, its arguments as a list, its results, its statuses as a list with when each comes, the rights that it needs in bold, links to its records and to its guide, and an example call through `src/library/support/system` when one helps.
+
+## The record outputs and the record inputs of the build
+
+The tool reads each declaration of `system.Record_Output(...)`, `system.Record_Input(...)` and `system.Record_Input_With_Terms(...)` in the sources that the compiler read for a module, and writes the tables `Record_Outputs` and `Record_Inputs` of the module file, sorted by name, with the record of each one in the table `Records` (`docs/MODULE_CONTRACT.md`, "The record outputs and the record inputs"). The comment before a declaration gives its line of help and its text. It has no type checker, so it refuses, with a message that names the source and the line:
+
+- a declaration of one of the two types that is not a package variable of the package of the module: a local variable, a constant, a type, a field of a record, a composite literal, a parameter by value, a declaration inside a `when`, a variable of another package that the module compiles in. A parameter that takes a stream by its address declares none;
+- a record or terms type that is not a record type of the package or of an imported package of the library, `system.Any_Record` as the terms, a record with padding or a Handle field;
+- arguments past the parameters, a name that names no parameter, a parameter given two times, no record type, no terms type in `Record_Input_With_Terms`, terms in `Record_Input`, and a pairing or a count that is not a member written `.Member`;
+- `.Paired` on a record output that is not generic, and `.Many_Types` on a record input that is not generic;
+- two record outputs, two record inputs, or a record output and a record input with one name;
+- a generic record output in a module with no generic record input, or with two;
+- more than 65 535 record outputs or record inputs, and a record whose name the module describes another way.
+
+The tool checks each module file that it writes with `module.record_streams_check`, the reader of the root service. `modustool test descriptions` compares the two tables of each module with its sources, and prints one line for each declaration: "the record output server.requests of the record Access_Record comes from its source". The host tests of `tools/modustool/build` (`record_streams_test.odin`) give each refused form and check the refusal.
 
 ## The intent folder
 
@@ -1028,10 +1042,10 @@ modustool run
 `modustool run` starts the machine with `build/data_disk.img`. The command writes no disk over a file that exists: a data disk holds the stores of a principal. The module runs with no grant and with the budget that it asks for, up to the largest budget of a disk process, paid by the one budget of the disk processes (`MODULE_CONTRACT.md`, "The budget that a module asks for"), and its name is no name of a module of the boot image (`MODULE_CONTRACT.md`, "A module from a disk"). The test part `disk_processes` builds a copy of the module `visitor` outside the sources under the name `outsider`, puts its file and its debug object on the disk, and starts it in the machine. The debugger attaches to it, holds its thread, and gives the frame of the procedure where it sleeps with its file and its line:
 
 ```
-> columns(debug("outsider"), "process described")
+> columns(debug("outsider"), process, described)
 outsider          1
-> columns(hold(0), "thread state")
-> columns(where(stack(0), procedure = "entry"), "module procedure file line")
+> columns(hold(0), thread, state)
+> columns(where(stack(0), procedure = "entry"), module, procedure, file, line)
 outsider  entry      outsider/main.odin    93
 ```
 
@@ -1039,7 +1053,7 @@ A module that faults needs no attach. The test part builds the same copy a secon
 
 ```
 > start_from_disk("outsider_fault", "<hash>")
-> columns(where(stop_report("outsider_fault"), procedure = "visitor::fault_three"), "module procedure file line")
+> columns(where(stop_report("outsider_fault"), procedure = "visitor::fault_three"), module, procedure, file, line)
 outsider_fault  visitor::fault_three  outsider/main.odin   169
 ```
 

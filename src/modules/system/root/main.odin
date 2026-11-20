@@ -310,6 +310,38 @@ Started :: struct {
 	// is no fault of the process, and the stop of the compositor so is no
 	// absence of the screen, whatever the order of the reap.
 	stop_asked_by_root_service: bool,
+	// The process that asked for the start of this one with Start: the
+	// rule of an end Started of a wiring (wirings.odin). nil: this service
+	// started it by itself, or the asker stopped.
+	asker:           ^Started,
+	// The module file of the process, in the boot image: the record
+	// descriptions of its record outputs and record inputs. Empty for a
+	// process that this service did not start with start(): no wiring
+	// names it.
+	file:            []u8,
+	// A handle of the budget of the process with Read and Spend, for a
+	// process that can send Wire, the one kind of asker: the wirings that
+	// the process asks for are paid from it. Closed at the stop of the
+	// process (src/md/features/module_outputs.md, "The budget").
+	budget:          system.Handle,
+	// The wiring ring of a process that declares a record output or a
+	// record input, or of an asker that asked for its list page, mapped in
+	// this service, which writes its commands.
+	wiring:          ring.Ring,
+	wiring_memory:   system.Handle,
+	// The words of its wiring ring that named no wiring of the process:
+	// one line at the first, and the count at its stop.
+	unknown_wiring_words: u64,
+	// The list page of an asker, as this service holds it: the asker
+	// writes its wiring lists there, and this service copies them from
+	// this handle, which a revocation by the asker does not reach.
+	list_memory:     system.Handle,
+	// The wiring pages of the wirings that the process asked for.
+	wiring_pages:    ^Wiring_Page,
+	// The wirings that the process asked for and that run, and the ends
+	// that it holds: each is bounded (wirings.odin).
+	wirings_asked:   int,
+	ends_given:      int,
 }
 
 // place_is_free says if a place of the table of the processes holds no
@@ -324,6 +356,10 @@ Connection :: struct {
 	service: ^Started,
 	ring:    system.Handle, // The call ring, as the service names it.
 	region:  system.Handle, // The call region, as the service names it.
+	// The process handle of the service as the caller names it: the number
+	// that the completion of Connect gave. A Connected end of a wiring
+	// names the connection by it, since that handle has no Give.
+	caller_service_handle: system.Handle,
 	// The connection to the store of the line history of the caller
 	// (Root_Command.Connect_History): its grant is the limit of that store,
 	// never the private store and never the grant to act for the principal.
@@ -1014,7 +1050,17 @@ root_loop_pass :: proc "contextless" () {
 		if item.process != 0 && item.requests.head != nil {
 			root_ring_serve(&item)
 		}
+		// The answers of the process to the ends of its wirings: Taken,
+		// Closed or a refusal. They are in the wait below, so an answer
+		// starts a pass and never waits for another event.
+		if item.process != 0 && item.wiring.head != nil {
+			wiring_completions_read(&item)
+		}
 	}
+	// A wiring ring whose process holds no end is unmapped: this service
+	// holds one mapping for each process with an end, and the wait below
+	// skips a ring that no answer can come in.
+	wiring_rings_let_go()
 	// Before reap: an entropy service that answered and stopped still has
 	// its answers in the ring.
 	entropy_answers(&wait)
@@ -1033,11 +1079,16 @@ root_loop_pass :: proc "contextless" () {
 		if item.process != 0 && item.requests.head != nil {
 			system.wait_records(&wait, &item.requests.commands)
 		}
+		if item.process != 0 && item.wiring.head != nil {
+			system.wait_records(&wait, &item.wiring.completions)
+		}
 	}
 	// The appearance in force at an edge of the rule of the day
 	// (appearance_edge.odin): one more deadline, and the change count of
 	// the date page.
 	appearance_step(&wait)
+	// The count of wait_words.odin keeps each list in the wait.
+	root_wait_full_tell(&wait)
 	// A load from the disk and a call for the disk grant table have a
 	// deadline: the wait ends there, with or without an answer of the
 	// storage service. The next read of the fresh bytes has one too, a
@@ -1511,6 +1562,15 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
 		return .Ok
+	case .Wirings:
+		// Each wiring that the process asked for ends with the end word
+		// Revoked; the process can ask for new ones, as a revocation ends
+		// what was given and not the right to ask.
+		count := wirings_revoke(item)
+		item.granted -= {which}
+		values[0] = count
+		system.log(.Info, "root: revoked the grant wirings of ", system.Module_Name{name}, ", wirings ended: ", count)
+		return .Ok
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
 	case .Machine:
@@ -1680,6 +1740,7 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 		disconnect(free)
 		return status
 	}
+	free.caller_service_handle = given[0]
 	hash := transmute([4]u64)service.hash
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), hash[0], hash[1], hash[2], hash[3]}
 	// The principal of the connection, and whether the caller acts for it.
@@ -1874,8 +1935,18 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 	connection^ = {}
 }
 
-// release frees what this service holds for a process, and tells the compositor.
-release :: proc "contextless" (item: ^Started) {
+// The stop of a process as the reap read it from the kernel: one read of
+// Process_State for the fact of the stop and for the end words.
+Process_Stop :: struct {
+	state:   op.Process_State,
+	cause:   op.Stop_Cause,
+	outcome: op.Stop_Outcome,
+}
+
+// release frees what this service holds for a process, and tells the
+// compositor. stop is the stop that the reap read; a start that this
+// service abandons, or a process that it lets go with no reap, gives none.
+release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	// The row goes before the handle closes: the kernel can then give the
 	// slot to another process, which the row must not name.
 	disk_process_page_remove(item)
@@ -1892,12 +1963,20 @@ release :: proc "contextless" (item: ^Started) {
 	if item.debugger != nil {
 		debug_end(item)
 	}
+	// Each wiring that names the process ends, with the end word of its
+	// part, before its handle closes: the other side reads the end, with
+	// the stop that the kernel recorded for a writer, as the reap read it
+	// for the fact of the stop.
+	wirings_at_stop(item, stop.state, stop.cause, stop.outcome)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {
 			debug_end(&other)
 		}
 		if other.writer == item {
 			other.writer = nil
+		}
+		if other.asker == item {
+			other.asker = nil
 		}
 		if other.driver == item {
 			other.driver = nil
@@ -2008,7 +2087,20 @@ reap :: proc "contextless" () {
 			// A compositor that this service stopped for the rescue is
 			// started again by the rescue: it is no absence of the screen.
 			stopped_for_the_rescue := item.stop_asked_by_root_service
-			release(&item)
+			// The stop of an asker of wirings: the tables of this service,
+			// after the wirings of the asker ended, as a measure of its
+			// margin (own_tables.odin).
+			asker_name: system.Name
+			asker_measured := root_ring.sender_allowed(.Wire, item.role.grants)
+			if asker_measured {
+				asker_name = item.name
+			}
+			// The one read of the stop serves the fact above and the end
+			// words of the wirings of the process.
+			release(&item, {state = state, cause = cause, outcome = outcome})
+			if asker_measured {
+				own_tables_measure(system.name_of(asker_name[:]))
+			}
 			// A later start gets no window and a start with a terminal is
 			// refused (start_view_give), and nothing starts here.
 			if compositor_reaped {

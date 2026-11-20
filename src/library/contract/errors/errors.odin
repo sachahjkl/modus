@@ -295,6 +295,10 @@ Unit :: enum i64 {
 	Dropped_Writes = 52, // Device: the blocks of a commit that the disk answered with Ok and did not keep; found: their count. The storage service refused the commit (docs/STORAGE.md, "3.3 The commit and the open").
 	Nanoseconds = 53, // A time of the system clock, or a span of it, in nanoseconds: the time of a record of a timed stream (src/library/contract/timed_stream).
 	Frames      = 54, // Frames of a timed stream: one sample of each channel (src/library/contract/timed_stream).
+	Record_Types = 55, // Bad_Value: the record descriptions of the two ends of a wiring differ (src/library/contract/output, record_descriptions_compare). value: the Description_Difference; limit: the first field that differs, from 1, or 0 for the record; found: the row of the wiring list.
+	Wiring_Rows = 56, // Bad_Value: a row of a wiring list. argument: the field, from 1 (output.Wiring_Field); value: the word; limit: the largest word there; found: the row from 1, or 0 for the list as a whole.
+	Wiring_Terms = 57, // Bad_Value or Out_Of_Range: the wiring terms of a row. value: their count of bytes; limit: the size of their description, 0 for a record input that takes none; found: the row.
+	Wirings     = 58, // The wirings of the root service. No_Grant: the asker did not start the process of the end, or does not act for the principal of the connection. Busy: the wiring ring of a process has no room, limit its capacity. Bad_Value: one process at both ends. found: the row.
 }
 
 // How a handle ended (Handle_Ended).
@@ -394,6 +398,10 @@ UNIT_NAMES := [Unit]string {
 	.Dropped_Writes = "blocks that the disk did not keep",
 	.Nanoseconds = "nanoseconds",
 	.Frames      = "frames",
+	.Record_Types = "record types of the two ends of a wiring",
+	.Wiring_Rows = "rows of the wiring list",
+	.Wiring_Terms = "bytes of the wiring terms",
+	.Wirings     = "wirings of the root service",
 }
 
 // A ring completion (src/library/contract/ring) has the status of the contract of its

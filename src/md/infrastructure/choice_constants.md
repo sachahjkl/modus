@@ -16,7 +16,7 @@ An `enum` gives the compiler the set: a `switch` with a member missing does not 
 
 ## The constraints
 
-- The context of a process is a fixed record of 16 handles and 24 values of 64 bits, and the records of a ring, of a call and of an error have words of 64 bits. A choice travels as a word. The word cannot become an enum in the record: the record is the layout that two processes agree on.
+- The context of a process is a fixed record of 18 handles and 24 values of 64 bits, and the records of a ring, of a call and of an error have words of 64 bits. A choice travels as a word. The word cannot become an enum in the record: the record is the layout that two processes agree on.
 - The values of a word are the contract of the two sides. They do not move when a member is added.
 - The kernel is freestanding and has no support package. A contract package has no kernel operation.
 - The tool reads the sources with the parser of the compiler library. It has no type checker: it does not know the type of a parameter of another package, nor the value of a variable.

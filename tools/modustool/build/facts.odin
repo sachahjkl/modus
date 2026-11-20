@@ -132,7 +132,7 @@ file_facts_read :: proc(extraction: ^Fact_Extraction, item: Fact_Source) -> bool
 		#partial switch found in node.derived {
 		case ^ast.Value_Decl:
 			if _, has_attribute := fact_attribute(found); has_attribute {
-				if !fact_declaration_at_package_scope(walk_state.file, found) {
+				if !declaration_at_package_scope(walk_state.file, found) {
 					walk_state.failed = !fact_fail(walk_state.file.fullpath, found.pos.line, "the attribute %s is on a declaration inside a procedure or a `when`: put it on a record type of the package scope, whose canonical name is <package>::<type>, the fact key", foundation.LOG_FACT_ATTRIBUTE_NAME)
 					return nil
 				}
@@ -185,10 +185,9 @@ fact_attribute :: proc(declaration: ^ast.Value_Decl) -> (value: ^ast.Expr, has_a
 	return nil, false
 }
 
-// fact_declaration_at_package_scope says if a declaration is one of the
+// declaration_at_package_scope says if a declaration is one of the
 // declarations of the top level of its file.
-@(private = "file")
-fact_declaration_at_package_scope :: proc(file: ^ast.File, declaration: ^ast.Value_Decl) -> bool {
+declaration_at_package_scope :: proc(file: ^ast.File, declaration: ^ast.Value_Decl) -> bool {
 	for statement in file.decls {
 		if top, is_value := statement.derived.(^ast.Value_Decl); is_value && top == declaration {
 			return true
@@ -359,7 +358,6 @@ fact_type_describe :: proc(package_read: ^Fact_Package, folder, type_name, call_
 // fact_type_problem gives why a described fact type is refused, or "":
 // the kinds of its fields, its padding, its size and its template.
 fact_type_problem :: proc(fact: Fact_Description) -> string {
-	end: u32 = 0
 	names := make([dynamic]string, context.temp_allocator)
 	for item in fact.record.fields {
 		switch item.type {
@@ -369,14 +367,10 @@ fact_type_problem :: proc(fact: Fact_Description) -> string {
 		case .None, .Record, .Table:
 			return fmt.tprintf("the field %s has a type that a record does not hold", item.name)
 		}
-		if item.offset != end {
-			return fmt.tprintf("%d bytes of padding before the field %s: those bytes carry memory of the writer that no field names; order the fields from the largest", item.offset - end, item.name)
-		}
-		end = item.offset + field_description_size(item)
 		append(&names, item.name)
 	}
-	if end != fact.record.size {
-		return fmt.tprintf("%d bytes of padding after the last field: those bytes carry memory of the writer that no field names", fact.record.size - end)
+	if problem := record_padding_problem(fact.record); problem != "" {
+		return problem
 	}
 	if fact.record.size > op.LOG_FACT_VALUE_CAPACITY {
 		return fmt.tprintf("its values have %d bytes; a fact is one log record, with at most %d bytes of values", fact.record.size, op.LOG_FACT_VALUE_CAPACITY)
@@ -403,6 +397,24 @@ fact_type_problem :: proc(fact: Fact_Description) -> string {
 		return fmt.tprintf("the template does not name the field %s: a reader shows each value", names[place])
 	case .Too_Many_Fields:
 		return fmt.tprintf("the record has more than %d fields", module.FACT_FIELD_CAPACITY)
+	}
+	return ""
+}
+
+// record_padding_problem gives the first run of bytes of a record that no
+// field names, as a sentence, or "". The record of a log fact and the
+// record of a record stream go into memory that another process reads:
+// those bytes would carry memory of the writer.
+record_padding_problem :: proc(record: Record_Description) -> string {
+	end: u32 = 0
+	for item in record.fields {
+		if item.offset != end {
+			return fmt.tprintf("%d bytes of padding before the field %s: those bytes carry memory of the writer that no field names; order the fields from the largest", item.offset - end, item.name)
+		}
+		end = item.offset + field_description_size(item)
+	}
+	if end != record.size {
+		return fmt.tprintf("%d bytes of padding after the last field: those bytes carry memory of the writer that no field names", record.size - end)
 	}
 	return ""
 }
@@ -449,25 +461,36 @@ facts_merge :: proc(description: ^Module_Description, facts: []Fact_Description)
 			}
 		}
 		item := fact
-		for known, index in records {
-			if known.name != fact.record.name {
-				continue
-			}
-			if !record_descriptions_equal(known, fact.record) {
-				return fact_fail(fact.file, fact.line, "the record %s of the fact type %s.%s has another description than the record %s that the module describes already: one module describes a record name one way", fact.record.name, fact.package_name, fact.type_name, known.name)
-			}
-			item.record_index = u32(index + 1)
+		index, added := record_description_add(&records, fact.record)
+		if !added {
+			return fact_fail(fact.file, fact.line, "the record %s of the fact type %s.%s has another description than the record %s that the module describes already: one module describes a record name one way", fact.record.name, fact.package_name, fact.type_name, fact.record.name)
 		}
-		if item.record_index == 0 {
-			append(&records, fact.record)
-			item.record_index = u32(len(records))
-		}
+		item.record_index = index
 		append(&merged, item)
 	}
 	slice.sort_by(merged[:], proc(a, b: Fact_Description) -> bool {return a.key < b.key})
 	description.records = records[:]
 	description.facts = merged[:]
 	return true
+}
+
+// record_description_add gives the index, from 1, of a record in the
+// records of a module: the index of the record of its name, or a new one
+// at the end. ok is false when the module describes that name another way:
+// one module describes a record name one way, whichever declaration names
+// it (an export, a log fact, a record output, a record input, wiring terms).
+record_description_add :: proc(records: ^[dynamic]Record_Description, record: Record_Description) -> (index: u32, ok: bool) {
+	for known, known_index in records {
+		if known.name != record.name {
+			continue
+		}
+		if !record_descriptions_equal(known, record) {
+			return 0, false
+		}
+		return u32(known_index + 1), true
+	}
+	append(records, record)
+	return u32(len(records)), true
 }
 
 // record_descriptions_equal says if two descriptions of a record are the
@@ -564,9 +587,11 @@ module_reached_facts_write :: proc(name: string, reached: []Fact_Description) ->
 }
 
 // module_facts gives the fact types that a module writes: those of its
-// sources whose key the list of its compile step names.
-module_facts :: proc(build: foundation.Module_Build) -> (facts: []Fact_Description, ok: bool) {
-	of_sources := module_facts_of_sources(build) or_return
+// sources whose key the list of its compile step names. The caller gives
+// the sources (module_sources), which it also reads for the record streams
+// of the module.
+module_facts :: proc(build: foundation.Module_Build, sources: []Fact_Source) -> (facts: []Fact_Description, ok: bool) {
+	of_sources := facts_of_sources(sources) or_return
 	path := module_reached_facts_file(build.name)
 	listed, read_error := os.read_entire_file(path, context.temp_allocator)
 	if read_error != nil {
@@ -598,19 +623,27 @@ module_facts :: proc(build: foundation.Module_Build) -> (facts: []Fact_Descripti
 // system.log_fact in each source of the repository that the compiler read
 // for a module (its list of dependencies), reached by its code or not.
 module_facts_of_sources :: proc(build: foundation.Module_Build) -> (facts: []Fact_Description, ok: bool) {
+	sources := module_sources(build) or_return
+	return facts_of_sources(sources)
+}
+
+// module_sources gives each source of the repository that the compiler
+// read for a module, with no test file: its list of dependencies. The log
+// facts and the record streams of a module come from these sources.
+module_sources :: proc(build: foundation.Module_Build) -> (sources: []Fact_Source, ok: bool) {
 	source_files, _, listed := dependency_list_read(module_dependency_file(build.name))
 	if !listed {
-		fmt.eprintfln("modustool: log facts of %s: the list of the sources of the compiler cannot be read", build.name)
+		fmt.eprintfln("modustool: the sources of %s: the list of the sources of the compiler cannot be read", build.name)
 		return nil, false
 	}
-	sources := make([dynamic]Fact_Source, context.temp_allocator)
+	read_sources := make([dynamic]Fact_Source, context.temp_allocator)
 	for listed_path in source_files {
 		path, of_the_repository := source_of_the_repository(listed_path)
 		if !of_the_repository || !strings.has_suffix(path, ".odin") || strings.has_suffix(path, "_test.odin") {
 			continue
 		}
 		source := foundation.read_file(path) or_return
-		append(&sources, Fact_Source{path = path, source = string(source)})
+		append(&read_sources, Fact_Source{path = path, source = string(source)})
 	}
-	return facts_of_sources(sources[:])
+	return read_sources[:], true
 }
