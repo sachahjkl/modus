@@ -300,6 +300,18 @@ line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: N
 		case .None:
 		case .Name:
 			being_typed := caret != NO_CARET && (token.end == caret || token.end == len(text))
+			// The words of Lex have the color of an operator, and the names
+			// of the bindings of a let the color of a variable.
+			if word_of_lex(text, token) {
+				if !being_typed {
+					count = run_add(runs, count, token.start, token.end, .Operator)
+				}
+				break
+			}
+			if bound_by_let(text, token) {
+				count = run_add(runs, count, token.start, token.end, .Variable)
+				break
+			}
 			assigned := false
 			next := token_next(text, token.end)
 			if first_token {
@@ -333,6 +345,56 @@ line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: N
 		first_token = false
 	}
 	return count
+}
+
+// word_of_lex says if a token is a word of Lex: `let`, `in`, `with`, or the
+// placeholder `_`.
+word_of_lex :: proc "contextless" (text: string, token: Token) -> bool {
+	return word_is(text, token, "let") || word_is(text, token, "in") || word_is(text, token, "with") || word_is(text, token, "_")
+}
+
+// bound_by_let says if a name, before its first '.', is the name of a
+// binding of a let of the line: a name after `let`, or after a ',' of the
+// bindings of a let, with a single '=' after it. The line is short, so the
+// colors read it again for each name.
+bound_by_let :: proc "contextless" (text: string, token: Token) -> bool {
+	name := text[token.start:token.end]
+	for place in 0 ..< len(name) {
+		if name[place] == '.' {
+			name = name[:place]
+			break
+		}
+	}
+	// The depth of the groups where each open let reads its bindings.
+	let_depths: [CALL_DEPTH_MOST]int
+	lets := 0
+	depth := 0
+	before := Token{}
+	for scanned := token_next(text, 0); scanned.kind != .None; scanned = token_next(text, scanned.end) {
+		defer {
+			before = scanned
+		}
+		switch {
+		case scanned.kind == .Operator && (text[scanned.start] == '(' || text[scanned.start] == '{'):
+			depth += 1
+		case scanned.kind == .Operator && (text[scanned.start] == ')' || text[scanned.start] == '}'):
+			depth -= 1
+		case word_is(text, scanned, "let"):
+			if lets < len(let_depths) {
+				let_depths[lets] = depth
+			}
+			lets += 1
+		case word_is(text, scanned, "in") && lets > 0:
+			lets -= 1
+		case scanned.kind == .Name && lets > 0 && lets <= len(let_depths) && let_depths[lets - 1] == depth && text[scanned.start:scanned.end] == name:
+			opens_binding := word_is(text, before, "let") || before.kind == .Operator && text[before.start] == ','
+			equal := token_next(text, scanned.end)
+			if opens_binding && equal.kind == .Operator && text[equal.start] == '=' && !(equal.end < len(text) && text[equal.end] == '=') {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // name_runs writes the runs of one name of a line. assigned: the name is

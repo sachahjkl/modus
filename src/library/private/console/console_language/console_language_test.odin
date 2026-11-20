@@ -364,3 +364,30 @@ integers_do_not_wrap :: proc(t: ^testing.T) {
 	quotient, rest, divide_ok = integer_divide(INTEGER_MOST, -1)
 	testing.expect(t, divide_ok && quotient == -INTEGER_MOST && rest == 0)
 }
+
+// The words of Lex have the color of an operator; the names of the
+// bindings of a let the color of a variable, where they are bound and where
+// they are read; a field of a literal and a named argument before their
+// "=" the color of a parameter.
+@(test)
+line_runs_of_the_forms_of_records :: proc(t: ^testing.T) {
+	runs: [32]terminal.Code_Run
+	text := "let a = 1 in a with r "
+	count := line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"let", .Operator}, {"a", .Variable}, {"=", .Operator}, {"1", .Number}, {"in", .Operator}, {"a", .Variable}, {"with", .Operator}, {"r", .Variable}})
+	expect_cover(t, text, runs[:count])
+	text = "length({width = 2}, by = 3) "
+	count = line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"length", .Function}, {"(", .Operator}, {"{", .Operator}, {"width", .Parameter}, {"=", .Operator}, {"2", .Number}, {"}", .Operator}, {",", .Operator}, {"by", .Parameter}, {"=", .Operator}, {"3", .Number}, {")", .Operator}})
+	text = "x |> length(_) "
+	count = line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"x", .Variable}, {"|>", .Operator}, {"length", .Function}, {"(", .Operator}, {"_", .Operator}, {")", .Operator}})
+	// A word being typed has no run yet: "in" can start "index".
+	text = "let a = 1 in"
+	count = line_runs(text, 0, len(text), test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"let", .Operator}, {"a", .Variable}, {"=", .Operator}, {"1", .Number}})
+	// A name after "," in the arguments of a call inside a let is no
+	// binding: only the bindings at the depth of the let are.
+	testing.expect(t, !bound_by_let("let a = f(1, b = 2) in b", token_next("let a = f(1, b = 2) in b", 23)))
+	testing.expect(t, bound_by_let("let a = 1, b = 2 in b", token_next("let a = 1, b = 2 in b", 20)))
+}

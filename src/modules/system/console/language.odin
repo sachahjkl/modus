@@ -106,7 +106,7 @@ type_of_kind :: proc "contextless" (kind: Kind) -> (type: module.Type) {
 		type = .Table
 	case .Bytes:
 		type = .Bytes
-	case .Stream, .Record_Input:
+	case .Stream, .Record_Input, .Record_Literal:
 		// No type of the module contract: no export takes one, and
 		// type_text names it itself.
 		type = .None
@@ -124,22 +124,23 @@ kind_of_type_word :: proc "contextless" (word: u8) -> (kind: Kind, ok: bool) {
 
 @(rodata)
 kind_names := [Kind]string {
-	.None    = "None",
-	.Integer = "Integer",
-	.Text    = "Text",
-	.Record  = "Record",
-	.Handle  = "Handle",
-	.Table   = "Table",
-	.Bytes   = "Bytes",
-	.Stream  = "Stream",
-	.Record_Input = "Record_Input",
+	.None           = "None",
+	.Integer        = "Integer",
+	.Text           = "Text",
+	.Record         = "Record",
+	.Handle         = "Handle",
+	.Table          = "Table",
+	.Bytes          = "Bytes",
+	.Stream         = "Stream",
+	.Record_Input   = "Record_Input",
+	.Record_Literal = "a record literal",
 }
 
 // type_text gives the name of a type: "Integer", the name of a record,
 // "Handle(Read)", or "Stream(Counted)". The text lasts for one line.
 type_text :: proc "contextless" (file: []u8, kind: Kind, detail: u32) -> string {
-	if kind == .None {
-		return "None"
+	if kind == .None || kind == .Record_Literal {
+		return kind_names[kind]
 	}
 	if kind == .Stream || kind == .Record_Input {
 		described, _ := module.record_type(file, detail)
@@ -192,33 +193,9 @@ scratch_bytes :: proc "contextless" (size: int) -> []u8 {
 	return bytes
 }
 
-// field_value gives one field of a Record value, by name.
-field_value :: proc "contextless" (value: Value, name: string) -> (result: Value, ok: bool) {
-	described := module.record_type(value.file, value.detail) or_return
-	for number in 0 ..< described.field_count {
-		item := module.field(value.file, described, number) or_return
-		if module.string_at(value.file, item.name_offset, item.name_count) != name {
-			continue
-		}
-		// A byte that names no type gives no value, as a field of no value.
-		type := module.field_type(item) or_return
-		switch type {
-		case .Integer:
-			return {kind = .Integer, integer = module.field_integer(value.record, item)}, true
-		case .Handle:
-			return {kind = .Handle, integer = i64((^u32)(&value.record[item.offset])^)}, true
-		case .Text:
-			return {kind = .Text, text = module.field_text(value.record, item)}, true
-		case .Bytes:
-			// A hash: the console draws its bytes.
-			return {kind = .Bytes, record = module.field_bytes(value.record, item)}, true
-		case .None, .Record, .Table:
-			// A field of a record holds no such value: the field gives none.
-			return {}, false
-		}
-	}
-	return {}, false
-}
+// field_value gives one field of a Record value, by name: the reader of
+// the evaluator, which `binding.field` of a let reads too.
+field_value :: lex_evaluator.record_field_value
 
 VARIABLE_CAPACITY :: 16
 VARIABLE_NAME_SIZE :: 16
@@ -268,6 +245,7 @@ console_host :: proc "contextless" () -> lex_evaluator.Evaluation_Host {
 		condition_value = host_condition_value,
 		fact_name_value = host_fact_name_value,
 		values_add = host_values_add,
+		record_memory = host_record_memory,
 	}
 }
 
@@ -373,9 +351,10 @@ assign :: proc "contextless" (name: string, value: Value) {
 	slot.name_count = copy(slot.name[:], name)
 	slot.value = value
 	switch value.kind {
-	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input:
+	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal:
 		// The value holds no memory of the line: the slot keeps it as it is.
-		// A Bytes value and a Stream were refused above.
+		// A Bytes value and a Stream were refused above; the evaluator
+		// refuses a literal that nothing typed.
 	case .Text:
 		count := copy(slot.text[:], value.text)
 		slot.value.text = string(slot.text[:count])
@@ -434,7 +413,75 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 		}
 	case .Effect_Refused:
 		fail(record.command, " has an effect, and an evaluation in mode declaration runs none")
+	case .Literal_No_Type:
+		if record.parameter == 0 {
+			fail("a record literal takes the type of the parameter that receives it, and nothing receives this one")
+		} else {
+			fail(record.command, ": argument ", i64(record.parameter), " is ", kind_names[record.right_kind], ", not a record literal: a literal takes the type of a parameter Record")
+		}
+	case .Literal_Field_Unknown:
+		described, _ := module.record_type(record.file, record.detail)
+		fail(record_name(record.file, record.detail), " has no field ", record.field, "; its fields are ", field_names(Table{file = record.file, record = described}))
+	case .Literal_Field_Missing:
+		fail(record_name(record.file, record.detail), " needs the field ", record.field, ", which has no default")
+	case .Literal_Field_Kind:
+		fail(record_name(record.file, record.detail), ": the field ", record.field, " is ", type_text_of_field(record.file, record.field_item), ", the value is ", kind_names[record.left_kind])
+	case .Literal_Field_Range:
+		if record.field_item.type == u8(module.Type.Text) {
+			fail(record_name(record.file, record.detail), ": the field ", record.field, " holds ", i64(record.field_item.detail), " bytes, the text has ", record.right)
+		} else {
+			fail(record_name(record.file, record.detail), ": the field ", record.field, " is ", type_text_of_field(record.file, record.field_item), ", it does not hold ", record.left)
+		}
+	case .Argument_Unknown:
+		fail(record.command, " has no parameter ", record.field, "; ", parameter_names_text(record.command))
+	case .Argument_Twice:
+		fail(record.command, ": the parameter ", record.field, " is given twice")
+	case .Argument_Missing:
+		fail(record.command, " needs the parameter ", record.field, ", which has no default")
+	case .With_Kinds:
+		fail("\"with\" composes a record with a record literal or a record, not ", kind_names[record.left_kind], " with ", kind_names[record.right_kind])
+	case .With_Records_Differ:
+		fail("\"with\": ", record_name(record.file, record.detail), " and ", record_name(record.other_file, record.other_detail), " are two records")
+	case .Field_Unknown:
+		switch {
+		case record.file != nil:
+			fail(record_name(record.file, record.detail), " has no field ", record.field)
+		case record.left_kind == .Record_Literal:
+			fail("the record literal has no field ", record.field)
+		case:
+			fail(kind_names[record.left_kind], " has no field ", record.field)
+		}
+	case .Cycle:
+		fail("the binding ", record.command, " needs its own value: a let cannot read a binding in its own value")
 	}
+}
+
+// record_name gives the name of a record of a module.
+record_name :: proc "contextless" (file: []u8, detail: u32) -> string {
+	described, _ := module.record_type(file, detail)
+	return module.string_at(file, described.name_offset, described.name_count)
+}
+
+// parameter_names_text says the names of the parameters of a command, for
+// a named argument that names none of them.
+parameter_names_text :: proc "contextless" (command_name: string) -> string {
+	found := command_find(command_name)
+	if found == nil {
+		return "it has no parameters"
+	}
+	start := scratch_count
+	written := 0
+	for name in found.parameter_names[:clamp(found.parameter_count, 0, ARGUMENT_CAPACITY)] {
+		if name == "" {
+			continue
+		}
+		scratch_text(written == 0 ? "its parameters are " : ", ", name)
+		written += 1
+	}
+	if written == 0 {
+		return "its parameters have no names"
+	}
+	return string(scratch[start:scratch_count])
 }
 
 // text_refusal_fail fails the line with the sentence of a refusal of the
@@ -466,6 +513,33 @@ text_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
 		fail("the line has more parts than the console reads: ", i64(lex_parser.NODE_CAPACITY))
 	case .Field_Name_Missing:
 		fail(record.command, ": the name of a field comes here, as ", record.command, "(t, name, slot)")
+	case .Literal_Close_Missing:
+		fail("\",\" or \"}\" is missing")
+	case .Literal_Name_Missing:
+		fail("a record literal holds fields, each a name, \"=\" and a value: {x = 1, y = 2}")
+	case .Literal_Equal_Missing:
+		fail("\"=\" is missing after the name of a field")
+	case .Literal_Field_Twice:
+		fail("the field ", lex_parser.node_text(&line_tree, record.node), " is given twice in one record literal")
+	case .Named_Argument_Twice:
+		fail("the parameter ", lex_parser.node_text(&line_tree, record.node), " is named twice in one call")
+	case .Positional_After_Named:
+		fail("an argument with no name comes after a named one: the arguments with no name come first")
+	case .Let_Name_Missing:
+		fail("let takes bindings, each a name, \"=\" and a value, then in: let a = 1 in a + 1")
+	case .Let_Equal_Missing:
+		fail("\"=\" is missing after the name of a binding")
+	case .Let_In_Missing:
+		fail("\",\" or \"in\" is missing after a binding of let")
+	case .Let_Name_Twice:
+		fail("the name ", lex_parser.node_text(&line_tree, record.node), " is bound twice in one let")
+	case .Word_As_Name:
+		word := lex_parser.node_text(&line_tree, record.node)
+		if word == "_" {
+			fail("_ is no name: it is the place of the value on the left of |>, in the call on its right")
+		} else {
+			fail(word, " is a word of Lex, not a name")
+		}
 	case .Unexpected, .None, .Fact_Name_Missing, .Condition_Head_Refused:
 		// A Fact_Name or a Condition node holds the last two, and the
 		// console reads them itself.
@@ -481,14 +555,40 @@ host_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: Va
 }
 
 // host_command_find fails the line for a name that no command has, before
-// the arguments of the call. Each command of the console has an effect: the
+// the arguments of the call, and gives the signature of a command: the
+// names of its parameters, their kinds, and the description of each Record
+// parameter of an export. Each command of the console has an effect: the
 // names of the evaluation, which have none, are not built.
-host_command_find :: proc "contextless" (data: rawptr, name: string) -> (has_effect: bool, found: bool) {
-	if command_find(name) == nil {
+host_command_find :: proc "contextless" (data: rawptr, name: string) -> (signature: lex_evaluator.Command_Signature, found: bool) {
+	item := command_find(name)
+	if item == nil {
 		fail("no command has the name ", name, "; try help()")
-		return false, false
+		return {}, false
 	}
-	return true, true
+	signature.has_effect = true
+	signature.parameter_count = clamp(item.parameter_count, 0, ARGUMENT_CAPACITY)
+	signature.optional_last = item.optional_last
+	for index in 0 ..< signature.parameter_count {
+		signature.names[index] = item.parameter_names[index]
+		signature.kinds[index] = item.parameters[index]
+		// An export describes the record of a parameter; a command of the
+		// console and a command that makes a record take no record.
+		if item.parameters[index] == .Record && item.run == nil && item.record == 0 {
+			signature.files[index], signature.details[index] = item.file, item.function.parameter_details[index]
+		}
+	}
+	return signature, true
+}
+
+// host_record_memory gives zero bytes for a record that a literal makes, in
+// the memory of the line.
+host_record_memory :: proc "contextless" (data: rawptr, size: int) -> (bytes: []u8, ok: bool) {
+	bytes = scratch_bytes(size)
+	if bytes == nil && size != 0 {
+		fail("the line has too many records")
+		return nil, false
+	}
+	return bytes, true
 }
 
 host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Value) -> (value: Value, ok: bool) {
@@ -702,26 +802,36 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 			fail(name, " takes no argument, and |> gives it the value on its left")
 			return text
 		}
-		if stage.argument_count >= ARGUMENT_CAPACITY {
+		// With a '_', the value on the left takes its place: it is one of
+		// the arguments in the parentheses.
+		placeholder := stage.placeholder_start >= 0
+		if !placeholder && stage.argument_count >= ARGUMENT_CAPACITY {
 			fail(name, " has ", i64(stage.argument_count), " arguments already, and |> gives it one more: a call takes at most ", i64(ARGUMENT_CAPACITY))
 			return text
 		}
 		// The names of a parameter of the form Field_Names are one argument
 		// of the call, which the stage counts as one for each name.
 		names_last := found.parameter_forms[found.parameter_count - 1] == .Field_Names
-		arguments_given := stage.argument_count + 1
+		arguments_given := placeholder ? stage.argument_count : stage.argument_count + 1
 		count_ok := arguments_given == found.parameter_count || (names_last && arguments_given > found.parameter_count) || (found.optional_last && arguments_given == found.parameter_count - 1)
 		if !count_ok {
 			fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(arguments_given))
 			return text
 		}
+		// The parameter that takes the value on the left: the first one, or
+		// the place of the '_'. A '_' of a named argument names its
+		// parameter, which the call checks when it runs.
+		parameter := placeholder ? stage.placeholder_argument : 0
+		if stage.placeholder_named || parameter < 0 || parameter >= found.parameter_count {
+			continue
+		}
 		// The sentence of the same line with calls in calls.
 		left, knowledge := pipe_left_value(text, stages, index)
-		if knowledge == .Whole && !argument_accepted(found, 0, left) {
-			argument_refusal(name, found, 0, left)
+		if knowledge == .Whole && !argument_accepted(found, parameter, left) {
+			argument_refusal(name, found, parameter, left)
 			return text
 		}
-		if !pipe_stage_names_check(text, stages, index, found, left, knowledge) {
+		if !placeholder && !pipe_stage_names_check(text, stages, index, found, left, knowledge) {
 			return text
 		}
 	}
@@ -914,7 +1024,21 @@ pipe_refusal_fail :: proc "contextless" (text: string, form: console_language.Pi
 		fail("a line holds at most ", i64(console_language.PIPE_STAGE_CAPACITY), " |>")
 	case .Too_Long:
 		fail("the line with calls in calls has more than ", i64(NESTED_LINE_SIZE), " bytes")
+	case .Placeholder_Not_Whole:
+		fail("|>: _ is a whole argument of ", pipe_text_at(text, form.call_start, form.call_end), ", not a part of an expression")
+	case .Placeholder_Twice:
+		fail("|>: ", pipe_text_at(text, form.call_start, form.call_end), " has two _; the value on the left takes one place")
+	case .Placeholder_Nested:
+		fail("|>: _ names an argument of ", pipe_text_at(text, form.call_start, form.call_end), ", not of ", pipe_text_at(text, form.inner_start, form.inner_end), " inside it")
+	case .Placeholder_Without_Pipe:
+		fail("_ is a place of the call on the right of |>; this call has no |> before it")
 	}
+}
+
+// pipe_text_at gives the bytes start:end of a line, cut to the line.
+pipe_text_at :: proc "contextless" (text: string, start, end: int) -> string {
+	first := clamp(start, 0, len(text))
+	return text[first:clamp(end, first, len(text))]
 }
 
 // pipe_left_value gives what the console knows, before the run, of the
@@ -975,7 +1099,7 @@ result_knowledge :: proc "contextless" (found: ^Command) -> (value: Value, knowl
 	case .Handle, .Bytes:
 		// The rights of a Handle come with the value.
 		knowledge = .Kind
-	case .Stream, .Record_Input:
+	case .Stream, .Record_Input, .Record_Literal:
 		// A command of the console makes a Stream, and the record of the
 		// record output comes with the value when the line runs.
 		knowledge = .Kind

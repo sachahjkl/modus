@@ -1026,7 +1026,7 @@ Do not use: runtime, environment (for this), call layer.
 
 A thunk is a value of the evaluator of Lex that is not computed yet: the expression of a field or of a `let` binding, with the names that it can read.
 
-The evaluator forces a thunk when a value needs it, and at most once: the result replaces the thunk. In mode `declaration`, `kernel.tools` forces the recipe of the tools and nothing of the image. In mode `console`, each thunk of a line is forced before the line ends, so a variable never keeps one. A field can name another field of its record; a cycle with no end stops at the evaluation budget.
+The evaluator forces a thunk when a value needs it, and at most once: the result replaces the thunk. In mode `declaration`, `kernel.tools` forces the recipe of the tools and nothing of the image. In mode `console`, each thunk of a line is forced before the line ends, so a variable never keeps one. A field can name another field of its record; a thunk that its own computation forces again is a cycle, refused at once.
 
 The design: `src/md/features/declarations.md`, "One parser, one lazy evaluator, two modes".
 
@@ -1041,6 +1041,16 @@ A field that the type does not have is refused, and so is a missing field with n
 The design: `src/md/features/declarations.md`, "A record literal is typed by its use".
 
 Do not use: object literal, struct literal, attribute set.
+
+### Word of Lex
+
+A word of Lex is a word of its grammar that is never a name: `let`, `in`, `with`, and the placeholder `_`.
+
+A variable, a field, a binding of a `let` or a named argument with one of these names is refused, with the word. A longer name that holds one, as `within` or `sum_values`, is a name. The console draws a word of Lex in the color of an operator.
+
+The design: `src/md/features/declarations.md`, "The forms of layer 3 as built".
+
+Do not use: keyword (for this), reserved name.
 
 ### Named argument
 
