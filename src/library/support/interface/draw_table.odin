@@ -37,6 +37,7 @@ package interface
 
 import "modus:contract/draw_record"
 import "modus:contract/glyph_cache"
+import "modus:contract/scale_factor"
 import "modus:support/display"
 import "modus:support/graphics"
 
@@ -129,6 +130,11 @@ Draw_Table :: struct {
 	// with no room) and that are not popped yet: their pops are not
 	// written either, so no pop ends a clip that the table holds.
 	clip_pushes_not_written: int,
+	// The scale factor at which the execution draws the records: their
+	// places are in logical pixels, and the canvas and the rectangles of a
+	// draw are in pixels of the screen (execute_scale.odin). nil: the
+	// places are pixels of the canvas, as for each table of today.
+	scale: Maybe(scale_factor.Scale),
 }
 
 // A rectangle of the surface. right and bottom are not in it.
@@ -165,6 +171,7 @@ draw_table_copy :: proc "contextless" (target, source: ^Draw_Table) -> bool {
 	target.interface_font = source.interface_font
 	target.clip_depth = source.clip_depth
 	target.clip_pushes_not_written = source.clip_pushes_not_written
+	target.scale = source.scale
 	return true
 }
 
