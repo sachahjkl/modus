@@ -46,6 +46,7 @@ import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/disk_process"
 import "modus:support/network"
 import "modus:support/random"
@@ -127,7 +128,7 @@ service: system.Service
 process_generator: random.Generator // The random generator of this process, from the seed of its starter.
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Info, "module_files: ", text)
+	system.log_fact(.Info, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -520,7 +521,7 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 			return store_failure(error, &store_error, status, "the listing of its root tree")
 		}
 		if len(page) == 0 {
-			system.log(.Info, "module_files: listed ", u64(total), " module files of the store module_files, each hash computed on its bytes")
+			system.log_fact(.Info, Files_Listed{files = u64(total)})
 			return i64(total)
 		}
 		for item in page {
@@ -544,9 +545,9 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 			hash, hashed := bytes_hash(entry_name, int(min(item.size, i64(disk_process.FILE_BYTES_LIMIT) + 1)))
 			if hashed {
 				disk_process.hash_write(&digits, hash)
-				system.log(.Info, "module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
+				system.log_fact(.Info, File_Hashed{size = value_kinds.Size_In_Bytes(max(item.size, 0)), file_hash = value_kinds.Hash_Field(hash), file_name = value_kinds.text_field(entry_name, FILE_NAME_FIELD_BYTES)})
 			} else {
-				system.log(.Info, "module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, has no hash: its bytes did not come, or pass the 4194304 bytes of a module file")
+				system.log_fact(.Info, File_Not_Hashed{size = value_kinds.Size_In_Bytes(max(item.size, 0)), file_name = value_kinds.text_field(entry_name, FILE_NAME_FIELD_BYTES)})
 			}
 			if total < len(result^) {
 				row := &result[total]
@@ -559,7 +560,7 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 			total += 1
 		}
 	}
-	system.log(.Info, "module_files: the listing of the store module_files did not end after ", u64(LIST_PAGE_LIMIT), " pages")
+	system.log_fact(.Info, Listing_Not_Ended{listing_pages = u64(LIST_PAGE_LIMIT)})
 	return errors.fail(error, ERROR_STORE, .Refused, .Store)
 }
 
@@ -653,7 +654,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address_buffer: [16]u8
 	address_writer := system.Writer{buffer = address_buffer[:]}
 	network.address_write(&address_writer, remote_address)
-	system.log(.Info, "module_files: serves the store module_files of principal ", store_principal, ": a file from the web server ", system.written(&address_writer), " port ", u64(remote_port), ", and the list of the files with the hash of their bytes")
+	system.log_fact(.Info, Serving{principal = store_principal, remote_port = u64(remote_port), remote_address = value_kinds.text_field(system.written(&address_writer), ADDRESS_FIELD_BYTES)})
 	for {
 		wait := system.wait_begin()
 		deadline, _ := network_step()

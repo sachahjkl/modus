@@ -90,8 +90,32 @@ Lockout_Change_Interface_Failed :: struct {
 	step: [32]u8,
 }
 
+// The count limits of the TPM, read at the start. The line writes a count
+// of seconds as "N seconds": an Integer, not a Time, which writes " s".
+@(log_fact = "tpm: the count limits of the TPM: a lockout after {lockout_failures} wrong authorization values, one forgiven each {forgive_interval_seconds} seconds; {counted_failures} counted now; the lockout hierarchy waits {lockout_recovery_seconds} seconds after a wrong value of its own")
+Count_Limits :: struct {
+	lockout_failures:         u64,
+	forgive_interval_seconds: u64,
+	counted_failures:         u64,
+	lockout_recovery_seconds: u64,
+}
+
+// The bytes of the Text field of the failure that stops the service: the
+// longest of the failures of the services of the devices and of the
+// network has 91 bytes, and a zero byte. One size in each module keeps one
+// meaning for the field name.
+FAILURE_FIELD_BYTES :: 96
+
+// The service stops on a failure: the words of the failure come from a
+// closed set of sentences of this module.
+@(log_fact = "tpm: {failure}")
+Service_Failed :: struct {
+	failure: [96]u8,
+}
+
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
+#assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
 #assert(size_of(Shutdown_Interface_Failed) == STEP_FIELD_BYTES)
 #assert(size_of(Capability_Answer_Malformed) == PROPERTIES_FIELD_BYTES)
 

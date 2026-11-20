@@ -58,6 +58,7 @@ import "modus:contract/errors"
 import "modus:contract/frame"
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/pci"
 import "modus:support/system"
 import "modus:support/virtio"
@@ -141,7 +142,7 @@ bytes_received: u64
 interrupts: u64
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Error, "frame: ", text)
+	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -291,7 +292,7 @@ read_region_add :: proc "contextless" (command: ring.Record) -> (status: frame.S
 		return .No_Region, .Done, errors.ring_fail(ADD, .Refused, .None, 1, i64(handle), 0, i64(size_status))
 	}
 	region^ = {memory = handle, physical = physical, size = pages * system.PAGE_SIZE}
-	system.log(.Info, "frame: a read region of ", pages, " pages at the place ", place, ", held with the right Read only: the device reads the data of the frames to send there")
+	system.log_fact(.Info, Read_Region_Added{region_size = value_kinds.Size_In_Pages(pages), place = place})
 	return .Ok, .Done, {}
 }
 

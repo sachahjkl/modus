@@ -38,6 +38,7 @@ import "base:intrinsics"
 import "modus:contract/entropy_service"
 import "modus:contract/errors"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/pci"
 import "modus:support/system"
 import "modus:support/virtio"
@@ -63,7 +64,7 @@ machine: system.Handle
 clients: ring.Ring
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Error, "entropy: ", text)
+	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 

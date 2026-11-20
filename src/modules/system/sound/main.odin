@@ -36,6 +36,7 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/timed_stream"
+import "modus:contract/value_kinds"
 import "modus:private/sound/sound_device"
 import "modus:support/pci"
 import "modus:support/system"
@@ -128,7 +129,7 @@ pending_head: u32
 pending_count: u32
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Error, "sound: ", text)
+	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -454,7 +455,7 @@ stream_start :: proc "contextless" (command: ring.Record) -> (timed_stream.Statu
 	periods_give()
 	virtio.notify(&transmit_queue)
 	latency, _ := timed_stream.time_of_frame({}, timed_stream.PERIODS_GIVEN * timed_stream.PERIOD_FRAMES)
-	system.log(.Info, "sound: the stream started: the frame 0 plays at ", anchor.time, " ns of the system clock; the service holds ", latency, " ns")
+	system.log_fact(.Info, Stream_Started{frame_zero_time = value_kinds.Time_In_Nanoseconds(anchor.time), held_time = value_kinds.Time_In_Nanoseconds(latency)})
 	return .Ok, {0 = anchor.time, 1 = latency, 2 = u64(timed_stream.Format.Signed_16_Stereo_48000)}
 }
 

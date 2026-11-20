@@ -327,7 +327,7 @@ log_second: u64
 log_count: u64
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Info, "remote: ", text)
+	system.log_fact(.Info, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -1231,7 +1231,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	key_text: [64]u8
-	system.log(.Info, "remote: the public key of this service: ", hex_text(key_text[:], public_key[:]))
+	system.log_fact(.Info, Public_Key_Made{public_key = value_kinds.text_field(hex_text(key_text[:], public_key[:]), KEY_FIELD_BYTES)})
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
 		fail("no endpoint: the process has no grant of the network")
@@ -1306,7 +1306,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log(.Info, "remote: listening on the UDP port ", u64(listen_port), ", for the host 10.0.2.2 only, and for the client keys that a principal allowed: ", u64(CAPACITY), " connections, each with ", u64(STREAMS_PER_CONNECTION), " calls at one time")
+	system.log_fact(.Info, Listening{listen_port = u64(listen_port), connection_capacity = u64(CAPACITY), calls_per_connection = u64(STREAMS_PER_CONNECTION)})
 
 	arrived: [RECEIVE_PLACES]ring.Record
 	drawn: u64
@@ -1377,8 +1377,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// to show (docs/DESIGN.md, section 7).
 				if !draw_logged && counts.calls >= 1000 {
 					draw_logged = true
-					system.log(.Info, "remote: the window drew one picture in ", (system.nanoseconds() - start) / 1000, " us")
-					system.log(.Info, "remote: the interface: ", u64(window_memory.drawing.now.record_count), " records, ", u64(window_memory.drawing.damage.count), " damage rectangles; build ", window_memory.drawing.build_time / 1000, " us, difference ", window_memory.drawing.difference_time / 1000, " us, draw ", window_memory.drawing.draw_time / 1000, " us")
+					system.log_fact(.Info, Window_Drawn{picture_time = value_kinds.Time_In_Microseconds((system.nanoseconds() - start) / 1000)})
+					system.log_fact(.Info, Interface_Measured{records = u64(window_memory.drawing.now.record_count), damage_rectangles = u64(window_memory.drawing.damage.count), build_time = value_kinds.Time_In_Microseconds(window_memory.drawing.build_time / 1000), difference_time = value_kinds.Time_In_Microseconds(window_memory.drawing.difference_time / 1000), draw_time = value_kinds.Time_In_Microseconds(window_memory.drawing.draw_time / 1000)})
 				}
 			}
 		}

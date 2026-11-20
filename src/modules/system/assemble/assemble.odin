@@ -21,6 +21,7 @@ package assemble
 import "base:intrinsics"
 import "modus:contract/errors"
 import writer "modus:contract/module_file_writer"
+import "modus:contract/value_kinds"
 import "modus:private/assemble/assembler"
 import "modus:support/system"
 
@@ -122,6 +123,6 @@ assemble :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .
 		system.log(.Error, "assemble: the module file writer refused the file: refusal ", u64(written_refusal.refusal), ", index ", written_refusal.index)
 		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, i64(written_refusal.refusal))
 	}
-	system.log(.Info, "assemble: a module file of ", written, " bytes with ", u64(len(parts.exports)), " exports")
+	system.log_fact(.Info, Module_File_Written{size = value_kinds.Size_In_Bytes(written), exports = u64(len(parts.exports))})
 	return i64(written)
 }

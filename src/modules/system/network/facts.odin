@@ -108,6 +108,72 @@ Read_Region_Refused :: struct {
 // name the same bytes.
 #assert(size_of(Endpoint_Listens_Udp_From_Address) == 8 + value_kinds.MODULE_NAME_FIELD_BYTES + ADDRESS_FIELD_BYTES)
 #assert(size_of(Frame_Service_Silent) == 8 + COMMAND_FIELD_BYTES)
+#assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
+#assert(size_of(Ready_Link_Up) == 8 + INTERFACE_ADDRESS_FIELD_BYTES)
+#assert(size_of(Payload_Passes_Checked) == 16 + value_kinds.MODULE_NAME_FIELD_BYTES + PROTOCOL_FIELD_BYTES)
+
+// The bytes of the Text field of the failure that stops the service: the
+// longest of the failures of the services of the devices and of the
+// network, "no handle of the frame service with the right Read: a wait
+// for the device would have no end", has 91 bytes, and a zero byte.
+FAILURE_FIELD_BYTES :: 96
+// The bytes of the Text field of the address of the interface: an IPv4
+// address, its prefix and the hardware address, at most
+// "255.255.255.255/24 ff:ff:ff:ff:ff:ff", 36 bytes, and a zero byte.
+INTERFACE_ADDRESS_FIELD_BYTES :: 40
+// The bytes of the Text field of the protocol of an endpoint: "TCP" or
+// "UDP", and a zero byte.
+PROTOCOL_FIELD_BYTES :: 8
+
+// The service stops on a failure: the words of the failure come from a
+// closed set of sentences of this module.
+@(log_fact = "network: {failure}")
+Service_Failed :: struct {
+	failure: [96]u8,
+}
+
+// The service is ready, and the link of the device is up.
+@(log_fact = "network: ok, the address {interface_address}, the gateway 10.0.2.2, the link is up, {receive_places} places for frames that arrive")
+Ready_Link_Up :: struct {
+	receive_places:    u64,
+	interface_address: [40]u8,
+}
+
+// The service is ready, and the link of the device is down.
+@(log_fact = "network: ok, the address {interface_address}, the gateway 10.0.2.2, the link is down, {receive_places} places for frames that arrive")
+Ready_Link_Down :: struct {
+	receive_places:    u64,
+	interface_address: [40]u8,
+}
+
+// A measure: the time of the headers of IPv4 and Ethernet of one frame,
+// in this process.
+@(log_fact = "network: the headers of IPv4 and Ethernet of a frame with a payload of {payload_size}: {header_time}, in this process (no checksum of the payload)")
+Headers_Measured :: struct {
+	payload_size: value_kinds.Size_In_Bytes,
+	header_time:  value_kinds.Time_In_Nanoseconds,
+}
+
+// The passes of the service over the data of an endpoint that ends are
+// those of its design: one copy on receive, the check of each header on
+// send, no byte of the data, no checksum.
+@(log_fact = "network: the endpoint of {owner}, {protocol}: this service read each payload byte one time on receive, for the copy, and on send only the {header_bytes} of each header that it checks, and {data_bytes_read} of the data; it computed no checksum: as it must")
+Payload_Passes_Checked :: struct {
+	header_bytes:    value_kinds.Size_In_Bytes,
+	data_bytes_read: value_kinds.Size_In_Bytes,
+	owner:           value_kinds.Module_Name_Field,
+	protocol:        [8]u8,
+}
+
+// The passes of the service over the data of an endpoint that ends are
+// not those of its design.
+@(log_fact = "network: the endpoint of {owner}, {protocol}: this service read each payload byte one time on receive, for the copy, and on send only the {header_bytes} of each header that it checks, and {data_bytes_read} of the data; it computed no checksum (WRONG)")
+Payload_Passes_Wrong :: struct {
+	header_bytes:    value_kinds.Size_In_Bytes,
+	data_bytes_read: value_kinds.Size_In_Bytes,
+	owner:           value_kinds.Module_Name_Field,
+	protocol:        [8]u8,
+}
 
 // owner_field gives the Text field of the name of the process of an
 // endpoint.

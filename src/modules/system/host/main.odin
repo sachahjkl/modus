@@ -111,7 +111,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	base := space.modules[index].base
-	system.log(.Info, "host: ready, ", u64(module.count(file, .Exports) - 1), " exports")
+	system.log_fact(.Info, Ready{exports = u64(module.count(file, .Exports) - 1)})
 	system.send(&queue.completions, ring.Record{kind = u32(isolated.Status.Ok)})
 
 	for {

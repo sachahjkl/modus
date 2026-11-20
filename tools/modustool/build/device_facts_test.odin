@@ -46,6 +46,10 @@ device_text_bytes_most :: proc() -> map[string]u32 {
 	most["cause"] = len("it names an empty rectangle, or a screen piece larger than 128 x 64")
 	most["error_code"] = len("Input_Not_Allowed")
 	most["missed_step"] = len("did not let the stream take the records of its viewer frame")
+	most["failure"] = len("no handle of the frame service with the right Read: a wait for the device would have no end")
+	most["public_key"] = len(KEY_WHOLE)
+	most["interface_address"] = len("255.255.255.255/24 ff:ff:ff:ff:ff:ff")
+	most["protocol"] = len("TCP")
 	return most
 }
 

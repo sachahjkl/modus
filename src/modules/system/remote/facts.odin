@@ -195,6 +195,50 @@ Service_Silent :: struct {
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
 #assert(size_of(Client_Key_Refused) == KEY_FIELD_BYTES)
+#assert(size_of(Public_Key_Made) == KEY_FIELD_BYTES)
+#assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
+
+// The bytes of the Text field of the failure that stops the service: the
+// longest of the failures of the services of the devices and of the
+// network has 91 bytes, and a zero byte.
+FAILURE_FIELD_BYTES :: 96
+
+// The service stops on a failure: the words of the failure come from a
+// closed set of sentences of this module.
+@(log_fact = "remote: {failure}")
+Service_Failed :: struct {
+	failure: [96]u8,
+}
+
+// The public key of the service, which a client checks.
+@(log_fact = "remote: the public key of this service: {public_key}")
+Public_Key_Made :: struct {
+	public_key: [72]u8,
+}
+
+// The service listens for the calls of the host.
+@(log_fact = "remote: listening on the UDP port {listen_port}, for the host 10.0.2.2 only, and for the client keys that a principal allowed: {connection_capacity} connections, each with {calls_per_connection} calls at one time")
+Listening :: struct {
+	listen_port:          u64,
+	connection_capacity:  u64,
+	calls_per_connection: u64,
+}
+
+// A measure: the time of one picture of the window, taken once.
+@(log_fact = "remote: the window drew one picture in {picture_time}")
+Window_Drawn :: struct {
+	picture_time: value_kinds.Time_In_Microseconds,
+}
+
+// A measure: the work of the interface for that picture.
+@(log_fact = "remote: the interface: {records} records, {damage_rectangles} damage rectangles; build {build_time}, difference {difference_time}, draw {draw_time}")
+Interface_Measured :: struct {
+	records:           u64,
+	damage_rectangles: u64,
+	build_time:        value_kinds.Time_In_Microseconds,
+	difference_time:   value_kinds.Time_In_Microseconds,
+	draw_time:         value_kinds.Time_In_Microseconds,
+}
 #assert(size_of(Client_Key_Grant_Ended_In_Handshake) == KEY_HEAD_FIELD_BYTES + PEER_FIELD_BYTES)
 #assert(size_of(Connection_Arrived) == PEER_FIELD_BYTES)
 

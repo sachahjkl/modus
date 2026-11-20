@@ -58,6 +58,7 @@ import "modus:contract/byte_order"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/tpm_service"
+import "modus:contract/value_kinds"
 import "modus:support/random"
 import "modus:support/system"
 import "modus:support/tpm2"
@@ -121,7 +122,7 @@ answer_bytes: [MESSAGE_LIMIT]u8
 region: []u8
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Error, "tpm: ", text)
+	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -613,7 +614,7 @@ count_limits_log :: proc "contextless" () {
 		maximum := limits[tpm2.PROPERTY_MAXIMUM_AUTHORIZATION_FAILURES - tpm2.PROPERTY_LOCKOUT_COUNTER]
 		interval := limits[tpm2.PROPERTY_LOCKOUT_INTERVAL - tpm2.PROPERTY_LOCKOUT_COUNTER]
 		recovery := limits[tpm2.PROPERTY_LOCKOUT_RECOVERY - tpm2.PROPERTY_LOCKOUT_COUNTER]
-		system.log(.Info, "tpm: the count limits of the TPM: a lockout after ", u64(maximum), " wrong authorization values, one forgiven each ", u64(interval), " seconds; ", u64(counted), " counted now; the lockout hierarchy waits ", u64(recovery), " seconds after a wrong value of its own")
+		system.log_fact(.Info, Count_Limits{lockout_failures = u64(maximum), forgive_interval_seconds = u64(interval), counted_failures = u64(counted), lockout_recovery_seconds = u64(recovery)})
 		if interval == 0 {
 			system.log(.Warning, "tpm: the TPM limits no rate of the wrong authorization values: its lockout interval is 0")
 		}

@@ -32,6 +32,7 @@ package start_policy
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // One thread and the rows on its stack, which the tool counts; the working
@@ -78,22 +79,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	bytes := list_start[:list_size]
 	count, problem, place := start_list.list_read(bytes, &rows)
 	if problem != .None {
-		system.log(.Error, "start_policy: the start list is refused: ", start_list.LIST_PROBLEM_TEXTS[problem], ", at its row ", u64(place), ": no row starts")
+		system.log_fact(.Error, Start_List_Refused{row = u64(place), list_problem = value_kinds.text_field(start_list.LIST_PROBLEM_TEXTS[problem], LIST_PROBLEM_FIELD_BYTES)})
 		system.stop(.Refused)
 	}
 	states: [start_list.ROW_CAPACITY]Row_State
 	for index in 0 ..< count {
 		states[index] = {row = rows[index], restarts_left = rows[index].restart_count}
 	}
-	system.log(.Info, "start_policy: the start list has ", u64(count), " rows: each starts in its order")
+	system.log_fact(.Info, Start_List_Read{rows = u64(count)})
 	for &state in states[:count] {
 		name := start_list.row_name(&state.row)
 		if missing := state.row.needs - parts; missing != {} && state.row.absent_rule == .Not_Started {
-			system.log(.Info, "start_policy: ", system.Module_Name{name}, " is not started: the machine has no ", start_list.PART_NAMES[first_part(missing)])
+			system.log_fact(.Info, Row_Not_Started{row_process = value_kinds.module_name_field(name), missing_part = value_kinds.text_field(start_list.PART_NAMES[first_part(missing)], PART_FIELD_BYTES)})
 			continue
 		}
 		if !row_start(&state) && state.row.usable_mark == .Needed {
-			system.log(.Error, "start_policy: the machine is not usable without ", system.Module_Name{name}, ": the start policy stops before Machine_Usable")
+			system.log_fact(.Error, Machine_Not_Usable_Without{row_process = value_kinds.module_name_field(name)})
 			system.stop(.Failed)
 		}
 	}
@@ -150,24 +151,37 @@ row_watch :: proc "contextless" (state: ^Row_State) {
 	}
 	system.close(state.process)
 	state.process = 0
-	name := start_list.row_name(&state.row)
-	buffer: [64]u8
-	stop_text := system.Writer{buffer = buffer[:]}
-	system.stop_write(&stop_text, cause, outcome)
+	// A stop of the row by itself has its outcome, and each other stop has
+	// none: each sentence is a fact type, as for the stops of the root
+	// service.
+	row_process := value_kinds.module_name_field(start_list.row_name(&state.row))
+	stopped_itself := cause == .Itself
 	if !start_list.stop_restarts(outcome) {
 		if state.row.restart_count != 0 {
-			system.log(.Info, "start_policy: ", system.Module_Name{name}, " stopped: ", system.written(&stop_text), "; it does not start again")
+			if stopped_itself {
+				system.log_fact(.Info, Row_Stopped_Not_Restarted{cause = cause, outcome = outcome, row_process = row_process})
+			} else {
+				system.log_fact(.Info, Row_Stopped_Not_Restarted_Without_Outcome{cause = cause, row_process = row_process})
+			}
 		}
 		return
 	}
 	if state.restarts_left == 0 {
 		if state.row.restart_count != 0 {
-			system.log(.Warning, "start_policy: ", system.Module_Name{name}, " stopped: ", system.written(&stop_text), "; past its ", u64(state.row.restart_count), " restarts, it stays stopped")
+			if stopped_itself {
+				system.log_fact(.Warning, Row_Stopped_Past_Restarts{restarts = state.row.restart_count, cause = cause, outcome = outcome, row_process = row_process})
+			} else {
+				system.log_fact(.Warning, Row_Stopped_Past_Restarts_Without_Outcome{restarts = state.row.restart_count, cause = cause, row_process = row_process})
+			}
 		}
 		return
 	}
 	state.restarts_left -= 1
-	system.log(.Info, "start_policy: ", system.Module_Name{name}, " stopped: ", system.written(&stop_text), "; it starts again, ", u64(state.restarts_left), " restarts left")
+	if stopped_itself {
+		system.log_fact(.Info, Row_Restarted{restarts_left = state.restarts_left, cause = cause, outcome = outcome, row_process = row_process})
+	} else {
+		system.log_fact(.Info, Row_Restarted_Without_Outcome{restarts_left = state.restarts_left, cause = cause, row_process = row_process})
+	}
 	row_start(state)
 }
 
@@ -187,12 +201,12 @@ command_call :: proc "contextless" (command: root_ring.Root_Command, name: strin
 		wait := system.wait_begin()
 		if answer, received := system.receive(&requests.completions); received {
 			if answer.tag != tag {
-				system.log(.Warning, "start_policy: refused a completion of the tag ", u64(answer.tag), ", which names no command in flight")
+				system.log_fact(.Warning, Completion_Tag_Refused{tag = u64(answer.tag)})
 				continue
 			}
 			read, refusal := system.status_of_word(answer.kind)
 			if refusal.kind != 0 {
-				system.log(.Warning, "start_policy: refused a completion whose status word ", u64(answer.kind), " names no status")
+				system.log_fact(.Warning, Completion_Status_Refused{status_word = u64(answer.kind)})
 				return .Bad_Operation, {}
 			}
 			return read, answer.values

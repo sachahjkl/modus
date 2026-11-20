@@ -12,3 +12,17 @@ package entropy_device_service
 Device_Ready :: struct {
 	queue_size: u64,
 }
+
+// The bytes of the Text field of the failure that stops the service: the
+// longest of the failures of the services of the devices and of the
+// network has 91 bytes, and a zero byte.
+FAILURE_FIELD_BYTES :: 96
+
+// The service stops on a failure: the words of the failure come from a
+// closed set of sentences of this module.
+@(log_fact = "entropy: {failure}")
+Service_Failed :: struct {
+	failure: [96]u8,
+}
+
+#assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
