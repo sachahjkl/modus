@@ -562,6 +562,11 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		// command with more parameters has no entry, and the command table
 		// can change between the entry and the choice.
 		count := found.parameter_count
+		// A command whose last parameter a call may leave out takes the
+		// choice with that parameter left out, as a line takes it.
+		if found.optional_last && record.values[4] == u64(count - 1) {
+			count -= 1
+		}
 		fits := count <= palette_table.PARAMETER_CAPACITY && palette_arguments_tag == record.tag && palette_arguments_bad != record.tag && record.values[4] == u64(count) && count > 0
 		// A Text of the palette and a line of the console are UTF-8. A text
 		// that a line cannot hold (an invalid sequence, which the
