@@ -5,17 +5,44 @@ import "core:strings"
 import "core:testing"
 import "modustool:foundation"
 
-// The IR of a counted kernel after the pass, in a short form: two arrays
-// of guards, a list of constructors, a global of another section, and code.
+// The IR of a counted kernel after the pass, in a short form: the comdat of
+// the constructor of the pass, two arrays of guards, a global of another
+// section, a list of constructors, the constructor, and code of the kernel
+// before and after it.
 @(private = "file")
-INSTRUMENTED_IR :: `@__sancov_gen_ = private global [3 x i32] zeroinitializer, section "__sancov_guards", comdat($kernel.enter), align 4, !associated !1
+INSTRUMENTED_IR :: `$sancov.module_ctor_trace_pc_guard = comdat any
+@__sancov_gen_ = private global [3 x i32] zeroinitializer, section "__sancov_guards", comdat($kernel.enter), align 4, !associated !1
 @__sancov_gen_.1 = private global [12 x i32] zeroinitializer, section "__sancov_guards", align 4, !associated !2
 @kernel.table = internal global [8 x i32] zeroinitializer, section ".data.table", align 4
 @llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 2, ptr @sancov.module_ctor_trace_pc_guard, ptr @sancov.module_ctor_trace_pc_guard }]
-define internal void @sancov.module_ctor_trace_pc_guard() {
+define void @kernel.enter() {
+  call void @__sanitizer_cov_trace_pc_guard(ptr @__sancov_gen_)
+  ret void
+}
+define internal void @sancov.module_ctor_trace_pc_guard() #3 comdat {
   call void @__sanitizer_cov_trace_pc_guard_init(ptr @__start___sancov_guards, ptr @__stop___sancov_guards)
   ret void
 }
+define void @kernel.after() {
+  ret void
+}
+declare void @__sanitizer_cov_trace_pc_guard_init(ptr, ptr)
+`
+
+// The IR above with no list of the constructors, no constructor of the
+// pass and no comdat of it: each other line stays, in its order.
+@(private = "file")
+INSTRUMENTED_IR_WITHOUT_CONSTRUCTOR :: `@__sancov_gen_ = private global [3 x i32] zeroinitializer, section "__sancov_guards", comdat($kernel.enter), align 4, !associated !1
+@__sancov_gen_.1 = private global [12 x i32] zeroinitializer, section "__sancov_guards", align 4, !associated !2
+@kernel.table = internal global [8 x i32] zeroinitializer, section ".data.table", align 4
+define void @kernel.enter() {
+  call void @__sanitizer_cov_trace_pc_guard(ptr @__sancov_gen_)
+  ret void
+}
+define void @kernel.after() {
+  ret void
+}
+declare void @__sanitizer_cov_trace_pc_guard_init(ptr, ptr)
 `
 
 // The tool counts the guards of each array of the section of the guards,
@@ -52,21 +79,30 @@ the_guards_of_the_ir_are_counted :: proc(t: ^testing.T) {
 	testing.expect_value(t, named_count, 3 + 12 + 7)
 }
 
-// The list of the constructors leaves the IR, and no other line does: the
-// constructor itself stays, and its call names the init that
-// edge_counters.asm defines.
+// The list of the constructors, the constructor of the pass and its comdat
+// leave the IR, and no other line does: the code before and after the
+// constructor stays whole, no code calls the init, and no procedure is left
+// that no entry of the kernel reaches.
 @(test)
-the_list_of_the_constructors_leaves_the_ir :: proc(t: ^testing.T) {
-	without, removed := kernel_ir_constructors_removed(INSTRUMENTED_IR)
-	testing.expect_value(t, removed, 1)
-	testing.expect(t, !strings.contains(without, KERNEL_IR_CONSTRUCTORS_LINE_START), "the list of the constructors stays")
-	testing.expect_value(t, len(without), len(INSTRUMENTED_IR) - len(strings.split_lines(INSTRUMENTED_IR, context.temp_allocator)[3]) - 1)
-	testing.expect(t, strings.contains(without, "@__sanitizer_cov_trace_pc_guard_init"), "the call of the init left")
-	again, removed_again := kernel_ir_constructors_removed(without)
-	testing.expect_value(t, removed_again, 0)
+the_constructor_of_the_pass_leaves_the_ir :: proc(t: ^testing.T) {
+	without, lists, constructors := kernel_ir_constructors_removed(INSTRUMENTED_IR)
+	testing.expect_value(t, lists, 1)
+	testing.expect_value(t, constructors, 1)
+	testing.expect_value(t, without, INSTRUMENTED_IR_WITHOUT_CONSTRUCTOR)
+	testing.expect(t, !strings.contains(without, KERNEL_IR_PASS_CONSTRUCTOR), "a reference to the constructor stays")
+	testing.expect(t, !strings.contains(without, "call void @__sanitizer_cov_trace_pc_guard_init"), "a call of the init stays")
+	// A second pass of the removal finds nothing: the tool refuses that
+	// form, as a pass of opt of another form.
+	again, lists_again, constructors_again := kernel_ir_constructors_removed(without)
+	testing.expect(t, lists_again == 0 && constructors_again == 0, "the removal found a list or a constructor twice")
 	testing.expect_value(t, again, without)
 	count, _ := kernel_ir_guard_count(without)
 	testing.expect_value(t, count, 3 + 12)
+	// A `}` line that ends with a carriage return ends the constructor too.
+	with_carriage_returns, _ := strings.replace_all(INSTRUMENTED_IR, "\n", "\r\n", context.temp_allocator)
+	without_carriage_returns, _, crlf_constructors := kernel_ir_constructors_removed(with_carriage_returns)
+	testing.expect_value(t, crlf_constructors, 1)
+	testing.expect(t, strings.contains(without_carriage_returns, "define void @kernel.after()"), "the code after the constructor left with it")
 }
 
 // Only the counted kernel gets the pass and the file of the callback, and

@@ -1,6 +1,6 @@
-// The asker of the measures of the record outputs
-// (src/md/features/module_outputs.md, "The measures that decide it", 1, 2
-// and 4). For each count of readers of READER_COUNTS, it starts that many
+// The asker of the measures 1, 2 and 4 of the record outputs
+// (src/md/features/module_outputs.md, "The measures that decide it"). For
+// each count of readers of READER_COUNTS, it starts that many
 // `output_measure_reader`, then starts `output_measure_writer` with a
 // wiring list of one row for each reader, and waits until each one stopped
 // with the outcome Done: each reader read each record in order. The writer
