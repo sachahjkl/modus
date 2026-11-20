@@ -122,6 +122,12 @@ Sandbox :: struct {
 	files_size:         u64,
 	replacement_offset: u64,
 	replacement_count:  u64,
+	// A module from memory (isolate_memory): the copy of its file in a
+	// memory object of the console, mapped at module_address, and its entry
+	// in the list of the files. 0: the module is a file of the boot image.
+	module_memory:      system.Handle,
+	module_address:     rawptr,
+	module_entry:       info.Image_Entry,
 	process:       system.Handle, // 0: no call host runs, or no connection exists. The next call makes one.
 	ring_memory:   system.Handle,
 	ring:          ring.Ring,
@@ -158,7 +164,7 @@ LOADED_CAPACITY :: 8
 // A module that the console loaded.
 Loaded :: struct {
 	hash:    [32]u8,
-	name:    string, // In the boot image.
+	name:    string, // In the boot image; for a module from memory, in its sandbox, which unload sets to zero.
 	file:    []u8, // In the boot image.
 	place:   int, // A direct load: the place of the module in `space`.
 	sandbox: int, // Not 0: the module is in sandboxes[sandbox - 1].
@@ -355,6 +361,35 @@ commands_start :: proc "contextless" () {
 	// sandboxes run, and "cannot start a sandboxed process" when the budget
 	// of the console cannot pay for it.
 	command("isolate", {.Text}, .Record, "load a module in a sandboxed process", isolate_module)
+	// Loads a module file that a memory object holds into a new call host,
+	// and makes each of its exports a command, as `isolate` does for a
+	// module of the boot image. The module that `assemble` wrote is such a
+	// file.
+	//
+	// - `name`: the name of the module in the console: 1 to 31 ASCII
+	//   letters, digits and `_`, with no digit first.
+	// - `memory`: the memory object that holds the file from its first byte.
+	// - `size`: the bytes of the file, 1 to 4 MiB.
+	//
+	// The console copies the bytes into a memory object of its own, checks
+	// the copy with `module.validate`, and computes its hash; the log has
+	// the hash. A later write into `memory` changes nothing. The call host
+	// receives the copy as its one file: a module from memory takes no
+	// import. The result is the `Record` of `load`, with the call
+	// `isolated`.
+	//
+	// ```
+	// > f = buffer(4)
+	// > n = assemble("export add(a: Integer, b: Integer) -> Integer; add: mov %rdi, %rax; add %rsi, %rax; ret", f)
+	// > isolate_memory("adder", f, n)
+	// ```
+	//
+	// Errors: the name is no name; a size of 0 or past the object or past
+	// 4 MiB; the handle names no memory object; the bytes are no module
+	// file; the module imports a module; a module with the name or the same
+	// bytes is loaded; it exports no command; no room for a sandbox or for
+	// its commands.
+	command("isolate_memory", {.Text, .Handle, .Integer}, .Record, "isolate the module file of a memory object", isolate_from_memory)
 	// Removes a module that `load` or `isolate` added: its commands leave
 	// the command table.
 	//
@@ -1245,6 +1280,127 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 	return fail("no module has the name ", name)
 }
 
+// The bytes of a module file that isolate_memory takes: the bound of a
+// module file of the store module_files, which a call host maps whole.
+MEMORY_MODULE_BYTES_MOST :: 4 * 1024 * 1024
+
+// isolate_from_memory makes each export of a module file that a memory
+// object holds a command, as isolate does for a module of the boot image
+// (src/md/features/assembler.md, "The machine step: a module from the memory of the console").
+// The console copies the bytes into an object of its own first: the caller
+// keeps its object and can write it again, and the descriptions that the
+// commands read must not change under them.
+isolate_from_memory :: proc "contextless" (arguments: []Value) -> Value {
+	name := arguments[0].text
+	memory := system.Handle(arguments[1].integer)
+	size := arguments[2].integer
+	name_valid := len(name) >= 1 && len(name) < info.IMAGE_NAME_SIZE
+	for index in 0 ..< len(name) {
+		character := name[index]
+		letter := character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character == '_'
+		digit := character >= '0' && character <= '9'
+		if !letter && !(digit && index > 0) {
+			name_valid = false
+		}
+	}
+	if !name_valid {
+		return fail("isolate_memory: \"", name, "\" is no name of a module: 1 to ", i64(info.IMAGE_NAME_SIZE - 1), " ASCII letters, digits and _, with no digit first")
+	}
+	if size < 1 || size > MEMORY_MODULE_BYTES_MOST {
+		return fail("isolate_memory: the size is ", size, " bytes; a module file has 1 to ", i64(MEMORY_MODULE_BYTES_MOST))
+	}
+	kind, _, _ := system.handle_state(memory)
+	if kind != .Memory {
+		return fail("isolate_memory: the handle names no memory object")
+	}
+	// A refused handle has no pages, so it has no byte.
+	pages, _ := system.memory_size(memory)
+	if u64(size) > pages * system.PAGE_SIZE {
+		return fail("isolate_memory: the memory object has ", pages * system.PAGE_SIZE, " bytes; it does not hold ", size)
+	}
+	for &item in loaded[:loaded_count] {
+		if item.name == name {
+			return fail("the module ", name, " is loaded; unload(\"", name, "\") removes it")
+		}
+	}
+	if loaded_count == LOADED_CAPACITY {
+		return fail("no room for the commands of ", name)
+	}
+	sandbox, number := sandbox_free()
+	if sandbox == nil {
+		return fail("no room for a sandboxed process")
+	}
+
+	copy_pages := (u64(size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	copy_memory, create_status := system.memory_create(copy_pages)
+	if create_status != .Ok {
+		return fail("isolate_memory: the budget of the console cannot pay for ", copy_pages, " pages")
+	}
+	copy_address, copy_status := system.memory_map(copy_memory)
+	if copy_status != .Ok {
+		system.close(copy_memory)
+		return fail("isolate_memory: the console cannot map its copy")
+	}
+	source_address, source_status := system.memory_map(memory, {})
+	if source_status != .Ok {
+		system.memory_unmap(copy_address)
+		system.close(copy_memory)
+		return fail("the console cannot map the memory object")
+	}
+	intrinsics.mem_copy_non_overlapping(copy_address, source_address, int(size))
+	system.memory_unmap(source_address)
+	file := ([^]u8)(copy_address)[:size]
+	copy_end :: proc "contextless" (address: rawptr, memory: system.Handle) {
+		system.memory_unmap(address)
+		system.close(memory)
+	}
+
+	if error := module.validate(file); error != .None {
+		copy_end(copy_address, copy_memory)
+		return fail("isolate_memory: the bytes are no module file: module.validate refuses them with the error ", u64(error))
+	}
+	if module.count(file, .Imports) > 1 {
+		copy_end(copy_address, copy_memory)
+		return fail("isolate_memory: the module imports another module; a module from memory takes no import")
+	}
+	hash := blake3.hash(file)
+	for &item in loaded[:loaded_count] {
+		if item.hash == hash {
+			copy_end(copy_address, copy_memory)
+			return fail("the module ", item.name, " has the same bytes and is loaded; unload(\"", item.name, "\") removes it")
+		}
+	}
+	callable := callable_count(file)
+	if callable == 0 {
+		copy_end(copy_address, copy_memory)
+		return fail("isolate_memory: the module ", name, " exports no command")
+	}
+	if command_count + callable + int(module.count(file, .Records)) > COMMAND_CAPACITY {
+		copy_end(copy_address, copy_memory)
+		return fail("no room for the commands of ", name)
+	}
+
+	sandbox^ = {module_memory = copy_memory, module_address = copy_address}
+	copy(sandbox.module_entry.name[:], name)
+	sandbox.module_entry.hash = hash
+	sandbox.module_entry.size = u64(size)
+	sandbox.name = system.name_of(sandbox.module_entry.name[:])
+	if !sandbox_create(sandbox, file) {
+		sandbox^ = {}
+		copy_end(copy_address, copy_memory)
+		if load_error.stage != .None {
+			load_details.count = 0 // A call host gives no details of its load.
+			return fail_load("cannot isolate ", name)
+		}
+		return fail("cannot start a sandboxed process for ", name)
+	}
+	loaded[loaded_count] = {hash = hash, name = sandbox.name, file = file, place = -1, sandbox = number}
+	loaded_count += 1
+	commands_add(file, "", number, 0)
+	system.log(.Info, "console: ", sandbox.name, " is a module from memory: ", u64(size), " bytes, the hash ", system.Hash{hash[:]})
+	return loaded_record(sandbox.name, callable, "isolated", hash)
+}
+
 // unload_module removes a module that load or isolate added: its commands
 // leave the console. A direct load leaves the memory of the console. A call
 // host stops: the kernel stops a process that no handle names.
@@ -1275,6 +1431,10 @@ unload_module :: proc "contextless" (arguments: []Value) -> Value {
 			system.close(sandbox.ring_memory)
 			system.close(sandbox.region_memory)
 			system.close(sandbox.files_memory)
+			if sandbox.module_memory != 0 {
+				system.memory_unmap(sandbox.module_address)
+				system.close(sandbox.module_memory)
+			}
 			sandbox^ = {}
 			memory = "its sandboxed process stopped"
 		} else {
@@ -1290,7 +1450,9 @@ unload_module :: proc "contextless" (arguments: []Value) -> Value {
 		columns := [3]Column{text_column("module", 32), integer_column("commands"), text_column("memory", 40)}
 		table, made := made_table("Unloaded", columns[:])
 		row := made_row(&table)
-		made_text(&table, row, 0, item.name)
+		// The argument, not item.name: the name of a module from memory is
+		// a view of its sandbox, which is all zero bytes now.
+		made_text(&table, row, 0, name)
 		made_integer(&table, row, 1, i64(removed))
 		made_text(&table, row, 2, memory)
 		loaded[index] = loaded[loaded_count - 1]
@@ -1809,7 +1971,14 @@ sandbox_create :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
 // other file.
 sandbox_files :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
 	source := source_now()
-	sandbox.file_count = system.source_closure(source, file, &sandbox.files)
+	if sandbox.module_memory != 0 {
+		// A module from memory is the one file: isolate_memory refused a
+		// module with an import.
+		sandbox.files[0] = &sandbox.module_entry
+		sandbox.file_count = 1
+	} else {
+		sandbox.file_count = system.source_closure(source, file, &sandbox.files)
+	}
 	list_size := size_of(info.Image_Header) + sandbox.file_count * size_of(info.Image_Entry)
 	if sandbox.file_count == 0 || list_size + len(source.replacements) * size_of(module.Replacement) > system.PAGE_SIZE {
 		return false
@@ -1866,7 +2035,11 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	mappings: [FILE_CAPACITY + 1]system.Mapping
 	mappings[0] = {memory = sandbox.files_memory, address = isolated.FILE_ADDRESS}
 	for item, index in sandbox.files[:sandbox.file_count] {
-		mappings[index + 1] = {memory = image_memory, address = isolated.FILE_ADDRESS + sandbox.file_offsets[index], first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
+		source_memory := image_memory
+		if sandbox.module_memory != 0 {
+			source_memory = sandbox.module_memory
+		}
+		mappings[index + 1] = {memory = source_memory, address = isolated.FILE_ADDRESS + sandbox.file_offsets[index], first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
 	}
 	status: system.Status
 	load_error = {}

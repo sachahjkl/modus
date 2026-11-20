@@ -550,6 +550,26 @@ The design: `src/md/features/first_compiler.md`; the guide: `docs/MODULE_CONTRAC
 
 Do not use: module writer (for this), linker, emitter.
 
+### Assembler
+
+The assembler is the module `assemble`, which reads a text of x86-64 assembly and writes a module file into a memory object that its caller lends.
+
+Its syntax is the syntax of AT&T, with directives of modus: `section`, `export` with the types of the parameters and of the result, `byte` and `zero`. Its package `modus:private/assemble/assembler` gives the parts of the module file writer, and refuses each text that it does not assemble whole, with the line and the column. It is the first program of modus that writes a program. It is not the assembler of the host that the build of a module runs.
+
+The design: `src/md/features/assembler.md`; the guide: `docs/MODULE_CONTRACT.md`, "The assembler".
+
+Do not use: compiler (for this), asm.
+
+### Module from memory
+
+A module from memory is a module whose file the console copies from a memory object and runs in a call host, with no file of the boot image.
+
+The command is `isolate_memory(name, memory, size)`. The console checks the copy with `module.validate`, writes its BLAKE3 hash on the log, and gives the call host the copy as its one file, so such a module takes no import. Its exports become commands, as after `isolate`. A module that the assembler wrote is one. It is not a disk process: no store holds it, and the root service does not start it.
+
+The design: `src/md/features/assembler.md`, "The machine step: a module from the memory of the console".
+
+Do not use: dynamic module, loaded file.
+
 ### Declaration
 
 A declaration is a tree of a store whose root holds a text in the language of the console, whose value is one record.
