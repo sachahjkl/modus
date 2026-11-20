@@ -57,7 +57,7 @@ window_queue_memory_open :: proc "contextless" (index: int) {
 		}
 		if status != .Ok {
 			window_queue_memory_refused[index] = true
-			system.log(.Info, "compositor: no memory for the records that wait for window ", system.name_of(clients[index].title[:]), ": each record that its full ring refuses is lost")
+			system.log_fact(.Info, No_Memory_For_Waiting_Records{window = window_field(clients[index].title[:])})
 			return
 		}
 		window_queue_memory[index] = memory

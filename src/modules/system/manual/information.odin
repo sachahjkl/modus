@@ -2,6 +2,7 @@ package manual
 
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/value_kinds"
 import "modus:support/graphics"
 import "modus:private/manual/information"
 import "modus:support/sentence"
@@ -328,7 +329,7 @@ overview_build :: proc "contextless" () -> int {
 	put_built(0, graphics.colors.dim, padded("all", name_width), right(totals[0], 6), right(totals[1], 8), right(totals[2], 8), right(totals[3], 8), right(i64(export_total), 9), right(i64(import_total), 8), "     ", right(i64(run_total), 6))
 	put("", 0, 0)
 	put("green: a process runs it. yellow: no entry, a library. red: it breaks a rule.", 0, graphics.colors.dim)
-	system.log(.Info, "manual: overview: ", u64(count), " modules, ", u64(export_total), " exports, ", u64(import_total), " imports, ", u64(run_count), " modules that run in processes")
+	system.log_fact(.Info, Overview_Shown{modules = u64(count), exports = u64(export_total), imports = u64(import_total), running_modules = u64(run_count)})
 	return count
 }
 
@@ -455,5 +456,5 @@ information_start :: proc "contextless" (ctx: ^system.Context) {
 	for &row in module_rows[:min(modules_count, len(module_rows))] {
 		problems += int(row.problem[0] != 0)
 	}
-	system.log(.Info, "manual: information: ", u64(modules_count), " modules and ", u64(exports_count), " exports listed in ", list_time, " us; who imports calendar: ", u64(importer_total), " modules, in ", question_time, " us; ", u64(problems), " modules break a rule")
+	system.log_fact(.Info, Information_Measured{modules = u64(modules_count), exports = u64(exports_count), list_time = value_kinds.Time_In_Microseconds(list_time), importers = u64(importer_total), question_time = value_kinds.Time_In_Microseconds(question_time), problems = u64(problems)})
 }

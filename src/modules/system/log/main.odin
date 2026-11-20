@@ -659,7 +659,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	reader, status := system.log_open(ctx.handles[system.GRANT_LOG_RECORDS])
 	if status != .Ok {
-		system.log(.Error, "log: cannot read the records of the log: status ", u64(status))
+		system.log_fact(.Error, Records_Not_Readable{status = op.Status_Word(status)})
 		system.stop(.Failed)
 	}
 	// The service reads the same memory object: exports.odin. Its handle
@@ -722,8 +722,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// The memory object of the log is its head and its records,
 			// each of the size of one record.
 			memory_bytes := (reader.head.capacity + 1) * size_of(system.Log_Record)
-			system.log(.Info, "log: the memory of the log: ", reader.head.capacity, " records in ", system.Size{memory_bytes / 1024, .Kibibytes})
-			system.log(.Info, "log: ok, ", row_count, " records, ", gone_before_start, " gone before its start, ", lost, " lost since, ", u64(process_count), " processes")
+			system.log_fact(.Info, Log_Memory{capacity = reader.head.capacity, memory = value_kinds.Size_In_Kibibytes(memory_bytes / 1024)})
+			system.log_fact(.Info, Window_Ready{records = row_count, gone_before_start = gone_before_start, lost = lost, processes = u64(process_count)})
 			continue
 		}
 		// The list comes after the reads and after the question to the

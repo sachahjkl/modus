@@ -6,6 +6,7 @@ import "modus:contract/palette_table"
 import "modus:contract/ring"
 import "modus:contract/settings"
 import "modus:contract/text_encoding"
+import "modus:contract/value_kinds"
 import "modus:private/compositor/bar"
 import "modus:support/display"
 import "modus:support/interface"
@@ -125,7 +126,7 @@ palette_start :: proc "contextless" () {
 	palette_panel.pressed_row = palette.NO_ROW
 	palette_panel.list = &palette_lists[0]
 	if _, status := system.thread_start(palette_ranking_thread, nil); status != .Ok {
-		system.log(.Info, "compositor: cannot start the ranking thread: the palette lists nothing")
+		system.log_fact(.Info, Ranking_Thread_Not_Started{})
 	}
 	palette_entries_refresh()
 }
@@ -183,7 +184,7 @@ palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
 		if problem != refused_before {
 			refused_before = problem
 			if problem != .None {
-				system.log(.Warning, "compositor: the table of the palette provider is refused: ", palette_table.problem_names[problem], ", entry ", u64(problem_index), "; the palette lists the processes and the windows only")
+				system.log_fact(.Warning, Provider_Table_Refused{entry_index = u64(problem_index), table_problem = value_kinds.text_field(palette_table.problem_names[problem], TABLE_PROBLEM_FIELD_BYTES)})
 			}
 		}
 		system.lock(&ranking.lock)
@@ -293,10 +294,10 @@ palette_turn :: proc "contextless" () {
 		palette_adoptions_same += 1
 	} else {
 		if asked && palette_panel.state != .Confirm {
-			system.log(.Info, "compositor: the palette goes back to the search: the entries changed")
+			system.log_fact(.Info, Palette_Entries_Changed{})
 		}
 		if adoption == .Moved {
-			system.log(.Info, "compositor: the chosen entry of the palette left the list: the first entry is chosen, and Enter waits for a frame")
+			system.log_fact(.Info, Chosen_Entry_Left{})
 			palette_enter_waits = false
 			palette_go_to_waits = false
 		}
@@ -361,7 +362,7 @@ palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Ha
 		}
 		system.close(ring_handle)
 		system.close(table_handle)
-		system.log(.Warning, "compositor: the palette provider is refused: its ring or its table cannot be mapped")
+		system.log_fact(.Warning, Palette_Provider_Refused{})
 		return
 	}
 	palette_provider_ring = opened
@@ -370,7 +371,7 @@ palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Ha
 	palette_ranking.table = ([^]u8)(address)[:palette_table.TABLE_BYTES]
 	system.unlock(&palette_ranking.table_lock)
 	palette_generation_seen = intrinsics.volatile_load(&(^palette_table.Header)(address).change_count)
-	system.log(.Info, "compositor: the palette has a provider")
+	system.log_fact(.Info, Palette_Provider_Present{})
 	palette_entries_refresh()
 }
 
@@ -391,7 +392,7 @@ palette_provider_remove :: proc "contextless" () {
 	system.close(palette_provider_ring_handle)
 	system.close(palette_provider_table_handle)
 	palette_answer_awaited = 0
-	system.log(.Info, "compositor: the palette has no provider")
+	system.log_fact(.Info, Palette_Provider_Absent{})
 	palette_candidates_awaited = 0
 	if palette_panel.state == .Arguments || palette_panel.state == .Confirm && palette_panel.form.active {
 		palette_panel.state = .Running // The form has no provider to go to.
@@ -433,9 +434,9 @@ palette_act_names_take :: proc "contextless" (client: ^Client, record: ring.Reco
 	if client.act_name_sets_logged < ACT_NAME_SETS_LOGGED {
 		client.act_name_sets_logged += 1
 		if ok {
-			system.log(.Info, "compositor: the window ", system.name_of(client.title[:]), " gave ", u64(set.count), " act names")
+			system.log_fact(.Info, Act_Names_Given{act_names = u64(set.count), window = window_field(client.title[:])})
 		} else {
-			system.log(.Warning, "compositor: the window ", system.name_of(client.title[:]), " gave a set of act names that is refused: it has none now")
+			system.log_fact(.Warning, Act_Names_Refused{window = window_field(client.title[:])})
 		}
 	}
 	// An open panel offers go to by these sets.
@@ -479,7 +480,7 @@ palette_go_to :: proc "contextless" () {
 	}
 	position := palette_act_window(picked)
 	if position < 0 {
-		system.log(.Info, "compositor: no open window names what ", palette.entry_name(picked), " acts on: the palette does not go to it")
+		system.log_fact(.Info, Act_Without_Window{entry = entry_field(palette.entry_name(picked))})
 		return
 	}
 	name: [palette.NAME_CAPACITY]u8
@@ -490,7 +491,7 @@ palette_go_to :: proc "contextless" () {
 	palette_close("")
 	raise(position)
 	send(&clients[index], .Go_To, {0 = act})
-	system.log(.Info, "compositor: the palette goes to ", name_text, " in the window ", system.name_of(clients[index].title[:]), ", now in front")
+	system.log_fact(.Info, Palette_Goes_To_Window{entry = entry_field(name_text), window = window_field(clients[index].title[:])})
 	palette_entries_refresh()
 }
 
@@ -536,7 +537,7 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 		if outcome == u64(palette_table.Outcome.Candidates_Ready) && palette_panel.state == .Arguments {
 			form := &palette_panel.form
 			palette.form_candidates_set(form, palette_ranking.table, record.values[2], record.values[1], record.values[3])
-			system.log(.Info, "compositor: the palette has ", u64(form.candidate_count), " candidates for the field ", u64(form.current), palette.field_control(form, form.current) == .Buttons ? ", as a row of buttons" : "")
+			system.log_fact(.Info, Palette_Candidates_Ready{candidates = u64(form.candidate_count), field = u64(form.current), buttons_words = value_kinds.text_field(palette.field_control(form, form.current) == .Buttons ? BUTTONS_WORDS : "", BUTTONS_WORDS_FIELD_BYTES)})
 			// Tab that came before the candidates acts now, on them.
 			if palette_tab_waits {
 				palette_tab_waits = false
@@ -551,16 +552,16 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 	}
 	palette_answer_awaited = 0
 	if outcome == u64(palette_table.Outcome.Manual_Opened) {
-		system.log(.Info, "compositor: the manual shows the page")
+		system.log_fact(.Info, Palette_Manual_Shown{})
 		palette_window_to_front("manual")
 	}
 	in_console := outcome == u64(palette_table.Outcome.Shown_In_Console) || outcome == u64(palette_table.Outcome.Edit_Opened)
 	if in_console {
-		where_text: string = "compositor: the result of the palette is in the console"
 		if outcome == u64(palette_table.Outcome.Edit_Opened) {
-			where_text = "compositor: the palette opened the entry in the console"
+			system.log_fact(.Info, Palette_Entry_Opened_In_Console{})
+		} else {
+			system.log_fact(.Info, Palette_Result_In_Console{})
 		}
-		system.log(.Info, where_text)
 		palette_window_to_front("console")
 	}
 	if palette_panel.state != .Running {
@@ -573,7 +574,7 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 		// its list again, with the value in use marked.
 		palette_sent_setting = false
 		palette_panel.state = .Search
-		system.log(.Info, "compositor: the palette did: ", palette.sent_text(&palette_panel))
+		system.log_fact(.Info, Palette_Did{sent_entry = entry_field(palette.sent_text(&palette_panel))})
 		palette_refresh()
 		return
 	}
@@ -587,13 +588,13 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 	// outcome closes the panel before this line.
 	switch result.outcome {
 	case .Shown_In_Panel:
-		system.log(.Info, "compositor: the palette shows ", palette_kind_words[result.kind])
+		system.log_fact(.Info, Palette_Shows_Result{result_kind = value_kinds.text_field(palette_kind_words[result.kind], RESULT_KIND_FIELD_BYTES)})
 	case .Failed:
-		system.log(.Info, "compositor: the palette shows an error")
+		system.log_fact(.Info, Palette_Shows_Error{})
 	case .Refused:
-		system.log(.Info, "compositor: the palette shows a refusal")
+		system.log_fact(.Info, Palette_Shows_Refusal{})
 	case .None, .Shown_In_Console, .Edit_Opened, .Candidates_Ready, .Manual_Opened:
-		system.log(.Info, "compositor: the palette shows no result")
+		system.log_fact(.Info, Palette_Shows_No_Result{})
 	}
 	palette_refresh()
 }
@@ -680,7 +681,7 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 	// The palette runs the row that is drawn: after a list moved the
 	// choice to another entry, Enter does nothing until a frame showed it.
 	if panel.choice_undrawn && palette.action_runs(action) {
-		system.log(.Info, "compositor: the palette drops Enter: the choice changed and no frame showed it yet")
+		system.log_fact(.Info, Palette_Enter_Dropped{})
 		palette_refresh()
 		return
 	}
@@ -709,7 +710,7 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		if palette_provider_ring.head != nil {
 			system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Refresh)})
 		}
-		system.log(.Info, "compositor: the palette is open")
+		system.log_fact(.Info, Palette_Open{})
 		palette_refresh()
 	case .Close:
 		palette_close(cause)
@@ -749,29 +750,31 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		}
 		picked := palette.chosen_entry(panel)
 		if picked == nil {
-			system.log(.Info, "compositor: the palette has no entry to run")
+			system.log_fact(.Info, Palette_No_Entry_To_Run{})
 			break
 		}
 		if state_next == .Confirm {
 			panel.state = .Confirm
-			system.log(.Info, "compositor: the palette asks to confirm: ", palette.entry_name(picked))
+			system.log_fact(.Info, Palette_Asks_To_Confirm{entry = entry_field(palette.entry_name(picked))})
 			palette_refresh()
 			break
 		}
 		if state_next == .Running {
 			if palette.entry_is_setting_row(picked) {
 				// The pointer acts with the key Other: a press on a button.
-				system.log(.Info, "compositor: the palette sets ", palette.entry_name(picked), " to ", palette.value_name(panel.list, picked, palette.value_chosen(panel, picked)), key == .Other ? ", by a press" : ", by a key")
+				system.log_fact(.Info, Palette_Sets_Value{entry = entry_field(palette.entry_name(picked)), value_name = value_kinds.text_field(palette.value_name(panel.list, picked, palette.value_chosen(panel, picked)), VALUE_NAME_FIELD_BYTES), input = value_kinds.text_field(key == .Other ? "a press" : "a key", INPUT_WORDS_FIELD_BYTES)})
 			}
 			palette_entry_send(picked)
 			break
 		}
 		if state_next == .Arguments {
 			palette.form_open(panel, picked)
-			system.log(.Info, "compositor: the palette asks for the arguments of ", palette.entry_name(picked))
+			system.log_fact(.Info, Palette_Asks_For_Arguments{entry = entry_field(palette.entry_name(picked))})
 			for field in 0 ..< panel.form.field_count {
 				if unit_text := palette.field_unit_text(&panel.form, field); unit_text != "" {
-					system.log(.Info, "compositor: the field ", u64(field), " of ", palette.entry_name(&panel.form.entry), " takes a number in", unit_text)
+					// The text of a unit starts with its space, which the
+					// template writes.
+					system.log_fact(.Info, Palette_Field_Unit{field = u64(field), entry = entry_field(palette.entry_name(&panel.form.entry)), unit = value_kinds.text_field(unit_text[1:], UNIT_FIELD_BYTES)})
 				}
 			}
 			palette_candidates_ask()
@@ -793,10 +796,10 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		}
 	case .Back:
 		if state_next == .Arguments {
-			system.log(.Info, "compositor: the palette goes back to the arguments")
+			system.log_fact(.Info, Palette_Back_To_Arguments{})
 		} else {
 			palette.form_close(panel)
-			system.log(.Info, "compositor: the palette goes back to the search")
+			system.log_fact(.Info, Palette_Back_To_Search{})
 		}
 		panel.state = state_next
 		palette_refresh()
@@ -805,18 +808,18 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		if leave {
 			palette.form_close(panel)
 			panel.state = .Search
-			system.log(.Info, "compositor: the palette goes back to the search")
+			system.log_fact(.Info, Palette_Back_To_Search{})
 		}
 		if drawn || leave {
 			if message := palette.form_message(&panel.form); message != "" {
-				system.log(.Info, "compositor: the palette refuses the key: ", message)
+				system.log_fact(.Info, Palette_Key_Refused{form_refusal = value_kinds.text_field(message, MESSAGE_FIELD_BYTES)})
 			}
 			palette_refresh()
 			// The panel is built with the key: a machine test takes its
 			// picture after this line, not before the key is drawn.
 			if !leave {
 				form := &panel.form
-				system.log(.Info, "compositor: the field ", u64(form.current), " of ", palette.entry_name(&form.entry), " shows \"", palette.field_text(form, form.current), "\"")
+				system.log_fact(.Info, Palette_Field_Shows{field = u64(form.current), entry = entry_field(palette.entry_name(&form.entry))}, palette.field_text(form, form.current))
 			}
 		}
 	case .Field_Next:
@@ -825,10 +828,10 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			// The candidates of the field are on their way: Tab acts
 			// when they come, and never jumps to the next field before.
 			palette_tab_waits = true
-			system.log(.Info, "compositor: Tab waits for the candidates of the field")
+			system.log_fact(.Info, Palette_Tab_Waits{})
 		case .Takes:
 			palette.form_candidate_take(&panel.form)
-			system.log(.Info, "compositor: the palette takes the candidate ", palette.field_text(&panel.form, panel.form.current))
+			system.log_fact(.Info, Palette_Takes_Candidate{candidate = value_kinds.text_field(palette.field_text(&panel.form, panel.form.current), CANDIDATE_FIELD_BYTES)})
 		case .Moves:
 			if palette.form_field_move(panel, 1) {
 				palette_candidates_ask()
@@ -849,14 +852,14 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		switch {
 		case ready && state_next == .Confirm:
 			panel.state = .Confirm
-			system.log(.Info, "compositor: the palette asks to confirm: ", palette.entry_name(&panel.form.entry))
+			system.log_fact(.Info, Palette_Asks_To_Confirm{entry = entry_field(palette.entry_name(&panel.form.entry))})
 		case ready:
 			palette_form_send()
 			return
 		case moved:
 			palette_candidates_ask()
 		case:
-			system.log(.Info, "compositor: the palette refuses the arguments: ", palette.form_message(&panel.form))
+			system.log_fact(.Info, Palette_Arguments_Refused{form_refusal = value_kinds.text_field(palette.form_message(&panel.form), MESSAGE_FIELD_BYTES)})
 		}
 		palette_refresh()
 	case .Go_To:
@@ -864,7 +867,7 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 	case .Value_Previous, .Value_Next:
 		if palette.value_move(panel, action == .Value_Next ? 1 : -1) {
 			if picked := palette.chosen_entry(panel); picked != nil {
-				system.log(.Info, "compositor: the palette chooses the value ", palette.value_name(panel.list, picked, palette.value_chosen(panel, picked)), " of ", palette.entry_name(picked))
+				system.log_fact(.Info, Palette_Chooses_Value{entry = entry_field(palette.entry_name(picked)), value_name = value_kinds.text_field(palette.value_name(panel.list, picked, palette.value_chosen(panel, picked)), VALUE_NAME_FIELD_BYTES)})
 			}
 			palette_refresh()
 		}
@@ -878,7 +881,7 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			sent := palette_choose(panel.list.snapshot.generation, picked, .Edit, 0, palette_tag_next())
 			palette_close("")
 			if sent {
-				system.log(.Info, "compositor: the palette opens ", opened_name, " in the console")
+				system.log_fact(.Info, Palette_Opens_In_Console{entry = entry_field(opened_name)})
 			}
 		}
 	}
@@ -912,11 +915,11 @@ palette_form_send :: proc "contextless" () {
 	}
 	sent = sent && palette_choose(form.generation, &form.entry, .Run_With_Arguments, form.field_count, tag)
 	if sent {
-		system.log(.Info, "compositor: the palette sends ", palette.sent_text(panel), " with ", u64(form.field_count), " arguments to the console")
+		system.log_fact(.Info, Palette_Sends_With_Arguments{arguments = u64(form.field_count), sent_entry = entry_field(palette.sent_text(panel))})
 	} else {
 		palette.form_close(panel)
 		palette.result_sentence(panel, "the console takes no choice now")
-		system.log(.Info, "compositor: the palette shows a refusal")
+		system.log_fact(.Info, Palette_Shows_Refusal{})
 	}
 	palette_refresh()
 }
@@ -956,17 +959,17 @@ palette_entry_send :: proc "contextless" (picked: ^palette.Entry) {
 		packed := system.name_pack(palette.entry_name(picked))
 		sent = palette_provider_ring.head != nil && system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Manual), tag = palette_tag_next(), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 		if sent {
-			system.log(.Info, "compositor: the palette asks for the page of the manual of ", palette.sent_text(panel))
+			system.log_fact(.Info, Palette_Asks_For_Manual{sent_entry = entry_field(palette.sent_text(panel))})
 		}
 	} else {
 		sent = palette_choose(panel.list.snapshot.generation, picked, .Run, 0, palette_tag_next())
 		if sent {
-			system.log(.Info, "compositor: the palette sends ", palette.sent_text(panel), " to the console")
+			system.log_fact(.Info, Palette_Sends{sent_entry = entry_field(palette.sent_text(panel))})
 		}
 	}
 	if !sent {
 		palette.result_sentence(panel, "the console takes no choice now")
-		system.log(.Info, "compositor: the palette shows a refusal")
+		system.log_fact(.Info, Palette_Shows_Refusal{})
 	}
 	palette_refresh()
 }
@@ -988,11 +991,11 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 		if number < len(bar.names) {
 			packed := system.name_pack(bar.names[number])
 			system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
-			system.log(.Info, "compositor: the palette starts ", name_text)
+			system.log_fact(.Info, Palette_Starts{entry = entry_field(name_text)})
 		}
 		palette_entries_refresh() // The choice is the newest recent one.
 	case .Window:
-		system.log(.Info, "compositor: the palette brings ", name_text, " to the front")
+		system.log_fact(.Info, Palette_Brings_To_Front{entry = entry_field(name_text)})
 		for position in 0 ..< order_count {
 			// The place of the client table can hold another window now:
 			// the title is checked, so the choice never reaches a window
@@ -1011,13 +1014,13 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 		close_start := palette.CLOSE_NAME_START
 		if number < CLIENT_CAPACITY && clients[number].surface.pixels != nil && len(name_text) > len(close_start) && system.name_of(clients[number].title[:]) == name_text[len(close_start):] {
 			system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(clients[number].ring_memory)}})
-			system.log(.Info, "compositor: the palette closes the window ", system.name_of(clients[number].title[:]))
+			system.log_fact(.Info, Palette_Closes_Window{window = window_field(clients[number].title[:])})
 		}
 	case .Command, .Export:
 		// An entry with parameters: the provider writes it in its edit
 		// line, and its window comes to the front when it answers.
 		if palette_choose(palette_panel.list.snapshot.generation, picked, .Edit, 0, palette_tag_next()) {
-			system.log(.Info, "compositor: the palette opens ", name_text, " in the console")
+			system.log_fact(.Info, Palette_Opens_In_Console{entry = entry_field(name_text)})
 		}
 		palette_entries_refresh()
 	case .Setting:
@@ -1098,7 +1101,7 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool, wheel: in
 					if palette.form_caret_put(panel, field, caret) {
 						palette_candidates_ask()
 					}
-					system.log(.Info, "compositor: a press puts the caret of the palette in the field ", u64(field), ", after ", u64(caret), " characters")
+					system.log_fact(.Info, Palette_Caret_Put{field = u64(field), characters = u64(caret)})
 					changed = true
 				}
 			}
@@ -1149,14 +1152,14 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool, wheel: in
 				form := &panel.form
 				palette.form_candidate_set(form, pressed_button)
 				if palette.form_candidate_take(form) {
-					system.log(.Info, "compositor: a press takes the button ", palette.field_text(form, form.current), " of the field ", u64(form.current))
+					system.log_fact(.Info, Palette_Button_Pressed{field = u64(form.current), candidate = value_kinds.text_field(palette.field_text(form, form.current), CANDIDATE_FIELD_BYTES)})
 				}
 				changed = true
 			}
 			if pressed_row != palette.NO_ROW && pressed_row == candidate {
 				palette.form_candidate_set(&panel.form, candidate)
 				if palette.form_candidate_take(&panel.form) {
-					system.log(.Info, "compositor: the palette takes the candidate ", palette.field_text(&panel.form, panel.form.current))
+					system.log_fact(.Info, Palette_Takes_Candidate{candidate = value_kinds.text_field(palette.field_text(&panel.form, panel.form.current), CANDIDATE_FIELD_BYTES)})
 				}
 				changed = true
 			}
@@ -1204,15 +1207,15 @@ palette_refresh :: proc "contextless" () {
 		if moved {
 			palette_scroll_dragged ||= scrolled.held == .Thumb
 			if scrolled.pressed_now != .None && scrolled.pressed_now != .Thumb {
-				system.log(.Info, "compositor: the scroll bar of the palette: a press on ", palette_scroll_part_words(scrolled.pressed_now), ", the rows from ", u64(scrolled.first))
+				system.log_fact(.Info, Palette_Scroll_Pressed{first_row = u64(scrolled.first), scroll_part = value_kinds.text_field(palette_scroll_part_words(scrolled.pressed_now), SCROLL_PART_FIELD_BYTES)})
 			}
 			if scrolled.wheel_taken {
-				system.log(.Info, "compositor: the wheel moves the rows of the palette: the rows from ", u64(scrolled.first))
+				system.log_fact(.Info, Palette_Wheel_Moved{first_row = u64(scrolled.first)})
 			}
 		}
 		if scrolled.drag_ended {
 			if palette_scroll_dragged {
-				system.log(.Info, "compositor: the scroll bar of the palette: a drag of the thumb, the rows from ", u64(scrolled.first))
+				system.log_fact(.Info, Palette_Thumb_Dragged{first_row = u64(scrolled.first)})
 			}
 			palette_scroll_dragged = false
 		}
@@ -1221,7 +1224,7 @@ palette_refresh :: proc "contextless" () {
 		}
 	}
 	if palette_now.full {
-		system.log(.Warning, "compositor: the draw table of the palette is full: records are missing")
+		system.log_fact(.Warning, Palette_Draw_Table_Full{})
 	}
 	// The panel is no window: the compositor writes the places of its
 	// named elements itself, in pixels of the screen, so that a machine
@@ -1261,36 +1264,29 @@ palette_scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part
 	return "no part"
 }
 
-PALETTE_LOG_NAMES :: 4 // The first rows that the log names: the line stays one line of the log.
+PALETTE_LOG_NAMES :: 4 // The first rows that the log names: a flood of the serial port loses no line of a test for a long list.
 
 // palette_list_log writes the list on the log: "compositor: the palette
-// lists 3 of 61 for "mon": monitor (window), monitor (module), close
-// monitor (close a window)". It names the first rows only.
+// lists 3 of 61 for "mon"", then one fact for each of the first rows,
+// "compositor: the palette lists the row 1: monitor (window)", and one
+// when more rows are left out.
 palette_list_log :: proc "contextless" () {
 	panel := &palette_panel
-	buffer: [PALETTE_LOG_NAMES * (palette.NAME_CAPACITY + 24)]u8
-	writer := system.Writer {
-		buffer = buffer[:],
-	}
-	named := 0
 	list := panel.list
+	system.log_fact(.Info, Palette_Listed{matched = u64(list.matched_count), entries = u64(list.entry_count), typed = value_kinds.text_field(palette.typed_text(panel), TYPED_FIELD_BYTES)})
+	named := 0
 	for row in list.rows[:list.row_count] {
 		if row.kind != .Entry {
 			continue
 		}
 		if named == PALETTE_LOG_NAMES {
-			system.write_part(&writer, ", ...")
+			system.log_fact(.Info, Palette_Listed_More{})
 			break
 		}
 		listed := &list.entries[row.entry]
-		system.write_part(&writer, named > 0 ? ", " : "")
-		system.write_part(&writer, palette.entry_name(listed))
-		system.write_part(&writer, " (")
-		system.write_part(&writer, palette.kind_words(listed.kind))
-		system.write_part(&writer, ")")
 		named += 1
+		system.log_fact(.Info, Palette_Listed_Row{row = u64(named), entry = entry_field(palette.entry_name(listed)), kind_words = value_kinds.text_field(palette.kind_words(listed.kind), KIND_WORDS_FIELD_BYTES)})
 	}
-	system.log(.Info, "compositor: the palette lists ", u64(list.matched_count), " of ", u64(list.entry_count), " for \"", palette.typed_text(panel), "\": ", system.written(&writer))
 	palette_row_log()
 }
 
@@ -1309,14 +1305,14 @@ palette_row_log :: proc "contextless" () {
 		return
 	}
 	palette_row_logged_length = copy(palette_row_logged[:], name)
-	system.log(.Info, "compositor: the palette shows the setting ", name, " as one row of ", u64(picked.value_count), " values")
+	system.log_fact(.Info, Palette_Setting_Row_Shown{values = u64(picked.value_count), entry = entry_field(name)})
 }
 
 // palette_choice_log writes the chosen entry on the log: "compositor: the
 // palette chooses plasma (window)".
 palette_choice_log :: proc "contextless" () {
 	if picked := palette.chosen_entry(&palette_panel); picked != nil {
-		system.log(.Info, "compositor: the palette chooses ", palette.entry_name(picked), " (", palette.kind_words(picked.kind), ")")
+		system.log_fact(.Info, Palette_Chooses_Entry{entry = entry_field(palette.entry_name(picked)), kind_words = value_kinds.text_field(palette.kind_words(picked.kind), KIND_WORDS_FIELD_BYTES)})
 	}
 	palette_row_log()
 }
@@ -1351,7 +1347,7 @@ palette_close :: proc "contextless" (cause: string) {
 	longest := palette_ranking.longest
 	palette_ranking.longest = 0
 	system.unlock(&palette_ranking.lock)
-	system.log(.Info, "compositor: the palette was open for ", palette_frames, " frames, ", per_frame / 1000, ".", per_frame / 100 % 10, " us per frame; the longest list of the ranking thread ", longest / 1000, ".", longest / 100 % 10, " us; ", palette_adoptions, " lists adopted, ", palette_adoptions_same, " of them the same")
+	system.log_fact(.Info, Palette_Open_Measured{frames = palette_frames, frame_time = value_kinds.Nanoseconds_As_Microseconds(per_frame), longest_list_time = value_kinds.Nanoseconds_As_Microseconds(longest), adopted_lists = palette_adoptions, same_lists = palette_adoptions_same})
 	palette_frames, palette_time = 0, 0
 	palette_adoptions, palette_adoptions_same = 0, 0
 	palette_tab_waits = false
@@ -1359,6 +1355,6 @@ palette_close :: proc "contextless" (cause: string) {
 	// The list of an empty typed part, ready for the next open.
 	palette_entries_refresh()
 	if cause != "" {
-		system.log(.Info, "compositor: the palette is closed by ", cause)
+		system.log_fact(.Info, Palette_Closed{close_cause = value_kinds.text_field(cause, CLOSE_CAUSE_FIELD_BYTES)})
 	}
 }

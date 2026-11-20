@@ -45,6 +45,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -538,7 +539,7 @@ attach :: proc "contextless" () {
 	thread_chosen, frame_chosen = 0, 0
 	place_count, memory_place_count = 0, 0
 	status_set(false, "attached to ", system.name_of(attached_row.process[:]), ": ", attached_row.threads, " threads, ", attached_row.described, " of ", attached_row.modules, " modules with a debug object")
-	system.log(.Info, "debugger_window: attached to ", system.name_of(attached_row.process[:]))
+	system.log_fact(.Info, Attached_To{debugged_process = process_field(attached_row.process[:])})
 	tables_read()
 }
 
@@ -546,7 +547,7 @@ detach :: proc "contextless" () {
 	rows: [1]Detached
 	if _, ok := call(.Detach, nil, bytes_of(rows[:])); ok {
 		status_set(false, "detached from ", system.name_of(rows[0].process[:]))
-		system.log(.Info, "debugger_window: detached from ", system.name_of(rows[0].process[:]))
+		system.log_fact(.Info, Detached_From{debugged_process = process_field(rows[0].process[:])})
 	}
 	attached = false
 	memory_place_count = 0
@@ -562,13 +563,13 @@ act :: proc "contextless" (export: Export, words: string) {
 	arguments := [1]isolated.Argument{{integer = u64(number)}}
 	count, ok := call(export, export == .Continue_All ? nil : arguments[:], bytes_of(scratch_rows[:]))
 	if ok {
-		pending: string = count > 0 && scratch_rows[0].pending != 0 ? ": it runs, and its stop comes later" : ""
+		pending: string = count > 0 && scratch_rows[0].pending != 0 ? PENDING_WORDS : ""
 		if export == .Continue_All {
 			status_set(false, words)
-			system.log(.Info, "debugger_window: ", words)
+			system.log_fact(.Info, Act_On_Each_Thread{act = value_kinds.text_field(words, ACT_WORDS_FIELD_BYTES)})
 		} else {
 			status_set(false, words, " the thread ", number, pending)
-			system.log(.Info, "debugger_window: ", words, " the thread ", number, pending)
+			system.log_fact(.Info, Act_On_Thread{thread = number, act = value_kinds.text_field(words, ACT_WORDS_FIELD_BYTES), pending = value_kinds.text_field(pending, PENDING_WORDS_FIELD_BYTES)})
 		}
 	}
 	tables_read()
@@ -582,7 +583,7 @@ thread_choose :: proc "contextless" (index: int) {
 	}
 	thread_chosen, frame_chosen = index, 0
 	tables_read()
-	system.log(.Info, "debugger_window: chose the thread ", thread_number())
+	system.log_fact(.Info, Thread_Chosen{thread = thread_number()})
 }
 
 // frame_choose chooses a frame of the chosen thread: a click on its row,
@@ -592,7 +593,7 @@ frame_choose :: proc "contextless" (index: int) {
 	frame_chosen = clamp(index, 0, max(frame_count - 1, 0))
 	tables_read()
 	if frame_chosen < frame_count {
-		system.log(.Info, "debugger_window: the frame ", frame_rows[frame_chosen].frame, " of the thread ", thread_number(), ": ", system.name_of(frame_rows[frame_chosen].procedure[:]), ", ", u64(variable_count), " variables, ", u64(source_count), " source lines")
+		system.log_fact(.Info, Frame_Chosen{frame = frame_rows[frame_chosen].frame, thread = thread_number(), variables = u64(variable_count), source_lines = u64(source_count), procedure = value_kinds.text_field(system.name_of(frame_rows[frame_chosen].procedure[:]), PROCEDURE_FIELD_BYTES)})
 	}
 }
 
@@ -605,7 +606,7 @@ break_at_place :: proc "contextless" (place: string) -> bool {
 	_, ok := call(.Break_At, arguments[:], bytes_of(rows[:]))
 	if ok {
 		status_set(false, "a breakpoint at ", place)
-		system.log(.Info, "debugger_window: a breakpoint at ", place)
+		system.log_fact(.Info, Breakpoint_Placed{}, place)
 	}
 	tables_read()
 	return ok
@@ -643,7 +644,7 @@ break_remove :: proc "contextless" (number: i64) {
 	arguments := [1]isolated.Argument{{integer = u64(number)}}
 	if _, ok := call(.Break_Remove, arguments[:], bytes_of(rows[:])); ok {
 		status_set(false, "removed the breakpoint ", number)
-		system.log(.Info, "debugger_window: removed the breakpoint ", number)
+		system.log_fact(.Info, Breakpoint_Removed{breakpoint = number})
 	}
 	tables_read()
 }
@@ -707,7 +708,7 @@ place_watch :: proc "contextless" () {
 	arguments := [2]isolated.Argument{{text = transmute([]u8)place}, {integer = u64(length)}}
 	if _, ok := call(.Watch, arguments[:], bytes_of(rows[:])); ok {
 		status_set(false, "a watch of ", length, " bytes at ", place)
-		system.log(.Info, "debugger_window: a watch of ", length, " bytes at ", place)
+		system.log_fact(.Info, Watch_Placed{watch_length = value_kinds.Size_In_Bytes(length)}, place)
 		place_count = 0
 	}
 	tables_read()
@@ -724,7 +725,7 @@ place_memory :: proc "contextless" () {
 	if memory_read() {
 		shown := string(memory_place[:memory_place_count])
 		status_set(false, "the memory at ", shown, ": ", u64(memory_count), " rows of 16 bytes")
-		system.log(.Info, "debugger_window: the memory at ", shown, ": ", u64(memory_count), " rows of 16 bytes")
+		system.log_fact(.Info, Memory_Shown{rows = u64(memory_count)}, shown)
 	}
 }
 
@@ -772,7 +773,7 @@ key_act :: proc "contextless" (press: interface.Key_Press) {
 	case press.character == 'g':
 		registers_shown = !registers_shown
 		tables_read()
-		system.log(.Info, "debugger_window: the card of the variables shows ", registers_shown ? "the registers" : "the variables", ": ", u64(registers_shown ? register_count : variable_count), " rows")
+		system.log_fact(.Info, Variables_Card_Shown{rows = u64(registers_shown ? register_count : variable_count), card = value_kinds.text_field(registers_shown ? "the registers" : "the variables", CARD_WORDS_FIELD_BYTES)})
 	}
 }
 
@@ -1236,10 +1237,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if problem := service_reach(ctx); problem != "" {
 		status_set(true, problem)
-		system.log(.Info, "debugger_window: ", problem)
+		system.log_fact(.Info, Service_Not_Reached{problem = value_kinds.text_field(problem, SERVICE_PROBLEM_FIELD_BYTES)})
 	} else {
 		ready = true
-		system.log(.Info, "debugger_window: ok, connected to the service debugger; ", u64(len(Export)), " exports, each record with the size of its description")
+		system.log_fact(.Info, Window_Ready{exports = u64(len(Export))})
 	}
 	for {
 		frame_build(&window)

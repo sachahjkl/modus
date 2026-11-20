@@ -24,6 +24,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:private/compositor/bar"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/key_path"
 import "modus:support/system"
 
@@ -71,7 +72,7 @@ capture_is_open :: proc "contextless" () -> bool {
 @(private = "file")
 capture_refuse :: proc "contextless" (client: ^Client, why: string) {
 	if capture.refused == 0 {
-		system.log(.Warning, "compositor: refused a command of the capture face: ", why, "; the next refusals are counted only")
+		system.log_fact(.Warning, Capture_Command_Refused{capture_refusal = value_kinds.text_field(why, CAPTURE_REFUSAL_FIELD_BYTES)})
 	}
 	capture.refused += 1
 }
@@ -130,7 +131,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		}
 		capture.remote_keys += 1
 		if capture.remote_keys == 1 {
-			system.log(.Info, "compositor: the first key of a viewer of the remote display goes along the path of the keys")
+			system.log_fact(.Info, First_Viewer_Key{})
 		}
 		character := display.key_character_of(character_word)
 		// The path of a key of the input service: the palette, the
@@ -200,7 +201,7 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 		damage_add(0, 0, screen.width, BAR_HEIGHT)
 		// The client of a capture face has no window, so it has no title:
 		// the root service allows one process, and the line names none.
-		system.log(.Info, "compositor: the capture face is open: a copy of ", u64(screen.width), "x", u64(screen.height), " after each frame, and the mark of a viewer in the bar")
+		system.log_fact(.Info, Capture_Face_Opened{width = u64(screen.width), height = u64(screen.height)})
 		return
 	}
 	system.close(memory)
@@ -218,7 +219,7 @@ capture_end :: proc "contextless" (why: string) {
 	if capture.memory != 0 {
 		system.close(capture.memory)
 	}
-	system.log(.Info, "compositor: the capture face ended (", why, ") after ", capture.records, " pictures, ", capture.remote_keys, " keys and ", capture.remote_pointers, " pointer records of viewers, ", capture.refused, " refused commands")
+	system.log_fact(.Info, Capture_Face_Ended{pictures = capture.records, viewer_keys = capture.remote_keys, viewer_pointer_records = capture.remote_pointers, refused = capture.refused, capture_end = value_kinds.text_field(why, CAPTURE_END_FIELD_BYTES)})
 	capture = {client = -1, held = -1, last_written = 1}
 	damage_add(0, 0, screen.width, BAR_HEIGHT)
 }

@@ -2611,6 +2611,7 @@ scenario := [?]Step {
 	// The log: records of processes. The kernel sets the process of each
 	// record; a process with the grant reads the records.
 	{kind = .Launch, text = "log"},
+	{kind = .Fact, process = "log", fact = "log.Log_Memory", condition = "memory > 0", any_order = true},
 	// The window loses no record once it reads the log: the records gone
 	// before its start depend on the length of the boot, and are only a
 	// measure (src/md/features/log_window_losses.md).
@@ -2623,12 +2624,14 @@ scenario := [?]Step {
 	// service: from here on some checks read the process and the level of
 	// a record (step Record), not only a line of text.
 	{kind = .Call, text = "log.records(0)", expected = " rows of Record"},
-	// Each record keeps the kind of each value of its text: the process log
-	// writes the size of the memory of the log as a size. The value runs
-	// are read from the number of that record: the records of the boot can
-	// be gone from the ring by now.
+	// The process log writes the size of the memory of the log as a log
+	// fact, whose field memory is a size in KiB: the step Record reads its
+	// sentence, which the tool writes from the fields, and the step Fact
+	// reads the field itself, which the check before the run finds in the
+	// fact table of the module log. The step Fact comes just after the
+	// launch: it reads the serial port after the last Wait, and the line
+	// comes before the line "log: ok".
 	{kind = .Record, process = "log", level = "Info", text = "log: the memory of the log: "},
-	{kind = .Call, text = "log.value_runs({record})", expected = "  size"},
 	{kind = .Front, text = "console"},
 	// The kernel writes a record of its own, and the log keeps it: a
 	// process that fails gives a warning of the kernel. A record of now,
@@ -3401,9 +3404,11 @@ scenario := [?]Step {
 	{kind = .Wait, text = "inspect: network: "},
 	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
 	{kind = .Type, text = "fault"},
-	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0; stack: fault::three + 0x"},
+	// The stop is a fact, then one fact for each frame of the stack.
+	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0"},
+	{kind = .Wait, text = "inspect: fault, the frame 0 of the stack: fault::three + 0x"},
 	{kind = .Wait, text = " in fault (" + FAULT_SOURCE_FILE + ":"},
-	{kind = .Wait, text = "), fault::two + 0x"},
+	{kind = .Wait, text = "inspect: fault, the frame 1 of the stack: fault::two + 0x"},
 	{kind = .Shot, text = "inspect_stopped"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "inspect: the bytes of the memory of inspect"},
@@ -4386,26 +4391,51 @@ machine_fact_catalog :: proc() -> ^build.Fact_Catalog {
 }
 
 // windows_line gives the line of the last window with a title in the menu
-// of the windows. The compositor writes the lines when the menu opens:
-// "compositor: windows: console, life, monitor". from: the bytes of the
-// log before the menu opened.
+// of the windows. The compositor writes one fact for each window when the
+// menu opens, in the order of the menu: "compositor: windows: console, the
+// window 1 of 3". from: the bytes of the log before the menu opened. The
+// list is whole at the line whose place is the count of the windows.
 windows_line :: proc(machine: ^Machine, title: string, from: int) -> (line: int, ok: bool) {
 	MARK :: "compositor: windows: "
+	PLACE :: ", the window "
 	for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 		text := log_read(machine)
-		at := len(text) > from ? strings.index(text[from:], MARK) : -1
-		if at < 0 {
-			log_change_wait(machine)
-			continue
-		}
-		text = text[from + at + len(MARK):]
-		titles := strings.split(strings.trim_right(text[:strings.index_byte(text, '\n')], "\r"), ", ", context.temp_allocator)
-		#reverse for name, index in titles {
-			if name == title {
-				return index, true
+		rest := len(text) > from ? text[from:] : ""
+		found := false
+		place_of_title := 0
+		for {
+			at := strings.index(rest, MARK)
+			if at < 0 {
+				break
+			}
+			rest = rest[at + len(MARK):]
+			end := strings.index_byte(rest, '\n')
+			if end < 0 {
+				break // The line is not whole yet.
+			}
+			entry := strings.trim_right(rest[:end], "\r")
+			rest = rest[end:]
+			cut := strings.last_index(entry, PLACE)
+			if cut < 0 {
+				continue
+			}
+			numbers := strings.split(entry[cut + len(PLACE):], " of ", context.temp_allocator)
+			if len(numbers) != 2 {
+				continue
+			}
+			place, place_ok := strconv.parse_int(numbers[0], 10)
+			windows, windows_ok := strconv.parse_int(numbers[1], 10)
+			if !place_ok || !windows_ok {
+				continue
+			}
+			if entry[:cut] == title {
+				found, place_of_title = true, place
+			}
+			if place == windows {
+				return max(place_of_title - 1, 0), found
 			}
 		}
-		return 0, false
+		log_change_wait(machine)
 	}
 	return 0, false
 }

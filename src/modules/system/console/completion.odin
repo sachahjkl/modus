@@ -166,7 +166,7 @@ completion_key :: proc "contextless" (pressed: Key) -> (taken: bool) {
 		// A machine test takes the picture of the search after this line:
 		// the list that the terminal shows then has the search and its choice.
 		if completion.mode == .History {
-			system.log(.Info, "console: the history search \"", string(completion.search[:completion.search_count]), "\" chooses the row ", u64(completion.chosen + 1), " of ", u64(completion.ranked_count))
+			system.log_fact(.Info, History_Search_Chose{row = u64(completion.chosen + 1), rows = u64(completion.ranked_count), search = value_kinds.text_field(string(completion.search[:completion.search_count]), SEARCH_FIELD_BYTES)})
 		}
 		// While the search is open, each key is for the search.
 		return true
@@ -204,7 +204,7 @@ completion_tab :: proc "contextless" () {
 	buffer: [terminal.RUN_LIMIT]u8
 	runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
 	_, _, run_count := candidate_row_runs(&buffer, candidate^, runs[:])
-	system.log(.Info, "console: the completion list opens by Tab: ", u64(completion.matched_count), " names of ", u64(completion.names.count), " match \"", completion.place.query, "\", the first is ", candidate.name, "; one ranking takes ", completion.longest_ranking / 1000, " us at most, over ", completion.rankings, " keys; its first row has ", u64(run_count), " runs of code")
+	system.log_fact(.Info, Completion_List_Opened{matched_names = u64(completion.matched_count), names = u64(completion.names.count), longest_ranking = value_kinds.Time_In_Microseconds(completion.longest_ranking / 1000), rankings = completion.rankings, code_runs = u64(run_count)}, completion.place.query, candidate.name)
 }
 
 completion_close :: proc "contextless" () {
@@ -685,7 +685,7 @@ list_take :: proc "contextless" () -> (changed: bool) {
 	if !line_editor.line_replace(&line, start, end, system.written(&writer)) {
 		return false
 	}
-	system.log(.Info, "console: the completion gave the line ", line_editor.line_text(&line))
+	system.log_fact(.Info, Completion_Gave_Line{}, line_editor.line_text(&line))
 	return true
 }
 
@@ -713,7 +713,7 @@ history_take :: proc "contextless" () {
 	if completion.ranked_count > 0 {
 		line_editor.line_set(&line, completion.names.items[completion.ranked[completion.chosen].candidate].name)
 		history_place = 0
-		system.log(.Info, "console: the history search gave the line ", line_editor.line_text(&line))
+		system.log_fact(.Info, History_Search_Gave_Line{}, line_editor.line_text(&line))
 	}
 	completion_close()
 }
