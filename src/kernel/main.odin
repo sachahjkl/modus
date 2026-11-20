@@ -127,6 +127,9 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	stolen_time_log()
 	log("kernel: free memory ", Size{free_frames * PAGE_SIZE >> 20, .Mebibytes})
 	log("kernel: framebuffer ", u64(boot.framebuffer.width), "x", u64(boot.framebuffer.height), " at ", Hex(boot.framebuffer.address))
+	when KERNEL_EDGE_COUNTERS {
+		edge_counters_start()
+	}
 	// Before any device service: from translation on, a device reaches only
 	// the memory that its service declares.
 	iommu_start(boot)

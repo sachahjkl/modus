@@ -1085,7 +1085,7 @@ run_fuzz :: proc(args: []string) -> int {
 	targets := fuzz.fuzz_targets()
 	switch args[0] {
 	case "operations":
-		// The kernel operations on machines of the kernel that ships
+		// The kernel operations on machines of the counted kernel
 		// (operation_fuzzing.odin).
 		code := machine.operation_fuzzing_run(args[1:])
 		if code == foundation.EXIT_USAGE {
@@ -1108,7 +1108,7 @@ run_fuzz :: proc(args: []string) -> int {
 		}
 		operation_regressions := fuzz.fuzz_inputs_read(machine.OPERATION_REGRESSION_FOLDER, context.temp_allocator)
 		operation_reach := fuzz.fuzz_inputs_read(machine.OPERATION_REACH_FOLDER, context.temp_allocator)
-		fmt.printfln("  %-26s %-9s %3d regression, %3d reach  %s", fuzz.OPERATION_CORPUS_NAME, "machine", len(operation_regressions), len(operation_reach), "The kernel operations on a machine of the kernel that ships: `fuzz operations`, `fuzz regression operations`")
+		fmt.printfln("  %-26s %-9s %3d regression, %3d reach  %s", fuzz.OPERATION_CORPUS_NAME, "machine", len(operation_regressions), len(operation_reach), "The kernel operations on a machine: `fuzz operations` on the counted kernel, `fuzz regression operations` on the kernel that ships")
 		return 0
 	case "show", "minimize", "regression":
 		if len(args) != 3 {

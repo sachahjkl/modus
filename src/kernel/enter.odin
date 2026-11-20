@@ -472,6 +472,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_Operation
 		}
 		created := process_create(budget.object, name[:v[2]]) or_return
+		when KERNEL_EDGE_COUNTERS {
+			edge_counted_mark(created, process_index, name[:v[2]])
+		}
 		handle := handle_insert(process, {kind = .Process, rights = RIGHTS_PROCESS, object = created})
 		if handle == 0 {
 			// No handle ever named it, so no reader sees this cause.

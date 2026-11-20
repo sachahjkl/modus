@@ -92,6 +92,17 @@ each_test_part_has_its_boot_volumes :: proc(t: ^testing.T) {
 	testing.expect(t, len(measure) == 1 && measure[0] == build.BOOT_VOLUME_MEASURE, "measure builds the volume of a measure run only")
 	measure_shortage := build.boot_volumes_of_command(build.MEASURE_SHORTAGE_COMMAND)
 	testing.expect(t, len(measure_shortage) == 1 && measure_shortage[0] == build.BOOT_VOLUME_SHORTAGE, "measure shortage builds the volume of the shortage only")
+	// `fuzz operations` boots the counted kernel, and a regression input
+	// keeps the answers of the kernel that ships: one volume each.
+	fuzzing := build.boot_volumes_of_command(build.OPERATION_FUZZING_COMMAND)
+	testing.expect(t, len(fuzzing) == 1 && fuzzing[0] == build.BOOT_VOLUME_OPERATION_FUZZING && build.boot_volume_counts_kernel_edges(fuzzing[0]), "fuzz operations builds the volume of the counted kernel only")
+	regression := build.boot_volumes_of_command(build.OPERATION_REGRESSION_COMMAND)
+	testing.expect(t, len(regression) == 1 && regression[0] == build.BOOT_VOLUME_OPERATION_SEQUENCES && !build.boot_volume_counts_kernel_edges(regression[0]), "fuzz regression operations builds the volume of the kernel that ships only")
+	for part in test_parts {
+		for path in test_part_volumes_of(part) {
+			testing.expectf(t, !build.boot_volume_counts_kernel_edges(path), "the part %s boots the counted kernel", part.name)
+		}
+	}
 }
 
 // The constants of the tool that name a boot volume, by their names in the
@@ -104,6 +115,7 @@ volume_constants := [?][2]string {
 	{"BOOT_VOLUME_SHORTAGE", build.BOOT_VOLUME_SHORTAGE},
 	{"BOOT_VOLUME_MISSING_CONSOLE", build.BOOT_VOLUME_MISSING_CONSOLE},
 	{"BOOT_VOLUME_OPERATION_SEQUENCES", build.BOOT_VOLUME_OPERATION_SEQUENCES},
+	{"BOOT_VOLUME_OPERATION_FUZZING", build.BOOT_VOLUME_OPERATION_FUZZING},
 	{"BOOT_VOLUME_MEASURE", build.BOOT_VOLUME_MEASURE},
 	{"BOOT_VOLUME_WITHOUT_RETURN_CHECK", build.BOOT_VOLUME_WITHOUT_RETURN_CHECK},
 	{"BOOT_VOLUME_SELF_TEST", build.BOOT_VOLUME_SELF_TEST},
