@@ -1775,8 +1775,10 @@ scenario := [?]Step {
 	{kind = .Type, text = "n = assemble(\"export add(a: Integer, b: Integer) -> Integer; add: mov %rdi, %rax; add %rsi, %rax; ret\", f)"},
 	{kind = .Wait, text = "assemble: a module file of "},
 	{kind = .Type, text = "isolate_memory(\"adder\", f, n)"},
+	// The call host is ready before the console writes its line about the
+	// module: two processes, in either order.
+	{kind = .Wait, text = "[adder] host: ready, 1 exports", any_order = true},
 	{kind = .Wait, text = "console: adder is a module from memory: "},
-	{kind = .Wait, text = "[adder] host: ready, 1 exports"},
 	{kind = .Wait, text = "[console]   module     adder"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	{kind = .Type, text = "add(2, 3)"},
