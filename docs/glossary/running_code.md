@@ -484,9 +484,9 @@ Do not use: dimension, measure (for this).
 
 ### Field kind
 
-A field kind is how a reader writes the value of one field of a record description: Plain, Hexadecimal, Status, Module_Name, Hash or Fact_Values.
+A field kind is how a reader writes the value of one field of a record description, a member of `value_kinds.Field_Kind`.
 
-The source states it with a type of the contract: `value_kinds.Hexadecimal_32`, a contract enum such as `operation.Log_Level`, `value_kinds.Module_Name_Field`, `value_kinds.Hash_Field`, `value_kinds.Fact_Values_Field`. Each reader takes its byte through one border that refuses a byte that names no kind. A reader writes a hexadecimal Integer after `0x`, a Status by the name of its member, a hash in hexadecimal, the values of a log fact as its sentence or in hexadecimal, each in the color of its value kind. It is not an integer unit.
+The source states it with a type of the contract: `value_kinds.Hexadecimal_32`, a contract enum such as `operation.Log_Level`, `value_kinds.Hash_Head_Field`, `value_kinds.Hundredths`. Each reader takes its byte through one border that refuses a byte that names no kind. A reader writes a hexadecimal Integer after `0x`, a Status by the name of its member, the head of a hash as `1a2b3c4d…`, hundredths as `1.05`, each in the color of its value kind. It is not an integer unit.
 
 The design: `src/md/features/console_value_colors.md`. The format: `docs/MODULE_CONTRACT.md`, "The kind of a field".
 
@@ -494,13 +494,21 @@ Do not use: field format, display hint, field style.
 
 ### Contract enum
 
-A contract enum is an enumeration of the contract whose members a field of the kind Status holds, named in the closed list `value_kinds.Contract_Enum`: `Status`, `Log_Level`, `Log_Record_Form`, `Stop_Cause` and `Stop_Outcome`.
+A contract enum is an enumeration of the contract whose members a field of the kind Status holds, named in the closed list `value_kinds.Contract_Enum`: `Status`, `Log_Level`, `Log_Record_Form`, `Stop_Cause`, `Stop_Outcome`, and the `Kind` and `Unit` of an error record.
 
 Each reader compiles the contract in, so it writes the name of a member (`operation.contract_enum_member_name`), and the number of a word that names no member. A condition names a member (`level = Warning`). The sentence of a log fact writes the words of a member (`contract_enum_member_words`): the name, or for a stop the words of a reader, `itself`, `done`. An enumeration of a module is no contract enum: the module file holds no names of its members, so its field stays a plain Integer.
 
 The design: `src/md/features/console_value_colors.md`.
 
 Do not use: status type, named enum, enum table.
+
+### Word type
+
+A word type is a distinct integer of a contract package that holds a word of one contract enum as it came, at its own size.
+
+A field of a word type is a Status field of that enum: a reader writes the name of the member, or the number of a word that names none. A writer copies a word of another party into it with no cast to the enum, and a word type of 8 bytes leaves no padding beside fields of 8 bytes. `value_kinds.CONTRACT_ENUM_TYPES` names it. Examples: `operation.Status_Word`, `errors.Kind_Word`, `errors.Unit_Word`. The design: `src/md/features/log_facts.md`, "Field kinds".
+
+Do not use: raw enum, enum word field.
 
 ### Cut mark
 

@@ -279,16 +279,28 @@ a_template_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		fault, place := fact_template_check(item.template, names)
 		testing.expectf(t, fault == item.fault && place == item.place, "the template %q gave %v at %d, not %v at %d", item.template, fault, place, item.fault, item.place)
 	}
-	// The length: the bound is taken, one byte more is refused.
+	// The length: one byte below the bound and the bound are taken, one
+	// byte more is refused. The bound holds the longest line of a module,
+	// about 380 bytes, with room.
+	#assert(FACT_TEMPLATE_BYTES_MOST == 512)
 	filled: [FACT_TEMPLATE_BYTES_MOST + 1]u8
 	for &value in filled {
 		value = 'x'
 	}
 	copy(filled[:], "{block} {check} ")
+	below_fault, _ := fact_template_check(string(filled[:FACT_TEMPLATE_BYTES_MOST - 1]), names)
 	bound_fault, _ := fact_template_check(string(filled[:FACT_TEMPLATE_BYTES_MOST]), names)
 	past_fault, past_place := fact_template_check(string(filled[:]), names)
+	testing.expect_value(t, below_fault, Fact_Template_Fault.None)
 	testing.expect_value(t, bound_fault, Fact_Template_Fault.None)
 	testing.expect(t, past_fault == .Too_Long && past_place == FACT_TEMPLATE_BYTES_MOST)
+	// A template of the bound with a field of each byte past the bound: the
+	// length is checked before the names, so a name at byte 513 is never read.
+	past_with_name: [FACT_TEMPLATE_BYTES_MOST + 8]u8
+	copy(past_with_name[:], filled[:])
+	copy(past_with_name[FACT_TEMPLATE_BYTES_MOST:], "{other}")
+	far_fault, _ := fact_template_check(string(past_with_name[:FACT_TEMPLATE_BYTES_MOST + 7]), names)
+	testing.expect_value(t, far_fault, Fact_Template_Fault.Too_Long)
 	// The count of the fields: one past the capacity is refused.
 	many: [FACT_FIELD_CAPACITY + 1]string
 	for &name in many {

@@ -237,6 +237,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"errors", "Unit", type_info_of(errors.Unit)},
 		{"errors", "End", type_info_of(errors.End)},
 		{"errors", "Unanswered", type_info_of(errors.Unanswered)},
+		{"errors", "Error_Record_Fact_Fields", type_info_of(errors.Error_Record_Fact_Fields)},
 		// src/library/contract/fixed_addresses
 		{"fixed_addresses", "Fixed_Range", type_info_of(fixed_addresses.Fixed_Range)},
 		{"fixed_addresses", "Fixed_Ranges", type_info_of(fixed_addresses.Fixed_Ranges)},
@@ -805,6 +806,14 @@ site_record_field_type_text :: proc(field: build.Field_Description, size: int) -
 		return fmt.tprintf("Hash(%d)", field.detail)
 	case .Fact_Values:
 		return fmt.tprintf("Fact_Values(%d)", field.detail)
+	case .Hexadecimal_Sixteen_Digits:
+		return "hexadecimal of 16 digits"
+	case .Hash_Head:
+		return fmt.tprintf("Hash_Head(%d)", field.detail)
+	case .Hundredths:
+		return fmt.tprintf("hundredths %s%d", field.unsigned ? "u" : "i", size * 8)
+	case .Nanoseconds_As_Microseconds:
+		return fmt.tprintf("nanoseconds as microseconds u%d", size * 8)
 	case .Plain:
 	}
 	switch field.type {
