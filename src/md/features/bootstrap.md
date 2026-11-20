@@ -45,9 +45,9 @@ Each arrow is a recipe. Its builder is the stage before it, its inputs are the s
 
 | Task | Expression |
 |---|---|
-| Check that the tool builds itself to the same bytes | `build(modus.tool_self_check)` |
-| Build the compiler from the seed | `build(catalog.bootstrap.odin, substitution = { mode = .Build_Only })` |
-| Compare the compiler of the host with the compiler of the seed | `build(catalog.odin, substitution = { mode = .Verify })` |
+| Check that the tool builds itself to the same bytes | `recipes.build(modus.tool_self_check)` |
+| Build the compiler from the seed | `recipes.build(catalog.bootstrap.odin, substitution = { mode = .Build_Only })` |
+| Compare the compiler of the host with the compiler of the seed | `recipes.build(catalog.odin, substitution = { mode = .Verify })` |
 
 ## The refused forms
 

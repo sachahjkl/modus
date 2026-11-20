@@ -2,7 +2,7 @@
 
 A principal describes a system, a session or a project, with the console of that project, as one lazy value of Lex, the language of the console, in the manner of Nix. The evaluation of that value has no effect: it gives a typed record, the plan. An explicit command applies the plan, and the root service writes it as one applied plan, which a rollback can select again. The root service and the services never read the text of a declaration.
 
-The terms Plan, Applied plan, Declaration, Catalog declaration, Declaration input, Pin, Release pointer, Project and Declaration reference are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Lex, Console of a project, Evaluation budget, Evaluation mode, Thunk, Record literal, Named argument and Anonymous function are in [`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md). The recipes that a plan names, the cache and the substitution policy are in [recipes.md](recipes.md).
+The terms Plan, Applied plan, Declaration, Catalog declaration, Declaration input, Pin, Source module, Release pointer, Project, Plans service, Projects service, Recipes service and Declaration reference are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Lex, Console of a project, Evaluation budget, Evaluation mode, Thunk, Record literal, Named argument and Anonymous function are in [`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md). The recipes that a plan names, the cache and the substitution policy are in [recipes.md](recipes.md).
 
 ## Purpose
 
@@ -37,15 +37,15 @@ What is missing is one value that names all of these at once, a way to compute i
 Text exists only between the principal and Lex. Lex has two readers, with one parser and one evaluator from one library package (property 10):
 
 - **The console** reads the line that the principal types, as today, and evaluates it in mode `console`.
-- **The evaluation process** evaluates in mode `declaration`. It reads the text of a declaration object. The console starts it as a sandboxed child for each evaluation of a declaration: it holds a connection that reads only the trees of the declarations that the evaluation names, and nothing else. No network, no store that it can write, no root ring.
+- **The evaluation process** evaluates in mode `declaration`. It reads the text of a declaration object. The service of the declarations that needs a value starts it as a sandboxed child for each evaluation ("The services of the declarations"): it holds a connection that reads only the trees of the declarations that the evaluation names, and nothing else. No network, no store that it can write, no root ring.
 
-The console sends the evaluation process typed values only: a declaration reference, which is the hash of a declaration, the list of the field names to force, and the typed records that a `with` composed with it. The evaluation process sends back typed values only: a plan, a table of recipes, the console of a project, or an error record with its place. No line of the principal crosses to it, and no text comes back. The text of a declaration is a document that a principal wrote, as the source of a module is: a reader of its language reads it, as a compiler reads a source. No process sends text to another process for it to parse.
+The service sends the evaluation process typed values only: a declaration reference, which is the hash of a declaration, the list of the field names to force, and the typed records that a `with` composed with it. The evaluation process sends back typed values only: a plan, a table of recipes, the console of a project, or an error record with its place. No line of the principal crosses to it, and no text comes back. The text of a declaration is a document that a principal wrote, as the source of a module is: a reader of its language reads it, as a compiler reads a source. No process sends text to another process for it to parse.
 
 The root service and every service read the plan, a typed record, through one border of a contract package. None of them reads the text of a declaration.
 
 ### A declaration is an object
 
-A declaration is a tree in a store, with its hash, as a module is. Its root holds one text object in Lex, whose name has the extension `.lex`, and whose value is one record. A tree whose root holds no entry `.lex`, or two, is no declaration: `declaration(hash)` refuses it with an error record that names the tree. A project keeps its declaration in its source tree; a principal keeps the declaration of its session in a store of its own.
+A declaration is a tree in a store, with its hash, as a module is. Its root holds one text object in Lex, whose name has the extension `.lex`, and whose value is one record: `project.lex` for a project. `pins.lex`, the pins of a project beside it, is no declaration ("Where the pins live"). A tree whose root holds no other entry `.lex`, or two, is no declaration: `declaration(hash)` refuses it with an error record that names the tree. A project keeps its declaration in its source tree; a principal keeps the declaration of its session in a store of its own.
 
 The value of a declaration is lazy: the evaluator reads it in mode `declaration` ("One parser, one lazy evaluator, two modes").
 
@@ -66,22 +66,22 @@ A plan names each object by its hash, so it is complete in itself: the root serv
 
 ### Apply, the difference and the rollback
 
-`plan { … }` is the only form of Lex that describes an effect, and it has no effect by itself: it is a value. An explicit command applies it:
+`plan { … }` is the only form of Lex that describes an effect, and it has no effect by itself: it is a value. An explicit command of the service `plans` applies it ("The services of the declarations"):
 
-1. `apply(p)` forces the plan, and the console asks the root service for the difference between the plan and the current applied plan of the principal: the grants that it adds and removes, the wirings, the rows of the start list, the start policy. The root service computes it from its own copy of the current applied plan, not from the evaluation.
+1. `plans.apply(p)` forces the plan in an evaluation process, and the service `plans` asks the root service for the difference between the plan and the current applied plan of the principal: the grants that it adds and removes, the wirings, the rows of the start list, the start policy. The root service computes it from its own copy of the current applied plan, not from the evaluation, so neither the evaluation nor `plans` can hide a grant. `plans.difference(p)` gives that difference and applies nothing.
 2. The console draws the difference as tables, and the principal accepts it with a key, as it accepts the grants of a role today. A difference with no new grant is still shown.
-3. The console sends the root ring command `Apply` with the hash of the plan and the hash of the current applied plan that the difference read. The root service refuses the command when the current applied plan changed since: the principal accepted another difference.
-4. The root service checks the plan at its border, checks that the store `module_files` holds each hash that the plan names and each import of each module, writes the plan as applied plan N + 1 in the store `plans` of the principal, then writes the hash of applied plan N + 1 in the row "current plan" of the disk grant table of the principal. That last write is the commit: before it, applied plan N is current; after it, N + 1 is.
+3. The service `plans` sends the root ring command `Apply` with the hash of the plan and the hash of the current applied plan that the difference read. The root service refuses the command when the current applied plan changed since: the principal accepted another difference.
+4. The root service checks the plan at its border, checks that the store `module_files` holds each hash that the plan names and each import of each module, writes the plan as applied plan N + 1 in the store `applied_plans` of the principal, then writes the hash of applied plan N + 1 in the row "current plan" of the disk grant table of the principal. That last write is the commit: before it, applied plan N is current; after it, N + 1 is.
 
-`rollback()` sends `Rollback`, which writes the hash of the applied plan before the current one into the row "current plan". It writes no new plan. `rollback(n)` selects the applied plan n. A later `apply` writes the number after the highest one, so a rollback never loses a plan.
+`plans.rollback()` sends `Rollback`, which writes the hash of the applied plan before the current one into the row "current plan". It writes no new plan. `plans.rollback(n)` selects the applied plan n. A later `plans.apply` writes the number after the highest one, so a rollback never loses a plan.
 
 What changes when:
 
 - The plan changes no process that runs. A grant of a disk process takes effect at its next start, as `allow` does today.
 - The start list and the start policy of the plan of principal 0 take effect at the next start of the machine, as the choice of a start policy does today.
-- The console of a project of the plan takes effect at the next `enter`.
+- The console of a project of the plan takes effect at the next `projects.enter`.
 
-So the authority is in `apply`, not in the evaluation. A foreign plan cannot take a grant in silence: its grants are in the difference that the principal accepts.
+So the authority is in `plans.apply`, not in the evaluation. A foreign plan cannot take a grant in silence: its grants are in the difference that the principal accepts.
 
 ### The plan of principal 0
 
@@ -90,7 +90,7 @@ The plan of principal 0 is the system plan. It adds to the signed image and neve
 - The row "current plan" of principal 0 is in its disk grant table, under the tag of the machine key, as the choice of a start policy is ([start_policy.md](start_policy.md), "A start policy from the disk").
 - The root service reads it at step 4 of each start, before the start policy.
 - The measure into PCR 12 stays one extend for each start policy. For a start policy of a system plan, its second hash is the hash of the plan, in place of the 32 zero bytes of a start policy from the disk with no list. So an attestation sees which plan ran, with no third extend.
-- `apply` of principal 0 is refused where the machine key does not open with no passphrase, for the reason of the choice of a start policy: the table cannot be read before the start policy.
+- `plans.apply` of principal 0 is refused where the machine key does not open with no passphrase, for the reason of the choice of a start policy: the table cannot be read before the start policy.
 
 ### Lex: the console with eight forms of grammar and the names of the evaluation
 
@@ -98,7 +98,7 @@ The language of a declaration is Lex, the language of the console ([`docs/CONSOL
 
 1. **`let`.** `let a = 1, b = a + 1 in { x = a, y = b }`.
 2. **The record literal.** `{ field = value, … }`. It takes the type of the parameter or the field that receives it ("A record literal is typed by its use").
-3. **The named argument.** `build(kernel, substitution = { mode = .Verify })`. A named argument follows the rule of the record literal: the parameters of the call are the fields of a record.
+3. **The named argument.** `recipes.build(kernel, substitution = { mode = .Verify })`. A named argument follows the rule of the record literal: the parameters of the call are the fields of a record.
 4. **The literals that a use types.** A list `[a, b]`, a member of an enum `.Verify`, and a hash `blake3:…`. A list and a member take their type from their receiver, as a record literal does.
 5. **The anonymous function.** `(name) => odin.module(name)`. A function is a value: it can be a field, an argument and a result.
 6. **`with`.** `a with b` composes two records: the result is `a`, with each field of `b` in place of the field of the same name ("Composition").
@@ -109,7 +109,7 @@ The other forms of the declarations are names of functions and values, with no f
 
 - **A reference by hash.** `module(blake3:…)` is one exact module. `declaration(blake3:…)` is one exact declaration. A name of a catalog declaration, `catalog.odin`, is a field of its record; the plan records the hash that it gave.
 - **`recipe(builder, arguments)`.** A lazy value whose identity is its recipe hash. Forcing it does not build it: a build is a command ([recipes.md](recipes.md)).
-- **`plan { … }`, `project { … }`.** The record of a plan, which `apply` takes; of a project, with its console ("The console of a project").
+- **`plan { … }`, `project { … }`.** The record of a plan, which `plans.apply` takes; of a project, with its console ("The console of a project").
 - **The values of the declaration inputs.** `catalog`, `inputs`, `keys` (the table of the publisher keys that the principal trusts), `follow(publisher, name)` and `here()` ("Declaration inputs, pins and release pointers", "Sources and the identity of a source").
 - **`map(list, function)`.** It gives a list with the function applied to each item.
 
@@ -122,7 +122,7 @@ The evaluator runs in one of two evaluation modes, a closed set:
 - **Mode `declaration`** runs in the evaluation process, in its sandbox. An export with an effect is refused at its border: the evaluator does not call it, and gives an error record that names the export, the declaration, its line and column, and the chain of fields that it forced. The evaluator forces nothing beyond the fields that the console asked for, so `kernel.tools` forces the recipe of the tools and nothing of the image.
 - **Mode `console`** runs in the console. Exports with an effect are allowed. Each line is forced whole, each binding of its `let` too, so no effect is skipped because its value went unused.
 
-The exports with an effect are the commands `apply`, `rollback`, `build`, `enter`, `exit` and `update`, and each export of a module or a service: the evaluator cannot know that an export of a module has no effect. The names of the evaluation (`module`, `declaration`, `recipe`, `catalog`, `inputs`, `keys`, `follow`, `here`, `map`, `plan`, `project`) have none. A Stream is a wiring, an effect: mode `declaration` refuses it, and mode `console` holds it while its line runs, as today.
+The exports with an effect are each command of the services `plans`, `projects` and `recipes`, the command `exit` of the console, and each export of a module or of another service: the evaluator cannot know that an export of a module has no effect. The names of the evaluation (`module`, `declaration`, `recipe`, `catalog`, `inputs`, `keys`, `follow`, `here`, `map`, `plan`, `project`) have none. A Stream is a wiring, an effect: mode `declaration` refuses it, and mode `console` holds it while its line runs, as today.
 
 **Why one meaning everywhere.** An export forces its arguments from the left to the right before it is called. So the effects run in the order of the data: `assemble(bytes(t, 0, compile(src, t)), f)` compiles, then reads, then assembles, as the eager console of today does. The one difference that laziness can make is a value that nothing uses, whose effect then never runs. That cannot happen in mode `console`, because the line is forced whole. So a line means the same thing in both modes; mode `declaration` only refuses the effects.
 
@@ -135,7 +135,7 @@ The exports with an effect are the commands `apply`, `rollback`, `build`, `enter
 
 **The cost.** The eager evaluator of the console was replaced by the shared evaluator in mode `console`, layer 2 of the build order ("The evaluator package"). Each line runs its effects in the same order as before.
 
-**A value of a declaration at the console.** The console evaluates no text of a declaration ("An evaluation in the console process" in the refused forms). `declaration(here())`, `catalog` and `kernel.tools` give a declaration reference at the console: the hash of the declaration, the chain of the field names, and the records that a `with` composed with it. Each part is a typed value. Forcing the reference in mode `console` gives the reference itself. A command that needs the value, such as `build` or `apply`, sends the reference to the evaluation process, which forces the fields in mode `declaration` and gives back typed values.
+**A value of a declaration at the console.** The console evaluates no text of a declaration ("An evaluation in the console process" in the refused forms). `declaration(here())`, `catalog` and `kernel.tools` give a declaration reference at the console: the hash of the declaration, the chain of the field names, and the records that a `with` composed with it. Each part is a typed value. Forcing the reference in mode `console` gives the reference itself. A command that needs the value, such as `recipes.build` or `plans.apply`, gives the reference to its service, which sends it to an evaluation process that forces the fields in mode `declaration` and gives back typed values.
 
 **The limits of the console on lazy values.** Mode `console` forces each line whole, so a variable keeps a value, never a thunk. The thunks of a declaration live in the evaluation process, which ends after its evaluation. So:
 
@@ -220,7 +220,7 @@ A record literal has no type of its own. It takes the type of the parameter or t
 - A field of the literal that the type does not have is refused: `error: Substitution has no field mdoe; its fields are sources, signers, mode`.
 - A field that the type has, with no default, and that the literal does not give, is refused: `error: Substitution needs the field mode, which has no default`.
 - A value of a field is checked against the type of that field, with the same rule, so a literal inside a literal is typed by its field.
-- A field whose type is a table of names, such as `inputs`, `outputs` and `tools`, takes any name. The type of the table checks each value.
+- A field whose type is a table of names, such as `inputs` and `outputs`, takes any name. The type of the table checks each value.
 
 A named argument is the same rule on the parameters of a call. An unknown name, a parameter given twice, and a parameter with no default that the call does not give are refused, with the name of the command.
 
@@ -318,26 +318,63 @@ project {
 
 The bytes and the trust are two separate things. The bytes of a declaration come from any source of the substitution policy, because a hash checks itself. The trust comes from the key of the publisher, which the principal names in `keys`, its table of the publisher keys that it trusts.
 
-**When the resolution happens.** An evaluation never reads the network to resolve a name, because it has no effect. It uses the pins: a typed record with the hash of each declaration input as it was resolved, kept in the store of the project or in the plan.
+**The source of an input.** An input that is no exact declaration names a reference that moves: a branch of git, a bookmark or a change of Jujutsu, a branch of Mercurial, a channel of Pijul, an archive at an address, a name that a publisher follows. Each one resolves to a state that does not move, and the system needs only one thing of that state: a modus tree by its hash. So each kind of source is a **source module** of the catalog declaration, with no word of Lex of its own, and fills one contract:
 
-- `update()` resolves each `follow` again, from the release pointers that the sources of the substitution policy give, and writes new pins. `update(inputs.gt)` resolves one.
-- The store keeps the pins before as a version (property 9), so the pins of each earlier state of a project stay readable.
-- An evaluation with an input that has no pin stops with an error record that names the input and the command `update(inputs.<name>)`.
+- **A resolver**, an export that only `projects.update` runs, with a network grant for the host of the address and nothing else. It turns the reference into the identity of the state in its format (a commit, a changeset, a state of Pijul, the number of a release pointer) and into the tree hash that the fetcher gives.
+- **A fetch recipe**, as `git_fetch` ([recipes.md](recipes.md), "The fetcher"): from the identity, it writes the modus tree and refuses a tree whose hash is not the hash of the pin.
 
-The pins are no text file to parse. They are a typed record, versioned by the store, and the plan records the same hashes.
+```
+inputs = {
+  a  = catalog.git.source(address = "https://…/a", branch = "main"),
+  b  = catalog.jj.source(address = "https://…/b", bookmark = "main"),
+  c  = catalog.jj.source(address = "https://…/c", change = "kxqzv…"),
+  d  = catalog.archive.source(address = "https://…/d-1.2.tar.gz"),
+  gt = follow(publisher = keys.gui_toolkit, name = "gui_toolkit"),
+}
+```
+
+- `follow` is the source of a release pointer: it fills the same contract, and its resolver also checks the signature of the publisher.
+- A new kind of source is one more module, which a principal can take from a publisher by `follow`: it changes neither Lex, nor the evaluator, nor `projects.update`.
+- Jujutsu keeps its states in a git store, so its fetch recipe is the one of git; its resolver reads bookmarks and change ids, which outlive a rebase.
+- A neighbour machine of modus needs no resolver: the tree is exchanged by its hash, with the protocol of the cache.
+- The identity in the format is provenance, kept in the pin. The tree hash is the one identity that the evaluation and the plan use.
+
+**When the resolution happens.** An evaluation never reads the network to resolve a name, because it has no effect. It uses the pins: for each declaration input, the identity of its state, its tree hash and its publisher when it has one, as it was resolved.
+
+**Where the pins live.** The pins of a project are a Lex file, `pins.lex`, beside `project.lex` at the root of its source tree. Its value is one record literal of hashes, with one field for each declaration input:
+
+```
+{
+  tool = { commit = "a1b2c3…", tree = blake3:9e7a… },
+  gt   = { publisher = keys.gui_toolkit, number = 41, tree = blake3:5f0d… },
+}
+```
+
+- **A project** is the tree that a principal shares, on GitHub too: `project.lex`, `pins.lex` and its sources. Its tree hash covers both files, so a project given by its hash is wholly fixed, on each machine. Each project that its inputs bring carries its own `pins.lex`, so its inputs do not move either, down the whole graph.
+- **No second format.** The one parser reads `pins.lex`, and the evaluation process evaluates it in mode `declaration`, with no effect. The record of the pins types its literal, as each receiver types a record literal.
+- **Only `projects.update` writes it**, never a hand. A hand edit cannot pass other bytes: each hash checks itself at the fetch. It can only name another state, which a review sees.
+- **Why a text.** A project shared on GitHub must be reviewable. One changed line of `pins.lex` is one input that moved; a binary record shows no useful difference.
+- A plan that has no project holds its pins itself.
+
+The commands:
+
+- `projects.update(kernel)` runs the resolver of each input again and writes a new `pins.lex`: a new version of the source tree, whose difference names the lines of the pins that moved. `projects.update(kernel, inputs.gt)` resolves one. With no `projects.update`, the inputs never move.
+- The store keeps the tree before as a version (property 9), so the pins of each earlier state of a project stay readable.
+- An evaluation with an input that has no pin stops with an error record that names the input and the command `projects.update(kernel, inputs.<name>)`.
+- `projects.inputs(kernel)` shows each pin, with its publisher and its hash.
 
 **Composition.** `with` has one meaning: the composition of two records. `a with b` gives the record `a`, with each field of `b` in place of the field of the same name. A field of `b` that `a` does not have is refused, as in a record literal ("A record literal is typed by its use"): the type of `a` receives `b`. So `catalog with { odin = recipe(…) }` changes one recipe.
 
 A declaration input can give a function that changes a catalog declaration. It is called as any function: `gt.overlay(catalog)`, or `catalog |> gt.overlay()` ([pipe_operator.md](pipe_operator.md)). `gt.window_app(here())` is a call of the same kind.
 
-An option of a command is a named argument, never a `with` after the call: `build(kernel, substitution = { mode = .Verify })`. A `with` after a call composes the record that the call gives; it changes nothing of the call.
+An option of a command is a named argument, never a `with` after the call: `recipes.build(kernel, substitution = { mode = .Verify })`. A `with` after a call composes the record that the call gives; it changes nothing of the call.
 
 ### A foreign declaration is safe to evaluate
 
 - The evaluation is pure, and it runs in the sandboxed evaluation process.
 - A builder runs in a sandbox of its own ([recipes.md](recipes.md), "The builder").
 - A realisation signed by a publisher that the principal does not trust is not used: the recipe is built on the machine, and its builder can change nothing but its empty output store.
-- The grants of a foreign plan reach the machine only through the difference that the principal accepts at `apply`.
+- The grants of a foreign plan reach the machine only through the difference that the principal accepts at `plans.apply`.
 
 ### Sources and the identity of a source
 
@@ -358,8 +395,9 @@ console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Writ
 
 - `modules` is a list of module values: `catalog.odin`, `module(blake3:…)`, an output of a declaration input, or a name that a `let` binds to one of them. The name of a module is the name of its commands, as with `connect`: the commands of `odin` are `odin.…`.
 - `stores` is a list of stores of the principal, each with its rights.
-- `enter(p)` asks the root service to start a child console of the principal. At its start, the child console connects each module of `modules`, by its hash: it is what `connect("odin")` does, declared in advance. Its context holds a connection to each store of `stores`, with the rights of the record. Each such store is a store of the principal, and each right is a right that the console that asks already holds.
-- `exit()` stops the child console and gives the line back to the console before.
+- `projects.enter(p)`: the service `projects` asks the root service to start a child console of the principal of the caller. At its start, the child console connects each module of `modules`, by its hash: it is what `connect("odin")` does, declared in advance. Its context holds a connection to each store of `stores`, with the rights of the record. Each such store is a store of the principal, and each right is a right that the console that asks already holds.
+- Inside the child console, a command of `projects` with no project argument acts on the project that `projects.enter` opened, the project of `here()`: `projects.update()`, `projects.inputs()`.
+- `exit()` stops the child console and gives the line back to the console before. It stays a bare name: the console itself does it.
 - Nothing is installed. The modules are objects of `module_files`, which a build or the cache gave. Another console sees none of these names.
 
 **Why `console`.** The interface where a principal types is the console, one term for one concept: the field says which console the project gives. The field describes the commands that are available, and nothing more.
@@ -368,23 +406,39 @@ console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Writ
 
 A project is a record with a source, its declaration inputs, its outputs and its console: `project { source = here(), inputs = {…}, outputs = {…}, console = {…} }`. `project` is the function `modus.project` of the catalog declaration, under a short name (property 22): it adds no mechanism.
 
-- `outputs.default` is the output that `build(p)` realises.
-- Each other output is a field: `build(kernel.tools)`.
-- `enter(kernel)` starts a child console with the field `console` of the project. With no such field, the console connects the builders of the outputs of the project, and grants the store of its source with Read and Write.
+- `outputs.default` is the output that `recipes.build(p)` realises.
+- Each other output is a field: `recipes.build(kernel.tools)`.
+- `projects.enter(kernel)` starts a child console with the field `console` of the project. With no such field, the console connects the builders of the outputs of the project, and grants the store of its source with Read and Write.
 
 An output names an entry of the source tree by the names of its entries from the root of the tree, separated by `/`: `odin.module("src/modules/server")`. The evaluation process takes each name in turn; a name is never `.` or `..`, so the text never reaches above the source tree.
+
+### The services of the declarations
+
+Three services give the commands of the declarations. A command of a service is always `service.command`, as `monitor.count` is:
+
+- **`plans`**: `apply`, `rollback`, `difference`. It holds the right to send `Apply` and `Rollback` to the root service for the principal of the caller. The root service computes the difference itself, so `plans` can hide nothing.
+- **`projects`**: `update`, `enter`, `inputs`. During `update` it runs the resolvers of the source modules, and it writes `pins.lex` in the store of the project, which the caller gives with Write. For `enter` it asks the root service to start a child console.
+- **`recipes`**: `build`, `provenance` ([recipes.md](recipes.md)). It asks the root service to realise a recipe, and applies the substitution policy.
+
+The evaluation process is no service. Each of the three starts one when it reads Lex, and the evaluation process holds no right.
+
+Each service acts for the principal of the caller, as the remote display does ([remote_display.md](remote_display.md)). The root service decides each command, with the grants of that principal.
+
+**Why three services, and not one.** Least authority. `recipes` cannot apply a system, and neither can `projects`. A compromised service does only its own part.
+
+**A bare name means one thing only:** the console itself does it, as `where`, `sort`, `start`, `processes` and `exit` ("Bare names for the commands of the declarations" in the refused forms).
 
 ### Storage
 
 - **The store `module_files` of the machine** holds the objects by hash: module files, debug objects, trees, release pointers, realisations. A tree is the list of the name, the kind and the hash of each entry, and its hash is the hash of that list ([recipes.md](recipes.md), "Trees").
-- **The store `plans` of each principal** holds its applied plans, each as an object named by its number.
+- **The store `applied_plans` of each principal** holds its applied plans, each as an object named by its number.
 - **The disk grant table** of each principal holds the row "current plan".
 
 ### The garbage collector
 
 The garbage collector of `module_files` keeps an object only when a root reaches it. The roots:
 
-- each applied plan that the store `plans` of a principal keeps;
+- each applied plan that the store `applied_plans` of a principal keeps;
 - the signed system description;
 - the hash of each row of each disk grant table;
 - the modules of each child console of a project that runs, and the recipe of each build that runs.
@@ -395,23 +449,25 @@ From each root it follows the imports of each module, the debug object of each m
 
 | Task | Expression |
 |---|---|
-| Apply a system | `apply(system)` |
-| Go back to the system before | `rollback()` |
-| Go back to one applied plan | `rollback(4)` |
+| Apply a system | `plans.apply(system)` |
+| See the difference before a change of the system | `plans.difference(system)`; `plans.apply(system)` shows it first too |
+| Go back to the system before | `plans.rollback()` |
+| Go back to one applied plan | `plans.rollback(4)` |
 | Declare the console of a project | `console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Write)] }`, a field of `project { … }` |
-| Work in the console of a project, then leave it | `enter(kernel)`, then `exit()` |
+| Work in the console of a project, then leave it | `projects.enter(kernel)`, then `exit()` |
 | Change one recipe of the catalog declaration | `catalog with { odin = recipe(…) }` |
 | Change a catalog declaration with the function of an input | `gt.overlay(catalog)` |
-| Build with an option | `build(kernel, substitution = { mode = .Verify })` |
-| Declare a project | `kernel = project { source = here(), outputs = { default = odin.module("src/modules/server"), tools = …, image = modus.image([…]) } }` |
+| Build with an option | `recipes.build(kernel, substitution = { mode = .Verify })` |
+| Declare a project | `kernel = project { source = here(), outputs = { default = odin.module("src/modules/server"), tools = …, image = modus.image([…]) } }` in `project.lex` |
 | Read a project from its source tree | `kernel = declaration(here())` |
-| Build a project, or one output | `build(kernel)`, `build(kernel.tools)` |
-| Resolve each followed input again | `update()` |
-| Resolve one input again | `update(inputs.gt)` |
-| See each pin, with its publisher and its hash | `inputs` |
-| See the difference before a change of the system | `apply(system)`: the difference comes first |
+| Build a project, or one output | `recipes.build(kernel)`, `recipes.build(kernel.tools)` |
+| Resolve each followed input again | `projects.update(kernel)`; in the console of the project, `projects.update()` |
+| Resolve one input again | `projects.update(kernel, inputs.gt)` |
+| See each pin, with its publisher and its hash | `projects.inputs(kernel)` |
+| Take a project from a git repository | `inputs = { tool = catalog.git.source(address = "https://…", branch = "main") }`, then `projects.update(kernel, inputs.tool)` |
+| Take a project from Jujutsu by a change | `inputs = { tool = catalog.jj.source(address = "https://…", change = "kxqzv…") }` |
 
-**The check for an incantation.** Each expression names its task: `apply`, `rollback`, `enter`, `build`, `update`. None names a store of the system, a number of a format, a hash to copy by hand, or an order of two commands.
+**The check for an incantation.** Each expression names its service and its task: `plans.apply`, `plans.rollback`, `projects.enter`, `projects.update`, `recipes.build`. None names a store of the system, a number of a format, a hash to copy by hand, or an order of two commands.
 
 ## The refused forms
 
@@ -425,16 +481,22 @@ From each root it follows the imports of each module, the debug object of each m
 - **A second parser for the declarations.** Two grammars drift, and a line that the console accepts then means another thing in a declaration. One parser library reads both.
 - **Two evaluators (eager console, lazy declarations).** Two semantics of one text, which a test must compare form by form. One lazy evaluator in two modes gives one meaning: the arguments of an export are forced from the left before it runs, and mode `console` forces each line whole.
 - **A console that forces only what its result needs.** An export whose result goes unused then never runs, and a line skips an effect that the principal typed. Mode `console` forces each line whole.
-- **`with` for the options of a command.** `build(kernel) with substitution = {…}` gives `with` a second meaning, and the option lands after the call that it changes. A named argument is checked against the parameters before the call.
+- **`with` for the options of a command.** `recipes.build(kernel) with substitution = {…}` gives `with` a second meaning, and the option lands after the call that it changes. A named argument is checked against the parameters before the call.
 - **`with` on a function.** `catalog with gt.overlay` gives `with` a second meaning, the call of a function. A call says it.
 - **A record literal with a type name, or with no type.** The first repeats the type of its receiver; the second accepts a field with a wrong name in silence.
 - **An anonymous function in `where`.** The root service cannot turn a function into wiring terms, and runs no Lex ("`where` keeps the form of a condition").
 - **A budget that a declaration asks for.** A foreign declaration then chooses its own bound ("The evaluation budget").
 - **A budget set by hand.** A guess has no measure; the measure over the declarations of the system gives the bound and its margin.
-- **The resolution of a name during an evaluation.** Such an evaluation reads the network, so two evaluations of one declaration can give two plans. The pins hold the resolution, and `update` changes them.
-- **A text lock file.** The resolution is recorded as typed pins, versioned by the store, never as a text to parse.
+- **The resolution of a name during an evaluation.** Such an evaluation reads the network, so two evaluations of one declaration can give two plans. The pins hold the resolution, and `projects.update` changes them.
+- **A lock file in a second text format**, such as the JSON of a `flake.lock`. A second format needs a second parser and a second set of rules. `pins.lex` is Lex, which the one parser reads.
+- **The pins as a binary typed record.** A project shared on GitHub must be reviewable, and a binary file shows no useful difference. One changed line of `pins.lex` is one input that moved.
+- **The pins outside the tree, in a store of the machine.** The source then travels with no pins: a second machine resolves again and gets other states. `pins.lex` is an entry of the tree, which its hash covers.
+- **Bare names for the commands of the declarations (`apply`, `update`, `build`, `enter`).** They look like words of the language, and they take generic names that every module wants. A command of a service is always `service.command`, as `monitor.count` is; a bare name is a command that the console itself runs, as `exit`.
+- **One service `declarations` with every right.** A fault in its build code could then apply a system. Three services each hold one part ("The services of the declarations").
+- **`git(...)` as a word of Lex, or a kind of source in `projects.update`.** Each new format (Jujutsu, Mercurial, Pijul, an archive) would change the language or the command. A source module fills one contract, and the catalog lists them.
+- **The commit of git as the identity of an input.** Two formats then give two identities for one tree. The tree hash is the identity; the commit is provenance in the pin.
 - **A central registry of names that the system trusts.** A server of authority for every name. A release pointer is trusted by the key of its publisher, and its bytes come from any source.
-- **The grants of a foreign plan applied with no view of their difference.** With it, a plan takes a grant in silence. `apply` shows the difference first.
+- **The grants of a foreign plan applied with no view of their difference.** With it, a plan takes a grant in silence. `plans.apply` shows the difference first.
 - **A signature on each object.** A hash checks itself. Only a realisation and a release pointer are signed ([recipes.md](recipes.md)).
 - **A store at a fixed place.** Property 11: a module holds no place, so the store `module_files` needs none.
 - **Git as the identity of a source.** One source then has two identities, and the system depends on a tool that it does not need.
@@ -456,7 +518,6 @@ From each root it follows the imports of each module, the debug object of each m
 ## Open questions
 
 - **The merge of two versions of a store.** Two machines that change one source give two trees; how a principal merges them, and in which process.
-- **Where the pins of a plan of a session live** when the plan has no project store: in the plan only, or in a store of the principal.
 - **The form of the acceptance of a difference** at a console that a remote client drives: the same key, or a second proof of the principal.
 - **The forced values of a declaration reference across lines.** The console evaluates a reference again on each line that needs it. An evaluation process that stays between the lines keeps the forced thunks, and holds their memory with no line that runs.
 - **Where the default of a field is written.** A field of a contract record has no mark of a default today, so a record literal must give each field. The mark goes in the record description, or in the function of the catalog declaration that takes the record. The frequent tasks need it: `{ mode = .Verify }` takes the sources and the signers of the plan of the principal.
@@ -472,10 +533,12 @@ Each layer adds one capability to a system that works, and each is a tested comm
 4. **Functions `(x) => …`**, used by `map`.
 5. **Mode `declaration` and the evaluation process.**
 6. **`module(...)`, `recipe` and `plan`**, and the evaluation budget measured.
-7. **`apply` and `rollback`.**
+7. **The service `plans`**: `plans.apply`, `plans.difference` and `plans.rollback`, with the root ring commands `Apply` and `Rollback`.
+8. **The service `recipes`**: `recipes.build` and `recipes.provenance`, with the builders and the substitution policy ([recipes.md](recipes.md)).
+9. **The service `projects`**: `projects.update` with the source modules and `pins.lex`, `projects.inputs`, and `projects.enter` with the child console of a project. `projects.update` comes after `recipes`, because a resolver needs the tree hash that a fetch recipe gives.
 
 ## State
 
 Built: layers 1 to 3 of the build order. The parser of Lex is the private part `lex_parser` of the console, with host tests of each form of the console and each refusal with its place. The evaluator is the private part `lex_evaluator`: thunks forced at most once, the order of the effects, the budget, the refusal of an effect in mode `declaration`, the record literal typed by its receiver, named arguments, `let`, `with` and the cycle, with host tests over a fake host. The console is its host in mode `console`. The placeholder `_` is a part of the nested form of `|>`.
 
-Left: layers 4 to 7, the budget measured, the default of a field, and the move of the parser and the evaluator to `src/library/support` with the evaluation process.
+Left: layers 4 to 9, with the three services of the declarations and `pins.lex`, the budget measured, the default of a field, and the move of the parser and the evaluator to `src/library/support` with the evaluation process.
