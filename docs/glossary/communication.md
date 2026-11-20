@@ -776,7 +776,7 @@ Do not use: untyped output, passthrough type.
 
 The record output log is the one record output that each process has with no declaration: a copy of each log record that the process writes, which loses none.
 
-Only the starter wires it, in the wiring list of the `Start` of the process, to one reader, so the reader has each record from the first one. Each record is an `output.Log_Output_Record`, and the writer waits while the ring of its reader is full; the kernel log below it stays lossy, and its budget of each second still refuses what it refuses. Its end comes in the handles 17 and 18 of the context. It is what an audit of the log of a process reads. Example: a row `{writer_end = Child, writer_stream = Log, reader_end = Asker}` in the list of a `Start`. The design: `src/md/features/log_facts.md`, "The record output `log`".
+Only the starter wires it, in the wiring list of the `Start` of the process, to one reader, which has each record from the first one. The writer waits while the ring of its reader is full; the kernel log below it stays lossy. An audit of the log of a process reads it. Example: a row `{writer_end = Child, writer_stream = Log, reader_end = Asker}` in the list of a `Start`. The guide: `docs/MODULE_CONTRACT.md`, "The record outputs and the record inputs".
 
 Do not use: audit log, log stream, log pipe, lossless log.
 
