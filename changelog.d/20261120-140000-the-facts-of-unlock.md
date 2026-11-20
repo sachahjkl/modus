@@ -1,0 +1,3 @@
+type: Changed
+
+**unlock writes log facts**: a passphrase or a recovery key that opens or is wrong, with the count of wrong tries, a principal created, locked or changed, a seal and its time of Argon2id, a file or a record that the store refuses or does not keep, an answer of the root service or of the TPM service that it does not take, and the erase of the versions of an object are records of fields, whose sentences are those of before. In the console, `log.records(0) |> facts(unlock.Passphrase_Wrong_Counted_By_Tpm) |> where(principal = 1)` gives each wrong passphrase of principal 1 that the TPM counted.
