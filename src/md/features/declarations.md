@@ -145,6 +145,43 @@ The exports with an effect are the commands `apply`, `rollback`, `build`, `enter
 
 The cost is a second evaluation of the same reference on a later line. The evaluation is pure, so it gives the same value ("Open questions").
 
+### The parser package
+
+The parser of Lex is `src/library/private/console/lex_parser`. It reads a text and gives a syntax tree ([`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md), "Syntax tree"); it evaluates nothing.
+
+**What it took from the console.** The console read and ran a line in one pass. `expression`, `term`, `factor` and `call` of `language.odin` read a token and computed its value at once, `condition_read` of `tables.odin` read the field and the operator of a condition, and `fact_name_read` of `facts.odin` the name of a fact type. A call ran when the parser reached its `)`, so the calls before a fault of the text ran before the parser found the fault. The parser package now holds that grammar, the arguments by their form, the head of a condition and the fact name. The console keeps:
+
+- the evaluation of each node: the values, the operators, the variables and the commands, the checks of a call, the checks of a condition against the record of its table, the fact names of the image;
+- the sentence of each refusal;
+- `pipe_nested_form` and the checks of `|>` before the run, which read the line before its nested form ([pipe_operator.md](pipe_operator.md));
+- the scanner of `console_language`, which the colors share, and `console_condition`, which the tool shares.
+
+**The tree.** Each node has a kind, its place (line, column from 1, and offset), its own bytes, and its children: the arguments of a call, the two operands of an operator, the value of a condition. The caller gives the memory; the package keeps no state and calls no allocator.
+
+**A refusal is a node in its place.** The parse stops at the first fault of the text, and the fault is a node where the one pass met it: an argument, an operand, or the root with the part before it as its child. The tree also holds it as a record: the member, the place and a value. The console evaluates the tree from the left, so the calls before the fault run, then the line fails with the sentence of the one pass ([`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "Errors": "A call that runs before the error keeps its effect"). The parse writes no text.
+
+**The form of an argument comes from the caller.** The parser asks a lookup of the caller for the form of each argument of a call: an expression, a condition or a fact name, as the one pass read it from the command. So inside `where`, `=` is the operator of a condition. The package keeps no table of the commands, because the console changes its table with each module that it loads.
+
+**A condition keeps both readings.** The kind of its field is known only when the evaluation has the table. The node keeps the head (the field, the operator, the place of the value) or its refusal, the value as an expression, and whether the first token of the value ends the argument. A status field reads that first token as the name of a member; another field evaluates the expression.
+
+**The bounds.** A text has at most the bytes of the longest line that the console runs, 200. Each level of a nesting takes one byte at least, so this bound is also the bound of the depth of the parser, and of its nodes: one for each byte, and the refusal. A text of a declaration is longer: its bounds come with mode `declaration`.
+
+**Why a private part, and not a support package yet.** A support package has two owners or more ([../infrastructure/repository_layout.md](../infrastructure/repository_layout.md), "The rules of the imports"), and the console is its one reader until the evaluation process exists. The package moves to `src/library/support` with the evaluation process, together with the scanner and `console_condition` that it imports, because a support package imports no private part.
+
+Refused forms:
+
+- **A parse of the whole line before the first call.** A fault of the text then fails a line before any call runs, and this changes what a line does today. If a later layer makes this change, it is a change that a reader sees, with its own changelog fragment.
+- **The parser in a support package now.** It has one owner, and the tool refuses it.
+- **Sentences made by the parser.** The sentence of a condition names the fields of the record of the table, which only the evaluation knows.
+- **Each argument read as an expression, with `=` as an operator.** `=` then has two meanings in one grammar, and the evaluator must tell a field from a variable. The form of the parameter says it with no rule.
+
+Subtle points:
+
+- **A load and a call in one line.** The parser reads the forms before any call, so a command that a call of the same line loads is read with the forms of before. Only built-in commands have a form other than an expression, so the forms are the same.
+- **A name that no command has.** The parser reads its arguments as expressions; the evaluation refuses the name before it reaches them, as the one pass did.
+- **A status reads one token.** When the value is a longer expression, the parser read more than the one pass. The node says that the first token does not end the argument, and the evaluation fails with `"," or ")" is missing`, the sentence of the one pass.
+- **A zero byte** ends the text for the parser, as it did for the one pass. The line editor types no such byte.
+
 ### A record literal is typed by its use
 
 A record literal has no type of its own. It takes the type of the parameter or the field that receives it:
@@ -338,7 +375,7 @@ From each root it follows the imports of each module, the debug object of each m
 
 Each layer adds one capability to a system that works, and each is a tested commit:
 
-1. **The parser in one library package.** The parser leaves the console for one library package, with no change of behaviour: the same trees and the same refusals.
+1. **The parser in one library package.** The parser leaves the console for one library package, with no change of behaviour: the same trees and the same refusals. The package is a private part of the console until the evaluation process is its second owner ("The parser package").
 2. **The shared lazy evaluator in mode `console`.** It replaces the eager evaluator of the console, with no change of behaviour: each line is forced whole, and the effects run in the order of their data.
 3. **The record literal, named arguments, `let`, `with`, and the placeholder `_` of `|>`.**
 4. **Functions `(x) => …`**, used by `map`.
@@ -348,4 +385,6 @@ Each layer adds one capability to a system that works, and each is a tested comm
 
 ## State
 
-Designed, not built.
+Built: layer 1 of the build order. The parser of Lex is the private part `lex_parser` of the console, with host tests of each form of the console and each refusal with its place; the console evaluates its tree.
+
+Left: layers 2 to 7, and the move of the parser to `src/library/support` with the evaluation process.

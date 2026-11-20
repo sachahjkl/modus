@@ -354,7 +354,7 @@ Do not use: color code, severity (for text).
 
 A token is the smallest part of a line of the console: a name, a number, a text, an operator, the arrow `->`, the pipe operator `|>`, or one byte of no other token.
 
-One scanner (`src/library/private/console/console_language`) gives them to the parser of the console and to its colors, so the colors never disagree with the parser.
+One scanner (`src/library/private/console/console_language`) gives them to the parser of Lex and to the colors of the console, so the colors never disagree with the parser.
 
 Do not use: lexeme, word (for this).
 

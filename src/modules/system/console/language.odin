@@ -4,29 +4,24 @@ import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:private/console/console_condition"
 import "modus:private/console/console_language"
+import "modus:private/console/lex_parser"
 import "modus:support/system"
 
-// The language of the console.
+// The evaluation of a line of Lex.
 //
-//   line       = name "=" pipeline | pipeline
-//   pipeline   = expression { "|>" stage }
-//   stage      = name | name "(" arguments ")"
-//   expression = term { ("+" | "-") term }
-//   term       = factor { ("*" | "/" | "%") factor }
-//   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" pipeline ")"
-//   arguments  = argument { "," argument }
-//   argument   = pipeline | condition | name
-//   condition  = name ("=" | "!=" | "<" | "<=" | ">" | ">=") (pipeline | name)
-//
-// The form of each parameter of a command (Parameter_Form) says which
-// argument the parser reads there: a pipeline, a condition on a field of
-// the table of the first argument (`where(t, block = 12)`), or the name of
-// a fact type (`facts(t, storage.Bad_Block)`). In a condition, a name is a
+// The parser of Lex (src/library/private/console/lex_parser) gives the
+// syntax tree of a line, and this file evaluates it from the left, as the
+// console read and ran a line in one pass before: the calls before a fault
+// of the text run, then the line fails with the sentence of the fault. The
+// form of each parameter of a command (Parameter_Form) says which argument
+// the parser reads there: an expression, a condition on a field of the
+// table of the first argument (`where(t, block = 12)`), or the name of a
+// fact type (`facts(t, storage.Bad_Block)`). In a condition, a name is a
 // field and, after the operator of a status field, a member of its enum:
 // never a variable.
 //
 // The pipe operator has the lowest priority: `a |> f(b)` is `f(a, b)`, and
-// `a |> f` is `f(a)`. The parser below reads no "|>": before any call,
+// `a |> f` is `f(a)`. The parser reads no "|>": before any call,
 // pipe_nested_line writes the line with calls in calls
 // (src/library/private/console/console_language/pipe.odin), so a line with
 // "|>" checks and runs as that line.
@@ -72,15 +67,9 @@ Value :: struct {
 // so that a value stays small: a call keeps 12 of them on the stack.
 line_conditions: console_condition.Condition_List
 
-// What the parser reads for a parameter of a command. Most parameters take
-// an expression; a few take a name that the console checks against a
-// description, never a variable (src/md/features/log_facts.md, "Filters
-// of a reader: one form").
-Parameter_Form :: enum u8 {
-	Expression = 0, // An expression, whose value has the kind of the parameter.
-	Fact_Name  = 1, // The name of a fact type, "package.Type": a Text value with the name.
-	Condition  = 2, // A field of the table of the first argument, an operator and a value.
-}
+// What the parser reads for a parameter of a command: an expression, the
+// name of a fact type (a Text value with the name), or a condition.
+Parameter_Form :: lex_parser.Parameter_Form
 
 // A condition on one field of the rows of a table: `block = 12`,
 // `level = Warning`, `name != "console"`. The package console_condition
@@ -246,16 +235,18 @@ variables: [VARIABLE_CAPACITY]Variable
 scratch: [4096]u8
 scratch_count: int
 
-source: string
-position: int
 failed: bool
 
 // The nested form of the line that runs, and the stages of its "|>". A
-// Text value of the line is a part of its source, so the nested form lives
-// until the next line.
+// Text value of the line is a part of its nested form, so the nested form
+// lives until the next line.
 NESTED_LINE_SIZE :: 1024 // A nested form is never longer than its line: a line of the history has 256 bytes at most.
 nested_line: [NESTED_LINE_SIZE]u8
 line_stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
+
+// The syntax tree of the nested form of the line that runs. Its names and
+// its texts are parts of the nested form.
+line_tree: lex_parser.Syntax_Tree
 
 scratch_text :: proc "contextless" (parts: ..system.Part) -> string {
 	text := system.format(scratch[scratch_count:], ..parts)
@@ -263,30 +254,15 @@ scratch_text :: proc "contextless" (parts: ..system.Part) -> string {
 	return text
 }
 
-// The parser reads its tokens with the scanner of src/library/private/console/console_language,
-// the one that colors the lines: the two agree on each token.
-skip_spaces :: proc "contextless" () {
-	position = console_language.space_end(source, position)
-}
-
-peek :: proc "contextless" () -> u8 {
-	skip_spaces()
-	return position < len(source) ? source[position] : 0
-}
-
-accept :: proc "contextless" (character: u8) -> bool {
-	if peek() == character {
-		position += 1
-		return true
+// parameter_form_of gives the parser the form of a parameter of a command:
+// the forms of the command that a call of the name runs, as the call reads
+// them when the line runs.
+parameter_form_of :: proc "contextless" (data: rawptr, command_name: string, index: int) -> lex_parser.Parameter_Form {
+	found := command_find(command_name)
+	if found == nil || index < 0 || index >= len(found.parameter_forms) {
+		return .Expression
 	}
-	return false
-}
-
-read_name :: proc "contextless" () -> string {
-	skip_spaces()
-	start := position
-	position = console_language.name_end(source, start)
-	return source[start:position]
+	return found.parameter_forms[index]
 }
 
 // run_line runs one line: it evaluates the expression, shows the log
@@ -294,26 +270,20 @@ read_name :: proc "contextless" () -> string {
 // its failure, or the value of an expression. A line that keeps its value
 // in a variable draws nothing.
 run_line :: proc "contextless" (text: string) {
-	source, position, failed, scratch_count, table_used, line_conditions.count = text, 0, false, 0, 0, 0
+	failed, scratch_count, table_used, line_conditions.count = false, 0, 0, 0
 	failure_reset()
 	line_records_start()
 
 	// A fault of "|>" fails the line here, before any call runs.
-	source = pipe_nested_line(text)
+	nested := pipe_nested_line(text)
 	name: string
 	assigned := false
 	value: Value
 	if !failed {
-		// An assignment starts with a name and "=".
-		name = read_name()
-		assigned = len(name) > 0 && accept('=')
-		if !assigned {
-			position = 0
-		}
-		value = expression()
-		if !failed && peek() != 0 {
-			fail("unexpected \"", source[position:], "\"")
-		}
+		lex_parser.parse(nested, {form_of = parameter_form_of}, &line_tree)
+		name = line_tree.assigned_name
+		assigned = len(name) > 0
+		value = line_evaluate()
 	}
 	line_records_show()
 	if !failed && assigned {
@@ -385,158 +355,197 @@ assign :: proc "contextless" (name: string, value: Value) {
 	}
 }
 
-expression :: proc "contextless" () -> Value {
-	left := term()
-	for !failed {
-		operator := peek()
-		if operator != '+' && operator != '-' {
-			break
-		}
-		position += 1
-		right := term()
-		if failed {
-			break
-		}
+// line_evaluate evaluates the tree of the line, from the left. A refusal of
+// the text is a node in its place: the parts before it run, then the line
+// fails with its sentence, as when the console read and ran the line in one
+// pass.
+line_evaluate :: proc "contextless" () -> Value {
+	// The bounds of the parser: no line that the console runs reaches them,
+	// and a tree past one is not whole in its places, so nothing of it runs.
+	switch line_tree.refusal.refusal {
+	case .Text_Too_Long:
+		return fail("the line has more than ", i64(lex_parser.TEXT_BYTES_MOST), " bytes")
+	case .Nodes_Full:
+		return fail("the line has more parts than the console reads: ", i64(lex_parser.NODE_CAPACITY))
+	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused:
+	}
+	return evaluate(line_tree.root)
+}
+
+// evaluate gives the value of a node of the tree of the line.
+evaluate :: proc "contextless" (index: lex_parser.Node_Index) -> Value {
+	node := lex_parser.node_at(&line_tree, index)
+	if node == nil {
+		return fail("the line ends too soon")
+	}
+	switch node.kind {
+	case .Integer:
+		return {kind = .Integer, integer = node.integer}
+	case .Text:
+		quoted := lex_parser.node_text(&line_tree, index)
+		return {kind = .Text, text = quoted[1:len(quoted) - 1]}
+	case .Name:
+		return name_evaluate(lex_parser.node_text(&line_tree, index))
+	case .Call:
+		return call(index)
+	case .Negate:
+		return negate_evaluate(node)
+	case .Binary:
+		return binary_evaluate(node)
+	case .Refused:
+		return refused_evaluate(index)
+	case .Condition, .Fact_Name:
+		// The parser makes these only as an argument of a call, and call
+		// reads them there.
+		return fail("unexpected \"", line_tree.text[int(node.place.offset):], "\"")
+	}
+	return {}
+}
+
+// binary_evaluate gives the value of an operator on two values. The left
+// one runs first.
+binary_evaluate :: proc "contextless" (node: ^lex_parser.Node) -> Value {
+	left := evaluate(node.first_child)
+	if failed {
+		return {}
+	}
+	right := evaluate(lex_parser.next_of(&line_tree, node.first_child))
+	if failed {
+		return {}
+	}
+	operator := lex_parser.OPERATOR_TEXTS[node.operator]
+	switch node.operator {
+	case .Add, .Subtract:
 		switch {
 		case left.kind == .Integer && right.kind == .Integer:
 			result: i64
 			fits: bool
-			if operator == '+' {
+			if node.operator == .Add {
 				result, fits = console_language.integer_add(left.integer, right.integer)
 			} else {
 				result, fits = console_language.integer_subtract(left.integer, right.integer)
 			}
 			if !fits {
-				return fail_overflow(operator == '+' ? "+" : "-", left.integer, right.integer)
+				return fail_overflow(operator, left.integer, right.integer)
 			}
 			left.integer = result
-		case left.kind == .Text && right.kind == .Text && operator == '+':
+		case left.kind == .Text && right.kind == .Text && node.operator == .Add:
 			left.text = scratch_text(left.text, right.text)
 		case:
-			return fail("\"", string([]u8{operator}), "\" does not take ", kind_names[left.kind], " and ", kind_names[right.kind])
+			return fail("\"", operator, "\" does not take ", kind_names[left.kind], " and ", kind_names[right.kind])
 		}
-	}
-	return left
-}
-
-term :: proc "contextless" () -> Value {
-	left := factor()
-	for !failed {
-		operator := peek()
-		if operator != '*' && operator != '/' && operator != '%' {
-			break
-		}
-		position += 1
-		right := factor()
-		if failed {
-			break
-		}
+	case .Multiply, .Divide, .Remainder:
 		if left.kind != .Integer || right.kind != .Integer {
-			return fail("\"", string([]u8{operator}), "\" does not take ", kind_names[left.kind], " and ", kind_names[right.kind])
+			return fail("\"", operator, "\" does not take ", kind_names[left.kind], " and ", kind_names[right.kind])
 		}
-		switch operator {
-		case '*':
+		if node.operator == .Multiply {
 			product, fits := console_language.integer_multiply(left.integer, right.integer)
 			if !fits {
 				return fail_overflow("*", left.integer, right.integer)
 			}
 			left.integer = product
-		case '/', '%':
-			if right.integer == 0 {
-				return fail("division by zero")
-			}
-			quotient, rest, fits := console_language.integer_divide(left.integer, right.integer)
-			if !fits {
-				return fail_overflow("/", left.integer, right.integer)
-			}
-			left.integer = operator == '/' ? quotient : rest
+			break
 		}
+		if right.integer == 0 {
+			return fail("division by zero")
+		}
+		quotient, rest, fits := console_language.integer_divide(left.integer, right.integer)
+		if !fits {
+			return fail_overflow("/", left.integer, right.integer)
+		}
+		left.integer = node.operator == .Divide ? quotient : rest
+	case .None:
+		// The parser gives each Binary node its operator.
+		return fail("unexpected \"", line_tree.text[int(node.place.offset):], "\"")
 	}
 	return left
 }
 
-factor :: proc "contextless" () -> Value {
-	c := peek()
-	switch {
-	case c == '-':
-		position += 1
-		value := factor()
+// negate_evaluate gives the opposite of an Integer.
+negate_evaluate :: proc "contextless" (node: ^lex_parser.Node) -> Value {
+	value := evaluate(node.first_child)
+	if failed {
+		return {}
+	}
+	if value.kind != .Integer {
+		return fail("\"-\" does not take ", kind_names[value.kind])
+	}
+	opposite, fits := console_language.integer_negate(value.integer)
+	if !fits {
+		return fail_overflow("-", 0, value.integer)
+	}
+	value.integer = opposite
+	return value
+}
+
+// refused_evaluate evaluates the part that the parser read before a fault
+// of the text, then fails the line with the sentence of the fault.
+refused_evaluate :: proc "contextless" (index: lex_parser.Node_Index) -> Value {
+	node := lex_parser.node_at(&line_tree, index)
+	if node.first_child != lex_parser.NO_NODE {
+		evaluate(node.first_child)
 		if failed {
 			return {}
 		}
-		if value.kind != .Integer {
-			return fail("\"-\" does not take ", kind_names[value.kind])
+	}
+	switch node.refusal {
+	case .Line_Ends_Too_Soon:
+		return fail("the line ends too soon")
+	case .Unexpected:
+		return fail("unexpected \"", line_tree.text[int(node.place.offset):], "\"")
+	case .Number_Too_Large:
+		// The record: the limit is the largest Integer; the sentence has
+		// the digits, which no Integer holds.
+		result := fail("the number ", lex_parser.node_text(&line_tree, index), " does not fit in an Integer: the largest is ", i64(console_language.INTEGER_MOST))
+		failure_record_set(errors.error_make(.Over_Limit, .None, 0, 0, console_language.INTEGER_MOST), "a number", nil)
+		return result
+	case .Text_Without_End_Quote:
+		return fail("the text has no end quote")
+	case .Close_Parenthesis_Missing:
+		return fail("\")\" is missing")
+	case .Comma_Or_Close_Missing:
+		return fail("\",\" or \")\" is missing")
+	case .Too_Many_Arguments:
+		return fail("too many arguments")
+	case .Text_Too_Long:
+		return fail("the line has more than ", i64(lex_parser.TEXT_BYTES_MOST), " bytes")
+	case .Nodes_Full:
+		return fail("the line has more parts than the console reads: ", i64(lex_parser.NODE_CAPACITY))
+	case .None, .Fact_Name_Missing, .Condition_Head_Refused:
+		// A Fact_Name or a Condition node holds these; a Refused node never.
+	}
+	return fail("unexpected \"", line_tree.text[int(node.place.offset):], "\"")
+}
+
+// name_evaluate gives the value of a name alone: a variable, or one field
+// of a Record variable.
+name_evaluate :: proc "contextless" (name: string) -> Value {
+	for &variable in variables {
+		if string(variable.name[:variable.name_count]) == name {
+			return variable.value
 		}
-		opposite, fits := console_language.integer_negate(value.integer)
-		if !fits {
-			return fail_overflow("-", 0, value.integer)
+	}
+	for &command in commands[:command_count] {
+		if command.name == name {
+			return fail(name, " is a command: write ", name, "(...)")
 		}
-		value.integer = opposite
-		return value
-	case c == '(':
-		position += 1
-		value := expression()
-		if !failed && !accept(')') {
-			return fail("\")\" is missing")
-		}
-		return value
-	case console_language.digit(c):
-		start := position
-		end := console_language.number_end(source, start)
-		position = end
-		value, fits := console_language.number_value(source, start, end)
-		if !fits {
-			// The record: the limit is the largest Integer; the sentence
-			// has the digits, which no Integer holds.
-			result := fail("the number ", source[start:end], " does not fit in an Integer: the largest is ", i64(console_language.INTEGER_MOST))
-			failure_record_set(errors.error_make(.Over_Limit, .None, 0, 0, console_language.INTEGER_MOST), "a number", nil)
-			return result
-		}
-		return {kind = .Integer, integer = value}
-	case c == '"':
-		start := position + 1
-		end, finished := console_language.text_end(source, position)
-		if !finished {
-			position = end
-			return fail("the text has no end quote")
-		}
-		position = end
-		return {kind = .Text, text = source[start:end - 1]}
-	case console_language.name_first(c):
-		name := read_name()
-		if accept('(') {
-			return call(name)
+	}
+	// variable.field: one field of a Record.
+	for split := len(name) - 1; split > 0; split -= 1 {
+		if name[split] != '.' {
+			continue
 		}
 		for &variable in variables {
-			if string(variable.name[:variable.name_count]) == name {
-				return variable.value
-			}
-		}
-		for &command in commands[:command_count] {
-			if command.name == name {
-				return fail(name, " is a command: write ", name, "(...)")
-			}
-		}
-		// variable.field: one field of a Record.
-		for split := len(name) - 1; split > 0; split -= 1 {
-			if name[split] != '.' {
-				continue
-			}
-			for &variable in variables {
-				if string(variable.name[:variable.name_count]) == name[:split] && variable.value.kind == .Record {
-					if value, found := field_value(variable.value, name[split + 1:]); found {
-						return value
-					}
-					return fail(type_text(variable.value.file, .Record, variable.value.detail), " has no field ", name[split + 1:])
+			if string(variable.name[:variable.name_count]) == name[:split] && variable.value.kind == .Record {
+				if value, found := field_value(variable.value, name[split + 1:]); found {
+					return value
 				}
+				return fail(type_text(variable.value.file, .Record, variable.value.detail), " has no field ", name[split + 1:])
 			}
-			break
 		}
-		return fail("no variable has the name ", name)
-	case c == 0:
-		return fail("the line ends too soon")
+		break
 	}
-	return fail("unexpected \"", source[position:], "\"")
+	return fail("no variable has the name ", name)
 }
 
 // command_find gives the command that a call of a name runs: of two
@@ -554,8 +563,9 @@ command_find :: proc "contextless" (name: string) -> (found: ^Command) {
 // the check of a call before it runs, and of the value on the left of a
 // "|>" when the console knows it before the run.
 argument_accepted :: proc "contextless" (found: ^Command, index: int, argument: Value) -> bool {
-	// A fact name and a condition are read by the parser, which checked
-	// them against the image and against the table: no value comes there.
+	// A fact name and a condition are read by the parser, and their
+	// evaluation checked them against the image and against the table: no
+	// value comes there.
 	if found.parameter_forms[index] != .Expression {
 		return true
 	}
@@ -583,44 +593,38 @@ argument_accepted :: proc "contextless" (found: ^Command, index: int, argument: 
 	return true
 }
 
-// call reads the arguments of a command, checks their types against the
-// parameters, and calls the function.
-call :: proc "contextless" (name: string) -> Value {
+// call evaluates the arguments of a Call node from the left, checks their
+// types against the parameters, and calls the function.
+call :: proc "contextless" (call_node: lex_parser.Node_Index) -> Value {
+	name := lex_parser.node_text(&line_tree, call_node)
 	found := command_find(name)
 	if found == nil {
 		return fail("no command has the name ", name, "; try help()")
 	}
 	arguments: [ARGUMENT_CAPACITY]Value
 	count := 0
-	if !accept(')') {
-		for {
-			if count == ARGUMENT_CAPACITY {
-				return fail("too many arguments")
-			}
-			// A fact name and a condition are names that the console
-			// checks, never an expression: `block` is a field, not a
-			// variable.
-			value: Value
-			switch found.parameter_forms[count] {
-			case .Expression:
-				value = expression()
-			case .Fact_Name:
-				value = fact_name_read(name)
-			case .Condition:
-				value = condition_read(name, arguments[:count])
-			}
-			if failed {
-				return {}
-			}
-			arguments[count] = value
-			count += 1
-			if accept(')') {
-				break
-			}
-			if !accept(',') {
-				return fail("\",\" or \")\" is missing")
-			}
+	for argument := lex_parser.node_at(&line_tree, call_node).first_child; argument != lex_parser.NO_NODE; argument = lex_parser.next_of(&line_tree, argument) {
+		// A fact name and a condition are names that the console checks,
+		// never an expression: `block` is a field, not a variable. A
+		// refusal of the text after the arguments before it fails here.
+		value: Value
+		switch lex_parser.node_at(&line_tree, argument).kind {
+		case .Fact_Name:
+			value = fact_name_evaluate(name, argument)
+		case .Condition:
+			value = condition_evaluate(name, arguments[:count], argument)
+		case .Integer, .Text, .Name, .Call, .Negate, .Binary, .Refused:
+			value = evaluate(argument)
 		}
+		if failed {
+			return {}
+		}
+		// The parser ends the arguments with a refusal at this count.
+		if count == ARGUMENT_CAPACITY {
+			return fail("too many arguments")
+		}
+		arguments[count] = value
+		count += 1
 	}
 	if count != found.parameter_count {
 		return fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(count))
@@ -717,8 +721,8 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 // that the parser reads as names: a fact name against the fact names of
 // the image, and the field of a condition against the record on the left
 // of the stage when the console knows it (pipe_left_record). A form that
-// it does not read, it leaves to the parser, which fails on it when the
-// line runs.
+// it does not read, it leaves to the parser and to the evaluation, which
+// fail on it when the line runs.
 pipe_stage_names_check :: proc "contextless" (text: string, stages: []console_language.Pipe_Stage, index: int, found: ^Command, left: Value, knowledge: Left_Knowledge) -> bool {
 	stage := stages[index]
 	name := text[stage.name_start:stage.name_end]
@@ -743,7 +747,7 @@ pipe_stage_names_check :: proc "contextless" (text: string, stages: []console_la
 		if !record_ok {
 			return true
 		}
-		// The same checks as condition_read, with the same sentences.
+		// The same checks as condition_evaluate, with the same sentences.
 		details := console_condition.Refusal_Details {
 			command = name,
 			file    = file,
@@ -790,7 +794,7 @@ pipe_stage_names_check :: proc "contextless" (text: string, stages: []console_la
 // literal_of reads a value that is one literal and nothing after it, at a
 // byte place of an argument: a number, a number after "-", or a text.
 // literal is false for any other expression, and for a number that does
-// not fit in an Integer: the parser reads those when the line runs.
+// not fit in an Integer: the evaluation checks those when the line runs.
 literal_of :: proc "contextless" (text: string, place: int) -> (type: module.Type, value: i64, literal: bool) {
 	token := console_language.token_next(text, place)
 	negative := false

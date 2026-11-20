@@ -100,6 +100,16 @@ The design: `docs/CONSOLE.md`, "Lex"; `src/md/features/declarations.md`.
 
 Do not use: console language, the language (for this), shell script, Nix language.
 
+### Syntax tree
+
+A syntax tree is what the parser of Lex gives for one text: a typed node for each part, with its line and its column.
+
+The evaluator reads the syntax tree, never the text. A fault of the text is a node at its place, with its refusal as a record: the console evaluates the parts before it, as its one pass did, then fails with the sentence of the fault. The tree holds no sentence. It is not a tree of a store, which has a hash.
+
+The design: `src/md/features/declarations.md`, "The parser package".
+
+Do not use: AST, parse tree, tree (for this).
+
 ### Desktop shell
 
 The desktop shell is the process that starts processes and shows their windows to the principal.
