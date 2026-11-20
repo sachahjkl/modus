@@ -98,7 +98,7 @@
 //   value bytes in 9 records, at the bound of a call, read back: ...: as it
 //   must`: it gives Log two facts of several records and reads each record
 //   back, joined (long_facts.odin);
-// - `log_reader: a child with a log limit of 4 records a second: ...: as it
+// - `log_reader: a child whose log limit holds 4 records: ...: as it
 //   must`: its child `log_reader fact budget` gives Log facts of more
 //   records than its limit has left, which the kernel refuses whole, and
 //   this process reads the records of the child (long_facts.odin);

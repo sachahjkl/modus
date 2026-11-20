@@ -557,6 +557,41 @@ The rules that decided each line, past those of the groups before:
 - **No log line of the network service is a refused frame.** The network service counts each frame that it refuses in the problem rows of an endpoint and of the machine (`datagram.Problem_Row`), which a process reads by a call: they are no log line, and need no fact.
 - **No line of the entropy service is a refused read.** The service answers a refused read in its completion, with its error record; the root service writes the line, and its facts are those of `root`.
 
+### The facts of the other system modules
+
+The other modules of `src/modules/system` convert with the groups of the demonstrations: the debugger and its window, the start policy, the module file service, the date service, the windows `boot`, `pages`, `inspect` and `manual`, the call host `host`, the assembler `assemble` and the C compiler `c_compiler`, and the lines that the services of the devices and of the network, `remote` and `remote_display`, kept as text in their group. Each module has a file `facts.odin`; the debugger has the most fact types, 49.
+
+The rules that decided each line, past those of the groups before:
+
+- **A text with no small bound is a text view** ("Text views"): a path of the module file service (`path`, `request_path`), the target, the title and the label of a link of the manual, a debug place of the debugger window and of `inspect`. A name of a process or of a store keeps a fixed Text field.
+- **A load error is one fact for each stage.** The call host declares its fact types as distinct types of the shapes of the contract (`host.Load_Find_Failed :: distinct module.Load_Find_Fields`, and one for each stage, `Load_Map_Failed` and `Load_Unmap_Failed` of one shape), and a fact type with no field for an error with no stage ("The load error as facts").
+- **A stop of a row of the start policy has the fields of the stop of the root service:** `cause`, and `outcome` when the row stopped itself, so `where(outcome = Done)` reads both writers.
+- **A refusal that crosses no border as a typed value is its word or its name.** The assembler gives its refusal by the place and the byte of the source, and the writer of module files gives its refusal as a number in an error record: neither is a contract enum. A refusal of the assembler is an Integer of 4 bytes beside the words of `assembler.refusal_sentence`; a refusal of the writer is the name of its member, a Text field that the module writes from `WRITER_REFUSAL_NAMES`. The word of the C entry that names no result keeps its number, as a word of another party does.
+- **A cause from a closed set of sentences is a Text field**, as the cause of a silent disk: the cause of a read of a debug object that stopped, the fault of a start list, the failure that stops the module file service.
+- **A date and a time zone are Text fields.** The date service writes a date in the form of ISO 8601 and a zone such as "+08:00", which no field kind writes.
+- **A count of pages that the line writes as "N pages" is a Size in pages.** The guard pages and the pages that can be written and executed of `pages` are plain counts, because the line writes other words after their number.
+
+### The facts of the demonstrations
+
+The demonstrations are the fifth writers that convert, and the last of `src/modules`: each of the 50 modules of `src/modules/demonstrations` has a file `facts.odin` with its fact types, 708 in all. Their lines are the cases that a scenario waits for, the measures that the measure record reads, and the failures that stop a demonstration. No table lists them: each `facts.odin` says what its module converted.
+
+The rules that decided each line, past those of the groups before:
+
+- **The template is the sentence of before.** A wait of a machine test, the measure record and each check of the tool after the run (`processor_frame_lines_check`, the generation that a test of `notes` reads) read the sentence unchanged. A field never has the name of a column of the head of `facts()`: `number`, `time`, `process`, `level`.
+- **A verdict is a Text field of a closed set of words.** "as it must" or "WRONG", "passed" or "FAILED", and the mark `wrong_mark`, " (WRONG)" or nothing: one fact type keeps each case, and `where(verdict = "WRONG")` finds the cases that did not hold. Where the sentence of a case leaves no room for a field of the verdict, the case is the type: `debugged.Breakpoints_Removed`.
+- **A part that is there or not is a Text field with its comma.** ", held" or nothing in `heron`; a word that depends on a count is a Text field too, "block" or "blocks" in `disk`, so that the sentence never says "1 blocks".
+- **A closed set of words of a module is a Text field.** The direction of a run of `disk`, the queue of `crowd`, the wait of `flow`, the name of a case of `fault_ring`: the enums of a module or of a support package are no contract enum, as for the grant of the root service. A status of another party that is no contract enum (`timed_stream.Status` in `tone`) stays its number.
+- **A status of the kernel writes its name.** Its field is the contract enum, or `operation.Status_Word` beside fields of 8 bytes. The status that a case of `counters` gives back on a failure keeps its number, as its line wrote it; the status that the case expected writes its name.
+- **An address is `Hexadecimal_Sixteen_Digits`.** It writes 16 digits with no "0x", as `system.Hex` did: the details of `debugged`, `fault_ring`, `guest_demo` and `return_fault`, and the hash of a body of `server`.
+- **A decimal of a number that is not a time is in hundredths.** The shares of `scheduler`, the rates of `fetch` and `randomness`, the times of a part of `extended_state` and of a call of `imports`: the lines wrote one decimal, and the facts write two. The kind `Tenths` writes one decimal, and came after these groups.
+- **A line that a loop wrote is one fact for each item.** The lock waits and the frame caches of `locks`, the weights of `scheduler`, the parts of a save of `extended_state`, the cost of the rules of `kernel_events`, whose 20 values passed one record. The sentence of each fact is the head of the line and the part of its item.
+- **A sentence that differs by a case is one fact type for each case.** A template has no condition: the stops of `tone`, the cases of `net` whose answer is an error record and its wrong answer, the stop of a child of `fault_ring` by its cause.
+- **An error record and a load error are fields.** A refusal of a service writes the seven fields of its record ("The error record as fields"): `fetch`, `net`, `notes`, `tables`. A start that fails at its load writes a fact of its status and its budgets, then a fact of the stage of its load error ("The load error as facts"): `kernel_events`, `scheduler`, `tables`.
+- **A value that the line wrote twice is two fields.** A template names each field once.
+- **A line with no value is a fact type with no field**, whose sentence is its template: the most frequent fact type of the small demonstrations (`fault`, `life`, `paint`, `twin`).
+- **A Text field comes last, and holds its longest text and a zero byte.** Each file says the longest text of each field beside its size.
+- **A line stays text** when it is the subject of its module: the demonstration `errors` writes the sentences of an error record, of a load error and of a stack, and a line longer than one log record, and its main test checks each writer of them by its words and the join of the long line.
+
 ### The kernel and the boot path
 
 The kernel and the boot program keep text records. The reason is not the store: the module file of the kernel is in the boot image, which a reader of the whole log holds. The reasons are two. The lines of the kernel are read on the serial port by a person at a fault of the start, with no tool: the boot stages, a stop on a fault, the report of a fault. And the kernel has no own-hash place and no `system` package: a writer of facts in the kernel is a kernel part of its own. The open question below keeps this choice open.

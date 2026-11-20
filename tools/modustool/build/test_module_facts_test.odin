@@ -626,7 +626,7 @@ the_facts_of_log_reader_of_its_checks_and_measures_write_their_sentences :: proc
 		c := TEST_FACT_COUNTS[index]
 		o := max(u64) - c
 		facts_expect_line(t, render(t, file, "Long_Facts_Read_Back", {{"short_bytes", c}, {"short_records", o}, {"long_bytes", c}, {"long_records", o}}), line_of_before("log_reader: a fact of ", c, " value bytes in ", o, " records and a fact of ", c, " value bytes in ", o, " records, at the bound of a call, read back: each record with its part, the count of its parts and its value bytes, joined whole into the bytes given: as it must"))
-		facts_expect_line(t, render(t, file, "Fact_Budget_Checked", {{"log_limit", c}, {"most_records", o}, {"past_limit_records", c}}), line_of_before("log_reader: a child with a log limit of ", c, " records a second: a fact of ", o, " records and one of ", c, " were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in one second was refused; its records hold whole facts only: as it must"))
+		facts_expect_line(t, render(t, file, "Fact_Budget_Checked", {{"log_limit", c}, {"most_records", o}, {"past_limit_records", c}}), line_of_before("log_reader: a child whose log limit holds ", c, " records: a fact of ", o, " records and one of ", c, " were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in the same budget was refused; its records hold whole facts only: as it must"))
 	}
 	// The sentences that the machine test waits for, with the values that
 	// the process writes.

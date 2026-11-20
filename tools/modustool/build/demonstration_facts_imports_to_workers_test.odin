@@ -12,8 +12,9 @@ import "core:testing"
 import "modustool:foundation"
 
 // The log facts of the demonstrations from imports to workers against the
-// lines that they replaced (src/md/features/log_facts.md, step 10 of "The
-// migration"). The fact types come from the extraction of the tool on the
+// lines that they replaced (src/md/features/log_facts.md, "The facts of the
+// demonstrations"), so that a wait on a sentence that did not change reads
+// it as before. The fact types come from the extraction of the tool on the
 // sources of each module: a host test does not depend on a build. Each
 // sentence is compared with the parts of the old line written by
 // sentence.format, at the edges of each field: the counts 0, 1 and

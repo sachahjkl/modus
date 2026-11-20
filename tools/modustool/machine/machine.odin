@@ -2709,7 +2709,7 @@ scenario := [?]Step {
 	// A fact of several records through the kernel, read back and joined,
 	// and the log limit that refuses such a fact whole.
 	{kind = .Wait, text = "[log_reader] log_reader: a fact of 145 value bytes in 2 records and a fact of 1168 value bytes in 9 records, at the bound of a call, read back: each record with its part, the count of its parts and its value bytes, joined whole into the bytes given: as it must", fails_on = "log_reader: WRONG"},
-	{kind = .Wait, text = "[log_reader] log_reader: a child with a log limit of 4 records a second: a fact of 9 records and one of 5 were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in one second was refused; its records hold whole facts only: as it must", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: a child whose log limit holds 4 records: a fact of 9 records and one of 5 were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in the same budget was refused; its records hold whole facts only: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	// The stop of log_reader is a log fact of the root service, with its
 	// stop cause and its stop outcome as fields. The step reads the field
@@ -2773,7 +2773,7 @@ scenario := [?]Step {
 	// A fact of several records through the kernel, read back and joined,
 	// and the log limit that refuses such a fact whole.
 	{kind = .Wait, text = "[log_reader] log_reader: a fact of 145 value bytes in 2 records and a fact of 1168 value bytes in 9 records, at the bound of a call, read back: each record with its part, the count of its parts and its value bytes, joined whole into the bytes given: as it must", fails_on = "log_reader: WRONG"},
-	{kind = .Wait, text = "[log_reader] log_reader: a child with a log limit of 4 records a second: a fact of 9 records and one of 5 were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in one second was refused; its records hold whole facts only: as it must", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: a child whose log limit holds 4 records: a fact of 9 records and one of 5 were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in the same budget was refused; its records hold whole facts only: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "stopped_process = \"log_reader\"", any_order = true},
 	{kind = .Wait, text = "root: log_reader stopped: itself, done"},

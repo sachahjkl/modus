@@ -505,7 +505,8 @@ integer_digits :: proc "contextless" (size: u32, unsigned: bool) -> int {
 
 // field_width gives the widest text that cell_of writes for a field: the
 // digits of an Integer, "0x" and two digits for each byte of a hexadecimal
-// Integer, the longest member of a status or its number, the 10 digits of
+// Integer, the longest text of the kinds that write a number in another
+// form, the longest member of a status or its number, the 10 digits of
 // a handle, the bytes of a Text, two digits for each byte of a Bytes field.
 // A field whose type or kind names nothing gives 0: its cell is empty.
 field_width :: proc "contextless" (item: module.Field) -> int {
@@ -526,8 +527,23 @@ field_width :: proc "contextless" (item: module.Field) -> int {
 		return int(size)
 	case .Integer:
 		switch kind {
-		case .Hexadecimal:
+		case .Hexadecimal, .Hexadecimal_No_Leading_Zero:
 			return 2 + 2 * int(size)
+		case .Hexadecimal_Sixteen_Digits:
+			return 16
+		case .Hundredths, .Tenths:
+			// The digits and the point: a value under one unit gains a 0
+			// before the point, and keeps no more width than its sign
+			// and its digits took.
+			return integer_digits(size, item.unsigned) + 1
+		case .Nanoseconds_As_Microseconds:
+			// Three digits fewer, the point, a decimal and " us"; a value
+			// under one microsecond is "0.0 us".
+			return max(6, integer_digits(size, true) + 2)
+		case .Time_Of_Day:
+			// The hours of the largest count of seconds, ":" and two
+			// digits of minutes; two digits of hours at least.
+			return max(5, integer_digits(size, true))
 		case .Status:
 			// A word that names no member is drawn as its number.
 			width := integer_digits(size, true)
@@ -539,7 +555,7 @@ field_width :: proc "contextless" (item: module.Field) -> int {
 				}
 			}
 			return width
-		case .Plain, .Module_Name, .Hash, .Fact_Values:
+		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View:
 		}
 		return integer_digits(size, item.unsigned)
 	}

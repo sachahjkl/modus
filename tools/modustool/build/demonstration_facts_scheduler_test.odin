@@ -6,8 +6,9 @@ import "core:testing"
 import "modustool:foundation"
 
 // The log facts of scheduler that replaced its long lines
-// (src/md/features/log_facts.md, step 10 of "The migration"), against the
-// lines that they replaced. Three kinds of line changed their sentence: a
+// (src/md/features/log_facts.md, "The facts of the demonstrations"),
+// against the lines that they replaced, so that a wait on a sentence that
+// did not change reads it as before. Three kinds of line changed their sentence: a
 // share is in hundredths of a percent with two decimals, where the line
 // wrote tenths; a line that passed the 512 bytes of a template is two
 // facts; the shares of the written weights, which a loop wrote over the

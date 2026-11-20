@@ -402,7 +402,7 @@ Long_Facts_Read_Back :: struct {
 
 // The log limit of a child refused each fact of more records than it had
 // left, whole.
-@(log_fact = "log_reader: a child with a log limit of {log_limit} records a second: a fact of {most_records} records and one of {past_limit_records} were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in one second was refused; its records hold whole facts only: as it must")
+@(log_fact = "log_reader: a child whose log limit holds {log_limit} records: a fact of {most_records} records and one of {past_limit_records} were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in the same budget was refused; its records hold whole facts only: as it must")
 Fact_Budget_Checked :: struct {
 	log_limit:          u64,
 	most_records:       u64,
