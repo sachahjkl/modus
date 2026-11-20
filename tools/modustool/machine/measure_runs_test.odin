@@ -15,18 +15,26 @@ main_scenario_waits_for_no_rate :: proc(t: ^testing.T) {
 	}
 }
 
-// The scenario of the measure run of a process starts it, waits for each
+// The scenario of the measure run of a process starts it, from the start
+// menu or by the line of the console that the table names, waits for each
 // line of its measures in the order of the table, then for its last line,
-// and stops the machine.
+// and stops the machine. A process with a line of the console is not
+// started from the start menu.
 @(test)
 measure_process_steps_wait_for_the_lines :: proc(t: ^testing.T) {
 	for process in measure_processes {
 		steps := make([dynamic]Step)
 		defer delete(steps)
 		measure_process_steps(process, &steps)
-		launched, last_wait := -1, -1
+		launched, last_wait, menu_starts := -1, -1, 0
 		for step, index in steps {
 			if step.kind == .Launch && step.text == process.name {
+				menu_starts += 1
+				if process.start_line == "" {
+					launched = index
+				}
+			}
+			if step.kind == .Type && process.start_line != "" && step.text == process.start_line {
 				launched = index
 			}
 			if step.kind == .Wait && step.text == process.done {
@@ -34,6 +42,25 @@ measure_process_steps_wait_for_the_lines :: proc(t: ^testing.T) {
 			}
 		}
 		testing.expectf(t, launched >= 0 && last_wait > launched, "the scenario of %s starts it and waits for its last line", process.name)
+		// A service that the process connects to starts before it, and the
+		// scenario waits for its line before the start of the process.
+		if process.service != "" {
+			service_launched, service_ready := -1, -1
+			for step, index in steps {
+				if step.kind == .Launch && step.text == process.service && service_launched < 0 {
+					service_launched = index
+				}
+				if step.kind == .Wait && step.text == process.ready && service_ready < 0 {
+					service_ready = index
+				}
+			}
+			testing.expectf(t, process.ready != "" && service_launched >= 0 && service_ready == service_launched + 1 && service_ready < launched, "the scenario of %s starts the service %s and waits for its line before the process", process.name, process.service)
+		}
+		menu_starts_expected := 0
+		if process.start_line == "" {
+			menu_starts_expected = 1
+		}
+		testing.expectf(t, menu_starts == menu_starts_expected, "the scenario of %s starts it %d times from the start menu", process.name, menu_starts)
 		at := launched + 1
 		for line in process.lines {
 			if line == "" {
@@ -46,6 +73,8 @@ measure_process_steps_wait_for_the_lines :: proc(t: ^testing.T) {
 		testing.expect_value(t, steps[len(steps) - 1].text, "kernel: the machine stops with code 0")
 	}
 	_, found := measure_process_find("clock")
+	testing.expect(t, found)
+	_, found = measure_process_find("log_reader")
 	testing.expect(t, found)
 	_, found = measure_process_find("life")
 	testing.expect(t, !found, "a process that measures nothing has no measure run")

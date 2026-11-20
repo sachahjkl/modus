@@ -28,8 +28,10 @@ measure_history_series_read_the_lines_of_the_record :: proc(t: ^testing.T) {
 		"[compositor] " + QUALITY_FRAME + ": least 812.4 us, median 9031.0 us, over 64 frames",
 		"[compositor] " + QUALITY_KEY + ": least 1203.7 us, median 14000.2 us, over 16 keys",
 		"[compositor] " + QUALITY_WINDOW_START_LOCKS + "51234.5 us",
+		"modustool: measure: the records of the log of build/test_output.txt: 412 up to \"kernel: ok\", 2210 up to \"root: the machine is usable\"",
+		"modustool: measure: the module files: root 1179648 bytes, 393216 bytes of code; compositor 2097152 bytes, 786432 bytes of code",
 	}
-	expected := [len(measure_history_series)]string{"25399040", "1106119202", "200581", "3887", "2272", "429355", "8215", "331", "66", "89509", "112.4", "20.5", "2823", "2310.4", "9120.0", "310.2", "14800.3", "812.4", "1203.7", "51234.5"}
+	expected := [len(measure_history_series)]string{"25399040", "1106119202", "200581", "3887", "2272", "429355", "8215", "331", "66", "89509", "112.4", "20.5", "2823", "2310.4", "9120.0", "310.2", "14800.3", "812.4", "1203.7", "51234.5", "2210", "1179648"}
 	sentences := make(map[string]bool, context.temp_allocator)
 	for series, index in measure_history_series {
 		in_table := false

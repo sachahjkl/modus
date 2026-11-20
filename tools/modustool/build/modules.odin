@@ -62,8 +62,9 @@ build_modules :: proc() -> bool {
 	// One process for each module, several at once (parallel_build.odin).
 	// A module whose inputs are the same is kept (incremental_build.odin).
 	build_modules_in_parallel() or_return
-	// The line of a log fact names its module by the first 8 bytes of its
-	// hash: two module files that share them would make one line two facts.
+	// The line of a log fact names its module by its module tag, the first
+	// 4 bytes of its hash: two module files that share it would make one
+	// line two facts.
 	if _, problem := fact_catalog_of_build(context.temp_allocator); problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
 		return false

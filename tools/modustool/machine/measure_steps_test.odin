@@ -7,8 +7,8 @@ import "modustool:foundation"
 import "modustool:checks"
 
 // Each required number is a line that a scenario of the full check waits
-// for, in the log that the table names; the second build is the one other
-// required source.
+// for, in the log that the table names; the second build and the measures
+// of the log of the main machine are the other required sources.
 @(test)
 measure_record_required_numbers_are_waited_for :: proc(t: ^testing.T) {
 	waits :: proc(steps: []Step, pattern: string) -> bool {
@@ -49,7 +49,9 @@ measure_record_required_numbers_are_waited_for :: proc(t: ^testing.T) {
 				waited ||= waits(scenario_cryptography[:], measure.pattern)
 			case foundation.BUILD_FOLDER + "/test_output_persist_1.txt":
 				waited ||= waits(scenario_persist_first[:], measure.pattern)
-			case build.REPRODUCIBLE_BUILD_RECORD:
+			case build.REPRODUCIBLE_BUILD_RECORD, build.LOG_MEASURES_RECORD:
+				// The tool writes them: the second build, and the measures
+				// of the log after the main machine.
 				waited = true
 			}
 		}

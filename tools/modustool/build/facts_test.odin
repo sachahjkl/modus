@@ -116,15 +116,22 @@ the_fact_types_of_a_module_come_from_their_calls :: proc(t: ^testing.T) {
 	testing.expect(t, sample.package_name == "fact_sample" && sample.template == "sample: the place {place}")
 }
 
-// facts_merge refuses a key of 0, two fact types with one key, and a record
-// of a fact whose name the module describes another way. It shares the
-// record of an equal description, and sorts the facts by key.
+// facts_merge refuses a key of 0, two fact types with one key, two fact
+// types with one key tag (the high bytes that the serial line writes: the
+// lowest and the highest key of one tag), and a record of a fact whose name
+// the module describes another way. It shares the record of an equal
+// description, and sorts the facts by key. Two keys of adjacent tags, the
+// highest key of one and the lowest of the next, are two fact types.
 @(test)
 facts_merge_refuses_a_collision :: proc(t: ^testing.T) {
+	// The least step of a fact key that changes its key tag.
+	TAG_STEP :: u64(1) << (64 - 8 * op.LOG_FACT_LINE_KEY_BYTES)
 	record := Record_Description{name = "Probe", size = 8, fields = []Field_Description{{name = "block", type = .Integer, unsigned = true}}}
 	other_record := Record_Description{name = "Probe", size = 8, fields = []Field_Description{{name = "place", type = .Integer, unsigned = true}}}
-	first := Fact_Description{key = 2, package_name = "a", type_name = "Probe", record = record}
-	second := Fact_Description{key = 1, package_name = "b", type_name = "Other", record = record}
+	first := Fact_Description{key = 2 * TAG_STEP, package_name = "a", type_name = "Probe", record = record}
+	second := Fact_Description{key = 2 * TAG_STEP - 1, package_name = "b", type_name = "Other", record = record}
+	same_tag := second
+	same_tag.key = 3 * TAG_STEP - 1
 	Case :: struct {
 		name:    string,
 		records: []Record_Description,
@@ -139,6 +146,8 @@ facts_merge_refuses_a_collision :: proc(t: ^testing.T) {
 	cases := [?]Case {
 		{"the key 0", nil, {zero_key}},
 		{"two types with one key", nil, {first, same_key}},
+		{"two types with one key tag", nil, {first, same_tag}},
+		{"two types with one key tag, the other first", nil, {same_tag, first}},
 		{"a record of another layout than the record of an export", {record}, {other_layout}},
 		{"two facts whose records have one name and two layouts", nil, {first, other_layout}},
 	}
@@ -150,7 +159,7 @@ facts_merge_refuses_a_collision :: proc(t: ^testing.T) {
 	description := Module_Description{records = {record}}
 	testing.expect(t, facts_merge(&description, {first, second}))
 	testing.expect(t, len(description.records) == 1 && len(description.facts) == 2)
-	testing.expect(t, description.facts[0].key == 1 && description.facts[1].key == 2)
+	testing.expect(t, description.facts[0].key == 2 * TAG_STEP - 1 && description.facts[1].key == 2 * TAG_STEP)
 	testing.expect(t, description.facts[0].record_index == 1 && description.facts[1].record_index == 1)
 }
 
@@ -282,11 +291,12 @@ fact_render_line :: proc(hash: [module.HASH_SIZE]u8, key: u64, values: []u8) -> 
 
 // The render of the line of a fact: the template with each value by the
 // kind of its field. A line stays raw when it is not the line of a fact
-// (each break of its form), when no module of the catalog has its hash,
-// when its module has no fact of its key, and when it has more value bytes
-// than the record. The catalog refuses two modules whose hashes share
-// their first 8 bytes. The render of a whole log changes the lines of the
-// facts only.
+// (each break of its form, and each text that op.log_fact_line never
+// writes), when no module of the catalog has its module tag, when its
+// module has no fact of its key tag, and when it has more value bytes than
+// the record. The catalog refuses two modules whose hashes share their
+// module tag. The render of a whole log changes the lines of the facts
+// only.
 @(test)
 the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	file := fact_render_file("probe: the value {value}, the mark {mark} and the number {number}; {{braces}}")
@@ -298,33 +308,130 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	testing.expect_value(t, fact_catalog_add(&catalog, hash, "", file), "")
 	values := [16]u8{42, 0, 0, 0, 0, 0, 0, 0, 0x46, 0x47, 0x4f, 0x4c, 7, 0, 0, 0}
 	line := fact_render_line(hash, FACT_RENDER_KEY, values[:])
+	// 42, a run of 7 zero bytes, the mark, then the number.
+	testing.expect_value(t, line, "#01020304:fa0adf 2am46474f4c07")
+	HEAD :: "#01020304:fa0adf"
 
-	// Lines that are not the line of a fact.
-	for text in ([?]string{"", "#", "a log line", strings.to_upper(line, context.temp_allocator), line[1:], strings.concatenate({line, "0"}, context.temp_allocator), strings.concatenate({line[:len("#0102030405060708:fa0adf38a559f4d1")], " "}, context.temp_allocator)}) {
+	// Lines that are not the line of a fact, and texts that the kernel
+	// never writes: a zero byte as digits, a run at the end, a short run
+	// before another run, an odd digit, a letter past the runs.
+	not_facts := [?]string {
+		"",
+		"#",
+		"a log line",
+		strings.to_upper(line, context.temp_allocator),
+		line[1:],
+		strings.concatenate({line, "0"}, context.temp_allocator),
+		HEAD + " ",
+		HEAD + "  2a",
+		HEAD + " 2a00",
+		HEAD + " 002a",
+		HEAD + " 2ag",
+		HEAD + " g",
+		HEAD + " gg2a",
+		HEAD + " yg2a",
+		HEAD + " 2",
+		HEAD + " 2a0",
+		HEAD + " 2a{",
+		HEAD + " 2aA0",
+		HEAD + " 2az",
+		HEAD + " 2azz",
+		HEAD + " 2a  ",
+		HEAD + " 2a\r",
+		HEAD + " 2a\r\n",
+		"#0102030:fa0adf 2a",
+		"#01020304:fa0ad 2a",
+		"#01020304fa0adf0 2a",
+	}
+	for text in not_facts {
 		_, parsed := fact_line_parse(text)
 		testing.expectf(t, !parsed, "the text %q is read as a fact", text)
 	}
-	too_many := strings.concatenate({line[:len("#0102030405060708:fa0adf38a559f4d1")], " ", strings.repeat("ab", op.LOG_FACT_VALUE_CAPACITY + 1, context.temp_allocator)}, context.temp_allocator)
+	// The capacity: 144 bytes by digits or by runs is a fact; one more
+	// byte, by a digit or by a run, is not.
+	full_digits := strings.concatenate({HEAD, " ", strings.repeat("ab", op.LOG_FACT_VALUE_CAPACITY, context.temp_allocator)}, context.temp_allocator)
+	full, full_parsed := fact_line_parse(full_digits)
+	testing.expect(t, full_parsed && full.value_count == op.LOG_FACT_VALUE_CAPACITY)
+	too_many := strings.concatenate({HEAD, " ", strings.repeat("ab", op.LOG_FACT_VALUE_CAPACITY + 1, context.temp_allocator)}, context.temp_allocator)
 	_, too_many_parsed := fact_line_parse(too_many)
 	testing.expect(t, !too_many_parsed)
+	// 143 zero bytes: 7 letters of 20 and one of 3, then one byte.
+	full_runs, full_runs_parsed := fact_line_parse(HEAD + " zzzzzzzi7f")
+	testing.expect(t, full_runs_parsed && full_runs.value_count == op.LOG_FACT_VALUE_CAPACITY && full_runs.values[op.LOG_FACT_VALUE_CAPACITY - 1] == 0x7f && full_runs.values[0] == 0)
+	_, past_runs_parsed := fact_line_parse(HEAD + " zzzzzzzj7f")
+	testing.expect(t, !past_runs_parsed)
+	// Runs of two letters between two bytes: "zz" is 40 zero bytes, "zzg"
+	// 41, and the line of the kernel for each is that text.
+	Run_Read :: struct {
+		text:  string,
+		zeros: int,
+	}
+	for item in ([?]Run_Read{{HEAD + " 01z02", 20}, {HEAD + " 01zz02", 40}, {HEAD + " 01zzg02", 41}}) {
+		read, read_ok := fact_line_parse(item.text)
+		expected: [op.LOG_FACT_VALUE_CAPACITY]u8
+		expected[0], expected[item.zeros + 1] = 0x01, 0x02
+		testing.expectf(t, read_ok && read.value_count == item.zeros + 2 && read.values == expected, "%q does not read back as %d zero bytes between two bytes", item.text, item.zeros)
+		testing.expect_value(t, fact_render_line(hash, FACT_RENDER_KEY, expected[:item.zeros + 2]), item.text)
+	}
 
-	// Lines that stay raw: another module, another key, more values than
-	// the record.
+	// Each line that the kernel writes reads back to its bytes: each byte
+	// value alone and after each run, and a Text field of its whole size.
+	for byte_value in 1 ..= 255 {
+		for zeros in ([?]int{0, 1, op.LOG_FACT_LINE_ZERO_RUN_MOST, op.LOG_FACT_LINE_ZERO_RUN_MOST + 1}) {
+			bytes: [op.LOG_FACT_VALUE_CAPACITY]u8
+			bytes[zeros] = u8(byte_value)
+			read, read_ok := fact_line_parse(fact_render_line(hash, FACT_RENDER_KEY, bytes[:zeros + 1]))
+			testing.expectf(t, read_ok && read.value_count == zeros + 1 && read.values == bytes && read.key_tag == op.log_fact_key_tag(FACT_RENDER_KEY), "the byte %d after %d zero bytes reads back wrong", byte_value, zeros)
+		}
+	}
+	text_field: [op.LOG_FACT_VALUE_CAPACITY]u8
+	for &value, index in text_field {
+		value = 'a' + u8(index % 26)
+	}
+	whole_text, whole_text_ok := fact_line_parse(fact_render_line(hash, FACT_RENDER_KEY, text_field[:]))
+	testing.expect(t, whole_text_ok && whole_text.value_count == op.LOG_FACT_VALUE_CAPACITY && whole_text.values == text_field)
+
+	// Lines that stay raw: another module, another key tag, more values
+	// than the record.
 	other_hash := hash
 	other_hash[0] = 0xFF
 	long_values: [17]u8
 	long_values[16] = 1
-	for text in ([3]string{fact_render_line(other_hash, FACT_RENDER_KEY, values[:]), fact_render_line(hash, FACT_RENDER_KEY + 1, values[:]), fact_render_line(hash, FACT_RENDER_KEY, long_values[:])}) {
+	TAG_STEP :: u64(1) << (64 - 8 * op.LOG_FACT_LINE_KEY_BYTES)
+	for text in ([3]string{fact_render_line(other_hash, FACT_RENDER_KEY, values[:]), fact_render_line(hash, FACT_RENDER_KEY + TAG_STEP, values[:]), fact_render_line(hash, FACT_RENDER_KEY, long_values[:])}) {
 		_, rendered := fact_line_render(&catalog, text)
 		testing.expectf(t, !rendered, "the line %s is rendered", text)
 	}
-	// A second module whose hash starts with the same 8 bytes is refused.
+	// A second module whose hash starts with the same module tag is
+	// refused, a hash that differs in the last byte of the tag is not.
 	twin := hash
 	twin[module.HASH_SIZE - 1] = 0xFF
 	testing.expect(t, fact_catalog_add(&catalog, twin, "", file) != "")
 	testing.expect_value(t, len(catalog.modules), 1)
+	neighbour := hash
+	neighbour[op.LOG_FACT_LINE_MODULE_HASH_BYTES - 1] += 1
+	neighbour_catalog := Fact_Catalog{allocator = context.temp_allocator}
+	testing.expect_value(t, fact_catalog_add(&neighbour_catalog, hash, "", file), "")
+	testing.expect_value(t, fact_catalog_add(&neighbour_catalog, neighbour, "", file), "")
+	// The outside modules of a test disk join the catalog of the build: an
+	// outside module with the tag of a module of the build is refused, and
+	// so is a second outside module with the tag of the first; modules with
+	// other tags are taken, and the module of the build keeps its lines.
+	outside_twin := [?]Fact_Catalog_Module{{hash = twin, file = file}}
+	outside_catalog := Fact_Catalog{allocator = context.temp_allocator}
+	testing.expect_value(t, fact_catalog_add(&outside_catalog, hash, "", file), "")
+	testing.expect(t, fact_catalog_add_modules(&outside_catalog, outside_twin[:]) != "")
+	other_outside := hash
+	other_outside[0] = 0xEE
+	twin_of_other := other_outside
+	twin_of_other[module.HASH_SIZE - 1] = 0xEE
+	outside_pair := [?]Fact_Catalog_Module{{hash = other_outside, file = file}, {hash = twin_of_other, file = file}}
+	testing.expect(t, fact_catalog_add_modules(&outside_catalog, outside_pair[:]) != "")
+	outside_taken := [?]Fact_Catalog_Module{{hash = neighbour, file = file}}
+	testing.expect_value(t, fact_catalog_add_modules(&outside_catalog, outside_taken[:]), "")
+	testing.expect(t, fact_catalog_file_of_hash(&outside_catalog, hash) != nil && fact_catalog_file_of_hash(&outside_catalog, twin) == nil)
 	// A whole hash names its module only: the twin, which starts with the
-	// same 8 bytes, and the hash of zeros name none.
+	// same module tag, and the hash of zeros name none.
 	testing.expect(t, fact_catalog_file_of_hash(&catalog, twin) == nil)
 	testing.expect(t, fact_catalog_file_of_hash(&catalog, {}) == nil)
 	testing.expect(t, fact_catalog_file_of_hash(&catalog, hash) != nil)
@@ -364,7 +471,7 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	// gives them: a key that the file has no fact type for, a count of 0,
 	// one less and one more than the record are refused; the record whole
 	// is the sentence of its line.
-	file_of_line := fact_catalog_file(&catalog, hash_prefix_of(hash))
+	file_of_line := fact_catalog_file(&catalog, module_tag_of(hash))
 	longer: [len(values) + 1]u8
 	copy(longer[:], values[:])
 	Refused_Values :: struct {
