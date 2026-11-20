@@ -239,7 +239,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			// It fits: the count of the keys of the table is under the
 			// bound of one principal, and the key is not zero bytes.
 			_ = disk_process.table_client_key_add(table, key)
-			system.log(.Info, "root: principal ", principal, " allowed the client key ", key_head_text(&head, key), " of remote: each call of that client acts for it", client_key_lasts(principal))
+			client_key_allowed_log(principal, key)
 			persisted_table_changed(principal)
 			return .Ok
 		}
@@ -316,16 +316,20 @@ client_connections_end :: proc "contextless" (place: int) -> (count: u64) {
 	return count
 }
 
-// client_key_lasts gives the end of the line of an allow: how long the key
-// lasts, as its disk grant table says.
-client_key_lasts :: proc "contextless" (principal: u64) -> string {
-	if principal == principals.MACHINE && persisted_tables[principals.MACHINE].state == .No_Passphrase {
-		return "; principal 0 has no passphrase, so the key lasts until the machine stops"
+// client_key_allowed_log writes the line of an allow of a client key of
+// Calls, with how long the key lasts, as its disk grant table says: one
+// fact type for each case, as a fact template has no condition.
+client_key_allowed_log :: proc "contextless" (principal: u64, key: [32]u8) {
+	head: [16]u8
+	client_key := text_field(key_head_text(&head, key), 24)
+	switch {
+	case principal == principals.MACHINE && persisted_tables[principals.MACHINE].state == .No_Passphrase:
+		system.log_fact(.Info, Client_Key_Allowed_Until_Stop{principal = principal, client_key = client_key})
+	case disk_grant_tables[principal].forget_by_default:
+		system.log_fact(.Info, Client_Key_Allowed_Until_Stop_Forgotten{principal = principal, client_key = client_key})
+	case:
+		system.log_fact(.Info, Client_Key_Allowed_Kept{principal = principal, client_key = client_key})
 	}
-	if disk_grant_tables[principal].forget_by_default {
-		return "; the disk grant table of the principal keeps nothing across a restart (disk_persistence), so the key lasts until the machine stops"
-	}
-	return "; the disk grant table of the principal keeps the key across a restart"
 }
 
 // client_keys_restore gives a row of the client table to each key of a disk
@@ -360,7 +364,7 @@ client_keys_restore :: proc "contextless" () {
 				changed.contested = principal + 1
 				client_row_write(place, changed)
 				count := client_connections_end(place)
-				system.log(.Warning, "root: the client key ", key_head_text(&head, key), " of remote is contested: principal ", changed.principal, " allowed it since the machine started, and the disk grant table of principal ", principal, " holds it; it acts for neither until one of them revokes it; connections to services ended: ", count)
+				system.log_fact(.Warning, Client_Key_Contested{principal = changed.principal, other_principal = principal, connections_ended = count, client_key = text_field(key_head_text(&head, key), 24)})
 			case .No_Free_Row:
 				// The rows of every principal fit (the assertion at the top
 				// of this file), so this is a fault; it is said, not hidden.

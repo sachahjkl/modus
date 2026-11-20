@@ -437,7 +437,7 @@ shortage_start :: proc "contextless" () -> system.Status {
 	}
 	process, status := system.process_start(system.image_find(image, "shortage"), "shortage", context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared)
 	if status != .Ok {
-		system.log(.Info, "root: cannot start shortage: status ", status)
+		system.log_fact(.Info, Shortage_Start_Failed{status = status})
 		shortage_failed()
 	}
 	part_place_fill(slot, "shortage", process)
@@ -509,7 +509,7 @@ operation_fuzzing_start :: proc "contextless" () -> system.Status {
 	}
 	process, status := system.process_start(system.image_find(image, OPERATION_FUZZING_NAME), OPERATION_FUZZING_NAME, context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared)
 	if status != .Ok {
-		system.log(.Error, "root: cannot start operation_fuzzing: status ", status)
+		system.log_fact(.Error, Operation_Fuzzing_Start_Failed{status = status})
 		return status
 	}
 	part_place_fill(slot, OPERATION_FUZZING_NAME, process)
@@ -533,7 +533,7 @@ shortage_failed :: proc "contextless" () -> ! {
 // stop: the boot display stays, with the failure, until the machine is
 // stopped from outside.
 fail :: proc "contextless" (text: string, status: system.Status) -> ! {
-	system.log(.Error, "root: ", text, ": status ", status)
+	system.log_fact(.Error, Root_Failed{status = status, failure = text_field(text, 140)})
 	failure_show(text, status)
 	for {
 		system.sleep(max(u64))
@@ -564,7 +564,7 @@ failure_show :: proc "contextless" (text: string, status: system.Status) {
 	bootscreen.put(&message, ": status ")
 	bootscreen.put_number(&message, u64(status))
 	show(string(message.bytes[:message.count]), .Failed, screen_data.step)
-	system.log(.Info, "root: the boot display shows the failure")
+	system.log_fact(.Info, Failure_Shown{})
 }
 
 // The random generator of the root service: its seed comes from the
@@ -755,7 +755,7 @@ random_seed_make :: proc "contextless" () {
 		fail("the random seed of the system is 32 zero bytes: no process can get a seed", .Bad_Operation)
 	}
 	report := &entropy_report
-	system.log(.Info, "root: the random seed of the system, strength ", op.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
+	system.log_fact(.Info, Random_Seed_Made{rdseed_good = u64(report.rdseed_good), rdseed_refused = u64(report.rdseed_refused), rdrand_good = u64(report.rdrand_good), rdrand_refused = u64(report.rdrand_refused), jitter_samples = u64(report.jitter_samples), jitter_distinct = u64(report.jitter_distinct), strength = text_field(op.seed_strength_names[report.strength], 32), rdseed_presence = text_field(report.rdseed_present ? "present" : "absent", 8), rdrand_presence = text_field(report.rdrand_present ? "present" : "absent", 8)})
 }
 
 // replacement_table_create makes the replacement table of the machine,
@@ -826,7 +826,7 @@ input_start :: proc "contextless" () -> system.Status {
 	}
 	process, status := system.process_start(system.image_find(image, "input"), "input", context_grants.grants, random.values_with_seed(&process_generator, input_values.values), budget_of(system.image_find(image, "input"), "input"), input_mappings, &prepared)
 	if status != .Ok {
-		system.log(.Warning, "root: cannot start input: status ", status)
+		system.log_fact(.Warning, Input_Start_Failed{status = status})
 		return status
 	}
 	part_place_fill(slot, "input", process)
@@ -845,9 +845,9 @@ screen_absence_note :: proc "contextless" () {
 	}
 	screen_absent = true
 	if no_screen_at_the_start {
-		system.log(.Warning, "root: no screen: no console, no window; the other services start")
+		system.log_fact(.Warning, No_Screen{})
 	} else {
-		system.log(.Warning, "root: the compositor stopped: no screen; a start of a window or a terminal is refused from now on")
+		system.log_fact(.Warning, Compositor_Stopped{})
 	}
 }
 
@@ -869,7 +869,7 @@ compositor_start :: proc "contextless" () -> system.Status {
 	}
 	new_control_memory, new_control, status := system.ring_create()
 	if status != .Ok {
-		system.log(.Warning, "root: cannot start the compositor: no control ring: status ", status)
+		system.log_fact(.Warning, Compositor_Control_Ring_Failed{status = status})
 		return status
 	}
 	if control_memory != 0 {
@@ -917,7 +917,7 @@ compositor_start :: proc "contextless" () -> system.Status {
 		if system.name_of(item.name[:]) == "compositor" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 			served.service_memory, served.service, status = system.ring_create()
 			if status != .Ok {
-				system.log(.Warning, "root: cannot start the compositor: no service ring: status ", status)
+				system.log_fact(.Warning, Compositor_Service_Ring_Failed{status = status})
 				served^ = {}
 				return status
 			}
@@ -961,7 +961,7 @@ compositor_start :: proc "contextless" () -> system.Status {
 			system.load_error_text(&writer, &compositor_load_error)
 			system.log(.Error, "root: cannot load the compositor: ", system.written(&writer))
 		}
-		system.log(.Warning, "root: cannot start the compositor: status ", status)
+		system.log_fact(.Warning, Compositor_Start_Failed{status = status})
 		compositor = 0
 		compositor_place_free(served)
 		return status
@@ -1600,7 +1600,7 @@ palette_provider_end :: proc "contextless" (item: ^Started, revoke: bool) -> (co
 	system.close(palette_ring_memory)
 	palette_provider = nil
 	palette_table_memory, palette_ring_memory = 0, 0
-	system.log(.Info, "root: no palette provider")
+	system.log_fact(.Info, Palette_Provider_Absent{})
 	return count
 }
 

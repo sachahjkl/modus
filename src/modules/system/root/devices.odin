@@ -419,7 +419,7 @@ display_open :: proc "contextless" (framebuffer_address, width, height, pixels_p
 	page_bytes := pixels_per_line * height * size_of(u32)
 	decodes_memory := pci.read_16(place, pci.OFFSET_COMMAND) & pci.COMMAND_MEMORY != 0
 	if !decodes_memory || video_address != framebuffer_address || registers_address == 0 || registers_address % system.PAGE_SIZE != 0 {
-		system.log(.Info, "root: the standard VGA does not hold the framebuffer of the firmware and its display registers: the compositor writes the screen page that the display shows")
+		system.log_fact(.Info, Standard_Vga_Without_Framebuffer{})
 		return 0, 0
 	}
 	status: system.Status
@@ -434,7 +434,7 @@ display_open :: proc "contextless" (framebuffer_address, width, height, pixels_p
 	}
 	display_registers := rawptr(uintptr(address) + bochs_display.DISPLAY_REGISTERS_OFFSET)
 	if bochs_display.screen_pages(display_registers, width, height, pixels_per_line) < bochs_display.PAGE_COUNT {
-		system.log(.Info, "root: the display registers of the standard VGA do not say the mode of the framebuffer of the firmware with two screen pages: the compositor writes the screen page that the display shows")
+		system.log_fact(.Info, Standard_Vga_Mode_Unknown{})
 		system.memory_unmap(address)
 		system.close(registers)
 		return 0, 0

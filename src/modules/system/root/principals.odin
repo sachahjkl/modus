@@ -125,7 +125,7 @@ principals_start :: proc "contextless" () {
 		machine_record.measure = trust.measure_value
 		system.log_fact(.Info, Machine_Principal_Measured{measure_register = trust.measure_register, measure_value = value_kinds.Hash_Field(trust.measure_value)})
 	} else {
-		system.log(.Info, "root: principal 0 is the machine: the system is not measured; its key, the attestation key of the TPM, is not built")
+		system.log_fact(.Info, Machine_Principal_Unmeasured{})
 	}
 }
 
@@ -145,7 +145,7 @@ unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string) 
 		unlock_run.stage = status == .Ok ? .Running : .Stopped
 	}
 	if status != .Ok {
-		system.log(.Warning, "root: unlock did not start (status ", status, "): no named principal can be created or unlocked")
+		system.log_fact(.Warning, Unlock_Start_Failed{status = status})
 	}
 	return status
 }
@@ -456,14 +456,14 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 	}
 	number := caller.principal
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state != .Unlocked {
-		system.log(.Warning, "root: refused a change of the passphrase: the caller runs in no session of a named principal")
+		system.log_fact(.Warning, Passphrase_Change_Refused_No_Session{})
 		values^ = errors.ring_fail(kind, .Absent, .Principals)
 		return .Bad_State, false
 	}
 	// A change that waits for its end is a change whose `unlock` runs, or
 	// is not reaped yet: one at a time.
 	if find("unlock") != nil || principal_change_waiting {
-		system.log(.Warning, "root: refused a change of the passphrase: unlock runs; it is made when unlock stopped")
+		system.log_fact(.Warning, Passphrase_Change_Refused_Unlock_Runs{})
 		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
 		return .No_Slot, false
 	}

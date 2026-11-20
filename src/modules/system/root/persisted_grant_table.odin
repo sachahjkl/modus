@@ -162,18 +162,18 @@ machine_key_held :: proc "contextless" () -> bool {
 machine_passphrase_ask :: proc "contextless" () -> system.Status {
 	state := persisted_tables[principals.MACHINE].state
 	if state == .Record_Unreadable {
-		system.log(.Warning, "root: refused a machine passphrase: the record of the machine passphrase cannot be read, and a new one would replace a key that can be good")
+		system.log_fact(.Warning, Machine_Passphrase_Refused_Unreadable{})
 		return .Bad_State
 	}
 	if state != .No_Passphrase {
-		system.log(.Warning, "root: refused a machine passphrase: the machine has one, and a change is not built")
+		system.log_fact(.Warning, Machine_Passphrase_Refused_Exists{})
 		return .Bad_State
 	}
 	if find("unlock") != nil {
-		system.log(.Warning, "root: refused a machine passphrase: unlock runs; it is set when unlock stopped")
+		system.log_fact(.Warning, Machine_Passphrase_Refused_Unlock_Runs{})
 		return .No_Slot
 	}
-	system.log(.Info, "root: the machine passphrase is set in the window of unlock")
+	system.log_fact(.Info, Machine_Passphrase_Setting_Started{})
 	return unlock_start(.Set_Machine_Passphrase, "")
 }
 
@@ -185,23 +185,23 @@ machine_passphrase_ask :: proc "contextless" () -> system.Status {
 // good, and the table that it signed.
 machine_seal_ask :: proc "contextless" () -> system.Status {
 	if tpm_ring == 0 {
-		system.log(.Warning, "root: refused a machine key sealed by the TPM: no TPM service runs, as the system is not measured into a TPM")
+		system.log_fact(.Warning, Machine_Key_Seal_Refused_No_Tpm{})
 		return .Bad_Handle
 	}
 	if !tpm_seal_allowed() {
-		system.log(.Warning, "root: refused a machine key sealed by the TPM: the firmware did not verify the boot program (Secure Boot is off), so a seal would trust a boot program that nothing verified")
+		system.log_fact(.Warning, Machine_Key_Seal_Refused_Not_Verified{})
 		return .No_Right
 	}
 	state := persisted_tables[principals.MACHINE].state
 	if state != .No_Passphrase {
-		system.log(.Warning, "root: refused a machine key sealed by the TPM: the machine has a record of its machine key, and a change is not built")
+		system.log_fact(.Warning, Machine_Key_Seal_Refused_Exists{})
 		return .Bad_State
 	}
 	if find("unlock") != nil {
-		system.log(.Warning, "root: refused a machine key sealed by the TPM: unlock runs; it is made when unlock stopped")
+		system.log_fact(.Warning, Machine_Key_Seal_Refused_Unlock_Runs{})
 		return .No_Slot
 	}
-	system.log(.Info, "root: the machine key is sealed by the TPM in the window of unlock")
+	system.log_fact(.Info, Machine_Key_Seal_Started{})
 	return unlock_start(.Seal_Machine_Key, "")
 }
 
@@ -229,10 +229,10 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 		switch report.form {
 		case .Sealed_By_The_Tpm:
 			machine_key_without_passphrase = true
-			system.log(.Info, "root: the machine key is sealed by the TPM: the disk grants of principal 0 wait for the unseal, and the machine runs")
+			system.log_fact(.Info, Machine_Key_Sealed_Grants_Wait{})
 		case .Passphrase:
 			machine_key_without_passphrase = false
-			system.log(.Info, "root: the machine has a passphrase: the disk grants of principal 0 wait for it, and the machine runs")
+			system.log_fact(.Info, Machine_Passphrase_Grants_Wait{})
 		}
 		return .Ok
 	case .Unreadable:
@@ -240,7 +240,7 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 			return .Bad_State
 		}
 		table.state = .Record_Unreadable
-		system.log(.Warning, "root: the record of the machine passphrase cannot be read: the disk grants of principal 0 stay absent, and no change and no new passphrase is taken")
+		system.log_fact(.Warning, Machine_Passphrase_Record_Unreadable{})
 		return .Ok
 	case .Opened, .New:
 		key_new := reported == .New
@@ -364,12 +364,12 @@ persisted_table_refusal :: proc "contextless" (principal: u64) -> bool {
 		return false
 	case .Awaited:
 		if principal == principals.MACHINE {
-			system.log(.Warning, "root: refused a change of the disk grant table of principal 0: the machine passphrase is not typed; type it in the window of unlock")
+			system.log_fact(.Warning, Machine_Table_Change_Refused_Not_Typed{})
 		} else {
 			system.log_fact(.Warning, Table_Change_Refused_No_Key{principal = principal})
 		}
 	case .Record_Unreadable:
-		system.log(.Warning, "root: refused a change of the disk grant table of principal 0: the record of the machine passphrase cannot be read, so nothing is written over the table on the disk")
+		system.log_fact(.Warning, Machine_Table_Change_Refused_Record_Unreadable{})
 	case .Reading:
 		system.log_fact(.Warning, Table_Change_Refused_Reading{principal = principal})
 	case .Unread:
@@ -581,7 +581,7 @@ persisted_table_end :: proc "contextless" (principal: u64) {
 // service can use: the table stays unread.
 persisted_table_read_failed :: proc "contextless" (principal: u64, reason: string) {
 	persisted_tables[principal].state = .Unread
-	system.log(.Warning, "root: the disk grant table of principal ", principal, " is not read: ", reason, "; the disk grants of principal ", principal, " stay absent until the machine starts again")
+	system.log_fact(.Warning, Table_Not_Read{principal = principal, absent_grants_principal = principal, call_failure = text_field(reason, 72)})
 }
 
 // persisted_table_write_failed counts a failed try of a write, and tries
@@ -592,13 +592,13 @@ persisted_table_write_failed :: proc "contextless" (principal: u64, reason: stri
 	table := &persisted_tables[principal]
 	table.write_failures += 1
 	if table.write_failures < WRITE_TRY_LIMIT {
-		system.log(.Warning, "root: the disk grant table of principal ", principal, " is not written: ", reason, "; try ", u64(table.write_failures + 1), " of ", u64(WRITE_TRY_LIMIT))
+		system.log_fact(.Warning, Table_Write_Tried_Again{principal = principal, try_number = u64(table.write_failures + 1), try_limit = u64(WRITE_TRY_LIMIT), call_failure = text_field(reason, 72)})
 		persisted_table_write_begin(principal)
 		return
 	}
 	table.state = .Unwritten
 	table.write_again = false
-	system.log(.Warning, "root: the disk grant table of principal ", principal, " is not written after ", u64(WRITE_TRY_LIMIT), " tries: ", reason, "; the disk keeps an older table, so a grant taken since can come back at the next start, and no change is taken")
+	system.log_fact(.Warning, Table_Write_Given_Up{principal = principal, try_limit = u64(WRITE_TRY_LIMIT), call_failure = text_field(reason, 72)})
 }
 
 // persisted_table_failed ends a call that got no answer that this service
@@ -651,10 +651,10 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 	case .Read:
 		absent := storage.export_failed_with(status, value, .Absent)
 		if !absent && status != .Ok {
-			sentence: [240]u8
-			writer := system.Writer{buffer = sentence[:]}
-			storage.error_text(&writer, &table.client, &error)
-			persisted_table_failed(principal, system.written(&writer))
+			// The error record is a fact of its own fields; the line of the
+			// table names the refusal.
+			system.log_fact(.Warning, Table_Call_Refused(errors.error_record_fact_fields(error)))
+			persisted_table_failed(principal, TABLE_CALL_REFUSED)
 			return
 		}
 		// The bytes are copied once, by table_decode, before any field is
@@ -683,14 +683,14 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 				system.log_fact(.Info, Table_Absent_Written{principal = principal})
 			} else {
 				new_record := principal == principals.MACHINE ? "the new machine passphrase" : "the new principal"
-				system.log(.Warning, "root: refused the disk grant table of principal ", principal, " from the store module_files: ", disk_process.table_problem_sentences[problem], "; it gives no grant, and the table of ", new_record, " is written over it")
+				table_refused_written_over_log(principal, problem, new_record)
 			}
 			persisted_table_write_begin(principal)
 			return
 		case .Keep:
 			table.state = .Refused
 			table.refused_problem = problem
-			system.log(.Warning, "root: refused the disk grant table of principal ", principal, " from the store module_files: ", disk_process.table_problem_sentences[problem], "; it gives no grant, and it is kept: no change is written over it")
+			table_refused_kept_log(principal, problem)
 			return
 		case .Take:
 		}
@@ -715,10 +715,8 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 		client_keys_after_read(principal)
 	case .Write:
 		if status != .Ok {
-			sentence: [240]u8
-			writer := system.Writer{buffer = sentence[:]}
-			storage.error_text(&writer, &table.client, &error)
-			persisted_table_failed(principal, system.written(&writer))
+			system.log_fact(.Warning, Table_Call_Refused(errors.error_record_fact_fields(error)))
+			persisted_table_failed(principal, TABLE_CALL_REFUSED)
 			return
 		}
 		persisted_table_end(principal)
@@ -744,4 +742,40 @@ persisted_tables_deadline :: proc "contextless" () -> u64 {
 		}
 	}
 	return deadline
+}
+
+// The cause of a call of a table that the storage service refused: the
+// fact Table_Call_Refused before it holds the fields of the error record.
+TABLE_CALL_REFUSED :: "the storage service refused the call"
+
+// table_refused_written_over_log writes the line of a table on the disk
+// that this service refuses and writes over. The sentence of a problem
+// that fits the field is a Text field; the three longer ones have a fact
+// type each, with their sentence in the template.
+table_refused_written_over_log :: proc "contextless" (principal: u64, problem: disk_process.Table_File_Problem, new_record: string) {
+	switch problem {
+	case .Older_Format:
+		system.log_fact(.Warning, Table_Refused_Older_Format_Written_Over{principal = principal, new_record = text_field(new_record, 32)})
+	case .Bad_Row:
+		system.log_fact(.Warning, Table_Refused_Bad_Row_Written_Over{principal = principal, new_record = text_field(new_record, 32)})
+	case .Bad_Client_Keys:
+		system.log_fact(.Warning, Table_Refused_Bad_Client_Keys_Written_Over{principal = principal, new_record = text_field(new_record, 32)})
+	case .None, .Wrong_Size, .Not_Authentic, .Wrong_Magic, .Wrong_Format, .Too_Many_Rows, .Bad_Setting, .Two_Rows, .Two_Start_Policies, .Start_Policy_Of_A_Named_Principal, .Bytes_After_Rows:
+		system.log_fact(.Warning, Table_Refused_Written_Over{principal = principal, new_record = text_field(new_record, 32), table_problem = text_field(disk_process.table_problem_sentences[problem], 104)})
+	}
+}
+
+// table_refused_kept_log writes the line of a table on the disk that this
+// service refuses and keeps, as table_refused_written_over_log does.
+table_refused_kept_log :: proc "contextless" (principal: u64, problem: disk_process.Table_File_Problem) {
+	switch problem {
+	case .Older_Format:
+		system.log_fact(.Warning, Table_Refused_Older_Format_Kept{principal = principal})
+	case .Bad_Row:
+		system.log_fact(.Warning, Table_Refused_Bad_Row_Kept{principal = principal})
+	case .Bad_Client_Keys:
+		system.log_fact(.Warning, Table_Refused_Bad_Client_Keys_Kept{principal = principal})
+	case .None, .Wrong_Size, .Not_Authentic, .Wrong_Magic, .Wrong_Format, .Too_Many_Rows, .Bad_Setting, .Two_Rows, .Two_Start_Policies, .Start_Policy_Of_A_Named_Principal, .Bytes_After_Rows:
+		system.log_fact(.Warning, Table_Refused_Kept{principal = principal, table_problem = text_field(disk_process.table_problem_sentences[problem], 104)})
+	}
 }

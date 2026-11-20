@@ -65,7 +65,7 @@ entropy_read_asked_at: u64 // The time of the last read that this service asked 
 entropy_service_start :: proc "contextless" () {
 	place := pci.Place{device = pci.ENTROPY_DEVICE}
 	if configuration_status := configuration_open(); configuration_status != .Ok {
-		system.log(.Warning, "root: cannot read the configuration of the bus for the entropy device: status ", configuration_status, ": the random seed of the system has the sources of the processor only")
+		system.log_fact(.Warning, Entropy_Configuration_Unread{status = configuration_status})
 		return
 	}
 	identity := pci.read_32(place, 0)
@@ -75,7 +75,7 @@ entropy_service_start :: proc "contextless" () {
 	}
 	driver, ring_memory, status := driver_start(place, DRIVER_ENTROPY)
 	if status != .Ok {
-		system.log(.Warning, "root: cannot start the entropy service: status ", status, ": the random seed of the system has the sources of the processor only")
+		system.log_fact(.Warning, Entropy_Service_Start_Failed{status = status})
 		return
 	}
 	opened: ring.Ring
@@ -83,7 +83,7 @@ entropy_service_start :: proc "contextless" () {
 		// reap takes the device back when the service stopped.
 		system.process_stop(driver.process)
 		system.close(ring_memory)
-		system.log(.Warning, "root: cannot open the entropy ring: status ", status, ": the random seed of the system has the sources of the processor only")
+		system.log_fact(.Warning, Entropy_Ring_Open_Failed{status = status})
 		return
 	}
 	entropy_ring, entropy_ring_memory, entropy_process = opened, ring_memory, driver
@@ -132,10 +132,7 @@ entropy_answers :: proc "contextless" (wait: ^system.Wait) {
 		} else {
 			counts.device_reads_refused += 1
 			error := errors.completion_record(record.values)
-			text: [240]u8
-			writer := system.Writer{buffer = text[:]}
-			system.ring_error_text(&writer, &error, "entropy", entropy_service.command_name(error.operation), entropy_service.argument_name(error.operation, error.argument))
-			system.log(.Warning, "root: the entropy service refused a read: ", system.written(&writer))
+			system.log_fact(.Warning, Entropy_Read_Refused(errors.error_record_fact_fields(error)))
 		}
 		intrinsics.mem_zero_volatile(&record, size_of(record))
 		if !at_start {
@@ -227,7 +224,7 @@ fresh_bytes_refresh_end :: proc "contextless" (mixed: bool) {
 		processes := fresh_bytes_write_all()
 		fresh_bytes_refreshes += 1
 		if fresh_bytes_refreshes == 1 {
-			system.log(.Info, "root: the first fresh bytes: ", u64(ENTROPY_READ_BYTES), " bytes of the entropy device mixed into the random generator of the system, then ", u64(fresh_bytes.BYTES), " bytes of its stream in the fresh bytes page of each of ", processes, " processes; a read every ", u64(FRESH_BYTES_PERIOD_MILLISECONDS / 1000), " seconds after this one, with no line")
+			system.log_fact(.Info, First_Fresh_Bytes{device_bytes = value_kinds.Size_In_Bytes(ENTROPY_READ_BYTES), stream_bytes = value_kinds.Size_In_Bytes(fresh_bytes.BYTES), receiving_processes = processes, period_seconds = u64(FRESH_BYTES_PERIOD_MILLISECONDS / 1000)})
 		}
 	}
 	fresh_bytes_deadline = system.time() + FRESH_BYTES_PERIOD_MILLISECONDS
@@ -245,7 +242,7 @@ entropy_service_end :: proc "contextless" (item: ^Started) {
 	if entropy_reads_answered < ENTROPY_READS_AT_START {
 		system.log_fact(.Warning, Entropy_Service_Stopped_Early{answered_reads = u64(entropy_reads_answered), start_reads = ENTROPY_READS_AT_START})
 	} else if !fresh_bytes_stopped {
-		system.log(.Warning, "root: the entropy service stopped: no more fresh bytes for the running processes")
+		system.log_fact(.Warning, Entropy_Service_Stopped{})
 	}
 	fresh_bytes_stopped = true
 	fresh_bytes_deadline = system.WAIT_FOREVER

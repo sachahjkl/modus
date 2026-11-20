@@ -54,7 +54,7 @@ text_settings_create :: proc "contextless" () {
 		}
 	}
 	if font_outlines_mapping.page_count == 0 {
-		system.log(.Warning, "root: the boot image has no valid font outlines: the text of the system is Spleen 8x16")
+		system.log_fact(.Warning, Font_Outlines_Absent{})
 	}
 }
 
@@ -94,7 +94,7 @@ settings_boot_pass_start :: proc "contextless" () -> system.Status {
 	status := start("settings")
 	settings_boot_pass = false
 	if status != .Ok {
-		system.log(.Warning, "root: the boot pass of settings did not start (status ", status, "): the settings are the defaults")
+		system.log_fact(.Warning, Settings_Boot_Pass_Failed{status = status})
 	}
 	return status
 }

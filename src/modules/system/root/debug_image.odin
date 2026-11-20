@@ -19,7 +19,7 @@ debug_image_take :: proc "contextless" (ctx: ^system.Context) {
 	debug_image_size = ctx.values[op.ROOT_VALUE_DEBUG_IMAGE_SIZE]
 	if debug_image_memory == 0 || debug_image_size == 0 || debug_image_size > fixed_addresses.RANGE_SPAN {
 		debug_image_memory, debug_image_size = 0, 0
-		system.log(.Info, "root: no debug image: a stop report names each frame by its module and its offset")
+		system.log_fact(.Info, Debug_Image_Absent{})
 		return
 	}
 	system.log_fact(.Info, Debug_Image_Found{debug_image_size = value_kinds.Size_In_Bytes(debug_image_size)})

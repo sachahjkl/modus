@@ -16,6 +16,7 @@ package root
 import "modus:contract/blake3"
 import "modus:contract/errors"
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:support/disk_process"
 import "modus:support/storage"
 import "modus:contract/root_ring"
@@ -78,7 +79,8 @@ disk_imports_begin :: proc "contextless" (wait: ^system.Wait) {
 	system.log_fact(.Info, Import_Scan_Started{imports = u64(imports.scan.wanted_count), loaded_process = module_name_field(name)})
 	load.stage = .List
 	if !disk_import_list_ask() {
-		disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service took no call")
+		system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = disk_load_name_field()})
+		disk_import_refused(.Bad_State, errors.Kind.Refused)
 		return
 	}
 	system.wait_records(wait, &load.client.calls.completions)
@@ -175,12 +177,14 @@ disk_import_list_answer :: proc "contextless" (value: i64, wait: ^system.Wait) {
 	}
 	for item in imports.rows[:count] {
 		if item.name_offset < 0 || item.name_count <= 0 || item.name_count > LIST_NAME_SIZE || item.name_offset > LIST_NAME_BYTES - item.name_count {
-			disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service listed an entry whose name is out of its page")
+			system.log_fact(.Warning, Disk_Load_Refused_Import_Entry_Name_Outside{refused_process = disk_load_name_field()})
+			disk_import_refused(.Bad_State, errors.Kind.Refused)
 			return
 		}
 		entry_kind, entry_kind_ok := storage.entry_kind_of_word(item.kind)
 		if !entry_kind_ok {
-			disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service listed an entry whose kind names no kind")
+			system.log_fact(.Warning, Disk_Load_Refused_Import_Entry_Kind_Unknown{refused_process = disk_load_name_field()})
+			disk_import_refused(.Bad_State, errors.Kind.Refused)
 			return
 		}
 		entry_name := string(imports.names[item.name_offset:][:item.name_count])
@@ -198,7 +202,8 @@ disk_import_list_answer :: proc "contextless" (value: i64, wait: ^system.Wait) {
 		return
 	}
 	if !disk_import_list_ask() {
-		disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service took no call")
+		system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = disk_load_name_field()})
+		disk_import_refused(.Bad_State, errors.Kind.Refused)
 		return
 	}
 	system.wait_records(wait, &load.client.calls.completions)
@@ -222,7 +227,8 @@ disk_import_read_next :: proc "contextless" (wait: ^system.Wait) {
 	imports.reading = index
 	load.stage = .Import_Size
 	if !disk_import_ask("size", 0, false) {
-		disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service took no call")
+		system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = disk_load_name_field()})
+		disk_import_refused(.Bad_State, errors.Kind.Refused)
 		return
 	}
 	system.wait_records(wait, &load.client.calls.completions)
@@ -259,13 +265,15 @@ disk_import_size_answer :: proc "contextless" (value: i64, wait: ^system.Wait) {
 	}
 	if status != .Ok {
 		entry_name := disk_process.scan_entry_name(&imports.scan, imports.reading)
-		disk_import_refused(status, errors.Kind.Refused, "no memory in the budget of the disk processes for the ", size, " bytes of the file ", system.Module_Name{entry_name}, " of the store ", disk_process.STORE_NAME, ": status ", status)
+		system.log_fact(.Warning, Disk_Load_Refused_Import_No_Memory{object_bytes = size, status = op.Status_Word(status), refused_process = disk_load_name_field(), file = text_field(entry_name, 24)})
+		disk_import_refused(status, errors.Kind.Refused)
 		return
 	}
 	imports.bytes = ([^]u8)(address)[:size]
 	load.stage = .Import_Bytes
 	if !disk_import_ask("read_range", 0, true) {
-		disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service took no call")
+		system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = disk_load_name_field()})
+		disk_import_refused(.Bad_State, errors.Kind.Refused)
 		return
 	}
 	system.wait_records(wait, &load.client.calls.completions)
@@ -286,15 +294,18 @@ disk_import_bytes_answer :: proc "contextless" (text: []u8, wait: ^system.Wait) 
 	case .More, .Complete:
 		copy(imports.bytes[imports.read.received - count:][:count], text)
 	case .No_Progress:
-		disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service gave no byte at the byte ", imports.read.received, " of ", imports.read.size, " of the file ", system.Module_Name{entry_name})
+		system.log_fact(.Warning, Disk_Load_Refused_Import_No_Byte_At{received_bytes = imports.read.received, object_bytes = imports.read.size, refused_process = disk_load_name_field(), file = text_field(entry_name, 24)})
+		disk_import_refused(.Bad_State, errors.Kind.Refused)
 		return
 	case .Too_Many:
-		disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service gave ", count, " bytes where the file ", system.Module_Name{entry_name}, " has ", imports.read.size - imports.read.received, " left")
+		system.log_fact(.Warning, Disk_Load_Refused_Import_Too_Many_Bytes{given_bytes = count, left_bytes = imports.read.size - imports.read.received, refused_process = disk_load_name_field(), file = text_field(entry_name, 24)})
+		disk_import_refused(.Bad_State, errors.Kind.Refused)
 		return
 	}
 	if step == .More {
 		if !disk_import_ask("read_range", imports.read.received, true) {
-			disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service took no call")
+			system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = disk_load_name_field()})
+			disk_import_refused(.Bad_State, errors.Kind.Refused)
 			return
 		}
 		system.wait_records(wait, &load.client.calls.completions)
@@ -341,25 +352,34 @@ disk_import_importer_name :: proc "contextless" (importer: int) -> string {
 disk_import_missing_refusal :: proc "contextless" () {
 	imports := &disk_imports
 	item := &imports.scan.wanted[disk_process.scan_missing(&imports.scan)]
-	left_out := ""
+	hash := value_kinds.Hash_Field(item.hash)
+	importer := module_name_field(disk_import_importer_name(item.importer))
 	if imports.scan.entries_left_out {
-		left_out = "; the store has more entries than the 64 that the scan notes"
+		system.log_fact(.Warning, Disk_Load_Refused_Import_Missing_Entries_Left_Out{hash = hash, scan_reads = u64(imports.scan.reads), refused_process = disk_load_name_field(), importer = importer})
+	} else {
+		system.log_fact(.Warning, Disk_Load_Refused_Import_Missing{hash = hash, scan_reads = u64(imports.scan.reads), refused_process = disk_load_name_field(), importer = importer})
 	}
-	disk_import_refused(.Bad_Handle, errors.Kind.Absent, system.Module_Name{disk_import_importer_name(item.importer)}, " imports ", system.Hash{item.hash[:]}, ", and no file of the boot image or of the store ", disk_process.STORE_NAME, " has bytes with this hash; the import scan read ", u64(imports.scan.reads), " files", left_out)
+	disk_import_refused(.Bad_Handle, errors.Kind.Absent)
 }
 
 // disk_import_bound_refusal ends the load: the imports pass the bounds of
 // the scan.
 disk_import_bound_refusal :: proc "contextless" () {
-	disk_import_refused(.No_Slot, errors.Kind.Full, "its imports outside the boot image pass the bounds of the import scan: ", u64(disk_process.SCAN_WANTED_CAPACITY), " modules of the store, ", u64(disk_process.SCAN_DEPTH_LIMIT), " levels")
+	system.log_fact(.Warning, Disk_Load_Refused_Import_Bounds{wanted_capacity = u64(disk_process.SCAN_WANTED_CAPACITY), depth_limit = u64(disk_process.SCAN_DEPTH_LIMIT), refused_process = disk_load_name_field()})
+	disk_import_refused(.No_Slot, errors.Kind.Full)
 }
 
-// disk_import_refused ends the load with one line of the log, and the
-// error record of the command with the kind of the refusal.
-disk_import_refused :: proc "contextless" (status: system.Status, kind_of_error: errors.Kind, parts: ..system.Part) {
-	name := string(disk_load.name[:disk_load.name_length])
+// disk_import_refused ends the load with the error record of the command
+// with the kind of the refusal. The caller wrote the fact of its cause.
+disk_import_refused :: proc "contextless" (status: system.Status, kind_of_error: errors.Kind) {
 	kind := u32(root_ring.Root_Command.Start_From_Disk)
-	disk_load_end(status, disk_refused(name, errors.ring_fail(kind, kind_of_error, .Modules, 2, 0, 0, i64(status)), ..parts))
+	disk_load_end(status, errors.ring_fail(kind, kind_of_error, .Modules, 2, 0, 0, i64(status)))
+}
+
+// disk_load_name_field gives the name of the disk process that the load
+// reads, as the field of a fact of its refusal.
+disk_load_name_field :: proc "contextless" () -> value_kinds.Module_Name_Field {
+	return module_name_field(string(disk_load.name[:disk_load.name_length]))
 }
 
 // disk_import_memory_free frees the memory of the entry that is read.

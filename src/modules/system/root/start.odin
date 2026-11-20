@@ -518,7 +518,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		system.load_error_text(&writer, &load_error)
 		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": ", system.written(&writer))
 	} else {
-		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": status ", status)
+		system.log_fact(.Warning, Start_Failed{status = status, refused_process = module_name_field(name)})
 	}
 	return status
 }

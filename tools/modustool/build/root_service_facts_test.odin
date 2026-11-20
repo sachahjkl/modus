@@ -1,10 +1,12 @@
 package build
 
+import "modus:contract/errors"
 import "modus:contract/font_outlines"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/replacement_list"
 import "modus:contract/start_grant"
+import "modus:contract/system_description"
 import "modus:contract/value_kinds"
 import "modus:private/root/replacement_signature"
 import "modus:support/sentence"
@@ -68,7 +70,7 @@ longest :: proc(texts: []string) -> u32 {
 root_text_bytes_most :: proc() -> map[string]u32 {
 	most := make(map[string]u32, context.temp_allocator)
 	name_most := u32(value_kinds.MODULE_NAME_FIELD_BYTES - 1)
-	for name in ([?]string{"started_process", "stopped_process", "refused_process", "loaded_process", "window_process", "service", "caller", "holder", "debugger", "target", "importer", "receiver", "provider", "nickname", "stop_report_name", "replaced", "replacement"}) {
+	for name in ([?]string{"started_process", "stopped_process", "refused_process", "loaded_process", "window_process", "service", "caller", "holder", "debugger", "target", "importer", "receiver", "provider", "nickname", "stop_report_name", "replaced", "replacement", "checked_entry"}) {
 		most[name] = name_most
 	}
 	// A principal name has at most principals.NAME_LIMIT bytes, a store
@@ -109,8 +111,59 @@ root_text_bytes_most :: proc() -> map[string]u32 {
 		append(&problems, problem)
 	}
 	most["problem"] = longest(problems[:])
+	most["failure"] = ROOT_FAILURE_MOST
+	most["call_failure"] = longest(TABLE_CALL_FAILURES[:])
+	most["table_problem"] = longest(TABLE_PROBLEMS_IN_A_FIELD[:])
+	most["new_record"] = longest(NEW_RECORDS[:])
+	most["persistence"] = longest(PERSISTENCES[:])
+	most["start_policy_words"] = longest(START_POLICY_WORDS[:])
+	most["tpm_status"] = longest(TPM_STATUS_WORDS[:])
+	most["machine_part"] = longest(MACHINE_PARTS[:])
+	most["strength"] = longest(SEED_STRENGTHS[:])
+	most["rdseed_presence"] = longest(PRESENCES[:])
+	most["rdrand_presence"] = longest(PRESENCES[:])
 	return most
 }
+
+// The texts of the Text fields of the second part of the root service,
+// each the way the root service writes it. The tool does not compile the
+// support packages disk_process, principals and start_list, so their
+// sentences are written here; a change of one of them fails the test of
+// its line.
+@(private = "file")
+TABLE_CALL_FAILURES := [?]string{"no connection to the storage service", "the call ring and the call region of the storage service do not map", "the storage service took no call", "the storage service stopped", "the storage service gave no answer in time", "the storage service refused the call"}
+// The sentences of disk_process.table_problem_sentences that a Text field
+// holds; the three longer ones have a fact type each.
+@(private = "file")
+TABLE_PROBLEMS_IN_A_FIELD := [?]string{"the table does not have 1136 bytes", "its tag does not verify under the key of the principal: another key wrote it, or a byte changed", "the table does not start with DISKGRNT", "the table has another format number", "the table counts more than 16 rows", "the global setting of the table is not 0 or 1, or its header has a byte that is not zero", "two rows have one nickname", "two rows hold the grant start_policy", "the table of a named principal holds the grant start_policy, which only principal 0 gives", "the table has bytes that are not zero after its last row"}
+@(private = "file")
+TABLE_PROBLEM_OLDER_FORMAT :: "the table has 1008 bytes: it has the format 1 of an older system, which this system does not read; no version of it can be restored to verify"
+@(private = "file")
+TABLE_PROBLEM_BAD_ROW :: "a row has a nickname that no grant names, a hash of zero bytes, an unknown grant or persistence, the grant start_policy with another grant, or a byte that must be zero"
+@(private = "file")
+TABLE_PROBLEM_BAD_CLIENT_KEYS :: "the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or a byte after the last key is not zero"
+@(private = "file")
+NEW_RECORDS := [?]string{"the new machine passphrase", "the new principal"}
+@(private = "file")
+PERSISTENCES := [?]string{"the global setting", "persist across a restart", "last until the machine stops"}
+// The list words of the start policy, and the words of a chosen one: its
+// nickname of disk_process.NAME_LIMIT bytes in parentheses.
+@(private = "file")
+START_POLICY_WORDS := [?]string{"of the list start_list", "of the list rescue_list", "chosen by principal 0, from the disk", "(nickname \"nnnnnnnnnnnnnnnnnnnnnnn\")"}
+@(private = "file")
+TPM_STATUS_WORDS := [?]string{"Ok", "Bad_Command", "Refused, a response code of the TPM", "Policy_Fails", "Device_Error, a step of the interface", "Not_Authentic", "Authorization_Fails", "Locked_Out", "Measure_Limit: PCR 12 took its two extends of this start"}
+@(private = "file")
+MACHINE_PARTS := [?]string{"screen", "data disk", "disk of the measures", "network device", "sound device", "entropy device", "TPM"}
+@(private = "file")
+SEED_STRENGTHS := [?]string{"none", "weak (the cycle counter only)", "processor (rdrand)", "entropy (rdseed)"}
+@(private = "file")
+PRESENCES := [?]string{"present", "absent"}
+// The failure of the root service: a sentence of this service, at most
+// 73 bytes, or the sentence of a fault of the check of the boot image,
+// which names an entry for a fault of one entry: at most 2 + 110 bytes for
+// a fault of the whole image (system_description.fault_sentences).
+@(private = "file")
+ROOT_FAILURE_MOST :: 112
 
 @(private = "file")
 root_service_facts_file :: proc(t: ^testing.T) -> (file: []u8, ok: bool) {
@@ -375,5 +428,445 @@ the_principal_and_start_policy_facts_of_the_root_service_write_the_lines_of_befo
 		expect(t, render(t, file, "Start_Policy_Choice_Refused_Principal", {{"principal", count}}), line_of_before("root: refused a choice of a start policy: the caller acts for principal ", count, ", and only principal 0 chooses the start policy of the machine"))
 		expect(t, render(t, file, "Start_Request_Refused", {{"start_request", count}, {"start_request_source", other}}), line_of_before("root: the boot record names the start request ", count, " with the source ", other, ", which the border refuses: the rescue start policy starts"))
 		expect(t, render(t, file, "Start_Policy_Restart_Refused", {{"restart_limit", count}, {"counted_names", other}, {"refused_process", process}}), line_of_before("root: refused a start of ", sentence.Module_Name{process}, " by the start policy from the disk: past its ", count, " restarts, or past the ", other, " names whose starts the root service counts, it stays stopped"))
+	}
+}
+
+// A fact type of the root service with no field, and the line that it
+// replaced: its template is the whole sentence.
+@(private = "file")
+Fact_Without_Field :: struct {
+	type_name: string,
+	line:      string,
+}
+
+// Each fact type with no field writes the line of before, word for word.
+@(test)
+the_facts_with_no_field_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	lines := [?]Fact_Without_Field {
+		{"Debug_Image_Absent", "root: no debug image: a stop report names each frame by its module and its offset"},
+		{"Standard_Vga_Without_Framebuffer", "root: the standard VGA does not hold the framebuffer of the firmware and its display registers: the compositor writes the screen page that the display shows"},
+		{"Standard_Vga_Mode_Unknown", "root: the display registers of the standard VGA do not say the mode of the framebuffer of the firmware with two screen pages: the compositor writes the screen page that the display shows"},
+		{"Entropy_Service_Stopped", "root: the entropy service stopped: no more fresh bytes for the running processes"},
+		{"Failure_Shown", "root: the boot display shows the failure"},
+		{"No_Screen", "root: no screen: no console, no window; the other services start"},
+		{"Compositor_Stopped", "root: the compositor stopped: no screen; a start of a window or a terminal is refused from now on"},
+		{"Palette_Provider_Absent", "root: no palette provider"},
+		{"Machine_Passphrase_Refused_Unreadable", "root: refused a machine passphrase: the record of the machine passphrase cannot be read, and a new one would replace a key that can be good"},
+		{"Machine_Passphrase_Refused_Exists", "root: refused a machine passphrase: the machine has one, and a change is not built"},
+		{"Machine_Passphrase_Refused_Unlock_Runs", "root: refused a machine passphrase: unlock runs; it is set when unlock stopped"},
+		{"Machine_Passphrase_Setting_Started", "root: the machine passphrase is set in the window of unlock"},
+		{"Machine_Key_Seal_Refused_No_Tpm", "root: refused a machine key sealed by the TPM: no TPM service runs, as the system is not measured into a TPM"},
+		{"Machine_Key_Seal_Refused_Not_Verified", "root: refused a machine key sealed by the TPM: the firmware did not verify the boot program (Secure Boot is off), so a seal would trust a boot program that nothing verified"},
+		{"Machine_Key_Seal_Refused_Exists", "root: refused a machine key sealed by the TPM: the machine has a record of its machine key, and a change is not built"},
+		{"Machine_Key_Seal_Refused_Unlock_Runs", "root: refused a machine key sealed by the TPM: unlock runs; it is made when unlock stopped"},
+		{"Machine_Key_Seal_Started", "root: the machine key is sealed by the TPM in the window of unlock"},
+		{"Machine_Key_Sealed_Grants_Wait", "root: the machine key is sealed by the TPM: the disk grants of principal 0 wait for the unseal, and the machine runs"},
+		{"Machine_Passphrase_Grants_Wait", "root: the machine has a passphrase: the disk grants of principal 0 wait for it, and the machine runs"},
+		{"Machine_Passphrase_Record_Unreadable", "root: the record of the machine passphrase cannot be read: the disk grants of principal 0 stay absent, and no change and no new passphrase is taken"},
+		{"Machine_Table_Change_Refused_Not_Typed", "root: refused a change of the disk grant table of principal 0: the machine passphrase is not typed; type it in the window of unlock"},
+		{"Machine_Table_Change_Refused_Record_Unreadable", "root: refused a change of the disk grant table of principal 0: the record of the machine passphrase cannot be read, so nothing is written over the table on the disk"},
+		{"Machine_Principal_Unmeasured", "root: principal 0 is the machine: the system is not measured; its key, the attestation key of the TPM, is not built"},
+		{"Passphrase_Change_Refused_No_Session", "root: refused a change of the passphrase: the caller runs in no session of a named principal"},
+		{"Passphrase_Change_Refused_Unlock_Runs", "root: refused a change of the passphrase: unlock runs; it is made when unlock stopped"},
+		{"Start_Policy_Choice_Unread_No_Tpm", "root: no choice of a start policy is read: no TPM service runs, so no machine key opens with no passphrase"},
+		{"Start_Policy_Choice_Unread_No_Disk", "root: no choice of a start policy is read: the machine has no data disk"},
+		{"Unlock_Reads_Machine_Key", "root: unlock reads the machine key with no window, before the start policy: the choice of principal 0 is in its disk grant table"},
+		{"Machine_Table_Unread_Before_Start_Policy", "root: the disk grant table of principal 0 is not read before the start policy: no choice of principal 0 is known"},
+		{"Start_Policy_Choice_Refused_Empty_Nickname", "root: refused a choice of a start policy: a nickname of no byte ends the choice, and the command names a hash"},
+		{"Start_Policy_Choice_Refused_No_Machine_Key", "root: refused a choice of a start policy: the machine has no machine key, so the disk grant table of principal 0 lasts until the machine stops, and no choice reaches the next start; machine_seal() makes a machine key"},
+		{"Start_Policy_Choice_Refused_Passphrase", "root: refused a choice of a start policy: the machine key opens with the machine passphrase, and the root service reads the choice before a passphrase can be typed"},
+		{"Start_Policy_Choice_Absent", "root: principal 0 has chosen no start policy: the default start policy runs at the next start"},
+		{"Start_Policy_Choice_Ended", "root: principal 0 ended its choice of a start policy: the default start policy runs at the next start of the machine"},
+		{"Start_Policy_Absent", "root: the start policy is absent from the boot image: the rescue start policy starts"},
+		{"Font_Outlines_Absent", "root: the boot image has no valid font outlines: the text of the system is Spleen 8x16"},
+		{"Tpm_Service_Absent_Unmeasured", "root: no TPM service: the system is not measured into a TPM, so no key is sealed to its measure"},
+		{"Tpm_Service_Absent_Table_Full", "root: no TPM service: the table of the processes is full"},
+		{"Tpm_Service_Stopped", "root: the TPM service stopped: no key is sealed or unsealed until the machine starts again"},
+		{"Description_Signed_By_Test_Key", "root: the system description is signed by the test signing key, whose private key is published: this system is not trusted"},
+		{"Verified_By_Boot_Program", "root: verified by the boot program, which the firmware did not verify"},
+		{"Verified_By_Firmware", "root: verified by the firmware (Secure Boot), then by the boot program"},
+		{"Description_Unmeasured_No_Tpm", "root: the system description is not measured into the TPM: the firmware has no TPM"},
+		{"Measure_Not_Tried", "root: the boot program did not try the measure"},
+		{"Tpm_Floor_Foreign", "root: an index of a TPM floor was not a floor that the boot program could read: another system defined or planted it, or PCR 7 changed; the boot program took it as 0, and replaced it with Secure Boot on"},
+		// The start policy of the boot image that a rescue replaces, when
+		// the boot image has no module of it.
+		{"Rescue_By_Key_Of_No_Module", "root: the key R was held at the start: the rescue start policy starts in place of the start policy of no module"},
+		{"Rescue_By_Boot_Entry_Of_No_Module", "root: the boot entry modus (rescue) started the machine: the rescue start policy starts in place of the start policy of no module"},
+		{"Rescue_By_Refused_Record_Of_No_Module", "root: the rescue start policy starts in place of the start policy of no module: the boot record asks for it with words that the border refuses"},
+		// The machine parts page wrote "no part" in a list; its parts are
+		// one fact each now.
+		{"Machine_Parts_None", "root: the machine parts page holds no part"},
+	}
+	for item in lines {
+		expect(t, render(t, file, item.type_name, {}), item.line)
+	}
+}
+
+// A fact type whose line wrote a status of the kernel as its number, and
+// the words around it: the field writes the name of the member now.
+@(private = "file")
+Status_Line :: struct {
+	type_name: string,
+	before:    string,
+	after:     string,
+}
+
+// The status of a kernel operation is the name of its member: the edges
+// are the first member, the last member, and a word past the last member,
+// which the render writes as its number, never as the name of another
+// member. Each line of a status with a name, a hash or a size writes those
+// fields at their edges.
+@(test)
+the_statuses_of_the_root_service_are_the_names_of_their_members :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	lines := [?]Status_Line {
+		{"Appearance_Date_Page_Unmapped", "root: the date page is not mapped in this service (status ", "): the setting appearance auto is dark"},
+		{"Disk_Processes_Budget_Refused", "root: cannot make the budget of the disk processes: status ", ""},
+		{"Entropy_Configuration_Unread", "root: cannot read the configuration of the bus for the entropy device: status ", ": the random seed of the system has the sources of the processor only"},
+		{"Entropy_Service_Start_Failed", "root: cannot start the entropy service: status ", ": the random seed of the system has the sources of the processor only"},
+		{"Entropy_Ring_Open_Failed", "root: cannot open the entropy ring: status ", ": the random seed of the system has the sources of the processor only"},
+		{"Fresh_Bytes_Pages_Failed", "root: cannot create the fresh bytes pages: status ", ": a running process mixes no new bytes into its generator"},
+		{"Shortage_Start_Failed", "root: cannot start shortage: status ", ""},
+		{"Operation_Fuzzing_Start_Failed", "root: cannot start operation_fuzzing: status ", ""},
+		{"Input_Start_Failed", "root: cannot start input: status ", ""},
+		{"Compositor_Control_Ring_Failed", "root: cannot start the compositor: no control ring: status ", ""},
+		{"Compositor_Service_Ring_Failed", "root: cannot start the compositor: no service ring: status ", ""},
+		{"Compositor_Start_Failed", "root: cannot start the compositor: status ", ""},
+		{"Unlock_Start_Failed", "root: unlock did not start (status ", "): no named principal can be created or unlocked"},
+		{"Start_Policy_Choice_Unread_Unlock_Failed", "root: no choice of a start policy is read: unlock did not start, with the status ", ""},
+		{"Machine_Parts_Page_Failed", "root: cannot create the machine parts page: status ", ""},
+		{"Settings_Boot_Pass_Failed", "root: the boot pass of settings did not start (status ", "): the settings are the defaults"},
+		{"Tpm_Service_Start_Failed", "root: cannot start the TPM service: status ", ""},
+		{"Start_Policy_Not_Started_Of_No_Module", "root: the start policy of no module did not start, with the status ", ": the rescue start policy starts"},
+	}
+	process := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
+	failure := strings.repeat("f", ROOT_FAILURE_MOST, context.temp_allocator)
+	hash: [module.HASH_SIZE]u8
+	for &value, index in hash {
+		value = u8(0x5A + index)
+	}
+	status_words := [3]u64{u64(min(op.Status)), u64(max(op.Status)), u64(max(op.Status)) + 1}
+	for word in status_words {
+		// The words of the status: its name, or the number of a word that
+		// names no member.
+		status_text := line_of_before(word)
+		if name, named := op.contract_enum_member_name(.Status, word); named {
+			status_text = name
+		}
+		for item in lines {
+			expect(t, render(t, file, item.type_name, {{"status", word}}), line_of_before(item.before, status_text, item.after))
+		}
+		expect(t, render(t, file, "Root_Failed", {{"status", word}, {"failure", failure}}), line_of_before("root: ", failure, ": status ", status_text))
+		expect(t, render(t, file, "Start_Failed", {{"status", word}, {"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": status ", status_text))
+		expect(t, render(t, file, "Chosen_Start_Policy_No_Connection", {{"status", word}, {"nickname", process}}), line_of_before("root: the chosen start policy \"", process, "\" is not read: no connection to the storage service, status ", status_text, ": the rescue start policy starts"))
+		expect(t, render(t, file, "Chosen_Start_Policy_Not_Started", {{"status", word}, {"nickname", process}}), line_of_before("root: the chosen start policy \"", process, "\" is not started, with the status ", status_text, ": the rescue start policy starts"))
+		expect(t, render(t, file, "Tpm_Registers_Refused", {{"registers", u64(0xFED4_0000)}, {"status", word}}), line_of_before("root: no TPM service: the registers of the TPM at ", sentence.Hex(0xFED4_0000), " are refused: status ", status_text))
+		expect(t, render(t, file, "Start_Policy_Not_Started", {{"start_policy_hash", hash}, {"status", word}}), line_of_before("root: the start policy ", sentence.Hash{hash[:4]}, "…", " did not start, with the status ", status_text, ": the rescue start policy starts"))
+		expect(t, render(t, file, "Disk_Load_Refused_No_Connection", {{"status", word}, {"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: no connection to the storage service: status ", status_text))
+		expect(t, render(t, file, "Disk_Load_Refused_Not_Started", {{"status", word}, {"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: it does not start: status ", status_text))
+		expect(t, render(t, file, "Disk_Load_Refused_No_Memory", {{"object_bytes", max(u64)}, {"status", word}, {"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: no memory for its ", max(u64), " bytes: status ", status_text))
+		expect(t, render(t, file, "Disk_Load_Refused_Import_No_Memory", {{"object_bytes", u64(0)}, {"status", word}, {"refused_process", process}, {"file", "fffffffffffffffffffffff"}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: no memory in the budget of the disk processes for the ", u64(0), " bytes of the file ", sentence.Module_Name{"fffffffffffffffffffffff"}, " of the store ", STORE_NAME, ": status ", status_text))
+	}
+}
+
+// An error record that a line wrote as the sentence of the console is the
+// fact of its fields: the kind and the unit by the names of their members,
+// the other values with their sign. The edges: the first and the last
+// member, a word of a kind or a unit that names no member (its number),
+// and the values 0, -1 and the largest.
+@(test)
+the_error_records_of_the_root_service_are_facts_of_their_fields :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	heads := [?][2]string {
+		{"Entropy_Read_Refused", "root: the entropy service refused a read: "},
+		{"Network_Control_Command_Refused", "root: the network service refused a command of its control ring: "},
+		{"Table_Call_Refused", "root: the storage service refused the call of a disk grant table: "},
+		{"Disk_Load_Read_Refused", "root: the storage service refused the read of a disk process: "},
+	}
+	kinds := [3]u64{u64(min(errors.Kind)), u64(max(errors.Kind)), u64(max(errors.Kind)) + 1}
+	units := [3]u64{u64(min(errors.Unit)), u64(max(errors.Unit)), u64(max(errors.Unit)) + 1}
+	values := [3]i64{0, -1, max(i64)}
+	for head in heads {
+		for index in 0 ..< 3 {
+			kind_text := line_of_before(kinds[index])
+			if errors.Kind(kinds[index]) <= max(errors.Kind) {
+				kind_text = errors.KIND_NAMES[errors.Kind(kinds[index])]
+			}
+			unit_text := line_of_before(units[index])
+			if errors.Unit(units[index]) <= max(errors.Unit) {
+				unit_text = errors.UNIT_MEMBER_NAMES[errors.Unit(units[index])]
+			}
+			value := values[index]
+			written := render(t, file, head[0], {{"kind", kinds[index]}, {"unit", units[index]}, {"operation", signed_bits(value)}, {"argument", signed_bits(value)}, {"value", signed_bits(value)}, {"limit", signed_bits(value)}, {"found", signed_bits(value)}})
+			expect(t, written, line_of_before(head[1], "kind ", kind_text, ", unit ", unit_text, ", operation ", value, ", argument ", value, ", value ", value, ", limit ", value, ", found ", value))
+		}
+	}
+}
+
+// The facts of the start policy, of its measure and of the trust write the
+// lines of before: a hash of 32 different bytes, whose head is its first 4
+// bytes and "…"; a stop of itself with each outcome, and each other cause;
+// the bounds 0 and max(i64); each text of a closed set; each fault of the
+// check of the boot image, with an entry of 31 bytes and with none.
+@(test)
+the_start_policy_and_trust_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	hash, other_hash: [module.HASH_SIZE]u8
+	for index in 0 ..< module.HASH_SIZE {
+		hash[index] = u8(0x10 + index)
+		other_hash[index] = u8(0xC0 + index)
+	}
+	head := line_of_before(sentence.Hash{hash[:4]}, "…")
+	expect(t, render(t, file, "Rescue_By_Key", {{"replaced_hash", hash}}), line_of_before("root: the key R was held at the start: the rescue start policy starts in place of the start policy ", head))
+	expect(t, render(t, file, "Rescue_By_Boot_Entry", {{"replaced_hash", hash}}), line_of_before("root: the boot entry modus (rescue) started the machine: the rescue start policy starts in place of the start policy ", head))
+	expect(t, render(t, file, "Rescue_By_Refused_Record", {{"replaced_hash", hash}}), line_of_before("root: the rescue start policy starts in place of the start policy ", head, ": the boot record asks for it with words that the border refuses"))
+	for cause in op.Stop_Cause {
+		if cause == .Itself {
+			for outcome in op.Stop_Outcome {
+				stop := line_of_before(op.STOP_CAUSE_TEXTS[cause], ", ", op.STOP_OUTCOME_TEXTS[outcome])
+				fields := []Fact_Test_Field{{"start_policy_hash", hash}, {"cause", u64(cause)}, {"outcome", u64(outcome)}}
+				expect(t, render(t, file, "Rescue_Stopped_Before_Usable", fields), line_of_before("root: the rescue start policy ", head, " stopped before the machine was usable: ", stop))
+				expect(t, render(t, file, "Start_Policy_Stopped_Before_Usable", fields), line_of_before("root: the start policy ", head, " stopped before the machine was usable: ", stop, "; the rescue start policy starts"))
+				expect(t, render(t, file, "Start_Policy_Stopped_After_Usable", fields), line_of_before("root: the start policy ", head, " stopped: ", stop, ", after the machine was usable: the processes that it asked for keep running"))
+			}
+			continue
+		}
+		stop := op.STOP_CAUSE_TEXTS[cause]
+		fields := []Fact_Test_Field{{"start_policy_hash", hash}, {"cause", u64(cause)}}
+		expect(t, render(t, file, "Rescue_Stopped_Before_Usable_Without_Outcome", fields), line_of_before("root: the rescue start policy ", head, " stopped before the machine was usable: ", stop))
+		expect(t, render(t, file, "Start_Policy_Stopped_Before_Usable_Without_Outcome", fields), line_of_before("root: the start policy ", head, " stopped before the machine was usable: ", stop, "; the rescue start policy starts"))
+		expect(t, render(t, file, "Start_Policy_Stopped_After_Usable_Without_Outcome", fields), line_of_before("root: the start policy ", head, " stopped: ", stop, ", after the machine was usable: the processes that it asked for keep running"))
+	}
+	bounds := [2]u64{0, u64(max(i64))}
+	for bound in bounds {
+		expect(t, render(t, file, "Rescue_Not_Usable_In_Time", {{"bound", bound}, {"start_policy_hash", hash}}), line_of_before("root: the rescue start policy ", head, " sent no Machine_Usable within the hang bound of ", bound, " ms"))
+		expect(t, render(t, file, "Start_Policy_Not_Usable_In_Time", {{"bound", bound}, {"start_policy_hash", hash}}), line_of_before("root: the start policy ", head, " sent no Machine_Usable within the hang bound of ", bound, " ms: the rescue start policy starts"))
+	}
+	for words in START_POLICY_WORDS {
+		pages := [2]u64{0, max(u64)}
+		expect(t, render(t, file, "Machine_Usable", {{"free_pages", pages[1]}, {"lowest_free_pages", pages[0]}, {"start_policy_hash", hash}, {"start_policy_words", words}}), line_of_before("root: the machine is usable, by the start policy ", head, " ", words, ": the budget of this service holds ", pages[1], " free pages, ", pages[0], " at the lowest"))
+		measure := []Fact_Test_Field{{"start_policy_hash", hash}, {"start_policy_words", words}}
+		expect(t, render(t, file, "Start_Policy_Unmeasured_Tpm_Stopped_Earlier", measure), line_of_before("root: the start policy ", head, " ", words, " is not measured: the TPM service stopped earlier in this run"))
+		expect(t, render(t, file, "Start_Policy_Unmeasured_No_Tpm", measure), line_of_before("root: the start policy ", head, " ", words, " is not measured: the system is not measured into a TPM"))
+		expect(t, render(t, file, "Start_Policy_Unmeasured_No_Measure_Ring", measure), line_of_before("root: the start policy ", head, " ", words, " is not measured: the TPM service has no measure ring"))
+		expect(t, render(t, file, "Start_Policy_Unmeasured_Measure_Ring_Full", measure), line_of_before("root: the start policy ", head, " ", words, " is not measured: the measure ring of the TPM service is full"))
+		expect(t, render(t, file, "Start_Policy_Unmeasured_Tpm_Stopped_During", measure), line_of_before("root: the start policy ", head, " ", words, " is not measured: the TPM service stopped during the measure"))
+		expect(t, render(t, file, "Start_Policy_Unmeasured_Unknown_Status", {{"status_word", max(u64)}, {"start_policy_hash", hash}, {"start_policy_words", words}}), line_of_before("root: the start policy ", head, " ", words, " is not measured: the TPM service gave the status ", max(u64), ", which names no status"))
+		expect(t, render(t, file, "Start_Policy_Unmeasured_No_Answer", {{"bound", u64(30_000)}, {"start_policy_hash", hash}, {"start_policy_words", words}}), line_of_before("root: the start policy ", head, " ", words, " is not measured: the TPM service gave no answer within ", u64(30_000), " ms"))
+		expect(t, render(t, file, "Start_Policy_Measured", {{"start_policy_hash", hash}, {"measure_value", other_hash}, {"start_policy_words", words}}), line_of_before("root: the start policy ", head, " ", words, " is measured into PCR 12: PCR 12 = ", sentence.Hash{other_hash[:]}))
+		for status_words in TPM_STATUS_WORDS {
+			expect(t, render(t, file, "Start_Policy_Measure_Failed", {{"answer_value", u64(0)}, {"start_policy_hash", hash}, {"start_policy_words", words}, {"tpm_status", status_words}}), line_of_before("root: the measure of the start policy ", head, " ", words, " into PCR 12 failed: the TPM service answered ", status_words, ", value ", u64(0)))
+		}
+	}
+	for part in MACHINE_PARTS {
+		expect(t, render(t, file, "Machine_Part_Present", {{"machine_part", part}}), line_of_before("root: the machine parts page holds ", part))
+	}
+
+	// The trust: a word of the TPM in 16 digits with no "0x".
+	tpm_words := [3]u64{0, 0x922, max(u64)}
+	for word in tpm_words {
+		expect(t, render(t, file, "Tpm_Service_Started", {{"registers", word}}), line_of_before("root: started tpm for the TPM at ", sentence.Hex(word), ": unlock seals keys to the measure of the system with it"))
+		expect(t, render(t, file, "Description_Measure_Refused", {{"measure_status", word}, {"measure_tries", word}, {"measure_register", u64(11)}}), line_of_before("root: the TPM refused the measure of the system description: status ", sentence.Hex(word), ", after ", word, " tries: PCR ", u64(11), " does not hold it"))
+		expect(t, render(t, file, "Description_Register_Unread", {{"measure_register", word}, {"measure_status", word}}), line_of_before("root: the system description is measured, but the read of PCR ", word, " failed: status ", sentence.Hex(word)))
+		expect(t, render(t, file, "Tpm_Floor_Unread", {{"floor_status", word}}), line_of_before("root: the boot program could not read a TPM floor: status ", sentence.Hex(word), "; it took it as 0"))
+	}
+	fault_types := [system_description.Check_Fault]string {
+		.None                = "",
+		.Not_Valid           = "Image_Check_Failed_Not_Valid",
+		.Image_Not_Valid     = "Image_Check_Failed_Image_Not_Valid",
+		.Count_Differs       = "Image_Check_Failed_Count_Differs",
+		.Name_Differs        = "Image_Check_Failed_Name_Differs",
+		.Kind_Differs        = "Image_Check_Failed_Kind_Differs",
+		.Size_Differs        = "Image_Check_Failed_Size_Differs",
+		.Hash_Differs        = "Image_Check_Failed_Hash_Differs",
+		.Stated_Hash_Differs = "Image_Check_Failed_Stated_Hash_Differs",
+		.Outside_Image       = "Image_Check_Failed_Outside_Image",
+	}
+	entries := [2]string{"", strings.repeat("e", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)}
+	for fault in system_description.Check_Fault {
+		if fault == .None {
+			continue
+		}
+		for entry in entries {
+			expect(t, render(t, file, fault_types[fault], {{"expected_hash", hash}, {"found_hash", other_hash}, {"checked_entry", entry}}), line_of_before("root: ", entry, ": ", system_description.fault_sentences[fault], ": expected ", sentence.Hash{hash[:]}, ", found ", sentence.Hash{other_hash[:]}))
+		}
+	}
+	// The failure of the root service holds the longest sentence of the
+	// check of the boot image whole.
+	longest_fault := 0
+	for fault in system_description.Check_Fault {
+		longest_fault = max(longest_fault, len(system_description.fault_sentences[fault]))
+	}
+	testing.expectf(t, len(": ") + longest_fault <= ROOT_FAILURE_MOST, "the failure of a fault of the whole image has %d bytes, more than %d", len(": ") + longest_fault, ROOT_FAILURE_MOST)
+}
+
+// The facts of the refusals of a start from the disk write the lines of
+// before: a name of 24 bytes, the most that the command holds; the counts
+// 0, 1 and max(u64); two hashes of different bytes.
+@(test)
+the_disk_refusal_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	name := strings.repeat("d", 24, context.temp_allocator)
+	importer := strings.repeat("i", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
+	entry := strings.repeat("f", 23, context.temp_allocator)
+	hash, other_hash: [module.HASH_SIZE]u8
+	for index in 0 ..< module.HASH_SIZE {
+		hash[index] = u8(0x20 + index)
+		other_hash[index] = u8(0xA0 + index)
+	}
+	refused := []Fact_Test_Field{{"refused_process", name}}
+	causes := [?][2]string {
+		{"Disk_Load_Refused_Name_Empty", "the name has no byte"},
+		{"Disk_Load_Refused_Name_Not_A_Process_Name", "the name is no name of a process: visible characters of ASCII, no \"/\", not \".\" or \"..\""},
+		{"Disk_Load_Refused_Name_Of_Module_Store", "the name is the name of the store of the module files"},
+		{"Disk_Load_Refused_Name_Of_Grant_Table", "the name is the name of the object of the disk grant table"},
+		{"Disk_Load_Refused_Name_In_Grant_Table", "the grant table of the root service names it, and a disk process takes no grant by its name"},
+		{"Disk_Load_Refused_Name_In_Boot_Image", "a module of the boot image has this name"},
+		{"Disk_Load_Refused_Asker_Without_Principal", "the asker has no principal with a record"},
+		{"Disk_Load_Refused_Load_Busy", "another load from the disk runs"},
+		{"Disk_Load_Refused_Not_Mapped", "the call ring and the call region of the storage service do not map"},
+		{"Disk_Load_Refused_Call_Not_Taken", "the storage service took no call"},
+		{"Disk_Load_Refused_Asker_Stopped", "the process that asked for it stopped"},
+		{"Disk_Load_Refused_Storage_Stopped", "the storage service stopped"},
+		{"Disk_Load_Refused_No_Object", "the store " + STORE_NAME + " has no object with this name"},
+		{"Disk_Load_Refused_Read_Refused", "the storage service refused the read"},
+		{"Disk_Load_Refused_Answer_Not_Allowed", "the storage service gave no answer that the description of its export allows"},
+		{"Disk_Load_Refused_Object_Empty", "the object has no byte"},
+		{"Disk_Load_Refused_Principal_Without_Record", "its principal has no record"},
+		{"Disk_Load_Refused_Import_Entry_Name_Outside", "the storage service listed an entry whose name is out of its page"},
+		{"Disk_Load_Refused_Import_Entry_Kind_Unknown", "the storage service listed an entry whose kind names no kind"},
+	}
+	for cause in causes {
+		expect(t, render(t, file, cause[0], refused), line_of_before("root: refused ", sentence.Module_Name{name}, " from the disk: ", cause[1]))
+	}
+	before := line_of_before("root: refused ", sentence.Module_Name{name}, " from the disk: ")
+	expect(t, render(t, file, "Disk_Load_Refused_Nickname_Other_File", {{"named_hash", hash}, {"hash", other_hash}, {"refused_process", name}}), line_of_before(before, "the nickname names the file ", sentence.Hash{hash[:]}, ", and the command names the file ", sentence.Hash{other_hash[:]}, "; nickname_move points it to another file"))
+	expect(t, render(t, file, "Disk_Load_Refused_Hash_Differs", {{"found_hash", hash}, {"hash", other_hash}, {"refused_process", name}}), line_of_before(before, "its bytes have the hash ", sentence.Hash{hash[:]}, ", and the hash asked is ", sentence.Hash{other_hash[:]}))
+	expect(t, render(t, file, "Disk_Load_Refused_Nickname_Moved", {{"named_hash", hash}, {"found_hash", other_hash}, {"refused_process", name}}), line_of_before(before, "the nickname names the file ", sentence.Hash{hash[:]}, " since the command, and the bytes have the hash ", sentence.Hash{other_hash[:]}))
+	counts := [3]u64{0, 1, max(u64)}
+	for count in counts {
+		other := max(u64) - count
+		expect(t, render(t, file, "Disk_Load_Refused_Name_Too_Long", {{"name_limit", count}, {"refused_process", name}}), line_of_before(before, "the name has more than ", count, " bytes"))
+		expect(t, render(t, file, "Disk_Load_Refused_Nickname_Without_Row", {{"principal", count}, {"refused_process", name}}), line_of_before(before, "the nickname has no row in the disk grant table of principal ", count, ": name the hash of its file"))
+		bound := min(count, u64(max(i64)))
+		expect(t, render(t, file, "Disk_Load_Refused_No_Answer", {{"bound", bound}, {"refused_process", name}}), line_of_before(before, "the storage service gave no answer in ", bound, " ms"))
+		expect(t, render(t, file, "Disk_Load_Refused_Object_Too_Large", {{"object_bytes", count}, {"file_bytes_limit", other}, {"refused_process", name}}), line_of_before(before, "the object has ", count, " bytes, and the module file of a disk process has at most ", other))
+		expect(t, render(t, file, "Disk_Load_Refused_No_Byte_At", {{"received_bytes", count}, {"object_bytes", other}, {"refused_process", name}}), line_of_before(before, "the storage service gave no byte at the byte ", count, " of ", other))
+		expect(t, render(t, file, "Disk_Load_Refused_Too_Many_Bytes", {{"given_bytes", count}, {"left_bytes", other}, {"refused_process", name}}), line_of_before(before, "the storage service gave ", count, " bytes where the file has ", other, " left"))
+		expect(t, render(t, file, "Disk_Load_Refused_Import_No_Byte_At", {{"received_bytes", count}, {"object_bytes", other}, {"refused_process", name}, {"file", entry}}), line_of_before(before, "the storage service gave no byte at the byte ", count, " of ", other, " of the file ", sentence.Module_Name{entry}))
+		expect(t, render(t, file, "Disk_Load_Refused_Import_Too_Many_Bytes", {{"given_bytes", count}, {"left_bytes", other}, {"refused_process", name}, {"file", entry}}), line_of_before(before, "the storage service gave ", count, " bytes where the file ", sentence.Module_Name{entry}, " has ", other, " left"))
+		expect(t, render(t, file, "Disk_Load_Refused_Import_Missing", {{"hash", hash}, {"scan_reads", count}, {"refused_process", name}, {"importer", importer}}), line_of_before(before, sentence.Module_Name{importer}, " imports ", sentence.Hash{hash[:]}, ", and no file of the boot image or of the store ", STORE_NAME, " has bytes with this hash; the import scan read ", count, " files"))
+		expect(t, render(t, file, "Disk_Load_Refused_Import_Missing_Entries_Left_Out", {{"hash", hash}, {"scan_reads", count}, {"refused_process", name}, {"importer", importer}}), line_of_before(before, sentence.Module_Name{importer}, " imports ", sentence.Hash{hash[:]}, ", and no file of the boot image or of the store ", STORE_NAME, " has bytes with this hash; the import scan read ", count, " files", "; the store has more entries than the 64 that the scan notes"))
+		expect(t, render(t, file, "Disk_Load_Refused_Import_Bounds", {{"wanted_capacity", count}, {"depth_limit", other}, {"refused_process", name}}), line_of_before(before, "its imports outside the boot image pass the bounds of the import scan: ", count, " modules of the store, ", other, " levels"))
+	}
+}
+
+// The facts of the disk grant tables whose line had a free part write the
+// lines of before: each cause of a call that failed, each problem of a
+// table, each case of how long a table and a key last, each text of a
+// closed set; the principals 0, 1 and max(u64); a nickname of 31 bytes.
+@(test)
+the_table_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	nickname := strings.repeat("k", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
+	key_head := "0123456789abcdef"
+	hash: [module.HASH_SIZE]u8
+	for &value, index in hash {
+		value = u8(0x33 + index)
+	}
+	table_lastings := [?][2]string {
+		{"_Until_Stop", "; principal 0 has no passphrase, so its disk grant table lasts until the machine stops"},
+		{"_Kept_By_Machine_Passphrase", "; the machine passphrase keeps the disk grant table of principal 0 on the disk"},
+		{"_Kept_By_Passphrase", "; the passphrase of the principal keeps its disk grant table on the disk"},
+	}
+	key_lastings := [?][2]string {
+		{"Client_Key_Allowed_Until_Stop", "; principal 0 has no passphrase, so the key lasts until the machine stops"},
+		{"Client_Key_Allowed_Until_Stop_Forgotten", "; the disk grant table of the principal keeps nothing across a restart (disk_persistence), so the key lasts until the machine stops"},
+		{"Client_Key_Allowed_Kept", "; the disk grant table of the principal keeps the key across a restart"},
+	}
+	long_problems := [?][2]string {
+		{"Older_Format", TABLE_PROBLEM_OLDER_FORMAT},
+		{"Bad_Row", TABLE_PROBLEM_BAD_ROW},
+		{"Bad_Client_Keys", TABLE_PROBLEM_BAD_CLIENT_KEYS},
+	}
+	principals := [3]u64{0, 1, max(u64)}
+	for principal in principals {
+		other := max(u64) - principal
+		for failure in TABLE_CALL_FAILURES {
+			expect(t, render(t, file, "Table_Not_Read", {{"principal", principal}, {"absent_grants_principal", principal}, {"call_failure", failure}}), line_of_before("root: the disk grant table of principal ", principal, " is not read: ", failure, "; the disk grants of principal ", principal, " stay absent until the machine starts again"))
+			expect(t, render(t, file, "Table_Write_Tried_Again", {{"principal", principal}, {"try_number", other}, {"try_limit", principal}, {"call_failure", failure}}), line_of_before("root: the disk grant table of principal ", principal, " is not written: ", failure, "; try ", other, " of ", principal))
+			expect(t, render(t, file, "Table_Write_Given_Up", {{"principal", principal}, {"try_limit", other}, {"call_failure", failure}}), line_of_before("root: the disk grant table of principal ", principal, " is not written after ", other, " tries: ", failure, "; the disk keeps an older table, so a grant taken since can come back at the next start, and no change is taken"))
+		}
+		for record in NEW_RECORDS {
+			for problem in TABLE_PROBLEMS_IN_A_FIELD {
+				expect(t, render(t, file, "Table_Refused_Written_Over", {{"principal", principal}, {"new_record", record}, {"table_problem", problem}}), line_of_before("root: refused the disk grant table of principal ", principal, " from the store module_files: ", problem, "; it gives no grant, and the table of ", record, " is written over it"))
+			}
+			for problem in long_problems {
+				expect(t, render(t, file, strings.concatenate({"Table_Refused_", problem[0], "_Written_Over"}, context.temp_allocator), {{"principal", principal}, {"new_record", record}}), line_of_before("root: refused the disk grant table of principal ", principal, " from the store module_files: ", problem[1], "; it gives no grant, and the table of ", record, " is written over it"))
+			}
+		}
+		for problem in TABLE_PROBLEMS_IN_A_FIELD {
+			expect(t, render(t, file, "Table_Refused_Kept", {{"principal", principal}, {"table_problem", problem}}), line_of_before("root: refused the disk grant table of principal ", principal, " from the store module_files: ", problem, "; it gives no grant, and it is kept: no change is written over it"))
+		}
+		for problem in long_problems {
+			expect(t, render(t, file, strings.concatenate({"Table_Refused_", problem[0], "_Kept"}, context.temp_allocator), {{"principal", principal}}), line_of_before("root: refused the disk grant table of principal ", principal, " from the store module_files: ", problem[1], "; it gives no grant, and it is kept: no change is written over it"))
+		}
+		for lasting in table_lastings {
+			for grant in DISK_GRANT_NAMES {
+				grant_fields := []Fact_Test_Field{{"hash", hash}, {"principal", principal}, {"nickname", nickname}, {"grant", grant}}
+				expect(t, render(t, file, strings.concatenate({"Grant_Lost", lasting[0]}, context.temp_allocator), grant_fields), line_of_before("root: the nickname ", sentence.Module_Name{nickname}, ", the file ", sentence.Hash{hash[:]}, ", lost the grant ", grant, " for principal ", principal, ", from its next start; its store stays on the disk", lasting[1]))
+				expect(t, render(t, file, strings.concatenate({"Grant_Given", lasting[0]}, context.temp_allocator), grant_fields), line_of_before("root: the nickname ", sentence.Module_Name{nickname}, ", the file ", sentence.Hash{hash[:]}, ", has the grant ", grant, " for principal ", principal, ", from its next start", lasting[1]))
+			}
+			expect(t, render(t, file, strings.concatenate({"Nickname_Moved", lasting[0]}, context.temp_allocator), {{"hash", hash}, {"nickname", nickname}}), line_of_before("root: the nickname ", sentence.Module_Name{nickname}, " names the file ", sentence.Hash{hash[:]}, ", with its grants and its store", lasting[1]))
+			for persistence in PERSISTENCES {
+				expect(t, render(t, file, strings.concatenate({"Table_Persistence_Set", lasting[0]}, context.temp_allocator), {{"principal", principal}, {"persistence", persistence}}), line_of_before("root: each row of the disk grant table of principal ", principal, " with no exception will ", persistence, lasting[1]))
+				expect(t, render(t, file, strings.concatenate({"Row_Persistence_Set", lasting[0]}, context.temp_allocator), {{"principal", principal}, {"nickname", nickname}, {"persistence", persistence}}), line_of_before("root: the row of the nickname ", sentence.Module_Name{nickname}, " in the disk grant table of principal ", principal, " has the setting: ", persistence, lasting[1]))
+			}
+		}
+		for lasting in key_lastings {
+			expect(t, render(t, file, lasting[0], {{"principal", principal}, {"client_key", key_head}}), line_of_before("root: principal ", principal, " allowed the client key ", key_head, " of remote: each call of that client acts for it", lasting[1]))
+		}
+		expect(t, render(t, file, "Client_Key_Contested", {{"principal", principal}, {"other_principal", other}, {"connections_ended", principal}, {"client_key", key_head}}), line_of_before("root: the client key ", key_head, " of remote is contested: principal ", principal, " allowed it since the machine started, and the disk grant table of principal ", other, " holds it; it acts for neither until one of them revokes it; connections to services ended: ", principal))
+	}
+}
+
+// The lines of the entropy at the start and of the random seed write the
+// lines of before: the counts 0, 1 and max(u64); a size of max(i64); each
+// strength of the seed; present and absent.
+@(test)
+the_seed_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	counts := [3]u64{0, 1, max(u64)}
+	for count in counts {
+		size := min(count, u64(max(i64)))
+		expect(t, render(t, file, "First_Fresh_Bytes", {{"device_bytes", size}, {"stream_bytes", size}, {"receiving_processes", count}, {"period_seconds", count}}), line_of_before("root: the first fresh bytes: ", size, " bytes of the entropy device mixed into the random generator of the system, then ", size, " bytes of its stream in the fresh bytes page of each of ", count, " processes; a read every ", count, " seconds after this one, with no line"))
+		for strength in op.seed_strength_names {
+			for presence in PRESENCES {
+				written := render(t, file, "Random_Seed_Made", {{"rdseed_good", count}, {"rdseed_refused", count}, {"rdrand_good", count}, {"rdrand_refused", count}, {"jitter_samples", count}, {"jitter_distinct", count}, {"strength", strength}, {"rdseed_presence", presence}, {"rdrand_presence", presence}})
+				expect(t, written, line_of_before("root: the random seed of the system, strength ", strength, ": rdseed ", presence, ", ", count, " good values, ", count, " refused; rdrand ", presence, ", ", count, " good, ", count, " refused; the cycle counter, ", count, " samples, ", count, " distinct low bytes"))
+			}
+		}
 	}
 }

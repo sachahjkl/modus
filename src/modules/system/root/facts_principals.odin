@@ -127,3 +127,101 @@ Tpm_Floors :: struct {
 Floor_State_Unknown :: struct {
 	floor_state: u64,
 }
+
+// The TPM service started, with the address of the registers of the TPM in
+// 16 digits with no "0x", as system.Hex wrote it.
+@(log_fact = "root: started tpm for the TPM at {registers}: unlock seals keys to the measure of the system with it")
+Tpm_Service_Started :: struct {
+	registers: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The TPM refused the measure of the system description: its response, a
+// word of the TPM in 16 digits.
+@(log_fact = "root: the TPM refused the measure of the system description: status {measure_status}, after {measure_tries} tries: PCR {measure_register} does not hold it")
+Description_Measure_Refused :: struct {
+	measure_status:   value_kinds.Hexadecimal_Sixteen_Digits,
+	measure_tries:    u64,
+	measure_register: u64,
+}
+
+// The system description is measured, and the read of the register back
+// failed.
+@(log_fact = "root: the system description is measured, but the read of PCR {measure_register} failed: status {measure_status}")
+Description_Register_Unread :: struct {
+	measure_register: u64,
+	measure_status:   value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The boot program could not read a floor of the TPM.
+@(log_fact = "root: the boot program could not read a TPM floor: status {floor_status}; it took it as 0")
+Tpm_Floor_Unread :: struct {
+	floor_status: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The check of the boot image against the system description failed: one
+// fact type for each fault, as the sentence of each fault differs. The
+// entry is empty for a fault of the whole image; the two hashes are those
+// that the check compared, zero for a fault with no hash.
+
+@(log_fact = "root: {checked_entry}: the system description does not follow its format: expected {expected_hash}, found {found_hash}")
+Image_Check_Failed_Not_Valid :: struct {
+	expected_hash: value_kinds.Hash_Field,
+	found_hash:    value_kinds.Hash_Field,
+	checked_entry: value_kinds.Module_Name_Field,
+}
+
+@(log_fact = "root: {checked_entry}: the boot image has no whole tables, or its two last resources are not the system description and its signature: expected {expected_hash}, found {found_hash}")
+Image_Check_Failed_Image_Not_Valid :: struct {
+	expected_hash: value_kinds.Hash_Field,
+	found_hash:    value_kinds.Hash_Field,
+	checked_entry: value_kinds.Module_Name_Field,
+}
+
+@(log_fact = "root: {checked_entry}: the boot image has another count of entries than the system description: expected {expected_hash}, found {found_hash}")
+Image_Check_Failed_Count_Differs :: struct {
+	expected_hash: value_kinds.Hash_Field,
+	found_hash:    value_kinds.Hash_Field,
+	checked_entry: value_kinds.Module_Name_Field,
+}
+
+@(log_fact = "root: {checked_entry}: the entry of the boot image at this place has another name: expected {expected_hash}, found {found_hash}")
+Image_Check_Failed_Name_Differs :: struct {
+	expected_hash: value_kinds.Hash_Field,
+	found_hash:    value_kinds.Hash_Field,
+	checked_entry: value_kinds.Module_Name_Field,
+}
+
+@(log_fact = "root: {checked_entry}: the entry of the boot image at this place is of another kind: expected {expected_hash}, found {found_hash}")
+Image_Check_Failed_Kind_Differs :: struct {
+	expected_hash: value_kinds.Hash_Field,
+	found_hash:    value_kinds.Hash_Field,
+	checked_entry: value_kinds.Module_Name_Field,
+}
+
+@(log_fact = "root: {checked_entry}: does not have the size of the system description: expected {expected_hash}, found {found_hash}")
+Image_Check_Failed_Size_Differs :: struct {
+	expected_hash: value_kinds.Hash_Field,
+	found_hash:    value_kinds.Hash_Field,
+	checked_entry: value_kinds.Module_Name_Field,
+}
+
+@(log_fact = "root: {checked_entry}: does not have the hash of the system description: expected {expected_hash}, found {found_hash}")
+Image_Check_Failed_Hash_Differs :: struct {
+	expected_hash: value_kinds.Hash_Field,
+	found_hash:    value_kinds.Hash_Field,
+	checked_entry: value_kinds.Module_Name_Field,
+}
+
+@(log_fact = "root: {checked_entry}: states in the boot image another hash than the system description: expected {expected_hash}, found {found_hash}")
+Image_Check_Failed_Stated_Hash_Differs :: struct {
+	expected_hash: value_kinds.Hash_Field,
+	found_hash:    value_kinds.Hash_Field,
+	checked_entry: value_kinds.Module_Name_Field,
+}
+
+@(log_fact = "root: {checked_entry}: points outside the boot image: expected {expected_hash}, found {found_hash}")
+Image_Check_Failed_Outside_Image :: struct {
+	expected_hash: value_kinds.Hash_Field,
+	found_hash:    value_kinds.Hash_Field,
+	checked_entry: value_kinds.Module_Name_Field,
+}

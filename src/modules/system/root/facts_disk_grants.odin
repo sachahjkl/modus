@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/errors"
 import "modus:contract/value_kinds"
 
 // The log facts of the disk processes, of the disk grant tables and of the
@@ -301,6 +302,231 @@ Client_Key_View_Paused :: struct {
 Client_Key_View_Back :: struct {
 	principal:  u64,
 	client_key: [24]u8,
+}
+
+// A client key allowed by a principal in this run is in the disk grant
+// table of another principal: it acts for neither.
+@(log_fact = "root: the client key {client_key} of remote is contested: principal {principal} allowed it since the machine started, and the disk grant table of principal {other_principal} holds it; it acts for neither until one of them revokes it; connections to services ended: {connections_ended}")
+Client_Key_Contested :: struct {
+	principal:         u64,
+	other_principal:   u64,
+	connections_ended: u64,
+	client_key:        [24]u8,
+}
+
+// A principal allowed a client key of Calls: one fact type for each case of
+// how long the key lasts.
+
+@(log_fact = "root: principal {principal} allowed the client key {client_key} of remote: each call of that client acts for it; principal 0 has no passphrase, so the key lasts until the machine stops")
+Client_Key_Allowed_Until_Stop :: struct {
+	principal:  u64,
+	client_key: [24]u8,
+}
+
+@(log_fact = "root: principal {principal} allowed the client key {client_key} of remote: each call of that client acts for it; the disk grant table of the principal keeps nothing across a restart (disk_persistence), so the key lasts until the machine stops")
+Client_Key_Allowed_Until_Stop_Forgotten :: struct {
+	principal:  u64,
+	client_key: [24]u8,
+}
+
+@(log_fact = "root: principal {principal} allowed the client key {client_key} of remote: each call of that client acts for it; the disk grant table of the principal keeps the key across a restart")
+Client_Key_Allowed_Kept :: struct {
+	principal:  u64,
+	client_key: [24]u8,
+}
+
+// The disk grant table of a principal is not read: the cause is a sentence
+// of a closed set of this service (the cause of a call that the storage
+// service refused is the fact Table_Call_Refused before it). The principal
+// comes twice in the sentence, and a template names a field once.
+@(log_fact = "root: the disk grant table of principal {principal} is not read: {call_failure}; the disk grants of principal {absent_grants_principal} stay absent until the machine starts again")
+Table_Not_Read :: struct {
+	principal:               u64,
+	absent_grants_principal: u64,
+	call_failure:            [72]u8,
+}
+
+// A write of the disk grant table failed: this service tries again.
+@(log_fact = "root: the disk grant table of principal {principal} is not written: {call_failure}; try {try_number} of {try_limit}")
+Table_Write_Tried_Again :: struct {
+	principal:    u64,
+	try_number:   u64,
+	try_limit:    u64,
+	call_failure: [72]u8,
+}
+
+// The writes of the disk grant table failed at each try.
+@(log_fact = "root: the disk grant table of principal {principal} is not written after {try_limit} tries: {call_failure}; the disk keeps an older table, so a grant taken since can come back at the next start, and no change is taken")
+Table_Write_Given_Up :: struct {
+	principal:    u64,
+	try_limit:    u64,
+	call_failure: [72]u8,
+}
+
+// The storage service refused the read or the write of a disk grant table:
+// the fields of its error record.
+@(log_fact = "root: the storage service refused the call of a disk grant table: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Table_Call_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// A table on the disk that this service refuses and writes over. The
+// sentence of the problem is a Text field when it fits beside the other
+// fields; each longer sentence has a fact type of its own.
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: {table_problem}; it gives no grant, and the table of {new_record} is written over it")
+Table_Refused_Written_Over :: struct {
+	principal:     u64,
+	new_record:    [32]u8,
+	table_problem: [104]u8,
+}
+
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the table has 1008 bytes: it has the format 1 of an older system, which this system does not read; no version of it can be restored to verify; it gives no grant, and the table of {new_record} is written over it")
+Table_Refused_Older_Format_Written_Over :: struct {
+	principal:  u64,
+	new_record: [32]u8,
+}
+
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: a row has a nickname that no grant names, a hash of zero bytes, an unknown grant or persistence, the grant start_policy with another grant, or a byte that must be zero; it gives no grant, and the table of {new_record} is written over it")
+Table_Refused_Bad_Row_Written_Over :: struct {
+	principal:  u64,
+	new_record: [32]u8,
+}
+
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or a byte after the last key is not zero; it gives no grant, and the table of {new_record} is written over it")
+Table_Refused_Bad_Client_Keys_Written_Over :: struct {
+	principal:  u64,
+	new_record: [32]u8,
+}
+
+// A table on the disk that this service refuses and keeps.
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: {table_problem}; it gives no grant, and it is kept: no change is written over it")
+Table_Refused_Kept :: struct {
+	principal:     u64,
+	table_problem: [104]u8,
+}
+
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the table has 1008 bytes: it has the format 1 of an older system, which this system does not read; no version of it can be restored to verify; it gives no grant, and it is kept: no change is written over it")
+Table_Refused_Older_Format_Kept :: struct {
+	principal: u64,
+}
+
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: a row has a nickname that no grant names, a hash of zero bytes, an unknown grant or persistence, the grant start_policy with another grant, or a byte that must be zero; it gives no grant, and it is kept: no change is written over it")
+Table_Refused_Bad_Row_Kept :: struct {
+	principal: u64,
+}
+
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or a byte after the last key is not zero; it gives no grant, and it is kept: no change is written over it")
+Table_Refused_Bad_Client_Keys_Kept :: struct {
+	principal: u64,
+}
+
+// The changes of a disk grant table: one fact type for each case of how
+// long the table lasts (Table_Lasting).
+
+@(log_fact = "root: the nickname {nickname}, the file {hash}, lost the grant {grant} for principal {principal}, from its next start; its store stays on the disk; principal 0 has no passphrase, so its disk grant table lasts until the machine stops")
+Grant_Lost_Until_Stop :: struct {
+	hash:      value_kinds.Hash_Field,
+	principal: u64,
+	nickname:  value_kinds.Module_Name_Field,
+	grant:     [24]u8,
+}
+
+@(log_fact = "root: the nickname {nickname}, the file {hash}, lost the grant {grant} for principal {principal}, from its next start; its store stays on the disk; the machine passphrase keeps the disk grant table of principal 0 on the disk")
+Grant_Lost_Kept_By_Machine_Passphrase :: struct {
+	hash:      value_kinds.Hash_Field,
+	principal: u64,
+	nickname:  value_kinds.Module_Name_Field,
+	grant:     [24]u8,
+}
+
+@(log_fact = "root: the nickname {nickname}, the file {hash}, lost the grant {grant} for principal {principal}, from its next start; its store stays on the disk; the passphrase of the principal keeps its disk grant table on the disk")
+Grant_Lost_Kept_By_Passphrase :: struct {
+	hash:      value_kinds.Hash_Field,
+	principal: u64,
+	nickname:  value_kinds.Module_Name_Field,
+	grant:     [24]u8,
+}
+
+@(log_fact = "root: the nickname {nickname}, the file {hash}, has the grant {grant} for principal {principal}, from its next start; principal 0 has no passphrase, so its disk grant table lasts until the machine stops")
+Grant_Given_Until_Stop :: struct {
+	hash:      value_kinds.Hash_Field,
+	principal: u64,
+	nickname:  value_kinds.Module_Name_Field,
+	grant:     [24]u8,
+}
+
+@(log_fact = "root: the nickname {nickname}, the file {hash}, has the grant {grant} for principal {principal}, from its next start; the machine passphrase keeps the disk grant table of principal 0 on the disk")
+Grant_Given_Kept_By_Machine_Passphrase :: struct {
+	hash:      value_kinds.Hash_Field,
+	principal: u64,
+	nickname:  value_kinds.Module_Name_Field,
+	grant:     [24]u8,
+}
+
+@(log_fact = "root: the nickname {nickname}, the file {hash}, has the grant {grant} for principal {principal}, from its next start; the passphrase of the principal keeps its disk grant table on the disk")
+Grant_Given_Kept_By_Passphrase :: struct {
+	hash:      value_kinds.Hash_Field,
+	principal: u64,
+	nickname:  value_kinds.Module_Name_Field,
+	grant:     [24]u8,
+}
+
+@(log_fact = "root: the nickname {nickname} names the file {hash}, with its grants and its store; principal 0 has no passphrase, so its disk grant table lasts until the machine stops")
+Nickname_Moved_Until_Stop :: struct {
+	hash:     value_kinds.Hash_Field,
+	nickname: value_kinds.Module_Name_Field,
+}
+
+@(log_fact = "root: the nickname {nickname} names the file {hash}, with its grants and its store; the machine passphrase keeps the disk grant table of principal 0 on the disk")
+Nickname_Moved_Kept_By_Machine_Passphrase :: struct {
+	hash:     value_kinds.Hash_Field,
+	nickname: value_kinds.Module_Name_Field,
+}
+
+@(log_fact = "root: the nickname {nickname} names the file {hash}, with its grants and its store; the passphrase of the principal keeps its disk grant table on the disk")
+Nickname_Moved_Kept_By_Passphrase :: struct {
+	hash:     value_kinds.Hash_Field,
+	nickname: value_kinds.Module_Name_Field,
+}
+
+// The global setting of persistence of a table: the words of a closed set
+// (persistence_words).
+
+@(log_fact = "root: each row of the disk grant table of principal {principal} with no exception will {persistence}; principal 0 has no passphrase, so its disk grant table lasts until the machine stops")
+Table_Persistence_Set_Until_Stop :: struct {
+	principal:   u64,
+	persistence: [32]u8,
+}
+
+@(log_fact = "root: each row of the disk grant table of principal {principal} with no exception will {persistence}; the machine passphrase keeps the disk grant table of principal 0 on the disk")
+Table_Persistence_Set_Kept_By_Machine_Passphrase :: struct {
+	principal:   u64,
+	persistence: [32]u8,
+}
+
+@(log_fact = "root: each row of the disk grant table of principal {principal} with no exception will {persistence}; the passphrase of the principal keeps its disk grant table on the disk")
+Table_Persistence_Set_Kept_By_Passphrase :: struct {
+	principal:   u64,
+	persistence: [32]u8,
+}
+
+@(log_fact = "root: the row of the nickname {nickname} in the disk grant table of principal {principal} has the setting: {persistence}; principal 0 has no passphrase, so its disk grant table lasts until the machine stops")
+Row_Persistence_Set_Until_Stop :: struct {
+	principal:   u64,
+	nickname:    value_kinds.Module_Name_Field,
+	persistence: [32]u8,
+}
+
+@(log_fact = "root: the row of the nickname {nickname} in the disk grant table of principal {principal} has the setting: {persistence}; the machine passphrase keeps the disk grant table of principal 0 on the disk")
+Row_Persistence_Set_Kept_By_Machine_Passphrase :: struct {
+	principal:   u64,
+	nickname:    value_kinds.Module_Name_Field,
+	persistence: [32]u8,
+}
+
+@(log_fact = "root: the row of the nickname {nickname} in the disk grant table of principal {principal} has the setting: {persistence}; the passphrase of the principal keeps its disk grant table on the disk")
+Row_Persistence_Set_Kept_By_Passphrase :: struct {
+	principal:   u64,
+	nickname:    value_kinds.Module_Name_Field,
+	persistence: [32]u8,
 }
 
 // A connection of remote refused for a contested client key.

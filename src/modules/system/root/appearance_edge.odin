@@ -26,7 +26,7 @@ appearance_open :: proc "contextless" () {
 	}
 	address, status := system.memory_map(date_memory, flags = {})
 	if status != .Ok {
-		system.log(.Warning, "root: the date page is not mapped in this service (status ", status, "): the setting appearance auto is dark")
+		system.log_fact(.Warning, Appearance_Date_Page_Unmapped{status = status})
 		return
 	}
 	appearance_date_page = (^date.Page)(address)

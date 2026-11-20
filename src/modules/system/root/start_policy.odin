@@ -12,7 +12,7 @@ package root
 import info "modus:contract/boot_info"
 import op "modus:contract/operation"
 import "modus:contract/start_list"
-import "modus:contract/system_description"
+import "modus:contract/value_kinds"
 import "modus:private/root/start_policy_rules"
 import "modus:support/disk_process"
 import "modus:support/pci"
@@ -116,22 +116,20 @@ machine_parts_page_create :: proc "contextless" () {
 	if status != .Ok {
 		// With no page, no start policy can read the parts: it starts
 		// nothing, and the rescue does the same, with their lines.
-		system.log(.Error, "root: cannot create the machine parts page: status ", status)
+		system.log_fact(.Error, Machine_Parts_Page_Failed{status = status})
 		machine_parts_memory = 0
 		return
 	}
 	start_list.parts_page_write((^start_list.Machine_Parts_Page)(address), parts, width, height)
-	buffer: [256]u8
-	present := system.Writer{buffer = buffer[:]}
+	// One fact for each part, so that a reader filters the parts by field.
 	for part in start_list.Machine_Part {
 		if part in parts {
-			if present.count > 0 {
-				system.write_bytes(&present, transmute([]u8)string(", "))
-			}
-			system.write_bytes(&present, transmute([]u8)start_list.PART_NAMES[part])
+			system.log_fact(.Info, Machine_Part_Present{machine_part = text_field(start_list.PART_NAMES[part], 24)})
 		}
 	}
-	system.log(.Info, "root: the machine parts page: ", present.count > 0 ? system.written(&present) : "no part", "; the start policy reads it")
+	if parts == {} {
+		system.log_fact(.Info, Machine_Parts_None{})
+	}
 }
 
 // start_policy_pages_give maps the machine parts page and the list of the
@@ -195,10 +193,13 @@ start_policy_begin :: proc "contextless" () {
 
 // start_policy_after_the_choice starts the start policy of this start, once
 // the choice of principal 0 is read or known to be absent. replaced is the
-// hash text of the start policy that a rescue replaces: the chosen one, or
-// the default one.
+// hash of the start policy that a rescue replaces: the chosen one, or the
+// default one, which the boot image can lack.
 start_policy_after_the_choice :: proc "contextless" (chosen: ^disk_process.Grant_Row) {
-	replaced := chosen != nil ? start_policy_hash_text(chosen.hash) : start_policy_hash_text_of_image()
+	replaced, replaced_found := start_policy_image_hash()
+	if chosen != nil {
+		replaced, replaced_found = chosen.hash, true
+	}
 	switch start_policy_request {
 	case .Chosen:
 		if chosen != nil {
@@ -207,37 +208,39 @@ start_policy_after_the_choice :: proc "contextless" (chosen: ^disk_process.Grant
 		}
 		start_policy_launch(.Default)
 	case .Rescue_By_Key:
-		system.log(.Info, "root: the key R was held at the start: the rescue start policy starts in place of the start policy ", replaced)
+		if replaced_found {
+			system.log_fact(.Info, Rescue_By_Key{replaced_hash = value_kinds.Hash_Head_Field(replaced)})
+		} else {
+			system.log_fact(.Info, Rescue_By_Key_Of_No_Module{})
+		}
 		start_policy_launch(.Rescue)
 	case .Rescue_By_Boot_Entry:
-		system.log(.Info, "root: the boot entry modus (rescue) started the machine: the rescue start policy starts in place of the start policy ", replaced)
+		if replaced_found {
+			system.log_fact(.Info, Rescue_By_Boot_Entry{replaced_hash = value_kinds.Hash_Head_Field(replaced)})
+		} else {
+			system.log_fact(.Info, Rescue_By_Boot_Entry_Of_No_Module{})
+		}
 		start_policy_launch(.Rescue)
 	case .Rescue_By_Refused_Record:
-		system.log(.Warning, "root: the rescue start policy starts in place of the start policy ", replaced, ": the boot record asks for it with words that the border refuses")
+		if replaced_found {
+			system.log_fact(.Warning, Rescue_By_Refused_Record{replaced_hash = value_kinds.Hash_Head_Field(replaced)})
+		} else {
+			system.log_fact(.Warning, Rescue_By_Refused_Record_Of_No_Module{})
+		}
 		start_policy_launch(.Rescue)
 	}
 }
 
-// start_policy_hash_text gives the first 8 digits of the hash of the
-// module of a start policy, for a line.
-start_policy_hash_text :: proc "contextless" (hash: [32]u8) -> string {
-	@(static) text: [8 + len("…")]u8
-	digits := system_description.hexadecimal(hash)
-	copy(text[:8], digits[:8])
-	copy(text[8:], "…")
-	return string(text[:])
-}
-
-// start_policy_hash_text_of_image gives the hash text of the module of the
-// start policy of the boot image: the policy that a request of the rescue
-// replaces before it starts.
-start_policy_hash_text_of_image :: proc "contextless" () -> string {
+// start_policy_image_hash gives the hash of the module of the start policy
+// of the boot image: the policy that a request of the rescue replaces
+// before it starts. found is false when the boot image has no such module.
+start_policy_image_hash :: proc "contextless" () -> (hash: [32]u8, found: bool) {
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == START_POLICY_NAME {
-			return start_policy_hash_text(item.hash)
+			return item.hash, true
 		}
 	}
-	return "of no module"
+	return {}, false
 }
 
 // start_policy_launch starts the start policy with one list. A start that
@@ -248,7 +251,7 @@ start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 	start_policy_process = nil
 	if len(system.image_find(image, START_POLICY_NAME)) == 0 {
 		if list == .Default {
-			system.log(.Warning, "root: the start policy is absent from the boot image: the rescue start policy starts")
+			system.log_fact(.Warning, Start_Policy_Absent{})
 			start_policy_launch(.Rescue)
 		} else {
 			start_policy_none("the rescue start policy is absent from the boot image")
@@ -278,7 +281,11 @@ start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 	}
 	if start_policy_process == nil {
 		if list == .Default {
-			system.log(.Warning, "root: the start policy ", start_policy_hash_text_of_image(), " did not start, with the status ", status, ": the rescue start policy starts")
+			if image_hash, image_found := start_policy_image_hash(); image_found {
+				system.log_fact(.Warning, Start_Policy_Not_Started{start_policy_hash = value_kinds.Hash_Head_Field(image_hash), status = status})
+			} else {
+				system.log_fact(.Warning, Start_Policy_Not_Started_Of_No_Module{status = status})
+			}
 			start_policy_launch(.Rescue)
 		} else {
 			start_policy_none("the rescue start policy did not start")
@@ -325,24 +332,36 @@ start_policy_stopped :: proc "contextless" (item: ^Started, cause: op.Stop_Cause
 		return
 	}
 	start_policy_process = nil
-	hash := start_policy_hash_text(start_policy_hash)
-	buffer: [64]u8
-	stop_text := system.Writer{buffer = buffer[:]}
-	system.stop_write(&stop_text, cause, outcome)
+	hash := value_kinds.Hash_Head_Field(start_policy_hash)
+	// A stop of itself has its outcome; another cause has none, as the line
+	// of the stop of each process says.
+	itself := cause == .Itself
 	switch start_policy_stage {
 	case .None, .Stopping, .No_Policy:
 		// The stop was asked by this service, or the policy was no longer
 		// the one that it waits for.
 	case .Running:
 		if start_policy_list == .Rescue {
-			system.log(.Error, "root: the rescue start policy ", hash, " stopped before the machine was usable: ", system.written(&stop_text))
+			if itself {
+				system.log_fact(.Error, Rescue_Stopped_Before_Usable{start_policy_hash = hash, cause = cause, outcome = outcome})
+			} else {
+				system.log_fact(.Error, Rescue_Stopped_Before_Usable_Without_Outcome{start_policy_hash = hash, cause = cause})
+			}
 			start_policy_none("the rescue start policy stopped before the machine was usable")
 			return
 		}
-		system.log(.Warning, "root: the start policy ", hash, " stopped before the machine was usable: ", system.written(&stop_text), "; the rescue start policy starts")
+		if itself {
+			system.log_fact(.Warning, Start_Policy_Stopped_Before_Usable{start_policy_hash = hash, cause = cause, outcome = outcome})
+		} else {
+			system.log_fact(.Warning, Start_Policy_Stopped_Before_Usable_Without_Outcome{start_policy_hash = hash, cause = cause})
+		}
 		start_policy_rescue_begin()
 	case .Usable:
-		system.log(.Warning, "root: the start policy ", hash, " stopped: ", system.written(&stop_text), ", after the machine was usable: the processes that it asked for keep running")
+		if itself {
+			system.log_fact(.Warning, Start_Policy_Stopped_After_Usable{start_policy_hash = hash, cause = cause, outcome = outcome})
+		} else {
+			system.log_fact(.Warning, Start_Policy_Stopped_After_Usable_Without_Outcome{start_policy_hash = hash, cause = cause})
+		}
 	}
 }
 
@@ -403,16 +422,16 @@ start_policy_step :: proc "contextless" () {
 		if system.time() < start_policy_deadline {
 			return
 		}
-		hash := start_policy_hash_text(start_policy_hash)
+		hash := value_kinds.Hash_Head_Field(start_policy_hash)
 		if start_policy_list == .Rescue {
-			system.log(.Error, "root: the rescue start policy ", hash, " sent no Machine_Usable within the hang bound of ", u64(START_POLICY_HANG_BOUND_MILLISECONDS), " ms")
+			system.log_fact(.Error, Rescue_Not_Usable_In_Time{bound = START_POLICY_HANG_BOUND_MILLISECONDS, start_policy_hash = hash})
 			if start_policy_process != nil {
 				root_stop_ask(start_policy_process)
 			}
 			start_policy_none("the rescue start policy sent no Machine_Usable within the hang bound")
 			return
 		}
-		system.log(.Warning, "root: the start policy ", hash, " sent no Machine_Usable within the hang bound of ", u64(START_POLICY_HANG_BOUND_MILLISECONDS), " ms: the rescue start policy starts")
+		system.log_fact(.Warning, Start_Policy_Not_Usable_In_Time{bound = START_POLICY_HANG_BOUND_MILLISECONDS, start_policy_hash = hash})
 		start_policy_rescue_begin()
 	}
 }
@@ -436,7 +455,7 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 	// A measure, not a check: the pages that this service can still give,
 	// now and at the lowest count that it read since its start.
 	budget_pages_note()
-	system.log(.Info, "root: the machine is usable, by the start policy ", start_policy_hash_text(start_policy_hash), " ", START_POLICY_LIST_WORDS[start_policy_list], ": the budget of this service holds ", budget_pages_now, " free pages, ", budget_pages_lowest, " at the lowest")
+	system.log_fact(.Info, Machine_Usable{free_pages = budget_pages_now, lowest_free_pages = budget_pages_lowest, start_policy_hash = value_kinds.Hash_Head_Field(start_policy_hash), start_policy_words = text_field(START_POLICY_LIST_WORDS[start_policy_list], 40)})
 	return .Ok
 }
 

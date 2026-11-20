@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/errors"
 import "modus:contract/value_kinds"
 
 // The log facts of the starts, the budgets, the mappings, the devices, the
@@ -365,3 +366,37 @@ Entropy_Start_Bytes :: struct {
 	bytes_mixed:         value_kinds.Size_In_Bytes,
 	refused_start_reads: u64,
 }
+
+// The first fresh bytes given to the running processes; the reads after it
+// write no line.
+@(log_fact = "root: the first fresh bytes: {device_bytes} of the entropy device mixed into the random generator of the system, then {stream_bytes} of its stream in the fresh bytes page of each of {receiving_processes} processes; a read every {period_seconds} seconds after this one, with no line")
+First_Fresh_Bytes :: struct {
+	device_bytes:        value_kinds.Size_In_Bytes,
+	stream_bytes:        value_kinds.Size_In_Bytes,
+	receiving_processes: u64,
+	period_seconds:      u64,
+}
+
+// The random seed of the system and the facts of each source of the
+// processor. A strength and a presence are words of a closed set.
+@(log_fact = "root: the random seed of the system, strength {strength}: rdseed {rdseed_presence}, {rdseed_good} good values, {rdseed_refused} refused; rdrand {rdrand_presence}, {rdrand_good} good, {rdrand_refused} refused; the cycle counter, {jitter_samples} samples, {jitter_distinct} distinct low bytes")
+Random_Seed_Made :: struct {
+	rdseed_good:     u64,
+	rdseed_refused:  u64,
+	rdrand_good:     u64,
+	rdrand_refused:  u64,
+	jitter_samples:  u64,
+	jitter_distinct: u64,
+	strength:        [32]u8,
+	rdseed_presence: [8]u8,
+	rdrand_presence: [8]u8,
+}
+
+// The entropy service refused a read: the fields of its error record.
+@(log_fact = "root: the entropy service refused a read: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Entropy_Read_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The network service refused a command of its control ring: the fields
+// of its error record.
+@(log_fact = "root: the network service refused a command of its control ring: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Network_Control_Command_Refused :: distinct errors.Error_Record_Fact_Fields

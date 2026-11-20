@@ -1,5 +1,6 @@
 package root
 
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // The log facts of the start policy and of its choice by principal 0
@@ -133,4 +134,202 @@ Start_Policy_Restart_Refused :: struct {
 	restart_limit:   u64,
 	counted_names:   u64,
 	refused_process: value_kinds.Module_Name_Field,
+}
+
+// The start policy names itself by the head of its hash, the first 4
+// bytes and "…": a field of the kind Hash_Head, which holds the whole hash
+// so that a reader compares each byte.
+
+// The rescue starts in place of the start policy: the key R was held.
+@(log_fact = "root: the key R was held at the start: the rescue start policy starts in place of the start policy {replaced_hash}")
+Rescue_By_Key :: struct {
+	replaced_hash: value_kinds.Hash_Head_Field,
+}
+
+// The rescue starts by the key R, and the boot image has no module of the
+// start policy that it replaces.
+@(log_fact = "root: the key R was held at the start: the rescue start policy starts in place of the start policy of no module")
+Rescue_By_Key_Of_No_Module :: struct {}
+
+// The rescue starts in place of the start policy: the boot entry of the
+// rescue started the machine.
+@(log_fact = "root: the boot entry modus (rescue) started the machine: the rescue start policy starts in place of the start policy {replaced_hash}")
+Rescue_By_Boot_Entry :: struct {
+	replaced_hash: value_kinds.Hash_Head_Field,
+}
+
+@(log_fact = "root: the boot entry modus (rescue) started the machine: the rescue start policy starts in place of the start policy of no module")
+Rescue_By_Boot_Entry_Of_No_Module :: struct {}
+
+// The rescue starts in place of the start policy: the boot record asks for
+// it with words that the border refuses.
+@(log_fact = "root: the rescue start policy starts in place of the start policy {replaced_hash}: the boot record asks for it with words that the border refuses")
+Rescue_By_Refused_Record :: struct {
+	replaced_hash: value_kinds.Hash_Head_Field,
+}
+
+@(log_fact = "root: the rescue start policy starts in place of the start policy of no module: the boot record asks for it with words that the border refuses")
+Rescue_By_Refused_Record_Of_No_Module :: struct {}
+
+// The start policy of the boot image did not start: the rescue starts.
+@(log_fact = "root: the start policy {start_policy_hash} did not start, with the status {status}: the rescue start policy starts")
+Start_Policy_Not_Started :: struct {
+	start_policy_hash: value_kinds.Hash_Head_Field,
+	status:            op.Status,
+}
+
+// The start policy did not start, and the boot image has no module of it.
+@(log_fact = "root: the start policy of no module did not start, with the status {status}: the rescue start policy starts")
+Start_Policy_Not_Started_Of_No_Module :: struct {
+	status: op.Status,
+}
+
+// The rescue stopped itself before the machine was usable: no start policy
+// is left.
+@(log_fact = "root: the rescue start policy {start_policy_hash} stopped before the machine was usable: {cause}, {outcome}")
+Rescue_Stopped_Before_Usable :: struct {
+	start_policy_hash: value_kinds.Hash_Head_Field,
+	cause:             op.Stop_Cause,
+	outcome:           op.Stop_Outcome,
+}
+
+// The rescue stopped for another cause than itself before the machine was
+// usable.
+@(log_fact = "root: the rescue start policy {start_policy_hash} stopped before the machine was usable: {cause}")
+Rescue_Stopped_Before_Usable_Without_Outcome :: struct {
+	start_policy_hash: value_kinds.Hash_Head_Field,
+	cause:             op.Stop_Cause,
+}
+
+// The start policy stopped itself before the machine was usable: the rescue
+// starts.
+@(log_fact = "root: the start policy {start_policy_hash} stopped before the machine was usable: {cause}, {outcome}; the rescue start policy starts")
+Start_Policy_Stopped_Before_Usable :: struct {
+	start_policy_hash: value_kinds.Hash_Head_Field,
+	cause:             op.Stop_Cause,
+	outcome:           op.Stop_Outcome,
+}
+
+@(log_fact = "root: the start policy {start_policy_hash} stopped before the machine was usable: {cause}; the rescue start policy starts")
+Start_Policy_Stopped_Before_Usable_Without_Outcome :: struct {
+	start_policy_hash: value_kinds.Hash_Head_Field,
+	cause:             op.Stop_Cause,
+}
+
+// The start policy stopped itself after the machine was usable: the
+// processes that it asked for keep running.
+@(log_fact = "root: the start policy {start_policy_hash} stopped: {cause}, {outcome}, after the machine was usable: the processes that it asked for keep running")
+Start_Policy_Stopped_After_Usable :: struct {
+	start_policy_hash: value_kinds.Hash_Head_Field,
+	cause:             op.Stop_Cause,
+	outcome:           op.Stop_Outcome,
+}
+
+@(log_fact = "root: the start policy {start_policy_hash} stopped: {cause}, after the machine was usable: the processes that it asked for keep running")
+Start_Policy_Stopped_After_Usable_Without_Outcome :: struct {
+	start_policy_hash: value_kinds.Hash_Head_Field,
+	cause:             op.Stop_Cause,
+}
+
+// The rescue sent no Machine_Usable within its bound.
+@(log_fact = "root: the rescue start policy {start_policy_hash} sent no Machine_Usable within the hang bound of {bound}")
+Rescue_Not_Usable_In_Time :: struct {
+	bound:             value_kinds.Time_In_Milliseconds,
+	start_policy_hash: value_kinds.Hash_Head_Field,
+}
+
+// The start policy sent no Machine_Usable within its bound: the rescue
+// starts.
+@(log_fact = "root: the start policy {start_policy_hash} sent no Machine_Usable within the hang bound of {bound}: the rescue start policy starts")
+Start_Policy_Not_Usable_In_Time :: struct {
+	bound:             value_kinds.Time_In_Milliseconds,
+	start_policy_hash: value_kinds.Hash_Head_Field,
+}
+
+// The machine is usable: the start policy that said so, its list, and the
+// free pages of the budget of this service now and at the lowest. The
+// measure of the records of the start stops at this fact
+// (tools/modustool/build/log_measures.odin).
+@(log_fact = "root: the machine is usable, by the start policy {start_policy_hash} {start_policy_words}: the budget of this service holds {free_pages} free pages, {lowest_free_pages} at the lowest")
+Machine_Usable :: struct {
+	free_pages:         u64,
+	lowest_free_pages:  u64,
+	start_policy_hash:  value_kinds.Hash_Head_Field,
+	start_policy_words: [40]u8,
+}
+
+// The words that name a start policy after its hash, in the lines of its
+// measure: its list ("of the list start_list"), or its nickname of at most
+// disk_process.NAME_LIMIT bytes in parentheses: at most 36 bytes.
+
+@(log_fact = "root: the start policy {start_policy_hash} {start_policy_words} is not measured: the TPM service stopped earlier in this run")
+Start_Policy_Unmeasured_Tpm_Stopped_Earlier :: struct {
+	start_policy_hash:  value_kinds.Hash_Head_Field,
+	start_policy_words: [40]u8,
+}
+
+@(log_fact = "root: the start policy {start_policy_hash} {start_policy_words} is not measured: the system is not measured into a TPM")
+Start_Policy_Unmeasured_No_Tpm :: struct {
+	start_policy_hash:  value_kinds.Hash_Head_Field,
+	start_policy_words: [40]u8,
+}
+
+@(log_fact = "root: the start policy {start_policy_hash} {start_policy_words} is not measured: the TPM service has no measure ring")
+Start_Policy_Unmeasured_No_Measure_Ring :: struct {
+	start_policy_hash:  value_kinds.Hash_Head_Field,
+	start_policy_words: [40]u8,
+}
+
+@(log_fact = "root: the start policy {start_policy_hash} {start_policy_words} is not measured: the measure ring of the TPM service is full")
+Start_Policy_Unmeasured_Measure_Ring_Full :: struct {
+	start_policy_hash:  value_kinds.Hash_Head_Field,
+	start_policy_words: [40]u8,
+}
+
+// The TPM service answered with a word that names no status of its
+// contract: the word of another party keeps its number.
+@(log_fact = "root: the start policy {start_policy_hash} {start_policy_words} is not measured: the TPM service gave the status {status_word}, which names no status")
+Start_Policy_Unmeasured_Unknown_Status :: struct {
+	status_word:        u64,
+	start_policy_hash:  value_kinds.Hash_Head_Field,
+	start_policy_words: [40]u8,
+}
+
+// The extend of PCR 12 failed: the words of the status of the TPM service,
+// a closed set (tpm_measure_status_words), and the value of its answer.
+@(log_fact = "root: the measure of the start policy {start_policy_hash} {start_policy_words} into PCR 12 failed: the TPM service answered {tpm_status}, value {answer_value}")
+Start_Policy_Measure_Failed :: struct {
+	answer_value:       u64,
+	start_policy_hash:  value_kinds.Hash_Head_Field,
+	start_policy_words: [40]u8,
+	tpm_status:         [64]u8,
+}
+
+// The start policy is measured into PCR 12, with the value of PCR 12 that
+// the TPM gives back.
+@(log_fact = "root: the start policy {start_policy_hash} {start_policy_words} is measured into PCR 12: PCR 12 = {measure_value}")
+Start_Policy_Measured :: struct {
+	start_policy_hash:  value_kinds.Hash_Head_Field,
+	measure_value:      value_kinds.Hash_Field,
+	start_policy_words: [40]u8,
+}
+
+@(log_fact = "root: the start policy {start_policy_hash} {start_policy_words} is not measured: the TPM service stopped during the measure")
+Start_Policy_Unmeasured_Tpm_Stopped_During :: struct {
+	start_policy_hash:  value_kinds.Hash_Head_Field,
+	start_policy_words: [40]u8,
+}
+
+@(log_fact = "root: the start policy {start_policy_hash} {start_policy_words} is not measured: the TPM service gave no answer within {bound}")
+Start_Policy_Unmeasured_No_Answer :: struct {
+	bound:              value_kinds.Time_In_Milliseconds,
+	start_policy_hash:  value_kinds.Hash_Head_Field,
+	start_policy_words: [40]u8,
+}
+
+// The parts of the machine that the machine parts page holds, one fact for
+// each part: the start policy reads the page.
+@(log_fact = "root: the machine parts page holds {machine_part}")
+Machine_Part_Present :: struct {
+	machine_part: [24]u8,
 }
