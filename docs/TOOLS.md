@@ -1096,6 +1096,8 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `site` | Writes the site in `build/site/` |
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
 | `ship step`, `ship correction`, `ship <release number>` | The release in one command: the changelog, a commit, a signed release tag, one atomic push to `master` ("The release") |
+| `queue <branch>...` | Merges a batch of branches into `master` after one full check, splits a batch that fails in halves to name the branch at fault, pushes `master`, and removes the merged branches and their worktrees ("The merge queue") |
+| `rename-library` | Moves the folders of the source library into its two source libraries, and rewrites the import lines, the comments and the documents; a second run changes nothing ("The rename of the library") |
 | `measure-history` | The copy of the measure record of each release tag that holds one, in `docs/measures/releases/` ("The release") |
 | `measure-compare <record before> <record after>` | The line of each measure in two measure records, and the number of each series in each with its ratio ("The comparison of two measure records") |
 | `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
@@ -1940,6 +1942,58 @@ A release (`glossary/project.md`, "Release") is one section of `CHANGELOG.md`, o
 | The release links | One for each release, in the order of the releases, each with the address of its release tag; no link for a number that is not a release; no empty line between two links; nothing after them |
 
 The code is `tools/modustool/checks/changelog.odin` and `tools/modustool/checks/ship.odin`; the host tests are `changelog_test.odin` and `ship_test.odin`. A test checks the plan of git commands as data, and never runs git.
+
+### The merge queue
+
+The merge queue (`glossary/project.md`, "Merge queue") merges a batch of branches into `master` after one full check (`glossary/project.md`, "Full check"), in place of one full check for each branch. The intent is `src/md/infrastructure/branch_batches.md`.
+
+```
+nix develop -c modustool queue work/editor work/sound work/viewer
+```
+
+Run it from the main working tree, on `master`, with no change in the tree. The branches merge in the order of the arguments.
+
+**What it refuses, with nothing changed.** Each refusal is one sentence; the refusals of the branches come all at once.
+
+| Refusal | The rule |
+|---|---|
+| The list | No branch; more than `QUEUE_BRANCH_LIMIT` (32) branches; an empty name; a name that starts with `-`; `master` or `queue/batch`; a branch named twice |
+| A branch | A branch that does not exist; a branch with no commit that `master` does not hold; a branch whose worktree has changes that are not committed |
+| The main tree | A tree that is not on `master`; a tree with changes; a `master` that does not hold `origin/master` after a fetch |
+| The identity | No `user.name` or no `user.email` in git; a set variable `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` or `GIT_COMMITTER_EMAIL`. A merge is made under the configured git user only |
+
+**What it does, in order.**
+
+1. It prints the message of each merge: `Merge branch '<branch>': <summary>`. The summary is the description of the branch (`git branch --edit-description`), or else the subject of its oldest commit that `master` does not hold and that is no merge, with its first letter in lower case.
+2. It makes the queue tree: a worktree `../kernel-queue` beside the main tree, on the branch `queue/batch`. The queue tree of a run that stopped before its end is removed first.
+3. For each group, the whole batch first: it resets the queue tree to `master`, and merges each branch of the group with `git merge --no-ff`. A conflict in `docs/screenshots/` or in `docs/measures/measures.txt` takes the side of the queue tree, because the full check writes both again. Another conflict aborts the merge and names the branch and its files; in the whole batch, it stops the command, with nothing checked and nothing merged.
+4. It runs the full check in the queue tree: `nix flake check`, then `nix develop -c modustool screenshots`.
+5. When the check passes, it commits the pictures and the measure record in the queue tree, and `master` takes the queue branch with `git merge --ff-only`. The history of `master` is then a merge commit for each branch, in order, and one commit of the pictures.
+6. When the check fails, the group splits in two halves, the first ⌈n/2⌉ branches and the rest, and the first half is tried first. A group of one branch whose check fails names that branch at fault. A conflict in a later group names its branch at fault with no check, and the group is tried again without it.
+7. At the end, it removes the queue tree and its branch, prints the state of each branch and the count of the full checks, pushes `master` once when a group landed, then removes each merged branch with `git branch -d` and its worktree with `git worktree remove`.
+
+**The count of the full checks.** For n branches and d = ⌈log₂ n⌉:
+
+| Batch | Full checks |
+|---|---|
+| No branch at fault | 1 |
+| One branch at fault | At most 1 + 2d: 9 for 12 branches |
+| The budget | min(2n − 1, 1 + 2d · `QUEUE_FAULT_LIMIT`): 17 for 12 branches, 21 for 32 |
+
+The queue stops after `QUEUE_FAULT_LIMIT` (2) branches at fault, and it never starts a check past the budget. The budget is the worst case of two branches at fault, so it stops only a run where a check fails with no branch at fault, as a check that fails once. The branches that were not checked stay branches, and the report says why.
+
+The exit status is 0 when every branch merged, and 1 otherwise. The code is `tools/modustool/checks/merge_queue.odin`. The host tests, `merge_queue_test.odin`, give the run of the groups a host with no git and no Nix, whose checks fail from a list, and check the refusals, the messages, the side of a conflict, the halves, the budget at each size up to the limit, the order of the merges, and each stop.
+
+### The rename of the library
+
+`modustool rename-library` makes the moves and the rewrites of the step of the two source libraries (`src/md/infrastructure/repository_layout.md`, "The steps"). Its table of the old and the new forms is in its intent file, `src/md/infrastructure/branch_batches.md`. It takes no argument and makes no commit.
+
+- It refuses a tree with files in conflict, a tracked file whose new place holds a tracked file or is under a tracked file, and a new place that exists with no tracked file in it. A refusal changes nothing.
+- It moves each tracked file of an old folder to the same place under its new folder, with `git mv`. A move takes the largest folder whose new place holds no tracked file, so a tree before the rename makes three moves. An old folder that ends empty leaves; a file that git does not track stays, and the command names it.
+- It rewrites the path of each import line and each old form of a comment in a `.odin` file, and each old form of a `.md`, `.txt` or `.manifest` file. It does not read the news entries, the fragments, `CHANGELOG.md`, `docs/measures/`, the designs that name the old forms on purpose, or its own source and test.
+- It prints each move, each file changed with its count, and each line that still holds an old form: a string of a source, which a developer changes by hand.
+
+It is idempotent: a second run moves nothing and rewrites nothing. So a branch that was made before the rename merges `master`, then runs it, and its own additions at the old places move and change. The code is `tools/modustool/checks/library_rename.odin`; the host tests, `library_rename_test.odin`, run it on a temporary tree with a host that moves with no git, three times: before the rename, again, and after a branch added files at the old places.
 
 ### The comparison of two measure records
 
