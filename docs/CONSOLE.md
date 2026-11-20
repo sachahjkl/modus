@@ -249,8 +249,8 @@ serial  status
 error: sort takes a Table; a Stream has no end: first(s, n) or table(s) makes one
 > kept = output_counter.counts
 error: a variable keeps no Stream: a Stream is a wiring, and a variable outlives its line; first(s, n) or table(s) makes a Table
-> output_counter.count
-error: output_counter declares no record output count; its record outputs are counts
+> output_counter.missing
+error: output_counter declares no record output or record input missing; its record outputs are counts
 ```
 
 **The draw of a record stream.** The width of each column is the widest text that its field can hold, from its record description: the digits of the largest value of an Integer of its size, the longest member of a status, the bytes of a Text. So a row never moves the rows above it. A row that is not a record is one dim line: "joined after 9 records" when the console joined the record stream after its start ([joined record](glossary/communication.md)), "3 records are missing here" for a [gap record](glossary/communication.md), and the end: the end record, or the end word of the wiring ("the stream ended: the writer stopped"). Escape ends the wait at once and closes the record stream, and the last line says "Escape closed the stream after 12 rows". `first` and `table` stop at Escape too, and the line fails with the count of the rows that came.

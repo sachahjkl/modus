@@ -2835,8 +2835,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "output_counter: it writes one record of counts each 200 ms while a reader is wired, and waits for a reader"},
 	{kind = .Type, text = "record_outputs(\"output_counter\")"},
 	{kind = .Wait, text = "[console] 1 row of Record_Output"},
-	{kind = .Type, text = "output_counter.count"},
-	{kind = .Wait, text = "[console] error: output_counter declares no record output count; its record outputs are counts"},
+	// A name that no record output begins with: the completion would end a
+	// prefix of `counts` into the name, and the line would run the stream.
+	{kind = .Type, text = "output_counter.missing"},
+	{kind = .Wait, text = "[console] error: output_counter declares no record output or record input missing; its record outputs are counts"},
 	{kind = .Type, text = "sort(output_counter.counts, \"serial\")"},
 	{kind = .Wait, text = "[console] error: sort takes a Table; a Stream has no end: first(s, n) or table(s) makes one"},
 	{kind = .Type, text = "kept = output_counter.counts"},
