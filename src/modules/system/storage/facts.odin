@@ -1,5 +1,6 @@
 package storage_service
 
+import "modus:contract/errors"
 import format "modus:contract/store"
 import "modus:contract/value_kinds"
 
@@ -269,8 +270,109 @@ Ranges_Committed :: struct {
 	object:        [72]u8,
 }
 
+// The block service refused a request: the values of its error record,
+// whose kind and unit a reader writes by the names of their members.
+@(log_fact = "storage: the block service refused a request: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Block_Request_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The facts of the start of the service with no value: their sentence is
+// their template.
+
+// The context has no seed.
+@(log_fact = "storage: no seed in the context of the process")
+No_Seed :: struct {}
+
+// The context has no service ring.
+@(log_fact = "storage: no service ring")
+No_Service_Ring :: struct {}
+
+// The ring of the block service does not open.
+@(log_fact = "storage: no block ring")
+No_Block_Ring :: struct {}
+
+// The handle of the block service lacks the right Read.
+@(log_fact = "storage: no handle of the block service with the right Read: a wait for the disk would have no end")
+No_Block_Service_Handle :: struct {}
+
+// The data region does not exist or does not map.
+@(log_fact = "storage: no data region")
+No_Data_Region :: struct {}
+
+// The block service refused the data region.
+@(log_fact = "storage: the block service refused the data region")
+Data_Region_Refused :: struct {}
+
+// The open found no valid root.
+@(log_fact = "storage: no valid root on the disk: the service keeps the disk as it is, and serves nothing")
+No_Valid_Root :: struct {}
+
+// The first root of the disk was cut by a stop: the service formats again.
+@(log_fact = "storage: the first root of the disk has a wrong check and no commit followed it: a format that a stop cut; the service formats again")
+First_Root_Cut :: struct {}
+
+// The newest root names a damaged block: the root before it is used.
+@(log_fact = "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used")
+Newest_Root_Refused :: struct {}
+
+// The open found blocks that the engine names wrongly, in one store.
+@(log_fact = "storage: a fault of the engine: {named_twice} blocks of one name named two times, {named_by_two_stores} blocks named from two stores, {reference_overflow} counts of names that pass their limit; the service makes no change in the {faulty_stores} store with such a block, and gives their objects")
+Engine_Fault_In_One_Store :: struct {
+	named_twice:         u64,
+	named_by_two_stores: u64,
+	reference_overflow:  u64,
+	faulty_stores:       u64,
+}
+
+// The open found blocks that the engine names wrongly, in several stores
+// or in none.
+@(log_fact = "storage: a fault of the engine: {named_twice} blocks of one name named two times, {named_by_two_stores} blocks named from two stores, {reference_overflow} counts of names that pass their limit; the service makes no change in the {faulty_stores} stores with such a block, and gives their objects")
+Engine_Fault :: struct {
+	named_twice:         u64,
+	named_by_two_stores: u64,
+	reference_overflow:  u64,
+	faulty_stores:       u64,
+}
+
+// The erase of versions: the disk did not keep the second root.
+@(log_fact = "storage: the versions of {object} in the store {store} are ended at the generation {generation}, and the read back of the second root found other bytes: the disk did not keep it; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
+Versions_Ended_Second_Root_Dropped :: struct {
+	generation: u64,
+	store:      [40]u8,
+	object:     [72]u8,
+}
+
+// The erase of versions: the write or the read back of the second root
+// failed on the device.
+@(log_fact = "storage: the versions of {object} in the store {store} are ended at the generation {generation}, and the write or the read back of the second root failed on the device: it is not taken, the open of the next start decides, and the service makes no change until then; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
+Versions_Ended_Second_Root_Failed :: struct {
+	generation: u64,
+	store:      [40]u8,
+	object:     [72]u8,
+}
+
+// The erase of versions: a write, the Flush or the read back of the zeros
+// failed.
+@(log_fact = "storage: the versions of {object} in the store {store} are ended at the generation {generation}, and a write, the Flush or the read back of the zeros failed: {zeroed} blocks read back as zeros and {not_zeroed} with other bytes; the others were not read back, and can keep their old bytes until a commit takes them")
+Versions_Ended_Zeros_Failed :: struct {
+	generation: u64,
+	zeroed:     u64,
+	not_zeroed: u64,
+	store:      [40]u8,
+	object:     [72]u8,
+}
+
+// The erase of versions: the disk did not keep some writes of zeros.
+@(log_fact = "storage: the versions of {object} in the store {store} are ended at the generation {generation}, and the read back of the zeros found {not_zeroed} blocks with other bytes: the disk did not keep those writes, and their old bytes stay in free blocks until a commit takes them")
+Versions_Ended_Zeros_Dropped :: struct {
+	generation: u64,
+	not_zeroed: u64,
+	store:      [40]u8,
+	object:     [72]u8,
+}
+
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes, and each holds its longest name and a zero byte.
+#assert(size_of(Versions_Ended_Zeros_Failed) == 24 + STORE_FIELD_BYTES + OBJECT_FIELD_BYTES)
 #assert(size_of(Tree_Node_Damaged) == STORE_FIELD_BYTES && STORE_FIELD_BYTES > NAME_CAPACITY)
 #assert(size_of(Erase_Damaged_Left) == 8 + STORE_FIELD_BYTES + OBJECT_FIELD_BYTES && OBJECT_FIELD_BYTES > format.ENTRY_NAME_CAPACITY)
 #assert(size_of(Disk_Silent) == DISK_SILENT_CAUSE_BYTES)

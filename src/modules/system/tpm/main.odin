@@ -58,6 +58,7 @@ import "modus:contract/byte_order"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/tpm_service"
+import "modus:contract/value_kinds"
 import "modus:support/random"
 import "modus:support/system"
 import "modus:support/tpm2"
@@ -121,7 +122,7 @@ answer_bytes: [MESSAGE_LIMIT]u8
 region: []u8
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Error, "tpm: ", text)
+	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -338,10 +339,10 @@ orderly_state_restore :: proc "contextless" () {
 	}
 	code, problem := tpm2.status_answer(answer)
 	if problem != .None {
-		system.log(.Info, "tpm: the TPM refused TPM2_Shutdown after a use of an authorization value (response code ", system.Hex(u64(code)), "); the next start of the TPM can count one failure")
+		system.log_fact(.Info, Shutdown_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
 		return
 	}
-	system.log(.Info, "tpm: TPM2_Shutdown after the use of an authorization value: a stop of the machine now makes the TPM count no failure")
+	system.log_fact(.Info, Shutdown_Done{})
 }
 
 // seal seals the secret of the region to the values of PCR 7 and PCR 11 now,
@@ -444,12 +445,12 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	// system in its creation data.
 	pcr_digest, creation_read := tpm2.creation_data_pcr_digest(creation_data[:creation_bytes])
 	if !creation_read {
-		system.log(.Info, "tpm: refused the unseal: the creation data does not name PCR 7 and PCR 11 with a digest")
+		system.log_fact(.Info, Unseal_Creation_Data_Refused{})
 		return {status = .Not_Authentic}
 	}
 	policy := tpm2.sealed_object_policy(&pcr_digest, authorized)
 	if !tpm2.sealed_public_check(public_area[:public_bytes], &policy, tpm2.sealed_object_attributes(authorized)) {
-		system.log(.Info, "tpm: refused the unseal: the policy of the object is not the policy of the PCR values of its creation, or its attributes are not the attributes of a sealed object")
+		system.log_fact(.Info, Unseal_Policy_Refused{})
 		return {status = .Not_Authentic}
 	}
 	defer erase(answer_bytes[:])
@@ -478,7 +479,7 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	}
 	code, problem = tpm2.status_answer(answer)
 	if problem == .Refused && tpm2.ticket_fails(code) {
-		system.log(.Info, "tpm: refused the unseal: the TPM refuses the creation ticket of the object (response code ", system.Hex(u64(code)), "): this TPM did not make it so")
+		system.log_fact(.Info, Unseal_Ticket_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
 		return {status = .Not_Authentic, values = {0 = u64(code)}}
 	}
 	if problem != .None {
@@ -507,7 +508,7 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	}
 	if problem != .None {
 		if problem == .Refused && tpm2.policy_fails(code) {
-			system.log(.Info, "tpm: the TPM refuses the unseal: PCR 7 and PCR 11 do not hold the values of the seal (response code ", system.Hex(u64(code)), ")")
+			system.log_fact(.Info, Unseal_Pcr_Values_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
 		}
 		if problem == .Refused && tpm2.authorization_fails(code) {
 			// No TPM2_Shutdown after a counted failure: a TPM can keep the
@@ -516,18 +517,18 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 			// failure. With no shutdown, the next start counts one failure
 			// at most, and a right passphrase later in this run sends it.
 			authorization_used = false
-			system.log(.Info, "tpm: the TPM refuses the unseal: the authorization value is wrong, and the TPM counted the failure (response code ", system.Hex(u64(code)), ")")
+			system.log_fact(.Info, Unseal_Authorization_Wrong{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
 		}
 		if problem == .Refused && tpm2.locked_out(code) {
-			system.log(.Info, "tpm: the TPM refuses the unseal: it counted too many wrong authorization values, and refuses each try for now (response code ", system.Hex(u64(code)), ")")
+			system.log_fact(.Info, Unseal_Locked_Out{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
 		}
 		return outcome_of_problem(problem, code, tpm2.COMMAND_UNSEAL)
 	}
 	copy(region[tpm_service.REGION_SECRET:][:tpm2.SECRET_SIZE], secret)
 	if authorized {
-		system.log(.Info, "tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal, and the authorization value is right")
+		system.log_fact(.Info, Unsealed_With_Authorization{})
 	} else {
-		system.log(.Info, "tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal")
+		system.log_fact(.Info, Unsealed{})
 	}
 	return {status = .Ok, values = {0 = tpm2.SECRET_SIZE}}
 }
@@ -558,7 +559,7 @@ measure_start_policy :: proc "contextless" (values: [7]u64) -> Outcome {
 	}
 	code, problem := tpm2.status_answer(answer)
 	if problem != .None {
-		system.log(.Warning, "tpm: the TPM refused the extend of PCR 12 (response code ", system.Hex(u64(code)), ")")
+		system.log_fact(.Warning, Extend_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
 		return outcome_of_problem(problem, code, tpm2.COMMAND_PCR_EXTEND)
 	}
 	count = tpm2.pcr_read_command(command_bytes[:])
@@ -570,7 +571,7 @@ measure_start_policy :: proc "contextless" (values: [7]u64) -> Outcome {
 	value: [tpm2.DIGEST_SIZE]u8
 	value, code, problem = tpm2.pcr_read_answer(answer)
 	if problem != .None {
-		system.log(.Warning, "tpm: extended PCR 12, and its read back gave no value of PCR 12 of SHA-256 (response code ", system.Hex(u64(code)), ")")
+		system.log_fact(.Warning, Extend_Read_Back_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
 		return outcome_of_problem(problem, code, tpm2.COMMAND_PCR_READ)
 	}
 	system.log_fact(.Info, Start_Policy_Measured{extend = u64(measure_count), extend_limit = tpm_service.MEASURE_LIMIT})
@@ -593,7 +594,7 @@ properties_read :: proc "contextless" (first: u32, values: []u32, what: string) 
 	}
 	code, problem := tpm2.properties_answer(answer, first, values)
 	if problem == .Refused {
-		system.log(.Warning, "tpm: the TPM refused TPM2_GetCapability of ", what, " (response code ", system.Hex(u64(code)), ")")
+		system.log_fact(.Warning, Capability_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code), properties = properties_field(what)})
 		return false
 	}
 	if problem != .None {
@@ -613,9 +614,9 @@ count_limits_log :: proc "contextless" () {
 		maximum := limits[tpm2.PROPERTY_MAXIMUM_AUTHORIZATION_FAILURES - tpm2.PROPERTY_LOCKOUT_COUNTER]
 		interval := limits[tpm2.PROPERTY_LOCKOUT_INTERVAL - tpm2.PROPERTY_LOCKOUT_COUNTER]
 		recovery := limits[tpm2.PROPERTY_LOCKOUT_RECOVERY - tpm2.PROPERTY_LOCKOUT_COUNTER]
-		system.log(.Info, "tpm: the count limits of the TPM: a lockout after ", u64(maximum), " wrong authorization values, one forgiven each ", u64(interval), " seconds; ", u64(counted), " counted now; the lockout hierarchy waits ", u64(recovery), " seconds after a wrong value of its own")
+		system.log_fact(.Info, Count_Limits{lockout_failures = u64(maximum), forgive_interval_seconds = u64(interval), counted_failures = u64(counted), lockout_recovery_seconds = u64(recovery)})
 		if interval == 0 {
-			system.log(.Warning, "tpm: the TPM limits no rate of the wrong authorization values: its lockout interval is 0")
+			system.log_fact(.Warning, No_Rate_Limit{})
 		}
 	}
 }
@@ -640,11 +641,11 @@ lockout_authorization_check :: proc "contextless" (seeded: bool) {
 	request_deadline = system.time() + LOCKOUT_CHECK_BOUND_MILLISECONDS
 	permanent: [1]u32
 	if !properties_read(tpm2.PROPERTY_PERMANENT, permanent[:], "the state of the hierarchies") {
-		system.log(.Warning, "tpm: the lockout hierarchy is not checked: another system can reset the count of the TPM while its value is empty")
+		system.log_fact(.Warning, Lockout_Not_Checked{})
 		return
 	}
 	if tpm2.lockout_authorization_set(permanent[0]) {
-		system.log(.Info, "tpm: the lockout hierarchy has an authorization value: an earlier start of this system set it, or another system did; this service keeps no copy of it and leaves it")
+		system.log_fact(.Info, Lockout_Authorization_Found{})
 		return
 	}
 	value: [tpm2.AUTHORIZATION_VALUE_SIZE]u8
@@ -653,11 +654,11 @@ lockout_authorization_check :: proc "contextless" (seeded: bool) {
 	defer erase(command_bytes[:])
 	error: errors.Error_Record
 	if !seeded {
-		system.log(.Warning, "tpm: the lockout hierarchy keeps its empty authorization value: this process has no seed, and another system can reset the count of the TPM")
+		system.log_fact(.Warning, Lockout_Kept_Empty_Without_Seed{})
 		return
 	}
 	if !random.fill_for_a_key(&generator, value[:], .Processor, &error) {
-		system.log(.Warning, "tpm: the lockout hierarchy keeps its empty authorization value: the seed of this process is too weak for a key, and another system can reset the count of the TPM")
+		system.log_fact(.Warning, Lockout_Kept_Empty_Weak_Seed{})
 		return
 	}
 	count := tpm2.lockout_authorization_change_command(command_bytes[:], value[:])
@@ -668,14 +669,14 @@ lockout_authorization_check :: proc "contextless" (seeded: bool) {
 	}
 	code, problem := tpm2.status_answer(answer)
 	if problem == .Refused {
-		system.log(.Warning, "tpm: the TPM refused a lockout authorization value (response code ", system.Hex(u64(code)), "): the lockout hierarchy keeps its empty one until the next start, and another system can reset the count of the TPM")
+		system.log_fact(.Warning, Lockout_Authorization_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
 		return
 	}
 	if problem != .None {
-		system.log(.Warning, "tpm: the answer of the TPM to TPM2_HierarchyChangeAuth of the lockout hierarchy does not have its form: the next start reads the state of the hierarchy again")
+		system.log_fact(.Warning, Lockout_Change_Answer_Malformed{})
 		return
 	}
-	system.log(.Info, "tpm: the lockout hierarchy had an empty authorization value: this service set a random one and kept no copy, so no system resets the count of the TPM or changes its limits")
+	system.log_fact(.Info, Lockout_Authorization_Set{})
 }
 
 // The entry: it maps the registers and checks the interface, then serves
@@ -714,13 +715,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if buffer_address != tpm_service.REGISTERS_ADDRESS + DATA_BUFFER || response_address != buffer_address || buffer_size < MESSAGE_LIMIT || buffer_size > system.PAGE_SIZE - DATA_BUFFER {
 		fail("the buffer of the TPM is not in the page of its registers")
 	}
-	system.log(.Info, "tpm: ok, the CRB interface at ", system.Hex(u64(tpm_service.REGISTERS_ADDRESS)), ", a buffer of ", u64(buffer_size), " bytes; it seals to PCR 7 and PCR 11")
+	system.log_fact(.Info, Ready{registers_address = value_kinds.Hexadecimal_Sixteen_Digits(tpm_service.REGISTERS_ADDRESS), buffer_size = value_kinds.Size_In_Bytes(buffer_size)})
 	// The measure ring of the root service. With none, no start policy is
 	// measured, and the root service says it at each start policy.
 	measures, measure_ring_status := system.ring_open(ctx.handles[tpm_service.SERVICE_MEASURE_RING])
 	measure_ring_open := measure_ring_status == .Ok
 	if !measure_ring_open {
-		system.log(.Warning, "tpm: no measure ring: no start policy is measured into PCR 12")
+		system.log_fact(.Warning, No_Measure_Ring{})
 	}
 	// Before the ring: a request of unlock waits in the ring until then.
 	count_limits_log()
@@ -756,7 +757,7 @@ requests_serve :: proc "contextless" (requests: ^ring.Ring, source: tpm_service.
 				erase(region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
 			}
 			if !system.send(&requests.completions, ring.Record{kind = u32(request_status), tag = command.tag}) {
-				system.log(.Warning, "tpm: the completion queue of a ring of the TPM service is full: a completion is lost")
+				system.log_fact(.Warning, Completion_Lost{})
 			}
 			continue
 		}
@@ -788,7 +789,7 @@ requests_serve :: proc "contextless" (requests: ^ring.Ring, source: tpm_service.
 			orderly_state_restore()
 		}
 		if !system.send(&requests.completions, ring.Record{kind = u32(outcome.status), tag = command.tag, values = outcome.values}) {
-			system.log(.Warning, "tpm: the completion queue of a ring of the TPM service is full: a completion is lost")
+			system.log_fact(.Warning, Completion_Lost{})
 		}
 	}
 }

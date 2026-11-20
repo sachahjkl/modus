@@ -133,8 +133,91 @@ Capture_Picture_Refused :: struct {
 	picture: u64,
 }
 
+// The bytes of the Text field of the failure that stops the service: the
+// longest of the failures of the services of the devices and of the
+// network has 91 bytes, and a zero byte.
+FAILURE_FIELD_BYTES :: 96
+
+// The service stops on a failure: the words of the failure come from a
+// closed set of sentences of this module.
+@(log_fact = "remote_display: {failure}")
+Service_Failed :: struct {
+	failure: [96]u8,
+}
+
+// A measure: the first viewer frame of the whole screen.
+@(log_fact = "remote_display: a measure: the whole screen of {width}x{height} in one viewer frame: {screen_pieces} screen pieces, {piece_bytes} of screen pieces for {pixel_bytes} of pixels, coded in {coded_time}, taken by the viewer {taken_time} after its start")
+Whole_Screen_Measured :: struct {
+	width:         u64,
+	height:        u64,
+	screen_pieces: u64,
+	piece_bytes:   value_kinds.Size_In_Bytes,
+	pixel_bytes:   value_kinds.Size_In_Bytes,
+	coded_time:    value_kinds.Time_In_Microseconds,
+	taken_time:    value_kinds.Time_In_Microseconds,
+}
+
+// A measure: the viewer frames of a small damage, their median and their
+// least. The template has at most 256 bytes, so its names are short.
+@(log_fact = "remote_display: a measure: viewer frames of a small damage (at most {pixels} pixels), the median of {frames}: {median_size} of screen pieces, {median_time} from Viewer_Frame_Start in the stream to Viewer_Frame_Taken; the least {least_size} and {least_time}")
+Small_Damage_Measured :: struct {
+	pixels:      u64,
+	frames:      u64,
+	median_size: value_kinds.Size_In_Bytes,
+	median_time: value_kinds.Time_In_Microseconds,
+	least_size:  value_kinds.Size_In_Bytes,
+	least_time:  value_kinds.Time_In_Microseconds,
+}
+
+// The screen of the compositor is past the reference screen of the
+// protocol.
+@(log_fact = "remote_display: the screen of {width}x{height} is past the reference screen of the protocol: no capture face")
+Screen_Past_Reference :: struct {
+	width:  u64,
+	height: u64,
+}
+
+// No memory for the capture face.
+@(log_fact = "remote_display: no memory for the capture face: {pages}")
+Capture_Memory_Refused :: struct {
+	pages: value_kinds.Size_In_Pages,
+}
+
+// The memory of the capture face does not map, or the compositor does not
+// take it.
+@(log_fact = "remote_display: the memory of the capture face does not map, or the compositor does not take it")
+Capture_Memory_Not_Given :: struct {}
+
+// The capture face is open: a copy of the screen.
+@(log_fact = "remote_display: the capture face is open: a copy of {width}x{height}")
+Capture_Face_Opened :: struct {
+	width:  u64,
+	height: u64,
+}
+
+// The last viewer left: the capture face is closed.
+@(log_fact = "remote_display: no viewer: the capture face is closed, after {pictures} pictures of the compositor")
+Capture_Face_Closed :: struct {
+	pictures: u64,
+}
+
+// The public key of the service, which a viewer checks.
+@(log_fact = "remote_display: the public key of this service: {public_key}")
+Public_Key_Made :: struct {
+	public_key: [72]u8,
+}
+
+// The service listens for viewers.
+@(log_fact = "remote_display: listening on the UDP port {listen_port}, for the host 10.0.2.2 only, and for the viewer keys that a principal allowed: {viewer_capacity} viewers at one time")
+Listening :: struct {
+	listen_port:     u64,
+	viewer_capacity: u64,
+}
+
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
+#assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
+#assert(size_of(Public_Key_Made) == KEY_FIELD_BYTES)
 #assert(size_of(Viewer_Key_Refused) == KEY_FIELD_BYTES)
 #assert(size_of(Viewer_Key_Grant_Ended_In_Handshake) == KEY_HEAD_FIELD_BYTES + PEER_FIELD_BYTES)
 #assert(size_of(Viewer_Record_Refused) == KEY_HEAD_FIELD_BYTES + RECORD_CAUSE_FIELD_BYTES + ERROR_CODE_FIELD_BYTES)

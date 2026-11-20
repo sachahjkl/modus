@@ -70,6 +70,7 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:private/debugger/debugging"
 import "modus:contract/root_ring"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The results of an export that fails: a negative number, with an error
@@ -261,7 +262,7 @@ root_request_send :: proc "contextless" (name: string, connection_ring: system.H
 		}
 	}
 	if free == nil {
-		system.log(.Info, "debugger: ", u64(ROOT_REQUEST_CAPACITY), " commands wait for the root service: no room for one more")
+		system.log_fact(.Info, Root_Commands_Full{capacity = u64(ROOT_REQUEST_CAPACITY)})
 		return 0
 	}
 	request_count += 1
@@ -349,10 +350,10 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 			}
 		}
 		if in_use {
-			system.log(.Info, "debugger: the root service answered an earlier attach to ", system.Module_Name{name}, " after the export stopped waiting: its handle is closed, and the debugging that runs stays")
+			system.log_fact(.Info, Late_Attach_Answer_While_Debugging{debugged_process = value_kinds.module_name_field(name)})
 			return
 		}
-		system.log(.Info, "debugger: the root service answered the attach to ", system.Module_Name{name}, " after the export stopped waiting: the debug access is given back")
+		system.log_fact(.Info, Late_Attach_Answer{debugged_process = value_kinds.module_name_field(name)})
 		root_request_send(name, request.ring, true)
 		return
 	}
@@ -467,7 +468,7 @@ session_end :: proc "contextless" (why: string) {
 	if !session.attached {
 		return
 	}
-	system.log(.Info, "debugger: the debugging of ", system.Module_Name{session_name()}, " ended: ", why)
+	system.log_fact(.Info, Debugging_Ended{debugged_process = value_kinds.module_name_field(session_name()), why = value_kinds.text_field(why, SESSION_END_FIELD_BYTES)})
 	system.close(session.process)
 	// The root service forgets the debug access: another caller can then
 	// ask for this process.
@@ -636,7 +637,7 @@ record_keep :: proc "contextless" (record: op.Fault_Record, awaited_step := fals
 	event.kind_count = len(system.written(&writer))
 	// One line of the log for each event: a reader of the log, and a
 	// caller that waits with no call, see it.
-	system.log(.Info, "debugger: the thread ", record.thread, " of ", system.Module_Name{session_name()}, " stopped: ", string(event.kind[:event.kind_count]))
+	system.log_fact(.Info, Thread_Stopped{thread = record.thread, debugged_process = value_kinds.module_name_field(session_name()), stop_kind = value_kinds.text_field(string(event.kind[:event.kind_count]), STOP_KIND_FIELD_BYTES)})
 }
 
 // thread_stopped says if the registers of a thread can be read: the
@@ -923,10 +924,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	opened: bool
 	service, opened = system.service_open(ctx)
 	if !opened {
-		system.log(.Info, "debugger: no service ring")
+		system.log_fact(.Info, No_Service_Ring{})
 		system.stop(.Refused)
 	}
-	system.log(.Info, "debugger: serves its exports")
+	system.log_fact(.Info, Serving{})
 	own := system.thread_record()
 	for {
 		// The stops of the debugged process wake this thread as the calls

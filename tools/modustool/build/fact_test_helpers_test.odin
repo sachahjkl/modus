@@ -216,8 +216,8 @@ facts_expect_text_fields_last :: proc(t: ^testing.T, file: []u8, text_bytes_most
 			if !testing.expect(t, item_ok) {
 				continue
 			}
-			// A text view is after the Text fields: the build keeps the
-			// views last, and their zeros cost no byte either.
+			// A text view is the last field of all, after the Text fields:
+			// the build refuses a field after a view.
 			if item.kind == u8(value_kinds.Field_Kind.Text_View) {
 				continue
 			}

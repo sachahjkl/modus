@@ -40,6 +40,7 @@ import info "modus:contract/boot_info"
 import "modus:support/display"
 import "modus:support/graphics"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 MARGIN :: 12
@@ -273,12 +274,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if !logged {
 			logged = true
-			system.log(.Info, "pages: the kernel half: ", kernel_half.pages, " pages in ", kernel_half.run_count, " runs, ", kernel_half.write_execute_pages, " write and execute, ", kernel_half.guard_pages, " guard pages of ", kernel_half.guards_expected)
-			system.log(.Info, "pages: this process: ", process_half.pages, " pages in ", process_half.run_count, " runs, ", process_half.write_execute_pages, " write and execute")
+			system.log_fact(.Info, Kernel_Half_Read{mapped = value_kinds.Size_In_Pages(kernel_half.pages), runs = u64(kernel_half.run_count), write_execute_pages = u64(kernel_half.write_execute_pages), guard_pages = u64(kernel_half.guard_pages), guards_expected = u64(kernel_half.guards_expected)})
+			system.log_fact(.Info, Process_Half_Read{mapped = value_kinds.Size_In_Pages(process_half.pages), runs = u64(process_half.run_count), write_execute_pages = u64(process_half.write_execute_pages)})
 			kept := kernel_half.pages != 0 && process_half.pages != 0 && kernel_half.write_execute_pages == 0 && process_half.write_execute_pages == 0 && kernel_half.guard_pages == kernel_half.guards_expected && kernel_half.guards_expected != 0
 			guards := kernel_half.kernel_no_execute != 0 && kernel_half.kernel_guard != 0
-			system.log(.Info, kept ? "pages: ok, the page tables keep the rules" : "pages: failed, the page tables do not keep the rules")
-			system.log(.Info, guards ? "pages: the processor refuses the memory of processes to the kernel" : "pages: the processor has no guard for the memory of processes")
+			// Each verdict is two sentences: each one is a fact type.
+			if kept {
+				system.log_fact(.Info, Rules_Kept{})
+			} else {
+				system.log_fact(.Info, Rules_Not_Kept{})
+			}
+			if guards {
+				system.log_fact(.Info, Kernel_Guard_Present{})
+			} else {
+				system.log_fact(.Info, Kernel_Guard_Absent{})
+			}
 		}
 		for _ in display.next_event(&window) {}
 		system.sleep(system.time() + INTERVAL)

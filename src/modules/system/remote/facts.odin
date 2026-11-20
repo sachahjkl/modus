@@ -1,5 +1,6 @@
 package remote_service
 
+import "modus:contract/errors"
 import "modus:contract/value_kinds"
 import "modus:support/quic"
 
@@ -195,6 +196,89 @@ Service_Silent :: struct {
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
 #assert(size_of(Client_Key_Refused) == KEY_FIELD_BYTES)
+#assert(size_of(Public_Key_Made) == KEY_FIELD_BYTES)
+#assert(size_of(Connection_Ended) == 24 + PEER_FIELD_BYTES + END_REASON_FIELD_BYTES)
+#assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
+
+// The bytes of the Text field of the failure that stops the service: the
+// longest of the failures of the services of the devices and of the
+// network has 91 bytes, and a zero byte.
+FAILURE_FIELD_BYTES :: 96
+
+// The service stops on a failure: the words of the failure come from a
+// closed set of sentences of this module.
+@(log_fact = "remote: {failure}")
+Service_Failed :: struct {
+	failure: [96]u8,
+}
+
+// The public key of the service, which a client checks.
+@(log_fact = "remote: the public key of this service: {public_key}")
+Public_Key_Made :: struct {
+	public_key: [72]u8,
+}
+
+// The service listens for the calls of the host.
+@(log_fact = "remote: listening on the UDP port {listen_port}, for the host 10.0.2.2 only, and for the client keys that a principal allowed: {connection_capacity} connections, each with {calls_per_connection} calls at one time")
+Listening :: struct {
+	listen_port:          u64,
+	connection_capacity:  u64,
+	calls_per_connection: u64,
+}
+
+// The bytes of the Text field of why a connection ended: the longest,
+// "closed by this service", has 22 bytes.
+END_REASON_FIELD_BYTES :: 32
+
+// A connection ended, with a transport code of its close.
+@(log_fact = "remote: {peer} ended ({end_reason}, the code {close_code}): in {bytes_in}, out {bytes_out}")
+Connection_Ended :: struct {
+	close_code: value_kinds.Hexadecimal_Sixteen_Digits,
+	bytes_in:   value_kinds.Size_In_Bytes,
+	bytes_out:  value_kinds.Size_In_Bytes,
+	peer:       [32]u8,
+	end_reason: [32]u8,
+}
+
+// A connection ended, with a code of the application.
+@(log_fact = "remote: {peer} ended ({end_reason}, the code {close_code} of the application): in {bytes_in}, out {bytes_out}")
+Connection_Ended_By_Application :: struct {
+	close_code: value_kinds.Hexadecimal_Sixteen_Digits,
+	bytes_in:   value_kinds.Size_In_Bytes,
+	bytes_out:  value_kinds.Size_In_Bytes,
+	peer:       [32]u8,
+	end_reason: [32]u8,
+}
+
+// A request refused, with the values of its error record.
+@(log_fact = "remote: refused a request: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Request_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The last refused request that the log takes: the service counts the
+// next ones only. The words of the error record end each such template,
+// so the words of the count come before them.
+@(log_fact = "remote: refused a request, and counts the next refusals only: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Request_Refused_Last_Logged :: distinct errors.Error_Record_Fact_Fields
+
+// The seed of the process is too weak for a key.
+@(log_fact = "remote: the random seed of this process is weak: it makes no key, and listens on nothing")
+Seed_Weak :: struct {}
+
+// A measure: the time of one picture of the window, taken once.
+@(log_fact = "remote: the window drew one picture in {picture_time}")
+Window_Drawn :: struct {
+	picture_time: value_kinds.Time_In_Microseconds,
+}
+
+// A measure: the work of the interface for that picture.
+@(log_fact = "remote: the interface: {records} records, {damage_rectangles} damage rectangles; build {build_time}, difference {difference_time}, draw {draw_time}")
+Interface_Measured :: struct {
+	records:           u64,
+	damage_rectangles: u64,
+	build_time:        value_kinds.Time_In_Microseconds,
+	difference_time:   value_kinds.Time_In_Microseconds,
+	draw_time:         value_kinds.Time_In_Microseconds,
+}
 #assert(size_of(Client_Key_Grant_Ended_In_Handshake) == KEY_HEAD_FIELD_BYTES + PEER_FIELD_BYTES)
 #assert(size_of(Connection_Arrived) == PEER_FIELD_BYTES)
 

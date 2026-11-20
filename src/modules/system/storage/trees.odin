@@ -907,23 +907,23 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	case .Wrong:
 		// The root before the commit is still on the disk and names the
 		// freed blocks: no zeros. The next commit writes its root over it.
-		system.log(.Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the read back of the second root found other bytes: the disk did not keep it; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
+		system.log_fact(.Error, Versions_Ended_Second_Root_Dropped{generation = u64(generation), store = store_field(store_name), object = object_field(object_name)})
 		// No unit Dropped_Writes: its sentence says that the store keeps its
 		// state before, and the commit of the end is already on the disk.
 		return {}, errors.fail(error, failure(.Disk), .Device)
 	case .Device:
-		system.log(.Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the write or the read back of the second root failed on the device: it is not taken, the open of the next start decides, and the service makes no change until then; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
+		system.log_fact(.Error, Versions_Ended_Second_Root_Failed{generation = u64(generation), store = store_field(store_name), object = object_field(object_name)})
 		return {}, errors.fail(error, failure(.Disk), .Device)
 	}
 	zeroed, not_zeroed, zeros_written := freed_blocks_zero()
 	if !zeros_written {
-		system.log(.Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", root.generation, ", and a write, the Flush or the read back of the zeros failed: ", zeroed, " blocks read back as zeros and ", not_zeroed, " with other bytes; the others were not read back, and can keep their old bytes until a commit takes them")
+		system.log_fact(.Error, Versions_Ended_Zeros_Failed{generation = root.generation, zeroed = zeroed, not_zeroed = not_zeroed, store = store_field(store_name), object = object_field(object_name)})
 		return {}, errors.fail(error, failure(.Disk), .Device)
 	}
 	if not_zeroed != 0 {
 		// The versions are ended; the bytes of these free blocks stay on the
 		// disk. The row counts only the blocks that read back as zeros.
-		system.log(.Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", root.generation, ", and the read back of the zeros found ", not_zeroed, " blocks with other bytes: the disk did not keep those writes, and their old bytes stay in free blocks until a commit takes them")
+		system.log_fact(.Error, Versions_Ended_Zeros_Dropped{generation = root.generation, not_zeroed = not_zeroed, store = store_field(store_name), object = object_field(object_name)})
 	}
 	// The count of the zeros is the count of the blocks that read back as
 	// zeros: a block that the disk did not write is in the line above.

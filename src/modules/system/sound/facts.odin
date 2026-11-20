@@ -1,5 +1,6 @@
 package sound_device_service
 
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // The log facts of the sound service (src/md/features/log_facts.md, "The
@@ -85,6 +86,57 @@ Period_Refused :: struct {
 request_field :: proc "contextless" (name: string) -> [REQUEST_FIELD_BYTES]u8 {
 	return value_kinds.text_field(name, REQUEST_FIELD_BYTES)
 }
+
+// The bytes of the Text field of the failure that stops the service: the
+// longest of the failures of the services of the devices and of the
+// network has 91 bytes, and a zero byte.
+FAILURE_FIELD_BYTES :: 96
+
+// The service stops on a failure: the words of the failure come from a
+// closed set of sentences of this module.
+@(log_fact = "sound: {failure}")
+Service_Failed :: struct {
+	failure: [96]u8,
+}
+
+// The stream started: the time of the system clock of its frame 0, and
+// the time that the service holds before the device.
+@(log_fact = "sound: the stream started: the frame 0 plays at {frame_zero_time} of the system clock; the service holds {held_time}")
+Stream_Started :: struct {
+	frame_zero_time: value_kinds.Time_In_Nanoseconds,
+	held_time:       value_kinds.Time_In_Nanoseconds,
+}
+
+#assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
+
+// The queues do not map, or have no device address: each status by the
+// name of its member.
+@(log_fact = "sound: the map of the queues gave the status {map_status}, their device address the status {address_status}")
+Queues_Not_Mapped :: struct {
+	map_status:     op.Status,
+	address_status: op.Status,
+}
+
+// The kernel gave no memory for the periods.
+@(log_fact = "sound: the memory of the periods gave the status {status}")
+Periods_Memory_Refused :: struct {
+	status: op.Status,
+}
+
+// The periods do not map, or have no device address.
+@(log_fact = "sound: the map of the periods gave the status {map_status}, their device address the status {address_status}")
+Periods_Not_Mapped :: struct {
+	map_status:     op.Status,
+	address_status: op.Status,
+}
+
+// The first hold of the stream.
+@(log_fact = "sound: the first hold: the device took the periods faster than their time; the service gives the next one when the time comes, and counts each hold")
+First_Hold :: struct {}
+
+// The first underrun of the stream.
+@(log_fact = "sound: the first underrun: the device took each period before the next one came; the next frame plays now, and each completion counts the underruns")
+First_Underrun :: struct {}
 
 // bytes_field gives a count of bytes as a field with its unit.
 bytes_field :: proc "contextless" (count: u32) -> value_kinds.Size_In_Bytes {

@@ -1235,7 +1235,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// of the key in the data of the module.
 	slot_key_generator: random.Generator
 	if !random.generator_from_context(&slot_key_generator, ctx) {
-		system.log(.Error, "storage: no seed in the context of the process")
+		system.log_fact(.Error, No_Seed{})
 		system.stop(.Refused)
 	}
 	slot_key: [8]u8
@@ -1244,24 +1244,24 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	opened.hash_index.slot_key = intrinsics.unaligned_load((^u64)(&slot_key[0]))
 	ok: bool
 	if service, ok = system.service_open(ctx); !ok {
-		system.log(.Error, "storage: no service ring")
+		system.log_fact(.Error, No_Service_Ring{})
 		system.stop(.Refused)
 	}
 	ring_memory := ctx.handles[block.GRANT_RING]
 	status: system.Status
 	if blocks, status = system.ring_open(ring_memory); status != .Ok {
-		system.log(.Error, "storage: no block ring")
+		system.log_fact(.Error, No_Block_Ring{})
 		system.stop(.Failed)
 	}
 	block_service = ctx.handles[block.GRANT_SERVICE]
 	if kind, rights, _ := system.handle_state(block_service); kind != .Process || .Read not_in rights {
-		system.log(.Error, "storage: no handle of the block service with the right Read: a wait for the disk would have no end")
+		system.log_fact(.Error, No_Block_Service_Handle{})
 		system.stop(.Failed)
 	}
 	memory, memory_status := system.memory_create(REGION_BLOCKS, 0, {.Contiguous}) // The device reads and writes it.
 	address, map_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || map_status != .Ok {
-		system.log(.Error, "storage: no data region")
+		system.log_fact(.Error, No_Data_Region{})
 		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)
@@ -1289,7 +1289,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// refuses each call with Device (disk_unopened_refusal).
 	if give_status != .Ok || block.Status(command(.Attach, {0 = u64(given)}).kind) != .Ok {
 		if !disk_silent {
-			system.log(.Error, "storage: the block service refused the data region")
+			system.log_fact(.Error, Data_Region_Refused{})
 			system.stop(.Failed)
 		}
 	}
@@ -1333,11 +1333,11 @@ disk_open :: proc "contextless" () {
 	}
 	switch {
 	case mounted.failed:
-		system.log(.Error, "storage: no valid root on the disk: the service keeps the disk as it is, and serves nothing")
+		system.log_fact(.Error, No_Valid_Root{})
 		system.stop(.Failed)
 	case mounted.needs_format:
 		if mounted.first_cut {
-			system.log(.Warning, "storage: the first root of the disk has a wrong check and no commit followed it: a format that a stop cut; the service formats again")
+			system.log_fact(.Warning, First_Root_Cut{})
 		}
 		system.log_fact(.Info, New_Disk_Formatted{blocks = blocks_field(root.disk_blocks)})
 	case:
@@ -1345,7 +1345,7 @@ disk_open :: proc "contextless" () {
 			system.log_fact(.Warning, Cut_Root_Skipped{generation = mounted.cut})
 		}
 		if mounted.older {
-			system.log(.Warning, "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used")
+			system.log_fact(.Warning, Newest_Root_Refused{})
 		}
 		if mounted.wrong != 0 {
 			system.log_fact(.Warning, Blocks_Damaged{blocks = mounted.wrong, objects = mounted.damaged_objects, stores = mounted.damaged_stores})
@@ -1358,7 +1358,13 @@ disk_open :: proc "contextless" () {
 			for flag in opened.store_faulty {
 				faulty += u64(flag)
 			}
-			system.log(.Error, "storage: a fault of the engine: ", mounted.named_twice, " blocks of one name named two times, ", mounted.named_by_two_stores, " blocks named from two stores, ", mounted.reference_overflow, " counts of names that pass their limit; the service makes no change in the ", faulty, faulty == 1 ? string(" store") : string(" stores"), " with such a block, and gives their objects")
+			// One store and several are two sentences: each one is a fact
+			// type.
+			if faulty == 1 {
+				system.log_fact(.Error, Engine_Fault_In_One_Store{named_twice = u64(mounted.named_twice), named_by_two_stores = u64(mounted.named_by_two_stores), reference_overflow = u64(mounted.reference_overflow), faulty_stores = faulty})
+			} else {
+				system.log_fact(.Error, Engine_Fault{named_twice = u64(mounted.named_twice), named_by_two_stores = u64(mounted.named_by_two_stores), reference_overflow = u64(mounted.reference_overflow), faulty_stores = faulty})
+			}
 		}
 		if mounted.stores_recounted != 0 || mounted.stores_with_wrong_count != 0 {
 			system.log_fact(.Warning, Store_Counts_Differ{stores_recounted = mounted.stores_recounted, stores_with_wrong_count = mounted.stores_with_wrong_count})

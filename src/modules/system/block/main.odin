@@ -135,7 +135,7 @@ blocks_moved: u64
 interrupts: u64
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Error, "block: ", text)
+	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -406,7 +406,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the device has no virtio registers in the memory that it received")
 	}
 	start(ctx.handles[pci.GRANT_QUEUES])
-	system.log(.Info, "block: ok, ", disk_blocks, " blocks of 4096 bytes, a queue of ", u64(queue.size), ", ", u64(slot_count), " requests in flight at most, flush: ", has_flush ? "yes" : "no")
+	// A device with a Flush and a device without one are two sentences: each
+	// one is a fact type.
+	if has_flush {
+		system.log_fact(.Info, Ready_With_Flush{disk_size = value_kinds.Size_In_Blocks(disk_blocks), queue_size = u64(queue.size), requests_in_flight = u64(slot_count)})
+	} else {
+		system.log_fact(.Info, Ready_Without_Flush{disk_size = value_kinds.Size_In_Blocks(disk_blocks), queue_size = u64(queue.size), requests_in_flight = u64(slot_count)})
+	}
 
 	waiting: ring.Record
 	has_waiting := false // A command that waits for a place in the queue of the device.
