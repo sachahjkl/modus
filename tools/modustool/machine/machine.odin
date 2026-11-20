@@ -178,6 +178,11 @@ Step_Kind :: enum {
 	Remote_Key, // As Quic_Key, for the QUIC client of `remote` in the peer (peer_remote.odin): each Call after it goes over QUIC with this key. The client proves its own key, which a step allows first: remote_allow("{client key}") in a console (CLIENT_KEY_MARK).
 	Remote_Case, // The peer runs the case text of `remote` (peer_remote.odin, remote_case_run) and checks its outcome.
 	Remote_Display_Key, // As Quic_Key, for the viewer of `remote_display` in the peer (peer_remote_display.odin). The viewer proves its own key, which a step allows first: remote_display_allow("{viewer key}", "view") in a console (VIEWER_KEY_MARK).
+	// As Remote_Display_Key, for a viewer on the host that reaches
+	// remote_display through the UDP relay of the peer: the tool prints the
+	// port of the relay, the line of the key, and the command of the viewer
+	// (remote_display_run.odin).
+	Viewer_Relay,
 	Remote_Display_Case, // The viewer of the peer runs the case text of `remote_display` (peer_remote_display.odin, remote_display_case_run) and checks its outcome.
 	// Read the text of the element `element` of the window with the title
 	// text off a picture of the screen, in Spleen 8x16 (screen_text.odin).
@@ -4590,6 +4595,9 @@ Machine_Options :: struct {
 	// Key_Until writes (serial_input_linux.odin). On a machine with no
 	// screen, the console input of the firmware is the serial terminal.
 	serial_input: bool,
+	// The UDP port of the machine that the UDP relay of the peer reaches
+	// (peer_relay.odin). 0: the port of quic_echo, QUIC_SERVER_PORT.
+	relay_machine_port: u16,
 }
 
 // machine_test runs a scenario on a machine of a part. It passes when each
@@ -4613,7 +4621,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	}
 	defer tpm_stop(&tpm)
 	peer: Peer
-	if !peer_start(&peer) {
+	if !peer_start(&peer, relay_machine_port = options.relay_machine_port != 0 ? options.relay_machine_port : QUIC_SERVER_PORT) {
 		return false
 	}
 	defer peer_stop(&peer)
@@ -5552,6 +5560,18 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 			}
 			fmt.printfln("modustool: the viewers of remote_display in the peer pin the key %s", line)
+		case .Viewer_Relay:
+			if !log_wait(machine, step.text, false) {
+				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			log := log_read(machine)
+			rest := log[machine.seen:]
+			line := strings.trim_right(rest[:max(strings.index_byte(rest, '\n'), 0)], "\r")
+			if !viewer_relay_announce(machine, step.text, line) {
+				fmt.eprintfln("modustool: test failed: step %d: \"%s\" is not a public key of 64 hexadecimal digits", index + 1, line)
+				return false
+			}
 		case .Remote_Display_Case:
 			passed, result := remote_display_case_run(machine, step.text)
 			if !passed {

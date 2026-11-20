@@ -86,7 +86,9 @@ peers_started: int
 // peer_start starts the peer. call_socket_name: the name of the socket of
 // the calls in the private folder of the user; "" gives a name of this
 // process and of this peer, so that two machine tests never share one.
-peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
+// relay_machine_port: the UDP port of the machine that the UDP relay of the
+// peer reaches (peer_relay.odin).
+peer_start :: proc(peer: ^Peer, call_socket_name := "", relay_machine_port: u16 = QUIC_SERVER_PORT) -> bool {
 	socket, err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
 	if err != nil {
 		fmt.eprintfln("modustool: the peer has no UDP socket: %v", err)
@@ -146,7 +148,7 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 	}
 	peer.tcp = peer_tcp_make()
 	peer.quic = peer_quic_make()
-	if !peer_relay_start(&peer.relay) {
+	if !peer_relay_start(&peer.relay, relay_machine_port) {
 		peer_tcp_free(peer.tcp)
 		peer_quic_free(peer.quic)
 		peer_remote_socket_stop(peer.remote)
@@ -422,11 +424,15 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 				peer_wrong(peer, "a UDP datagram with a wrong length or checksum")
 				return
 			}
+			// A datagram of the port of the relay to a port of the relay goes
+			// back to its client on the host, whatever the port of the
+			// machine; another datagram of that port goes to the cases of
+			// the peer below.
+			if address_at(ip, 16) == PEER_ADDRESS && peer_relay_datagram(peer, u16(be16(payload, 0)), u16(be16(payload, 2)), payload[8:]) {
+				free_all(context.temp_allocator)
+				return
+			}
 			if be16(payload, 0) == QUIC_SERVER_PORT {
-				if address_at(ip, 16) == PEER_ADDRESS && peer_relay_datagram(peer, u16(be16(payload, 2)), payload[8:]) {
-					free_all(context.temp_allocator)
-					return
-				}
 				peer_quic_datagram(peer, address_at(ip, 16), u16(be16(payload, 2)), payload[8:])
 				free_all(context.temp_allocator)
 				return

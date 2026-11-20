@@ -839,7 +839,7 @@ Volumes_Of_Part :: struct {
 MEASURE_COMMAND :: "measure"
 MEASURE_SHORTAGE_COMMAND :: "measure shortage"
 command_volumes := [?]Volumes_Of_Part {
-	{part = "run", procedures = {"run_machine"}, volumes = {BOOT_VOLUME}},
+	{part = "run", procedures = {"run_machine", "remote_display_run"}, volumes = {BOOT_VOLUME}},
 	{part = MEASURE_COMMAND, procedures = {"run_measure", "measure_windows", "measure_process_run"}, volumes = {BOOT_VOLUME_MEASURE}},
 	{part = MEASURE_SHORTAGE_COMMAND, procedures = {"shortage_tests_run"}, volumes = {BOOT_VOLUME_SHORTAGE}},
 	{part = "screenshots", procedures = {"measure_runs_of_the_record", "measure_process_run"}, volumes = {BOOT_VOLUME_MEASURE}},

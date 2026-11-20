@@ -528,8 +528,8 @@ Before the budgets, each forged Initial cost the 11 exports (about 30 us), with 
 
 The network device of the machine of `test quic-real` goes to the peer of the tool (`-netdev dgram`), as in `test quic`. `s_client` reaches `quic_echo` through the UDP relay of the peer (`tools/modustool/machine/peer_relay.odin`):
 - the relay has one UDP socket on the loopback of the host, at a port that the system chooses;
-- a datagram of a client of the host becomes a frame from 10.0.2.2 to 10.0.2.15 port 4433, from a port that the relay gives that client (42000 + its place in a table of 16; a new client takes a free place, or the place whose last datagram is the oldest);
-- a datagram of the machine to 10.0.2.2 at one of those ports goes back to its client from the socket of the relay;
+- a datagram of a client of the host becomes a frame from 10.0.2.2 to 10.0.2.15 at the port of the relay, from a port that the relay gives that client (42000 + its place in a table of 16; a new client takes a free place, or the place whose last datagram is the oldest). The port of the relay is a parameter of the peer: 4433 of `quic_echo` here, 7101 of `remote_display` for `modustool run --remote-display`;
+- a datagram of the machine from the port of the relay to 10.0.2.2 at one of those ports goes back to its client from the socket of the relay;
 - a datagram over 1472 bytes (the UDP data of a frame of 1500 bytes), from either side, is dropped and counted; the relay prints its counts when the peer stops.
 
 The thread of the peer runs the relay. `peer_run` reads each frame of the machine that waits, and runs the ticks of the cases and of the relay when no frame waits, or after 1 ms of frames: the answers of the machine never wait in the socket of the peer behind the next sends. The socket of the relay does not block; each tick takes 64 datagrams at most. The test needs no network of the host but its loopback.

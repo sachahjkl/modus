@@ -195,7 +195,7 @@ COMMANDS :: [?]foundation.Command {
 	// starts the peer of the host that takes the calls of `modustool call`,
 	// on a socket that only this user reaches. Close the window, or run
 	// `shutdown()` in the console, to end it.
-	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
+	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build; `run --remote-display <viewer key>`: a machine with no window for a viewer on the host, through the UDP relay of the peer to remote_display", run = run_machine},
 	// Takes the results of the check of the flake, which ran the whole
 	// machine test and the second build, then publishes them into the
 	// repository (src/md/infrastructure/full_check.md).
@@ -588,6 +588,18 @@ run_site :: proc(args: []string) -> int {
 }
 
 run_machine :: proc(args: []string) -> int {
+	if len(args) >= 1 && args[0] == "--remote-display" {
+		// A machine for a viewer on the host: no window, the relay of the
+		// peer to remote_display (machine/remote_display_run.odin).
+		if len(args) != 2 {
+			fmt.eprintln("modustool: run --remote-display <viewer key>: the viewer key is the 64 hexadecimal digits that `modus-viewer -print-key` prints")
+			return foundation.EXIT_USAGE
+		}
+		if code := build.build_system(build.boot_volumes_of_command("run")); code != 0 {
+			return code
+		}
+		return machine.remote_display_run(args[1]) ? 0 : foundation.EXIT_FAILURE
+	}
 	if len(args) >= 1 && args[0] == "without_checks" {
 		build.test_build_checks = false
 	}
