@@ -1454,6 +1454,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				dirty = true
 				continue
 			}
+			// An answer of a surface request: the window may hold a new
+			// surface, whose pictures hold nothing yet (display, scale.odin).
+			if event.kind == .Surface_Answer {
+				interface.draw_whole_window_next(&drawing)
+				dirty = true
+				continue
+			}
 			// The pointer goes to the scroll bars and to the action bar, and
 			// to no other part of the window: a frame is built only when
 			// the pointer is on one of them, holds it, leaves it lit, turns
@@ -1524,6 +1531,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				request.follow = true
 			}
 			view_move(move)
+		}
+		// A new surface waits for its first picture: the compositor shows
+		// the frame of the window with the background until then.
+		if display.picture_owed(&window) {
+			dirty = true
 		}
 		// A change that this turn does not draw waits for the next picture:
 		// the start of the next turn says it, before its wait.

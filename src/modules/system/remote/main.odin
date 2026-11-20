@@ -1371,6 +1371,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		now := system.time()
 		if has_window {
 			interface.window_events(&window_memory.drawing, &window)
+			// A new surface, of a change of the scale or of a resize, waits
+			// for its first picture: the compositor shows the frame of the
+			// window with the background until then. The calls are not the
+			// only change of this window.
+			if display.picture_owed(&window) {
+				dirty = true
+			}
 			// The window changes at most ten times in one second: a burst of
 			// calls does not wait for the drawing. This service never
 			// waits for the compositor: while the compositor did not take

@@ -4984,16 +4984,24 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		}
 	}
 	if !passed {
-		log, _ := os.read_entire_file(output, context.temp_allocator)
-		lines := strings.split_lines(string(log), context.temp_allocator)
+		// The whole log, its facts rendered: the check of the flake keeps
+		// no file of a part that fails, but Nix keeps what the build
+		// printed (`nix log`), and the cause of a failure is rarely in the
+		// last lines. A log whose facts cannot be rendered prints raw.
+		log, rendered := log_file_rendered(output)
+		if !rendered {
+			raw, _ := os.read_entire_file(output, context.temp_allocator)
+			log = string(raw)
+		}
+		lines := strings.split_lines(log, context.temp_allocator)
 		// One write: the lines of a machine of another part that runs at the
 		// same time do not come between them.
-		end := strings.builder_make(context.temp_allocator)
-		fmt.sbprintf(&end, "modustool: the end of the log of the kernel of %s:\n", output)
-		for line in lines[max(len(lines) - 25, 0):] {
-			fmt.sbprintf(&end, "    %s\n", line)
+		whole := strings.builder_make(context.temp_allocator)
+		fmt.sbprintf(&whole, "modustool: the log of the kernel of %s, %d lines (nix log of the part keeps it whole):\n", output, len(lines))
+		for line in lines {
+			fmt.sbprintf(&whole, "    %s\n", line)
 		}
-		fmt.eprint(strings.to_string(end))
+		fmt.eprint(strings.to_string(whole))
 	}
 	test_times_machine_end(&machine, passed, machine_test_started, machine.started_at, scenario_ended)
 	return passed
