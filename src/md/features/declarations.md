@@ -1,12 +1,12 @@
 # Declarations
 
-A principal describes a system, a session, a project or an environment as one lazy value of Lex, the language of the console, in the manner of Nix. The evaluation of that value has no effect: it gives a typed record, the plan. An explicit command applies the plan, and the root service writes it as one applied plan, which a rollback can select again. The root service and the services never read the text of a declaration.
+A principal describes a system, a session or a project, with the console of that project, as one lazy value of Lex, the language of the console, in the manner of Nix. The evaluation of that value has no effect: it gives a typed record, the plan. An explicit command applies the plan, and the root service writes it as one applied plan, which a rollback can select again. The root service and the services never read the text of a declaration.
 
-The terms Plan, Applied plan, Declaration, Catalog declaration, Declaration input, Pin, Release pointer, Project and Declaration reference are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Lex, Environment, Evaluation budget, Evaluation mode, Thunk, Record literal, Named argument and Anonymous function are in [`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md). The recipes that a plan names, the cache and the substitution policy are in [recipes.md](recipes.md).
+The terms Plan, Applied plan, Declaration, Catalog declaration, Declaration input, Pin, Release pointer, Project and Declaration reference are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Lex, Console of a project, Evaluation budget, Evaluation mode, Thunk, Record literal, Named argument and Anonymous function are in [`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md). The recipes that a plan names, the cache and the substitution policy are in [recipes.md](recipes.md).
 
 ## Purpose
 
-A principal does each day the same few tasks: start the system that it chose, go back to the system before, work in a project with its tools, build an output of a project. Today each one is a sequence of console commands that the principal keeps in memory. A declaration states the result once, with the hashes that it resolves to, and one command applies it. A second machine with the same declaration and the same pins gets the same hashes.
+A principal does each day the same few tasks: start the system that it chose, go back to the system before, work in a project with the commands of its modules, build an output of a project. Today each one is a sequence of console commands that the principal keeps in memory. A declaration states the result once, with the hashes that it resolves to, and one command applies it. A second machine with the same declaration and the same pins gets the same hashes.
 
 ## Constraints
 
@@ -39,7 +39,7 @@ Text exists only between the principal and Lex. Lex has two readers, with one pa
 - **The console** reads the line that the principal types, as today, and evaluates it in mode `console`.
 - **The evaluation process** evaluates in mode `declaration`. It reads the text of a declaration object. The console starts it as a sandboxed child for each evaluation of a declaration: it holds a connection that reads only the trees of the declarations that the evaluation names, and nothing else. No network, no store that it can write, no root ring.
 
-The console sends the evaluation process typed values only: a declaration reference, which is the hash of a declaration, the list of the field names to force, and the typed records that a `with` composed with it. The evaluation process sends back typed values only: a plan, a table of recipes, a record of an environment, or an error record with its place. No line of the principal crosses to it, and no text comes back. The text of a declaration is a document that a principal wrote, as the source of a module is: a reader of its language reads it, as a compiler reads a source. No process sends text to another process for it to parse.
+The console sends the evaluation process typed values only: a declaration reference, which is the hash of a declaration, the list of the field names to force, and the typed records that a `with` composed with it. The evaluation process sends back typed values only: a plan, a table of recipes, the console of a project, or an error record with its place. No line of the principal crosses to it, and no text comes back. The text of a declaration is a document that a principal wrote, as the source of a module is: a reader of its language reads it, as a compiler reads a source. No process sends text to another process for it to parse.
 
 The root service and every service read the plan, a typed record, through one border of a contract package. None of them reads the text of a declaration.
 
@@ -79,7 +79,7 @@ What changes when:
 
 - The plan changes no process that runs. A grant of a disk process takes effect at its next start, as `allow` does today.
 - The start list and the start policy of the plan of principal 0 take effect at the next start of the machine, as the choice of a start policy does today.
-- An environment of the plan takes effect at the next `enter`.
+- The console of a project of the plan takes effect at the next `enter`.
 
 So the authority is in `apply`, not in the evaluation. A foreign plan cannot take a grant in silence: its grants are in the difference that the principal accepts.
 
@@ -102,14 +102,14 @@ The language of a declaration is Lex, the language of the console ([`docs/CONSOL
 4. **The literals that a use types.** A list `[a, b]`, a member of an enum `.Verify`, and a hash `blake3:…`. A list and a member take their type from their receiver, as a record literal does.
 5. **The anonymous function.** `(name) => odin.module(name)`. A function is a value: it can be a field, an argument and a result.
 6. **`with`.** `a with b` composes two records: the result is `a`, with each field of `b` in place of the field of the same name ("Composition").
-7. **The call on a record literal.** `plan { … }` is `plan({ … })`. `plan`, `project` and `env` are functions of the catalog declaration that take one record literal.
+7. **The call on a record literal.** `plan { … }` is `plan({ … })`. `plan` and `project` are functions of the catalog declaration that take one record literal.
 8. **The placeholder `_` of `|>`.** `compile(src, t) |> bytes(t, 0, _) |> assemble(f)`: the value on the left takes the place of `_`, one whole argument of the call on the right ([pipe_operator.md](pipe_operator.md), "The placeholder `_`").
 
 The other forms of the declarations are names of functions and values, with no form of grammar of their own. Both modes know them; in mode `console`, a name that gives a value of a declaration gives a declaration reference:
 
 - **A reference by hash.** `module(blake3:…)` is one exact module. `declaration(blake3:…)` is one exact declaration. A name of a catalog declaration, `catalog.odin`, is a field of its record; the plan records the hash that it gave.
 - **`recipe(builder, arguments)`.** A lazy value whose identity is its recipe hash. Forcing it does not build it: a build is a command ([recipes.md](recipes.md)).
-- **`plan { … }`, `project { … }`, `env { … }`.** The record of a plan, which `apply` takes; of a project; of an environment.
+- **`plan { … }`, `project { … }`.** The record of a plan, which `apply` takes; of a project, with its console ("The console of a project").
 - **The values of the declaration inputs.** `catalog`, `inputs`, `keys` (the table of the publisher keys that the principal trusts), `follow(publisher, name)` and `here()` ("Declaration inputs, pins and release pointers", "Sources and the identity of a source").
 - **`map(list, function)`.** It gives a list with the function applied to each item.
 
@@ -122,7 +122,7 @@ The evaluator runs in one of two evaluation modes, a closed set:
 - **Mode `declaration`** runs in the evaluation process, in its sandbox. An export with an effect is refused at its border: the evaluator does not call it, and gives an error record that names the export, the declaration, its line and column, and the chain of fields that it forced. The evaluator forces nothing beyond the fields that the console asked for, so `kernel.tools` forces the recipe of the tools and nothing of the image.
 - **Mode `console`** runs in the console. Exports with an effect are allowed. Each line is forced whole, each binding of its `let` too, so no effect is skipped because its value went unused.
 
-The exports with an effect are the commands `apply`, `rollback`, `build`, `enter`, `exit` and `update`, and each export of a module or a service: the evaluator cannot know that an export of a module has no effect. The names of the evaluation (`module`, `declaration`, `recipe`, `catalog`, `inputs`, `keys`, `follow`, `here`, `map`, `plan`, `project`, `env`) have none. A Stream is a wiring, an effect: mode `declaration` refuses it, and mode `console` holds it while its line runs, as today.
+The exports with an effect are the commands `apply`, `rollback`, `build`, `enter`, `exit` and `update`, and each export of a module or a service: the evaluator cannot know that an export of a module has no effect. The names of the evaluation (`module`, `declaration`, `recipe`, `catalog`, `inputs`, `keys`, `follow`, `here`, `map`, `plan`, `project`) have none. A Stream is a wiring, an effect: mode `declaration` refuses it, and mode `console` holds it while its line runs, as today.
 
 **Why one meaning everywhere.** An export forces its arguments from the left to the right before it is called. So the effects run in the order of the data: `assemble(bytes(t, 0, compile(src, t)), f)` compiles, then reads, then assembles, as the eager console of today does. The one difference that laziness can make is a value that nothing uses, whose effect then never runs. That cannot happen in mode `console`, because the line is forced whole. So a line means the same thing in both modes; mode `declaration` only refuses the effects.
 
@@ -341,28 +341,36 @@ An option of a command is a named argument, never a `with` after the call: `buil
 
 ### Sources and the identity of a source
 
-The identity of a source is the hash of a tree in a store. `here()` gives the tree of the current version of the store of the current environment, as a hash, so the source of a project is an object with a hash. The versions of property 9 give the history of a source.
+The identity of a source is the hash of a tree in a store. `here()` gives the tree of the current version of the store of the source of the current project, as a hash, so the source of a project is an object with a hash. The versions of property 9 give the history of a source.
 
 Git is an import format and an export format, never a dependency:
 
 - A git repository enters through the fetcher, as a hash given in advance: the commit gives a tree, and the recipe of the fetch holds the hash of its modus tree ([recipes.md](recipes.md), "The fetcher").
 - Two machines exchange sources as they exchange modules: a sync of stores by hash, with the protocol of the cache. A tree is an object, as a module is.
 
-### Environments
+### The console of a project
 
-An environment is a record of names and grants that a child console starts with: `env { tools = {…}, stores = [store("kernel", .Read, .Write)] }`.
+The field `console` of a project names what a child console of the project has: the modules that it connects, so that their commands are available, and the stores that it grants.
 
-- `enter(e)` asks the root service to start a child console of the principal. Its command table holds the exports of the modules of `tools`, each by its hash, and its context holds a connection to each store of `stores`, with the rights of the record. Each such store is a store of the principal, and each right is a right that the console that asks already holds.
+```
+console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Write)] }
+```
+
+- `modules` is a list of module values: `catalog.odin`, `module(blake3:…)`, an output of a declaration input, or a name that a `let` binds to one of them. The name of a module is the name of its commands, as with `connect`: the commands of `odin` are `odin.…`.
+- `stores` is a list of stores of the principal, each with its rights.
+- `enter(p)` asks the root service to start a child console of the principal. At its start, the child console connects each module of `modules`, by its hash: it is what `connect("odin")` does, declared in advance. Its context holds a connection to each store of `stores`, with the rights of the record. Each such store is a store of the principal, and each right is a right that the console that asks already holds.
 - `exit()` stops the child console and gives the line back to the console before.
-- Nothing is installed. The modules of `tools` are objects of `module_files`, which a build or the cache gave. Another console sees none of these names.
+- Nothing is installed. The modules are objects of `module_files`, which a build or the cache gave. Another console sees none of these names.
+
+**Why `console`.** The interface where a principal types is the console, one term for one concept: the field says which console the project gives. The field describes the commands that are available, and nothing more.
 
 ### Projects
 
-A project is a record with a source, its declaration inputs and its outputs: `project { source = here(), inputs = {…}, outputs = {…} }`. `project` is the function `modus.project` of the catalog declaration, under a short name (property 22): it adds no mechanism.
+A project is a record with a source, its declaration inputs, its outputs and its console: `project { source = here(), inputs = {…}, outputs = {…}, console = {…} }`. `project` is the function `modus.project` of the catalog declaration, under a short name (property 22): it adds no mechanism.
 
 - `outputs.default` is the output that `build(p)` realises.
 - Each other output is a field: `build(kernel.tools)`.
-- `enter(kernel)` enters the field `environment` of the project. With no such field, the environment holds the builders of its outputs as tools, and the store of its source with Read and Write.
+- `enter(kernel)` starts a child console with the field `console` of the project. With no such field, the console connects the builders of the outputs of the project, and grants the store of its source with Read and Write.
 
 An output names an entry of the source tree by the names of its entries from the root of the tree, separated by `/`: `odin.module("src/modules/server")`. The evaluation process takes each name in turn; a name is never `.` or `..`, so the text never reaches above the source tree.
 
@@ -379,7 +387,7 @@ The garbage collector of `module_files` keeps an object only when a root reaches
 - each applied plan that the store `plans` of a principal keeps;
 - the signed system description;
 - the hash of each row of each disk grant table;
-- the modules of each environment that runs, and the recipe of each build that runs.
+- the modules of each child console of a project that runs, and the recipe of each build that runs.
 
 From each root it follows the imports of each module, the debug object of each module, the entries of each tree, and the output of each realisation. It deletes the rest. An object that two principals reach is kept while one of them reaches it.
 
@@ -390,15 +398,14 @@ From each root it follows the imports of each module, the debug object of each m
 | Apply a system | `apply(system)` |
 | Go back to the system before | `rollback()` |
 | Go back to one applied plan | `rollback(4)` |
-| Declare an environment | `kernel_dev = env { tools = { odin = catalog.odin }, stores = [store("kernel", .Read, .Write)] }` |
-| Work in an environment, then leave it | `enter(kernel_dev)`, then `exit()` |
+| Declare the console of a project | `console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Write)] }`, a field of `project { … }` |
+| Work in the console of a project, then leave it | `enter(kernel)`, then `exit()` |
 | Change one recipe of the catalog declaration | `catalog with { odin = recipe(…) }` |
 | Change a catalog declaration with the function of an input | `gt.overlay(catalog)` |
 | Build with an option | `build(kernel, substitution = { mode = .Verify })` |
 | Declare a project | `kernel = project { source = here(), outputs = { default = odin.module("src/modules/server"), tools = …, image = modus.image([…]) } }` |
 | Read a project from its source tree | `kernel = declaration(here())` |
 | Build a project, or one output | `build(kernel)`, `build(kernel.tools)` |
-| Work in a project | `enter(kernel)` |
 | Resolve each followed input again | `update()` |
 | Resolve one input again | `update(inputs.gt)` |
 | See each pin, with its publisher and its hash | `inputs` |
@@ -408,7 +415,11 @@ From each root it follows the imports of each module, the debug object of each m
 
 ## The refused forms
 
-- **Environment variables, `PATH` and shared configuration files.** They are ambient state that each process reads (property 8, property 19). An environment here is a record that one child console starts with.
+- **Environment variables, `PATH` and shared configuration files.** They are ambient state that each process reads (property 8, property 19). The console of a project is a record that one child console starts with.
+- **`env` and an environment record, with `tools` as a record of names.** The field says what the principal gets: a console, with modules. A second word for that console, and a record of names beside the names that the modules already have, are two terms for one concept.
+- **`shell`.** modus has no shell: the interface where a principal types is the console.
+- **`packages`.** A loan from Nix. What a console makes available is modules and their commands.
+- **`workspace` and `bench`.** The field describes the commands that are available, not a place of work.
 - **A text file that a service reads at its start.** A parser of text in a service, against property 19 and [start_policy.md](start_policy.md). The root service reads the plan, a typed record.
 - **A second language beside the console.** Two languages for one principal, against property 22. Lex grows by eight forms of grammar, with one parser and one evaluator.
 - **A second parser for the declarations.** Two grammars drift, and a line that the console accepts then means another thing in a declaration. One parser library reads both.

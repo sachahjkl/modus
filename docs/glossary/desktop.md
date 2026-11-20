@@ -982,15 +982,15 @@ The design: `src/md/features/gpu_access.md`.
 
 Do not use: WebGPU implementation, software WebGPU.
 
-### Environment
+### Console of a project
 
-An environment is a record of names and grants that a child console starts with: the modules of its tools, by hash, and stores of the principal with their rights.
+The console of a project is the field `console` of a project: the modules that a child console of the project connects, and the stores of the principal that it grants, with their rights.
 
-`enter(e)` starts the child console with the exports of `e.tools` in its command table and a connection to each store of `e.stores`; `exit()` stops it. Nothing is installed, and no other console sees these names. It is not a set of environment variables, which the system does not have, and not the context of a process.
+Example: `console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Write)] }`. `modules` is a list of module values, and the name of a module is the name of its commands, as with `connect`. `enter(p)` starts a child console that connects each module, by its hash, as `connect` does, and holds a connection to each store; `exit()` stops it. Nothing is installed, and no other console sees these commands. It is not a set of environment variables, which the system does not have, and not the context of a process.
 
-The design: `src/md/features/declarations.md`, "Environments".
+The design: `src/md/features/declarations.md`, "The console of a project".
 
-Do not use: shell environment, virtualenv, dev shell.
+Do not use: environment record, env, environment (for this), shell, packages, workspace, bench, dev shell, virtualenv.
 
 ### Evaluation budget
 
