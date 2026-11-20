@@ -59,38 +59,38 @@ Client_Key_Refused :: struct {
 
 // The grant of a client key ended between the check of the handshake and
 // the binding of its connection.
-@(log_fact = "remote: {peer}: the grant of the client key {client_key} ended during the handshake: the connection ends with the code Revoked, before any call")
+@(log_fact = "remote: {peer}: the grant of the client key {client_key_head} ended during the handshake: the connection ends with the code Revoked, before any call")
 Client_Key_Grant_Ended_In_Handshake :: struct {
-	client_key: [24]u8,
-	peer:       [32]u8,
+	client_key_head: [24]u8,
+	peer:            [32]u8,
 }
 
 // A host proved a client key that a principal allowed: the connection is
 // taken, and its calls act for that principal.
-@(log_fact = "remote: {peer} proved the client key {client_key}: its calls act for principal {principal}")
+@(log_fact = "remote: {peer} proved the client key {client_key_head}: its calls act for principal {principal}")
 Client_Key_Proved :: struct {
-	principal:  u64,
-	client_key: [24]u8,
-	peer:       [32]u8,
+	principal:       u64,
+	client_key_head: [24]u8,
+	peer:            [32]u8,
 }
 
 // A second principal allowed the client key of an open connection: the
 // connection ends.
-@(log_fact = "remote: the client key {client_key} of principal {principal} is contested: principal {other_principal} allowed it too, and it acts for neither; the connection from {peer} ends with the code Revoked")
+@(log_fact = "remote: the client key {client_key_head} of principal {principal} is contested: principal {other_principal} allowed it too, and it acts for neither; the connection from {peer} ends with the code Revoked")
 Client_Key_Contested :: struct {
 	principal:       u64,
 	other_principal: u64,
-	client_key:      [24]u8,
+	client_key_head: [24]u8,
 	peer:            [32]u8,
 }
 
 // The grant of the client key of an open connection ended: the connection
 // ends.
-@(log_fact = "remote: the grant of the client key {client_key} of principal {principal} ended (a revocation, or a lock of its session): the connection from {peer} ends with the code Revoked")
+@(log_fact = "remote: the grant of the client key {client_key_head} of principal {principal} ended (a revocation, or a lock of its session): the connection from {peer} ends with the code Revoked")
 Client_Key_Grant_Ended :: struct {
-	principal:  u64,
-	client_key: [24]u8,
-	peer:       [32]u8,
+	principal:       u64,
+	client_key_head: [24]u8,
+	peer:            [32]u8,
 }
 
 // A host opened a connection, before its handshake.
@@ -122,45 +122,45 @@ Idle_End_Not_Held :: struct {
 
 // A request passed the limit of a request: its stream is reset, and no
 // call runs.
-@(log_fact = "remote: {peer}, the stream {stream}: a request of more than {limit}: reset with the code Too_Large, and no call")
+@(log_fact = "remote: {peer}, the stream {stream_identifier}: a request of more than {request_limit}: reset with the code Too_Large, and no call")
 Request_Too_Large :: struct {
-	stream: u64,
-	limit:  value_kinds.Size_In_Bytes,
-	peer:   [32]u8,
+	stream_identifier: u64,
+	request_limit:     value_kinds.Size_In_Bytes,
+	peer:              [32]u8,
 }
 
 // A request was not whole by its bound: its stream is reset. The service
 // resets it only when the time of the machine since its start reached the
 // bound, so the bound held: a test reads the words, and the time is a
 // field.
-@(log_fact = "remote: {peer}, the stream {stream}: no whole request in {limit} ({received} came): reset with the code Timeout after {elapsed} of the machine; the bound of a request held")
+@(log_fact = "remote: {peer}, the stream {stream_identifier}: no whole request in {bound} ({bytes_received} came): reset with the code Timeout after {elapsed} of the machine; the bound of a request held")
 Request_Timeout :: struct {
-	stream:   u64,
-	limit:    value_kinds.Time_In_Milliseconds,
-	received: value_kinds.Size_In_Bytes,
-	elapsed:  value_kinds.Time_In_Milliseconds,
-	peer:     [32]u8,
+	stream_identifier: u64,
+	bound:             value_kinds.Time_In_Milliseconds,
+	bytes_received:    value_kinds.Size_In_Bytes,
+	elapsed:           value_kinds.Time_In_Milliseconds,
+	peer:              [32]u8,
 }
 
 // The host did not take an answer by its bound: its stream is reset, as a
 // request past its bound is.
-@(log_fact = "remote: {peer}, the stream {stream}: the host did not take the answer in {limit} ({written} of {answer_length} in the stream): reset with the code Timeout after {elapsed} of the machine; the bound of an answer held")
+@(log_fact = "remote: {peer}, the stream {stream_identifier}: the host did not take the answer in {bound} ({bytes_written} of {answer_length} in the stream): reset with the code Timeout after {elapsed} of the machine; the bound of an answer held")
 Answer_Timeout :: struct {
-	stream:        u64,
-	limit:         value_kinds.Time_In_Milliseconds,
-	written:       u64,
-	answer_length: value_kinds.Size_In_Bytes,
-	elapsed:       value_kinds.Time_In_Milliseconds,
-	peer:          [32]u8,
+	stream_identifier: u64,
+	bound:             value_kinds.Time_In_Milliseconds,
+	bytes_written:     u64,
+	answer_length:     value_kinds.Size_In_Bytes,
+	elapsed:           value_kinds.Time_In_Milliseconds,
+	peer:              [32]u8,
 }
 
 // The host did not end a stream after its reset: the connection ends.
-@(log_fact = "remote: {peer}, the stream {stream}: the host did not end it {limit} after its reset: the connection ends with the code Timeout after {elapsed} of the machine")
+@(log_fact = "remote: {peer}, the stream {stream_identifier}: the host did not end it {bound} after its reset: the connection ends with the code Timeout after {elapsed} of the machine")
 Stream_Not_Ended_After_Reset :: struct {
-	stream:  u64,
-	limit:   value_kinds.Time_In_Milliseconds,
-	elapsed: value_kinds.Time_In_Milliseconds,
-	peer:    [32]u8,
+	stream_identifier: u64,
+	bound:             value_kinds.Time_In_Milliseconds,
+	elapsed:           value_kinds.Time_In_Milliseconds,
+	peer:              [32]u8,
 }
 
 // The grants of connections to services ended: their slots are free.

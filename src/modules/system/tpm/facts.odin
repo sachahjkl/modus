@@ -63,10 +63,10 @@ Extend_Read_Back_Interface_Failed :: struct {
 
 // An extend of PCR 12 with the digest of a start policy, and its place
 // among the extends of this start.
-@(log_fact = "tpm: extended PCR 12 with the digest of a start policy: extend {extend} of {limit} in this start")
+@(log_fact = "tpm: extended PCR 12 with the digest of a start policy: extend {extend} of {extend_limit} in this start")
 Start_Policy_Measured :: struct {
-	extend: u64,
-	limit:  u64,
+	extend:       u64,
+	extend_limit: u64,
 }
 
 // The interface failed at a TPM2_GetCapability.

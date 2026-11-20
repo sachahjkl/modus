@@ -573,7 +573,7 @@ measure_start_policy :: proc "contextless" (values: [7]u64) -> Outcome {
 		system.log(.Warning, "tpm: extended PCR 12, and its read back gave no value of PCR 12 of SHA-256 (response code ", system.Hex(u64(code)), ")")
 		return outcome_of_problem(problem, code, tpm2.COMMAND_PCR_READ)
 	}
-	system.log_fact(.Info, Start_Policy_Measured{extend = u64(measure_count), limit = tpm_service.MEASURE_LIMIT})
+	system.log_fact(.Info, Start_Policy_Measured{extend = u64(measure_count), extend_limit = tpm_service.MEASURE_LIMIT})
 	words := transmute([4]u64)value
 	return {status = .Ok, values = {0 = words[0], 1 = words[1], 2 = words[2], 3 = words[3], 4 = u64(measure_count)}}
 }

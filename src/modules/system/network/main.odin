@@ -1057,19 +1057,19 @@ controlled :: proc "contextless" (record: ring.Record) {
 			switch {
 			case grant.tcp && grant.listen:
 				endpoint.local_port = grant.port
-				system.log_fact(.Info, Endpoint_Listens_Tcp{port = u64(grant.port), owner = owner})
+				system.log_fact(.Info, Endpoint_Listens_Tcp{listen_port = u64(grant.port), owner = owner})
 			case grant.listen && grant.address != 0:
 				endpoint.local_port = grant.port
-				system.log_fact(.Info, Endpoint_Listens_Udp_From_Address{port = u64(grant.port), owner = owner, address = address_field(grant.address)})
+				system.log_fact(.Info, Endpoint_Listens_Udp_From_Address{listen_port = u64(grant.port), owner = owner, remote_address = address_field(grant.address)})
 			case grant.listen:
 				endpoint.local_port = grant.port
-				system.log_fact(.Info, Endpoint_Listens_Udp{port = u64(grant.port), owner = owner})
+				system.log_fact(.Info, Endpoint_Listens_Udp{listen_port = u64(grant.port), owner = owner})
 			case grant.tcp:
 				endpoint.local_port = u16(TCP_PORT_FIRST + free * datagram.PORT_BLOCK)
 				endpoint.port_count = datagram.PORT_BLOCK
-				system.log_fact(.Info, Endpoint_Connects_Tcp{first_port = u64(endpoint.local_port), last_port = u64(endpoint.local_port) + datagram.PORT_BLOCK - 1, port = u64(grant.port), owner = owner, address = address_field(grant.address)})
+				system.log_fact(.Info, Endpoint_Connects_Tcp{first_local_port = u64(endpoint.local_port), last_local_port = u64(endpoint.local_port) + datagram.PORT_BLOCK - 1, remote_port = u64(grant.port), owner = owner, remote_address = address_field(grant.address)})
 			case:
-				system.log_fact(.Info, Endpoint_Connects_Udp{local_port = u64(endpoint.local_port), port = u64(grant.port), owner = owner, address = address_field(grant.address)})
+				system.log_fact(.Info, Endpoint_Connects_Udp{local_port = u64(endpoint.local_port), remote_port = u64(grant.port), owner = owner, remote_address = address_field(grant.address)})
 			}
 			values[0] = u64(endpoint.local_port)
 		}
@@ -1130,7 +1130,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 				system.memory_unmap(raw_data(item.region))
 				system.close(item.region_memory)
 			}
-			system.log_fact(.Info, Endpoint_Ended{sent = item.sent, received = item.received, owner = owner_field(item.name)})
+			system.log_fact(.Info, Endpoint_Ended{datagrams_sent = item.sent, datagrams_received = item.received, owner = owner_field(item.name)})
 			data_passes_log(&item)
 			item = {}
 			result = .Ok

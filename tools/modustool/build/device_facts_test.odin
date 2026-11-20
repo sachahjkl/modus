@@ -32,17 +32,19 @@ device_text_bytes_most :: proc() -> map[string]u32 {
 	most := make(map[string]u32, context.temp_allocator)
 	most["client_key"] = len(KEY_WHOLE)
 	most["viewer_key"] = len(KEY_WHOLE)
+	most["client_key_head"] = len(KEY_HEAD)
+	most["viewer_key_head"] = len(KEY_HEAD)
 	most["peer"] = len(PEER_LONGEST)
 	most["service"] = value_kinds.MODULE_NAME_FIELD_BYTES - 1
 	most["owner"] = value_kinds.MODULE_NAME_FIELD_BYTES - 1
-	most["address"] = len("255.255.255.255")
+	most["remote_address"] = len("255.255.255.255")
 	most["command"] = len("Read_Region_Remove")
 	most["hardware_address"] = len("52:54:00:12:34:56")
 	most["request"] = len("PCM_SET_PARAMS")
 	most["step"] = len("the wait until the TPM is ready")
 	most["properties"] = len("the state of the hierarchies")
 	most["cause"] = len("it names an empty rectangle, or a screen piece larger than 128 x 64")
-	most["code"] = len("Input_Not_Allowed")
+	most["error_code"] = len("Input_Not_Allowed")
 	most["missed_step"] = len("did not let the stream take the records of its viewer frame")
 	return most
 }
@@ -90,26 +92,26 @@ the_facts_of_remote_write_the_lines_of_before :: proc(t: ^testing.T) {
 		facts_expect_line(t, render(t, file, "Client_Key_Refused_For_Display_Only", {{"principal", principal}, {"client_key", KEY_WHOLE}}), line_of_before("remote: refused the client key ", KEY_WHOLE, ": principal ", principal, " allowed it for the remote display, and not for calls", refused_end))
 		facts_expect_line(t, render(t, file, "Client_Key_Refused_Session_Locked", {{"principal", principal}, {"client_key", KEY_WHOLE}}), line_of_before("remote: refused the client key ", KEY_WHOLE, ": the session of its principal ", principal, " is locked", refused_end))
 		for peer in peers {
-			facts_expect_line(t, render(t, file, "Client_Key_Proved", {{"principal", principal}, {"client_key", KEY_HEAD}, {"peer", peer}}), line_of_before("remote: ", peer, " proved the client key ", KEY_HEAD, ": its calls act for principal ", principal))
-			facts_expect_line(t, render(t, file, "Client_Key_Contested", {{"principal", principal}, {"other_principal", other}, {"client_key", KEY_HEAD}, {"peer", peer}}), line_of_before("remote: the client key ", KEY_HEAD, " of principal ", principal, " is contested: principal ", other, " allowed it too, and it acts for neither; the connection from ", peer, " ends with the code Revoked"))
-			facts_expect_line(t, render(t, file, "Client_Key_Grant_Ended", {{"principal", principal}, {"client_key", KEY_HEAD}, {"peer", peer}}), line_of_before("remote: the grant of the client key ", KEY_HEAD, " of principal ", principal, " ended (a revocation, or a lock of its session): the connection from ", peer, " ends with the code Revoked"))
+			facts_expect_line(t, render(t, file, "Client_Key_Proved", {{"principal", principal}, {"client_key_head", KEY_HEAD}, {"peer", peer}}), line_of_before("remote: ", peer, " proved the client key ", KEY_HEAD, ": its calls act for principal ", principal))
+			facts_expect_line(t, render(t, file, "Client_Key_Contested", {{"principal", principal}, {"other_principal", other}, {"client_key_head", KEY_HEAD}, {"peer", peer}}), line_of_before("remote: the client key ", KEY_HEAD, " of principal ", principal, " is contested: principal ", other, " allowed it too, and it acts for neither; the connection from ", peer, " ends with the code Revoked"))
+			facts_expect_line(t, render(t, file, "Client_Key_Grant_Ended", {{"principal", principal}, {"client_key_head", KEY_HEAD}, {"peer", peer}}), line_of_before("remote: the grant of the client key ", KEY_HEAD, " of principal ", principal, " ended (a revocation, or a lock of its session): the connection from ", peer, " ends with the code Revoked"))
 		}
 		facts_expect_line(t, render(t, file, "Service_Connected", {{"principal", principal}, {"service", service}}), line_of_before("remote: connected to the service ", service, ", for principal ", principal))
 	}
 	facts_expect_line(t, render(t, file, "Client_Key_Refused", {{"client_key", KEY_WHOLE}}), line_of_before("remote: refused the client key ", KEY_WHOLE, ": no principal allowed it", refused_end))
 
 	for peer in peers {
-		facts_expect_line(t, render(t, file, "Client_Key_Grant_Ended_In_Handshake", {{"client_key", KEY_HEAD}, {"peer", peer}}), line_of_before("remote: ", peer, ": the grant of the client key ", KEY_HEAD, " ended during the handshake: the connection ends with the code Revoked, before any call"))
+		facts_expect_line(t, render(t, file, "Client_Key_Grant_Ended_In_Handshake", {{"client_key_head", KEY_HEAD}, {"peer", peer}}), line_of_before("remote: ", peer, ": the grant of the client key ", KEY_HEAD, " ended during the handshake: the connection ends with the code Revoked, before any call"))
 		facts_expect_line(t, render(t, file, "Connection_Arrived", {{"peer", peer}}), line_of_before("remote: a connection from ", peer))
 		for time in times {
 			other := largest - time
 			facts_expect_line(t, render(t, file, "Idle_End_Held", {{"silence", time}, {"idle_timeout", other}, {"bound", time}, {"after_bound", other}, {"peer", peer}}), line_of_before("remote: ", peer, ": the idle end held its bound: ", time, " ms with no packet of the host, the idle timeout ", other, " ms, the bound ", time, " ms, ", other, " ms after the bound"))
 			facts_expect_line(t, render(t, file, "Idle_End_Not_Held", {{"silence", other}, {"idle_timeout", time}, {"bound", other}, {"after_bound", time}, {"peer", peer}}), line_of_before("remote: ", peer, ": the idle end did NOT hold its bound: ", other, " ms with no packet of the host, the idle timeout ", time, " ms, the bound ", other, " ms, ", time, " ms after the bound"))
-			facts_expect_line(t, render(t, file, "Request_Timeout", {{"stream", max(u64)}, {"limit", u64(10_000)}, {"received", time}, {"elapsed", other}, {"peer", peer}}), line_of_before("remote: ", peer, ", the stream ", max(u64), ": no whole request in ", u64(10_000), " ms (", time, " bytes came): reset with the code Timeout after ", other, " ms of the machine; the bound of a request held"))
-			facts_expect_line(t, render(t, file, "Answer_Timeout", {{"stream", u64(0)}, {"limit", u64(10_000)}, {"written", max(u64)}, {"answer_length", time}, {"elapsed", other}, {"peer", peer}}), line_of_before("remote: ", peer, ", the stream ", u64(0), ": the host did not take the answer in ", u64(10_000), " ms (", max(u64), " of ", time, " bytes in the stream): reset with the code Timeout after ", other, " ms of the machine; the bound of an answer held"))
-			facts_expect_line(t, render(t, file, "Stream_Not_Ended_After_Reset", {{"stream", u64(1)}, {"limit", time}, {"elapsed", other}, {"peer", peer}}), line_of_before("remote: ", peer, ", the stream ", u64(1), ": the host did not end it ", time, " ms after its reset: the connection ends with the code Timeout after ", other, " ms of the machine"))
+			facts_expect_line(t, render(t, file, "Request_Timeout", {{"stream_identifier", max(u64)}, {"bound", u64(10_000)}, {"bytes_received", time}, {"elapsed", other}, {"peer", peer}}), line_of_before("remote: ", peer, ", the stream ", max(u64), ": no whole request in ", u64(10_000), " ms (", time, " bytes came): reset with the code Timeout after ", other, " ms of the machine; the bound of a request held"))
+			facts_expect_line(t, render(t, file, "Answer_Timeout", {{"stream_identifier", u64(0)}, {"bound", u64(10_000)}, {"bytes_written", max(u64)}, {"answer_length", time}, {"elapsed", other}, {"peer", peer}}), line_of_before("remote: ", peer, ", the stream ", u64(0), ": the host did not take the answer in ", u64(10_000), " ms (", max(u64), " of ", time, " bytes in the stream): reset with the code Timeout after ", other, " ms of the machine; the bound of an answer held"))
+			facts_expect_line(t, render(t, file, "Stream_Not_Ended_After_Reset", {{"stream_identifier", u64(1)}, {"bound", time}, {"elapsed", other}, {"peer", peer}}), line_of_before("remote: ", peer, ", the stream ", u64(1), ": the host did not end it ", time, " ms after its reset: the connection ends with the code Timeout after ", other, " ms of the machine"))
 		}
-		facts_expect_line(t, render(t, file, "Request_Too_Large", {{"stream", max(u64)}, {"limit", u64(65640)}, {"peer", peer}}), line_of_before("remote: ", peer, ", the stream ", max(u64), ": a request of more than ", u64(65640), " bytes: reset with the code Too_Large, and no call"))
+		facts_expect_line(t, render(t, file, "Request_Too_Large", {{"stream_identifier", max(u64)}, {"request_limit", u64(65640)}, {"peer", peer}}), line_of_before("remote: ", peer, ", the stream ", max(u64), ": a request of more than ", u64(65640), " bytes: reset with the code Too_Large, and no call"))
 	}
 
 	counts := [3]u64{0, 1, max(u64)}
@@ -139,21 +141,21 @@ the_facts_of_remote_display_write_the_lines_of_before :: proc(t: ^testing.T) {
 	facts_expect_line(t, render(t, file, "Viewer_Key_Refused", {{"viewer_key", KEY_WHOLE}}), line_of_before("remote_display: refused the viewer key ", KEY_WHOLE, ": no principal allowed it for the view, or the session of its principal is locked; the handshake ends before any viewer frame"))
 	counts := [3]u64{0, 1, max(u64)}
 	for count in counts {
-		facts_expect_line(t, render(t, file, "Viewer_Input_Records_Dropped", {{"dropped", count}, {"viewer_key", KEY_HEAD}}), line_of_before("remote_display: the end of the viewer key ", KEY_HEAD, " dropped ", count, " of its input records that waited for the compositor"))
-		facts_expect_line(t, render(t, file, "Viewer_Damage_Full", {{"merges", count}, {"viewer_key", KEY_HEAD}}), line_of_before("remote_display: the damage of the viewer key ", KEY_HEAD, " was full: ", count, " rectangles joined another, and the viewer receives more pixels"))
+		facts_expect_line(t, render(t, file, "Viewer_Input_Records_Dropped", {{"dropped", count}, {"viewer_key_head", KEY_HEAD}}), line_of_before("remote_display: the end of the viewer key ", KEY_HEAD, " dropped ", count, " of its input records that waited for the compositor"))
+		facts_expect_line(t, render(t, file, "Viewer_Damage_Full", {{"merges", count}, {"viewer_key_head", KEY_HEAD}}), line_of_before("remote_display: the damage of the viewer key ", KEY_HEAD, " was full: ", count, " rectangles joined another, and the viewer receives more pixels"))
 		facts_expect_line(t, render(t, file, "Compositor_Word_Refused", {{"word", count}}), line_of_before("remote_display: the compositor sent the word ", count, ", which names no event; the next ones are counted"))
 		facts_expect_line(t, render(t, file, "Capture_Picture_Refused", {{"picture", count}}), line_of_before("remote_display: the compositor named the picture ", count, " of no capture face, or a second one while this process holds one: the record is refused"))
 	}
 	for peer in peers {
-		facts_expect_line(t, render(t, file, "Viewer_Key_Grant_Ended_In_Handshake", {{"viewer_key", KEY_HEAD}, {"peer", peer}}), line_of_before("remote_display: ", peer, ": the grant of the viewer key ", KEY_HEAD, " ended during the handshake: the connection ends with the code Revoked"))
+		facts_expect_line(t, render(t, file, "Viewer_Key_Grant_Ended_In_Handshake", {{"viewer_key_head", KEY_HEAD}, {"peer", peer}}), line_of_before("remote_display: ", peer, ": the grant of the viewer key ", KEY_HEAD, " ended during the handshake: the connection ends with the code Revoked"))
 		for principal in principals {
-			facts_expect_line(t, render(t, file, "Viewer_Key_Proved_With_Input", {{"principal", principal}, {"viewer_key", KEY_HEAD}, {"peer", peer}}), line_of_before("remote_display: ", peer, " proved the viewer key ", KEY_HEAD, ": it sees the screen for principal ", principal, ", and its keys and its pointer go to the desktop"))
-			facts_expect_line(t, render(t, file, "Viewer_Key_Proved_Without_Input", {{"principal", principal}, {"viewer_key", KEY_HEAD}, {"peer", peer}}), line_of_before("remote_display: ", peer, " proved the viewer key ", KEY_HEAD, ": it sees the screen for principal ", principal, ", with no input"))
-			facts_expect_line(t, render(t, file, "Viewer_Key_Grant_Ended", {{"principal", principal}, {"viewer_key", KEY_HEAD}, {"peer", peer}}), line_of_before("remote_display: the grant of the viewer key ", KEY_HEAD, " of principal ", principal, " ended (a revocation, a lock of its session, or another session in front): the connection from ", peer, " ends with the code Revoked"))
+			facts_expect_line(t, render(t, file, "Viewer_Key_Proved_With_Input", {{"principal", principal}, {"viewer_key_head", KEY_HEAD}, {"peer", peer}}), line_of_before("remote_display: ", peer, " proved the viewer key ", KEY_HEAD, ": it sees the screen for principal ", principal, ", and its keys and its pointer go to the desktop"))
+			facts_expect_line(t, render(t, file, "Viewer_Key_Proved_Without_Input", {{"principal", principal}, {"viewer_key_head", KEY_HEAD}, {"peer", peer}}), line_of_before("remote_display: ", peer, " proved the viewer key ", KEY_HEAD, ": it sees the screen for principal ", principal, ", with no input"))
+			facts_expect_line(t, render(t, file, "Viewer_Key_Grant_Ended", {{"principal", principal}, {"viewer_key_head", KEY_HEAD}, {"peer", peer}}), line_of_before("remote_display: the grant of the viewer key ", KEY_HEAD, " of principal ", principal, " ended (a revocation, a lock of its session, or another session in front): the connection from ", peer, " ends with the code Revoked"))
 		}
 	}
 	for principal in principals {
-		facts_expect_line(t, render(t, file, "Viewer_Input_Not_Allowed", {{"principal", principal}, {"viewer_key", KEY_HEAD}}), line_of_before("remote_display: the viewer key ", KEY_HEAD, " sent input, and principal ", principal, " allowed it for the view only: nothing reaches the desktop, and the connection ends with the code Input_Not_Allowed"))
+		facts_expect_line(t, render(t, file, "Viewer_Input_Not_Allowed", {{"principal", principal}, {"viewer_key_head", KEY_HEAD}}), line_of_before("remote_display: the viewer key ", KEY_HEAD, " sent input, and principal ", principal, " allowed it for the view only: nothing reaches the desktop, and the connection ends with the code Input_Not_Allowed"))
 	}
 	// The causes of a refused record: the sentences of the protocol and
 	// the three of the service, each with a code.
@@ -161,7 +163,7 @@ the_facts_of_remote_display_write_the_lines_of_before :: proc(t: ^testing.T) {
 	codes := [?]string{"Too_Large", "Bad_Record", "Out_Of_Order", "Input_Not_Allowed"}
 	for cause in causes {
 		for code in codes {
-			facts_expect_line(t, render(t, file, "Viewer_Record_Refused", {{"viewer_key", KEY_HEAD}, {"cause", cause}, {"code", code}}), line_of_before("remote_display: refused a record of the viewer key ", KEY_HEAD, ": ", cause, ": the connection ends with the code ", code))
+			facts_expect_line(t, render(t, file, "Viewer_Record_Refused", {{"viewer_key_head", KEY_HEAD}, {"cause", cause}, {"error_code", code}}), line_of_before("remote_display: refused a record of the viewer key ", KEY_HEAD, ": ", cause, ": the connection ends with the code ", code))
 		}
 	}
 	// The bounds of a viewer, each with its own words.
@@ -169,7 +171,7 @@ the_facts_of_remote_display_write_the_lines_of_before :: proc(t: ^testing.T) {
 	limits := [2]u64{0, u64(max(i64))}
 	for bound in bounds {
 		for limit in limits {
-			facts_expect_line(t, render(t, file, "Viewer_Bound_Passed", {{"limit", limit}, {"viewer_key", KEY_HEAD}, {"missed_step", bound}}), line_of_before("remote_display: the viewer key ", KEY_HEAD, " ", bound, " in its bound of ", limit, " ms: the connection ends with the code Timeout"))
+			facts_expect_line(t, render(t, file, "Viewer_Bound_Passed", {{"bound", limit}, {"viewer_key_head", KEY_HEAD}, {"missed_step", bound}}), line_of_before("remote_display: the viewer key ", KEY_HEAD, " ", bound, " in its bound of ", limit, " ms: the connection ends with the code Timeout"))
 		}
 	}
 }
@@ -190,19 +192,19 @@ the_facts_of_the_network_service_write_the_lines_of_before :: proc(t: ^testing.T
 	addresses := [2]string{"255.255.255.255", "0.0.0.0"}
 	ports := [2]u64{0, 65535}
 	for port in ports {
-		facts_expect_line(t, render(t, file, "Endpoint_Listens_Tcp", {{"port", port}, {"owner", owner}}), line_of_before("network: an endpoint for ", owner, ": TCP, the listen port ", port, ", the remotes that send to it"))
-		facts_expect_line(t, render(t, file, "Endpoint_Listens_Udp", {{"port", port}, {"owner", owner}}), line_of_before("network: an endpoint for ", owner, ": UDP, the listen port ", port, ", the remotes that send 1200 bytes to it"))
+		facts_expect_line(t, render(t, file, "Endpoint_Listens_Tcp", {{"listen_port", port}, {"owner", owner}}), line_of_before("network: an endpoint for ", owner, ": TCP, the listen port ", port, ", the remotes that send to it"))
+		facts_expect_line(t, render(t, file, "Endpoint_Listens_Udp", {{"listen_port", port}, {"owner", owner}}), line_of_before("network: an endpoint for ", owner, ": UDP, the listen port ", port, ", the remotes that send 1200 bytes to it"))
 		for address in addresses {
-			facts_expect_line(t, render(t, file, "Endpoint_Listens_Udp_From_Address", {{"port", port}, {"owner", owner}, {"address", address}}), line_of_before("network: an endpoint for ", owner, ": UDP, the listen port ", port, ", the remotes of the address ", address, " only that send 1200 bytes to it"))
-			facts_expect_line(t, render(t, file, "Endpoint_Connects_Tcp", {{"first_port", port}, {"last_port", 65535 - port}, {"port", port}, {"owner", owner}, {"address", address}}), line_of_before("network: an endpoint for ", owner, ": TCP, the local ports ", port, " to ", 65535 - port, ", the grant ", address, " port ", port))
-			facts_expect_line(t, render(t, file, "Endpoint_Connects_Udp", {{"local_port", 65535 - port}, {"port", port}, {"owner", owner}, {"address", address}}), line_of_before("network: an endpoint for ", owner, ": the local port ", 65535 - port, ", the grant ", address, " port ", port))
+			facts_expect_line(t, render(t, file, "Endpoint_Listens_Udp_From_Address", {{"listen_port", port}, {"owner", owner}, {"remote_address", address}}), line_of_before("network: an endpoint for ", owner, ": UDP, the listen port ", port, ", the remotes of the address ", address, " only that send 1200 bytes to it"))
+			facts_expect_line(t, render(t, file, "Endpoint_Connects_Tcp", {{"first_local_port", port}, {"last_local_port", u64(65535) - port}, {"remote_port", port}, {"owner", owner}, {"remote_address", address}}), line_of_before("network: an endpoint for ", owner, ": TCP, the local ports ", port, " to ", u64(65535) - port, ", the grant ", address, " port ", port))
+			facts_expect_line(t, render(t, file, "Endpoint_Connects_Udp", {{"local_port", u64(65535) - port}, {"remote_port", port}, {"owner", owner}, {"remote_address", address}}), line_of_before("network: an endpoint for ", owner, ": the local port ", u64(65535) - port, ", the grant ", address, " port ", port))
 		}
 	}
 	facts_expect_line(t, render(t, file, "Endpoint_Grant_Changed_To_Remote", {{"owner", owner}}), line_of_before("network: the grant of the endpoint of ", owner, " changed: ", "a new remote"))
 	facts_expect_line(t, render(t, file, "Endpoint_Grant_Changed_To_None", {{"owner", "net"}}), line_of_before("network: the grant of the endpoint of ", "net", " changed: ", "none"))
 	counts := [3]u64{0, 1, max(u64)}
 	for count in counts {
-		facts_expect_line(t, render(t, file, "Endpoint_Ended", {{"sent", count}, {"received", max(u64) - count}, {"owner", owner}}), line_of_before("network: the endpoint of ", owner, " ended: ", count, " datagrams sent, ", max(u64) - count, " received"))
+		facts_expect_line(t, render(t, file, "Endpoint_Ended", {{"datagrams_sent", count}, {"datagrams_received", max(u64) - count}, {"owner", owner}}), line_of_before("network: the endpoint of ", owner, " ended: ", count, " datagrams sent, ", max(u64) - count, " received"))
 		facts_expect_line(t, render(t, file, "Read_Region_Refused", {{"status_word", count}, {"owner", owner}}), line_of_before("network: the frame service refused the datagram region of ", owner, " as a read region: status ", count))
 	}
 	// The longest name of a command, and the words of a command that names
@@ -306,6 +308,6 @@ the_facts_of_the_tpm_service_write_the_lines_of_before :: proc(t: ^testing.T) {
 	counts := [3]u64{0, 1, max(u64)}
 	for count in counts {
 		facts_expect_line(t, render(t, file, "Extend_Refused_At_Limit", {{"extends", count}}), line_of_before("tpm: refused an extend of PCR 12: ", count, " extends ran in this start, the most that it takes"))
-		facts_expect_line(t, render(t, file, "Start_Policy_Measured", {{"extend", count}, {"limit", u64(2)}}), line_of_before("tpm: extended PCR 12 with the digest of a start policy: extend ", count, " of ", u64(2), " in this start"))
+		facts_expect_line(t, render(t, file, "Start_Policy_Measured", {{"extend", count}, {"extend_limit", u64(2)}}), line_of_before("tpm: extended PCR 12 with the digest of a start policy: extend ", count, " of ", u64(2), " in this start"))
 	}
 }

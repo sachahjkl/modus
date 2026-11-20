@@ -517,7 +517,7 @@ call_work :: proc "contextless" (connection: ^quic.Connection, peer: quic.Remote
 				stream_refuse(connection, call, .Too_Large, now)
 				counts.too_large += 1
 				if log_allowed() {
-					system.log_fact(.Info, Request_Too_Large{stream = call.identifier, limit = bytes_field(u64(remote.REQUEST_LIMIT)), peer = peer_field(peer)})
+					system.log_fact(.Info, Request_Too_Large{stream_identifier = call.identifier, request_limit = bytes_field(u64(remote.REQUEST_LIMIT)), peer = peer_field(peer)})
 				}
 				return
 			case .Complete:
@@ -535,7 +535,7 @@ call_work :: proc "contextless" (connection: ^quic.Connection, peer: quic.Remote
 			stream_refuse(connection, call, .Timeout, now)
 			counts.timeouts += 1
 			if log_allowed() {
-				system.log_fact(.Info, Request_Timeout{stream = call.identifier, limit = milliseconds_field(REQUEST_TIME_LIMIT), received = bytes_field(u64(call.received)), elapsed = milliseconds_field(elapsed), peer = peer_field(peer)})
+				system.log_fact(.Info, Request_Timeout{stream_identifier = call.identifier, bound = milliseconds_field(REQUEST_TIME_LIMIT), bytes_received = bytes_field(u64(call.received)), elapsed = milliseconds_field(elapsed), peer = peer_field(peer)})
 			}
 		}
 	case .Answering:
@@ -554,7 +554,7 @@ call_work :: proc "contextless" (connection: ^quic.Connection, peer: quic.Remote
 			stream_refuse(connection, call, .Timeout, now)
 			counts.timeouts += 1
 			if log_allowed() {
-				system.log_fact(.Info, Answer_Timeout{stream = call.identifier, limit = milliseconds_field(ANSWER_TIME_LIMIT), written = u64(call.answer_written), answer_length = bytes_field(u64(call.answer_length)), elapsed = milliseconds_field(elapsed), peer = peer_field(peer)})
+				system.log_fact(.Info, Answer_Timeout{stream_identifier = call.identifier, bound = milliseconds_field(ANSWER_TIME_LIMIT), bytes_written = u64(call.answer_written), answer_length = bytes_field(u64(call.answer_length)), elapsed = milliseconds_field(elapsed), peer = peer_field(peer)})
 			}
 		}
 	case .Discarding:
@@ -570,7 +570,7 @@ call_work :: proc "contextless" (connection: ^quic.Connection, peer: quic.Remote
 				quic.connection_close(connection, u64(remote.Stream_Error.Timeout), now_microseconds())
 				counts.closed_held += 1
 				if log_allowed() {
-					system.log_fact(.Info, Stream_Not_Ended_After_Reset{stream = call.identifier, limit = milliseconds_field(RELEASE_TIME_LIMIT), elapsed = milliseconds_field(elapsed), peer = peer_field(peer)})
+					system.log_fact(.Info, Stream_Not_Ended_After_Reset{stream_identifier = call.identifier, bound = milliseconds_field(RELEASE_TIME_LIMIT), elapsed = milliseconds_field(elapsed), peer = peer_field(peer)})
 				}
 			}
 			// The connection ends by its closing state; the next bound is
@@ -620,13 +620,13 @@ client_bind :: proc "contextless" (connection: ^quic.Connection, client: ^Record
 		quic.connection_close(connection, u64(remote.Stream_Error.Revoked), now_microseconds())
 		counts.revoked += 1
 		if log_allowed() {
-			system.log_fact(.Info, Client_Key_Grant_Ended_In_Handshake{client_key = key_head_field(key), peer = peer_field(peer)})
+			system.log_fact(.Info, Client_Key_Grant_Ended_In_Handshake{client_key_head = key_head_field(key), peer = peer_field(peer)})
 		}
 		return
 	}
 	client.bound, client.row, client.serial, client.principal, client.key = true, row, client_rows[row].serial, client_rows[row].principal, key
 	if log_allowed() {
-		system.log_fact(.Info, Client_Key_Proved{principal = client.principal, client_key = key_head_field(key), peer = peer_field(peer)})
+		system.log_fact(.Info, Client_Key_Proved{principal = client.principal, client_key_head = key_head_field(key), peer = peer_field(peer)})
 	}
 }
 
@@ -644,9 +644,9 @@ client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: 
 	if log_allowed() {
 		place := client.row
 		if place >= 0 && place < remote.CLIENT_CAPACITY && client_rows[place].key == client.key && client_rows[place].contested != 0 {
-			system.log_fact(.Info, Client_Key_Contested{principal = client.principal, other_principal = client_rows[place].contested - 1, client_key = key_head_field(client.key), peer = peer_field(peer)})
+			system.log_fact(.Info, Client_Key_Contested{principal = client.principal, other_principal = client_rows[place].contested - 1, client_key_head = key_head_field(client.key), peer = peer_field(peer)})
 		} else {
-			system.log_fact(.Info, Client_Key_Grant_Ended{principal = client.principal, client_key = key_head_field(client.key), peer = peer_field(peer)})
+			system.log_fact(.Info, Client_Key_Grant_Ended{principal = client.principal, client_key_head = key_head_field(client.key), peer = peer_field(peer)})
 		}
 	}
 }

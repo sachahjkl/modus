@@ -436,7 +436,7 @@ viewer_close :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewe
 	viewer.bound = false
 	quic.connection_close(connection, u64(code), now_microseconds())
 	if dropped := compositor_held_drop(viewer.place, viewer.generation); dropped > 0 && log_allowed() {
-		system.log_fact(.Info, Viewer_Input_Records_Dropped{dropped = u64(dropped), viewer_key = key_head_field(viewer.key)})
+		system.log_fact(.Info, Viewer_Input_Records_Dropped{dropped = u64(dropped), viewer_key_head = key_head_field(viewer.key)})
 	}
 }
 
@@ -447,7 +447,7 @@ viewer_bind :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer
 	if row < 0 || !remote.client_grant_holds(&client_rows, row, client_rows[row].serial, .View) {
 		viewer_close(connection, viewer, .Revoked)
 		if log_allowed() {
-			system.log_fact(.Info, Viewer_Key_Grant_Ended_In_Handshake{viewer_key = key_head_field(key), peer = peer_field(peer)})
+			system.log_fact(.Info, Viewer_Key_Grant_Ended_In_Handshake{viewer_key_head = key_head_field(key), peer = peer_field(peer)})
 		}
 		return
 	}
@@ -457,9 +457,9 @@ viewer_bind :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer
 	viewer.damage = {}
 	interface.damage_add(&viewer.damage, {0, 0, int(protocol.SCREEN_WIDTH_LIMIT), int(protocol.SCREEN_HEIGHT_LIMIT)})
 	if viewer.input {
-		system.log_fact(.Info, Viewer_Key_Proved_With_Input{principal = viewer.principal, viewer_key = key_head_field(key), peer = peer_field(peer)})
+		system.log_fact(.Info, Viewer_Key_Proved_With_Input{principal = viewer.principal, viewer_key_head = key_head_field(key), peer = peer_field(peer)})
 	} else {
-		system.log_fact(.Info, Viewer_Key_Proved_Without_Input{principal = viewer.principal, viewer_key = key_head_field(key), peer = peer_field(peer)})
+		system.log_fact(.Info, Viewer_Key_Proved_Without_Input{principal = viewer.principal, viewer_key_head = key_head_field(key), peer = peer_field(peer)})
 	}
 	viewers_tell()
 }
@@ -493,7 +493,7 @@ viewer_grant_check :: proc "contextless" (connection: ^quic.Connection, viewer: 
 	if !remote.client_grant_holds(&client_rows, viewer.row, viewer.serial, .View) {
 		viewer_close(connection, viewer, .Revoked)
 		if log_allowed() {
-			system.log_fact(.Info, Viewer_Key_Grant_Ended{principal = viewer.principal, viewer_key = key_head_field(viewer.key), peer = peer_field(peer)})
+			system.log_fact(.Info, Viewer_Key_Grant_Ended{principal = viewer.principal, viewer_key_head = key_head_field(viewer.key), peer = peer_field(peer)})
 		}
 		viewers_tell()
 		return
@@ -510,7 +510,7 @@ viewer_grant_check :: proc "contextless" (connection: ^quic.Connection, viewer: 
 viewer_refuse :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer, code: protocol.Display_Error, why: string) {
 	viewer_close(connection, viewer, code)
 	if log_allowed() {
-		system.log_fact(.Info, Viewer_Record_Refused{viewer_key = key_head_field(viewer.key), cause = value_kinds.text_field(why, RECORD_CAUSE_FIELD_BYTES), code = value_kinds.text_field(protocol.DISPLAY_ERROR_NAMES[code], ERROR_CODE_FIELD_BYTES)})
+		system.log_fact(.Info, Viewer_Record_Refused{viewer_key_head = key_head_field(viewer.key), cause = value_kinds.text_field(why, RECORD_CAUSE_FIELD_BYTES), error_code = value_kinds.text_field(protocol.DISPLAY_ERROR_NAMES[code], ERROR_CODE_FIELD_BYTES)})
 	}
 	viewers_tell()
 }
@@ -598,7 +598,7 @@ viewer_record_take :: proc "contextless" (connection: ^quic.Connection, viewer: 
 		if !remote.client_grant_holds(&client_rows, viewer.row, viewer.serial, .Input) {
 			viewer_close(connection, viewer, .Input_Not_Allowed)
 			if log_allowed() {
-				system.log_fact(.Info, Viewer_Input_Not_Allowed{principal = viewer.principal, viewer_key = key_head_field(viewer.key)})
+				system.log_fact(.Info, Viewer_Input_Not_Allowed{principal = viewer.principal, viewer_key_head = key_head_field(viewer.key)})
 			}
 			viewers_tell()
 			return
@@ -701,7 +701,7 @@ viewer_next_record :: proc "contextless" (viewer: ^Viewer) -> bool {
 		}
 		viewer.damage = {}
 		if viewer.merges > 0 && log_allowed() {
-			system.log_fact(.Info, Viewer_Damage_Full{merges = viewer.merges, viewer_key = key_head_field(viewer.key)})
+			system.log_fact(.Info, Viewer_Damage_Full{merges = viewer.merges, viewer_key_head = key_head_field(viewer.key)})
 			viewer.merges = 0
 		}
 		if viewer.viewer_frame.count == 0 {
@@ -850,7 +850,7 @@ viewers_work :: proc "contextless" () {
 		}
 		viewer_close(connection, viewer, .Timeout)
 		if log_allowed() {
-			system.log_fact(.Info, Viewer_Bound_Passed{limit = value_kinds.Time_In_Milliseconds(limit), viewer_key = key_head_field(viewer.key), missed_step = value_kinds.text_field(VIEWER_BOUND_SENTENCES[bound], MISSED_STEP_FIELD_BYTES)})
+			system.log_fact(.Info, Viewer_Bound_Passed{bound = value_kinds.Time_In_Milliseconds(limit), viewer_key_head = key_head_field(viewer.key), missed_step = value_kinds.text_field(VIEWER_BOUND_SENTENCES[bound], MISSED_STEP_FIELD_BYTES)})
 		}
 		viewers_tell()
 	}

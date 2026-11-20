@@ -44,80 +44,80 @@ Viewer_Key_Refused :: struct {
 
 // The end of a viewer dropped its keys and pointer records that waited for
 // room in the window ring.
-@(log_fact = "remote_display: the end of the viewer key {viewer_key} dropped {dropped} of its input records that waited for the compositor")
+@(log_fact = "remote_display: the end of the viewer key {viewer_key_head} dropped {dropped} of its input records that waited for the compositor")
 Viewer_Input_Records_Dropped :: struct {
-	dropped:    u64,
-	viewer_key: [24]u8,
+	dropped:         u64,
+	viewer_key_head: [24]u8,
 }
 
 // The grant of a viewer key ended between the check of the handshake and
 // the binding of its connection.
-@(log_fact = "remote_display: {peer}: the grant of the viewer key {viewer_key} ended during the handshake: the connection ends with the code Revoked")
+@(log_fact = "remote_display: {peer}: the grant of the viewer key {viewer_key_head} ended during the handshake: the connection ends with the code Revoked")
 Viewer_Key_Grant_Ended_In_Handshake :: struct {
-	viewer_key: [24]u8,
-	peer:       [32]u8,
+	viewer_key_head: [24]u8,
+	peer:            [32]u8,
 }
 
 // A host proved a viewer key whose principal allowed the view and the
 // input: the viewer is taken.
-@(log_fact = "remote_display: {peer} proved the viewer key {viewer_key}: it sees the screen for principal {principal}, and its keys and its pointer go to the desktop")
+@(log_fact = "remote_display: {peer} proved the viewer key {viewer_key_head}: it sees the screen for principal {principal}, and its keys and its pointer go to the desktop")
 Viewer_Key_Proved_With_Input :: struct {
-	principal:  u64,
-	viewer_key: [24]u8,
-	peer:       [32]u8,
+	principal:       u64,
+	viewer_key_head: [24]u8,
+	peer:            [32]u8,
 }
 
 // A host proved a viewer key whose principal allowed the view only: the
 // viewer is taken, with no input.
-@(log_fact = "remote_display: {peer} proved the viewer key {viewer_key}: it sees the screen for principal {principal}, with no input")
+@(log_fact = "remote_display: {peer} proved the viewer key {viewer_key_head}: it sees the screen for principal {principal}, with no input")
 Viewer_Key_Proved_Without_Input :: struct {
-	principal:  u64,
-	viewer_key: [24]u8,
-	peer:       [32]u8,
+	principal:       u64,
+	viewer_key_head: [24]u8,
+	peer:            [32]u8,
 }
 
 // The grant of the key of a viewer ended: its connection ends.
-@(log_fact = "remote_display: the grant of the viewer key {viewer_key} of principal {principal} ended (a revocation, a lock of its session, or another session in front): the connection from {peer} ends with the code Revoked")
+@(log_fact = "remote_display: the grant of the viewer key {viewer_key_head} of principal {principal} ended (a revocation, a lock of its session, or another session in front): the connection from {peer} ends with the code Revoked")
 Viewer_Key_Grant_Ended :: struct {
-	principal:  u64,
-	viewer_key: [24]u8,
-	peer:       [32]u8,
+	principal:       u64,
+	viewer_key_head: [24]u8,
+	peer:            [32]u8,
 }
 
 // The border refused a record of a viewer: its connection ends with an
 // error code. The cause and the code are Text fields: the cause comes
 // from a closed set of sentences, and the name of a code of the protocol
 // is no member of a contract enum that a field can name.
-@(log_fact = "remote_display: refused a record of the viewer key {viewer_key}: {cause}: the connection ends with the code {code}")
+@(log_fact = "remote_display: refused a record of the viewer key {viewer_key_head}: {cause}: the connection ends with the code {error_code}")
 Viewer_Record_Refused :: struct {
-	viewer_key: [24]u8,
-	cause:      [72]u8,
-	code:       [24]u8,
+	viewer_key_head: [24]u8,
+	cause:           [72]u8,
+	error_code:      [24]u8,
 }
 
 // A viewer sent input that its principal allowed for the view only.
-@(log_fact = "remote_display: the viewer key {viewer_key} sent input, and principal {principal} allowed it for the view only: nothing reaches the desktop, and the connection ends with the code Input_Not_Allowed")
+@(log_fact = "remote_display: the viewer key {viewer_key_head} sent input, and principal {principal} allowed it for the view only: nothing reaches the desktop, and the connection ends with the code Input_Not_Allowed")
 Viewer_Input_Not_Allowed :: struct {
-	principal:  u64,
-	viewer_key: [24]u8,
+	principal:       u64,
+	viewer_key_head: [24]u8,
 }
 
 // The damage set of a viewer was full: rectangles joined another.
-@(log_fact = "remote_display: the damage of the viewer key {viewer_key} was full: {merges} rectangles joined another, and the viewer receives more pixels")
+@(log_fact = "remote_display: the damage of the viewer key {viewer_key_head} was full: {merges} rectangles joined another, and the viewer receives more pixels")
 Viewer_Damage_Full :: struct {
-	merges:     u64,
-	viewer_key: [24]u8,
+	merges:          u64,
+	viewer_key_head: [24]u8,
 }
 
 // A viewer did not keep a bound of time: its connection ends. The step
 // that it did not do is a Text field: Viewer_Bound is an enum of this
 // module, whose members a reader cannot name, and one fact type keeps the
 // one event.
-@(log_fact = "remote_display: the viewer key {viewer_key} {missed_step} in its bound of {limit}: the connection ends with the code Timeout")
+@(log_fact = "remote_display: the viewer key {viewer_key_head} {missed_step} in its bound of {bound}: the connection ends with the code Timeout")
 Viewer_Bound_Passed :: struct {
-	limit:       value_kinds.Time_In_Milliseconds,
-	viewer_key:  [24]u8,
-	missed_step: [64]u8,
+	bound:           value_kinds.Time_In_Milliseconds,
+	viewer_key_head: [24]u8,
+	missed_step:     [64]u8,
 }
 
 // The compositor sent a word of the window ring that names no event. The

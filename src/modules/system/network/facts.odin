@@ -27,44 +27,44 @@ ADDRESS_FIELD_BYTES :: 16
 COMMAND_FIELD_BYTES :: 24
 
 // An endpoint with a listen grant of TCP.
-@(log_fact = "network: an endpoint for {owner}: TCP, the listen port {port}, the remotes that send to it")
+@(log_fact = "network: an endpoint for {owner}: TCP, the listen port {listen_port}, the remotes that send to it")
 Endpoint_Listens_Tcp :: struct {
-	port:  u64,
-	owner: value_kinds.Module_Name_Field,
+	listen_port: u64,
+	owner:       value_kinds.Module_Name_Field,
 }
 
 // An endpoint with a listen grant of UDP for the remotes of one address.
-@(log_fact = "network: an endpoint for {owner}: UDP, the listen port {port}, the remotes of the address {address} only that send 1200 bytes to it")
+@(log_fact = "network: an endpoint for {owner}: UDP, the listen port {listen_port}, the remotes of the address {remote_address} only that send 1200 bytes to it")
 Endpoint_Listens_Udp_From_Address :: struct {
-	port:    u64,
-	owner:   value_kinds.Module_Name_Field,
-	address: [16]u8,
+	listen_port:    u64,
+	owner:          value_kinds.Module_Name_Field,
+	remote_address: [16]u8,
 }
 
 // An endpoint with a listen grant of UDP for any remote.
-@(log_fact = "network: an endpoint for {owner}: UDP, the listen port {port}, the remotes that send 1200 bytes to it")
+@(log_fact = "network: an endpoint for {owner}: UDP, the listen port {listen_port}, the remotes that send 1200 bytes to it")
 Endpoint_Listens_Udp :: struct {
-	port:  u64,
-	owner: value_kinds.Module_Name_Field,
+	listen_port: u64,
+	owner:       value_kinds.Module_Name_Field,
 }
 
 // An endpoint with a client grant of TCP: a block of local ports.
-@(log_fact = "network: an endpoint for {owner}: TCP, the local ports {first_port} to {last_port}, the grant {address} port {port}")
+@(log_fact = "network: an endpoint for {owner}: TCP, the local ports {first_local_port} to {last_local_port}, the grant {remote_address} port {remote_port}")
 Endpoint_Connects_Tcp :: struct {
-	first_port: u64,
-	last_port:  u64,
-	port:       u64,
-	owner:      value_kinds.Module_Name_Field,
-	address:    [16]u8,
+	first_local_port: u64,
+	last_local_port:  u64,
+	remote_port:      u64,
+	owner:            value_kinds.Module_Name_Field,
+	remote_address:   [16]u8,
 }
 
 // An endpoint with a client grant of UDP: one local port.
-@(log_fact = "network: an endpoint for {owner}: the local port {local_port}, the grant {address} port {port}")
+@(log_fact = "network: an endpoint for {owner}: the local port {local_port}, the grant {remote_address} port {remote_port}")
 Endpoint_Connects_Udp :: struct {
-	local_port: u64,
-	port:       u64,
-	owner:      value_kinds.Module_Name_Field,
-	address:    [16]u8,
+	local_port:     u64,
+	remote_port:    u64,
+	owner:          value_kinds.Module_Name_Field,
+	remote_address: [16]u8,
 }
 
 // The grant of an endpoint changed to a new remote.
@@ -80,11 +80,11 @@ Endpoint_Grant_Changed_To_None :: struct {
 }
 
 // An endpoint ended, with the datagrams that it sent and received.
-@(log_fact = "network: the endpoint of {owner} ended: {sent} datagrams sent, {received} received")
+@(log_fact = "network: the endpoint of {owner} ended: {datagrams_sent} datagrams sent, {datagrams_received} received")
 Endpoint_Ended :: struct {
-	sent:     u64,
-	received: u64,
-	owner:    value_kinds.Module_Name_Field,
+	datagrams_sent:     u64,
+	datagrams_received: u64,
+	owner:              value_kinds.Module_Name_Field,
 }
 
 // The frame service did not answer a command by the bound of an answer:
