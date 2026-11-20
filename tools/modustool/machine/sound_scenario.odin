@@ -61,12 +61,13 @@ sound_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	if !machine_test(part, scenario_sound[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_SOUND, exit_status = build.MACHINE_STOP_OK, sound_device = true}) {
 		return false
 	}
-	machine_log, log_error := os.read_entire_file(TEST_OUTPUT_SOUND, context.temp_allocator)
-	if log_error != nil {
-		fmt.eprintfln("modustool: cannot read %s: %v", TEST_OUTPUT_SOUND, log_error)
+	// The line of the frame is a log fact: its sentence is in the rendered
+	// log, not in the raw lines that QEMU wrote.
+	machine_log, log_read := log_file_rendered(TEST_OUTPUT_SOUND)
+	if !log_read {
 		return false
 	}
-	frame, named := tone_frame_of_log(string(machine_log))
+	frame, named := tone_frame_of_log(machine_log)
 	if !named {
 		fmt.eprintfln("modustool: the log %s has no line \"%s<frame>\"", TEST_OUTPUT_SOUND, TONE_FRAME_LINE)
 		return false

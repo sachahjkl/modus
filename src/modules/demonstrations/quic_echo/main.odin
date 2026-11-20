@@ -187,7 +187,7 @@ send_refusal_last: u32 // The status word of the last refused Send, as the netwo
 counters_second: u64
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Info, "quic_echo: ", text)
+	system.log_fact(.Info, Start_Failed{cause = value_kinds.text_field(text, CAUSE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -332,8 +332,12 @@ idle_end_log :: proc "contextless" (connection: ^quic.Connection, remote: quic.R
 	idle_timeout := connection.idle_timeout / 1000
 	bound := quic.connection_idle_bound(connection) / 1000
 	held := silence >= idle_timeout
-	text: [40]u8
-	system.log(.Info, "quic_echo: ", address_text(text[:], remote), held ? ": the idle end held its bound: " : ": the idle end did NOT hold its bound: ", silence, " ms with no packet of the client, the idle timeout ", idle_timeout, " ms, the bound ", bound, " ms, ", silence - min(silence, bound), " ms after the bound")
+	after_bound := silence - min(silence, bound)
+	if held {
+		system.log_fact(.Info, Idle_End_Held{silence = value_kinds.Time_In_Milliseconds(silence), idle_timeout = value_kinds.Time_In_Milliseconds(idle_timeout), bound = value_kinds.Time_In_Milliseconds(bound), after_bound = value_kinds.Time_In_Milliseconds(after_bound), peer = peer_field(remote)})
+	} else {
+		system.log_fact(.Info, Idle_End_Not_Held{silence = value_kinds.Time_In_Milliseconds(silence), idle_timeout = value_kinds.Time_In_Milliseconds(idle_timeout), bound = value_kinds.Time_In_Milliseconds(bound), after_bound = value_kinds.Time_In_Milliseconds(after_bound), peer = peer_field(remote)})
+	}
 }
 
 // printable_text copies the bytes of a text of the network into place,
@@ -358,8 +362,7 @@ echo_work :: proc "contextless" () {
 		if echo.generation != record.generation {
 			echo^ = {generation = record.generation}
 			if log_allowed() {
-				text: [40]u8
-				system.log(.Info, "quic_echo: a connection from ", address_text(text[:], record.remote))
+				system.log_fact(.Info, Connection_Arrived{peer = peer_field(record.remote)})
 			}
 		}
 		connection := &connections[place]
@@ -590,7 +593,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	text: [64]u8
-	system.log(.Info, "quic_echo: the public key of this server: ", hex_text(text[:], public_key[:]))
+	system.log_fact(.Info, Public_Key_Made{public_key = value_kinds.text_field(hex_text(text[:], public_key[:]), PUBLIC_KEY_FIELD_BYTES)})
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
 		fail("no endpoint: the process has no grant of the network")
@@ -642,7 +645,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log(.Info, "quic_echo: listening on the UDP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections of ", u64(size_of(quic.Connection) / 1024), " KiB, each with ", u64(STREAMS_PER_CONNECTION), " streams of ", u64(size_of(quic.Stream) / 1024), " KiB, the key of this server from the generator of the process")
+	system.log_fact(.Info, Listening{listen_port = u64(listen_port), capacity = u64(CAPACITY), connection_size = value_kinds.Size_In_Kibibytes(size_of(quic.Connection) / 1024), streams = u64(STREAMS_PER_CONNECTION), stream_size = value_kinds.Size_In_Kibibytes(size_of(quic.Stream) / 1024)})
 
 	arrived: [RECEIVE_PLACES]ring.Record
 	last_draw: u64

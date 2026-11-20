@@ -40,6 +40,7 @@
 package interface_font
 
 import "modus:contract/text_encoding"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -184,33 +185,33 @@ fallback_lines_tell :: proc "contextless" () {
 		}
 	}
 	if drawn == B612_GREEK_LETTER_COUNT && missing == 0 {
-		system.log(.Info, "interface_font: each Greek letter of B612 is drawn by this process: ", drawn, " letters: as it must")
+		system.log_fact(.Info, Greek_Letters_Drawn{letters = drawn})
 	} else {
-		system.log(.Warning, "interface_font: not each Greek letter of B612 is drawn: ", drawn, " of ", u64(B612_GREEK_LETTER_COUNT), ", ", missing, " with no glyph")
+		system.log_fact(.Warning, Greek_Letters_Missing{drawn = drawn, letters = u64(B612_GREEK_LETTER_COUNT), missing = missing})
 	}
 	for character in BOX_CHARACTERS {
 		entry, _, source := text_rendering.glyph(face, character, text_rendering.size_of_scale(1), 0)
 		font := text_rendering.font_of(face, character)
 		if font != .Paper_Mono || source != .Private_Cache || entry.row_count == 0 {
-			system.log(.Warning, FAULT, "the character ", u64(character), " comes from the font ", text_rendering.outline_font_name(font), ", with ", u64(entry.row_count), " rows of ink")
+			system.log_fact(.Warning, Box_Character_Wrong{character = u64(character), ink_rows = u64(entry.row_count), font = value_kinds.text_field(text_rendering.outline_font_name(font), FONT_NAME_FIELD_BYTES)})
 			return
 		}
 	}
-	system.log(.Info, "interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: ", u64(len(BOX_CHARACTERS)), " characters: as it must")
+	system.log_fact(.Info, Box_Characters_From_Paper_Mono{characters = u64(len(BOX_CHARACTERS))})
 	for character in MISSING_CHARACTERS {
 		_, _, source := text_rendering.glyph(face, character, text_rendering.size_of_scale(1), 0)
 		if text_rendering.has(face, character) || source != .Missing {
-			system.log(.Warning, FAULT, "the character ", u64(character), " has a glyph, and no font of the chain has it")
+			system.log_fact(.Warning, Missing_Character_Has_Glyph{character = u64(character)})
 			return
 		}
 		// Its advance is the advance of the replacement glyph: the shaper
 		// gives it no fallback glyph.
 		if _, found := text_rendering.advance(face, character, text_rendering.size_of_scale(1)); found {
-			system.log(.Warning, FAULT, "the character ", u64(character), " has an advance of a font")
+			system.log_fact(.Warning, Missing_Character_Has_Advance{character = u64(character)})
 			return
 		}
 	}
-	system.log(.Info, "interface_font: ", u64(len(MISSING_CHARACTERS)), " characters that no font of the chain has draw the replacement glyph: as it must")
+	system.log_fact(.Info, Replacement_Glyph_Drawn{characters = u64(len(MISSING_CHARACTERS))})
 }
 
 // line_width gives the width of a text in 1/64 of a pixel.
@@ -362,9 +363,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	no_pair_spacing_large.without_pairs = true
 	greek_lines_make()
 	measure()
-	system.log(.Info, "interface_font: one line of ", u64(len(PARAGRAPH[1])), " characters in B612 at scale 1 (the least of 50 batches): shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; its first draw, each glyph from its outline: ", first_drawing_time, " ns")
+	system.log_fact(.Info, Line_Measured{characters = u64(len(PARAGRAPH[1])), shaping = value_kinds.Time_In_Nanoseconds(shaping_time), drawing = value_kinds.Time_In_Nanoseconds(drawing_time), first_drawing = value_kinds.Time_In_Nanoseconds(first_drawing_time)})
 	draw(&window)
-	system.log(.Info, "interface_font: ok, B612 Regular and Bold, ", u64(text_rendering.state.fonts[.B612].pairs.count), " and ", u64(text_rendering.state.fonts[.B612_Bold].pairs.count), " pairs")
+	system.log_fact(.Info, Fonts_Ready{regular_pairs = u64(text_rendering.state.fonts[.B612].pairs.count), bold_pairs = u64(text_rendering.state.fonts[.B612_Bold].pairs.count)})
 	for {
 		// The input of the window: each event gives a frame.
 		list: system.Wait

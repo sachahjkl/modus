@@ -541,6 +541,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log(.Info, "processor_frame: ok, each part drew its pixels, the drawing module refused no call, and each table holds each of its records")
 		system.stop(.Done)
 	}
-	system.log(.Info, "processor_frame: wrong: the pixels of the clear and present, the full frame, the frame in its damage and the draw table are right: ", pixels_right[0] ? "yes" : "no", ", ", pixels_right[1] ? "yes" : "no", ", ", pixels_right[2] ? "yes" : "no", ", ", pixels_right[3] ? "yes" : "no", "; the drawing module refused ", refusals, " calls; each table holds each of its records: ", tables_whole ? "yes" : "no")
+	system.log_fact(.Info, Parts_Wrong{refused_calls = refusals, pixels_right = pixels_right_field(pixels_right), tables_whole = answer_field(tables_whole)})
 	system.stop(.Failed)
 }

@@ -55,6 +55,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/random"
 import "modus:support/system"
 
@@ -303,7 +304,7 @@ starter_records_check :: proc "contextless" () -> (found: Starter_Records) {
 			// A word that names no writer is not found: the case then fails.
 			writer, writer_ok := op.module_writer_of_word(item.writer)
 			if !writer_ok {
-				system.log(.Info, "imports: the module record at ", item.base, " has the writer word ", item.writer, ", which names no writer")
+				system.log_fact(.Info, Module_Writer_Unknown{base = item.base, writer_word = item.writer})
 				continue
 			}
 			if item.base == op.PROCESS_BASE {
@@ -473,7 +474,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	starter := starter_records_check()
 	starter_right := starter.refused == STARTER_CHANGES && starter.process_found && starter.process_writer == .Starter && starter.own_found && starter.own_writer == .Process && starter.released
 	note("the module record of the root service", starter_right, starter.refused, " of ", u64(STARTER_CHANGES), " changes refused; calendar loaded here: ", (starter.own_found ? op.module_writer_name(starter.own_writer) : "not found"))
-	system.log(.Info, "imports: the module record of the root service: ", starter.refused, " of ", u64(STARTER_CHANGES), " changes refused with Starter_Module, writer ", (starter.process_found ? op.module_writer_name(starter.process_writer) : "not found"), "; calendar, loaded by this process: writer ", (starter.own_found ? op.module_writer_name(starter.own_writer) : "not found"))
+	system.log_fact(.Info, Root_Service_Module_Record{refused = starter.refused, changes = u64(STARTER_CHANGES), process_writer = writer_field(starter.process_found ? op.module_writer_name(starter.process_writer) : "not found"), own_writer = writer_field(starter.own_found ? op.module_writer_name(starter.own_writer) : "not found")})
 
 	wrong: u64
 	for item in cases[:case_count] {
@@ -483,7 +484,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if wrong == 0 {
-		system.log(.Info, "imports: ok, ", u64(case_count), " cases")
+		system.log_fact(.Info, Cases_Passed{cases = u64(case_count)})
 	}
 	call_whole, call_tenth := tenths(call_direct, CALLS)
 	replaced_whole, replaced_tenth := tenths(call_replaced, CALLS)
@@ -493,7 +494,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	load_whole, _ := tenths(load_direct, 1)
 	load_replaced_whole, _ := tenths(load_replaced, 1)
 	system.log(.Info, "imports: the bind of agenda: ", bind_whole, ".", bind_tenth, " ns, and ", checked_whole, ".", checked_tenth, " ns with the check of the replacement; the load of agenda and its import: ", load_whole / 1000, " us, and ", load_replaced_whole / 1000, " us")
-	system.log(.Info, "imports: two processes import calendar at two places: one copy of its code, ", shared_pages, " pages, mapped ", shared_mappings, " times")
+	system.log_fact(.Info, Calendar_Code_Shared{pages = value_kinds.Size_In_Pages(shared_pages), mappings = shared_mappings})
 
 	for {
 		frame := interface.window_frame_start(&window_memory, &window)

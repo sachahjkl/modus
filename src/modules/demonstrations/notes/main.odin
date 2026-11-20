@@ -33,6 +33,7 @@ package notes
 
 import "modus:contract/errors"
 import "modus:contract/text_encoding"
+import "modus:contract/value_kinds"
 import "modus:support/calendar"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -121,8 +122,12 @@ show :: proc "contextless" (place: int) {
 	shown = place
 	bytes, status := storage.version(&client, storage.ROOT, "note", history[place].generation, shown_text[:])
 	shown_count = status == .Ok ? len(bytes) : 0
-	date_text: [24]u8
-	system.log(.Info, "notes: the version ", u64(place + 1), " of ", u64(history_count()), ", generation ", history[place].generation, history[place].date != 0 ? ", " : "", history[place].date != 0 ? calendar.iso_text(date_text[:], history[place].date) : "", ": \"", string(shown_text[:shown_count]), "\"")
+	date_text: [DATE_FIELD_BYTES]u8
+	if history[place].date != 0 {
+		system.log_fact(.Info, Version_Shown{version = u64(place + 1), versions = u64(history_count()), generation = history[place].generation, date = value_kinds.text_field(calendar.iso_text(date_text[:], history[place].date), DATE_FIELD_BYTES), note_text = note_field(shown_text[:shown_count])})
+	} else {
+		system.log_fact(.Info, Version_Shown_Without_Date{version = u64(place + 1), versions = u64(history_count()), generation = history[place].generation, note_text = note_field(shown_text[:shown_count])})
+	}
 }
 
 // keep writes one object. It gives false when the store is gone or refuses.
@@ -196,10 +201,14 @@ restore :: proc "contextless" () {
 		system.log(.Info, "notes: WRONG: the 3 blocks of the count do not agree")
 	case note_damaged:
 		restored = "WRONG: the note is damaged on the disk: a key writes a new note"
-		system.log(.Info, "notes: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", count, ", its 3 blocks agree")
+		system.log_fact(.Info, Note_Damaged{count = count})
 	case:
 		restored = "restored at the start: the note and the count, 3 blocks agree"
-		system.log(.Info, "notes: restored the note \"", string(note[:note_count]), "\" and the count ", count, ", its 3 blocks agree", count % RUN_STEPS != 0 ? ", the last run stopped before its end" : "")
+		if count % RUN_STEPS != 0 {
+			system.log_fact(.Info, Note_Restored_After_Stopped_Run{count = count, note_text = note_field(note[:note_count])})
+		} else {
+			system.log_fact(.Info, Note_Restored{count = count, note_text = note_field(note[:note_count])})
+		}
 	}
 }
 
@@ -369,7 +378,7 @@ key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Pre
 		if status == .Ok && commit > 0 {
 			generation = commit
 			note_count = copy(note[:], shown_text[:shown_count])
-			system.log(.Info, "notes: restored the version of generation ", generation_shown, ": \"", string(note[:note_count]), "\", in the commit of generation ", commit, " in ", restore_time_last, " us; the note before it is a version")
+			system.log_fact(.Info, Version_Restored{generation = generation_shown, commit = commit, restore = value_kinds.Time_In_Microseconds(restore_time_last), note_text = note_field(note[:note_count])})
 		}
 		shown = -1
 		history_read()
@@ -385,20 +394,20 @@ key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Pre
 				break
 			}
 			if step == RUN_STEPS {
-				system.log(.Info, "notes: count ", count, ", stopped: ", u64(RUN_STEPS), " commits in ", system.time() - started, " ms")
+				system.log_fact(.Info, Count_Run_Stopped{count = count, commits = u64(RUN_STEPS), elapsed = value_kinds.Time_In_Milliseconds(system.time() - started)})
 				measure_started := system.nanoseconds()
 				_, total, status := storage.versions(&client, storage.ROOT, "count", count_versions[:])
 				if status == .Ok {
-					system.log(.Info, "notes: the versions of the count: ", total, " rows in ", (system.nanoseconds() - measure_started) / 1000, " us")
+					system.log_fact(.Info, Count_Versions_Listed{rows = total, elapsed = value_kinds.Time_In_Microseconds((system.nanoseconds() - measure_started) / 1000)})
 				}
 			} else if step % 100 == 0 {
-				system.log(.Info, "notes: count ", count)
+				system.log_fact(.Info, Count_Stepped{count = count})
 				draw(window)
 			}
 		}
 	case '\n':
 		history_read()
-		system.log(.Info, "notes: the note is \"", string(note[:note_count]), "\", generation ", generation, ", ", u64(max(history_total - 1, 0)), " versions; one commit of the note: ", commit_time_total / max(commit_count, 1), " us in the mean of ", commit_count)
+		system.log_fact(.Info, Note_Shown{generation = generation, versions = u64(max(history_total - 1, 0)), commit_mean = value_kinds.Time_In_Microseconds(commit_time_total / max(commit_count, 1)), commits = commit_count, note_text = note_field(note[:note_count])})
 	case 8:
 		// The note is UTF-8: Backspace removes its last whole
 		// character.

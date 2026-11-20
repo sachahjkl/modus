@@ -117,6 +117,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/random"
 import "modus:support/system"
 
@@ -866,7 +867,7 @@ log_written :: proc "contextless" () {
 	}
 	log_whole(system.written(&writer))
 	ordered := results[1].measured && results[2].measured && results[1].written_ordered && results[2].written_ordered
-	system.log(.Info, "scheduler: the weights 1 2 4 written through the machine handle while 12 spinners ran: each write was read back, and the heavier weight got more under fair and EEVDF", ordered ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Written_Weights_Ordered{verdict = verdict_field(ordered)})
 }
 
 // The stress case: a thread changes the strategy CHANGES times while 8
@@ -1023,9 +1024,9 @@ stress :: proc "contextless" () {
 		fail("the stress case")
 	}
 	stress_done = true
-	system.log(.Info, "scheduler: one Strategy_Set, with its kernel entry: ", change_least, " ns at least, ", change_middle, " ns in the middle, ", change_worst, " ns at worst")
+	system.log_fact(.Info, Strategy_Set_Measured{least = value_kinds.Time_In_Nanoseconds(change_least), middle = value_kinds.Time_In_Nanoseconds(change_middle), worst = value_kinds.Time_In_Nanoseconds(change_worst)})
 	system.log(.Info, "scheduler: stress: ", changer.changes, " changes of strategy while ", stress_churned, " threads started and stopped, two threads woke each other ", stress_wakes, " times and 8 spinners ran and moved; after the last change each thread ran: ", u64(ran), "; thread slots ", after.threads, " of ", at_start.threads, "; ", schedule_writer.writes, " writes of a schedule through the machine handle, ", schedule_writer.refused, " refused")
-	system.log(.Info, "scheduler: writes of a schedule through the machine handle while the strategy changed 100 times: none was refused, each of the 8 spinners ran after them and has the schedule written last", ran && schedules_right && changer.changes == CHANGES ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Schedule_Writes_During_Changes{verdict = verdict_field(ran && schedules_right && changer.changes == CHANGES)})
 }
 
 // The thread that reads and writes its own schedule, by its number.
@@ -1165,7 +1166,7 @@ other_process_schedule :: proc "contextless" () -> bool {
 		as_it_must &&= after == changed && restored == before
 		as_it_must &&= again_status == .Ok && again.process_serial == serial
 	}
-	system.log(.Info, "scheduler: a thread of another process, the root service, found by its name and its serial: through the machine handle its schedule was read, written, read back and written back", as_it_must ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Other_Process_Schedule{verdict = verdict_field(as_it_must)})
 	return as_it_must
 }
 
@@ -1342,7 +1343,7 @@ spinner_with_company :: proc "contextless" (count: int) -> int {
 // checks nothing.
 owing_kept :: proc "contextless" (processors: u64) -> bool {
 	if processors >= SPINNER_LIMIT {
-		system.log(.Info, "scheduler: the lag of a held spinner is not checked on a machine with ", u64(SPINNER_LIMIT), " processors or more: each spinner can be alone in its queue")
+		system.log_fact(.Info, Lag_Not_Checked{processors = u64(SPINNER_LIMIT)})
 		return true
 	}
 	result: Owing_Result
@@ -1415,7 +1416,7 @@ owing_kept :: proc "contextless" (processors: u64) -> bool {
 		ending = ": WRONG"
 	}
 	system.log(.Info, "scheduler: at least ", u64(OWING_ROUNDS), " rounds on a held spinner under EEVDF, until one had a lag below 0: the spinner lowered to the weight 1 and ran a tick, a Stop, its own writes of the full weight and of the request 1 us, the full weight through the machine handle, a Resume: ", result.raised, " of its raises were not refused, the reported lag changed after ", result.changed, " of its writes, and was not 0 after ", result.not_new, " raises of the machine handle", ending)
-	system.log(.Info, "scheduler: in ", result.rounds, " rounds the kernel reported the held spinner with a lag below 0 ", result.owing, " times and above 0 ", result.owed, " times; the lowest lag was minus ", result.largest, " weighted cycles (measures)")
+	system.log_fact(.Info, Lag_Measured{rounds = result.rounds, owing = result.owing, owed = result.owed, largest = result.largest})
 	return as_it_must
 }
 
@@ -1946,7 +1947,7 @@ strategy_set :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 		return errors.fail(error, -1, .Refused, .None, 0, 0, 0, i64(status))
 	}
 	if before != wanted {
-		system.log(.Info, "scheduler: the strategy is now ", op.STRATEGY_NAMES[wanted], ", it was ", op.STRATEGY_NAMES[before])
+		system.log_fact(.Info, Strategy_Changed{strategy = strategy_field(wanted), previous_strategy = strategy_field(before)})
 	}
 	return i64(before)
 }
@@ -1956,7 +1957,7 @@ choose :: proc "contextless" (index: int) {
 		return
 	}
 	if before, status := system.strategy_set(machine, strategies[index]); status == .Ok && before != strategies[index] {
-		system.log(.Info, "scheduler: the strategy is now ", op.STRATEGY_NAMES[strategies[index]], ", it was ", op.STRATEGY_NAMES[before])
+		system.log_fact(.Info, Strategy_Changed{strategy = strategy_field(strategies[index]), previous_strategy = strategy_field(before)})
 	}
 }
 
@@ -2055,22 +2056,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	done = true
 	if right && system.measure_run() {
-		system.log(.Info, "scheduler: EEVDF woke ", results[2].wakes / max(results[0].wakes, 1), " times as often as round robin (a measure)")
+		system.log_fact(.Info, Eevdf_Wakes_Compared{ratio = results[2].wakes / max(results[0].wakes, 1)})
 	}
 	if right {
-		system.log(.Info, "scheduler: ok, no spinner starved under 3 strategies, a wake ended ", eevdf_preemptions, " turns under EEVDF and 0 under round robin, the weights ordered the shares, each thread ran after ", stress_changes, " changes, 0 wakes lost, a change needs the right Schedule")
+		system.log_fact(.Info, Strategies_Passed{eevdf_turns = eevdf_preemptions, changes = stress_changes})
 	} else {
-		system.log(.Info, "scheduler: wrong: ", problem)
+		system.log_fact(.Info, Check_Failed{problem = value_kinds.text_field(problem, PROBLEM_FIELD_BYTES)})
 	}
 	start := system.nanoseconds()
 	draw(&window, system_report(), processors)
 	drawn := system.nanoseconds() - start
-	system.log(.Info, "scheduler: the window took ", drawn / 1000, " us to draw")
+	system.log_fact(.Info, Window_Drawn{drawing = value_kinds.Time_In_Microseconds(drawn / 1000)})
 	// The rounds of the share policy run on a thread of their own: a round
 	// enters the kernel for each process, and this thread draws and serves
 	// the commands.
 	if _, policy_status := system.thread_start(policy_run, nil); policy_status != .Ok {
-		system.log(.Info, "scheduler: the thread of the share policy did not start: ", op.STATUS_NAMES[policy_status])
+		system.log_fact(.Info, Share_Policy_Thread_Not_Started{status = policy_status})
 	}
 	for {
 		// The events go to the input of the next frame: a click or Enter on

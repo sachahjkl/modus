@@ -43,6 +43,7 @@ import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -716,7 +717,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if hostile_host, status = system.call_host_start(image, image_memory, hostile_file, "hostile host", random.values_with_seed(&process_generator, {}), &load_error); status == .Ok {
 		hostile_ready[.Call_Host] = true
 	}
-	system.log(.Info, "tables: the ways: direct ", ways_ready[.Direct] ? "ready" : "refused", ", call host ", ways_ready[.Call_Host] ? "ready" : "refused", ", service ", ways_ready[.Service] ? "ready" : "refused")
+	system.log_fact(.Info, Ways_Ready{direct = way_state_field(ways_ready[.Direct]), call_host = way_state_field(ways_ready[.Call_Host]), service = way_state_field(ways_ready[.Service])})
 
 	// The table of the measures: 65536 readings in a memory object.
 	pages := u64(LARGE_COUNT * size_of(Reading) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
@@ -753,10 +754,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log(.Info, "tables: ", item.name, ": ", answer_text(&item.answer))
 	}
 	for way in Measure_Way {
-		system.log(.Info, "tables: sum_values, ", measure_names[way], ": ", measures[way][0], " ns for 64 rows, ", measures[way][1], " ns for 1024 rows, ", measures[way][2], " ns for 65536 rows (0: refused)")
+		system.log_fact(.Info, Sum_Values_Measured{small_table = value_kinds.Time_In_Nanoseconds(measures[way][0]), medium_table = value_kinds.Time_In_Nanoseconds(measures[way][1]), large_table = value_kinds.Time_In_Nanoseconds(measures[way][2]), way = value_kinds.text_field(measure_names[way], MEASURE_WAY_FIELD_BYTES)})
 	}
 	if wrong == 0 {
-		system.log(.Info, "tables: ok, ", u64(case_count), " cases in 3 ways and ", u64(hostile_count), " hostile cases")
+		system.log_fact(.Info, Cases_Passed{cases = u64(case_count), hostile_cases = u64(hostile_count)})
 	}
 
 	for {

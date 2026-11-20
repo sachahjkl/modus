@@ -44,6 +44,7 @@ package pointers
 import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/pointer_pictures"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -129,7 +130,7 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 		result := interface.button(frame, area, interface.identity_with(interface.identity("theme"), index), label, index == shown)
 		if result.activated {
 			shown = index
-			system.log(.Info, "pointers: the theme ", label, " is shown")
+			system.log_fact(.Info, Theme_Shown{theme = resource_field(label)})
 		}
 	}
 	interface.column_take(&column, 8)
@@ -335,7 +336,7 @@ frame_draw :: proc "contextless" (window: ^display.Window) -> u64 {
 	if under != tile_under_pointer {
 		tile_under_pointer = under
 		if under >= 0 {
-			system.log(.Info, "pointers: the pointer is over the tile ", pointer_pictures.SHAPE_NAMES[shape])
+			system.log_fact(.Info, Pointer_Over_Tile{shape = value_kinds.text_field(pointer_pictures.SHAPE_NAMES[shape], SHAPE_FIELD_BYTES)})
 		}
 	}
 	return system.nanoseconds() - start
@@ -382,7 +383,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if theme.valid {
 			head := pointer_pictures.header(theme.file)
-			system.log(.Info, "pointers: ", name, ": ", pointer_pictures.text_of(head.theme_name[:]), ", ", pointer_pictures.text_of(head.license[:]), ", ", u64(head.shape_count), " shapes, ", u64(head.picture_count), " pictures, ", entry.size, " bytes; the hash and the validation in ", theme.check_time / 1000, " us")
+			system.log_fact(.Info, Theme_Valid{shapes = u64(head.shape_count), pictures = u64(head.picture_count), file_size = value_kinds.Size_In_Bytes(entry.size), check = value_kinds.Time_In_Microseconds(theme.check_time / 1000), theme = resource_field(name), theme_name = theme_text_field(pointer_pictures.text_of(head.theme_name[:])), license = theme_text_field(pointer_pictures.text_of(head.license[:]))})
 		} else {
 			system.log(.Info, "pointers: ", name, " is not valid: ", string(theme.problem[:theme.problem_count]))
 		}
@@ -397,7 +398,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	table = {records = table_records[:], text = table_text[:]}
 	spent := frame_draw(&window)
-	system.log(.Info, "pointers: ok, ", u64(theme_count), " themes; the window of ", themes[shown].resource, " drawn in ", spent / 1000, " us")
+	system.log_fact(.Info, Window_Drawn{themes = u64(theme_count), drawing = value_kinds.Time_In_Microseconds(spent / 1000), theme = resource_field(themes[shown].resource)})
 	for {
 		display.wait(&window)
 		came := false

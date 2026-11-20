@@ -40,6 +40,7 @@ import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // Itself and one process that only receives: 1372 pages. And the glyph
@@ -152,11 +153,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for item in cases[:case_count] {
 		if !item.right {
 			wrong += 1
-			system.log(.Info, "origin: wrong answer: ", item.text)
+			system.log_fact(.Info, Answer_Wrong{case_text = value_kinds.text_field(item.text, CASE_FIELD_BYTES)})
 		}
 	}
 	if wrong == 0 {
-		system.log(.Info, "origin: ok, ", u64(case_count), " cases")
+		system.log_fact(.Info, Cases_Passed{cases = u64(case_count)})
 	}
 
 	// The measure. One cycle of a lent handle is four kernel entries: a
@@ -175,7 +176,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.close(copy)
 	}
 	copy_time = (system.time() - start) * 1_000_000 / CYCLES
-	system.log(.Info, "origin: lend a handle and take it back: ", lend_time, " ns with 4 kernel entries; copy and close: ", copy_time, " ns with 2")
+	system.log_fact(.Info, Handle_Cycles_Measured{lend = value_kinds.Time_In_Nanoseconds(lend_time), copy_and_close = value_kinds.Time_In_Nanoseconds(copy_time)})
 
 	for {
 		frame := interface.window_frame_start(&window_memory, &window)

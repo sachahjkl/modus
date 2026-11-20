@@ -43,6 +43,8 @@ A line of a log holds several numbers: the lock measure gives 1, 2 and 4 lockers
 
 The number is read from the words of the line, as the home reads its bar charts. A line whose words changed gives no number for that release: the chart has a gap, never a wrong point. The value is the text of the log, digits with at most one decimal point.
 
+A measured line that its writer writes as a log fact is read in its sentence: the tool renders the line of the fact with the module files of the build before it searches the log (`measure_log_read`), for the record, for the check of a line and for the page. The fact template is the line of before, so the record keeps its form and the history keeps its series. The record holds sentences, not fields: a number read from a field, with no words around it, needs a field of the record for each value, which is a second form of the record ([log_facts.md](log_facts.md), "The machine tests").
+
 ### The chart
 
 - One card for each measure with at least two points. The rule "a chart or nothing" holds: a measure with one point has no chart, and the section says how many releases the history holds.

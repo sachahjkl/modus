@@ -202,7 +202,7 @@ measure :: proc "contextless" (mode: lockers.Mode, rates: ^[len(counts)]u64, loc
 			// and the wait that follows (it can be in the count or not yet).
 			if mode == .Entries && (slot.entries != slot.count + 1 || kernel < slot.count + 3 || kernel > slot.count + 8) {
 				if entries_right {
-					system.log(.Info, "locks: locker ", u64(index + 1), " counted ", slot.count, " operations and ", slot.entries, " entries, the kernel ", kernel)
+					system.log_fact(.Info, Locker_Entries_Differ{locker = u64(index + 1), operations = slot.count, entries = slot.entries, kernel_entries = kernel})
 				}
 				entries_right = false
 			}
@@ -600,7 +600,7 @@ frames_stress :: proc "contextless" () {
 		faulted += board.slots[2].count + board.slots[3].count
 	}
 	frames_stress_right = answered && made != 0 && faulted != 0 && wrong == 0
-	system.log(.Info, "locks: frames: ", made, " objects of 600 pages made and closed by two lockers while two lockers faulted ", faulted, " pages and this process read ", reports, " reports; reports where the free pages less the reserved pages were not the pages of the budgets: ", wrong)
+	system.log_fact(.Info, Frames_Stress_Done{made = made, faulted = faulted, reports = reports, wrong = wrong})
 }
 
 // The second thread of the stress case: it stops the process that the
@@ -688,12 +688,24 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// check have the counts of its work.
 	measured := system.measure_run()
 	measure(.Entries, &entry_rates, &entry_locks)
-	system.log(.Info, measured ? "locks: kernel entries in one second, each locker on its own objects: 1 locker " : "locks: kernel entries, each locker on its own objects: 1 locker ", entry_rates[0], ", 2 lockers ", entry_rates[1], ", 4 lockers ", entry_rates[2])
+	if measured {
+		system.log_fact(.Info, Kernel_Entries_Measured{one_locker = entry_rates[0], two_lockers = entry_rates[1], four_lockers = entry_rates[2]})
+	} else {
+		system.log_fact(.Info, Kernel_Entries_Counted{one_locker = entry_rates[0], two_lockers = entry_rates[1], four_lockers = entry_rates[2]})
+	}
 	measure(.Faults, &fault_rates, &fault_locks)
-	system.log(.Info, measured ? "locks: pages on first use in one second, each locker in its own memory: 1 locker " : "locks: pages on first use, each locker in its own memory: 1 locker ", fault_rates[0], ", 2 lockers ", fault_rates[1], ", 4 lockers ", fault_rates[2])
+	if measured {
+		system.log_fact(.Info, Pages_On_First_Use_Measured{one_locker = fault_rates[0], two_lockers = fault_rates[1], four_lockers = fault_rates[2]})
+	} else {
+		system.log_fact(.Info, Pages_On_First_Use_Counted{one_locker = fault_rates[0], two_lockers = fault_rates[1], four_lockers = fault_rates[2]})
+	}
 	pairs_alone = pairs(0)
 	pairs_loaded = pairs(2)
-	system.log(.Info, "locks: word wait, two threads wake each other: ", pairs_alone, measured ? " wakes in one second alone, " : " wakes alone, ", pairs_loaded, " while 2 lockers enter the kernel, ", lost_wakes, " lost")
+	if measured {
+		system.log_fact(.Info, Word_Wait_Measured{alone = pairs_alone, loaded = pairs_loaded, lost = lost_wakes})
+	} else {
+		system.log_fact(.Info, Word_Wait_Counted{alone = pairs_alone, loaded = pairs_loaded, lost = lost_wakes})
+	}
 	text: [512]u8
 	system.log(.Info, "locks: lock waits of takes, 4 lockers, kernel entries: ", locks_text(text[:], entry_locks))
 	system.log(.Info, "locks: lock waits of takes, 4 lockers, pages on first use: ", locks_text(text[:], fault_locks))
@@ -736,7 +748,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right && frames_stress_right {
 		system.log(.Info, "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped process returned its pages, its slot and its threads")
 	} else {
-		system.log(.Info, "locks: wrong: entries ", u64(entries_right), " faults ", u64(faults_right), " pages ", u64(pages_right), " wakes ", u64(pairs_right), " lost ", lost_wakes, " stress ", u64(stress_right), " frames ", u64(frames_stress_right))
+		system.log_fact(.Info, Checks_Wrong{entries_right = u64(entries_right), faults_right = u64(faults_right), pages_right = u64(pages_right), wakes_right = u64(pairs_right), lost = lost_wakes, stress_right = u64(stress_right), frames_right = u64(frames_stress_right)})
 	}
 	draw(&window)
 	for {

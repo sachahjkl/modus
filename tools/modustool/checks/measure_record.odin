@@ -182,6 +182,29 @@ measure_record_number_from_log :: proc(number: ^Measure_Record_Number, measure: 
 	return true
 }
 
+// measure_log_read gives the text of the log of a machine with the line of
+// each log fact rendered by the module files of the build. QEMU writes the
+// raw line of a fact; a measure, its check and the page read the sentence
+// that the fact template writes from the fields, which is the line that the
+// writer wrote as text before (src/md/features/measure_history.md, "The
+// number that a chart follows"). A log with no fact is read as it is, and
+// needs no module file: a record of the host is such a log.
+measure_log_read :: proc(path: string) -> (text: string, problem: string) {
+	data, read_error := os.read_entire_file(path, context.temp_allocator)
+	if read_error != nil {
+		return "", fmt.tprintf("cannot read: %v", read_error)
+	}
+	if !strings.contains(string(data), build.FACT_LINE_MARK) {
+		return string(data), ""
+	}
+	catalog, catalog_problem := build.fact_catalog_of_build(context.temp_allocator)
+	if catalog_problem != "" {
+		return "", fmt.tprintf("the facts cannot be rendered: %s", catalog_problem)
+	}
+	rendered, _ := build.fact_lines_render(&catalog, string(data))
+	return rendered, ""
+}
+
 // measure_record_number_read reads one number from the logs of the run. A
 // log that is older than the start of the run is of another run: it is not
 // read.
@@ -201,12 +224,12 @@ measure_record_number_read :: proc(measure: Measure_Entry, started: time.Time, n
 			append(&reasons, fmt.tprintf("%s: written before the start of the run", path))
 			continue
 		}
-		data, read_error := os.read_entire_file(path, context.temp_allocator)
-		if read_error != nil {
-			append(&reasons, fmt.tprintf("%s: cannot read: %v", path, read_error))
+		data, read_problem := measure_log_read(path)
+		if read_problem != "" {
+			append(&reasons, fmt.tprintf("%s: %s", path, read_problem))
 			continue
 		}
-		if measure_record_number_from_log(&number, measure, path, string(data), names) {
+		if measure_record_number_from_log(&number, measure, path, data, names) {
 			return number
 		}
 		append(&reasons, fmt.tprintf("%s: no line with \"%s\"", path, measure.pattern))

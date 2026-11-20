@@ -182,11 +182,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			for row in rows {
 				right &&= within(row)
 			}
-			system.log(.Info, "limits: processor time of one second, used of limit: ", rows[0].used, " of ", rows[0].limit, ", ", rows[1].used, " of ", rows[1].limit, ", ", rows[2].used, " of ", rows[2].limit, ", the process ", rows[3].used, " of ", rows[3].limit)
+			system.log_fact(.Info, Processor_Time_Used{first_used = rows[0].used, first_limit = rows[0].limit, second_used = rows[1].used, second_limit = rows[1].limit, third_used = rows[2].used, third_limit = rows[2].limit, process_used = rows[3].used, process_limit = rows[3].limit})
 			if right {
-				system.log(.Info, "limits: ok, 4 budgets within their processor time, ", accepted, " log records written and ", refused, " refused with ", log_limit, " for each second")
+				system.log_fact(.Info, Budgets_Within_Limits{accepted = accepted, refused = refused, log_limit = log_limit})
 			} else {
-				system.log(.Info, "limits: wrong: threads ", u64(started), " log ", u64(log_right), " rule ", u64(rule_right))
+				system.log_fact(.Info, Checks_Wrong{threads_started = u64(started), log_right = u64(log_right), rule_right = u64(rule_right)})
 			}
 		}
 

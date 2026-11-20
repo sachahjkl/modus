@@ -44,6 +44,7 @@
 package randomness
 
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -224,7 +225,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	report_ok: bool
 	if report, report_ok = random.report_values_read(&ctx.values); !report_ok {
-		system.log(.Info, "randomness: the root service gave the seed strength ", ctx.values[0] & 0xFF, ", which names no strength: nothing is shown")
+		system.log_fact(.Info, Seed_Strength_Unknown{strength_word = ctx.values[0] & 0xFF})
 		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "randomness")
@@ -233,9 +234,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	random.fill(&process_generator, first_bytes[:])
 	hex: interface.Text_Builder
-	system.log(.Info, "randomness: the seed of the system: strength ", op.seed_strength_names[report.strength], "; the first bytes of the stream of this process: ", hex_text(&hex, first_bytes[:]))
+	system.log_fact(.Info, Seed_Shown{strength = value_kinds.text_field(op.seed_strength_names[report.strength], STRENGTH_FIELD_BYTES), first_bytes = value_kinds.text_field(hex_text(&hex, first_bytes[:]), FIRST_BYTES_FIELD_BYTES)})
 	if report.device_present {
-		system.log(.Info, "randomness: the entropy device: ", u64(report.device_bytes), " bytes mixed after the gathering; refused reads: ", u64(report.device_reads_refused))
+		system.log_fact(.Info, Entropy_Device_Shown{device_bytes = value_kinds.Size_In_Bytes(report.device_bytes), refused_reads = u64(report.device_reads_refused)})
 	} else {
 		system.log(.Info, "randomness: the entropy device: absent")
 	}
@@ -253,7 +254,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for count in byte_counts {
 		least, most = min(least, count), max(most, count)
 	}
-	system.log(.Info, "randomness: 1 MiB by the high 4 bits of each byte: from ", least, " to ", most, " in each of 16 (the mean is 65536)")
+	system.log_fact(.Info, Byte_Counts_Shown{least = least, most = most})
 	start := system.nanoseconds()
 	for _ in 0 ..< MEASURE_SIZE / len(chunk) {
 		random.fill(&process_generator, chunk[:])
@@ -272,7 +273,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		draw(&window)
 		if mixes, change_count := random.fresh_bytes_mixes(&process_generator); mixes > 0 && !fresh_bytes_logged {
 			fresh_bytes_logged = true
-			system.log(.Info, "randomness: the fresh bytes of the root service are mixed into the generator of this process, at the change ", u64(change_count), " of its page")
+			system.log_fact(.Info, Fresh_Bytes_Mixed{change = u64(change_count)})
 		}
 		deadline += 500
 		display.wait(&window, deadline)

@@ -1,0 +1,3 @@
+type: Changed
+
+**The demonstrations from imports to workers write log facts.** Their lines of a case, of a measure and of a refusal are now records of fields, with the sentences of before, so `facts()` and `where()` in the console filter them by field: for example `facts(net.Round_Trip_Measured)`, `facts(kernel_events.Operations_Counted) |> where(verdict = "WRONG")`, `facts(server.Access_Record)`. The measure record, its page and the checks of a measure run read the sentence of a fact as they read a line. The lines that write an address in 16 hexadecimal digits, a number with one decimal, a status as its number, a template longer than 256 bytes, or no value stay text.

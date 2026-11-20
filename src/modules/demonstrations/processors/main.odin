@@ -40,6 +40,7 @@ import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 import "base:intrinsics"
 
@@ -261,9 +262,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	run_together()
 	if together == min(processor_count, WORKER_COUNT + 1) {
-		system.log(.Info, "processors: ok, ", together, " processors ran the process at the same time")
+		system.log_fact(.Info, Processors_Together{together = together})
 	} else {
-		system.log(.Info, "processors: at most ", together, " of ", processor_count, " processors ran the process at the same time")
+		system.log_fact(.Info, Processors_Together_At_Most{together = together, processors = processor_count})
 	}
 
 	job.next = PICTURE_HEIGHT
@@ -292,7 +293,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			if phase == len(thread_counts) - 1 && !logged {
 				logged = true
-				system.log(.Info, "processors: the picture took ", times[0], " ms with 1 thread, ", times[1], " ms with 2 threads, ", times[2], " ms with 4 threads")
+				system.log_fact(.Info, Picture_Timed{one_thread = value_kinds.Time_In_Milliseconds(times[0]), two_threads = value_kinds.Time_In_Milliseconds(times[1]), four_threads = value_kinds.Time_In_Milliseconds(times[2])})
 			}
 		}
 		// The pause between two pictures is for a reader. The first three

@@ -61,6 +61,7 @@ import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -244,13 +245,13 @@ child_start :: proc "contextless" (role: Role, name: string, amounts: system.Bud
 	status: system.Status
 	child.shared_memory, status = system.memory_create(1)
 	if status != .Ok {
-		system.log(.Info, "kernel_events: ", name, ": memory_create of the shared page failed: ", op.STATUS_NAMES[status])
+		system.log_fact(.Info, Shared_Page_Not_Made{status = status, child = child_field(28, name)})
 		return
 	}
 	address: rawptr
 	address, status = system.memory_map(child.shared_memory)
 	if status != .Ok {
-		system.log(.Info, "kernel_events: ", name, ": memory_map of the shared page failed: ", op.STATUS_NAMES[status])
+		system.log_fact(.Info, Shared_Page_Not_Mapped{status = status, child = child_field(28, name)})
 		system.close(child.shared_memory)
 		return
 	}
@@ -307,7 +308,7 @@ child_end :: proc "contextless" (child: ^Child, name: string, cause_after_stop: 
 		}
 	}
 	if !back {
-		system.log(.Info, "kernel_events: ", name, ": the budget of this process did not get back every page, thread and process of the child in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
+		system.log_fact(.Info, Child_Budget_Not_Back{bound = value_kinds.Time_In_Milliseconds(system.TEST_HANG_BOUND_MILLISECONDS), child = child_field(CHILD_FIELD_BYTES, name)})
 	}
 	system.memory_unmap(child.shared)
 	system.close(child.shared_memory)
@@ -328,10 +329,13 @@ round_run :: proc "contextless" (load: ^Child, round: Round) -> bool {
 		// A child that refused the round stopped, after its own line that
 		// says so: the wait for a round that never runs ends now.
 		if state, cause, outcome := system.process_state(load.process); state == .Stopped {
-			buffer: [64]u8
-			stop_text := system.Writer{buffer = buffer[:]}
-			system.stop_write(&stop_text, cause, outcome)
-			system.log(.Info, "kernel_events: the load child stopped: ", system.written(&stop_text), ", before the end of the round ", u64(round))
+			// The words of system.stop_write: the outcome follows the cause
+			// Itself only.
+			if cause == .Itself {
+				system.log_fact(.Info, Load_Child_Stopped{round = u32(round), cause = cause, outcome = outcome})
+			} else {
+				system.log_fact(.Info, Load_Child_Stopped_Without_Outcome{round = u32(round), cause = cause})
+			}
 			return false
 		}
 		system.word_wait(&load.shared.done, done, system.time() + 100)
@@ -339,7 +343,7 @@ round_run :: proc "contextless" (load: ^Child, round: Round) -> bool {
 	if intrinsics.atomic_load(&load.shared.done) == u32(round) {
 		return true
 	}
-	system.log(.Info, "kernel_events: the load child did not end the round ", u64(round), " in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
+	system.log_fact(.Info, Round_Not_Ended{round = u64(round), bound = value_kinds.Time_In_Milliseconds(system.TEST_HANG_BOUND_MILLISECONDS)})
 	return false
 }
 
@@ -351,7 +355,7 @@ table_give :: proc "contextless" (rules: []op.Event_Rule, records: u64) -> syste
 		processor_count = processors
 		ring_records = records
 	} else {
-		system.log(.Info, "kernel_events: Events_Set with ", u64(len(rules)), " rules and ", records, " records gave ", op.STATUS_NAMES[status])
+		system.log_fact(.Info, Events_Set_Refused{records = records, rules = u32(len(rules)), status = status})
 	}
 	return status
 }
@@ -451,7 +455,7 @@ cases_of_refusal :: proc "contextless" () {
 		system.close(without_right)
 	}
 	right := given == .Ok && refused == .No_Right
-	system.log(.Info, "kernel_events: no grant: Events_Set with a copy of the machine handle with no right gave ", op.STATUS_NAMES[refused], right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, No_Grant_Refused{status = refused, verdict = verdict_field(16, right)})
 	case_end(0, right, right ? string("refused with No_Right: as it must") : string("WRONG: see the log"))
 
 	// 2. 16 rules, then 17.
@@ -461,7 +465,7 @@ cases_of_refusal :: proc "contextless" () {
 	}
 	_, _, seventeen := system.events_set(machine, rings_memory, rules[:], RING_RECORDS)
 	right = sixteen == .Ok && seventeen == .No_Slot
-	system.log(.Info, "kernel_events: a seventeenth rule: 16 rules ", op.STATUS_NAMES[sixteen], ", 17 rules ", op.STATUS_NAMES[seventeen], right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Seventeenth_Rule_Refused{sixteen_rules = sixteen, seventeen_rules = seventeen, verdict = verdict_field(16, right)})
 	case_end(1, right, right ? string("16 taken, 17 refused with No_Slot: as it must") : string("WRONG: see the log"))
 }
 
@@ -500,12 +504,12 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	// kind, so the records + lost of all the rings is at most the count of
 	// the loop; with no record lost, it is exactly that count.
 	right := ran && tally.kinds[.Operation] == CALLS && lost == 0
-	system.log(.Info, "kernel_events: 1000 operations Memory_Size of one process: ", tally.kinds[.Operation], " records, ", lost, " lost", right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Operations_Counted{records = tally.kinds[.Operation], lost = lost, verdict = verdict_field(16, right)})
 	case_end(2, right, tally.kinds[.Operation], " records, ", lost, " lost", right ? string(": as it must") : string(": WRONG"))
 	// A lower bound: each of the 20 sleeps of the loop ends with a switch
 	// to the thread; its waits for the round add more.
 	right = ran && tally.kinds[.Switch] >= SLEEPS
-	system.log(.Info, "kernel_events: a thread that sleeps 20 times: ", tally.kinds[.Switch], " switches to it", right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Sleeps_Counted{switches = tally.kinds[.Switch], verdict = verdict_field(16, right)})
 	case_end(3, right, tally.kinds[.Switch], " switches to it, at least 20", right ? string(": as it must") : string(": WRONG"))
 	_, faulter_cause, faulter_outcome := system.process_state(faulter.process)
 	stop_buffer: [64]u8
@@ -522,7 +526,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	ran = table_give(one_in[:], RING_RECORDS) == .Ok && round_run(load, .One_In)
 	rings_read(&tally)
 	right = ran && tally.kinds[.Operation] == CALLS / ONE_IN
-	system.log(.Info, "kernel_events: one in 10: ", tally.kinds[.Operation], " records of 1000 operations", right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, One_In_Ten_Counted{records = tally.kinds[.Operation], verdict = verdict_field(16, right)})
 	case_end(5, right, tally.kinds[.Operation], " records of 1000", right ? string(": as it must") : string(": WRONG"))
 	interface_draw(window)
 
@@ -532,7 +536,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	written, full_lost, most := heads()
 	rings_read(&tally)
 	right = ran && written + full_lost == CALLS && full_lost > 0 && most <= FULL_RING_RECORDS && tally.kinds[.Operation] == written
-	system.log(.Info, "kernel_events: a full ring of 16 records: ", written, " written, ", full_lost, " lost, ", written + full_lost, " of 1000", right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Full_Ring_Counted{written = written, lost = full_lost, total = written + full_lost, verdict = verdict_field(16, right)})
 	case_end(6, right, written, " written, ", full_lost, " lost, of 1000", right ? string(": as it must") : string(": WRONG"))
 	interface_draw(window)
 
@@ -544,7 +548,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	written_after, lost_after, _ := heads()
 	second := system.events_end(machine)
 	right = ran && written_after == written_before && lost_after == lost_before && second == .Bad_State
-	system.log(.Info, "kernel_events: the table taken away: ", written_after - written_before, " records after it; a second take gave ", op.STATUS_NAMES[second], right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Table_Taken_Away{records_after = written_after - written_before, second_take = second, verdict = verdict_field(12, right)})
 	case_end(7, right, written_after - written_before, " records after it", right ? string(": as it must") : string(": WRONG"))
 	interface_draw(window)
 	return
@@ -619,7 +623,7 @@ case_of_the_ends_under_load :: proc "contextless" (load: ^Child, window: ^displa
 	if broken_round >= 0 {
 		system.log(.Info, "kernel_events: 1000 gives and ends under load: WRONG: after the end ", u64(broken_round), ", the word at the offset ", system.Hex(broken_offset), " of the memory object of the rings changed: a record written after the end")
 	}
-	system.log(.Info, "kernel_events: 1000 gives and ends under load: ", u64(rounds), " ends with ", u64(loaders), " loaders, ", written_sum, " records and ", lost_sum, " lost in all, the pattern whole after each end", right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Ends_Under_Load{ends = u64(rounds), loaders = u64(loaders), records = written_sum, lost = lost_sum, verdict = verdict_field(16, right)})
 	case_end(9, right, u64(rounds), " ends, ", u64(loaders), " loaders, the pattern whole", right ? string(": as it must") : string(": WRONG"))
 	interface_draw(window)
 }
@@ -649,7 +653,7 @@ case_of_the_revoked_right :: proc "contextless" (load: ^Child) {
 	written_after, lost_after, _ := heads()
 	_, _, refused := system.events_set(machine, rings_memory, rules[:], RING_RECORDS)
 	right := ran && revoked && written_before + lost_before == CALLS && written_after == written_before && lost_after == lost_before && refused == .Bad_Handle
-	system.log(.Info, "kernel_events: the right revoked: ", written_before + lost_before, " records of ", u64(CALLS), " before it; ", written_after - written_before, " records after it; Events_Set after it gave ", op.STATUS_NAMES[refused], right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Right_Revoked{records_before = written_before + lost_before, calls = u64(CALLS), records_after = written_after - written_before, status = refused, verdict = verdict_field(12, right)})
 	case_end(11, right, written_after - written_before, " records after it, then ", op.STATUS_NAMES[refused], right ? string(": as it must") : string(": WRONG"))
 }
 
@@ -688,7 +692,7 @@ measure_round :: proc "contextless" (load: ^Child, round: Round, rules: []op.Eve
 	if drainer_status == .Ok {
 		system.thread_wait(drainer)
 	} else {
-		system.log(.Info, "kernel_events: the thread that empties the rings did not start: ", op.STATUS_NAMES[drainer_status])
+		system.log_fact(.Info, Drainer_Not_Started{status = drainer_status})
 	}
 	if len(rules) != 0 {
 		ended := system.events_end(machine)
@@ -747,7 +751,7 @@ case_of_the_cost :: proc "contextless" (load: ^Child, other: ^Child) {
 		system.sleep(system.time() + 200)
 		system.events_end(machine)
 		rings_read(&tally)
-		system.log(.Info, "kernel_events: in 200 ms while this process sleeps, every process: ", tally.kinds[.Operation], " operations, the longest ", operation_name(tally.longest_operation), " in ", nanoseconds_of(tally.longest), " ns; ", tally.kinds[.Lock_Wait], " waits for a lock (shown, not checked)")
+		system.log_fact(.Info, Every_Process_Shown{operations = tally.kinds[.Operation], longest = value_kinds.Time_In_Nanoseconds(nanoseconds_of(tally.longest)), lock_waits = tally.kinds[.Lock_Wait], operation = value_kinds.text_field(operation_name(tally.longest_operation), OPERATION_FIELD_BYTES)})
 	}
 }
 
@@ -801,7 +805,7 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 		status: system.Status
 		load_memory, status = system.memory_create(1)
 		if status != .Ok {
-			system.log(.Info, "kernel_events: the load child could not make its memory object: ", op.STATUS_NAMES[status])
+			system.log_fact(.Info, Load_Memory_Not_Made{status = status})
 			system.stop(.Failed)
 		}
 		round_word: u32
@@ -816,7 +820,7 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 			// the word of no round, runs nothing, and the child stops.
 			round, round_ok := rounds.round_of_word(round_word)
 			if !round_ok {
-				system.log(.Info, "kernel_events: the load child got the round ", u64(round_word), ", which names no round: it stops")
+				system.log_fact(.Info, Round_Word_Unknown{round_word = u64(round_word)})
 				system.stop(.Refused)
 			}
 			switch round {
@@ -888,7 +892,7 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 		_ = intrinsics.volatile_load((^u64)(uintptr(FAULT_ADDRESS)))
 	}
 	// The child that faults does not come here: its fault stops it.
-	system.log(.Info, "kernel_events: the child of the role ", u64(role), " came past its fault")
+	system.log_fact(.Info, Child_Past_Its_Fault{role = u64(role)})
 	system.stop(.Failed)
 }
 
@@ -900,7 +904,7 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	role, role_ok := role_of(ctx.values[VALUE_ROLE])
 	if !role_ok {
-		system.log(.Info, "kernel_events: the context names the role ", ctx.values[VALUE_ROLE] & 0xFFFF_FFFF, ", which names no role")
+		system.log_fact(.Info, Role_Word_Unknown{role = ctx.values[VALUE_ROLE] & 0xFFFF_FFFF})
 		system.stop(.Refused)
 	}
 	if role != .Parent {
@@ -930,12 +934,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	rings_pages = (bytes + PAGE - 1) / PAGE
 	rings_memory, status = system.memory_create(rings_pages, flags = {.Contiguous})
 	if status != .Ok {
-		system.log(.Info, "kernel_events: memory_create of the rings failed: ", op.STATUS_NAMES[status])
+		system.log_fact(.Info, Rings_Not_Made{status = status})
 		system.stop(.Failed)
 	}
 	rings_base, status = system.memory_map(rings_memory)
 	if status != .Ok {
-		system.log(.Info, "kernel_events: memory_map of the rings failed: ", op.STATUS_NAMES[status])
+		system.log_fact(.Info, Rings_Not_Mapped{status = status})
 		system.stop(.Failed)
 	}
 
@@ -963,7 +967,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			cause_after_stop: op.Stop_Cause
 			child_end(&faulter, "the child that faults", &cause_after_stop)
 			kept := cause_after_stop == .Fault
-			system.log(.Info, "kernel_events: the child that faults, stopped again by this process: its stop cause stays ", op.STOP_CAUSE_TEXTS[cause_after_stop], kept ? string(": as it must") : string(", not a fault: WRONG"))
+			if kept {
+				system.log_fact(.Info, Fault_Cause_Kept{cause = cause_after_stop})
+			} else {
+				system.log_fact(.Info, Fault_Cause_Changed{cause = cause_after_stop})
+			}
 		}
 		interface_draw(&window)
 		case_of_the_revoked_right(&load)
@@ -979,9 +987,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if right == len(cases) {
-		system.log(.Info, "kernel_events: ok, ", u64(len(cases)), " cases: each count of the rings was exact, each refusal came, and each child gave back every page and every thread")
+		system.log_fact(.Info, Cases_Passed{cases = u64(len(cases))})
 	} else {
-		system.log(.Info, "kernel_events: failed: ", u64(len(cases) - right), " cases of ", u64(len(cases)))
+		system.log_fact(.Info, Cases_Failed{failed = u64(len(cases) - right), cases = u64(len(cases))})
 	}
 	for {
 		interface_draw(&window)

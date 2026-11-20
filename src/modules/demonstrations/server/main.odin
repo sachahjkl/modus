@@ -52,6 +52,7 @@ import "modus:contract/byte_order"
 import "modus:contract/date"
 import "modus:contract/datagram"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/network"
 import "modus:support/storage"
@@ -128,7 +129,7 @@ draw_time: u64
 start_time: u64
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Info, "server: ", text)
+	system.log_fact(.Info, Run_Failed{cause = value_kinds.text_field(text, CAUSE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -250,7 +251,7 @@ connection_log_second_end :: proc "contextless" () {
 		return
 	}
 	if connections_not_logged > 0 {
-		system.log(.Info, "server: ", connections_not_logged, " ends of connections in one second are not on the log (the limit is 50)")
+		system.log_fact(.Info, Ends_Not_Logged{ends = connections_not_logged})
 	}
 	connection_log_second, connection_log_count, connections_not_logged = second, 0, 0
 }
@@ -286,8 +287,7 @@ ended_log :: proc "contextless" (index: int, how: string) {
 		keep_alive_measure(index)
 		return
 	}
-	remote_text: [32]u8
-	system.log(.Info, "server: ", address_text(remote_text[:], connection.remote_address, connection.remote_port), " ", how, ": ", u64(session.requests), " requests, in ", connection.bytes_received, ", out ", connection.bytes_sent, ", srtt ", connection.smoothed_rtt, " us, ", connection.retransmissions, " retransmissions, ", connection.probes, " probes, ", connection.challenges, " challenges")
+	system.log_fact(.Info, Connection_Ended{requests = u64(session.requests), bytes_received = connection.bytes_received, bytes_sent = connection.bytes_sent, round_trip = value_kinds.Time_In_Microseconds(connection.smoothed_rtt), retransmissions = connection.retransmissions, probes = connection.probes, challenges = connection.challenges, peer = peer_field(connection.remote_address, connection.remote_port), how = value_kinds.text_field(how, HOW_FIELD_BYTES)})
 	keep_alive_measure(index)
 }
 
@@ -324,7 +324,7 @@ event_take :: proc "contextless" (event: tcp.Event) {
 		open := tcp.open_count(&table)
 		if open > most_open {
 			most_open = open
-			system.log(.Info, "server: ", u64(open), " connections open at once")
+			system.log_fact(.Info, Connections_Open{open = u64(open)})
 		}
 	}
 	switch {
@@ -357,7 +357,7 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	// count doubles: a flood of damaged segments writes few lines.
 	if table.bad_checksums >= max(2 * bad_checksums_logged, 1) {
 		bad_checksums_logged = table.bad_checksums
-		system.log(.Info, "server: ", table.bad_checksums, " segments dropped for a wrong checksum")
+		system.log_fact(.Info, Segments_Dropped{segments = table.bad_checksums})
 	}
 	// The events and the answers write data; the next step sends it. A few
 	// rounds end the work of one pass; what is left waits for the next pass.
@@ -532,7 +532,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log(.Info, "server: listening on the TCP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections, the secret of the initial sequence numbers from the generator of the process")
+	system.log_fact(.Info, Listening{listen_port = u64(listen_port), capacity = u64(CAPACITY)})
 
 	incoming: [RECEIVE_PLACES]tcp.Incoming
 	used: [RECEIVE_PLACES]u32

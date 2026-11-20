@@ -170,7 +170,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if wrong == 0 {
-		system.log(.Info, "rights: ok, ", allowed, " allowed, ", refused, " refused")
+		system.log_fact(.Info, Attempts_Passed{allowed = allowed, refused = refused})
 	}
 
 	for {

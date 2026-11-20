@@ -17,6 +17,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/random"
 import "modus:support/system"
 
@@ -444,7 +445,7 @@ policy_run :: proc "c" (parameter: rawptr) -> ! {
 			system.log(.Info, "scheduler: the share policy is off: each thread has the weight that its process asked and the full weight limit")
 		}
 		if on && !was_on {
-			system.log(.Info, "scheduler: the share policy is on: each process has its process weight, divided between its threads that count, one round each ", u64(POLICY_PERIOD), " ms")
+			system.log_fact(.Info, Share_Policy_On{period = value_kinds.Time_In_Milliseconds(POLICY_PERIOD)})
 		}
 		policy_round(on)
 		was_on = on
@@ -992,7 +993,7 @@ share_case :: proc "contextless" () -> bool {
 	// ticks of the kernel over one interval.
 	last :: SHARE_PROCESS_COUNT - 1
 	order_right := without_ran && with_ran && with[last] * without[0] < without[last] * with[0]
-	system.log(.Info, "scheduler: the process with 8 spinning threads against the process with 1, by the ticks of the kernel over one interval: its part is smaller under the share policy than without it", order_right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Share_Policy_Orders_Parts{verdict = verdict_field(order_right)})
 
 	buffer: [800]u8
 	writer := system.Writer{buffer = buffer[:]}
@@ -1014,7 +1015,7 @@ share_case :: proc "contextless" () -> bool {
 			sorted[back - 1], sorted[back] = sorted[back], sorted[back - 1]
 		}
 	}
-	system.log(.Info, "scheduler: one round of the share policy, over ", u64(round_now.count), " processes and ", round_now.threads, " threads: ", sorted[rounds / 2], " ns in the middle of ", u64(rounds), " rounds; ", policy_writes, " writes of a schedule in all, ", policy_raises, " of them raised a weight; the period of the rounds is ", u64(POLICY_PERIOD), " ms (measures)")
+	system.log_fact(.Info, Share_Policy_Round_Measured{processes = u64(round_now.count), threads = round_now.threads, middle = value_kinds.Time_In_Nanoseconds(sorted[rounds / 2]), rounds = u64(rounds), writes = policy_writes, raises = policy_raises, period = value_kinds.Time_In_Milliseconds(POLICY_PERIOD)})
 	return weights_right && steady && kept_right && back_right && order_right
 }
 
@@ -1197,7 +1198,7 @@ short_threads_case :: proc "contextless" () -> bool {
 		started_right = started_weights.threads == 1 && started_weights.most == new_part && started_weights.limit_most == new_part && started_weights.new_thread_limit_most == new_part
 	}
 	case_processes_stop(started_under_policy[:])
-	system.log(.Info, "scheduler: the first thread of a process started under the share policy, by a thread whose own new-thread weight limit is above ", u64(new_part) + 1, ", has the weight, the weight limit and the new-thread weight limit ", u64(started_weights.most), ", ", u64(started_weights.limit_most), " and ", u64(started_weights.new_thread_limit_most), started_right && first_open ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Started_Process_Weights{above = u64(new_part) + 1, weight = u64(started_weights.most), limit = u64(started_weights.limit_most), thread_limit = u64(started_weights.new_thread_limit_most), verdict = verdict_field(started_right && first_open)})
 	with, with_ran := case_processes_interval(short_case_processes[:], true)
 	if !policy_weights_give_back() {
 		system.log(.Info, "scheduler: after the case of the short threads, a write that gives the full weight limits back was refused")
@@ -1208,6 +1209,6 @@ short_threads_case :: proc "contextless" () -> bool {
 	// weight orders the share only between threads of one queue, and the
 	// balance places the threads, so no order of the two intervals follows
 	// from the weights.
-	system.log(.Info, "scheduler: the process of short threads got ", without[0] * 100 / max(without[1], 1), " % of the process of one long thread without the share policy, and ", with[0] * 100 / max(with[1], 1), " % with it; each interval ended on its count of ticks: ", u64(without_ran), " and ", u64(with_ran), " (measures)")
+	system.log_fact(.Info, Short_Threads_Parts{without_policy = without[0] * 100 / max(without[1], 1), with_policy = with[0] * 100 / max(with[1], 1), without_ended = u64(without_ran), with_ended = u64(with_ran)})
 	return unseen_right && refused_right && started_right && first_open
 }

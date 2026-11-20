@@ -36,6 +36,7 @@ package tone
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/timed_stream"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The sample region: 500 ms of frames, and the rest of its last page.
@@ -169,7 +170,7 @@ case_check :: proc "contextless" (tag: u32, command: timed_stream.Command, refus
 	if status_of(record) != refused.status || error.kind != i64(refused.kind) || error.unit != i64(refused.unit) || error.argument != refused.argument || error.operation != i64(command) {
 		fail("tone: ", refused.name, " got the status ", u64(record.kind), ", the kind ", error.kind, ", the unit ", error.unit, ", the argument ", error.argument)
 	}
-	system.log(.Info, "tone: ", refused.name, " is refused with ", timed_stream_status_name(refused.status), ": as it must")
+	system.log_fact(.Info, Case_Refused{case_name = value_kinds.text_field(refused.name, CASE_FIELD_BYTES), status = status_field(refused.status)})
 }
 
 timed_stream_status_name :: proc "contextless" (status: timed_stream.Status) -> string {
@@ -243,7 +244,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if started.values[2] != u64(timed_stream.Format.Signed_16_Stereo_48000) {
 		fail("tone: the stream has the format ", started.values[2])
 	}
-	system.log(.Info, "tone: the stream started; the service holds ", started.values[1], " ns of frames")
+	system.log_fact(.Info, Stream_Started{held = value_kinds.Time_In_Nanoseconds(started.values[1])})
 
 	tone_time := anchor.time + TONE_OFFSET_NANOSECONDS
 	format := u64(timed_stream.Format.Signed_16_Stereo_48000)
@@ -274,7 +275,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	played_time, frame, underruns := tone.values[0], tone.values[1], tone.values[2]
 	expected_frame, _ := timed_stream.frame_of_time(anchor, tone_time)
 	expected_time, _ := timed_stream.time_of_frame(anchor, expected_frame)
-	system.log(.Info, "tone: the tone of 440 Hz played from the frame ", frame, " of the stream for ", u64(TONE_FRAMES), " frames; underruns before its end: ", underruns)
+	system.log_fact(.Info, Tone_Played{frame = frame, frames = u64(TONE_FRAMES), underruns = underruns})
 	// A record keeps its frames: an underrun moves its time, never its
 	// frame. With no underrun, its time is the time of that frame.
 	if frame != expected_frame || (underruns == 0 && played_time != expected_time) {

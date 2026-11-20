@@ -7,7 +7,6 @@
 package checks
 
 import "core:fmt"
-import "core:os"
 import "core:strconv"
 import "core:strings"
 import "modustool:foundation"
@@ -161,12 +160,11 @@ processor_frame_lines_problems :: proc(log: string) -> []string {
 // processor_frame_lines_check reads the log of a measure run and checks
 // the lines of processor_frame. It prints the lines when they pass.
 processor_frame_lines_check :: proc(path: string) -> bool {
-	data, read_error := os.read_entire_file(path, context.temp_allocator)
-	if read_error != nil {
-		fmt.eprintfln("modustool: test failed: cannot read %s: %v", path, read_error)
+	log, read_problem := measure_log_read(path)
+	if read_problem != "" {
+		fmt.eprintfln("modustool: test failed: %s: %s", path, read_problem)
 		return false
 	}
-	log := string(data)
 	problems := processor_frame_lines_problems(log)
 	for problem in problems {
 		fmt.eprintfln("modustool: test failed: %s: %s", path, problem)

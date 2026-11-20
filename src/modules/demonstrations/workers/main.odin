@@ -223,8 +223,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	made_locked = add_with_threads(true)
 	made_free = add_with_threads(false)
-	system.log(.Info, "workers: with the lock, 4 threads made ", made_locked, " additions: the number is ", sum_locked, ", ", u64(sum_lock.waits), " waits")
-	system.log(.Info, "workers: with no lock, 4 threads made ", made_free, " additions: the number is ", sum_free)
+	system.log_fact(.Info, Locked_Additions{additions = made_locked, sum = sum_locked, waits = u64(sum_lock.waits)})
+	system.log_fact(.Info, Free_Additions{additions = made_free, sum = sum_free})
 	if made_locked == sum_locked {
 		system.log(.Info, "workers: the lock lost no addition")
 	}
@@ -251,7 +251,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if done == COLUMNS * ROWS && complete_at == 0 {
 			complete_at = now
 			if pictures_made == 1 {
-				system.log(.Info, "workers: ok, 4 threads computed ", u64(COLUMNS * ROWS), " tiles: ", workers[0].tiles, " ", workers[1].tiles, " ", workers[2].tiles, " ", workers[3].tiles)
+				system.log_fact(.Info, Tiles_Computed{tiles = u64(COLUMNS * ROWS), first_thread = workers[0].tiles, second_thread = workers[1].tiles, third_thread = workers[2].tiles, fourth_thread = workers[3].tiles})
 			}
 		}
 		if done == COLUMNS * ROWS && now >= complete_at + (pictures_made == 0 ? 0 : PICTURE_PAUSE) {

@@ -1,0 +1,84 @@
+package interface_font
+
+import "modus:contract/value_kinds"
+
+// The log facts of interface_font (src/md/features/log_facts.md): each fact
+// template is the line that the process wrote before it was a fact, so a
+// wait of a machine test on that sentence, and its line that fails a step,
+// read it as before. The Text fields are the last fields: the serial line
+// of a fact stops at its last byte that is not zero.
+//
+// The three lines with no value stay text: no font outlines, and no glyph
+// memory, at the start and in the fallback chain.
+
+// The bytes of the Text field of the name of an outline font: the longest,
+// "paper_mono_semibold", has 19 bytes.
+FONT_NAME_FIELD_BYTES :: 24
+
+// Each Greek letter of the subset of B612 is drawn from the private glyph
+// cache of this process.
+@(log_fact = "interface_font: each Greek letter of B612 is drawn by this process: {letters} letters: as it must")
+Greek_Letters_Drawn :: struct {
+	letters: u64,
+}
+
+// Some Greek letters of B612 have no glyph that this process draws.
+@(log_fact = "interface_font: not each Greek letter of B612 is drawn: {drawn} of {letters}, {missing} with no glyph")
+Greek_Letters_Missing :: struct {
+	drawn:   u64,
+	letters: u64,
+	missing: u64,
+}
+
+// A box-drawing character comes from another font than paper_mono, or has
+// no ink: the fallback chain is wrong.
+@(log_fact = "interface_font: the fallback chain of the interface is wrong: the character {character} comes from the font {font}, with {ink_rows} rows of ink")
+Box_Character_Wrong :: struct {
+	character: u64,
+	ink_rows:  u64,
+	font:      [24]u8,
+}
+
+// Each box-drawing character comes from paper_mono.
+@(log_fact = "interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: {characters} characters: as it must")
+Box_Characters_From_Paper_Mono :: struct {
+	characters: u64,
+}
+
+// A character that no font of the chain has got a glyph.
+@(log_fact = "interface_font: the fallback chain of the interface is wrong: the character {character} has a glyph, and no font of the chain has it")
+Missing_Character_Has_Glyph :: struct {
+	character: u64,
+}
+
+// A character that no font of the chain has got the advance of a font, not
+// the advance of the replacement glyph.
+@(log_fact = "interface_font: the fallback chain of the interface is wrong: the character {character} has an advance of a font")
+Missing_Character_Has_Advance :: struct {
+	character: u64,
+}
+
+// The characters that no font of the chain has draw the replacement glyph.
+@(log_fact = "interface_font: {characters} characters that no font of the chain has draw the replacement glyph: as it must")
+Replacement_Glyph_Drawn :: struct {
+	characters: u64,
+}
+
+// The time of one line of B612: its shaping, its drawing from the glyph
+// cache, and its first drawing from the outlines.
+@(log_fact = "interface_font: one line of {characters} characters in B612 at scale 1 (the least of 50 batches): shaping {shaping}, drawing {drawing}; its first draw, each glyph from its outline: {first_drawing}")
+Line_Measured :: struct {
+	characters:    u64,
+	shaping:       value_kinds.Time_In_Nanoseconds,
+	drawing:       value_kinds.Time_In_Nanoseconds,
+	first_drawing: value_kinds.Time_In_Nanoseconds,
+}
+
+// The fonts of the interface are open, with their kerning pairs.
+@(log_fact = "interface_font: ok, B612 Regular and Bold, {regular_pairs} and {bold_pairs} pairs")
+Fonts_Ready :: struct {
+	regular_pairs: u64,
+	bold_pairs:    u64,
+}
+
+#assert(size_of(Box_Character_Wrong) == 16 + FONT_NAME_FIELD_BYTES)

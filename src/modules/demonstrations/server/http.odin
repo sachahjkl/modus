@@ -8,6 +8,7 @@ package server
 // read when the answer before it is all in the send buffer.
 
 import "modus:contract/date"
+import "modus:contract/value_kinds"
 import "modus:support/calendar"
 import "modus:support/system"
 import "modus:support/tcp"
@@ -83,8 +84,9 @@ Session :: struct {
 
 sessions: [CAPACITY]Session
 
-// One request, as the access table of the window and the log show it.
-Access_Record :: struct {
+// One request, as the access table of the window shows it. The log writes
+// it as the fact Access_Record (facts.odin).
+Access_Row :: struct {
 	remote_address: u32,
 	remote_port:    u16,
 	method:         web.Request_Method,
@@ -95,7 +97,7 @@ Access_Record :: struct {
 	time:           u64, // Microseconds: from the first byte of the head to the last byte of the answer in the send buffer.
 }
 
-access_records: [ACCESS_HISTORY]Access_Record
+access_records: [ACCESS_HISTORY]Access_Row
 access_next: int
 requests_answered: u64
 status_classes: [6]u64 // Answers by class: index 2 is 2xx, 4 is 4xx, 5 is 5xx.
@@ -308,7 +310,7 @@ request_finish :: proc "contextless" (index: int) {
 	second_requests += 1
 	status_classes[min(session.answer_status / 100, 5)] += 1
 	request := &session.request
-	record := Access_Record {
+	record := Access_Row {
 		remote_address = connection.remote_address,
 		remote_port    = connection.remote_port,
 		method         = request.method,
@@ -328,9 +330,8 @@ request_finish :: proc "contextless" (index: int) {
 	}
 	if request_log_count < REQUEST_LOG_LIMIT {
 		request_log_count += 1
-		remote_text: [32]u8
 		method := web.request_method_name(request.method)
-		system.log(.Info, "server: ", method == "" ? "-" : method, " ", string(record.target[:record.target_length]), " ", u64(session.answer_status), ", ", session.answer_bytes, " bytes, ", microseconds_taken, " us, ", address_text(remote_text[:], connection.remote_address, connection.remote_port))
+		system.log_fact(.Info, Access_Record{status = u64(session.answer_status), answer_size = value_kinds.Size_In_Bytes(session.answer_bytes), answer_time = value_kinds.Time_In_Microseconds(microseconds_taken), method = value_kinds.text_field(method == "" ? "-" : method, METHOD_FIELD_BYTES), target = value_kinds.text_field(string(record.target[:record.target_length]), TARGET_FIELD_BYTES), peer = peer_field(connection.remote_address, connection.remote_port)})
 	} else {
 		requests_not_logged += 1
 	}
@@ -525,8 +526,7 @@ http_limits :: proc "contextless" (index: int, now: u64) {
 	case session.input_length == 0:
 		if now - session.progress_at >= IDLE_LIMIT && !sending {
 			if connection_log_allowed() {
-				remote_text: [32]u8
-				system.log(.Info, "server: ", address_text(remote_text[:], connection.remote_address, connection.remote_port), ": no request in 10 s, closed")
+				system.log_fact(.Info, Request_Timeout{peer = peer_field(connection.remote_address, connection.remote_port)})
 			}
 			session.closing = true
 			tcp.close(&table, index)
@@ -551,9 +551,8 @@ keep_alive_measure :: proc "contextless" (index: int) {
 	nanoseconds_taken := session.last_answer_at - session.first_request_at
 	per_second := u64(session.requests) * 1_000_000_000 / nanoseconds_taken
 	best_keep_alive_rate = max(best_keep_alive_rate, per_second)
-	remote_text: [32]u8
 	connection := &connections[index]
-	system.log(.Info, "server: ", u64(session.requests), " requests on one connection of ", address_text(remote_text[:], connection.remote_address, connection.remote_port), " in ", nanoseconds_taken / 1_000_000, " ms: ", per_second, " requests in one second")
+	system.log_fact(.Info, Connection_Requests_Measured{requests = u64(session.requests), elapsed = value_kinds.Time_In_Milliseconds(nanoseconds_taken / 1_000_000), rate = per_second, peer = peer_field(connection.remote_address, connection.remote_port)})
 }
 
 // second_measure ends a second of measure: the requests answered in it, and
@@ -568,7 +567,7 @@ second_measure :: proc "contextless" (now: u64) {
 		if new_connections >= second_requests * 9 / 10 {
 			best_new_connection_rate = max(best_new_connection_rate, second_requests)
 		}
-		system.log(.Info, "server: ", second_requests, " requests answered in one second, on ", new_connections, " new connections")
+		system.log_fact(.Info, Requests_In_One_Second{requests = second_requests, new_connections = new_connections})
 	}
 	second_start = now
 	second_requests = 0
