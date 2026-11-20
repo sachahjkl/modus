@@ -1052,8 +1052,11 @@ scenario := [?]Step {
 	// The kernel refuses a stop code past one byte, and the machine runs on.
 	{kind = .Wait, text = "root: Machine_Stop refused the codes 256 and 18446744073709551615 with Bad_Operation and the record Bad_Value of the code, limit 255, and the machine runs on: as it must"},
 	// The virtual mouse of QEMU answers the IntelliMouse sequence: its
-	// packets have the wheel.
-	{kind = .Wait, text = "input: ok, the mouse has a wheel"},
+	// packets have the wheel. The input service and the compositor run
+	// on their own processors, so the line of the compositor can come
+	// before this one: an ordered wait here would move the place of the
+	// log past it, and the step of the screen pages would never see it.
+	{kind = .Wait, text = "input: ok, the mouse has a wheel", any_order = true},
 	// The date: the process `date` starts after the input service and reads the real-time clock of the machine,
 	// which QEMU takes from the clock of the host. The date must be within a
 	// few seconds of the host.
