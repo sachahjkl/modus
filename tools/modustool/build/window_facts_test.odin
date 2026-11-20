@@ -797,7 +797,6 @@ the_lines_of_the_windows_with_no_value_write_the_lines_of_before :: proc(t: ^tes
 		{"compositor", "compositor", "Palette_Tab_Waits", "compositor: Tab waits for the candidates of the field"},
 		{"compositor", "compositor", "Palette_Draw_Table_Full", "compositor: the draw table of the palette is full: records are missing"},
 		{"compositor", "compositor", "No_Pointer_Theme", "compositor: no pointer theme: the arrow of squares"},
-		{"compositor", "compositor", "Palette_Listed_More", "compositor: the palette lists more rows than the log names"},
 	}
 	for fact in facts {
 		file, ok := window_facts_file(t, fact.folder)
@@ -930,11 +929,22 @@ the_other_lines_of_the_windows_write_the_lines_of_before :: proc(t: ^testing.T) 
 				facts_expect_line(t, render(t, compositor_file, "Palette_Takes_Candidate", {{"candidate", candidate}}), line_of_before("compositor: the palette takes the candidate ", candidate))
 				facts_expect_line(t, render(t, compositor_file, "Palette_Button_Pressed", {{"field", count}, {"candidate", candidate}}), line_of_before("compositor: a press takes the button ", candidate, " of the field ", count))
 			}
+			// The list as one line: what is typed, then the names of the
+			// first rows as a text view, as the waits read it: no row, one
+			// row of 12 bytes, rows of the area, and the four longest names
+			// with ", ..." after them.
 			typed := [3]string{"", "mon", strings.repeat("m", 64, context.temp_allocator)}
+			longest_row := strings.concatenate({entry_longest(), " (close a window)"}, context.temp_allocator)
+			row_texts := [4]string{"", "p (window)12", "monitor (window), monitor (module)", strings.join({longest_row, longest_row, longest_row, longest_row, "..."}, ", ", context.temp_allocator)}
 			for text in typed {
-				facts_expect_line(t, render(t, compositor_file, "Palette_Listed", {{"matched", count}, {"entries", other}, {"typed", text}}), line_of_before("compositor: the palette lists ", count, " of ", other, " for \"", text, "\""))
+				for rows_text in row_texts {
+					sentence_text, written := views_render(t, compositor_file, "compositor", "Palette_Listed", {{"matched", count}, {"entries", other}, {"typed", text}}, {rows_text})
+					if len(written) == 1 {
+						testing.expect_value(t, written[0], rows_text)
+					}
+					facts_expect_line(t, sentence_text, line_of_before("compositor: the palette lists ", count, " of ", other, " for \"", text, "\": ", rows_text))
+				}
 			}
-			facts_expect_line(t, render(t, compositor_file, "Palette_Listed_Row", {{"row", count}, {"entry", entry_longest()}, {"kind_words", "close a window"}}), line_of_before("compositor: the palette lists the row ", count, ": ", entry_longest(), " (", "close a window", ")"))
 		}
 		profiles := [2]string{"the processor profile", "the GPU profile"}
 		reasons := [2]string{"the system drives no GPU device", "the system drives a GPU device"}
@@ -942,6 +952,11 @@ the_other_lines_of_the_windows_write_the_lines_of_before :: proc(t: ^testing.T) 
 			for reason in reasons {
 				facts_expect_line(t, render(t, compositor_file, "Quality_Profile_Chosen", {{"profile", profile}, {"profile_reason", reason}}), line_of_before("compositor: the quality profile is ", profile, ": ", reason))
 			}
+		}
+		// The line of the list that the main machine test waits for, whole.
+		{
+			listed_sentence, _ := views_render(t, compositor_file, "compositor", "Palette_Listed", {{"matched", u64(9)}, {"entries", u64(61)}, {"typed", "p"}}, {"plasma (module), plasma (window), pages (module), paint (module), ..."})
+			facts_expect_line(t, listed_sentence, "compositor: the palette lists 9 of 61 for \"p\": plasma (module), plasma (window), pages (module), paint (module), ...")
 		}
 		// The line that quality_lines_check reads, whole.
 		facts_expect_line(t, render(t, compositor_file, "Quality_Profile_Chosen", {{"profile", "the processor profile"}, {"profile_reason", "the system drives no GPU device"}}), "compositor: the quality profile is the processor profile: the system drives no GPU device")

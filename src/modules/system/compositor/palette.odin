@@ -1264,29 +1264,37 @@ palette_scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part
 	return "no part"
 }
 
-PALETTE_LOG_NAMES :: 4 // The first rows that the log names: a flood of the serial port loses no line of a test for a long list.
+PALETTE_LOG_NAMES :: 4 // The first rows that the log names: the line stays short for a long list.
 
 // palette_list_log writes the list on the log: "compositor: the palette
-// lists 3 of 61 for "mon"", then one fact for each of the first rows,
-// "compositor: the palette lists the row 1: monitor (window)", and one
-// when more rows are left out.
+// lists 3 of 61 for "mon": monitor (window), monitor (module), close
+// monitor (close a window)". It names the first rows only; the names are
+// one text view of the fact.
 palette_list_log :: proc "contextless" () {
 	panel := &palette_panel
-	list := panel.list
-	system.log_fact(.Info, Palette_Listed{matched = u64(list.matched_count), entries = u64(list.entry_count), typed = value_kinds.text_field(palette.typed_text(panel), TYPED_FIELD_BYTES)})
+	buffer: [PALETTE_LOG_NAMES * (palette.NAME_CAPACITY + 24)]u8
+	writer := system.Writer {
+		buffer = buffer[:],
+	}
 	named := 0
+	list := panel.list
 	for row in list.rows[:list.row_count] {
 		if row.kind != .Entry {
 			continue
 		}
 		if named == PALETTE_LOG_NAMES {
-			system.log_fact(.Info, Palette_Listed_More{})
+			system.write_part(&writer, ", ...")
 			break
 		}
 		listed := &list.entries[row.entry]
+		system.write_part(&writer, named > 0 ? ", " : "")
+		system.write_part(&writer, palette.entry_name(listed))
+		system.write_part(&writer, " (")
+		system.write_part(&writer, palette.kind_words(listed.kind))
+		system.write_part(&writer, ")")
 		named += 1
-		system.log_fact(.Info, Palette_Listed_Row{row = u64(named), entry = entry_field(palette.entry_name(listed)), kind_words = value_kinds.text_field(palette.kind_words(listed.kind), KIND_WORDS_FIELD_BYTES)})
 	}
+	system.log_fact(.Info, Palette_Listed{matched = u64(list.matched_count), entries = u64(list.entry_count), typed = value_kinds.text_field(palette.typed_text(panel), TYPED_FIELD_BYTES)}, system.written(&writer))
 	palette_row_log()
 }
 
