@@ -57,6 +57,10 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 	cuts: [draw_record.CLIP_DEPTH_LIMIT + 1]Rectangle
 	cuts[0] = limit
 	order: draw_record.Clip_Order
+	// At a scale, the border reads each record in logical pixels, then its
+	// box goes to the screen, and each draw below works in pixels of the
+	// screen (execute_scale.odin).
+	scale, scaled := table.scale.?
 	for index in 0 ..< table.record_count {
 		// One copy of each record, read through the border: a table can be
 		// in memory that another process writes during the call, and each
@@ -64,10 +68,18 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 		record := draw_record.copy_once(&table.records[index])
 		primitive, problem := draw_record.read(record)
 		if kind, known := draw_record.draw_kind_of_word(record.kind); known && (kind == .Clip_Push || kind == .Clip_Pop) {
-			clip_step(&cuts, &order, kind == .Clip_Push, problem == .None ? record_rectangle(record) : Rectangle{})
+			box := Rectangle{}
+			if problem == .None {
+				box = scaled ? rectangle_at_scale(record, scale) : record_rectangle(record)
+			}
+			clip_step(&cuts, &order, kind == .Clip_Push, box)
 			continue
 		}
 		if problem != .None || order.excess > 0 {
+			continue
+		}
+		if scaled {
+			record_at_scale_draw(table, canvas, cuts[order.depth], origin_x, origin_y, record, primitive, scale)
 			continue
 		}
 		place := record_rectangle(record)
