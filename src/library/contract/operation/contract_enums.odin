@@ -1,6 +1,7 @@
 package operation
 
 import "modus:contract/enum_word"
+import "modus:contract/errors"
 import "modus:contract/value_kinds"
 
 // The names of the members of the contract enums that a field of the kind
@@ -61,7 +62,38 @@ CONTRACT_ENUM_SIZES := [value_kinds.Contract_Enum]u32 {
 	.Log_Record_Form = size_of(Log_Record_Form),
 	.Stop_Cause      = size_of(Stop_Cause),
 	.Stop_Outcome    = size_of(Stop_Outcome),
+	.Error_Kind      = size_of(errors.Kind),
+	.Error_Unit      = size_of(errors.Unit),
 }
+
+// The word of a Status in 8 bytes: a field of a log fact or of a record
+// that holds a status beside fields of 8 bytes, with no padding. A Status
+// has 4 bytes, so a record of a status and a u64 has 4 bytes that no
+// field covers, which the build refuses; this type covers them. A reader
+// writes the name of the member, or the number of a word that names none.
+//
+// Example: `status: op.Status_Word` in a fact type, written with
+// `op.Status_Word(status)`.
+Status_Word :: distinct u64
+
+// The bytes of the word type of each contract enum
+// (value_kinds.Contract_Enum_Type.word_name): 0 for an enum with none.
+@(rodata)
+CONTRACT_ENUM_WORD_SIZES := [value_kinds.Contract_Enum]u32 {
+	.None            = 0,
+	.Status          = size_of(Status_Word),
+	.Log_Level       = 0,
+	.Log_Record_Form = 0,
+	.Stop_Cause      = 0,
+	.Stop_Outcome    = 0,
+	.Error_Kind      = size_of(errors.Kind_Word),
+	.Error_Unit      = size_of(errors.Unit_Word),
+}
+
+// A word type holds each word of its enum.
+#assert(size_of(Status_Word) >= size_of(Status))
+#assert(size_of(errors.Kind_Word) >= size_of(errors.Kind))
+#assert(size_of(errors.Unit_Word) >= size_of(errors.Unit))
 
 // contract_enum_member_count gives the count of the members of a contract
 // enum, whose words are 0 up to the count: a reader that lists the members
@@ -81,6 +113,10 @@ contract_enum_member_count :: proc "contextless" (which: value_kinds.Contract_En
 		return u64(max(Stop_Cause)) + 1
 	case .Stop_Outcome:
 		return u64(max(Stop_Outcome)) + 1
+	case .Error_Kind:
+		return u64(max(errors.Kind)) + 1
+	case .Error_Unit:
+		return u64(max(errors.Unit)) + 1
 	}
 	return 0
 }
@@ -111,6 +147,12 @@ contract_enum_member_name :: proc "contextless" (which: value_kinds.Contract_Enu
 	case .Stop_Outcome:
 		outcome := enum_word.member_of_word(Stop_Outcome, word) or_return
 		return STOP_OUTCOME_NAMES[outcome], true
+	case .Error_Kind:
+		kind := enum_word.member_of_word(errors.Kind, word) or_return
+		return errors.KIND_NAMES[kind], true
+	case .Error_Unit:
+		unit := enum_word.member_of_word(errors.Unit, word) or_return
+		return errors.UNIT_MEMBER_NAMES[unit], true
 	}
 	return "", false
 }
@@ -128,7 +170,7 @@ contract_enum_member_name :: proc "contextless" (which: value_kinds.Contract_Enu
 // and `contract_enum_member_words(.Log_Level, 2)` is `"Warning", true`.
 contract_enum_member_words :: proc "contextless" (which: value_kinds.Contract_Enum, word: u64) -> (words: string, ok: bool) {
 	switch which {
-	case .None, .Status, .Log_Level, .Log_Record_Form:
+	case .None, .Status, .Log_Level, .Log_Record_Form, .Error_Kind, .Error_Unit:
 		return contract_enum_member_name(which, word)
 	case .Stop_Cause:
 		cause := enum_word.member_of_word(Stop_Cause, word) or_return

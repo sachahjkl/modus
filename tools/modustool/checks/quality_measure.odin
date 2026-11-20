@@ -175,14 +175,21 @@ quality_lines_problems :: proc(log: string) -> []string {
 }
 
 // quality_lines_check reads the log of a measure run and checks the lines
-// of the quality measures. It prints the lines when they pass.
+// of the quality measures. It prints the lines when they pass. It reads
+// the line of each fact rendered by the module files of the build: QEMU
+// writes the raw line of a fact, and a measure that becomes a fact keeps
+// its sentence.
 quality_lines_check :: proc(path: string) -> bool {
 	data, read_error := os.read_entire_file(path, context.temp_allocator)
 	if read_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot read %s: %v", path, read_error)
 		return false
 	}
-	log := string(data)
+	log, render_problem := measure_log_rendered(string(data))
+	if render_problem != "" {
+		fmt.eprintfln("modustool: test failed: the facts of %s cannot be rendered: %s", path, render_problem)
+		return false
+	}
 	problems := quality_lines_problems(log)
 	for problem in problems {
 		fmt.eprintfln("modustool: test failed: %s: %s", path, problem)
