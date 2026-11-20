@@ -33,6 +33,7 @@ package arena
 
 import "base:intrinsics"
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import "modus:support/system"
 
 // entry runs the test, writes its result on the log, and stops.
@@ -45,7 +46,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	record: errors.Error_Record
 	arena, created := system.arena_create(reservation, error = &record)
 	if created != .Ok {
-		system.log(.Info, "arena: WRONG: the reservation of ", reservation, " pages failed with ", created)
+		system.log_fact(.Info, Wrong_Reservation{reservation_pages = reservation, status = op.Status_Word(created)})
 		system.stop(.Failed)
 	}
 
@@ -100,17 +101,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	right := false
 	switch {
 	case !refusal_is_of_the_budget:
-		system.log(.Info, "arena: WRONG: the growth stopped with ", refused, " and the error kind ", record.kind, ", not with No_Budget")
+		system.log_fact(.Info, Wrong_Growth_Stop{status = op.Status_Word(refused), error_kind = errors.Kind_Word(record.kind)})
 	case pushes == 0 || nonzero != 0:
 		system.log_fact(.Info, Wrong_Pushes{pushes = pushes, nonzero_pages = nonzero})
 	case held.pages != 0 || !unchanged:
-		system.log(.Info, "arena: WRONG: after the refusal the budget held ", held.pages, " pages, and a second push gave ", again, " or changed the arena")
+		system.log_fact(.Info, Wrong_After_Refusal{budget_pages = held.pages, status = op.Status_Word(again)})
 	case !reused:
-		system.log(.Info, "arena: WRONG: after a reset the same pushes did not take the same pages with no commit")
+		system.log_fact(.Info, Wrong_Reset{})
 	case ended != .Ok || after.pages != before.pages:
-		system.log(.Info, "arena: WRONG: the end gave ", ended, ", and the budget holds ", after.pages, " pages of ", before.pages)
+		system.log_fact(.Info, Wrong_End{status = op.Status_Word(ended), budget_pages_after = after.pages, budget_pages_before = before.pages})
 	case:
-		system.log(.Info, "arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must")
+		system.log_fact(.Info, Arena_Checked{})
 		right = true
 	}
 	if !right {

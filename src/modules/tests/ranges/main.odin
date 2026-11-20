@@ -1,6 +1,6 @@
 // A test of the large objects of a store (docs/STORAGE.md, "Large objects"): an object of 8 GiB made by three range writes holds a few blocks; 1000 small writes at scrambled offsets and one commit hash and write what they touched, not the whole object; a version keeps its bytes; a cut and an extension; the refusals; the same object of 1 MiB under two names takes the blocks of one (docs/STORAGE.md, "4.7 The same object one time").
 //
-// The first run (an empty store) checks each case, then makes a loop of range commits (the scenario of a loss of power stops the machine in it). The second run, on the same disk after a new start of the machine, reads back what the first run left, and writes the object of 1 MiB under a third name, which takes no block. Each case ends with a line "...: as it must", or a line "WRONG". The times and the counts of a commit are measures, printed: a case checks a bound that comes from the blocks changed, never a speed.
+// The first run (an empty store) checks each case, then makes a loop of range commits (the scenario of a loss of power stops the machine in it). The second run, on the same disk after a new start of the machine, reads back what the first run left, and writes the object of 1 MiB under a third name, which takes no block. Each case ends with a line "...: as it must", or a line "...: WRONG". The times and the counts of a commit are measures, printed: a case checks a bound that comes from the blocks changed, never a speed.
 //
 // **What it is for.** It proves that the cost of a change of a large object follows the bytes changed, not the
 // size of the object: a process can keep an object of gigabytes and change a few blocks of it in one commit.
@@ -14,8 +14,8 @@
 // - **Store**: its private store, with a limit of 12000 blocks: a commit of 1000 blocks spread over the object of
 //   8 GiB holds about 2000 blocks with its version, and the loop of range commits about 4000.
 //
-// **What a reader sees**: no window. The log has one line for each case, "...: as it must" or "WRONG", the
-// measures of the commits, and at the end "ranges: done, N wrong". The process stops with `Done` when no case
+// **What a reader sees**: no window. The log has one log fact for each case, "...: as it must" or "...: WRONG"
+// (`where(verdict = "WRONG")` keeps the cases that failed), the measures of the commits, and at the end "ranges: done, N wrong". The process stops with `Done` when no case
 // is wrong, else with `Failed`.
 //
 // The exports that it calls: [write_range](storage.write_range), [set_size](storage.set_size) and
@@ -73,20 +73,6 @@ LOOP_MARKER :: "ranges: the first commit of the loop of range commits"
 
 client: storage.Client
 wrong_cases: int
-
-outcome :: proc "contextless" (good: bool, what: string, parts: ..system.Part) {
-	writer_bytes: [480]u8
-	writer := system.Writer{buffer = writer_bytes[:]}
-	for part in parts {
-		system.write_part(&writer, part)
-	}
-	if good {
-		system.log(.Info, "ranges: ", what, system.written(&writer), ": as it must")
-	} else {
-		wrong_cases += 1
-		system.log(.Error, "ranges: WRONG: ", what, system.written(&writer))
-	}
-}
 
 refused_with :: proc "contextless" (status: storage.Status, error: ^errors.Error_Record, kind: errors.Kind, unit: errors.Unit) -> bool {
 	return status == .Failed && error.kind == i64(kind) && error.unit == i64(unit)
@@ -184,12 +170,18 @@ first_run :: proc "contextless" () {
 		statuses &&= status == .Ok
 	}
 	size, size_status := storage.size(&client, storage.ROOT, "sparse")
-	outcome(statuses && size_status == .Ok && u64(size) == SPARSE_SIZE, "three range writes are pending, and the size of the object is ", u64(size), " bytes")
+	{
+		verdict := outcome(statuses && size_status == .Ok && u64(size) == SPARSE_SIZE)
+		system.log_fact(verdict.level, Writes_Pending{size = u64(size), verdict = verdict.words})
+	}
 	measure, status := storage.commit(&client, storage.ROOT, "sparse")
 	measure_log(.Sparse_Object, measure)
 	// The root, and for each block its object nodes of levels 3, 2 and 1
 	// (the three blocks share no node under the root), and the block.
-	outcome(status == .Ok && measure.object_blocks == i64(SPARSE_BLOCKS) && measure.held_blocks == 1 + 3 * 3 + 3, "a sparse object of 8 GiB from 3 writes and one commit holds ", u64(measure.held_blocks), " blocks")
+	{
+		verdict := outcome(status == .Ok && measure.object_blocks == i64(SPARSE_BLOCKS) && measure.held_blocks == 1 + 3 * 3 + 3)
+		system.log_fact(verdict.level, Sparse_Object_Held{held_blocks = u64(measure.held_blocks), verdict = verdict.words})
+	}
 
 	// Read back; a hole; a read across the edge of a block and a hole.
 	hole: [100]u8
@@ -198,7 +190,10 @@ first_run :: proc "contextless" () {
 	edge_bytes, edge_status := storage.read_range(&client, storage.ROOT, "sparse", BLOCK - 6, edge[:])
 	block_bytes(1, &block)
 	edge_good := edge_status == .Ok && len(edge_bytes) == 12 && same_bytes(edge_bytes[:6], block[BLOCK - 6:]) && all_zero(edge_bytes[6:])
-	outcome(sparse_blocks_read() && hole_status == .Ok && len(hole_bytes) == len(hole) && all_zero(hole_bytes) && edge_good, "its three blocks read back, a hole reads as zero bytes, and a read across a block edge gives the end of a block and zero bytes")
+	{
+		verdict := outcome(sparse_blocks_read() && hole_status == .Ok && len(hole_bytes) == len(hole) && all_zero(hole_bytes) && edge_good)
+		system.log_fact(verdict.level, Sparse_Object_Read{verdict = verdict.words})
+	}
 
 	// 1000 small writes at scrambled offsets, then one commit.
 	writes_start := system.time()
@@ -209,29 +204,38 @@ first_run :: proc "contextless" () {
 		_, write_status := storage.write_range(&client, storage.ROOT, "sparse", offset, bytes[:])
 		writes_good &&= write_status == .Ok
 	}
-	system.log_fact(.Info, Range_Writes_Pending{elapsed = value_kinds.Time_In_Milliseconds(system.time() - writes_start)})
+	system.log_fact(.Info, Range_Writes_Pending{elapsed = elapsed_since(writes_start)})
 	measure, status = storage.commit(&client, storage.ROOT, "sparse")
 	measure_log(.Scrambled_Writes, measure)
 	// The bound of the cost: each changed block, the last block of the hash,
 	// and at most one object node of each level for each changed block.
 	levels: i64 = 4
 	bounded := measure.changed == WRITES && measure.hashed_blocks <= measure.changed + 1 && measure.hashed_nodes <= measure.changed * levels && measure.object_written <= measure.hashed_blocks + measure.hashed_nodes
-	outcome(writes_good && status == .Ok && bounded, "the commit of 1000 scrambled writes hashed ", u64(measure.hashed_blocks), " blocks and ", u64(measure.hashed_nodes), " object nodes, bounded by the blocks changed, not by the ", u64(measure.object_blocks), " blocks of the object")
-	outcome(small_writes_read() && sparse_blocks_read(), "the 1000 writes read back, each one byte for byte, and the three blocks before them")
+	{
+		verdict := outcome(writes_good && status == .Ok && bounded)
+		system.log_fact(verdict.level, Scrambled_Commit_Bounded{hashed_blocks = u64(measure.hashed_blocks), hashed_nodes = u64(measure.hashed_nodes), object_blocks = u64(measure.object_blocks), verdict = verdict.words})
+	}
+	{
+		verdict := outcome(small_writes_read() && sparse_blocks_read())
+		system.log_fact(verdict.level, Scrambled_Writes_Read{verdict = verdict.words})
+	}
 
 	// The versions of the sparse object: the state before the 1000 writes
 	// shares its blocks with the new state but the path of the first block.
 	rows: [4]storage.Version
 	versions, total, versions_status := storage.versions(&client, storage.ROOT, "sparse", rows[:])
 	own: i64 = len(versions) == 2 ? versions[0].own_blocks : -1
-	outcome(versions_status == .Ok && total == 2 && own == 4, "the version before the 1000 writes holds ", own, " blocks of its own: the root and the path of the first block; its other blocks are shared with the new state")
+	{
+		verdict := outcome(versions_status == .Ok && total == 2 && own == 4)
+		system.log_fact(verdict.level, Version_Blocks_Shared{own_blocks = own, verdict = verdict.words})
+	}
 
 	versions_case()
 	cut_case()
 	refusals()
 	conflict_case()
 	twin_case()
-	system.log_fact(.Info, Cases_Done{elapsed = value_kinds.Time_In_Milliseconds(system.time() - start)})
+	system.log_fact(.Info, Cases_Done{elapsed = elapsed_since(start)})
 	loop()
 }
 
@@ -261,7 +265,8 @@ versions_case :: proc "contextless" () {
 	found, compare_status := storage.compare(&client, storage.ROOT, "small", first, measure.generation, ranges[:])
 	good := status == .Ok && range_status == .Ok && commit_status == .Ok && old_status == .Ok && same_bytes(old_bytes, bytes[:]) && same_bytes(current_bytes, expected[:])
 	good &&= compare_status == .Ok && len(found) == 1 && found[0].first == 5000 && found[0].count == 100
-	outcome(good, "an old version reads its old bytes after a range write, and compare gives the one range written")
+	verdict := outcome(good)
+	system.log_fact(verdict.level, Old_Version_Read{verdict = verdict.words})
 }
 
 // cut_case: an object of 70 blocks is cut to 6000 bytes, then extended to
@@ -295,13 +300,19 @@ cut_case :: proc "contextless" () {
 	}
 	// After the cut: a root of level 1 and two blocks. After the extension:
 	// two new roots above it.
-	outcome(good && kept && cut_measure.held_blocks == 3 && extended.held_blocks == 5, "a cut of an object of 70 blocks to 6000 bytes holds ", u64(cut_measure.held_blocks), " blocks; an extension to 1 GiB holds ", u64(extended.held_blocks), " blocks, and reads zero bytes past the cut")
+	{
+		verdict := outcome(good && kept && cut_measure.held_blocks == 3 && extended.held_blocks == 5)
+		system.log_fact(verdict.level, Cut_And_Extension{cut_blocks = u64(cut_measure.held_blocks), extended_blocks = u64(extended.held_blocks), verdict = verdict.words})
+	}
 	// The end, and past the end.
 	end: [8]u8
 	end_bytes, end_status := storage.read_range(&client, storage.ROOT, "cut", EXTENDED_SIZE, end[:])
 	error: errors.Error_Record
 	_, past_status := storage.read_range(&client, storage.ROOT, "cut", EXTENDED_SIZE + 1, end[:], &error)
-	outcome(end_status == .Ok && len(end_bytes) == 0 && refused_with(past_status, &error, .Out_Of_Range, .Bytes), "a read at the end gives no byte, and a read past the end is refused")
+	{
+		verdict := outcome(end_status == .Ok && len(end_bytes) == 0 && refused_with(past_status, &error, .Out_Of_Range, .Bytes))
+		system.log_fact(verdict.level, End_Read{verdict = verdict.words})
+	}
 }
 
 // refusals: another store, and a place of no connection.
@@ -315,7 +326,8 @@ refusals :: proc "contextless" () {
 	error = {}
 	_, commit_status := storage.commit(&client, storage.ROOT, "nothing pending", &error)
 	commit_refused := refused_with(commit_status, &error, .Absent, .Pending)
-	outcome(store_refused && place_refused && commit_refused, "a place of another store, a place of no connection, and a commit with no pending change are refused")
+	verdict := outcome(store_refused && place_refused && commit_refused)
+	system.log_fact(verdict.level, Places_Refused{verdict = verdict.words})
 }
 
 // conflict_case: a write of the whole object comes between a range write
@@ -327,7 +339,8 @@ conflict_case :: proc "contextless" () {
 	_, commit_status := storage.commit(&client, storage.ROOT, "small", &error)
 	read: [16]u8
 	bytes, _, _ := storage.read(&client, storage.ROOT, "small", read[:])
-	outcome(range_status == .Ok && write_status == .Ok && refused_with(commit_status, &error, .Absent, .Pending) && error.found == 1 && string(bytes) == "whole", "a commit after another change of the object is refused, and its pending changes are dropped")
+	verdict := outcome(range_status == .Ok && write_status == .Ok && refused_with(commit_status, &error, .Absent, .Pending) && error.found == 1 && string(bytes) == "whole")
+	system.log_fact(verdict.level, Conflict_Refused{verdict = verdict.words})
 }
 
 // twin_byte gives the byte at an offset of the object of 1 MiB: never 0, so
@@ -392,7 +405,10 @@ twin_case :: proc "contextless" () {
 	after_two := store_blocks()
 	held := after_two - before
 	good := first_good && second_good && before >= 0 && first.held_blocks == i64(TWIN_HELD) && second.held_blocks == i64(TWIN_HELD)
-	outcome(good && held == i64(TWIN_HELD) && second.object_written == 0, "the same object of 1 MiB under two names holds ", u64(max(held, 0)), " blocks of the store, one object's worth; the second commit wrote ", u64(second.object_written), " blocks of its block tree")
+	{
+		verdict := outcome(good && held == i64(TWIN_HELD) && second.object_written == 0)
+		system.log_fact(verdict.level, Twin_Held{held_blocks = u64(max(held, 0)), written_blocks = u64(second.object_written), verdict = verdict.words})
+	}
 
 	// A change of one block of the second name: the block, its node of
 	// level 1 and the root are new; the first name keeps its bytes.
@@ -401,7 +417,10 @@ twin_case :: proc "contextless" () {
 	changed, changed_status := storage.commit(&client, storage.ROOT, "twin_b")
 	path_written := i64(1 + format.object_levels(TWIN_SIZE))
 	changed_good := range_status == .Ok && changed_status == .Ok && changed.object_written == path_written
-	outcome(changed_good && twin_read("twin_a", false) && twin_read("twin_b", true), "a change of one block of the second name wrote ", u64(changed.object_written), " blocks of its block tree; the first name reads its bytes as before")
+	{
+		verdict := outcome(changed_good && twin_read("twin_a", false) && twin_read("twin_b", true))
+		system.log_fact(verdict.level, Twin_Changed{written_blocks = u64(changed.object_written), verdict = verdict.words})
+	}
 
 	// The removal of the second name frees its own blocks only. Then the
 	// second name again: the two names stay on the disk, so that each
@@ -411,7 +430,10 @@ twin_case :: proc "contextless" () {
 	removal_good := remove_status == .Ok && after_removal == after_two && twin_read("twin_a", false)
 	again, again_good := twin_write("twin_b")
 	after_again := store_blocks()
-	outcome(removal_good && again_good && again.object_written == 0 && after_again == after_two, "the removal of the second name frees its own blocks only, the first name reads its 1 MiB, and the second name written again takes no block")
+	{
+		verdict := outcome(removal_good && again_good && again.object_written == 0 && after_again == after_two)
+		system.log_fact(verdict.level, Twin_Removed{verdict = verdict.words})
+	}
 }
 
 // loop makes commits of range writes, one after the other: the scenario of
@@ -439,17 +461,21 @@ loop :: proc "contextless" () {
 		_, status := storage.commit(&client, storage.ROOT, "loop")
 		good &&= status == .Ok
 		if (commit_number + 1) % 50 == 0 {
-			system.log_fact(.Info, Loop_Commits_Made{commits = u64(commit_number + 1), elapsed = value_kinds.Time_In_Milliseconds(system.time() - start)})
+			system.log_fact(.Info, Loop_Commits_Made{commits = u64(commit_number + 1), elapsed = elapsed_since(start)})
 		}
 	}
-	outcome(good, "the loop made ", u64(LOOP_COMMITS), " commits of range writes")
+	verdict := outcome(good)
+	system.log_fact(verdict.level, Loop_Done{commits = u64(LOOP_COMMITS), verdict = verdict.words})
 }
 
 // second_run checks what the first run left, after a new start of the
 // machine: the open of the disk walked each block tree again.
 second_run :: proc "contextless" () {
 	size, _ := storage.size(&client, storage.ROOT, "sparse")
-	outcome(u64(size) == SPARSE_SIZE && sparse_blocks_read() && small_writes_read(), "after the remount: the sparse object of ", u64(size), " bytes reads its 3 blocks and its 1000 writes, byte for byte")
+	{
+		verdict := outcome(u64(size) == SPARSE_SIZE && sparse_blocks_read() && small_writes_read())
+		system.log_fact(verdict.level, Remount_Sparse_Read{size = u64(size), verdict = verdict.words})
+	}
 	read: [16]u8
 	small, _, _ := storage.read(&client, storage.ROOT, "small", read[:])
 	cut_size, _ := storage.size(&client, storage.ROOT, "cut")
@@ -460,13 +486,19 @@ second_run :: proc "contextless" () {
 		kept &&= cut_bytes[index] == pattern_byte(u64(index))
 	}
 	loop_size, _ := storage.size(&client, storage.ROOT, "loop")
-	outcome(string(small) == "whole" && u64(cut_size) == EXTENDED_SIZE && kept && u64(loop_size) == LOOP_SIZE, "after the remount: the small object, the object of the cut and the object of the loop")
+	{
+		verdict := outcome(string(small) == "whole" && u64(cut_size) == EXTENDED_SIZE && kept && u64(loop_size) == LOOP_SIZE)
+		system.log_fact(verdict.level, Remount_Objects_Read{verdict = verdict.words})
+	}
 	// The hash index is in memory only: the open made it again from the
 	// entries, so a third name of the same bytes takes no block.
 	twin_before := store_blocks()
 	third, third_good := twin_write("twin_c")
 	twin_after := store_blocks()
-	outcome(third_good && twin_read("twin_a", false) && third.object_written == 0 && twin_before >= 0 && twin_after == twin_before, "after the remount: the same object of 1 MiB under a third name took no block: the open found it by its hash")
+	{
+		verdict := outcome(third_good && twin_read("twin_a", false) && third.object_written == 0 && twin_before >= 0 && twin_after == twin_before)
+		system.log_fact(verdict.level, Remount_Twin_Found{verdict = verdict.words})
+	}
 }
 
 // The entry of ranges: the first run on an empty store, or the second run on the store that the first run left;
@@ -481,16 +513,16 @@ second_run :: proc "contextless" () {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ok: bool
 	if client, ok = storage.open(ctx); !ok {
-		system.log(.Error, "ranges: WRONG: no store")
+		system.log_fact(.Error, Wrong_No_Store{})
 		system.stop(.Failed)
 	}
 	counts, status := storage.usage(&client)
 	if status != .Ok {
-		system.log(.Error, "ranges: WRONG: no usage")
+		system.log_fact(.Error, Wrong_No_Usage{})
 		system.stop(.Failed)
 	}
 	if counts.objects == 0 {
-		system.log(.Info, "ranges: a new store: the first run")
+		system.log_fact(.Info, First_Run{})
 		first_run()
 	} else {
 		system.log_fact(.Info, Store_Remounted{objects = counts.objects})

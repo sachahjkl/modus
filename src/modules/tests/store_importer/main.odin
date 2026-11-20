@@ -48,7 +48,7 @@ window_memory: interface.Window_Memory(8, 256)
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	result := triple(14)
 	if result == 42 {
-		system.log(.Info, "store_importer: triple(14) of the module store_library of the store module_files gives 42: as it must")
+		system.log_fact(.Info, Triple_Checked{})
 	} else {
 		system.log_fact(.Info, Wrong_Result{result = u64(result)})
 	}

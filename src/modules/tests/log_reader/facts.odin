@@ -1,27 +1,29 @@
 package log_reader
 
+import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // The log facts of the lines of log_reader (src/md/features/log_facts.md):
-// its checks and its refusals, as records of fields. Each fact template is
-// the sentence that the line wrote before it was a fact, so a wait of the
-// machine test on that sentence reads it as before. Fact_Probe and the two
-// facts of the measures are in main.odin and measures.odin, beside the code
-// that reads their bytes back.
+// its checks, its refusals and its measures, as records of fields. Each
+// fact template is the sentence that the line wrote before it was a fact,
+// so a wait of the machine test on that sentence reads it as before; an
+// error kind that a line wrote as its number is now the name of its
+// member. Fact_Probe and the two facts of the measured lines are in
+// main.odin and measures.odin, beside the code that reads their bytes
+// back.
 //
-// Some lines stay text, each for a reason of its own:
+// Two kinds of lines stay text, on purpose:
 //
 // - the record of this process and the record of each child: the test
 //   reads their text and their value run back through the log service;
 // - the line of a bad block and the line of a connection of the measures:
-//   the measure compares their write as text with their write as a fact;
-// - a line whose template would pass the 256 bytes of a template: the
-//   refusals of Log, of its text and of its facts, and the lines of the
-//   measures;
-// - a line that writes a status as its number, or a number as
-//   system.Hex writes it, which no field kind writes;
-// - a line with no value, and the reason of a failure, a free sentence.
+//   the measure compares their write as text with their write as a fact.
+//
+// A status of a call of the support library (system.Call_Status), the
+// kind of an object (op.Object_Kind) and the form of a record beside
+// fields of 8 bytes keep their number: no field kind names their members
+// at that size.
 //
 // A field of the name of a process holds the name and a zero byte; the
 // name of a refused call or of an edge is a Text field of its own size.
@@ -303,6 +305,94 @@ Child_Value_Runs_Read :: struct {
 
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
+// The bytes of the Text field of the reason of a failure: the longest,
+// "the log service gave a row before the first record of this process, or
+// of an earlier run", has 88 bytes, and a zero byte.
+PROBLEM_FIELD_BYTES :: 96
+
+// Log of the form Fact refused each wrong fact, and changed nothing.
+@(log_fact = "log_reader: Log refused {refusals} wrong facts, each with its status and its error record: the form word, a run, the length below the head and past the whole fact, an address that the process cannot read, and the level; the own log ring kept the same {own_records} records, and the budget the same log records and the same refused count: as it must")
+Refused_Facts_Checked :: struct {
+	refusals:    u64,
+	own_records: u64,
+}
+
+// The refused facts changed the log records of the budget or its refused
+// count.
+@(log_fact = "log_reader: WRONG: the facts changed the log records of the budget or its refused count")
+Wrong_Facts_Changed_Budget :: struct {}
+
+// A fact read back does not hold what the kernel must write. The form is
+// its number: a field of the enum of 1 byte among fields of 8 would pad
+// the record, and the enum has no word type.
+@(log_fact = "log_reader: WRONG: the fact {index} has the form {form_word}, more {continues}, the reserved bytes {reserved}, the key {key}, {value_count} value bytes, the first {first_values} and the last {last_value}")
+Wrong_Fact_Row :: struct {
+	index:        u64,
+	form_word:    u64,
+	continues:    i64,
+	reserved:     value_kinds.Hexadecimal_Sixteen_Digits,
+	key:          value_kinds.Hexadecimal_Sixteen_Digits,
+	value_count:  i64,
+	first_values: value_kinds.Hexadecimal_Sixteen_Digits,
+	last_value:   u64,
+}
+
+// Log refused each wrong call, and changed nothing.
+@(log_fact = "log_reader: Log refused {refusals} wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, an address that the process cannot read, and a text or its runs past the end of what it can read; the own log ring kept the same {own_records} records, and the budget the same log records and the same refused count: as it must")
+Refused_Calls_Checked :: struct {
+	refusals:    u64,
+	own_records: u64,
+}
+
+// The call with the process handle of the log service was not refused.
+@(log_fact = "log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status {call_status}")
+Wrong_Service_Handle_Call :: struct {
+	call_status: u64,
+}
+
+// The process handle of the log service, which has no Give, is not lent.
+@(log_fact = "log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must")
+Service_Handle_Not_Lent :: struct {}
+
+// The call of log.process_records for a child did not come back.
+@(log_fact = "log_reader: WRONG: the call of log.process_records for {child} gave the status {call_status}")
+Wrong_Child_Records_Call :: struct {
+	call_status: u64,
+	child:       value_kinds.Module_Name_Field,
+}
+
+// The call of log.process_value_runs for a child did not come back.
+@(log_fact = "log_reader: WRONG: the call of log.process_value_runs for {child} gave the status {call_status}")
+Wrong_Child_Runs_Call :: struct {
+	call_status: u64,
+	child:       value_kinds.Module_Name_Field,
+}
+
+// The log service did not refuse a memory object in place of a process
+// handle with the kind Handle_Kind.
+@(log_fact = "log_reader: WRONG: a memory object in place of a process handle gave the status {call_status}, the kind {kind}, the argument {argument} and the found kind {found_kind}")
+Wrong_Memory_Lent :: struct {
+	call_status: u64,
+	kind:        errors.Kind_Word,
+	argument:    i64,
+	found_kind:  i64,
+}
+
+// The log service refused a memory object in place of a process handle.
+@(log_fact = "log_reader: a memory object in place of a process handle: the log service refused it with Handle_Kind: as it must")
+Memory_Lent_Refused :: struct {}
+
+// A check failed: the reason, one of the sentences of the checks.
+@(log_fact = "log_reader: WRONG: {problem}")
+Wrong_Check :: struct {
+	problem: [96]u8,
+}
+
+// Each check passed.
+@(log_fact = "log_reader: ok")
+Checked :: struct {}
+
+#assert(size_of(Wrong_Check) == PROBLEM_FIELD_BYTES)
 #assert(size_of(Wrong_Fact_Refusal) == 3 * size_of(i64) + size_of(op.Status) + REFUSAL_NAME_FIELD_BYTES)
 #assert(size_of(Wrong_Text_Refusal) == size_of(Wrong_Fact_Refusal))
 #assert(size_of(Wrong_Edge_Refused) == size_of(op.Status) + EDGE_NAME_FIELD_BYTES)
@@ -310,6 +400,11 @@ Child_Value_Runs_Read :: struct {
 // refusal_name_field gives the Text field of the name of a refused call.
 refusal_name_field :: proc "contextless" (name: string) -> [REFUSAL_NAME_FIELD_BYTES]u8 {
 	return value_kinds.text_field(name, REFUSAL_NAME_FIELD_BYTES)
+}
+
+// problem_field gives the Text field of the reason of a failure.
+problem_field :: proc "contextless" (problem: string) -> [PROBLEM_FIELD_BYTES]u8 {
+	return value_kinds.text_field(problem, PROBLEM_FIELD_BYTES)
 }
 
 // edge_name_field gives the Text field of the name of an edge that Log

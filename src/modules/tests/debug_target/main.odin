@@ -135,7 +135,7 @@ run_rounds :: proc "contextless" () -> ! {
 		#force_no_inline record_round()
 		if intrinsics.volatile_load(&rounds) % ROUNDS_FOR_ONE_LINE == 0 {
 			if wrong_totals == 0 {
-				system.log(.Info, "debug_target: 64 more rounds ran, so the process is not held: as it must")
+				system.log_fact(.Info, Rounds_Ran{})
 			} else {
 				system.log_fact(.Info, Wrong_Totals{wrong_totals = wrong_totals})
 			}
@@ -159,9 +159,9 @@ waiter :: proc "c" (parameter: rawptr) -> ! {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	#force_no_inline fill_globals()
 	if _, status := system.thread_start(waiter, nil); status != .Ok {
-		system.log(.Info, "debug_target: the second thread did not start: status ", status)
+		system.log_fact(.Info, Thread_Not_Started{status = status})
 		system.stop(.Failed)
 	}
-	system.log(.Info, "debug_target: runs, with a thread that waits")
+	system.log_fact(.Info, Running{})
 	#force_no_inline run_rounds()
 }

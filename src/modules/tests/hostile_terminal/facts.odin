@@ -3,9 +3,12 @@ package hostile_terminal
 import "modus:contract/value_kinds"
 
 // The log facts of the hostile terminal client
-// (src/md/features/log_facts.md): the lines with a value, as records of
-// fields. Each fact template is the sentence that the line wrote before it
+// (src/md/features/log_facts.md): each line, as a record of fields. Each fact template is the sentence that the line wrote before it
 // was a fact, so the wait of the machine test reads it as before.
+
+// The context holds no terminal.
+@(log_fact = "hostile_terminal: no terminal")
+No_Terminal :: struct {}
 
 // The terminal read the three records whose kind word names no record,
 // and the line after them. A kind word keeps its number: it names no

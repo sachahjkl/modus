@@ -3932,6 +3932,7 @@ Machine :: struct {
 	echo:        Console_Echo, // The lines typed into the console whose echo the tool waits for (console_echo.odin).
 	memory_file: string, // The file of the memory of the machine, or "" (Machine_Options).
 	fact_catalog: ^build.Fact_Catalog, // The module files whose log facts log_read renders; nil until the log holds a fact.
+	fact_outside_modules: []build.Fact_Catalog_Module, // The modules from outside the build that the catalog adds (Machine_Options).
 	fact_rendered: [dynamic]u8, // The log with the sentence of each fact, up to fact_raw_length bytes of the file: each read renders only the lines after it.
 	fact_raw_length: int, // The bytes of the file of the log that fact_rendered covers.
 	fact_lines: [dynamic]build.Fact_Line_Place, // The place, the process and the fields of each rendered line of a fact of fact_rendered, in order: the step Fact reads them.
@@ -4245,20 +4246,23 @@ machine_fact_catalog_ensure :: proc(machine: ^Machine) {
 		return
 	}
 	catalog_started := time.tick_now()
-	machine.fact_catalog = machine_fact_catalog()
+	machine.fact_catalog = machine_fact_catalog(machine.fact_outside_modules)
 	machine.fact_catalog_time = time.tick_since(catalog_started)
 	machine.fact_rendered = make([dynamic]u8, runtime.heap_allocator())
 	machine.fact_lines = make([dynamic]build.Fact_Line_Place, runtime.heap_allocator())
 }
 
-// machine_fact_catalog gives the catalog of the module files of the build,
-// in memory that lives as long as the machine: the temporary memory of a
-// step is freed after it.
-machine_fact_catalog :: proc() -> ^build.Fact_Catalog {
+// machine_fact_catalog gives the catalog of the module files of the build
+// and of the modules from outside the build that the machine runs, in
+// memory that lives as long as the machine: the temporary memory of a step
+// is freed after it.
+machine_fact_catalog :: proc(outside_modules: []build.Fact_Catalog_Module) -> ^build.Fact_Catalog {
 	catalog := new(build.Fact_Catalog, runtime.heap_allocator())
 	read, problem := build.fact_catalog_of_build(runtime.heap_allocator())
 	if problem != "" {
 		fmt.eprintfln("modustool: the lines of the log facts stay raw: %s", problem)
+	} else if outside_problem := build.fact_catalog_add_modules(&read, outside_modules); outside_problem != "" {
+		fmt.eprintfln("modustool: the lines of the log facts of the modules from outside the build stay raw: %s", outside_problem)
 	}
 	catalog^ = read
 	return catalog
@@ -4442,6 +4446,10 @@ Machine_Options :: struct {
 	data_disk:      string, // "": the data disk of its part.
 	user_network:   bool, // QEMU user networking in place of the peer: the listener of the tool also serves served_files (web_host.odin).
 	served_files:   []Listener_File,
+	// The module files from outside the build that the machine runs, whose
+	// log facts the tool renders beside those of the build
+	// (disk_processes.odin). Their bytes live as long as the machine.
+	fact_outside_modules: []build.Fact_Catalog_Module,
 	disk_server:    ^Network_Block_Device, // The data disk that the tool serves, when the tool serves it (power_loss.odin).
 	processor:      Processor_Model,
 	firmware:       Machine_Firmware,
@@ -4618,6 +4626,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		disk_server = options.disk_server,
 		memory_file = options.memory_file,
 		serial_input = &serial_input,
+		fact_outside_modules = options.fact_outside_modules,
 	}
 	passed := qmp_opened && scenario_run(&machine, steps)
 	scenario_ended := time.tick_now()

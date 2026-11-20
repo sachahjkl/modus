@@ -1,7 +1,10 @@
 package build
 
+import "modus:contract/errors"
+import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
+import "modus:support/sentence"
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"
@@ -20,9 +23,26 @@ REFUSAL_NAME_LONGEST :: "a fact at the level one past the last member"
 @(private = "file")
 EDGE_NAME_LONGEST :: "one byte on the last byte of a mapped page"
 
+// The longest text of the other Text fields of the test modules: the name
+// of a command of the root ring, a verdict, a name that a share refuses,
+// the reason of a failure of log_reader, and the cause of a failure of
+// iommu_device and of operation_fuzzing.
+@(private = "file")
+COMMAND_LONGEST :: "Disk_Grant_Persistence"
+@(private = "file")
+VERDICT_LONGEST :: "as it must"
+@(private = "file")
+SHARE_NAME_LONGEST :: "part_000/../.."
+@(private = "file")
+PROBLEM_LONGEST :: "the log service gave a row before the first record of this process, or of an earlier run"
+@(private = "file")
+IOMMU_DEVICE_CAUSE_LONGEST :: "without the registers of the other device behind the conventional bridge, a declaration was not refused"
+@(private = "file")
+FUZZING_CAUSE_LONGEST :: "Memory_Physical refused the mailbox"
+
 // The folders of the test modules that write log facts.
 @(private = "file")
-TEST_FACT_FOLDERS := [?]string{"arena", "debug_target", "disk_start_policy", "flood", "hierarchy", "hostile_terminal", "iommu_device", "ranges", "shortage", "store_importer", "visitor", "log_reader"}
+TEST_FACT_FOLDERS := [?]string{"arena", "debug_target", "disk_start_policy", "flood", "hierarchy", "hostile_terminal", "iommu", "iommu_device", "operation_fuzzing", "probe", "ranges", "shortage", "stops_failed", "stops_refused", "store_importer", "visitor", "log_reader"}
 
 // The edges of a count, of a signed count, and of a time in milliseconds:
 // a Time field is signed, so its largest value is max(i64).
@@ -52,11 +72,19 @@ the_texts_of_the_test_module_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	most["service"] = value_kinds.MODULE_NAME_FIELD_BYTES - 1
 	most["refusal"] = len(REFUSAL_NAME_LONGEST)
 	most["edge"] = len(EDGE_NAME_LONGEST)
+	most["command"] = len(COMMAND_LONGEST)
+	most["verdict"] = len(VERDICT_LONGEST)
+	most["name"] = len(SHARE_NAME_LONGEST)
+	most["problem"] = len(PROBLEM_LONGEST)
 	for folder in TEST_FACT_FOLDERS {
 		file, ok := test_facts_file(t, folder)
-		if ok {
-			facts_expect_text_fields_last(t, file, most)
+		if !ok {
+			continue
 		}
+		// A cause of a failure is a sentence of its module: each module
+		// has its own longest one.
+		most["cause"] = folder == "operation_fuzzing" ? len(FUZZING_CAUSE_LONGEST) : len(IOMMU_DEVICE_CAUSE_LONGEST)
+		facts_expect_text_fields_last(t, file, most)
 	}
 }
 
@@ -266,5 +294,290 @@ the_facts_of_log_reader_write_the_lines_of_before :: proc(t: ^testing.T) {
 		}
 		past_cause := u64(max(op.Stop_Cause)) + 1
 		facts_expect_line(t, render(t, file, "Wrong_Child_Stopped_Without_Outcome", {{"cause", past_cause}, {"child", child}}), line_of_before("log_reader: WRONG: ", child, " stopped: ", past_cause))
+	}
+}
+
+// One fact type with no field: its folder, its package, its name, and the
+// line that it replaced.
+@(private = "file")
+Fact_With_No_Field :: struct {
+	folder, package_name, type_name, line: string,
+}
+
+// Each fact type with no field writes the line of before, byte for byte:
+// its sentence is its template. A fact of one value byte is refused: a
+// fact type with no field takes no value.
+@(test)
+the_facts_with_no_field_of_the_test_modules_write_the_lines_of_before :: proc(t: ^testing.T) {
+	facts := [?]Fact_With_No_Field {
+		{"arena", "arena", "Wrong_Reset", "arena: WRONG: after a reset the same pushes did not take the same pages with no commit"},
+		{"arena", "arena", "Arena_Checked", "arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must"},
+		{"debug_target", "debug_target", "Rounds_Ran", "debug_target: 64 more rounds ran, so the process is not held: as it must"},
+		{"debug_target", "debug_target", "Running", "debug_target: runs, with a thread that waits"},
+		{"disk_start_policy", "disk_start_policy", "Running", "disk_start_policy: ok, a start policy from the disk: its order is in its code"},
+		{"disk_start_policy", "disk_start_policy", "Context_Checked", "disk_start_policy: the context holds the log, the budget and the root ring, no other handle and no start list: as it must"},
+		{"disk_start_policy", "disk_start_policy", "Parts_Page_Refused", "disk_start_policy: the machine parts page is refused: it starts the console only"},
+		{"disk_start_policy", "disk_start_policy", "Wrong_Start_Policy_Start_Taken", "disk_start_policy: a start of the start policy of the boot image is taken: WRONG"},
+		{"disk_start_policy", "disk_start_policy", "Commands_Refused", "disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with No_Right: as it must"},
+		{"disk_start_policy", "disk_start_policy", "Machine_Is_Usable", "disk_start_policy: the console runs: the machine is usable"},
+		{"flood", "flood", "No_Terminal", "flood: no terminal"},
+		{"flood", "flood", "Running", "flood: ok"},
+		{"flood", "flood", "Lines_Continue", "flood: Space: the lines continue"},
+		{"hierarchy", "hierarchy", "First_Run", "hierarchy: a new store: the first run"},
+		{"hierarchy", "hierarchy", "Wrong_No_Store", "hierarchy: WRONG: no store"},
+		{"hierarchy", "hierarchy", "Wrong_No_Usage", "hierarchy: WRONG: no usage"},
+		{"hostile_terminal", "hostile_terminal", "No_Terminal", "hostile_terminal: no terminal"},
+		{"iommu", "iommu_client", "No_Block_Ring", "iommu: no block ring"},
+		{"iommu", "iommu_client", "Block_Ring_Full", "iommu: the block ring has no room"},
+		{"iommu", "iommu_client", "Machine_Goes_On", "iommu: the test device service answered after its read into a page that was not declared: the machine goes on: as it must"},
+		{"iommu", "iommu_client", "Device_Service_Silent", "iommu: the test device service did not answer before the hang bound"},
+		{"iommu_device", "iommu_device_service", "Block_Arrived", "iommu_device: a block written from a declared page and read into another declared page: the 4096 bytes arrived: as it must"},
+		{"iommu_device", "iommu_device_service", "Interrupt_Arrived", "iommu_device: the message interrupt of the device arrived through its entry: as it must"},
+		{"iommu_device", "iommu_device_service", "Interrupt_Addresses_Refused", "iommu_device: a read into the interrupt addresses, to entries that the kernel did not give this device: the device gave the request back: as it must"},
+		{"iommu_device", "iommu_device_service", "Undeclared_Page_Written", "iommu_device: a read into a page that was not declared: the device wrote the page: no IOMMU keeps the device in the memory of its service on this machine"},
+		{"iommu_device", "iommu_device_service", "Undeclared_Read_Needs_Reset", "iommu_device: a read into a page that was not declared: the device needs a reset, and the page keeps its 4096 bytes: as it must"},
+		{"iommu_device", "iommu_device_service", "Undeclared_Read_Silent", "iommu_device: a read into a page that was not declared: the device did not end the request before the hang bound"},
+		{"iommu_device", "iommu_device_service", "Declaration_Refused_Behind_Bridge", "iommu_device: without the registers of the other device behind the conventional bridge, a declaration is refused: as it must"},
+		{"iommu_device", "iommu_device_service", "Read_After_Domain_End", "iommu_device: a read given to the device after the end of its domain: the service waits for the new size of the disk"},
+		{"iommu_device", "iommu_device_service", "Domain_Ended", "iommu_device: after the end of its domain, a read of the device into a page that this service declared before does not end, the page keeps its 4096 bytes, and no interrupt of the device arrives, also for its new size: as it must"},
+		{"log_reader", "log_reader", "Wrong_Facts_Changed_Budget", "log_reader: WRONG: the facts changed the log records of the budget or its refused count"},
+		{"log_reader", "log_reader", "Service_Handle_Not_Lent", "log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must"},
+		{"log_reader", "log_reader", "Memory_Lent_Refused", "log_reader: a memory object in place of a process handle: the log service refused it with Handle_Kind: as it must"},
+		{"log_reader", "log_reader", "Checked", "log_reader: ok"},
+		{"probe", "probe", "Spin_Runs", "probe: spin runs, and never returns"},
+		{"ranges", "ranges", "First_Run", "ranges: a new store: the first run"},
+		{"ranges", "ranges", "Wrong_No_Store", "ranges: WRONG: no store"},
+		{"ranges", "ranges", "Wrong_No_Usage", "ranges: WRONG: no usage"},
+		{"shortage", "shortage", "Shortage_Checked", "shortage: ok, the stacks were drained for takes that cannot fail, a new object failed only when its budget could pay no page, and each frame returned"},
+		{"shortage", "shortage", "Wrong", "shortage: wrong"},
+		{"stops_failed", "stops_failed", "Fails_On_Purpose", "stops_failed: it fails on purpose"},
+		{"stops_refused", "stops_refused", "Refuses_On_Purpose", "stops_refused: it refuses its context on purpose"},
+		{"store_importer", "store_importer", "Triple_Checked", "store_importer: triple(14) of the module store_library of the store module_files gives 42: as it must"},
+		{"visitor", "visitor", "Running", "visitor: ok, a module that the boot image does not hold"},
+		{"visitor", "visitor", "Context_With_Store", "visitor: the context holds the log, a window, the budget and a store, and no other handle of a grant: as it must"},
+		{"visitor", "visitor", "Context_Without_Grant", "visitor: the context holds the log, a window and the budget, and no handle of a grant: as it must"},
+		{"visitor", "visitor", "Root_Ring_Refused", "visitor: no ring to the root service: the open of its handle is refused: as it must"},
+		{"visitor", "visitor", "Wrong_Count_Read_Again", "visitor: the count read again is not the count written: WRONG"},
+	}
+	for fact in facts {
+		file, ok := test_facts_file(t, fact.folder)
+		if !ok {
+			continue
+		}
+		facts_expect_line(t, fact_test_render(t, file, fact.package_name, fact.type_name, {}), fact.line)
+		key := fact_key(fact.package_name, fact.type_name)
+		one_byte := [1]u8{0}
+		buffer: [module.FACT_SENTENCE_BYTES_MOST]u8
+		_, _, refusal := module.fact_sentence_write(file, key, one_byte[:], buffer[:], nil)
+		testing.expectf(t, refusal == .Value_Count, "the fact %s.%s of no field takes one value byte: %v", fact.package_name, fact.type_name, refusal)
+	}
+}
+
+// Each fact type with a status, an error kind, a status of another party
+// or a cause writes its sentence: a status and an error kind by the names
+// of their members, where the line of before wrote their numbers; a word
+// that names no member, and the largest word, by their numbers. The other
+// values at their edges.
+@(test)
+the_statuses_and_causes_of_the_test_modules_write_their_sentences :: proc(t: ^testing.T) {
+	arena_file, arena_ok := test_facts_file(t, "arena")
+	debug_file, debug_ok := test_facts_file(t, "debug_target")
+	policy_file, policy_ok := test_facts_file(t, "disk_start_policy")
+	visitor_file, visitor_ok := test_facts_file(t, "visitor")
+	fuzzing_file, fuzzing_ok := test_facts_file(t, "operation_fuzzing")
+	iommu_file, iommu_ok := test_facts_file(t, "iommu")
+	device_file, device_ok := test_facts_file(t, "iommu_device")
+	shortage_file, shortage_ok := test_facts_file(t, "shortage")
+	if !arena_ok || !debug_ok || !policy_ok || !visitor_ok || !fuzzing_ok || !iommu_ok || !device_ok || !shortage_ok {
+		return
+	}
+	process := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
+	commands := [2]string{COMMAND_LONGEST, "Connect"}
+	causes := [2]string{FUZZING_CAUSE_LONGEST, "no mailbox"}
+	for status in op.Status {
+		name := op.STATUS_NAMES[status]
+		word := u64(status)
+		for count in TEST_FACT_COUNTS {
+			other := max(u64) - count
+			facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_Reservation", {{"reservation_pages", count}, {"status", word}}), line_of_before("arena: WRONG: the reservation of ", count, " pages failed with ", name))
+			facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_After_Refusal", {{"budget_pages", count}, {"status", word}}), line_of_before("arena: WRONG: after the refusal the budget held ", count, " pages, and a second push gave ", name, " or changed the arena"))
+			facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_End", {{"status", word}, {"budget_pages_after", count}, {"budget_pages_before", other}}), line_of_before("arena: WRONG: the end gave ", name, ", and the budget holds ", count, " pages of ", other))
+		}
+		for kind in errors.Kind {
+			facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_Growth_Stop", {{"status", word}, {"error_kind", u64(kind)}}), line_of_before("arena: WRONG: the growth stopped with ", name, " and the error kind ", errors.KIND_NAMES[kind], ", not with No_Budget"))
+		}
+		facts_expect_line(t, fact_test_render(t, debug_file, "debug_target", "Thread_Not_Started", {{"status", word}}), line_of_before("debug_target: the second thread did not start: status ", name))
+		facts_expect_line(t, fact_test_render(t, policy_file, "disk_start_policy", "Root_Ring_Refused", {{"status", word}}), line_of_before("disk_start_policy: the root ring does not open: status ", name))
+		facts_expect_line(t, fact_test_render(t, policy_file, "disk_start_policy", "Start_Policy_Start_Refused", {{"status", word}}), line_of_before("disk_start_policy: a start of the start policy of the boot image is refused with the status ", name, ": as it must"))
+		facts_expect_line(t, fact_test_render(t, policy_file, "disk_start_policy", "Machine_Usable_Refused", {{"status", word}}), line_of_before("disk_start_policy: the root service refused Machine_Usable: status ", name))
+		facts_expect_line(t, fact_test_render(t, policy_file, "disk_start_policy", "Start_Refused", {{"status", word}, {"started_process", process}}), line_of_before("disk_start_policy: cannot start ", process, ": status ", name))
+		for command in commands {
+			facts_expect_line(t, fact_test_render(t, policy_file, "disk_start_policy", "Wrong_Command_Not_Refused", {{"status", word}, {"command", command}}), line_of_before("disk_start_policy: the command ", command, " gives the status ", name, ", not No_Right: WRONG"))
+		}
+		facts_expect_line(t, fact_test_render(t, visitor_file, "visitor", "Wrong_Root_Ring", {{"status", word}}), line_of_before("visitor: a ring to the root service opens with status ", name, ": WRONG"))
+		for cause in causes {
+			facts_expect_line(t, fact_test_render(t, fuzzing_file, "operation_fuzzing", "Failed", {{"status", word}, {"cause", cause}}), line_of_before("operation_fuzzing: failed: ", cause, ": status ", name))
+		}
+	}
+	// A status that names no member, the largest status word of 8 bytes and
+	// an error kind that names no member: their numbers, never the name of
+	// another member.
+	past_status := u64(max(op.Status)) + 1
+	past_kind := u64(max(errors.Kind)) + 1
+	facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_Growth_Stop", {{"status", past_status}, {"error_kind", past_kind}}), line_of_before("arena: WRONG: the growth stopped with ", past_status, " and the error kind ", past_kind, ", not with No_Budget"))
+	facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_End", {{"status", max(u64)}, {"budget_pages_after", u64(0)}, {"budget_pages_before", u64(0)}}), line_of_before("arena: WRONG: the end gave ", max(u64), ", and the budget holds ", u64(0), " pages of ", u64(0)))
+	facts_expect_line(t, fact_test_render(t, debug_file, "debug_target", "Thread_Not_Started", {{"status", past_status}}), line_of_before("debug_target: the second thread did not start: status ", past_status))
+
+	// The statuses of another party keep their numbers: a status of the
+	// block service, of the storage service and of the device.
+	for count in TEST_FACT_COUNTS {
+		facts_expect_line(t, fact_test_render(t, iommu_file, "iommu_client", "Info_Refused", {{"block_status", count}}), line_of_before("iommu: the test device service gave the status ", count, " to Info"))
+		facts_expect_line(t, fact_test_render(t, visitor_file, "visitor", "Wrong_Count_Not_Read", {{"storage_status", count}}), line_of_before("visitor: the store did not give the count: status ", count, ": WRONG"))
+		facts_expect_line(t, fact_test_render(t, visitor_file, "visitor", "Wrong_Count_Not_Kept", {{"storage_status", count}}), line_of_before("visitor: the store did not keep the count: status ", count, ": WRONG"))
+		facts_expect_line(t, fact_test_render(t, fuzzing_file, "operation_fuzzing", "Mailbox_Ready", {{"mailbox_address", count}, {"mailbox_pages", max(u64) - count}}), line_of_before("operation_fuzzing: mailbox at ", count, ", ", max(u64) - count, " pages"))
+		facts_expect_line(t, fact_test_render(t, fuzzing_file, "operation_fuzzing", "Sequence_Ended", {{"sequence", count}}), line_of_before("operation_fuzzing: sequence ", count, " ended"))
+	}
+	// The causes of a failure of iommu_device: the longest and a short one.
+	device_causes := [2]string{IOMMU_DEVICE_CAUSE_LONGEST, "no block ring"}
+	for cause in device_causes {
+		facts_expect_line(t, fact_test_render(t, device_file, "iommu_device_service", "Failed", {{"cause", cause}}), line_of_before("iommu_device: ", cause))
+	}
+
+	// The full machine of shortage: each error kind, with the words of the
+	// fact type of its case, and the status and the kind by their names.
+	for count in TEST_FACT_COUNTS {
+		other := max(u64) - count
+		for time in TEST_FACT_TIMES {
+			values := []Fact_Test_Field{{"pages", count}, {"objects", other}, {"threads", u64(4)}, {"elapsed", time}, {"budget_pages", count}, {"payable_pages", other}, {"reserved_pages", count}, {"drains", other}, {"status", u64(op.Status.No_Budget)}, {"error_kind", u64(errors.Kind.Budget)}}
+			facts_expect_line(t, fact_test_render(t, shortage_file, "shortage", "Full_Refused_By_Budget", values), line_of_before("shortage: full: ", count, " pages written in ", other, " objects by ", u64(4), " threads in ", time, " ms; the budget of this process holds ", count, " pages; the free pages that budgets can pay: ", other, " (the pages that the root service kept), and the reserved pages: ", count, "; drains of the stacks: ", other, "; a new memory object of 1 page: status ", "No_Budget", ", error kind ", "Budget", " (Budget: the budget cannot pay)"))
+			values[9].value = u64(errors.Kind.Budget_Hidden)
+			facts_expect_line(t, fact_test_render(t, shortage_file, "shortage", "Full_Refused_By_Another_Kind", values), line_of_before("shortage: full: ", count, " pages written in ", other, " objects by ", u64(4), " threads in ", time, " ms; the budget of this process holds ", count, " pages; the free pages that budgets can pay: ", other, " (the pages that the root service kept), and the reserved pages: ", count, "; drains of the stacks: ", other, "; a new memory object of 1 page: status ", "No_Budget", ", error kind ", "Budget_Hidden", " (another kind)"))
+		}
+	}
+}
+
+// Each case of hierarchy and of ranges is one fact type: its values, then
+// its verdict. Each writes the sentence of the case, then "as it must" or
+// "WRONG", at the edges of its values: the counts 0, 1 and max(u64), the
+// signed counts -1, 0 and max(i64), the times 0 and max(i64).
+@(test)
+the_cases_of_hierarchy_and_ranges_write_their_verdicts :: proc(t: ^testing.T) {
+	hierarchy_file, hierarchy_ok := test_facts_file(t, "hierarchy")
+	ranges_file, ranges_ok := test_facts_file(t, "ranges")
+	if !hierarchy_ok || !ranges_ok {
+		return
+	}
+	render_hierarchy :: proc(t: ^testing.T, file: []u8, type_name: string, values: []Fact_Test_Field) -> string {
+		return fact_test_render(t, file, "hierarchy", type_name, values)
+	}
+	render_ranges :: proc(t: ^testing.T, file: []u8, type_name: string, values: []Fact_Test_Field) -> string {
+		return fact_test_render(t, file, "ranges", type_name, values)
+	}
+	verdicts := [2]string{VERDICT_LONGEST, "WRONG"}
+	names := [2]string{SHARE_NAME_LONGEST, "."}
+	for verdict in verdicts {
+		for index in 0 ..< len(TEST_FACT_COUNTS) {
+			c := TEST_FACT_COUNTS[index]
+			s := TEST_FACT_SIGNED[index]
+			m := TEST_FACT_TIMES[min(index, len(TEST_FACT_TIMES) - 1)]
+			b := signed_bits(s)
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Top_Trees_Refused", {{"storage_status", c}, {"verdict", verdict}}), line_of_before("hierarchy: the top trees: status ", c, ": ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Top_Tree_Open_Refused", {{"storage_status", c}, {"verdict", verdict}}), line_of_before("hierarchy: open a top tree: status ", c, ": ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Part_Open_Refused", {{"storage_status", c}, {"verdict", verdict}}), line_of_before("hierarchy: open a part: status ", c, ": ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Part_Objects_Refused", {{"storage_status", c}, {"verdict", verdict}}), line_of_before("hierarchy: add the objects of a part: status ", c, ": ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Trees_Made", {{"objects", b}, {"trees", b}, {"commits", c}, {"elapsed", m}, {"blocks", b}, {"verdict", verdict}}), line_of_before("hierarchy: made ", s, " objects and ", s, " trees in ", c, " commits, in ", m, " ms, ", s, " blocks: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Root_Listed", {{"trees", b}, {"verdict", verdict}}), line_of_before("hierarchy: the root in pages of 16: ", s, " trees, in order: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Parts_Listed", {{"objects", b}, {"trees", b}, {"elapsed", m}, {"verdict", verdict}}), line_of_before("hierarchy: listed ", s, " objects in ", s, " trees in pages of 16, each page after the one before, in ", m, " ms: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Object_Renamed", {{"objects", b}, {"verdict", verdict}}), line_of_before("hierarchy: rename of an object to the root: the part has ", s, " objects: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Tree_Renamed", {{"trees", b}, {"objects", b}, {"verdict", verdict}}), line_of_before("hierarchy: rename of a tree of ", s, " trees and ", s, " objects: one commit: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Tree_Removed", {{"removing", b}, {"verdict", verdict}}), line_of_before("hierarchy: remove of a tree: the name is gone at its commit; ", s, " trees wait to be freed: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Removal_Freed", {{"objects", b}, {"trees", b}, {"blocks", b}, {"elapsed", m}, {"verdict", verdict}}), line_of_before("hierarchy: the removal freed ", s, " objects, ", s, " trees and ", s, " blocks, in ", m, " ms: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "First_Run_Left", {{"objects", b}, {"trees", b}, {"verdict", verdict}}), line_of_before("hierarchy: the first run leaves ", s, " objects and ", s, " trees: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Scrambled_Tree_Refused", {{"storage_status", c}, {"open_storage_status", max(u64) - c}, {"verdict", verdict}}), line_of_before("hierarchy: the tree scrambled: status ", c, " ", max(u64) - c, ": ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Scrambled_Adds_Refused", {{"storage_status", c}, {"verdict", verdict}}), line_of_before("hierarchy: the scrambled adds: status ", c, ": ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Scrambled_Names_Checked", {{"added", b}, {"commits", c}, {"removed", b}, {"left", b}, {"elapsed", m}, {"verdict", verdict}}), line_of_before("hierarchy: added ", s, " names in a scrambled order in ", c, " commits, listed in order, each read back; removed ", s, " in another order, ", s, " left in order, in ", m, " ms: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Share_Count_Checked", {{"share_took", b}, {"maker_took", b}, {"share_saw", b}, {"freed", b}, {"verdict", verdict}}), line_of_before("hierarchy: while a writable share of a tree is open, its write took ", s, " blocks of the count of its tree; the same bytes written by the maker outside the tree took ", s, " blocks of the store and ", s, " of the count of the share; the removal through the share freed ", s, ": the share sees the count of its own tree only: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Guess_Hidden", {{"maker_took", b}, {"verdict", verdict}}), line_of_before("hierarchy: after unshare, the guess of the holder stays hidden: the same bytes written by the maker took ", s, " blocks: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Share_Listed", {{"trees", b}, {"verdict", verdict}}), line_of_before("hierarchy: the share lists the ", s, " trees of tree_003 only: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Remount_Counted", {{"objects", b}, {"trees", b}, {"verdict", verdict}}), line_of_before("hierarchy: after the remount: ", s, " objects and ", s, " trees: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Remount_Scrambled_Left", {{"left", b}, {"verdict", verdict}}), line_of_before("hierarchy: after the remount: ", s, " scrambled names left, in order: ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Remount_Parts_Listed", {{"objects", b}, {"contents", b}, {"elapsed", m}, {"verdict", verdict}}), line_of_before("hierarchy: after the remount: ", s, " objects listed in the parts, ", s, " contents byte for byte, the renamed tree and object in their places, in ", m, " ms: ", verdict))
+
+			facts_expect_line(t, render_ranges(t, ranges_file, "Writes_Pending", {{"size", c}, {"verdict", verdict}}), line_of_before("ranges: three range writes are pending, and the size of the object is ", c, " bytes: ", verdict))
+			facts_expect_line(t, render_ranges(t, ranges_file, "Sparse_Object_Held", {{"held_blocks", c}, {"verdict", verdict}}), line_of_before("ranges: a sparse object of 8 GiB from 3 writes and one commit holds ", c, " blocks: ", verdict))
+			facts_expect_line(t, render_ranges(t, ranges_file, "Scrambled_Commit_Bounded", {{"hashed_blocks", c}, {"hashed_nodes", max(u64) - c}, {"object_blocks", c}, {"verdict", verdict}}), line_of_before("ranges: the commit of 1000 scrambled writes hashed ", c, " blocks and ", max(u64) - c, " object nodes, bounded by the blocks changed, not by the ", c, " blocks of the object: ", verdict))
+			facts_expect_line(t, render_ranges(t, ranges_file, "Version_Blocks_Shared", {{"own_blocks", b}, {"verdict", verdict}}), line_of_before("ranges: the version before the 1000 writes holds ", s, " blocks of its own: the root and the path of the first block; its other blocks are shared with the new state: ", verdict))
+			facts_expect_line(t, render_ranges(t, ranges_file, "Cut_And_Extension", {{"cut_blocks", c}, {"extended_blocks", max(u64) - c}, {"verdict", verdict}}), line_of_before("ranges: a cut of an object of 70 blocks to 6000 bytes holds ", c, " blocks; an extension to 1 GiB holds ", max(u64) - c, " blocks, and reads zero bytes past the cut: ", verdict))
+			facts_expect_line(t, render_ranges(t, ranges_file, "Twin_Held", {{"held_blocks", c}, {"written_blocks", max(u64) - c}, {"verdict", verdict}}), line_of_before("ranges: the same object of 1 MiB under two names holds ", c, " blocks of the store, one object's worth; the second commit wrote ", max(u64) - c, " blocks of its block tree: ", verdict))
+			facts_expect_line(t, render_ranges(t, ranges_file, "Twin_Changed", {{"written_blocks", c}, {"verdict", verdict}}), line_of_before("ranges: a change of one block of the second name wrote ", c, " blocks of its block tree; the first name reads its bytes as before: ", verdict))
+			facts_expect_line(t, render_ranges(t, ranges_file, "Loop_Done", {{"commits", c}, {"verdict", verdict}}), line_of_before("ranges: the loop made ", c, " commits of range writes: ", verdict))
+			facts_expect_line(t, render_ranges(t, ranges_file, "Remount_Sparse_Read", {{"size", c}, {"verdict", verdict}}), line_of_before("ranges: after the remount: the sparse object of ", c, " bytes reads its 3 blocks and its 1000 writes, byte for byte: ", verdict))
+		}
+		for name in names {
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Name_Refused", {{"name", name}, {"verdict", verdict}}), line_of_before("hierarchy: the name \"", name, "\" is refused: ", verdict))
+		}
+		facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Move_Inside_Refused", {{"verdict", verdict}}), line_of_before("hierarchy: a tree cannot move inside itself: ", verdict))
+		facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Rename_Onto_Name_Refused", {{"verdict", verdict}}), line_of_before("hierarchy: a rename onto a name that exists is refused: ", verdict))
+		facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Read_Only_Share_Made", {{"verdict", verdict}}), line_of_before("hierarchy: a read-only share of tree_003: ", verdict))
+		facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Foreign_Place_Refused", {{"verdict", verdict}}), line_of_before("hierarchy: a place of another connection names nothing on the share: ", verdict))
+		facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Foreign_Store_Refused", {{"verdict", verdict}}), line_of_before("hierarchy: a name of another store is refused: ", verdict))
+		facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Read_Only_Write_Refused", {{"verdict", verdict}}), line_of_before("hierarchy: the read-only share cannot write: ", verdict))
+		facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Read_Only_Remove_Refused", {{"verdict", verdict}}), line_of_before("hierarchy: the read-only share cannot remove: ", verdict))
+		facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Share_Handles_Revoked", {{"verdict", verdict}}), line_of_before("hierarchy: after unshare, the handles of the share are revoked: a call gives Gone: ", verdict))
+		facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Writable_Share_Written", {{"verdict", verdict}}), line_of_before("hierarchy: a writable share writes in tree_005, and the maker reads it: ", verdict))
+		facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Share_Root_Refused", {{"verdict", verdict}}), line_of_before("hierarchy: a share of a tree cannot open the root of its own store: ", verdict))
+		facts_expect_line(t, render_ranges(t, ranges_file, "Sparse_Object_Read", {{"verdict", verdict}}), line_of_before("ranges: its three blocks read back, a hole reads as zero bytes, and a read across a block edge gives the end of a block and zero bytes: ", verdict))
+		facts_expect_line(t, render_ranges(t, ranges_file, "Scrambled_Writes_Read", {{"verdict", verdict}}), line_of_before("ranges: the 1000 writes read back, each one byte for byte, and the three blocks before them: ", verdict))
+		facts_expect_line(t, render_ranges(t, ranges_file, "Old_Version_Read", {{"verdict", verdict}}), line_of_before("ranges: an old version reads its old bytes after a range write, and compare gives the one range written: ", verdict))
+		facts_expect_line(t, render_ranges(t, ranges_file, "End_Read", {{"verdict", verdict}}), line_of_before("ranges: a read at the end gives no byte, and a read past the end is refused: ", verdict))
+		facts_expect_line(t, render_ranges(t, ranges_file, "Places_Refused", {{"verdict", verdict}}), line_of_before("ranges: a place of another store, a place of no connection, and a commit with no pending change are refused: ", verdict))
+		facts_expect_line(t, render_ranges(t, ranges_file, "Conflict_Refused", {{"verdict", verdict}}), line_of_before("ranges: a commit after another change of the object is refused, and its pending changes are dropped: ", verdict))
+		facts_expect_line(t, render_ranges(t, ranges_file, "Twin_Removed", {{"verdict", verdict}}), line_of_before("ranges: the removal of the second name frees its own blocks only, the first name reads its 1 MiB, and the second name written again takes no block: ", verdict))
+		facts_expect_line(t, render_ranges(t, ranges_file, "Remount_Objects_Read", {{"verdict", verdict}}), line_of_before("ranges: after the remount: the small object, the object of the cut and the object of the loop: ", verdict))
+		facts_expect_line(t, render_ranges(t, ranges_file, "Remount_Twin_Found", {{"verdict", verdict}}), line_of_before("ranges: after the remount: the same object of 1 MiB under a third name took no block: the open found it by its hash: ", verdict))
+	}
+}
+
+// Each fact type of log_reader of this round writes the line of before,
+// byte for byte, or its new sentence: the counts 0, 1 and max(u64), the
+// signed counts -1, 0 and max(i64), each error kind by its name, a number
+// in 16 hexadecimal digits as system.Hex writes it, the longest reason of
+// a failure and a short one, and the measures at their edges.
+@(test)
+the_facts_of_log_reader_of_its_checks_and_measures_write_their_sentences :: proc(t: ^testing.T) {
+	file, ok := test_facts_file(t, "log_reader")
+	if !ok {
+		return
+	}
+	render :: proc(t: ^testing.T, file: []u8, type_name: string, values: []Fact_Test_Field) -> string {
+		return fact_test_render(t, file, "log_reader", type_name, values)
+	}
+	children := [2]string{"log_reader child 1", strings.repeat("c", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)}
+	problems := [2]string{PROBLEM_LONGEST, "the boot image does not map"}
+	for index in 0 ..< len(TEST_FACT_COUNTS) {
+		c := TEST_FACT_COUNTS[index]
+		o := max(u64) - c
+		s := TEST_FACT_SIGNED[index]
+		b := signed_bits(s)
+		facts_expect_line(t, render(t, file, "Refused_Facts_Checked", {{"refusals", c}, {"own_records", o}}), line_of_before("log_reader: Log refused ", c, " wrong facts, each with its status and its error record: the form word, a run, the length below the head and past the whole fact, an address that the process cannot read, and the level; the own log ring kept the same ", o, " records, and the budget the same log records and the same refused count: as it must"))
+		facts_expect_line(t, render(t, file, "Refused_Calls_Checked", {{"refusals", c}, {"own_records", o}}), line_of_before("log_reader: Log refused ", c, " wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, an address that the process cannot read, and a text or its runs past the end of what it can read; the own log ring kept the same ", o, " records, and the budget the same log records and the same refused count: as it must"))
+		facts_expect_line(t, render(t, file, "Wrong_Fact_Row", {{"index", c}, {"form_word", o}, {"continues", b}, {"reserved", c}, {"key", o}, {"value_count", b}, {"first_values", c}, {"last_value", o}}), line_of_before("log_reader: WRONG: the fact ", c, " has the form ", o, ", more ", s, ", the reserved bytes ", sentence.Hex(c), ", the key ", sentence.Hex(o), ", ", s, " value bytes, the first ", sentence.Hex(c), " and the last ", o))
+		facts_expect_line(t, render(t, file, "Wrong_Service_Handle_Call", {{"call_status", c}}), line_of_before("log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status ", c))
+		for child in children {
+			facts_expect_line(t, render(t, file, "Wrong_Child_Records_Call", {{"call_status", c}, {"child", child}}), line_of_before("log_reader: WRONG: the call of log.process_records for ", child, " gave the status ", c))
+			facts_expect_line(t, render(t, file, "Wrong_Child_Runs_Call", {{"call_status", c}, {"child", child}}), line_of_before("log_reader: WRONG: the call of log.process_value_runs for ", child, " gave the status ", c))
+		}
+		for kind in errors.Kind {
+			facts_expect_line(t, render(t, file, "Wrong_Memory_Lent", {{"call_status", c}, {"kind", u64(kind)}, {"argument", b}, {"found_kind", b}}), line_of_before("log_reader: WRONG: a memory object in place of a process handle gave the status ", c, ", the kind ", errors.KIND_NAMES[kind], ", the argument ", s, " and the found kind ", s))
+		}
+		// A kind word of -1, as a record of another party can hold: its
+		// number.
+		facts_expect_line(t, render(t, file, "Wrong_Memory_Lent", {{"call_status", c}, {"kind", max(u64)}, {"argument", b}, {"found_kind", b}}), line_of_before("log_reader: WRONG: a memory object in place of a process handle gave the status ", c, ", the kind ", max(u64), ", the argument ", s, " and the found kind ", s))
+		facts_expect_line(t, render(t, file, "Write_Measured", {{"calls", c}, {"bad_block_text_least", o}, {"bad_block_text_median", c}, {"bad_block_fact_least", o}, {"bad_block_fact_median", c}, {"connected_text_least", o}, {"connected_text_median", c}, {"connected_fact_least", o}, {"connected_fact_median", c}}), line_of_before("log_reader: measure: the write of one line, in ns, the least and the median of ", c, " calls: a bad block as text ", o, " and ", c, ", as a fact ", o, " and ", c, "; a connection as text ", o, " and ", c, ", as a fact ", o, " and ", c))
+		facts_expect_line(t, render(t, file, "Log_Operation_Measured", {{"calls", c}, {"text_least", o}, {"text_median", c}, {"fact_least", o}, {"fact_median", c}, {"refused_least", o}, {"refused_median", c}}), line_of_before("log_reader: measure: the operation Log, in ns from the call to the return, the least and the median of ", c, " calls: the text of a bad block ", o, " and ", c, ", its fact ", o, " and ", c, ", a call that the kernel refuses at the border of the form ", o, " and ", c))
+		facts_expect_line(t, render(t, file, "Render_Measured", {{"renders", c}, {"render_least", o}, {"render_median", c}, {"window_rows", o}, {"window_rows_time", c}}), line_of_before("log_reader: measure: the render of a log fact by module.fact_sentence_write, in ns, the least and the median of ", c, " renders of two fact types of this module: ", o, " and ", c, "; ", o, " rows of the window of the log at the median: ", c, " ns"))
+	}
+	for problem in problems {
+		facts_expect_line(t, render(t, file, "Wrong_Check", {{"problem", problem}}), line_of_before("log_reader: WRONG: ", problem))
 	}
 }

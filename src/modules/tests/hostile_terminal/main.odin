@@ -47,7 +47,7 @@ refused_kind_words := [3]u32{u32(terminal.Kind.None), u32(max(terminal.Kind)) + 
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output, ok := terminal.open(ctx)
 	if !ok {
-		system.log(.Info, "hostile_terminal: no terminal")
+		system.log_fact(.Info, No_Terminal{})
 		system.stop(.Refused)
 	}
 	// A tag of 0: a record whose kind names no record takes no byte of the

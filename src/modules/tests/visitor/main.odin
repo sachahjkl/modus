@@ -57,7 +57,7 @@ FAULTS_AFTER_THE_START :: #config(FAULTS_AFTER_THE_START, false)
 //    address 0, three calls deep (fault_one).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	system.log(.Info, "visitor: ok, a module that the boot image does not hold")
+	system.log_fact(.Info, Running{})
 	when BUILT_OUTSIDE {
 		system.log(.Info, "visitor: built outside the sources of the system")
 	}
@@ -71,18 +71,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if granted == 0 && ctx.handles[system.GRANT_DISPLAY] != 0 && ctx.handles[op.CONTEXT_BUDGET] != 0 {
 		if has_store {
-			system.log(.Info, "visitor: the context holds the log, a window, the budget and a store, and no other handle of a grant: as it must")
+			system.log_fact(.Info, Context_With_Store{})
 		} else {
-			system.log(.Info, "visitor: the context holds the log, a window and the budget, and no handle of a grant: as it must")
+			system.log_fact(.Info, Context_Without_Grant{})
 		}
 	} else {
 		system.log_fact(.Info, Wrong_Grant_Handles{grant_handles = u64(granted)})
 	}
 	_, status := system.ring_open(ctx.handles[system.GRANT_ROOT])
 	if ctx.handles[system.GRANT_ROOT] == 0 && status == .Bad_Handle {
-		system.log(.Info, "visitor: no ring to the root service: the open of its handle is refused: as it must")
+		system.log_fact(.Info, Root_Ring_Refused{})
 	} else {
-		system.log(.Info, "visitor: a ring to the root service opens with status ", status, ": WRONG")
+		system.log_fact(.Info, Wrong_Root_Ring{status = status})
 	}
 	if has_store {
 		visits_count(&client)
@@ -114,7 +114,7 @@ visits_count :: proc "contextless" (client: ^storage.Client) {
 	buffer: [16]u8
 	bytes, found, status := storage.read(client, storage.ROOT, VISITS_OBJECT, buffer[:])
 	if status != .Ok {
-		system.log(.Info, "visitor: the store did not give the count: status ", u64(status), ": WRONG")
+		system.log_fact(.Info, Wrong_Count_Not_Read{storage_status = u64(status)})
 		return
 	}
 	before: u64
@@ -128,7 +128,7 @@ visits_count :: proc "contextless" (client: ^storage.Client) {
 	now := before + 1
 	written := transmute([8]u8)now
 	if _, write_status := storage.write(client, storage.ROOT, VISITS_OBJECT, written[:]); write_status != .Ok {
-		system.log(.Info, "visitor: the store did not keep the count: status ", u64(write_status), ": WRONG")
+		system.log_fact(.Info, Wrong_Count_Not_Kept{storage_status = u64(write_status)})
 		return
 	}
 	again, found_again, read_status := storage.read(client, storage.ROOT, VISITS_OBJECT, buffer[:])
@@ -137,7 +137,7 @@ visits_count :: proc "contextless" (client: ^storage.Client) {
 		read_back = transmute(u64)[8]u8{again[0], again[1], again[2], again[3], again[4], again[5], again[6], again[7]}
 	}
 	if read_status != .Ok || !found_again || len(again) != 8 || read_back != now {
-		system.log(.Info, "visitor: the count read again is not the count written: WRONG")
+		system.log_fact(.Info, Wrong_Count_Read_Again{})
 		return
 	}
 	system.log_fact(.Info, Visit_Read_Again{visit = now})

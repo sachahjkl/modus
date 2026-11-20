@@ -105,8 +105,15 @@ measure_process_run :: proc(part: ^Test_Part_Run, process: Measure_Process) -> b
 		fmt.eprintfln("modustool: cannot read %s: %v", output, read_error)
 		return false
 	}
+	// The lines of the measures are log facts: the file of QEMU holds
+	// their raw lines, and a reader reads their sentences.
+	rendered, render_problem := checks.measure_log_rendered(string(log))
+	if render_problem != "" {
+		fmt.eprintfln("modustool: the facts of %s cannot be rendered: %s", output, render_problem)
+		return false
+	}
 	fmt.printfln("modustool: the measure run of %s (%s):", process.name, output)
-	for line in checks.measure_process_lines(string(log), process.name) {
+	for line in checks.measure_process_lines(rendered, process.name) {
 		fmt.println(line)
 	}
 	return true

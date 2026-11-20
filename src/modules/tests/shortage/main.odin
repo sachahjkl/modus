@@ -167,7 +167,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// A take that can fail fails now, with its error record.
 	refusal: errors.Error_Record
 	_, refused := system.memory_create(1, error = &refusal)
-	system.log(.Info, "shortage: full: ", pages, " pages written in ", objects, " objects by ", u64(THREAD_COUNT), " threads in ", filled / 1_000_000, " ms; the budget of this process holds ", empty.pages, " pages; the free pages that budgets can pay: ", payable, " (the pages that the root service kept), and the reserved pages: ", full.reserved_pages, "; drains of the stacks: ", drains_full - drains_before, "; a new memory object of 1 page: status ", u64(refused), ", error kind ", u64(refusal.kind), refusal.kind == i64(errors.Kind.Budget) ? " (Budget: the budget cannot pay)" : " (another kind)")
+	if refusal.kind == i64(errors.Kind.Budget) {
+		system.log_fact(.Info, Full_Refused_By_Budget{pages = pages, objects = objects, threads = u64(THREAD_COUNT), elapsed = value_kinds.Time_In_Milliseconds(filled / 1_000_000), budget_pages = empty.pages, payable_pages = payable, reserved_pages = full.reserved_pages, drains = drains_full - drains_before, status = op.Status_Word(refused), error_kind = errors.Kind_Word(refusal.kind)})
+	} else {
+		system.log_fact(.Info, Full_Refused_By_Another_Kind{pages = pages, objects = objects, threads = u64(THREAD_COUNT), elapsed = value_kinds.Time_In_Milliseconds(filled / 1_000_000), budget_pages = empty.pages, payable_pages = payable, reserved_pages = full.reserved_pages, drains = drains_full - drains_before, status = op.Status_Word(refused), error_kind = errors.Kind_Word(refusal.kind)})
+	}
 
 	began = system.nanoseconds()
 	for &filler in fillers {
@@ -199,9 +203,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	right := kept == 0 && drains_full > drains_before && refused == .No_Budget && (refusal.kind == i64(errors.Kind.Budget) || refusal.kind == i64(errors.Kind.Budget_Hidden)) && empty.pages == 0 && payable == full.budget_pages && after.free_pages - after.reserved_pages == start.free_pages - start.reserved_pages && after.budget_pages + after.reserved_pages == after.free_pages
 	system.log_fact(.Info, Freed{elapsed = value_kinds.Time_In_Milliseconds(freed / 1_000_000), budget_pages = back.pages, own_pages = own.pages, kept_pages = kept, payable_pages_after = after.free_pages - after.reserved_pages, payable_pages_before = start.free_pages - start.reserved_pages})
 	if right {
-		system.log(.Info, "shortage: ok, the stacks were drained for takes that cannot fail, a new object failed only when its budget could pay no page, and each frame returned")
+		system.log_fact(.Info, Shortage_Checked{})
 	} else {
-		system.log(.Info, "shortage: wrong")
+		system.log_fact(.Info, Wrong{})
 	}
 	system.call(.Machine_Stop, u64(machine), 0)
 	for {}
