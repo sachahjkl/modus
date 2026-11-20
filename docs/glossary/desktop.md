@@ -906,7 +906,7 @@ Do not use: device-independent pixel, virtual pixel.
 
 The scale factor is the count of pixels of the screen for one logical pixel, in eighths: from 1.25 to 2 on the reference screen.
 
-For the desktop it is one setting of the system, so every window has the same scale. A count of eighths keeps each multiple of 8 logical pixels, as each spacing token, on whole pixels of the screen; 1.3 has no value. The drawing module turns places into screen pixels and rounds each edge. It is not built: the desktop draws at scale 1. The boot display takes its own scale from the size of the screen, among the sizes of Spleen: 1, 1.5, 2 or 4.
+For the desktop it is one setting of the system, so every window has the same scale. A count of eighths keeps each multiple of 8 logical pixels, as each spacing token, on whole pixels of the screen; 1.3 has no value. The contract package `scale_factor` holds the range and the rounding of each edge; the execution of a draw table draws at a scale. The desktop still draws at scale 1. The boot display takes its own scale from the size of the screen, among the sizes of Spleen.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen", and `src/md/features/boot_display_scale.md`.
 
