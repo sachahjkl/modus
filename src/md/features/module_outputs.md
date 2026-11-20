@@ -172,7 +172,9 @@ A **wiring** is the act that joins one record output of one process to one recor
 
 - `Child = 1`: the process that the `Start` of the list starts. Only a wiring list of a start names it.
 - `Started = 2`: a process whose start the asker asked for, named by the process handle that the completion of its `Start` gave. The root service records the asker of each start (`Started.asker`), and refuses an end that names a process that the asker did not start, as `Stop` refuses it to a start policy.
-- `Connected = 3`: a record output or a record input of a service to which the asker holds a connection, named by the process handle that the completion of `Connect` gave. A caller that acts for the principal can name each record output and each record input of the service. A role that names a record stream of a service for a caller that does not act for the principal is a later step: until it, such a caller is refused with `No_Right`.
+- `Connected = 3`: a record output or a record input of a service to which the asker holds a connection, named by the number of the process handle that the completion of `Connect` gave. The asker writes that number in the row and lends nothing. That handle has the right Read only and never Give: with Give, a client could lend it to `log.process_records` and read the log records of the service ([log_reader_scope.md](log_reader_scope.md)). The root service keeps the number that it gave with each connection, and finds the service from its own record. A number that two connections of the asker hold, after the asker closed one handle and the kernel gave the number again, names none: it never names the service of the other connection. A number that names no connection is refused with `Absent` of the unit `Connections`. A caller that acts for the principal can name each record output and each record input of the service. A role that names a record stream of a service for a caller that does not act for the principal is a later step: until it, such a caller is refused with `No_Right`.
+
+The rule of the asker for each end is the pure procedure `output.wiring_end_allowed`, with host tests; the root service reads the facts from its tables. Its refusal of a `Started` end that the asker did not start has a host test only: an asker receives a process handle with Give only from its own `Start`, so no machine test can lend a process that the asker did not start.
 - `Asker = 4`: the asker itself, as the reader, with no declared record input: the console reads a stream this way. It is never a writer.
 
 Each end names its record output or record input by its index in the tables of its module. The record output `log` is named only as the end of the child in the wiring list of a start ("The record output `log`"), and its step builds it: until then a row that names it is refused with `Unsupported`. The same command serves each asker: a starter, a start policy, the console. The old command `Output_Connect` is the case `Connected` to `Asker`.
@@ -245,11 +247,11 @@ A starter that starts a process can give the wiring of the child in the `Start` 
 | Field | Meaning |
 |---|---|
 | `writer_end` | The end of the writer, a `Wiring_End`: `Child`, `Started` or `Connected`. |
-| `writer_handle` | The place from 1, in the table of the lent handles, of the process handle of a `Started` or `Connected` writer; 0 for `Child`. |
+| `writer_handle` | The place from 1, in the table of the lent handles, of the process handle of a `Started` writer; the number of the process handle that `Connect` gave, not 0, for a `Connected` writer; 0 for `Child`. |
 | `writer_stream` | What the writer writes, an `output.Writer_Stream`: `Record_Output = 1`, or `Log = 2`, the record output `log` of the child. |
 | `writer_index` | The index of the record output in the tables of the module of the writer, from 1; 0 for `Log`. |
 | `reader_end` | The end of the reader: `Child`, `Started`, `Connected` or `Asker`. |
-| `reader_handle` | The place from 1 of the process handle of a `Started` or `Connected` reader; 0 for `Child` and `Asker`. |
+| `reader_handle` | The place from 1 of the process handle of a `Started` reader; the number that `Connect` gave for a `Connected` reader; 0 for `Child` and `Asker`. Two ends of one form with one word are one process at both ends, and refused; a place and a number of a connection name different things. |
 | `reader_index` | The index of the record input of the reader, from 1; 0 for `Asker`. |
 | `pace` | A `Wiring_Pace`. |
 | `capacity` | The compartments of the ring, a power of two from 32 to 4096; 0 is the default of 256. |

@@ -520,6 +520,9 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "net"},
 	{kind = .Wait, text = "root: started frame for the device at the place 18 of the bus"},
+	// The device found, by its hardware address: the step reads the field,
+	// the wait the sentence.
+	{kind = .Fact, process = "frame", fact = "frame_service.Device_Ready_Link_Up", condition = "hardware_address = \"52:54:00:12:34:56\"", any_order = true},
 	{kind = .Wait, text = "frame: ok, the hardware address 52:54:00:12:34:56, the link is up", any_order = true},
 	{kind = .Wait, text = "root: started network"},
 	{kind = .Wait, text = "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up", any_order = true},
@@ -587,6 +590,8 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "net: a datagram to 10.0.2.2 port 7 after a key: refused, the endpoint has no grant now: datagram.Send: the argument address, 10.0.2.2 port 7, is refused: the grant names no remote"},
 	{kind = .Close, text = "net"},
 	{kind = .Wait, text = "root: net stopped: a holder"},
+	// The end of the endpoint, by the process that owned it.
+	{kind = .Fact, process = "network", fact = "network_service.Endpoint_Ended", condition = "owner = \"net\"", any_order = true},
 	{kind = .Wait, text = "network: the endpoint of net ended: "},
 	// The passes of the network service over the bytes of the datagrams of
 	// `net`: a measure, then the structural count: one copy on receive, on
@@ -632,6 +637,8 @@ scenario_network := [?]Step {
 	// An Integer, with the measure of a small call.
 	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4", repeat = 1000},
 	{kind = .Wait, text = "root: connected remote to the service monitor, acting for principal 0, for the client key ", any_order = true},
+	// The connection of remote to a service, by the service.
+	{kind = .Fact, process = "remote", fact = "remote_service.Service_Connected", condition = "service = \"monitor\"", any_order = true},
 	{kind = .Wait, text = "remote: connected to the service monitor, for principal 0"},
 	{kind = .Wait, text = "remote: the window drew one picture in ", any_order = true},
 	// A Table: the row of the remote service is there, and the count of the
@@ -1621,6 +1628,9 @@ scenario := [?]Step {
 	// The picture shows spin() that runs: the console entered it. The keys
 	// of the next line wait unseen until the line ends.
 	{kind = .Wait, text = "[console] > spin()"},
+	// The echo comes before the call: Escape stops the call only once it
+	// runs, and an Escape before it is a key of the next line.
+	{kind = .Wait, text = "probe: spin runs, and never returns"},
 	{kind = .Shot, text = "running"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "console: Escape stops the line after "},
@@ -1632,6 +1642,9 @@ scenario := [?]Step {
 	// exact line, and no queue of the path of a key wrote that a record is
 	// lost (docs/ARCHITECTURE.md, "The path of a key").
 	{kind = .Type, text = "spin()"},
+	// Escape must come once the call runs: the keys before it wait in any
+	// case, so the wait for the call comes before them.
+	{kind = .Wait, text = "probe: spin runs, and never returns"},
 	{kind = .Keys, text = KEYS_HELD_LINE},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "console: Escape stops the line after "},
@@ -1752,6 +1765,42 @@ scenario := [?]Step {
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module    hostile_exports"},
 	{kind = .Wait, text = "[console]   commands  4"},
+	// The first program of modus that writes a program
+	// (src/md/features/assembler.md): the module assemble, in a call host,
+	// writes a module file into a memory object of the console; the console
+	// isolates the module of that object, and calls its export. A text that
+	// the assembler refuses names its line and its column on the log.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "isolate(\"assemble\")"},
+	{kind = .Wait, text = "[assemble] host: ready, 1 exports"},
+	{kind = .Wait, text = "[console]   module     assemble"},
+	{kind = .Wait, text = "[console]   call       isolated"},
+	{kind = .Type, text = "f = buffer(4)"},
+	{kind = .Type, text = "assemble(\"add: movx %rdi, %rax\", f)"},
+	{kind = .Wait, text = "assemble: line 1, column 6: no instruction of the subset and no directive has this name"},
+	{kind = .Wait, text = "[console] error: assemble: "},
+	{kind = .Type, text = "n = assemble(\"export add(a: Integer, b: Integer) -> Integer; add: mov %rdi, %rax; add %rsi, %rax; ret\", f)"},
+	{kind = .Wait, text = "assemble: a module file of "},
+	{kind = .Type, text = "isolate_memory(\"adder\", f, n)"},
+	// The call host is ready before the console writes its line about the
+	// module: two processes, in either order.
+	{kind = .Wait, text = "[adder] host: ready, 1 exports", any_order = true},
+	{kind = .Wait, text = "console: adder is a module from memory: "},
+	{kind = .Wait, text = "[console]   module     adder"},
+	{kind = .Wait, text = "[console]   call       isolated"},
+	{kind = .Type, text = "add(2, 3)"},
+	{kind = .Wait, text = "[console] > add(2, 3)"},
+	{kind = .Wait, text = "[console] 5"},
+	// The record of unload names the module: a module from memory whose
+	// name the console lost gives the line of the memory with no name
+	// before it, and the step fails at once.
+	{kind = .Type, text = "unload(\"adder\")"},
+	{kind = .Wait, text = "[console]   module    adder", fails_on = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Type, text = "unload(\"assemble\")"},
+	{kind = .Wait, text = "[console]   module    assemble", fails_on = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Type, text = "release(f)"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "load(\"sample\")"},
 	{kind = .Wait, text = "[console]   module     sample"},
@@ -3123,6 +3172,31 @@ scenario := [?]Step {
 	{kind = .Wait, text = "01234567890123456789the end of a long result"},
 	{kind = .Type, text = "stop(\"notes\")"},
 	{kind = .Wait, text = "root: notes stopped"},
+	// The editor: each group of changes is a commit, and undo walks the
+	// versions of the store. The space after "first", the line end and
+	// the space after "second" each end a group; Ctrl+Z commits the last
+	// word, then restores the version before it; Ctrl+Y restores that
+	// word again. Shift with Up then selects from the end of the text to
+	// the end of the first line, which is shorter: 12 bytes, with the line
+	// end, over 2 lines.
+	{kind = .Type, text = "start(\"edit\")"},
+	{kind = .Wait, text = "edit: a new store: an empty text", any_order = true},
+	{kind = .Wait, text = "compositor: surface edit"},
+	{kind = .Wait, text = "edit: ok, the first picture is presented"},
+	{kind = .Front, text = "edit"},
+	{kind = .Keys, text = "first line"},
+	{kind = .Key, text = "ret"},
+	{kind = .Keys, text = "second line"},
+	{kind = .Key, text = "ctrl-z"},
+	{kind = .Wait, text = "edit: undo: the text has 18 bytes, the caret at byte 18, the version of generation "},
+	{kind = .Key, text = "ctrl-y"},
+	{kind = .Wait, text = "edit: redo: the text has 22 bytes, the caret at byte 22, the version of generation "},
+	{kind = .Key, text = "shift-up"},
+	{kind = .Wait, text = "edit: the selection has 12 bytes, from byte 10 to byte 22, over 2 lines"},
+	{kind = .Shot, text = "edit"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "stop(\"edit\")"},
+	{kind = .Wait, text = "root: edit stopped"},
 	// Errors that diagnose: each case makes an error for real, and the
 	// window shows the sentence of its error record. The process fault
 	// stops three calls deep: the tool names the functions of its stack

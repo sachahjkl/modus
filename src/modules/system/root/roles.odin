@@ -214,6 +214,11 @@ process_roles := [?]Process_Role_Row {
 	// the versions of a run of 1000 commits of the count (4 blocks each),
 	// then thinning at the limit.
 	{name = "notes", grants = {.Store}, terms = {store_blocks = 4500}},
+	// The text that it edits and the versions of the text live in its
+	// private store: a commit of a text of 32 KiB holds 8 blocks of data
+	// and their nodes, and the store keeps each version for 10 minutes
+	// before the thinning.
+	{name = "edit", grants = {.Store}, terms = {store_blocks = 4500}},
 	// The records of the named principals in its private store, the
 	// passphrase in its window, the commands of the principals, and the
 	// ring of the TPM service, which seals the machine key to the measure

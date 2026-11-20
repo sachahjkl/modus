@@ -372,15 +372,17 @@ wiring_list_take :: proc "contextless" (work: ^Wiring_Work) -> system.Status {
 	return status
 }
 
-// end_process gives the process of one end: the child, a lent process, or
-// the asker.
+// end_process gives the process of one end: the child, a lent process, the
+// service of a connection of the asker, or the asker.
 @(private = "file")
 end_process :: proc "contextless" (work: ^Wiring_Work, end: output.Wiring_End, place: u32) -> ^Started {
 	switch end {
 	case .Child:
 		return work.child
-	case .Started, .Connected:
+	case .Started:
 		return work.lent[place - 1]
+	case .Connected:
+		return connected_service(work.asker, system.Handle(place))
 	case .Asker:
 		return work.asker
 	case .None:
@@ -388,30 +390,49 @@ end_process :: proc "contextless" (work: ^Wiring_Work, end: output.Wiring_End, p
 	return nil
 }
 
-// end_allowed is the rule of the asker for one end: a Started end is a
-// process whose start the asker asked for; a Connected end a service to
-// which it holds a connection, for which it acts for the principal.
+// connected_service gives the service of the connection of an asker that
+// the completion of Connect named by number, or nil. The asker names the
+// connection and lends nothing: the process handle of a service has no
+// Give, so that no client lends it to log.process_records
+// (src/md/features/log_reader_scope.md). This service gave the number, so
+// its own record proves it. The asker can close that handle and the
+// kernel can give the number again, so two connections can hold one
+// number: such a number names none, and never the service of another
+// connection.
+@(private = "file")
+connected_service :: proc "contextless" (asker: ^Started, number: system.Handle) -> ^Started {
+	found: ^Started
+	for &connection in connections {
+		if connection.caller != asker || connection.history || connection.caller_service_handle != number {
+			continue
+		}
+		if found != nil {
+			return nil
+		}
+		found = connection.service
+	}
+	return found
+}
+
+// end_allowed reads the facts of one end from the tables of this service,
+// and output.wiring_end_allowed decides: the rule has its host tests there.
 @(private = "file")
 end_allowed :: proc "contextless" (work: ^Wiring_Work, end: output.Wiring_End, process: ^Started) -> bool {
 	asker := work.asker
-	switch end {
-	case .Child, .Asker:
-		return true
-	case .Started:
-		return process.asker == asker || (.Start_Policy in asker.role.grants && process.asked_by_start_policy)
-	case .Connected:
-		if .Acts_For_Principal not_in grants_held(asker) || process.service.head == nil {
-			return false
-		}
-		for &connection in connections {
-			if connection.caller == asker && connection.service == process && !connection.history && connection.client.place == 0 {
-				return true
-			}
-		}
-		return false
-	case .None:
+	facts := output.End_Facts {
+		started_by_asker         = process.asker == asker,
+		asker_is_start_policy    = .Start_Policy in asker.role.grants,
+		started_by_start_policy  = process.asked_by_start_policy,
+		asker_acts_for_principal = .Acts_For_Principal in grants_held(asker),
+		process_is_a_service     = process.service.head != nil,
 	}
-	return false
+	for &connection in connections {
+		if connection.caller == asker && connection.service == process && !connection.history && connection.client.place == 0 {
+			facts.asker_holds_a_connection = true
+			break
+		}
+	}
+	return output.wiring_end_allowed(end, facts)
 }
 
 // wiring_row_resolve is step 3 for one row: it changes nothing.
@@ -422,6 +443,14 @@ wiring_row_resolve :: proc "contextless" (work: ^Wiring_Work, number: u32) -> sy
 	found := i64(number)
 	plan.writer = end_process(work, row.writer_end, row.writer_handle)
 	plan.reader = end_process(work, row.reader_end, row.reader_handle)
+	// A connection number names a connection of the asker, not a lent
+	// handle: its refusal names the connections and the field.
+	if plan.writer == nil && row.writer_end == .Connected {
+		return wiring_refuse(work, .Bad_Handle, .Absent, .Connections, i64(output.Wiring_Field.Writer_Handle), i64(row.writer_handle), 0, found)
+	}
+	if plan.reader == nil && row.reader_end == .Connected {
+		return wiring_refuse(work, .Bad_Handle, .Absent, .Connections, i64(output.Wiring_Field.Reader_Handle), i64(row.reader_handle), 0, found)
+	}
 	if plan.writer == nil || plan.reader == nil {
 		return wiring_refuse(work, .Bad_Handle, .Handle_Absent, .Lent_Handles, 0, 0, 0, found)
 	}

@@ -356,6 +356,10 @@ Connection :: struct {
 	service: ^Started,
 	ring:    system.Handle, // The call ring, as the service names it.
 	region:  system.Handle, // The call region, as the service names it.
+	// The process handle of the service as the caller names it: the number
+	// that the completion of Connect gave. A Connected end of a wiring
+	// names the connection by it, since that handle has no Give.
+	caller_service_handle: system.Handle,
 	// The connection to the store of the line history of the caller
 	// (Root_Command.Connect_History): its grant is the limit of that store,
 	// never the private store and never the grant to act for the principal.
@@ -1736,6 +1740,7 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 		disconnect(free)
 		return status
 	}
+	free.caller_service_handle = given[0]
 	hash := transmute([4]u64)service.hash
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), hash[0], hash[1], hash[2], hash[3]}
 	// The principal of the connection, and whether the caller acts for it.
