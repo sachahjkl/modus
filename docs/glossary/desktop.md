@@ -986,7 +986,7 @@ Do not use: WebGPU implementation, software WebGPU.
 
 The console of a project is the field `console` of a project: the modules that a child console of the project connects, and the stores of the principal that it grants, with their rights.
 
-Example: `console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Write)] }`. `modules` is a list of module values, and the name of a module is the name of its commands, as with `connect`. `enter(p)` starts a child console that connects each module, by its hash, as `connect` does, and holds a connection to each store; `exit()` stops it. Nothing is installed, and no other console sees these commands. It is not a set of environment variables, which the system does not have, and not the context of a process.
+Example: `console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Write)] }`. `modules` is a list of module values, and the name of a module is the name of its commands, as with `connect`. `enter(p)` starts a child console that connects each module, by its hash, as `connect` does, and holds a connection to each store; `exit()` stops it. Nothing is installed, and no other console sees these commands. It is not a set of environment variables, and not the context of a process.
 
 The design: `src/md/features/declarations.md`, "The console of a project".
 
