@@ -363,6 +363,23 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 		append(&works, Reused_Work{what = foundation.join("the package ", path, " of the Odin compiler"), place = path, license = odin_license, license_file = ODIN_LICENSE_FILE})
 	}
 
+	// The works in C that a module compiles in: the license of each is the
+	// copy in its folder of the repository, whose first line names it.
+	for source in foundation.outside_sources() {
+		license_file := foundation.join(source.folder, "/", OUTSIDE_SOURCE_LICENSE_NAME)
+		text, ok := foundation.read_text_file_quiet(license_file)
+		if !ok {
+			missing(problems, license_file, source.work)
+			continue
+		}
+		append(&works, Reused_Work {
+			what         = foundation.join("the work ", source.work, " in C"),
+			place        = source.folder,
+			license      = build.reuse_spdx_of_record_words(strings.trim_space(foundation.lines_of_text(text)[0])),
+			license_file = license_file,
+		})
+	}
+
 	// The portraits of the module hall_of_fame.
 	credits, credits_problem := resources.hall_of_fame_credits_read()
 	if credits_problem != "" {
@@ -399,6 +416,10 @@ reuse_list_check :: proc() -> bool {
 }
 
 FONT_FOLDER :: "resources/fonts"
+
+// The copy of the license of a work in C, in its folder of the repository
+// (src/md/infrastructure/outside_source.md).
+OUTSIDE_SOURCE_LICENSE_NAME :: "LICENSE"
 
 ODIN_LICENSE_FILE :: foundation.CRYPTOGRAPHY_FOLDER + "/LICENSE.odin.txt"
 

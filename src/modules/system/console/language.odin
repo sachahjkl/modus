@@ -565,9 +565,13 @@ argument_accepted :: proc "contextless" (found: ^Command, index: int, argument: 
 		return true
 	}
 	// A table parameter takes a Table value of an equal record; Bytes
-	// take a Text. The direction says what the export does with it.
-	wanted := kind == .Bytes ? Kind.Text : kind
-	if argument.kind != wanted {
+	// take a Text, or the Bytes of a memory object that bytes() read: the
+	// call copies either one. The direction says what the export does with
+	// it.
+	if kind == .Bytes {
+		return argument.kind == .Text || argument.kind == .Bytes
+	}
+	if argument.kind != kind {
 		return false
 	}
 	// A Record agrees when the two descriptions are equal: a record of one

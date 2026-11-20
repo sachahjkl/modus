@@ -570,6 +570,26 @@ The design: `src/md/features/assembler.md`, "The machine step: a module from the
 
 Do not use: dynamic module, loaded file.
 
+### C compiler
+
+The C compiler is the module `c_compiler`, which reads a C source and writes a text of assembly that the assembler takes, into a memory object that its caller lends.
+
+It is `chibicc`, ported: its source is an outside source with four patches. Its export is `compile(source, output)`. Each function of the source that is not `static` becomes an export of the text, with its `int` and `long` types as Integers. A call host compiles one source. It is the stage after the assembler in the native tier of the bootstrap. It is not the compiler of the host that builds the system.
+
+The design: `src/md/features/c_compiler.md`; the guide: `docs/MODULE_CONTRACT.md`, "The C compiler".
+
+Do not use: cc, toolchain.
+
+### Thin libc
+
+The thin libc is the C library that a ported C program compiles in: the procedures that the program calls, over an arena and over streams in memory, with no path and no standard stream of a terminal.
+
+`malloc` pushes on an arena of the budget, and `free` ends nothing. `fopen` opens a name of a table of files, to read. `stderr` is the diagnostic, which the module writes on its log, and `exit` returns to the entry of the program. Today it is the part that `chibicc` calls, in C beside it; it grows with each port. It is not a C library of the host.
+
+The design: `src/md/features/c_compiler.md`, "The thin libc".
+
+Do not use: C runtime, standard library (for this).
+
 ### Declaration
 
 A declaration is a tree of a store whose root holds a text in the language of the console, whose value is one record.
