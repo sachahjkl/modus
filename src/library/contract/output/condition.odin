@@ -43,29 +43,35 @@ Condition_Value_Kind :: enum u32 {
 }
 
 // The terms of a condition, as the asker writes them after the lent
-// handles of its list. Each word is the word of its member or a number.
+// handles of its list, or as the wiring terms of `filter`. Each word is the
+// word of its member or a number. The tool describes it for the record
+// input of `filter`, so its text has a written count and each reserved
+// word is a field of its own: the tool takes no other array.
 Condition_Terms :: struct {
-	field:      u32, // The number of the field from 1, in the record description of the record output.
-	comparison: u32, // A Condition_Comparison.
-	value_kind: u32, // A Condition_Value_Kind.
-	text_count: u32, // A Text: its bytes, at most CONDITION_TEXT_BYTES_MOST. An Integer: 0.
-	integer:    i64, // An Integer: the value. A Text: 0.
-	text:       [CONDITION_TEXT_BYTES_MOST]u8, // A Text: its bytes, then zero bytes. An Integer: zero bytes.
-	reserved:   [2]u32, // 0.
+	field:           u32, // The number of the field from 1, in the record description of the record output.
+	comparison:      u32, // A Condition_Comparison.
+	value_kind:      u32, // A Condition_Value_Kind.
+	text_count:      u32, // A Text: its bytes, at most CONDITION_TEXT_BYTES_MOST. An Integer: 0.
+	integer:         i64, // An Integer: the value. A Text: 0.
+	text:            [64]u8, // A Text: its bytes, then zero bytes. An Integer: zero bytes.
+	reserved_first:  u32, // 0.
+	reserved_second: u32, // 0.
 }
 #assert(size_of(Condition_Terms) == 96)
+#assert(size_of(Condition_Terms{}.text) == CONDITION_TEXT_BYTES_MOST)
 
 // The number of each field of Condition_Terms, from 1, as the error record
 // of a refusal names it in its argument; 0 for the terms as a whole.
 Condition_Terms_Field :: enum i64 {
-	Whole      = 0,
-	Field      = 1,
-	Comparison = 2,
-	Value_Kind = 3,
-	Text_Count = 4,
-	Integer    = 5,
-	Text       = 6,
-	Reserved   = 7,
+	Whole           = 0,
+	Field           = 1,
+	Comparison      = 2,
+	Value_Kind      = 3,
+	Text_Count      = 4,
+	Integer         = 5,
+	Text            = 6,
+	Reserved_First  = 7,
+	Reserved_Second = 8,
 }
 
 // How the writer reads the field of a condition. 0 names nothing.
@@ -160,10 +166,11 @@ writer_condition_of_terms :: proc "contextless" (bytes: []u8, file: []u8, descri
 	}
 	terms: Condition_Terms
 	intrinsics.mem_copy_non_overlapping(&terms, raw_data(bytes), size_of(terms))
-	for word in terms.reserved {
-		if word != 0 {
-			return {}, terms_refusal(.Reserved, i64(word), 0), false
-		}
+	if terms.reserved_first != 0 {
+		return {}, terms_refusal(.Reserved_First, i64(terms.reserved_first), 0), false
+	}
+	if terms.reserved_second != 0 {
+		return {}, terms_refusal(.Reserved_Second, i64(terms.reserved_second), 0), false
 	}
 	if terms.field == 0 || terms.field > description.field_count {
 		return {}, terms_refusal(.Field, i64(terms.field), i64(description.field_count)), false

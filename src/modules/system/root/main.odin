@@ -344,6 +344,11 @@ Started :: struct {
 	// context and never in the wiring ring: it keeps no mapping of the
 	// wiring ring in this service.
 	log_ends_given:  int,
+	// The types that wirings fixed for its generic record inputs of the
+	// counts One and Many: each lasts until the stop of the process
+	// (wirings.odin).
+	generic_types:      [GENERIC_TYPES_OF_A_PROCESS_MOST]Generic_Type,
+	generic_type_count: int,
 }
 
 // place_is_free says if a place of the table of the processes holds no

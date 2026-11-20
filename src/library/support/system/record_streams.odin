@@ -61,6 +61,7 @@ Output_State :: struct {
 	last_end:    output.End_Word, // The end word of the last ring that ended by an end word.
 	rings_ended: u64, // The rings that ended by an end word: a reader that stopped, its asker, a revocation.
 	rings_broken: u64, // The rings that the writer closed for a count of the reader past its own write: no honest reader writes one.
+	record_size: u32, // A generic record output: the size of its record, from output_size_set; 0 until then. A record output of a record: 0, as its type gives its size.
 }
 #assert(offset_of(Output_State, index) == 0)
 
@@ -68,6 +69,7 @@ Output_State :: struct {
 // record output.
 Input_State :: struct {
 	index: u32, // The loader writes it.
+	turn:  u32, // The place of the table of the ends where the next read starts: the ends of the counts Many and Many_Types are read in turn.
 	read:  u64, // The records that the readers took.
 }
 #assert(offset_of(Input_State, index) == 0)

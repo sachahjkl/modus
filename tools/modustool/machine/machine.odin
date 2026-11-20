@@ -2890,6 +2890,18 @@ scenario := [?]Step {
 	{kind = .Wait, text = "root: wired the record output 1 of log to its asker log_follower, wiring "},
 	{kind = .Wait, text = "log_follower: log.follow gave ", fails_on = "log_follower: WRONG"},
 	{kind = .Wait, text = "root: log_follower stopped: itself, done"},
+	// The generic record inputs, merge and filter, through start lists
+	// (src/md/features/module_outputs.md, "Generic record inputs and the
+	// utility modules"): the refusals first, then a chain of
+	// generic_source, merge and filter in one list, then a filter whose
+	// condition names no field. Each process writes a few lines only.
+	{kind = .Type, text = "start(\"generic_wiring\")"},
+	{kind = .Wait, text = "generic_wiring: a second source of another record, a generic output with no fixed type, a record of no terms into a running generic input, a condition on no field and one source past the wirings of an asker: refused, each with its status and its error record and the budget unchanged: as it must", fails_on = "generic_wiring: WRONG"},
+	{kind = .Wait, text = "generic_source: wrote 20 probes into left and into right, and ended both", fails_on = "generic_source: WRONG", any_order = true},
+	{kind = .Wait, text = "generic_wiring: generic_source to merge to filter with mark = 1 to this asker, in one start list, after a refused Wire of Other into filter.source kept no type: the joined record of 0, the 20 probes of mark 1 of the two sides, each side in its order, then a clean end: as it must", fails_on = "generic_wiring: WRONG"},
+	{kind = .Wait, text = "generic_wiring: filter with a condition on the field 0 ended kept at once with the error record of that field: as it must", fails_on = "generic_wiring: WRONG"},
+	{kind = .Wait, text = "generic_wiring: ok, after 5 refusals"},
+	{kind = .Wait, text = "root: generic_wiring stopped: itself, done", any_order = true},
 	// The streams of the console (src/md/features/module_outputs.md, "The
 	// console form"): the console starts output_counter and reads its
 	// record output by its typed name. The refusals first, none of which
@@ -2960,6 +2972,18 @@ scenario := [?]Step {
 	{kind = .Type, text = "start(\"output_count_reader\", wire(where(output_counter.counts, status = 404), output_count_reader.counts))"},
 	{kind = .Wait, text = "output_count_reader: joined after ", fails_on = "output_count_reader: WRONG"},
 	{kind = .Wait, text = "root: output_count_reader stopped: itself, done", any_order = true},
+	// merge through the console: its generic record output has no record
+	// before a list of this console fixed one; the list of its start
+	// fixes it, with a generic record input that wire takes with no type
+	// check; then merge.merged reads as the records of output_counter.
+	{kind = .Type, text = "merge.merged"},
+	{kind = .Wait, text = "[console] error: merge.merged is generic: it writes the record that the first wiring of the generic record input of merge fixed, and no list of a start of merge by this console fixed one"},
+	{kind = .Type, text = "start(\"merge\", wire(where(output_counter.counts, status = 404), merge.sources))"},
+	{kind = .Wait, text = "root: wired the record output 1 of output_counter to merge, wiring "},
+	{kind = .Type, text = "merge.merged |> first(2)"},
+	{kind = .Wait, text = "[console] 2 rows of Counted"},
+	{kind = .Type, text = "stop(\"merge\")"},
+	{kind = .Wait, text = "root: merge stopped: "},
 	// A writer that writes a record that fails the condition of its
 	// wiring: the console refuses it as a fault of the writer, with its
 	// error record, and closes the record stream.

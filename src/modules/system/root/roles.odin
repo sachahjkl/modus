@@ -385,6 +385,14 @@ process_roles := [?]Process_Role_Row {
 	// service in their wiring rings, and they need no grant.
 	{name = "output_writer"},
 	{name = "output_reader"},
+	// The utility modules of the record streams: their ends come in their
+	// wiring rings, and they need no grant.
+	{name = "merge"},
+	{name = "filter"},
+	// The asker of the test of the generic record inputs: Start, Wire and
+	// Stop are commands of the root ring. Its writer needs no grant.
+	{name = "generic_wiring", grants = {.Root_Ring}},
+	{name = "generic_source"},
 	// The writer of the test of the record output log: its end comes in
 	// its context before its first instruction, and it needs no grant. Its
 	// log budget holds 0 records (budgets.odin).

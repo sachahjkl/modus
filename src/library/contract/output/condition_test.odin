@@ -122,11 +122,12 @@ terms_of_another_size_are_refused :: proc(t: ^testing.T) {
 // word; a Handle and Bytes, which the writer does not filter.
 @(test)
 a_field_that_names_no_field_or_that_is_not_filtered_is_refused :: proc(t: ^testing.T) {
-	for index in 0 ..< len(Condition_Terms{}.reserved) {
-		terms := integer_terms(1, .Equal, 0)
-		terms.reserved[index] = 1
-		expect_refused(t, terms, .Reserved, 1, 0)
-	}
+	first := integer_terms(1, .Equal, 0)
+	first.reserved_first = 1
+	expect_refused(t, first, .Reserved_First, 1, 0)
+	second := integer_terms(1, .Equal, 0)
+	second.reserved_second = max(u32)
+	expect_refused(t, second, .Reserved_Second, i64(max(u32)), 0)
 	for field in ([?]u32{0, PROBE_FIELDS + 1, max(u32)}) {
 		expect_refused(t, integer_terms(field, .Equal, 0), .Field, i64(field), PROBE_FIELDS)
 	}

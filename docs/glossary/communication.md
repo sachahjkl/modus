@@ -756,7 +756,7 @@ Do not use: start marker, subscription point, replay.
 
 A generic record input is a record input that declares no record type, `system.Record_Input(system.Any_Record)`, and whose type its wiring fixes from the record output of the writer.
 
-The root service reads the record description from the module file of the writer and gives it to the reader with its end. With the count `Many`, the first wiring fixes one type for each later one; with `Many_Types`, each wiring keeps its own type. A module that moves records and reads no field, such as `merge` or the collector, works on any stream so. It does not take any bytes: each record is checked against the fixed type.
+The root service reads the record description from the module file of the writer and gives it to the reader with its end. With the count `Many`, the first wiring fixes one type for each later one, until the stop of the reader; with `Many_Types`, each wiring keeps its own type. A module that moves records and reads no field, such as `merge` or the collector, works on any stream so. It does not take any bytes: each record is checked against the fixed type.
 
 The design: `src/md/features/module_outputs.md`, "Generic record inputs and the utility modules".
 
@@ -771,6 +771,14 @@ With the mark `Paired`, it has one ring for each wiring of that record input, of
 The design: `src/md/features/module_outputs.md`, "Generic record inputs and the utility modules".
 
 Do not use: untyped output, passthrough type.
+
+### Utility module
+
+A utility module is a module that works on a stream of any record, with a generic record input and a generic record output, and no window and no grant: `merge` and `filter`.
+
+A starter wires it in the list of a start, as any record stream. `merge` joins several sources of one record into one stream, and `filter` keeps the records that pass the one condition of its wiring terms. Each runs as a process of its own, of the module group `libraries`. Example: `start("merge", wire(alpha.out, merge.sources) + wire(beta.out, merge.sources))`, then `merge.merged`. The design: `src/md/features/module_outputs.md`, "Generic record inputs and the utility modules".
+
+Do not use: tee, adapter, pipe stage.
 
 ### Record output log
 
@@ -842,7 +850,7 @@ Do not use: subscription table, wiring table.
 
 The wiring terms are the record that the asker of a wiring gives for the record input, and that the reader receives with its end.
 
-A source declares them with the record input, `system.Record_Input_With_Terms(system.Any_Record, Condition)`, and the module file holds their record type in its row of the table `Record_Inputs`. The root service checks their size against that description and copies them once; the reader checks their fields. Examples: the condition of `filter` (a field, an operator and a value), the kind, the bound and the forward of a collector space. A free text is never a term.
+A source declares them with the record input, `system.Record_Input_With_Terms(system.Any_Record, output.Condition_Terms)`, and the module file holds their record type in its row of the table `Record_Inputs`. The root service checks their size against that description and copies them once; the reader checks their fields. Examples: the condition of `filter` (a field, an operator and a value), the kind, the bound and the forward of a collector space. A free text is never a term.
 
 The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
 

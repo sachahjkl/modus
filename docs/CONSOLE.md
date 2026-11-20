@@ -310,7 +310,14 @@ The rows come from the next request on: the console draws "joined after N record
 |---|---|
 | `wire` | a first argument that is no `Stream`, a second that is no `Record_Input`; two records that differ; one process at both ends; a `Stream` with more than one condition, or that `columns` cut |
 | `start` with a list | a list that is no `Table` of `Wiring`; a row that names no end of the module, or names it at both ends; an end that does not run; more than 32 rows or 16 lent handles; each check comes before the console lends a handle |
-| the root service | each refusal of the list, with the row in its error record: a record input of the count `One` wired twice among them |
+| the root service | each refusal of the list, with the row in its error record: a record input of the count `One` wired twice among them, and a second source of a generic record input of another record than the first |
+
+**A generic record input or output.** `merge.sources` is a generic record input: `wire` takes it with no check of the record, and the root service checks the record of each wiring against the one that the first fixed. `merge.merged` writes the record that a list of a `start` of this console fixed for `merge`; with none, the line fails and says so:
+
+```
+> start("merge", wire(where(output_counter.counts, status = 404), merge.sources))
+> merge.merged |> first(2)
+```
 
 ### How a line composes
 

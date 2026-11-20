@@ -60,6 +60,12 @@ Stream_Owner :: struct {
 	// Started, Connected, or Child for a module that does not run: the end
 	// that it is in the list of its own start.
 	end:     output.Wiring_End,
+	// The record that a list of start of this console fixed for the generic
+	// record input of the owner, which its generic record output takes
+	// (src/md/features/module_outputs.md, "The decisions of the generic record inputs"): the
+	// file that describes it, and its index there. nil: none.
+	generic_file:   []u8,
+	generic_detail: u32,
 }
 
 stream_owners: [STREAM_OWNER_CAPACITY]Stream_Owner
@@ -218,10 +224,21 @@ stream_owner_named :: proc "contextless" (name: string) -> bool {
 stream_name_known :: proc "contextless" (name: string) -> (file: []u8, detail: u32, kind: Kind, known: bool) {
 	owner_name, stream_name := console_stream.typed_name_split(name) or_return
 	owner := stream_owner_find(owner_name, false) or_return
-	if _, record, found := console_stream.record_output_find(owner.file, stream_name); found == .Found {
-		return owner.file, record, .Stream, true
+	_, output_record, output_found := console_stream.record_output_find(owner.file, stream_name)
+	switch output_found {
+	case .Found:
+		return owner.file, output_record, .Stream, true
+	case .Generic:
+		// A generic record output reads as the record that a list of
+		// this console fixed for it.
+		if owner.generic_file != nil {
+			return owner.generic_file, owner.generic_detail, .Stream, true
+		}
+		return nil, 0, .None, false
+	case .Absent, .Damaged:
 	}
-	if _, record, found := console_stream.record_input_find(owner.file, stream_name); found == .Found {
+	// A generic record input has no fields: the record 0.
+	if _, record, found := console_stream.record_input_find(owner.file, stream_name); found == .Found || found == .Generic {
 		return owner.file, record, .Record_Input, true
 	}
 	return nil, 0, .None, false
@@ -271,21 +288,38 @@ stream_value_of_name :: proc "contextless" (name: string) -> (value: Value, name
 		index, record, how = console_stream.record_input_find(owner.file, stream_name)
 		is_input = true
 	}
+	// The record that the line reads: of the declaration, or for a generic
+	// record output the record that a list of this console fixed.
+	file := owner.file
 	switch how {
 	case .Found:
 	case .Absent:
 		return stream_names_fail(owner_name, stream_name, owner.file), true
 	case .Generic:
-		return fail(name, " is generic: its record comes with its wiring, and the console names a record output or a record input of a record only"), true
+		switch {
+		case is_input:
+			// wire takes it; the root service checks the record of each
+			// wiring, as the first one fixes it.
+		case owner.generic_file != nil:
+			file, record = owner.generic_file, owner.generic_detail
+		case:
+			return fail(name, " is generic: it writes the record that the first wiring of the generic record input of ", owner_name, " fixed, and no list of a start of ", owner_name, " by this console fixed one"), true
+		}
 	case .Damaged:
 		return fail("the module file of ", owner_name, " has a row of its record streams that the module contract refuses"), true
 	}
 	if line_stream_count >= LINE_STREAM_CAPACITY {
 		return fail("a line names at most ", u64(LINE_STREAM_CAPACITY), " record streams"), true
 	}
-	described, described_ok := module.record_type(owner.file, record)
-	if !described_ok || described.size == 0 {
-		return fail("the record of ", name, " has no valid description"), true
+	// A generic record input has no record of its own: size 0, which only
+	// wire reads.
+	size := 0
+	if record != 0 {
+		described, described_ok := module.record_type(file, record)
+		if !described_ok || described.size == 0 {
+			return fail("the record of ", name, " has no valid description"), true
+		}
+		size = int(described.size)
 	}
 	line_streams[line_stream_count] = {
 		owner       = owner.name,
@@ -294,13 +328,13 @@ stream_value_of_name :: proc "contextless" (name: string) -> (value: Value, name
 		end         = owner.end,
 		is_input    = is_input,
 		index       = index,
-		file        = owner.file,
+		file        = file,
 		detail      = record,
-		size        = int(described.size),
+		size        = size,
 	}
 	line_stream_count += 1
 	kind := is_input ? Kind.Record_Input : Kind.Stream
-	return {kind = kind, file = owner.file, detail = record, integer = i64(line_stream_count - 1)}, true
+	return {kind = kind, file = file, detail = record, integer = i64(line_stream_count - 1)}, true
 }
 
 // line_stream_of gives the Stream or the record input of a value of the
@@ -338,7 +372,7 @@ condition_terms_fail :: proc "contextless" (condition: Condition, refusal: outpu
 		return fail("where: the field ", condition.field, " cannot hold the value of the condition")
 	case .Text_Count, .Text:
 		return fail("where: a record stream compares a Text of at most ", u64(output.CONDITION_TEXT_BYTES_MOST), " bytes and the bytes of its field, with no zero byte and no control character")
-	case .Whole, .Reserved:
+	case .Whole, .Reserved_First, .Reserved_Second:
 	}
 	return fail("where: the terms of the condition on ", condition.field, " are refused")
 }
@@ -1028,7 +1062,12 @@ wire :: proc "contextless" (arguments: []Value) -> Value {
 	if from.owner == to.owner {
 		return fail("wire: ", from.owner, " is at both ends: a wiring joins two processes")
 	}
-	difference, part := output.record_descriptions_compare(from.file, from.detail, to.file, to.detail)
+	// A generic record input takes the record of its wiring: the root
+	// service checks it against the type that the first wiring fixed.
+	difference, part := output.Description_Difference.Equal, u32(0)
+	if to.detail != 0 {
+		difference, part = output.record_descriptions_compare(from.file, from.detail, to.file, to.detail)
+	}
 	if difference != .Equal {
 		writer_record, _ := module.record_type(from.file, from.detail)
 		reader_record, _ := module.record_type(to.file, to.detail)
@@ -1100,11 +1139,29 @@ start_end_of :: proc "contextless" (number: int, module_name: string, child_file
 	} else {
 		index, _, how = console_stream.record_output_find(file, stream_name)
 	}
-	if how != .Found {
+	// A generic end is a row too: the root service fixes and checks its
+	// record.
+	if how != .Found && how != .Generic {
 		stream_names_fail(owner_name, stream_name, file)
 		return {}, 0, false
 	}
 	return owner, index, true
+}
+
+// start_row_type gives the record that the writer of a row writes: the
+// record of its record output, or for a generic one the record that a list
+// of this console fixed for its owner. nil: none is known.
+@(private = "file")
+start_row_type :: proc "contextless" (owner: Stream_Owner, index: u32, child_file: []u8, is_child: bool) -> (file: []u8, detail: u32) {
+	file = is_child ? child_file : owner.file
+	value, _, _, ok := module.record_output(file, index)
+	if !ok {
+		return nil, 0
+	}
+	if value.record != 0 {
+		return file, value.record
+	}
+	return owner.generic_file, owner.generic_detail
 }
 
 // start_with_list starts a module with the rows of a Table of the record
@@ -1138,6 +1195,8 @@ start_with_list :: proc "contextless" (name: string, list: Value) -> Value {
 	}
 	handle_count := 0
 	condition_count := 0
+	fixed_file: []u8
+	fixed_detail: u32
 	for index in 0 ..< table.rows {
 		row := table_row(table, list, index)
 		writer := module.field_text(row, items[WIRING_COLUMN_WRITER])
@@ -1162,6 +1221,14 @@ start_with_list :: proc "contextless" (name: string, list: Value) -> Value {
 		}
 		planned.writer_owner, planned.reader_owner = writer_owner, reader_owner
 		planned.row = {writer_end = u32(writer_owner.end), writer_stream = u32(output.Writer_Stream.Record_Output), writer_index = writer_index, reader_end = u32(reader_owner.end), reader_index = reader_index}
+		// The first row to the generic record input of the module, of the
+		// counts One or Many, fixes its record, as the root service does:
+		// its generic record output then reads as that record.
+		if reader_is_child && fixed_file == nil {
+			if input, wirings, _, _, input_ok := module.record_input(child_file, reader_index); input_ok && input.record == 0 && wirings != .Many_Types {
+				fixed_file, fixed_detail = start_row_type(writer_owner, writer_index, child_file, writer_is_child)
+			}
+		}
 		handle_count += int(writer_owner.end == .Started) + int(reader_owner.end == .Started)
 		if field := module.field_integer(row, items[WIRING_COLUMN_FIELD]); field != 0 {
 			planned.has_terms = true
@@ -1235,8 +1302,16 @@ start_with_list :: proc "contextless" (name: string, list: Value) -> Value {
 	if status, _ := system.status_of_word(completion.kind); status != .Ok {
 		return fail_root(scratch_text("start: ", name, ": "), completion)
 	}
-	if !stream_owner_keep(name, system.Handle(completion.values[0])) {
+	process := system.Handle(completion.values[0])
+	if !stream_owner_keep(name, process) {
 		return fail("start: ", name, " runs, and has no typed name: the console names the record outputs of ", u64(STREAM_OWNER_CAPACITY), " processes that it started at most, until one of them stops")
+	}
+	if fixed_file != nil {
+		for &owner in stream_owners {
+			if owner.process == process {
+				owner.generic_file, owner.generic_detail = fixed_file, fixed_detail
+			}
+		}
 	}
 	return {}
 }
