@@ -98,6 +98,25 @@ Read_State :: struct {
 	joined:      bool, // It took the joined record.
 	ended:       bool, // It took the end record: no compartment comes after it.
 	next_serial: u32, // The serial of the next record.
+	// The wiring has a condition (Reader_Filter.By_Writer): the writer
+	// leaves out the records that fail it, so a serial moves forward by any
+	// count below SERIAL_FORWARD_MOST.
+	filtered:    bool,
+}
+
+// How far a serial of a ring with a condition moves forward at most: half
+// of the 32 bits, so a serial behind the next one is never taken for one
+// far ahead.
+SERIAL_FORWARD_MOST :: u32(1) << 31
+
+// serial_follows says if a serial is the one that the reader takes next:
+// the next serial, or on a ring with a condition a serial at or past it by
+// less than SERIAL_FORWARD_MOST.
+serial_follows :: proc "contextless" (state: ^Read_State, serial: u32) -> bool {
+	if !state.filtered {
+		return serial == state.next_serial
+	}
+	return serial - state.next_serial < SERIAL_FORWARD_MOST
 }
 
 // One compartment that the border took.
@@ -138,7 +157,9 @@ Compartment_Fault :: enum u8 {
 // - a first compartment that is not a joined record, a second joined record, and
 //   any compartment after the end record;
 // - a serial that is not the next one: the joined record gives the first,
-//   each record adds 1, a gap of N adds N, and the end record holds it;
+//   each record adds 1, a gap of N adds N, and the end record holds it; on
+//   a ring with a condition (state.filtered), a serial behind the next
+//   one or past it by SERIAL_FORWARD_MOST or more (serial_follows);
 // - a gap of 0 records;
 // - a byte that the kind does not name and that is not 0: past the count
 //   of a gap, past the error record of an end, past the compartment word of a
@@ -169,7 +190,7 @@ record_of_compartment :: proc "contextless" (state: ^Read_State, compartment: []
 	if state.joined && kind == .Joined {
 		return {}, .Joined_Again, errors.error_make(.Bad_Value, .None, 0, i64(word.kind), 0, 0)
 	}
-	if state.joined && word.serial != state.next_serial {
+	if state.joined && !serial_follows(state, word.serial) {
 		return {}, .Wrong_Serial, errors.error_make(.Bad_Value, .Records, 0, i64(word.serial), i64(state.next_serial), 0)
 	}
 	taken = {kind = kind, serial = word.serial}

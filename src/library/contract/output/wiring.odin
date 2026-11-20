@@ -54,10 +54,18 @@ Wiring_Command :: enum u32 {
 WIRING_VALUE_RING :: 0 // The handle of the output ring, with Read and Write, given through the wiring ring.
 WIRING_VALUE_INDEX :: 1 // The index of the record output or the record input in the tables of the module, from 1.
 WIRING_VALUE_PACE :: 2 // A writer end: the word of its Wiring_Pace. A reader end: 0.
-WIRING_VALUE_TERMS :: 3 // A reader end: the handle of a memory object with its wiring terms at offset 0, with Read only, given through the wiring ring; or 0. A writer end: 0.
+WIRING_VALUE_TERMS :: 3 // A reader end: the handle of a memory object with its wiring terms at offset 0, with Read only, given through the wiring ring; or 0. A writer end: the handle of the page of its Writer_Condition, with Read only; or 0. An asker end: 0.
 WIRING_VALUE_DESCRIPTION :: 4 // A reader end: the handle of its description file (description_file_write), with Read only, given through the wiring ring; never 0. A writer end: 0.
 WIRING_VALUE_END_WORDS :: 5 // Each end: the handle of the end page of the wiring (End_Words), with Read only, given through the wiring ring; never 0.
-WIRING_VALUE_FIRST_RESERVED :: 6 // From this index to the last value: 0.
+WIRING_VALUE_FILTER :: 6 // A reader end: the word of its Reader_Filter. A writer end: 0.
+
+// Whether the writer leaves out records of a ring: the wiring has a
+// condition. 0 names no condition. The values cross the border of the
+// wiring ring.
+Reader_Filter :: enum u64 {
+	None      = 0, // Each record of the record output comes, and the serials follow one another.
+	By_Writer = 1, // The writer writes only the records that pass the condition of the wiring: the serials move forward by any count.
+}
 
 // One end that the process took from the wiring ring. It lives in the
 // private memory of the process. The handles are numbers that the root
@@ -72,6 +80,8 @@ Given_End :: struct {
 	terms:   op.Handle, // A reader end: the memory of its wiring terms, or 0.
 	description: op.Handle, // A reader end: the memory of its description file. A writer end: 0.
 	end_words: op.Handle, // Each end: the end page of the wiring, which the root service alone writes.
+	condition: op.Handle, // A writer end: the page of its Writer_Condition, or 0. A reader end: 0.
+	filter:    Reader_Filter, // A reader end: whether the writer leaves out records. A writer end: None.
 }
 
 // given_end_of_record is the border of a command of the wiring ring: the
@@ -83,11 +93,11 @@ Given_End :: struct {
 // - an end page of 0, or past 32 bits;
 // - a description file beside a writer end, and none or one past 32 bits
 //   beside a reader end;
-// - for a writer end, a pace that names no Wiring_Pace, and a terms handle
-//   that is not 0;
-// - for a reader end, a pace word that is not 0, and a terms handle past
-//   32 bits;
-// - a reserved word that is not 0.
+// - for a writer end, a pace that names no Wiring_Pace, a condition page
+//   past 32 bits, and a filter word that is not 0;
+// - for a reader end, a pace word that is not 0, a terms handle past 32
+//   bits, and a filter word that names no Reader_Filter;
+// - for an asker end, a terms handle that is not 0.
 //
 // The refusal is Bad_Value: its argument is the index of the word + 1, or
 // 0 for the kind, its value the word (at most 2^62), and its limit the
@@ -121,13 +131,19 @@ given_end_of_record :: proc "contextless" (record: ring.Record) -> (end: Given_E
 		if !pace_known {
 			return {}, word_refusal(WIRING_VALUE_PACE + 1, values[WIRING_VALUE_PACE], u64(max(Wiring_Pace))), false
 		}
-		if values[WIRING_VALUE_TERMS] != 0 {
-			return {}, word_refusal(WIRING_VALUE_TERMS + 1, values[WIRING_VALUE_TERMS], 0), false
+		// The word of the terms is the page of the condition of the
+		// wiring, or 0.
+		if values[WIRING_VALUE_TERMS] > u64(max(u32)) {
+			return {}, word_refusal(WIRING_VALUE_TERMS + 1, values[WIRING_VALUE_TERMS], u64(max(u32))), false
 		}
 		if values[WIRING_VALUE_DESCRIPTION] != 0 {
 			return {}, word_refusal(WIRING_VALUE_DESCRIPTION + 1, values[WIRING_VALUE_DESCRIPTION], 0), false
 		}
+		if values[WIRING_VALUE_FILTER] != 0 {
+			return {}, word_refusal(WIRING_VALUE_FILTER + 1, values[WIRING_VALUE_FILTER], 0), false
+		}
 		end.pace = pace
+		end.condition = op.Handle(values[WIRING_VALUE_TERMS])
 	case .Reader_End, .Asker_End:
 		if values[WIRING_VALUE_PACE] != 0 {
 			return {}, word_refusal(WIRING_VALUE_PACE + 1, values[WIRING_VALUE_PACE], 0), false
@@ -144,15 +160,15 @@ given_end_of_record :: proc "contextless" (record: ring.Record) -> (end: Given_E
 			return {}, word_refusal(WIRING_VALUE_DESCRIPTION + 1, values[WIRING_VALUE_DESCRIPTION], u64(max(u32))), false
 		}
 		end.description = op.Handle(values[WIRING_VALUE_DESCRIPTION])
+		filter, filter_known := enum_word.member_of_word(Reader_Filter, values[WIRING_VALUE_FILTER])
+		if !filter_known {
+			return {}, word_refusal(WIRING_VALUE_FILTER + 1, values[WIRING_VALUE_FILTER], u64(max(Reader_Filter))), false
+		}
+		end.filter = filter
 	case .None:
 		// The check of the kind above refused None: the case keeps the
 		// switch whole.
 		return {}, word_refusal(0, u64(record.kind), u64(max(Wiring_Command))), false
-	}
-	for index in WIRING_VALUE_FIRST_RESERVED ..< len(values) {
-		if values[index] != 0 {
-			return {}, word_refusal(index + 1, values[index], 0), false
-		}
 	}
 	return end, {}, true
 }
@@ -175,9 +191,11 @@ given_end_record :: proc "contextless" (end: Given_End) -> ring.Record {
 	switch end.command {
 	case .Writer_End:
 		record.values[WIRING_VALUE_PACE] = u64(end.pace)
+		record.values[WIRING_VALUE_TERMS] = u64(end.condition)
 	case .Reader_End, .Asker_End:
 		record.values[WIRING_VALUE_TERMS] = u64(end.terms)
 		record.values[WIRING_VALUE_DESCRIPTION] = u64(end.description)
+		record.values[WIRING_VALUE_FILTER] = u64(end.filter)
 	case .None:
 	}
 	return record

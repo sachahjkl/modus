@@ -395,13 +395,13 @@ Each command is an export of the service under a short name (`bound_call`, `CONS
 | `debug_memory(place, count)` | `memory` | `memory` gives the memory of the machine |
 | `events()`, `wait_stop(milliseconds)` | The same names | |
 
-A table of the debugger is a table as any other: `columns(stack(0), "frame procedure line")`, `where(locals(0, 1), name = "total")`.
+A table of the debugger is a table as any other: `columns(stack(0), frame, procedure, line)`, `where(locals(0, 1), name = "total")`.
 
 ```
 > debug("debug_target")
 > break_at("debug_target::add_step")
 > wait_stop(3000)
-> columns(stack(0), "frame procedure")
+> columns(stack(0), frame, procedure)
 frame  procedure
     0  debug_target::add_step
     1  debug_target::count_rounds
@@ -1027,10 +1027,10 @@ modustool run
 `modustool run` starts the machine with `build/data_disk.img`. The command writes no disk over a file that exists: a data disk holds the stores of a principal. The module runs with no grant and with the budget that it asks for, up to the largest budget of a disk process, paid by the one budget of the disk processes (`MODULE_CONTRACT.md`, "The budget that a module asks for"), and its name is no name of a module of the boot image (`MODULE_CONTRACT.md`, "A module from a disk"). The test part `disk_processes` builds a copy of the module `visitor` outside the sources under the name `outsider`, puts its file and its debug object on the disk, and starts it in the machine. The debugger attaches to it, holds its thread, and gives the frame of the procedure where it sleeps with its file and its line:
 
 ```
-> columns(debug("outsider"), "process described")
+> columns(debug("outsider"), process, described)
 outsider          1
-> columns(hold(0), "thread state")
-> columns(where(stack(0), procedure = "entry"), "module procedure file line")
+> columns(hold(0), thread, state)
+> columns(where(stack(0), procedure = "entry"), module, procedure, file, line)
 outsider  entry      outsider/main.odin    93
 ```
 
@@ -1038,7 +1038,7 @@ A module that faults needs no attach. The test part builds the same copy a secon
 
 ```
 > start_from_disk("outsider_fault", "<hash>")
-> columns(where(stop_report("outsider_fault"), procedure = "visitor::fault_three"), "module procedure file line")
+> columns(where(stop_report("outsider_fault"), procedure = "visitor::fault_three"), module, procedure, file, line)
 outsider_fault  visitor::fault_three  outsider/main.odin   169
 ```
 

@@ -4,7 +4,7 @@
 
 ## Purpose
 
-A frequent task of the console is a chain of calls: a table, then a filter, then the columns. With calls in calls, the reader reads it from the inside out, and the name of the last call is the first word of the line. With `|>`, the line reads in the order in which its calls run, which property 22 asks for: `processes() |> where(name = "server") |> columns("name slot")`. The designs of the log facts and of the record outputs write their frequent tasks with it ([log_facts.md](log_facts.md), [module_outputs.md](module_outputs.md)).
+A frequent task of the console is a chain of calls: a table, then a filter, then the columns. With calls in calls, the reader reads it from the inside out, and the name of the last call is the first word of the line. With `|>`, the line reads in the order in which its calls run, which property 22 asks for: `processes() |> where(name = "server") |> columns(name, slot)`. The designs of the log facts and of the record outputs write their frequent tasks with it ([log_facts.md](log_facts.md), [module_outputs.md](module_outputs.md)).
 
 ## Constraints
 

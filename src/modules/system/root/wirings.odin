@@ -134,6 +134,11 @@ Wiring_Plan :: struct {
 	end_memory:         system.Handle,
 	terms_memory:       system.Handle,
 	description_memory: system.Handle,
+	// The condition of the row, resolved against the record of the
+	// writer, and the page that gives it to the writer.
+	condition:          output.Writer_Condition,
+	has_condition:      bool,
+	condition_memory:   system.Handle,
 	kept:               ^Wiring_Kept,
 	page:               ^Wiring_Page,
 	number:             u32,
@@ -505,6 +510,22 @@ wiring_row_resolve :: proc "contextless" (work: ^Wiring_Work, number: u32) -> sy
 	if row.terms_count != plan.terms_size {
 		return wiring_refuse(work, .Bad_Operation, .Bad_Value, .Wiring_Terms, i64(output.Wiring_Field.Terms_Count), i64(row.terms_count), i64(plan.terms_size), found)
 	}
+	// The condition, against the record of the writer: the writer receives
+	// the place of the field, and leaves out the records that fail it
+	// (src/md/features/module_outputs.md, "The condition of a wiring").
+	plan.has_condition = false
+	if row.condition_offset != 0 {
+		description, _ := module.record_stream_type(plan.writer_file, plan.description)
+		terms := wiring_list_copy[row.condition_offset:][:size_of(output.Condition_Terms)]
+		condition, refusal, condition_ok := output.writer_condition_of_terms(terms, plan.writer_file, description)
+		if !condition_ok {
+			refusal.operation = i64(work.command)
+			refusal.found = found
+			work.refusal = errors.completion_values(refusal)
+			return .Bad_Operation
+		}
+		plan.condition, plan.has_condition = condition, true
+	}
 	return .Ok
 }
 
@@ -789,6 +810,10 @@ wiring_plan_make :: proc "contextless" (work: ^Wiring_Work, plan: ^Wiring_Plan, 
 	if plan.row.terms_count != 0 {
 		plan.terms_memory = page_write(asker, wiring_list_copy[plan.row.terms_offset:][:plan.row.terms_count], error) or_return
 	}
+	if plan.has_condition {
+		condition_bytes := transmute([size_of(output.Writer_Condition)]u8)plan.condition
+		plan.condition_memory = page_write(asker, condition_bytes[:], error) or_return
+	}
 	size, described := output.description_file_write(description_copy[:], plan.writer_file, plan.description)
 	if !described {
 		error^ = errors.error_make(.Too_Long, .Bytes, 0, 0, output.DESCRIPTION_FILE_BYTES_MOST)
@@ -820,7 +845,7 @@ wiring_plan_make :: proc "contextless" (work: ^Wiring_Work, plan: ^Wiring_Plan, 
 // sides hold. The end page stays in the wiring record.
 @(private = "file")
 wiring_handles_close :: proc "contextless" (plan: ^Wiring_Plan) {
-	handles := [3]^system.Handle{&plan.ring_memory, &plan.terms_memory, &plan.description_memory}
+	handles := [4]^system.Handle{&plan.ring_memory, &plan.terms_memory, &plan.description_memory, &plan.condition_memory}
 	for handle in handles {
 		if handle^ != 0 {
 			system.close(handle^)
@@ -851,10 +876,11 @@ wiring_list_unmake :: proc "contextless" (work: ^Wiring_Work) {
 @(private = "file")
 wiring_end_of_plan :: proc "contextless" (plan: ^Wiring_Plan, writer: bool) -> output.Given_End {
 	if writer {
-		return {command = .Writer_End, tag = plan.number, ring = plan.ring_memory, index = plan.row.writer_index, pace = plan.row.pace, end_words = plan.end_memory}
+		return {command = .Writer_End, tag = plan.number, ring = plan.ring_memory, index = plan.row.writer_index, pace = plan.row.pace, end_words = plan.end_memory, condition = plan.condition_memory}
 	}
 	command := plan.row.reader_end == .Asker ? output.Wiring_Command.Asker_End : output.Wiring_Command.Reader_End
-	return {command = command, tag = plan.number, ring = plan.ring_memory, index = plan.row.reader_index, terms = plan.terms_memory, description = plan.description_memory, end_words = plan.end_memory}
+	filter := plan.has_condition ? output.Reader_Filter.By_Writer : output.Reader_Filter.None
+	return {command = command, tag = plan.number, ring = plan.ring_memory, index = plan.row.reader_index, terms = plan.terms_memory, description = plan.description_memory, end_words = plan.end_memory, filter = filter}
 }
 
 // wiring_child_ends gives the ends of the child, for system.process_start:
@@ -918,9 +944,9 @@ wiring_rings_let_go :: proc "contextless" () {
 @(private = "file")
 wiring_end_give :: proc "contextless" (process: ^Started, end: output.Given_End) -> system.Status {
 	given := end
-	sources := [4]system.Handle{end.ring, end.end_words, end.terms, end.description}
-	rights := [4]system.Rights{{.Read, .Write}, {.Read}, {.Read}, {.Read}}
-	results := [4]^system.Handle{&given.ring, &given.end_words, &given.terms, &given.description}
+	sources := [5]system.Handle{end.ring, end.end_words, end.terms, end.description, end.condition}
+	rights := [5]system.Rights{{.Read, .Write}, {.Read}, {.Read}, {.Read}, {.Read}}
+	results := [5]^system.Handle{&given.ring, &given.end_words, &given.terms, &given.description, &given.condition}
 	status := system.Status.Ok
 	gifts := 0
 	for source, index in sources {

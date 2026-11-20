@@ -1711,7 +1711,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "Span(b, 96, 10)"},
 	{kind = .Wait, text = "[console]   count   10"},
-	{kind = .Type, text = "columns(where(processes(), name = \"console\"), \"name slot threads resident time started\")"},
+	{kind = .Type, text = "columns(where(processes(), name = \"console\"), name, slot, threads, resident, time, started)"},
 	{kind = .Wait, text = "[console] name     slot  threads  resident (pages)  time (ms)  started (us)"},
 	{kind = .Wait, text = "[console] console  "},
 	{kind = .Wait, text = "[console] 1 row of Process"},
@@ -1719,9 +1719,9 @@ scenario := [?]Step {
 
 	// The pipe operator: the value on its left is the first argument of the
 	// call on its right, so this line is the line with calls in calls
-	// columns(where(processes(), name = "console"), "name slot"). A '|'
+	// columns(where(processes(), name = "console"), name, slot). A '|'
 	// alone is no operator: its line fails before any call.
-	{kind = .Type, text = "processes() |> where(name = \"console\") |> columns(\"name slot\")"},
+	{kind = .Type, text = "processes() |> where(name = \"console\") |> columns(name, slot)"},
 	{kind = .Wait, text = "[console] name     slot"},
 	{kind = .Wait, text = "[console] 1 row of Process"},
 	{kind = .Type, text = "processes() | rows"},
@@ -2520,23 +2520,23 @@ scenario := [?]Step {
 	// records of the kernel. The console combines them with generic
 	// commands that read the description of the records.
 	{kind = .Type, text = "clear()"},
-	{kind = .Type, text = "columns(manual.importers(\"calendar_fixed\"), \"module name replacement slots\")"},
+	{kind = .Type, text = "columns(manual.importers(\"calendar_fixed\"), module, name, replacement, slots)"},
 	{kind = .Wait, text = "[console] agenda "},
 	{kind = .Wait, text = "[console] imports "},
 	{kind = .Wait, text = "[console] 2 rows of Import"},
-	{kind = .Type, text = "columns(where(manual.running(), module = \"calendar_fixed\"), \"process slot module replaces\")"},
+	{kind = .Type, text = "columns(where(manual.running(), module = \"calendar_fixed\"), process, slot, module, replaces)"},
 	{kind = .Wait, text = "[console] imports "},
 	{kind = .Wait, text = " of Running"},
 	// The graph of the modules as it runs: in the process imports, the
 	// module imports imports calendar_fixed, which a replacement put in
 	// place of calendar. The first column is the importer.
-	{kind = .Type, text = "columns(where(manual.edges(), replaces = \"calendar\"), \"imported_by module replaces process\")"},
+	{kind = .Type, text = "columns(where(manual.edges(), replaces = \"calendar\"), imported_by, module, replaces, process)"},
 	{kind = .Wait, text = "[console] imports      calendar_fixed  calendar  imports"},
 	{kind = .Wait, text = " of Edge"},
-	{kind = .Type, text = "sort(columns(manual.handles(\"Write\"), \"module name rights\"), \"name\")"},
+	{kind = .Type, text = "sort(columns(manual.handles(\"Write\"), module, name, rights), \"name\")"},
 	{kind = .Wait, text = "[console] sample "},
 	{kind = .Wait, text = " of Export"},
-	{kind = .Type, text = "join(columns(manual.running(), \"process hash\"), columns(manual.modules(), \"hash name code exports\"), \"hash\")"},
+	{kind = .Type, text = "join(columns(manual.running(), process, hash), columns(manual.modules(), hash, name, code, exports), \"hash\")"},
 	{kind = .Wait, text = " rows of Running_Module"},
 	{kind = .Type, text = "rows(manual.exports(\"\")) - rows(manual.exporters(\"show\"))"},
 	{kind = .Wait, text = "[console] "},
@@ -2756,7 +2756,8 @@ scenario := [?]Step {
 	// processes print in an order that the system does not fix.
 	{kind = .Type, text = "start(\"output_wiring\")"},
 	{kind = .Wait, text = "output_wiring: Wire before its list page, with a step that names nothing and with a reserved word, and the list page past the budget: refused, each with its status and its error record, the budget unchanged; then the list page, its handle revoked, unmapped and closed, and a new handle of it: as it must", fails_on = "output_wiring: WRONG"},
-	{kind = .Wait, text = "output_wiring: the refusals of a wiring, each with its status and its error record and the budget unchanged, 140 lent memory handles among them, and the Wire of the second reader: as it must", fails_on = "output_wiring: WRONG", any_order = true},
+	{kind = .Wait, text = "output_wiring: 140 lent handles given back with lists of no row, each list refused with its status and its error record and the budget unchanged: as it must", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = "output_wiring: the refusals of a wiring, each with its status and its error record and the budget unchanged, 140 lent memory handles among them, 70 conditions that the root service refuses at its border, and the Wire of the second reader: as it must", fails_on = "output_wiring: WRONG", any_order = true},
 	{kind = .Wait, text = "output_writer: probes: 8 probes to two readers, the second one after 5, a clean end, and Ended after it: as it must", fails_on = "output_writer: WRONG", any_order = true},
 	{kind = .Wait, text = "output_reader: probes: joined after 0 records, the probes 0 to 7 in order, and a clean end: as it must", fails_on = "output_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "output_reader: probes: joined after 5 records, the probes 5 to 7 in order, and a clean end: as it must", fails_on = "output_reader: WRONG"},
@@ -2815,6 +2816,52 @@ scenario := [?]Step {
 	{kind = .Wait, text = "console: Escape stops the line after "},
 	{kind = .Wait, text = "[console] Escape closed the stream after "},
 	{kind = .Wait, text = "output_counter: counts has no reader after "},
+	// The counts of the writer, with the first compartment of a ring.
+	{kind = .Type, text = "stream_counts(output_counter.counts)"},
+	{kind = .Wait, text = "[console] Writer_Counts"},
+	// A condition that no record passes: the writer still writes the
+	// joined record with its next write, so the counts come.
+	{kind = .Type, text = "stream_counts(where(output_counter.counts, status = 500))"},
+	{kind = .Wait, text = "[console] Writer_Counts"},
+	// columns with the names of the fields: a name that the record lacks
+	// fails the line before any wiring; then the field that it keeps.
+	{kind = .Type, text = "output_counter.counts |> columns(statut)"},
+	{kind = .Wait, text = "[console] error: columns: the records Counted have no field statut; their fields are serial, status"},
+	{kind = .Type, text = "output_counter.counts |> columns(status) |> first(2)"},
+	{kind = .Wait, text = "[console] 2 rows of Counted"},
+	// A record input of a module that does not run, by its typed name: no
+	// record to draw; and the refusals of wire and of a start with a list,
+	// none of which starts a process.
+	{kind = .Type, text = "output_count_reader.counts"},
+	{kind = .Wait, text = "[console] error: output_count_reader.counts is a record input: it has no record to draw, and wire(from, to) names it"},
+	{kind = .Type, text = "wire(output_counter.counts, output_counter.counts)"},
+	{kind = .Wait, text = "[console] error: wire: argument 2 is Record_Input, not Stream(Counted)"},
+	{kind = .Type, text = "wire(where(where(output_counter.counts, status = 404), serial > 0), output_count_reader.counts)"},
+	{kind = .Wait, text = "[console] error: wire: a wiring takes one condition; the record stream output_counter.counts has 2"},
+	{kind = .Type, text = "start(\"output_reader\", wire(output_counter.counts, output_count_reader.counts))"},
+	{kind = .Wait, text = "[console] error: start: the row 1 wires output_counter to output_count_reader, and names no end of output_reader"},
+	{kind = .Type, text = "start(\"output_count_reader\", first(output_counter.counts, 1))"},
+	{kind = .Wait, text = "[console] error: start: the list is a Table of Wiring, as wire(from, to) gives it; this one is Table(Counted)"},
+	// A record input of the count One wired twice: the root service
+	// refuses the whole list, and starts nothing.
+	{kind = .Type, text = "start(\"output_count_reader\", wire(output_counter.counts, output_count_reader.counts) + wire(output_counter.counts, output_count_reader.counts))"},
+	{kind = .Wait, text = "[console] error: start: output_count_reader: "},
+	// The start with its list: the writer writes into that ring only the
+	// records of the status 404, and the reader takes the serials that jump.
+	{kind = .Type, text = "start(\"output_count_reader\", wire(where(output_counter.counts, status = 404), output_count_reader.counts))"},
+	{kind = .Wait, text = "output_count_reader: joined after ", fails_on = "output_count_reader: WRONG"},
+	{kind = .Wait, text = "root: output_count_reader stopped: itself, done", any_order = true},
+	// A writer that writes a record that fails the condition of its
+	// wiring: the console refuses it as a fault of the writer, with its
+	// error record, and closes the record stream.
+	{kind = .Type, text = "start(\"output_liar\")"},
+	{kind = .Wait, text = "output_liar: it waits for a reader"},
+	{kind = .Type, text = "output_liar.counts |> where(status = 404) |> first(1)"},
+	{kind = .Wait, text = "output_liar: wrote a record of the status 200 into a ring whose wiring has a condition: as it must", fails_on = "output_liar: WRONG", any_order = true},
+	{kind = .Wait, text = "[console] error: first: the writer of output_liar.counts wrote the record 0, which fails the condition of its wiring (status = 404); the console closed the record stream"},
+	{kind = .Wait, text = "[console]   kind       Bad_Value"},
+	{kind = .Type, text = "stop(\"output_liar\")"},
+	{kind = .Wait, text = "root: output_liar stopped: a holder"},
 	{kind = .Type, text = "stop(\"output_counter\")"},
 	{kind = .Wait, text = "root: output_counter stopped: a holder"},
 	// The refusals of the root service give an error record: the console
@@ -2897,7 +2944,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "4 rows of Reading"},
 	{kind = .Type, text = "sum_values(where(t, sensor = 2))"},
 	{kind = .Wait, text = "[console] 210"},
-	{kind = .Type, text = "sum_values(columns(t, \"sensor value\"))"},
+	{kind = .Type, text = "sum_values(columns(t, sensor, value))"},
 	{kind = .Wait, text = "[console] error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)"},
 	{kind = .Shot, text = "table_argument"},
 	{kind = .Type, text = "unload(\"sample\")"},

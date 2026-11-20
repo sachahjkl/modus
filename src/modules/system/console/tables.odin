@@ -14,7 +14,7 @@ import "modus:support/sentence"
 //   where(table, field = value)  the rows whose field passes a condition
 //   sort(table, field)           the rows in the order of a field
 //   join(left, right, field)     each pair of rows with the same value of a field
-//   columns(table, "a b c")      the rows with some fields only
+//   columns(table, a, b, c)      the rows with some fields only
 //   first(table, count)          the first rows
 //   skip(table, count)           the rows after the first rows
 //   rows(table)                  the count of rows
@@ -155,7 +155,7 @@ tables_start :: proc "contextless" () {
 	// The result has the record of the table.
 	//
 	// ```
-	// > columns(where(manual.running(), module = "calendar_fixed"), "process slot module replaces")
+	// > columns(where(manual.running(), module = "calendar_fixed"), process, slot, module, replaces)
 	// > log.records(0) |> where(level = Warning) |> where(process = "storage")
 	// ```
 	//
@@ -185,7 +185,7 @@ tables_start :: proc "contextless" () {
 	// two fields. The result has the record of the table.
 	//
 	// ```
-	// > sort(columns(manual.handles("Write"), "module name rights"), "name")
+	// > sort(columns(manual.handles("Write"), module, name, rights), "name")
 	// ```
 	command("sort", {.Table, .Text}, .Table, "the rows of a table in the order of a field", table_sort)
 	// Gives one row for each pair of a row of the left table and a row of
@@ -200,30 +200,34 @@ tables_start :: proc "contextless" () {
 	// description in the format of the module contract.
 	//
 	// ```
-	// > join(columns(manual.running(), "process hash"), columns(manual.modules(), "hash name code exports"), "hash")
+	// > join(columns(manual.running(), process, hash), columns(manual.modules(), hash, name, code, exports), "hash")
 	// ```
 	//
 	// Errors: the field is a text on one side and an integer on the other;
 	// the new record is larger than a record can be: choose fewer fields
 	// with `columns` first.
 	command("join", {.Table, .Table, .Text}, .Table, "each pair of rows of two tables with one value of a field", table_join)
-	// Gives the rows with only the fields that a text names, in the order
-	// of the text.
+	// Gives the rows with only the fields that the names choose, in their
+	// order.
 	//
-	// - `table`: a table of any record.
-	// - `names`: the names of the fields, separated by spaces or commas.
+	// - `table`: a table of any record, or a Stream.
+	// - `fields`: one name of a field of its record or more, separated by
+	//   commas. A name is a field, never a variable or a text.
 	//
 	// The new record keeps the name of the record. A table that `columns`
 	// made is not the table that an export takes: an export checks the
-	// whole record.
+	// whole record. On a Stream, it gives a Stream whose rows hold those
+	// fields; its conditions still read the whole record.
 	//
 	// ```
-	// > columns(manual.importers("calendar_fixed"), "module name replacement slots")
+	// > columns(manual.importers("calendar_fixed"), module, name, replacement, slots)
+	// > output_counter.counts |> columns(status) |> first(2)
 	// ```
 	//
-	// Errors: a name names no field (the error lists the fields); the text
-	// names no field.
-	command("columns", {.Table, .Text}, .Table, "the rows with the fields that a text names: \"a b c\"", table_columns)
+	// Errors: a name names no field (the error lists the fields), before
+	// the line runs when the console knows the record on the left of `|>`.
+	command("columns", {.Table, .None}, .Table, "the rows with the fields that the names choose: columns(t, a, b)", table_columns, forms = {.Expression, .Field_Names})
+	command_takes_stream()
 	// Gives the first rows of a table, at most a count: a count larger than
 	// the table gives the whole table, and 0 or less gives no row.
 	//
@@ -283,6 +287,47 @@ tables_start :: proc "contextless" () {
 	//
 	// Errors: no module of the boot image has the name.
 	command("record_outputs", {.Text}, .Table, "the record outputs of a module: record_outputs(\"server\")", record_outputs)
+	// Gives the counts of the writer of a record output: the records
+	// written, discarded with no reader (or that the condition of each
+	// reader left out), and refused as `Full`. They are the claim of the
+	// writer, as it published them at its last write before the console
+	// read them: at least as new as the joined record.
+	//
+	// - `stream`: a Stream, by its typed name.
+	//
+	// The console wires the record output, waits for its first
+	// compartment, the joined record, which the writer writes at its next
+	// write, also when the condition of the Stream leaves that record out;
+	// then it reads the counts and closes the record stream. Escape stops
+	// the wait.
+	//
+	// ```
+	// > stream_counts(output_counter.counts)
+	// Writer_Counts
+	//   written    12
+	//   discarded  0
+	//   refused    0
+	// ```
+	command("stream_counts", {.Stream}, .Record, "the counts of the writer of a record output: stream_counts(server.requests)", stream_counts)
+	// Gives the Table of one row of a wiring list: the record output
+	// `from` to the record input `to`, each by its typed name.
+	//
+	// - `from`: a Stream. Its first condition goes with the row, so the
+	//   writer writes only the records that pass it.
+	// - `to`: a record input, by its typed name.
+	//
+	// The row names its ends by their names; `start(module, list)` applies
+	// it, and `+` joins two lists. The record `Wiring` holds `writer`,
+	// `output`, `reader`, `input`, the text of the `condition`, and its
+	// terms (`field`, `comparison`, `value_kind`, `integer`, `text`).
+	//
+	// ```
+	// > wire(where(output_counter.counts, status = 404), output_count_reader.counts)
+	// ```
+	//
+	// Errors: the two records differ; one process at both ends; a Stream
+	// with more than one condition, or that `columns` cut.
+	command("wire", {.Stream, .Record_Input}, .Table, "one row of a wiring list, from a record output to a record input", wire)
 }
 
 // command_takes_stream marks the command added last as a command whose
@@ -558,6 +603,14 @@ table_join :: proc "contextless" (arguments: []Value) -> Value {
 // table_columns gives the rows with the fields that a text names, in that
 // order. The names are separated by spaces or commas.
 table_columns :: proc "contextless" (arguments: []Value) -> Value {
+	// The parser gives each argument of the form Field_Names a Text of the
+	// names; a value of another source is no list of names.
+	if arguments[1].kind != .Text || arguments[1].text == "" {
+		return fail("columns takes the names of fields: columns(t, slot, name)")
+	}
+	if arguments[0].kind == .Stream {
+		return stream_columns(arguments[0], arguments[1].text)
+	}
 	table, ok := table_of(arguments[0])
 	if !ok {
 		return fail("columns: the table has no valid description")
@@ -590,7 +643,7 @@ table_columns :: proc "contextless" (arguments: []Value) -> Value {
 		count += 1
 	}
 	if count == 0 {
-		return fail("columns: the text names no field; the fields are ", field_names(table))
+		return fail("columns: no field is named; the fields are ", field_names(table))
 	}
 	file, size, made := description_make(module.string_at(table.file, table.record.name_offset, table.record.name_count), columns[:count])
 	if !made {

@@ -3,6 +3,7 @@ package console_stream
 
 import module "modus:contract/module"
 import "modus:contract/output"
+import "modus:private/console/console_condition"
 import "modus:support/sentence"
 import "core:testing"
 
@@ -17,6 +18,7 @@ Test_File :: struct {
 	fields:  [dynamic]module.Field,
 	strings: [dynamic]u8,
 	outputs: [dynamic]module.Record_Output,
+	inputs:  [dynamic]module.Record_Input,
 }
 
 @(private = "file")
@@ -61,6 +63,14 @@ test_file_parts :: proc() -> (parts: Test_File) {
 	append(&parts.outputs, module.Record_Output{})
 	output_add(&parts, "counts", COUNTED, .Unpaired, about_offset, about_count)
 	output_add(&parts, "mixed", 0, .Unpaired, about_offset, about_count)
+	parts.inputs = make([dynamic]module.Record_Input, context.temp_allocator)
+	input_add :: proc(parts: ^Test_File, name: string, record: u32, wirings: module.Wiring_Count, about_offset, about_count: u32) {
+		name_offset, name_count := string_add(&parts.strings, name)
+		append(&parts.inputs, module.Record_Input{name_offset = name_offset, name_count = name_count, about_offset = about_offset, about_count = about_count, text_offset = about_offset, text_count = about_count, record = record, wirings = u8(wirings)})
+	}
+	append(&parts.inputs, module.Record_Input{})
+	input_add(&parts, "orders", COUNTED, .One, about_offset, about_count)
+	input_add(&parts, "sources", 0, .Many_Types, about_offset, about_count)
 	return parts
 }
 
@@ -86,6 +96,7 @@ test_file :: proc(parts: Test_File) -> []u8 {
 	add(&file, &directory, .Fields, bytes_of(parts.fields[:]), u32(len(parts.fields)), size_of(module.Field))
 	add(&file, &directory, .Strings, parts.strings[:], u32(len(parts.strings)), 1)
 	add(&file, &directory, .Record_Outputs, bytes_of(parts.outputs[:]), u32(len(parts.outputs)), size_of(module.Record_Output))
+	add(&file, &directory, .Record_Inputs, bytes_of(parts.inputs[:]), u32(len(parts.inputs)), size_of(module.Record_Input))
 	(^module.Header)(&file[0])^ = {magic = module.MAGIC, version = module.VERSION, header_size = size_of(module.Header), machine = .X86_64, table_count = module.TABLE_COUNT}
 	(^[module.TABLE_COUNT]module.Table_Entry)(&file[size_of(module.Header)])^ = directory
 	return file[:]
@@ -273,4 +284,67 @@ the_refusals_have_their_sentences :: proc(t: ^testing.T) {
 	writer = {buffer = buffer[:]}
 	table_too_large_write(&writer, 2048, 32768)
 	testing.expect_value(t, sentence.written(&writer), "table: the stream gave 2048 rows and no end, and the line holds 32768 bytes of rows; first(s, n) keeps the first rows")
+}
+
+// A record input is found by its whole name only: a name of a record
+// output is no record input, a generic one is Generic, a damaged row is
+// Damaged. The record input of a description comes last.
+@(test)
+a_record_input_is_found_only_by_its_whole_name :: proc(t: ^testing.T) {
+	file := test_file(test_file_parts())
+	for name in ([?]string{"", "order", "Orders", "counts", "orders "}) {
+		_, _, found := record_input_find(file, name)
+		testing.expectf(t, found == .Absent, "the name %q gave %v", name, found)
+	}
+	index, record, found := record_input_find(file, "sources")
+	testing.expect(t, found == .Generic && index == 2 && record == 0)
+	damaged := test_file_parts()
+	damaged.inputs[1].reserved[6] = 1
+	_, _, found = record_input_find(test_file(damaged), "orders")
+	testing.expect_value(t, found, Output_Find.Damaged)
+	index, record, found = record_input_find(file, "orders")
+	testing.expect(t, found == .Found && index == 1 && record == COUNTED)
+}
+
+// Each operator of the console has the operator of the contract with the
+// same sign, and none names None.
+@(test)
+each_operator_of_the_console_has_its_operator_of_a_wiring :: proc(t: ^testing.T) {
+	for comparison in console_condition.Comparison {
+		wiring := comparison_of(comparison)
+		testing.expectf(t, wiring != .None, "%v gives None", comparison)
+		testing.expect_value(t, output.condition_comparison_texts[wiring], console_condition.COMPARISON_TEXTS[comparison])
+	}
+}
+
+// A row of a start names the module at one end: neither end and both ends
+// are refused; then each end alone.
+@(test)
+a_row_of_a_start_names_the_module_at_one_end :: proc(t: ^testing.T) {
+	_, _, refusal := start_row_ends("server", "shop", "collector")
+	testing.expect_value(t, refusal, Start_Row_Refusal.No_End_Of_Module)
+	_, _, refusal = start_row_ends("server", "server", "server")
+	testing.expect_value(t, refusal, Start_Row_Refusal.Module_Twice)
+	_, _, refusal = start_row_ends("server", "", "")
+	testing.expect_value(t, refusal, Start_Row_Refusal.No_End_Of_Module)
+	writer_is_child, reader_is_child, accepted := start_row_ends("server", "server", "collector")
+	testing.expect(t, writer_is_child && !reader_is_child && accepted == .None)
+	writer_is_child, reader_is_child, accepted = start_row_ends("server", "shop", "server")
+	testing.expect(t, !writer_is_child && reader_is_child && accepted == .None)
+}
+
+// The bounds of a list: no row, one row past the most, one handle past the
+// most, a negative count, more conditions than rows. Then the largest list,
+// a condition for each row, which fits the list page.
+@(test)
+a_list_of_a_start_fits_its_bounds :: proc(t: ^testing.T) {
+	refused := [?][3]int{{0, 0, 0}, {-1, 0, 0}, {output.WIRING_LIST_ROW_LIMIT + 1, 0, 0}, {1, output.WIRING_LIST_HANDLE_LIMIT + 1, 0}, {1, -1, 0}, {1, 0, 2}, {1, 0, -1}}
+	for counts in refused {
+		_, fits := start_list_fits(counts[0], counts[1], counts[2])
+		testing.expectf(t, !fits, "the counts %v fit", counts)
+	}
+	start, fits := start_list_fits(1, 0, 1)
+	testing.expect(t, fits && start == output.wiring_terms_start(1, 0))
+	start, fits = start_list_fits(output.WIRING_LIST_ROW_LIMIT, output.WIRING_LIST_HANDLE_LIMIT, output.WIRING_LIST_ROW_LIMIT)
+	testing.expect(t, fits && start == output.wiring_terms_start(output.WIRING_LIST_ROW_LIMIT, output.WIRING_LIST_HANDLE_LIMIT))
 }

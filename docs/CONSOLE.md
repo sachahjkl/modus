@@ -106,7 +106,7 @@ When two commands have one name, the command added last runs.
 **The check before the call.** The console checks the count of the arguments and the kind of each one against the description of the parameters, before the call. A record or a table argument must have a description equal to the description of the parameter: equal records of two modules agree. A wrong argument is refused with its number and the two types, and the call does not run:
 
 ```
-> sum_values(columns(t, "sensor value"))
+> sum_values(columns(t, sensor, value))
 error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)
 ```
 
@@ -150,7 +150,7 @@ A table is the records of one description, one after the other. An export with a
 | `where(table, field = value)` | The rows whose field passes a condition ("Conditions") |
 | `sort(table, field)` | The rows in the increasing order of a field: integers by value, texts byte by byte. Rows with one value keep their order, so two sorts give an order by two fields |
 | `join(left, right, field)` | One row for each pair of rows with one value of the field. The new record has the fields of the left record, then the fields of the right one that the left one does not have, at most 40; its name is `<left>_<right>` |
-| `columns(table, "a b c")` | The rows with only the fields that the text names, in its order. The record keeps its name |
+| `columns(table, a, b, c)` | The rows with only the fields that the names choose, in their order: names of fields, never a variable or a text. The record keeps its name |
 | `first(table, count)` | The first rows, at most the count |
 | `skip(table, count)` | The rows after the first rows |
 | `rows(table)` | The count of rows, as an `Integer` |
@@ -255,7 +255,31 @@ error: output_counter declares no record output count; its record outputs are co
 
 **The draw of a record stream.** The width of each column is the widest text that its field can hold, from its record description: the digits of the largest value of an Integer of its size, the longest member of a status, the bytes of a Text. So a row never moves the rows above it. A row that is not a record is one dim line: "joined after 9 records" when the console joined the record stream after its start ([joined record](glossary/communication.md)), "3 records are missing here" for a [gap record](glossary/communication.md), and the end: the end record, or the end word of the wiring ("the stream ended: the writer stopped"). Escape ends the wait at once and closes the record stream, and the last line says "Escape closed the stream after 12 rows". `first` and `table` stop at Escape too, and the line fails with the count of the rows that came.
 
-**What is not built yet.** The record inputs as typed names, `wire(from, to)`, `start(module, list)` with a wiring list, `columns` with the names of the fields, the counts of `record_outputs` (written, refused, discarded), and the conditions of a stream as wiring terms: [src/md/features/module_outputs.md](../src/md/features/module_outputs.md), "State".
+**The condition goes to the writer.** The first condition of a `Stream` goes with its wiring: the root service checks it against the record of the record output, and gives the writer the place of the field, so the writer writes into the ring of the console only the records that pass it. The console still checks each condition on each record, with the same test. A record that fails the first one is a fault of the writer: the line fails with an error record (`Bad_Value` of the unit `Wiring_Terms`, the serial of the record as its value) and the console closes the record stream; a record that fails another condition is only left out. A condition that the writer does not filter fails the line before any wiring: an order on a Text or a status, a field of a handle, a Text of more than 64 bytes.
+
+**The fields that a row shows.** `columns(stream, a, b)` gives a `Stream` whose rows hold those fields; its conditions still read the whole record.
+
+```
+> output_counter.counts |> columns(status) |> first(2)
+status
+   404
+   200
+2 rows of Counted
+```
+
+**The counts of the writer.** `stream_counts(stream)` wires the record output, waits for the first compartment of the ring, the joined record, which the writer writes at its next write even when the condition leaves that record out, and gives the `Record` `Writer_Counts`: the records `written`, `discarded` (no reader, or the condition of each reader left them out) and `refused` as `Full`, as the writer published them at its last write before the read. They are the claim of the writer, not a fact that the console checks.
+
+**A record input, and a wiring list.** A typed name also names a record input: `output_count_reader.counts` is a value of the kind `Record_Input`, which only `wire` takes. A typed name may name a module that does not run yet: its module file in the boot image gives its record outputs and its record inputs, for the list of its own start. `wire(from, to)` gives a `Table` of one `Wiring`: `writer`, `output`, `reader`, `input`, the `condition` as a text, and its terms. `+` joins two of them, and `start(module, list)` starts the module with the wirings of the list, made before its first instruction:
+
+```
+> start("output_count_reader", wire(where(output_counter.counts, status = 404), output_count_reader.counts))
+```
+
+| Refused by | What |
+|---|---|
+| `wire` | a first argument that is no `Stream`, a second that is no `Record_Input`; two records that differ; one process at both ends; a `Stream` with more than one condition, or that `columns` cut |
+| `start` with a list | a list that is no `Table` of `Wiring`; a row that names no end of the module, or names it at both ends; an end that does not run; more than 32 rows or 16 lent handles; each check comes before the console lends a handle |
+| the root service | each refusal of the list, with the row in its error record: a record input of the count `One` wired twice among them |
 
 ### How a line composes
 
@@ -263,8 +287,8 @@ A line composes by calls in calls. The console evaluates each argument before it
 
 ```
 > connect("manual")
-> columns(where(manual.running(), module = "calendar_fixed"), "process slot module replaces")
-> join(columns(manual.running(), "process hash"), columns(manual.modules(), "hash name code exports"), "hash")
+> columns(where(manual.running(), module = "calendar_fixed"), process, slot, module, replaces)
+> join(columns(manual.running(), process, hash), columns(manual.modules(), hash, name, code, exports), "hash")
 > rows(manual.exports("")) - rows(manual.exporters("show"))
 ```
 
@@ -276,7 +300,7 @@ The first line lists the processes that run a module, keeps the rows of one modu
 > where(grants("notes"), state = "held")
 > sort(where(processes(), state = "waiting"), "name")
 > rows(where(help(), name = "repeat"))
-> columns(where(loaded(), call = "direct"), "module imported_by in_place_of")
+> columns(where(loaded(), call = "direct"), module, imported_by, in_place_of)
 ```
 
 ### The pipe operator
@@ -285,11 +309,11 @@ The first line lists the processes that run a module, keeps the rows of one modu
 
 ```
 > processes() |> where(name = "server")
-> processes() |> where(name = "server") |> columns("name slot")
+> processes() |> where(name = "server") |> columns(name, slot)
 > rows(help() |> first(3)) |> text
 ```
 
-They are `where(processes(), name = "server")`, `columns(where(processes(), name = "server"), "name slot")` and `text(rows(first(help(), 3)))`.
+They are `where(processes(), name = "server")`, `columns(where(processes(), name = "server"), name, slot)` and `text(rows(first(help(), 3)))`.
 
 - **The lowest priority.** The whole expression on the left is the value: `1 + 2 |> text` is `text(1 + 2)`. A `,` and the parentheses around it end it: `where(x |> f, a = 1)` is `where(f(x), a = 1)`, and `(x |> f) + 1` is `(f(x)) + 1`.
 - **From the left.** `x |> h |> g(1) |> f` is `f(g(h(x), 1))`.
@@ -366,7 +390,7 @@ Memory
   memory                256 MiB
   free                  201 MiB
   ...
-> columns(where(processes(), name = "console"), "name slot threads resident time started")
+> columns(where(processes(), name = "console"), name, slot, threads, resident, time, started)
 name     slot  threads  resident (pages)  time (ms)  started (us)
 console     4        3               412         38       1830211
 1 row of Process
@@ -424,7 +448,7 @@ When the export has a table of error details and wrote more than one detail, one
 |---|---|---|
 | `help()` | Table of `Command` | One row for each command: `name`, `signature`, `about` |
 | `describe(name)` | Text | The signature and the whole help of one command |
-| `processes()` | Table of `Process` | The export `monitor.processes()` ("The built-in commands and the services"). A disk process has its nickname as its `name` and the hash of its file in `hash`: `columns(where(processes(), name = "visitor"), "name hash")` |
+| `processes()` | Table of `Process` | The export `monitor.processes()` ("The built-in commands and the services"). A disk process has its nickname as its `name` and the hash of its file in `hash`: `columns(where(processes(), name = "visitor"), name, hash)` |
 | `debug(process)`, `detach()` | Table | One row: the exports `debugger.attach()` and `debugger.detach()` ("The commands of the debugger") |
 | `threads()`, `hold(thread)`, `resume(thread)`, `continue_all()`, `step(thread)`, `step_line(thread)`, `step_over(thread)` | Table of `Thread_Row` | The threads of the debugged process: `thread`, `state`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
 | `registers(thread)` | Table of `Register_Row` | `name`, `value`, `about` |
@@ -444,7 +468,9 @@ When the export has a table of error details and wrote more than one detail, one
 | `isolate_memory(name, memory, size)` | Record `Loaded` | A module from memory: the console copies `size` bytes of the memory object, checks them as a module file, and isolates them, with the call `isolated` (`MODULE_CONTRACT.md`, "The assembler") |
 | `unload(name)` | Record `Unloaded` | `module`, `commands`, `memory`: what became of the memory of the module |
 | `loaded()` | Table of `Loaded_Module` | The modules and the services whose exports are commands, and the imports of the modules: `module`, `call`, `imported_by`, `in_place_of`, `hash_head` |
-| `start(name)`, `stop(name)` | none | When the module declares a record output, `start` keeps the handle of the process while it runs, for its typed names ("Streams") |
+| `start(name)`, `start(name, list)`, `stop(name)` | none | `start` takes a wiring list that `wire` gives, or none. When the module declares a record output, `start` keeps the handle of the process while it runs, for its typed names ("Streams") |
+| `wire(from, to)` | Table of `Wiring` | One row of a wiring list: `writer`, `output`, `reader`, `input`, `condition`, and the terms `field`, `comparison`, `value_kind`, `integer`, `text` ("Streams") |
+| `stream_counts(stream)` | Record `Writer_Counts` | `written`, `discarded`, `refused`, as the writer published them at its last write before the read, after the first compartment of the ring ("Streams") |
 | `record_outputs(module)` | Table of `Record_Output` | One row for each record output of a module of the boot image: `output`, `record` (`any record` for a generic one), `about` |
 | `table(stream)` | Table | The rows of a `Stream` until its end ("Streams") |
 | `start_from_disk(name, hash)` | none | A disk process: its module file is an object of the store `module_files`, and `hash` is 64 hexadecimal digits, or empty for the file of the row of the nickname (`MODULE_CONTRACT.md`, "A module from a disk") |
@@ -535,7 +561,7 @@ A fact that a service holds is an export of that service, and the console calls 
 
 ### The commands of the debugger
 
-The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console holds no state of a debugging and has no code that draws one: each command of the debugger is a short name of one export of the service, and the drawers draw the table that the export gives. So a table of the debugger composes as each other table: `columns(stack(0), "frame procedure line")`, `where(locals(0, 1), name = "total")`.
+The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console holds no state of a debugging and has no code that draws one: each command of the debugger is a short name of one export of the service, and the drawers draw the table that the export gives. So a table of the debugger composes as each other table: `columns(stack(0), frame, procedure, line)`, `where(locals(0, 1), name = "total")`.
 
 | Command | Export of `debugger` |
 |---|---|

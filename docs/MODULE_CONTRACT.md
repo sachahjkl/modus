@@ -452,13 +452,13 @@ offset  size  field         type
 | `values[0]` | The handle of the output ring, with Read and Write | The same | The same |
 | `values[1]` | The index of the record output, from 1 | The index of the record input, from 1 | 0 |
 | `values[2]` | The word of its `output.Wiring_Pace`: `Writer_Chooses` (0), `Never_Holds_Writer` (1), `Always_Holds_Writer` (2) | 0 | 0 |
-| `values[3]` | 0 | The memory of its wiring terms, with Read only, or 0 | 0 |
+| `values[3]` | The page of its `output.Writer_Condition`, with Read only, or 0: the writer writes into this ring only the records that pass it | The memory of its wiring terms, with Read only, or 0 | 0 |
 | `values[4]` | 0 | Its description file, with Read only | The same |
 | `values[5]` | The end page of the wiring, with Read only | The same | The same |
-| `values[6]` | 0 | 0 | 0 |
+| `values[6]` | 0 | The word of its `output.Reader_Filter`: `None` (0), or `By_Writer` (1) when the wiring has a condition, so the serials of the ring move forward by any count | The same |
 
 - **Each handle comes through the ring.** The root service gives the handles with `Handle_Give` and the memory of the wiring ring as the target, and the process proves each one with `Handle_State` before it maps it.
-- **The border** `output.given_end_of_record` refuses a kind that names no command, a ring handle of 0 or past 32 bits, an index of 0 or past `module.RECORD_STREAM_INDEX_MOST` (an index that is not 0 for the asker), an end page of 0 or past 32 bits, a description file beside a writer end or none beside a reader, a pace that names no member, a pace word beside a reader, terms beside a writer or the asker, and a reserved word that is not 0. Its error record is `Bad_Value` with the index of the word + 1 as the argument, 0 for the kind.
+- **The border** `output.given_end_of_record` refuses a kind that names no command, a ring handle of 0 or past 32 bits, an index of 0 or past `module.RECORD_STREAM_INDEX_MOST` (an index that is not 0 for the asker), an end page of 0 or past 32 bits, a description file beside a writer end or none beside a reader, a pace that names no member, a pace word beside a reader, a condition page past 32 bits beside a writer, terms beside the asker, a filter word beside a writer, and a filter word that names no `Reader_Filter` beside a reader. Its error record is `Bad_Value` with the index of the word + 1 as the argument, 0 for the kind.
 - **The description file** (`output.description_file_write`) is a module file with the one record of the wiring at the index 1: a process has no copy of its own module file, so the reader checks each compartment against it.
 - **The completion** has the status `Ok` when the process took the end, with the word `output.Wiring_Answer.Taken` (0) in values[0], else the status of its refusal and its error record. When the process closes an end that it took, it writes one more completion: `Ok` with the word `Closed` (1) (`output.wiring_closed_completion`), and the root service gives back that end to the count of the process. The root service takes each completion through `output.wiring_completion_of_record`, which refuses a status that names no member, an answer word that names no member, and an `Ok` with another value. It takes two completions at most for each end, the answer and then `Closed`, and drops each later one with one line.
 - **No command ends an end.** The end page of the wiring says it, which the root service alone writes.
@@ -473,20 +473,24 @@ offset  size  field         type
      8    56  reserved      [14]u32
 
 output.Wiring, 64 bytes: one row of a wiring list
-offset  size  field          type
-     0     4  writer_end     u32
-     4     4  writer_handle  u32
-     8     4  writer_stream  u32
-    12     4  writer_index   u32
-    16     4  reader_end     u32
-    20     4  reader_handle  u32
-    24     4  reader_index   u32
-    28     4  pace           u32
-    32     4  capacity       u32
-    36     4  terms_offset   u32
-    40     4  terms_count    u32
-    44    20  reserved       [5]u32
+offset  size  field             type
+     0     4  writer_end        u32
+     4     4  writer_handle     u32
+     8     4  writer_stream     u32
+    12     4  writer_index      u32
+    16     4  reader_end        u32
+    20     4  reader_handle     u32
+    24     4  reader_index      u32
+    28     4  pace              u32
+    32     4  capacity          u32
+    36     4  terms_offset      u32
+    40     4  terms_count       u32
+    44     4  condition_offset  u32
+    48     4  condition_count   u32
+    52    12  reserved          [3]u32
 ```
+
+- **The condition of a wiring** (`src/md/features/module_outputs.md`, "The condition of a wiring"): `condition_offset` and `condition_count` name an `output.Condition_Terms` after the lent handles, or 0 and 0. The root service takes it through `output.writer_condition_of_terms` against the record of the writer, and gives the writer an `output.Writer_Condition`; the writer writes into that ring only the records for which `output.writer_condition_holds`.
 
 - **The type check** of a wiring is `output.record_descriptions_compare`: the name, the size and the count of the fields of the two records, then each field: its name, offset, type, sign, integer unit, detail, field kind and contract enum. It gives the first difference, with the number of the field from 1, and it refuses a description that `module.record_stream_type` refuses before any comparison.
 
@@ -798,7 +802,7 @@ The tag does not refuse an older version of the table that the storage service k
 - The record `Client_Add`, which tells the compositor of a new window, holds the nickname (values 1 to 3) and the first 8 bytes of the hash (value 4). The window has the nickname as its title, in the title bar, the menu of the windows and the palette: the title that the process asks for is not read, so the window of a disk process cannot have the title `console`. The menu and the palette (the window and its close) show the hash prefix after the nickname, so a nickname that only looks like a name of the system (`consoIe`) is told apart; the title bar shows the nickname alone.
 - A disk process cannot start a child: its budget holds one process, its own. So no child of it takes the name of a process of the system in the monitor.
 - The disk process page (`modus:contract/disk_process_page`) holds one row for each disk process that runs: its process slot, its process serial, its nickname and its whole hash. The root service maps it read-only into each process that it starts with the right Inspect, as the monitor. The root service learns the process slot and the process serial from `Process_State`, which gives them as its results 5 and 6.
-- The export `monitor.processes()` gives what the window shows: the row of a disk process has its nickname as its `name`, and the whole hash of its file, 64 hexadecimal digits, in `hash`. The row of each other process has an empty `hash`. `columns(where(processes(), name = "store_importer"), "name hash")` in the console gives `store_importer  5f0c1a2b…`.
+- The export `monitor.processes()` gives what the window shows: the row of a disk process has its nickname as its `name`, and the whole hash of its file, 64 hexadecimal digits, in `hash`. The row of each other process has an empty `hash`. `columns(where(processes(), name = "store_importer"), name, hash)` in the console gives `store_importer  5f0c1a2b…`.
 
 The monitor writes one line for each disk process that it shows, and the compositor one line for each disk process in the menu of the windows when the menu opens:
 
@@ -1100,7 +1104,7 @@ A module names each import by its hash. The party that starts a process can give
 - **The replacement is in place of an import only**: `load("calendar")` loads calendar. The table applies to each import of a load, at each level.
 - **A table that changes applies to the loads that follow.** A process that runs keeps the modules that it has. The root service does not start a process again.
 - **Visible**: the module records of the kernel (operation `Process_Module`). `processes()` in the console shows the modules of each process that has more than its module, with "in place of" for each replacement. The manual shows the imports of a module, and the replacement of the machine for each one. When a thread faults, the kernel writes the hash of the module of the instruction, its offset, and the hash that the module replaces: "in module 5d8ff6e736fda684 at offset 00000000000019c0, which replaces b1f1b875df9992f8".
-- **The module graph of what runs** (`glossary/code.md`, "Module graph"): `manual.edges()` gives one row of `Edge` (`src/library/private/manual/information/rows.odin`) for each import edge of each process that runs: `process`, `slot`, `module`, `hash`, `imported_by` and `replaces`. It reads the module records of the kernel, as `manual.running()` does, and the import table of the file of each module, from the boot image: module A of a process imports module B of the same process when an import of A holds the hash that B replaces, or holds the hash of B and no module of the process replaces that hash. A module that no module of its process imports has one row with `imported_by` empty: the module of the process, or a module that the process loaded by its name. `replaces` names the module that the import names. A module that the boot image does not hold is named by the first 16 digits of its hash, so an empty field means "none". It needs a caller that acts for the principal, as `running()`. The console combines it as each table: `columns(where(manual.edges(), replaces = "calendar"), "imported_by module replaces process")` gives `imports calendar_fixed calendar imports`: in the process `imports`, its module imports calendar_fixed, which a replacement put in place of calendar. It is an export of the service that already gives `running()` and `importers()`, not a second mechanism: the console has no command of its own for it.
+- **The module graph of what runs** (`glossary/code.md`, "Module graph"): `manual.edges()` gives one row of `Edge` (`src/library/private/manual/information/rows.odin`) for each import edge of each process that runs: `process`, `slot`, `module`, `hash`, `imported_by` and `replaces`. It reads the module records of the kernel, as `manual.running()` does, and the import table of the file of each module, from the boot image: module A of a process imports module B of the same process when an import of A holds the hash that B replaces, or holds the hash of B and no module of the process replaces that hash. A module that no module of its process imports has one row with `imported_by` empty: the module of the process, or a module that the process loaded by its name. `replaces` names the module that the import names. A module that the boot image does not hold is named by the first 16 digits of its hash, so an empty field means "none". It needs a caller that acts for the principal, as `running()`. The console combines it as each table: `columns(where(manual.edges(), replaces = "calendar"), imported_by, module, replaces, process)` gives `imports calendar_fixed calendar imports`: in the process `imports`, its module imports calendar_fixed, which a replacement put in place of calendar. It is an export of the service that already gives `running()` and `importers()`, not a second mechanism: the console has no command of its own for it.
 - **What the rows do not say** (not built): whether the code of a module is shared code (`glossary/code.md`) of a prepared module or a copy of the process. A module record holds no memory object, and the table of prepared modules is in the process that starts processes. A row would need the mappings of the process (`Inspect_Kind.Process_Mappings`) and an identity of each memory object that two reports can compare.
 - **A view in the window of the manual** (designed, not built): the key `o` shows the table of all the modules (`overview()`); a second view would draw the rows of `edges()` for one process with `src/library/support/interface`: one column for each depth, a rectangle for each module in the color of its kind, a line from the importer to the module that it imports, with a line at an angle only where a column is skipped, and the name of the module that a replacement changed beside the line. The rows are the facts; the window adds no fact.
 - **Where the identity is kept**: the kernel keeps it, as it keeps the name of a process: the fault report and `Inspect` are in the kernel, and the loader of a process is in the process that started it, or in the process itself. A cycle of imports is possible with a replacement, and the loader refuses it.
@@ -1877,7 +1881,7 @@ debugger: read the debug object 5f0c… of outsider from the store module_files 
 root: disconnected processes from the service storage
 ```
 
-Then `columns(where(stack(0), procedure = "entry"), "module procedure file line")` in the console gives `outsider  entry      outsider/main.odin    93`: the source of the copy, by the name of its folder.
+Then `columns(where(stack(0), procedure = "entry"), module, procedure, file, line)` in the console gives `outsider  entry      outsider/main.odin    93`: the source of the copy, by the name of its folder.
 
 ### The readers
 

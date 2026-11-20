@@ -48,14 +48,30 @@ console_name_role :: proc "contextless" (data: rawptr, name: string) -> console_
 	if stream_owner_named(name) {
 		return .Module
 	}
-	if _, _, known := stream_name_known(name); known {
+	if _, _, _, known := stream_name_known(name); known {
 		return .Stream
 	}
 	return .Unknown
 }
 
+// console_field_names_from gives the first argument of a command that is a
+// name of a field: the parameter of the form Field_Names, or -1.
+console_field_names_from :: proc "contextless" (data: rawptr, name: string) -> int {
+	found := command_find(name)
+	if found == nil {
+		return -1
+	}
+	for index in 0 ..< found.parameter_count {
+		if found.parameter_forms[index] == .Field_Names {
+			return index
+		}
+	}
+	return -1
+}
+
 console_names := console_language.Name_Lookup {
-	role_of = console_name_role,
+	role_of          = console_name_role,
+	field_names_from = console_field_names_from,
 }
 
 // edit_runs gives the runs of the edit line: the prompt, then the line, with

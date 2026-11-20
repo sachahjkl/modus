@@ -83,6 +83,11 @@ start_wiring_give :: proc "contextless" (process: Handle, budget: Handle, record
 		if status == .Ok && end.description != 0 {
 			given.description, status = give(memory, end.description, {.Read})
 		}
+		// The condition of a writer end, with Read only: only the root
+		// service writes it.
+		if status == .Ok && end.condition != 0 {
+			given.condition, status = give(memory, end.condition, {.Read})
+		}
 		// The end page with Read only: only the root service writes the end.
 		if status == .Ok {
 			given.end_words, status = give(memory, end.end_words, {.Read})

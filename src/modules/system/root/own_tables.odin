@@ -42,9 +42,9 @@ MODULE_HANDLES_MOST :: 3
 MODULES_OF_A_START_PREPARED_MOST :: 3
 
 // The handles of one row of a wiring list while the start or the Wire
-// makes it: its ring, its end page, its description file and its terms;
-// and the wiring page of the asker, once.
-WIRING_ROW_HANDLES_MOST :: 4
+// makes it: its ring, its end page, its description file, its terms and
+// the page of its condition; and the wiring page of the asker, once.
+WIRING_ROW_HANDLES_MOST :: 5
 WIRING_PAGE_HANDLES :: 1
 
 // The handles of a List_Page: the list page and the wiring ring of an
@@ -53,7 +53,7 @@ LIST_PAGE_HANDLES :: 2
 
 // start_handles_needed gives the free handles that one start needs: a
 // start with no list 25, a start with the full list of an asker
-// (output.WIRINGS_OF_AN_ASKER_MOST rows) 58.
+// (output.WIRINGS_OF_AN_ASKER_MOST rows) 66.
 start_handles_needed :: proc "contextless" (rows: int) -> int {
 	needed := START_HANDLES_MOST + MODULES_OF_A_START_PREPARED_MOST * MODULE_HANDLES_MOST
 	if rows > 0 {

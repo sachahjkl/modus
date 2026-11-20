@@ -110,21 +110,31 @@ an_index_of_zero_or_past_the_most_is_refused :: proc(t: ^testing.T) {
 }
 
 // The pace of a writer end: one past the last member and the largest word
-// name none. Terms beside a writer end are refused: the reader takes them.
+// name none. Its condition page is a handle: past 32 bits it is refused,
+// and a page of a handle is taken. A filter word beside a writer end is
+// refused: the reader takes it.
 @(test)
-a_writer_end_with_an_unknown_pace_or_with_terms_is_refused :: proc(t: ^testing.T) {
+a_writer_end_with_an_unknown_pace_or_a_wrong_condition_is_refused :: proc(t: ^testing.T) {
 	paces := [?]u64{u64(max(Wiring_Pace)) + 1, max(u64)}
 	for word in paces {
 		record := writer_command()
 		record.values[WIRING_VALUE_PACE] = word
 		expect_end_refused(t, record, WIRING_VALUE_PACE + 1, i64(min(word, 1 << 62)), i64(max(Wiring_Pace)))
 	}
-	terms := [?]u64{1, max(u64)}
-	for word in terms {
+	for word in ([?]u64{u64(max(u32)) + 1, max(u64)}) {
 		record := writer_command()
 		record.values[WIRING_VALUE_TERMS] = word
-		expect_end_refused(t, record, WIRING_VALUE_TERMS + 1, i64(min(word, 1 << 62)), 0)
+		expect_end_refused(t, record, WIRING_VALUE_TERMS + 1, i64(min(word, 1 << 62)), i64(max(u32)))
 	}
+	for word in ([?]u64{u64(Reader_Filter.By_Writer), max(u64)}) {
+		record := writer_command()
+		record.values[WIRING_VALUE_FILTER] = word
+		expect_end_refused(t, record, WIRING_VALUE_FILTER + 1, i64(min(word, 1 << 62)), 0)
+	}
+	with_condition := writer_command()
+	with_condition.values[WIRING_VALUE_TERMS] = u64(max(u32))
+	taken, _, ok := given_end_of_record(with_condition)
+	testing.expect(t, ok && taken.condition == op.Handle(max(u32)) && taken.filter == .None)
 }
 
 // A reader end has no pace: the word is 0, so a pace word of a member is
@@ -162,19 +172,23 @@ a_description_file_belongs_to_a_reader_end_only :: proc(t: ^testing.T) {
 	}
 }
 
-// Each reserved word: 1 and the largest word are refused, with the index
-// of the word.
+// The filter word of a reader end and of an asker end: one past the last
+// member and the largest word name none. Then By_Writer, which the border
+// gives back.
 @(test)
-a_reserved_word_that_is_not_zero_is_refused :: proc(t: ^testing.T) {
-	words := [?]u64{1, max(u64)}
-	for command in ([?]ring.Record{writer_command(), reader_command()}) {
-		for index in WIRING_VALUE_FIRST_RESERVED ..< len(command.values) {
-			for word in words {
-				record := command
-				record.values[index] = word
-				expect_end_refused(t, record, i64(index) + 1, i64(min(word, 1 << 62)), 0)
-			}
+a_filter_word_that_names_no_member_is_refused :: proc(t: ^testing.T) {
+	asker := given_end_record({command = .Asker_End, tag = 9, ring = 26, description = 27, end_words = 28})
+	for command in ([?]ring.Record{reader_command(), asker}) {
+		for word in ([?]u64{u64(max(Reader_Filter)) + 1, max(u64)}) {
+			record := command
+			record.values[WIRING_VALUE_FILTER] = word
+			expect_end_refused(t, record, WIRING_VALUE_FILTER + 1, i64(min(word, 1 << 62)), i64(max(Reader_Filter)))
 		}
+		filtered := command
+		filtered.values[WIRING_VALUE_FILTER] = u64(Reader_Filter.By_Writer)
+		taken, _, ok := given_end_of_record(filtered)
+		testing.expect(t, ok && taken.filter == .By_Writer)
+		testing.expect_value(t, given_end_record(taken), filtered)
 	}
 }
 

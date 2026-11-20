@@ -90,7 +90,9 @@ Wiring :: struct {
 	capacity:      u32, // The compartments of the ring: 0 for WIRING_CAPACITY_DEFAULT, or a power of two from WIRING_CAPACITY_LEAST to WIRING_CAPACITY_MOST.
 	terms_offset:  u32, // The wiring terms, in bytes from the start of the memory of the list, after the lent handles; 0 with no terms.
 	terms_count:   u32, // The bytes of the terms; 0 with no terms.
-	reserved:      [5]u32, // 0.
+	condition_offset: u32, // The condition of the wiring, a Condition_Terms, in bytes from the start of the memory of the list, after the lent handles; 0 with no condition.
+	condition_count:  u32, // size_of(Condition_Terms), or 0 with no condition.
+	reserved:      [3]u32, // 0.
 }
 #assert(size_of(Wiring) == 64)
 
@@ -109,7 +111,9 @@ Wiring_Field :: enum i64 {
 	Capacity      = 9,
 	Terms_Offset  = 10,
 	Terms_Count   = 11,
-	Reserved      = 12,
+	Condition_Offset = 12,
+	Condition_Count  = 13,
+	Reserved      = 14,
 }
 
 // One row after its border: each word is its member or a checked number.
@@ -125,6 +129,7 @@ Checked_Wiring :: struct {
 	capacity:      u32, // The default is applied: a power of two.
 	terms_offset:  u32,
 	terms_count:   u32,
+	condition_offset: u32, // The condition terms, or 0: their count is size_of(Condition_Terms).
 }
 
 // Which command lends the list.
@@ -212,6 +217,9 @@ end_handle_check :: proc "contextless" (end: Wiring_End, place: u32, handle_coun
 // - terms with a count and no offset, an offset and no count, a count past
 //   module.RECORD_SIZE_LIMIT, terms before terms_start or past the list,
 //   and terms for an Asker reader;
+// - a condition with a count and no offset or an offset and no count, a
+//   count that is not size_of(Condition_Terms), and a condition before
+//   terms_start or past the list;
 // - a reserved word that is not 0.
 //
 // It reads no state, and a refusal gives no row.
@@ -282,6 +290,21 @@ wiring_row_check :: proc "contextless" (row: Wiring, number: u32, form: Wiring_L
 			return {}, row_refusal(number, .Terms_Offset, u64(row.terms_offset), u64(list_size)), false
 		}
 	}
+	// The condition: both words or neither, the size of its terms, and
+	// after the lent handles inside the list. The root service reads its
+	// fields against the record of the writer.
+	if (row.condition_offset == 0) != (row.condition_count == 0) {
+		field := row.condition_offset == 0 ? Wiring_Field.Condition_Offset : Wiring_Field.Condition_Count
+		return {}, row_refusal(number, field, 0, 0), false
+	}
+	if row.condition_count != 0 {
+		if row.condition_count != size_of(Condition_Terms) {
+			return {}, row_refusal(number, .Condition_Count, u64(row.condition_count), size_of(Condition_Terms)), false
+		}
+		if row.condition_offset < terms_start || u64(row.condition_offset) + u64(row.condition_count) > u64(list_size) {
+			return {}, row_refusal(number, .Condition_Offset, u64(row.condition_offset), u64(list_size)), false
+		}
+	}
 	for word in row.reserved {
 		if word != 0 {
 			return {}, row_refusal(number, .Reserved, u64(word), 0), false
@@ -299,6 +322,7 @@ wiring_row_check :: proc "contextless" (row: Wiring, number: u32, form: Wiring_L
 		capacity      = capacity,
 		terms_offset  = row.terms_offset,
 		terms_count   = row.terms_count,
+		condition_offset = row.condition_offset,
 	}
 	return checked, {}, true
 }

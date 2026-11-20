@@ -75,6 +75,9 @@ READER_WATCHED :: 3
 READER_ECHO :: 1
 SIDE_ECHO :: 1
 
+// The fields of the probe: serial and mark.
+PROBE_FIELDS :: 2
+
 // A number that names no handle that this process gave the root service.
 NUMBER_NOT_LENT :: 0x7FFF_0000
 
@@ -313,6 +316,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	requests = opened
 	words_case()
+	lent_return_case()
 	probes_case()
 	start_case()
 	end_words_case()
@@ -394,6 +398,29 @@ words_case :: proc "contextless" () {
 	system.close(first)
 	list_page_take()
 	system.log(.Info, "output_wiring: Wire before its list page, with a step that names nothing and with a reserved word, and the list page past the budget: refused, each with its status and its error record, the budget unchanged; then the list page, its handle revoked, unmapped and closed, and a new handle of it: as it must")
+}
+
+// lent_return_case: handles that an asker lent and names in a list of no
+// row, sent with Wire, as the console gives back the handles of a command
+// that it does not send. The border refuses the count of rows, and the
+// root service closes each lent number: in more rounds than its handle
+// table holds, so a handle that it kept would fill it, and the starts and
+// the wirings of the cases after this one would fail.
+@(private = "file")
+lent_return_case :: proc "contextless" () {
+	memory, memory_status := system.memory_create(1)
+	if memory_status != .Ok {
+		wrong("the memory to lend was refused with the status", u64(memory_status))
+	}
+	before := budget_pages()
+	for _ in 0 ..< LENT_MEMORY_ROUNDS {
+		lent := [2]u32{lend(memory), lend(memory)}
+		list_write(nil, lent[:])
+		status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply)})
+		refused("a list of no row that gives back its lent handles", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Rows, 0, 0, 1))
+	}
+	system.close(memory)
+	system.log(.Info, "output_wiring: ", u64(2 * LENT_MEMORY_ROUNDS), " lent handles given back with lists of no row, each list refused with its status and its error record and the budget unchanged: as it must")
 }
 
 // probes_case: the reader of the start joins at 0, the reader of a Wire at
@@ -482,6 +509,30 @@ probes_case :: proc "contextless" () {
 	terms := [8]u8{1, 2, 3, 4, 5, 6, 7, 8}
 	status, answer = wire(terms_row, with_terms[:], terms[:])
 	refused("terms for a record input that takes none", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Wiring_Field.Terms_Count), 8, 0, 1))
+	// Conditions that the root service refuses at its border, in more
+	// rounds than its handle table holds: a condition on no field, and a
+	// Text for an Integer field. Each refusal closes its lent handles and
+	// makes no page, so the budget does not change, and the wirings after
+	// them find the room of the table.
+	no_field := output.Condition_Terms{field = 0, comparison = u32(output.Condition_Comparison.Equal), value_kind = u32(output.Condition_Value_Kind.Integer)}
+	text_for_integer := output.Condition_Terms{field = 1, comparison = u32(output.Condition_Comparison.Equal), value_kind = u32(output.Condition_Value_Kind.Text), text_count = 1}
+	text_for_integer.text[0] = 'a'
+	for _ in 0 ..< LENT_MEMORY_ROUNDS / 2 {
+		conditions := [2]output.Condition_Terms{no_field, text_for_integer}
+		for condition, index in conditions {
+			ends := [2]u32{lend(writer), lend(second_reader)}
+			condition_row := row(.Started, 1, WRITER_PROBES, .Started, 2, READER_PROBES)
+			condition_row.condition_offset = u32(output.wiring_terms_start(1, len(ends)))
+			condition_row.condition_count = size_of(output.Condition_Terms)
+			bytes := transmute([size_of(output.Condition_Terms)]u8)condition
+			status, answer = wire(condition_row, ends[:], bytes[:])
+			if index == 0 {
+				refused("a condition on no field", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Condition_Terms_Field.Field), 0, PROBE_FIELDS, 1))
+			} else {
+				refused("a Text for an Integer field", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Condition_Terms_Field.Value_Kind), i64(output.Condition_Value_Kind.Text), i64(output.Condition_Value_Kind.Integer), 1))
+			}
+		}
+	}
 
 	// The count One: the record input of the first reader has its wiring,
 	// which runs until the writer has its second reader, so no stop races
@@ -497,7 +548,7 @@ probes_case :: proc "contextless" () {
 	if status != .Ok || answer[0] == 0 {
 		wrong("the Wire of the second reader gave the status", u64(status))
 	}
-	system.log(.Info, "output_wiring: the refusals of a wiring, each with its status and its error record and the budget unchanged, ", u64(2 * LENT_MEMORY_ROUNDS), " lent memory handles among them, and the Wire of the second reader: as it must")
+	system.log(.Info, "output_wiring: the refusals of a wiring, each with its status and its error record and the budget unchanged, ", u64(2 * LENT_MEMORY_ROUNDS), " lent memory handles among them, ", u64(LENT_MEMORY_ROUNDS), " conditions that the root service refuses at its border, and the Wire of the second reader: as it must")
 	processes := [3]system.Handle{writer, first_reader, second_reader}
 	stopped_wait(processes[:])
 	for process in processes {

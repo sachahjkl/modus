@@ -682,6 +682,16 @@ The design: `src/md/features/module_outputs.md`, "The console form".
 
 Do not use: topic, path (for this), stream address, channel name.
 
+### Condition of a wiring
+
+A condition of a wiring is one field of the record of a record output, one operator and one value that a row of a wiring list carries, so that the writer writes into that ring only the records that pass it.
+
+The asker writes the terms with the row; the root service checks them against the record description and gives the writer the place of the field, never reading a record itself. The serials of such a ring move forward by any count. The console sends the first condition of a record stream this way, and refuses a record that fails it as a fault of the writer.
+
+The design: `src/md/features/module_outputs.md`, "The condition of a wiring".
+
+Do not use: subscription filter, predicate pushdown, server-side filter.
+
 ### Body region
 
 A body region is the memory object of the writer of a record output that holds the bytes that a record of that record output names past its 256 bytes.

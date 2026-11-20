@@ -194,10 +194,53 @@ wiring_terms_out_of_their_place_are_refused :: proc(t: ^testing.T) {
 	expect_row_refused(t, row, .Start, .Terms_Count, 8)
 }
 
+// The condition: an offset with no count and a count with no offset; a
+// count of one byte less and one byte more than its terms, and the largest
+// count; a condition over the lent handles, one that ends one byte past the
+// list, and the largest offset. Then a condition that ends at the last
+// byte of the list, beside an asker reader, which a condition serves too.
+@(private = "file")
+CONDITION_LIST_SIZE :: TERMS_START + size_of(Condition_Terms)
+
+@(private = "file")
+expect_condition_refused :: proc(t: ^testing.T, row: Wiring, field: Wiring_Field, word: u64, loc := #caller_location) {
+	checked, refusal, ok := wiring_row_check(row, 3, .Start, HANDLE_COUNT, TERMS_START, CONDITION_LIST_SIZE)
+	testing.expectf(t, !ok && checked == Checked_Wiring{}, "the row %v is taken", row, loc = loc)
+	testing.expectf(t, refusal.kind == i64(errors.Kind.Bad_Value) && refusal.unit == i64(errors.Unit.Wiring_Rows) && refusal.argument == i64(field) && refusal.value == i64(min(word, 1 << 62)) && refusal.found == 3, "the refusal is %v", refusal, loc = loc)
+}
+
+@(test)
+a_condition_out_of_its_place_or_of_another_size_is_refused :: proc(t: ^testing.T) {
+	refused :: expect_condition_refused
+	list_size :: CONDITION_LIST_SIZE
+	row := good_row()
+	row.condition_count = size_of(Condition_Terms)
+	refused(t, row, .Condition_Offset, 0)
+	row = good_row()
+	row.condition_offset = TERMS_START
+	refused(t, row, .Condition_Count, 0)
+	for count in ([?]u32{size_of(Condition_Terms) - 1, size_of(Condition_Terms) + 1, max(u32)}) {
+		row = good_row()
+		row.condition_offset, row.condition_count = TERMS_START, count
+		refused(t, row, .Condition_Count, u64(count))
+	}
+	for offset in ([?]u32{TERMS_START - 1, TERMS_START + 1, max(u32)}) {
+		row = good_row()
+		row.condition_offset, row.condition_count = offset, size_of(Condition_Terms)
+		refused(t, row, .Condition_Offset, u64(offset))
+	}
+	row = good_row()
+	row.reader_end, row.reader_handle, row.reader_index = u32(Wiring_End.Asker), 0, 0
+	row.condition_offset, row.condition_count = TERMS_START, size_of(Condition_Terms)
+	checked, refusal, ok := wiring_row_check(row, 1, .Wire, HANDLE_COUNT, TERMS_START, list_size)
+	testing.expectf(t, ok, "the condition at the end of the list is refused: %v", refusal)
+	testing.expect_value(t, checked.condition_offset, u32(TERMS_START))
+}
+
 // Each reserved word: 1 and the largest word.
 @(test)
 a_reserved_word_of_a_row_that_is_not_zero_is_refused :: proc(t: ^testing.T) {
-	for index in 0 ..< 5 {
+	for index in 0 ..< len(Wiring{}.reserved) {
 		for word in ([?]u32{1, max(u32)}) {
 			row := good_row()
 			row.reserved[index] = word

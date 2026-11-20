@@ -261,6 +261,36 @@ a_stream_is_taken_in_order :: proc(t: ^testing.T) {
 	testing.expect(t, top_joined == .None && top_record == .None && top_gap == .None && top_next == .None && top.next_serial == 3)
 }
 
+// A ring with a condition, through the whole border: a record that jumps
+// past the next serial is taken and the next serial follows it; a serial
+// behind is refused with nothing changed; a gap and the end record that
+// jump are taken. A ring with no condition refuses the same jump.
+@(test)
+a_filtered_ring_takes_a_record_that_jumps_and_refuses_one_behind :: proc(t: ^testing.T) {
+	file, description := test_file()
+	filtered := Read_State{filtered = true}
+	_, joined_fault, _ := record_of_compartment(&filtered, joined_at(10), file, description)
+	testing.expect(t, joined_fault == .None && filtered.next_serial == 10)
+	taken, fault, refusal := record_of_compartment(&filtered, probe_compartment(13), file, description)
+	testing.expectf(t, fault == .None && taken.kind == .Record && taken.serial == 13 && filtered.next_serial == 14, "a record that jumps gave %v: %v", fault, refusal)
+	expect_refused(t, &filtered, probe_compartment(13), file, description, .Wrong_Serial, 13, 0)
+	expect_refused(t, &filtered, probe_compartment(9), file, description, .Wrong_Serial, 9, 0)
+	_, fault, _ = record_of_compartment(&filtered, probe_compartment(14), file, description)
+	testing.expect(t, fault == .None && filtered.next_serial == 15)
+	gap := new_compartment()
+	testing.expect(t, gap_compartment(gap, 20, 2))
+	taken, fault, _ = record_of_compartment(&filtered, gap, file, description)
+	testing.expect(t, fault == .None && taken.kind == .Gap && taken.gap_count == 2 && filtered.next_serial == 22)
+	end := new_compartment()
+	testing.expect(t, end_compartment(end, 30, {}))
+	taken, fault, _ = record_of_compartment(&filtered, end, file, description)
+	testing.expect(t, fault == .None && taken.kind == .End && taken.serial == 30 && filtered.ended)
+	plain: Read_State
+	_, joined_fault, _ = record_of_compartment(&plain, joined_at(10), file, description)
+	testing.expect(t, joined_fault == .None)
+	expect_refused(t, &plain, probe_compartment(13), file, description, .Wrong_Serial, 13, 0)
+}
+
 // The compartments that a writer writes refuse a compartment too small for their kind
 // and a record that does not fit; each writes zero past what it names.
 @(test)

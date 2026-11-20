@@ -11,6 +11,7 @@ package console_stream
 
 import module "modus:contract/module"
 import "modus:contract/output"
+import "modus:private/console/console_condition"
 import "modus:support/sentence"
 
 // ---- The typed name.
@@ -73,6 +74,33 @@ record_output_find :: proc "contextless" (file: []u8, name: string) -> (index: u
 	return 0, 0, .Absent
 }
 
+// record_input_count gives the rows of the table Record_Inputs of a module
+// file, as record_output_count does.
+record_input_count :: proc "contextless" (file: []u8) -> u32 {
+	return min(max(module.count(file, .Record_Inputs), 1) - 1, module.RECORD_STREAM_INDEX_MOST)
+}
+
+// record_input_find gives the index from 1 of the record input of a name
+// in a module file, and the index of the description of its record. A
+// generic record input is Generic; a row that module.record_input refuses
+// is Damaged, never a match.
+record_input_find :: proc "contextless" (file: []u8, name: string) -> (index: u32, record: u32, found: Output_Find) {
+	for row in 1 ..= record_input_count(file) {
+		value, _, _, _, ok := module.record_input(file, row)
+		if !ok {
+			return 0, 0, .Damaged
+		}
+		if module.string_at(file, value.name_offset, value.name_count) != name {
+			continue
+		}
+		if value.record == 0 {
+			return row, 0, .Generic
+		}
+		return row, value.record, .Found
+	}
+	return 0, 0, .Absent
+}
+
 // record_output_names_write writes the names of the record outputs of a
 // module file, separated by ", ": the sentence of a name that the module
 // does not declare lists them.
@@ -87,6 +115,65 @@ record_output_names_write :: proc "contextless" (writer: ^sentence.Writer, file:
 		sentence.write_part(writer, module.string_at(file, value.name_offset, value.name_count))
 		written += 1
 	}
+}
+
+// ---- The condition of a wiring.
+
+// comparison_of gives the operator of a condition of a wiring for the
+// operator of a condition of the console: the same six, with the values of
+// the contract.
+comparison_of :: proc "contextless" (comparison: console_condition.Comparison) -> output.Condition_Comparison {
+	switch comparison {
+	case .Equal:
+		return .Equal
+	case .Not_Equal:
+		return .Not_Equal
+	case .Less:
+		return .Less
+	case .Less_Or_Equal:
+		return .Less_Or_Equal
+	case .Greater:
+		return .Greater
+	case .Greater_Or_Equal:
+		return .Greater_Or_Equal
+	}
+	return .None
+}
+
+// ---- The list of a start.
+
+// Why the console refuses a row of the list of a start, before the root
+// service reads it.
+Start_Row_Refusal :: enum u8 {
+	None             = 0,
+	No_End_Of_Module = 1, // Neither end is the module that starts.
+	Module_Twice     = 2, // Both ends are the module that starts: a wiring of a process to itself.
+}
+
+// start_row_ends says which ends of a row are the module that starts: they
+// become the end Child, and the other end names a process that runs.
+start_row_ends :: proc "contextless" (module_name, writer, reader: string) -> (writer_is_child, reader_is_child: bool, refusal: Start_Row_Refusal) {
+	writer_is_child = writer == module_name
+	reader_is_child = reader == module_name
+	switch {
+	case writer_is_child && reader_is_child:
+		return false, false, .Module_Twice
+	case !writer_is_child && !reader_is_child:
+		return false, false, .No_End_Of_Module
+	}
+	return writer_is_child, reader_is_child, .None
+}
+
+// start_list_fits says if a list of rows, with its lent handles and the
+// condition of each row, fits the bounds of the contract and the bytes of
+// the list page. It gives the first byte of the conditions, after the lent
+// handles.
+start_list_fits :: proc "contextless" (rows, handles, conditions: int) -> (conditions_start: int, fits: bool) {
+	if rows <= 0 || rows > output.WIRING_LIST_ROW_LIMIT || handles < 0 || handles > output.WIRING_LIST_HANDLE_LIMIT || conditions < 0 || conditions > rows {
+		return 0, false
+	}
+	conditions_start = output.wiring_terms_start(rows, handles)
+	return conditions_start, conditions_start + conditions * size_of(output.Condition_Terms) <= output.WIRING_LIST_BYTES_MOST
 }
 
 // ---- The notes of the draw.

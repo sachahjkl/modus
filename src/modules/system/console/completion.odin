@@ -292,6 +292,11 @@ names_of_a_call :: proc "contextless" (table: ^Candidate_Table, place: line_edit
 	call_start := int(uintptr(raw_data(name)) - uintptr(raw_data(text)))
 	piped := console_language.pipe_before(text, call_start)
 	parameter := argument + (piped ? 1 : 0)
+	// Each name after the first of a list of field names is the same
+	// parameter.
+	if item.parameter_count > 0 && parameter >= item.parameter_count && item.parameter_forms[item.parameter_count - 1] == .Field_Names {
+		parameter = item.parameter_count - 1
+	}
 	if parameter >= item.parameter_count {
 		return false
 	}
@@ -316,6 +321,27 @@ names_of_a_call :: proc "contextless" (table: ^Candidate_Table, place: line_edit
 		case .None, .Quoted:
 		}
 		return false
+	case .Field_Names:
+		// Inside columns( after a "|>": the fields of the record on the
+		// left, for each name of the list.
+		if place.place != .Name || !piped {
+			return false
+		}
+		file, detail, known := pipe_left_record_at(text, call_start)
+		if !known {
+			return false
+		}
+		described, described_ok := module.record_type(file, detail)
+		if !described_ok {
+			return false
+		}
+		for number in 0 ..< described.field_count {
+			field_item, field_ok := module.field(file, described, number)
+			if field_ok {
+				candidate_add(table, module.string_at(file, field_item.name_offset, field_item.name_count), .Field, int(number))
+			}
+		}
+		return true
 	case .Condition:
 		if place.place != .Name || !piped {
 			// The record of a table that the line names in the call is
@@ -445,9 +471,14 @@ names_collect :: proc "contextless" (table: ^Candidate_Table, place: line_editor
 		}
 		// The record outputs of a process that the console started or of a
 		// service that it connected: the typed names "owner.output".
-		if found, found_ok := stream_owner_find(owner); found_ok {
+		if found, found_ok := stream_owner_find(owner, false); found_ok {
 			for row in 1 ..= console_stream.record_output_count(found.file) {
 				if value, _, _, ok := module.record_output(found.file, row); ok && value.record != 0 {
+					candidate_add(table, module.string_at(found.file, value.name_offset, value.name_count), .Stream, int(row))
+				}
+			}
+			for row in 1 ..= console_stream.record_input_count(found.file) {
+				if value, _, _, _, ok := module.record_input(found.file, row); ok && value.record != 0 {
 					candidate_add(table, module.string_at(found.file, value.name_offset, value.name_count), .Stream, int(row))
 				}
 			}
@@ -713,6 +744,10 @@ signature_write :: proc "contextless" (writer: ^system.Writer, item: ^Command, m
 			system.write_part(writer, "Fact_Type") // A name of a fact type, which the console checks.
 		case item.parameter_forms[index] == .Condition:
 			system.write_part(writer, "Condition") // A field, an operator and a value: `block = 12`.
+		case item.parameter_forms[index] == .Field_Names:
+			system.write_part(writer, "Field, ...") // One name of a field or more: `slot, name`.
+		case kind == .Stream || kind == .Record_Input:
+			system.write_part(writer, kind_names[kind])
 		case kind == .None:
 			system.write_part(writer, "Value") // Any kind: the command checks it.
 		case:
@@ -795,7 +830,7 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 			system.write_part(writer, value_kinds.CONTRACT_ENUM_TYPES[which].name)
 		}
 	case .Stream:
-		system.write_part(writer, "record output: a Stream")
+		system.write_part(writer, "record stream: a typed name")
 	}
 }
 

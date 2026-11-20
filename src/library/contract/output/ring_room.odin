@@ -40,6 +40,50 @@ ring_room_of :: proc "contextless" (write, read, capacity, needed: u32, pace: Wi
 	return .Holds
 }
 
+// What one ring of a record output does in the decision of a write.
+Ring_Part :: enum u8 {
+	Skipped         = 0, // The record fails the condition of the ring: the ring takes nothing of it, and holds nothing.
+	Takes           = 1, // The ring has room for the write.
+	Holds_By_Choice = 2, // The ring is full, of the pace Writer_Chooses: it holds a writer that waits.
+	Holds_Always    = 3, // The ring is full, of the pace Always_Holds_Writer: it holds the writer whatever its call says.
+	Refuses         = 4, // The ring is full, of the pace Never_Holds_Writer: it refuses the record for its reader alone.
+	Broken          = 5, // The reader wrote a count past the write of the writer: the writer closes the end.
+}
+
+// ring_part_of gives what one ring does with a write: skips says that the
+// record fails the condition of the ring, room what ring_room_of decided
+// from its counters (not read for a ring that skips), and pace its pace. A
+// ring that skips the record never holds the writer, full as it may be.
+ring_part_of :: proc "contextless" (skips: bool, room: Ring_Room, pace: Wiring_Pace) -> Ring_Part {
+	if skips {
+		return .Skipped
+	}
+	switch room {
+	case .Room:
+		return .Takes
+	case .Refuses:
+		return .Refuses
+	case .Broken:
+		return .Broken
+	case .Holds:
+		return pace == .Always_Holds_Writer ? .Holds_Always : .Holds_By_Choice
+	}
+	return .Broken
+}
+
+// counts_after_write gives the counts of a record output after a write
+// that passed its decision: written when a ring took the record, else
+// discarded, as each ring left it out by its condition.
+counts_after_write :: proc "contextless" (counts: Writer_Counts, taken: bool) -> Writer_Counts {
+	after := counts
+	if taken {
+		after.written += 1
+	} else {
+		after.discarded += 1
+	}
+	return after
+}
+
 // What a write does after it looked at each ring.
 Write_Step :: enum u8 {
 	Write = 0, // No ring holds the writer: it writes now.
