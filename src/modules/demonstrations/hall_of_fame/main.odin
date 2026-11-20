@@ -22,6 +22,7 @@ package hall_of_fame
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 WIDTH :: 1000
@@ -137,7 +138,7 @@ portraits_prepare :: proc "contextless" () {
 			continue
 		}
 		if len(source) != PORTRAIT_PIXELS {
-			system.log(.Info, "hall_of_fame: the portrait ", u64(portrait), " has ", u64(len(source)), " pixels, not ", u64(PORTRAIT_PIXELS), ": its card shows no picture")
+			system.log_fact(.Info, Portrait_Refused{portrait = u64(portrait), pixels = u64(len(source)), portrait_pixels = u64(PORTRAIT_PIXELS)})
 			continue
 		}
 		first := (int(portrait) - 1) * PORTRAIT_PIXELS
@@ -335,7 +336,7 @@ build :: proc "contextless" (frame: ^interface.Frame) -> (drawn: int) {
 	choose_by_input(frame)
 	if chosen != before {
 		view_show_chosen()
-		system.log(.Info, "hall_of_fame: chose ", people[chosen].name)
+		system.log_fact(.Info, Card_Chosen{chosen_name = value_kinds.text_field(people[chosen].name, 40)})
 	}
 
 	interface.background(frame, {0, 0, WIDTH, HEIGHT})
@@ -383,7 +384,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// wake: the line says what the screen has.
 		if !logged && !window_memory.drawing.late {
 			logged = true
-			system.log(.Info, "hall_of_fame: ok, the first frame drew ", u64(drawn), " of the ", u64(PERSON_COUNT), " people in ", window_memory.drawing.draw_time / 1000, " us")
+			system.log_fact(.Info, First_Frame_Drawn{drawn = u64(drawn), cards = u64(PERSON_COUNT), draw_time = window_memory.drawing.draw_time / 1000})
 		}
 		deadline: u64 = system.WAIT_FOREVER
 		if time, due := interface.window_scroll_bar_wake(&window_memory.drawing); due {

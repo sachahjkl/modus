@@ -39,6 +39,7 @@ import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 DURATION :: 1000 // Milliseconds of one measure, in a measure run.
@@ -249,9 +250,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The ring holds the one record of the surface: a full ring is a fault
 	// of the compositor, which the line says too.
 	if problem, sent := display.resizable_set(&window, {least_width = WIDTH, least_height = HEIGHT, largest_width = LARGEST_WIDTH, largest_height = LARGEST_HEIGHT}); problem != .None {
-		system.log(.Info, "clock: the window stays fixed: ", display.SIZE_LIMITS_PROBLEM_SENTENCES[problem])
+		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field(display.SIZE_LIMITS_PROBLEM_SENTENCES[problem], 64)})
 	} else if !sent {
-		system.log(.Info, "clock: the window stays fixed: the command ring of the window is full")
+		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field("the command ring of the window is full", 64)})
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
@@ -269,12 +270,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	draw(&window)
 	run(&measures[1], true, ENTERED_READS_CHECKED)
 	if measured {
-		system.log(.Info, "clock: the time page: ", measures[0].rate, " reads in one second, ", measures[0].entries, " kernel entries for one million reads")
-		system.log(.Info, "clock: a kernel entry: ", measures[1].rate, " reads in one second, ", measures[1].entries, " kernel entries for one million reads")
+		system.log_fact(.Info, Time_Page_Measured{reads_in_one_second = measures[0].rate, kernel_entries = measures[0].entries})
+		system.log_fact(.Info, Kernel_Entry_Measured{reads_in_one_second = measures[1].rate, kernel_entries = measures[1].entries})
 	} else {
 		// The entries of the check are for its own count of reads.
-		system.log(.Info, "clock: the check of the time page: ", measures[0].reads, " reads, ", measures[0].entries * measures[0].reads / 1_000_000, " kernel entries")
-		system.log(.Info, "clock: the check of a kernel entry: ", measures[1].reads, " reads, ", measures[1].entries * measures[1].reads / 1_000_000, " kernel entries")
+		system.log_fact(.Info, Time_Page_Checked{reads = measures[0].reads, kernel_entries = measures[0].entries * measures[0].reads / 1_000_000})
+		system.log_fact(.Info, Kernel_Entry_Checked{reads = measures[1].reads, kernel_entries = measures[1].entries * measures[1].reads / 1_000_000})
 	}
 
 	// The two ways give the same time: a kernel entry between two reads
@@ -299,7 +300,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		apart_most = max(apart_most, page_after - page_before)
 	}
-	system.log(.Info, "clock: the time page and a kernel entry: in 1000 pairs of reads of the page with an entry between them, the entry was outside the two reads ", outside, " times; the two reads were at most ", apart_most, " ms apart (a measure)")
+	system.log_fact(.Info, Page_And_Kernel_Entry{outside = outside, apart_most = apart_most})
 	// The page follows the cycle counter: each read of the page is
 	// compared with the time that the cycle counter gives now, until the
 	// page changed PAGE_CHANGES_COMPARED times. A measure run compares for
@@ -321,12 +322,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		ahead = max(ahead, page > fine ? page - fine : 0)
 		compared += 1
 	}
-	system.log(.Info, "clock: the time page and the cycle counter: in ", compared, " reads the page was ", least, " to ", behind, " ms behind and at most ", ahead, " ms ahead")
+	system.log_fact(.Info, Page_And_Cycle_Counter{compared = compared, least_behind = least, most_behind = behind, most_ahead = ahead})
 	refused = system.memory_unmap(rawptr(uintptr(op.TIME_ADDRESS))) != .Ok && system.time() != 0
 	checked = true
 	if slot != 0 && went_back == 0 && outside == 0 && page_changes >= PAGE_CHANGES_COMPARED && least <= LEAST_LIMIT && ahead <= AHEAD_LIMIT && refused && measures[0].entries == 0 {
 		system.log(.Info, "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page")
 	} else {
+		// The sentence is longer than the 256 bytes of a fact template: the
+		// line stays text.
 		system.log(.Info, "clock: wrong: the time went back ", went_back, " times, a kernel entry was outside two reads of the page ", outside, " times, the page changed ", page_changes, " times and is at least ", least, " ms behind and ", ahead, " ms ahead of the cycle counter, the kernel ", refused ? "refuses" : "does not refuse", " to remove the time page")
 	}
 	deadline := system.time()
@@ -340,6 +343,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			drawn_time += system.nanoseconds() - start
 			drawn += 1
 			if drawn == 10 {
+				// Times with one decimal, which no field kind writes: the
+				// two lines stay text until a field kind writes them.
 				system.log(.Info, "clock: the window drew one picture in ", drawn_time / 10 / 1000, ".", drawn_time / 10 / 100 % 10, " us, the mean of 10")
 				// One frame where one number changed: the time since boot.
 				system.log(.Info, "clock: the interface: ", u64(window_memory.drawing.now.record_count), " records, ", u64(window_memory.drawing.damage.count), " damage rectangles; build ", window_memory.drawing.build_time / 1000, ".", window_memory.drawing.build_time / 100 % 10, " us, difference ", window_memory.drawing.difference_time / 1000, ".", window_memory.drawing.difference_time / 100 % 10, " us, draw ", window_memory.drawing.draw_time / 1000, ".", window_memory.drawing.draw_time / 100 % 10, " us")

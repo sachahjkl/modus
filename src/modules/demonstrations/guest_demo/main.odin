@@ -39,6 +39,7 @@ package guest_demo
 
 import "modus:contract/errors"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The process itself and its guest. The working memory holds what the
@@ -71,8 +72,17 @@ INTERRUPTED_RUNS_LIMIT :: 1000
 
 // fail writes the line of a failure, which starts with "guest_demo:
 // failed: ", and stops the process with `Failed`.
+// It keeps the lines with an address or an exit code as text: system.Hex
+// writes them, which no field kind writes.
 fail :: proc "contextless" (parts: ..system.Part) -> ! {
 	system.log(.Info, ..parts)
+	system.stop(.Failed)
+}
+
+// step_failed writes the fact of a step that gave a status that stops the
+// demonstration, and stops the process with `Failed`.
+step_failed :: proc "contextless" (step: string, status: system.Status) -> ! {
+	system.log_fact(.Info, Step_Failed{status_word = u64(status), step = value_kinds.text_field(step, 40)})
 	system.stop(.Failed)
 }
 
@@ -81,7 +91,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	name := GUEST_NAME
 	created, create_status := system.call(.Process_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
 	if create_status != .Ok {
-		fail("guest_demo: failed: Process_Create of the guest gave ", create_status)
+		step_failed("Process_Create of the guest", create_status)
 	}
 	guest := system.Handle(created[0])
 
@@ -89,11 +99,11 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	// guest with Execute only: no page is writable and executable.
 	memory, memory_status := system.memory_create(1)
 	if memory_status != .Ok {
-		fail("guest_demo: failed: Memory_Create gave ", memory_status)
+		step_failed("Memory_Create", memory_status)
 	}
 	page, map_status := system.memory_map(memory, {.Write})
 	if map_status != .Ok {
-		fail("guest_demo: failed: Memory_Map of the code gave ", map_status)
+		step_failed("Memory_Map of the code", map_status)
 	}
 	code := GUEST_CODE
 	bytes := ([^]u8)(page)
@@ -102,7 +112,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	}
 	system.memory_unmap(page)
 	if _, guest_map_status := system.memory_map(memory, {.Execute}, guest, CODE_ADDRESS); guest_map_status != .Ok {
-		fail("guest_demo: failed: Memory_Map of the code in the guest gave ", guest_map_status)
+		step_failed("Memory_Map of the code in the guest", guest_map_status)
 	}
 
 	registers := op.Guest_Registers{rip = CODE_ADDRESS}
@@ -118,14 +128,15 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 			system.stop(.Done)
 		}
 		if run_status != .Ok {
-			fail("guest_demo: failed: Guest_Run gave ", run_status)
+			step_failed("Guest_Run", run_status)
 		}
 		switch exit.kind {
 		case .Port_Write:
 			written_port, written_value = exit.a, exit.c
 			writes += 1
 			if exit.b != 1 {
-				fail("guest_demo: failed: the port write has ", exit.b, " bytes, not 1")
+				system.log_fact(.Info, Port_Write_Size_Wrong{port_write_bytes = u64(exit.b)})
+				system.stop(.Failed)
 			}
 			registers.rip = exit.next
 		case .Halt:
@@ -136,14 +147,16 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 		case .Interrupted:
 			interrupted += 1
 			if interrupted > INTERRUPTED_RUNS_LIMIT {
-				fail("guest_demo: failed: the guest did not reach its hlt in ", u64(INTERRUPTED_RUNS_LIMIT), " runs")
+				system.log_fact(.Info, Instruction_Not_Reached{runs = u64(INTERRUPTED_RUNS_LIMIT), instruction = value_kinds.text_field("hlt", 8)})
+				system.stop(.Failed)
 			}
 		case .None, .Port_Read, .Cpuid, .Memory, .Shutdown, .Refused_State, .Other:
 			fail("guest_demo: failed: an exit of kind ", u64(exit.kind), ", exit code ", system.Hex(exit.code), ", information ", system.Hex(exit.information), ", at ", system.Hex(registers.rip))
 		}
 	}
 	if writes != 1 || written_port != PORT || written_value != VALUE {
-		fail("guest_demo: failed: the guest wrote ", writes, " times, the last ", written_value, " to the port ", written_port)
+		system.log_fact(.Info, Port_Writes_Wrong{writes = writes, written_value = written_value, written_port = written_port})
+		system.stop(.Failed)
 	}
 	system.log(.Info, "guest_demo: the guest wrote 42 to the port 0x80, then halted after it: as it must")
 
@@ -154,12 +167,13 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	for {
 		exit, run_status := system.guest_run(guest, &registers)
 		if run_status != .Ok {
-			fail("guest_demo: failed: Guest_Run at int1 gave ", run_status)
+			step_failed("Guest_Run at int1", run_status)
 		}
 		if exit.kind == .Interrupted {
 			interrupted += 1
 			if interrupted > INTERRUPTED_RUNS_LIMIT {
-				fail("guest_demo: failed: the guest did not reach its int1 in ", u64(INTERRUPTED_RUNS_LIMIT), " runs")
+				system.log_fact(.Info, Instruction_Not_Reached{runs = u64(INTERRUPTED_RUNS_LIMIT), instruction = value_kinds.text_field("int1", 8)})
+				system.stop(.Failed)
 			}
 			continue
 		}
@@ -172,7 +186,8 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 
 	// A guest has no kernel half in its page table: no thread runs on it.
 	if _, start_status := system.call(.Process_Start, u64(guest), CODE_ADDRESS, op.STACK_TOP, op.CONTEXT_ADDRESS); start_status != .Bad_State {
-		fail("guest_demo: failed: Process_Start of the guest gave ", start_status, ", not Bad_State")
+		system.log_fact(.Info, Step_Not_Refused{status_word = u64(start_status), expected = .Bad_State, step = value_kinds.text_field("Process_Start of the guest", 36)})
+		system.stop(.Failed)
 	}
 	system.log(.Info, "guest_demo: Process_Start of the guest gave Bad_State: as it must")
 	system.log(.Info, "guest_demo: ok")

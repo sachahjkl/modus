@@ -81,6 +81,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/mark"
 import "modus:support/random"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The stage: the part of the window where the heron stands and moves. It
@@ -791,7 +792,7 @@ played_line_write :: proc "contextless" () {
 			// Not the start of the line of an asked animation: a reader
 			// of the log that waits for "dash played: " must not take
 			// a dash of the own order for the dash that it asked for.
-			system.log(.Info, "heron: ", name, " played in its own order: ", frames, " frames")
+			system.log_fact(.Info, Played_In_Own_Order{frames = frames, animation = value_kinds.text_field(name, 16)})
 		}
 		return
 	}
@@ -813,12 +814,14 @@ played_line_write :: proc "contextless" () {
 	} else if asked_ways == u32(1) << u32(Move_Way.Free) {
 		ways = ", free"
 	}
-	system.log(.Info, "heron: ", name, " played: ", frames, " frames", what, ways)
+	system.log_fact(.Info, Played{frames = frames, animation = value_kinds.text_field(name, 16), motion = value_kinds.text_field(what, 48), ways = value_kinds.text_field(ways, 24)})
 	if measure_line_written || asked_pictures == 0 {
 		return
 	}
 	measure_line_written = true
 	mean := asked_draw_time / asked_pictures
+	// A time with one decimal, which no field kind writes: the line stays
+	// text until a field kind writes it.
 	system.log(.Info, "heron: a picture of ", name, " took ", mean / 1000, ".", mean / 100 % 10, " us to draw and damaged ", asked_damage / asked_pictures, " pixels of the ", u64(WIDTH * HEIGHT), " of the window, the means of ", asked_pictures, " pictures (a measure)")
 }
 
@@ -831,17 +834,18 @@ played_line_write :: proc "contextless" () {
 shows_line_write :: proc "contextless" () {
 	lines := lines_shown ? "shown" : "hidden"
 	if state != .Animation {
-		system.log(.Info, "heron: shows the still heron, ", way_text(shown.way), "; the lines of the cells ", lines)
+		system.log_fact(.Info, Still_Shown{way = value_kinds.text_field(way_text(shown.way), 16), cell_lines = value_kinds.text_field(lines, 8)})
 		return
 	}
-	held := paused ? ", held" : ""
+	held := value_kinds.text_field(paused ? ", held" : "", 8)
 	changed := u64(changed_cells())
+	animation_name := value_kinds.text_field(mark.animation_names[animation], 16)
 	if shown.way == .On_The_Grid {
-		side := shown.cells_right < 0 ? " cells to the left and " : " cells to the right and "
-		system.log(.Info, "heron: shows ", mark.animation_names[animation], " at frame ", u64(frame_now()), " of ", u64(mark.animation_frame_count(animation)), held, ", on the grid: the form ", mark.form_names[shown.form], ", ", u64(abs(shown.cells_right)), side, u64(max(shown.cells_up, 0)), " up; the lines of the cells ", lines, "; ", changed, " cells of the frame differ from the still heron")
+		side: string = shown.cells_right < 0 ? "left" : "right"
+		system.log_fact(.Info, Grid_Frame_Shown{frame = u64(frame_now()), frame_count = u64(mark.animation_frame_count(animation)), cells_sideways = u64(abs(shown.cells_right)), cells_up = u64(max(shown.cells_up, 0)), changed_cells = changed, animation = animation_name, held = held, form = value_kinds.text_field(mark.form_names[shown.form], 16), side = value_kinds.text_field(side, 8), cell_lines = value_kinds.text_field(lines, 8)})
 		return
 	}
-	system.log(.Info, "heron: shows ", mark.animation_names[animation], " at frame ", u64(frame_now()), " of ", u64(mark.animation_frame_count(animation)), held, ", free: the frame stretched to ", u64(max(shown.body.right - shown.body.left, 0)), " by ", u64(max(shown.body.bottom - shown.body.top, 0)), " pixels; the lines of the cells ", lines, "; ", changed, " cells of the frame differ from the still heron")
+	system.log_fact(.Info, Free_Frame_Shown{frame = u64(frame_now()), frame_count = u64(mark.animation_frame_count(animation)), width = u64(max(shown.body.right - shown.body.left, 0)), height = u64(max(shown.body.bottom - shown.body.top, 0)), changed_cells = changed, animation = animation_name, held = held, cell_lines = value_kinds.text_field(lines, 8)})
 }
 
 // entry opens the window and plays the animations until the process is
@@ -948,7 +952,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if cell_line_waits {
 			cell_line_waits = false
-			system.log(.Info, "heron: cells of ", u64(cell_sizes[cell_size_index]), " pixels")
+			system.log_fact(.Info, Cell_Size_Changed{cell_size = u64(cell_sizes[cell_size_index])})
 		}
 		if shows_line_waits {
 			shows_line_waits = false

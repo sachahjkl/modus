@@ -40,6 +40,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 import "base:intrinsics"
 
@@ -183,12 +184,13 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 	measure.entries = (after - before) * 1_000_000 / max(received, 1)
 	measure.lost = lost
 	measure.done = true
+	waiting := value_kinds.text_field(measure.spin ? "read the counters then wait" : "wait at once", 32)
 	if measured {
 		measure.rate = received * 1000 / max(end - start, 1)
-		system.log(.Info, "flow: capacity ", u64(measure.capacity), measure.spin ? ", read the counters then wait: " : ", wait at once: ", measure.rate, " records in one second, ", measure.entries, " kernel entries for one million records, ", lost, " lost")
+		system.log_fact(.Info, Ring_Measured{capacity = u64(measure.capacity), records_in_one_second = measure.rate, kernel_entries = measure.entries, lost_records = lost, waiting = waiting})
 		return received != 0
 	}
-	system.log(.Info, "flow: capacity ", u64(measure.capacity), measure.spin ? ", read the counters then wait: " : ", wait at once: ", received, " records read in order, ", lost, " lost, ", measure.entries, " kernel entries for one million records")
+	system.log_fact(.Info, Ring_Checked{capacity = u64(measure.capacity), read_records = received, lost_records = lost, kernel_entries = measure.entries, waiting = waiting})
 	return received == RECORDS_CHECKED
 }
 
@@ -270,9 +272,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		draw(&window)
 	}
 	if wrong || total_lost != 0 {
-		system.log(.Info, "flow: wrong: ", total_lost, " records lost")
+		system.log_fact(.Info, Flow_Wrong{lost_records = total_lost})
 	} else {
-		system.log(.Info, "flow: ok, ", u64(len(measures)), " rings, 0 records lost")
+		system.log_fact(.Info, Flow_Held{rings = u64(len(measures))})
 	}
 	for {
 		draw(&window)

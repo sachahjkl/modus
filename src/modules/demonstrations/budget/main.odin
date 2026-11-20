@@ -31,6 +31,7 @@ import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The pages that its cases spend: 598. And the glyph memory of the copy
@@ -171,11 +172,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for &row in rows[:row_count] {
 		if !row.correct {
 			wrong += 1
-			system.log(.Info, "budget: wrong answer: ", row.text, ": ", string(row.buffer[:row.count]), ", ", row.pages, " pages")
+			system.log_fact(.Info, Wrong_Answer{pages = row.pages, step = value_kinds.text_field(row.text, 48), answer = value_kinds.text_field(string(row.buffer[:row.count]), 48)})
 		}
 	}
 	if wrong == 0 {
-		system.log(.Info, "budget: ok, ", object_count, " memory objects then no budget, ", thread_count, " threads then no budget, each page returned")
+		system.log_fact(.Info, Budget_Held{memory_objects = u64(object_count), threads = u64(thread_count)})
 	}
 
 	for {

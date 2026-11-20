@@ -36,6 +36,7 @@ package counters
 import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The process itself and the region of the reads: 180 pages, as the other
@@ -65,16 +66,25 @@ LINES_IN_A_PAGE :: PAGE_BYTES / LINE_BYTES
 // compiler cannot drop.
 loop_sink: u64
 
-// fail writes the line of a failure, which starts with "counters: failed: ",
-// and stops the process with `Failed`.
-fail :: proc "contextless" (parts: ..system.Part) -> ! {
-	system.log(.Info, ..parts)
+// step_failed writes the fact of a step that gave a status that stops the
+// demonstration, and stops the process with `Failed`. Its sentence starts
+// with "counters: failed: ".
+step_failed :: proc "contextless" (step: string, status: system.Status) -> ! {
+	system.log_fact(.Info, Step_Failed{status_word = u64(status), step = value_kinds.text_field(step, 56)})
 	system.stop(.Failed)
 }
 
-// counts_log writes the four counts of one measure on one line.
-counts_log :: proc "contextless" (counters: op.Thread_Counters, prefix: string) {
-	system.log(.Info, prefix, counters.instructions_retired, " instructions retired, ", counters.cycles, " cycles, ", counters.cache_misses, " cache misses, ", counters.branch_misses, " branch misses")
+// step_not_refused writes the fact of a step that the kernel must refuse
+// with `expected` and that gave another status, and stops the process with
+// `Failed`.
+step_not_refused :: proc "contextless" (step: string, status, expected: system.Status) -> ! {
+	system.log_fact(.Info, Step_Not_Refused{status_word = u64(status), expected = expected, refused_step = value_kinds.text_field(step, 68)})
+	system.stop(.Failed)
+}
+
+// counts_log writes the four counts of one measure: `measure` names it.
+counts_log :: proc "contextless" (counters: op.Thread_Counters, measure: string) {
+	system.log_fact(.Info, Counts_Measured{instructions = counters.instructions_retired, cycles = counters.cycles, cache_misses = counters.cache_misses, branch_misses = counters.branch_misses, measure = value_kinds.text_field(measure, 24)})
 }
 
 // difference gives the counts of a measure between two reads of one start.
@@ -91,7 +101,12 @@ difference :: proc "contextless" (after, before: op.Thread_Counters) -> op.Threa
 read_or_fail :: proc "contextless" (machine: system.Handle, during: string) -> op.Thread_Counters {
 	counters, status := system.thread_counters_read(machine)
 	if status != .Ok {
-		fail("counters: failed: Read_Counters ", during, " gave ", status)
+		// The step is "Read_Counters " and the moment of the read.
+		step: [56]u8
+		copy(step[:], "Read_Counters ")
+		written := len("Read_Counters ")
+		written += copy(step[written:len(step) - 1], during)
+		step_failed(string(step[:written]), status)
 	}
 	return counters
 }
@@ -127,13 +142,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// right counts nothing.
 	without_right, given := system.give(0, machine, {})
 	if given != .Ok {
-		fail("counters: failed: the copy of the machine handle gave ", given)
+		step_failed("the copy of the machine handle", given)
 	}
 	refused := system.thread_counters_start(without_right)
 	system.close(without_right)
 	if refused != .No_Right {
-		fail("counters: failed: Start_Counters with a copy of the machine handle with no right gave ", refused, ", not No_Right")
+		step_not_refused("Start_Counters with a copy of the machine handle with no right", refused, .No_Right)
 	}
+	// A line with no value stays text: a fact type needs a field.
 	system.log(.Info, "counters: Start_Counters with a copy of the machine handle with no right gave No_Right: as it must")
 
 	// 2. No count before a start, or no counters on this machine.
@@ -143,20 +159,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		start_error: errors.Error_Record
 		start_status := system.thread_counters_start(machine, &start_error)
 		if start_status != .Bad_Operation || start_error.kind != i64(errors.Kind.Unsupported) {
-			fail("counters: failed: Read_Counters gave Unsupported and Start_Counters gave ", start_status)
+			step_failed("Read_Counters gave Unsupported and Start_Counters", start_status)
 		}
 		system.log(.Info, "counters: Read_Counters and Start_Counters gave Bad_Operation with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must")
 		system.log(.Info, "counters: ok")
 		system.stop(.Done)
 	}
 	if before_start != .Bad_State {
-		fail("counters: failed: Read_Counters before Start_Counters gave ", before_start, ", not Bad_State")
+		step_not_refused("Read_Counters before Start_Counters", before_start, .Bad_State)
 	}
 	system.log(.Info, "counters: Read_Counters before Start_Counters gave Bad_State: as it must")
 
 	// 3. A loop of known length.
 	if status := system.thread_counters_start(machine); status != .Ok {
-		fail("counters: failed: Start_Counters gave ", status)
+		step_failed("Start_Counters", status)
 	}
 	for turn in u64(0) ..< LOOP_TURNS {
 		intrinsics.volatile_store(&loop_sink, turn)
@@ -165,26 +181,29 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if loop.instructions_retired < LOOP_INSTRUCTIONS_LEAST {
 		// A counter that the host did not give counts nothing: the four
 		// counts on the line say which.
-		fail("counters: failed: a loop of ", u64(LOOP_TURNS), " turns retired ", loop.instructions_retired, " instructions, fewer than ", u64(LOOP_INSTRUCTIONS_LEAST), "; ", loop.cycles, " cycles, ", loop.cache_misses, " cache misses, ", loop.branch_misses, " branch misses")
+		system.log_fact(.Info, Loop_Too_Short{turns = u64(LOOP_TURNS), instructions = loop.instructions_retired, least_instructions = u64(LOOP_INSTRUCTIONS_LEAST), cycles = loop.cycles, cache_misses = loop.cache_misses, branch_misses = loop.branch_misses})
+		system.stop(.Failed)
 	}
-	system.log(.Info, "counters: a loop of ", u64(LOOP_TURNS), " turns retired at least ", u64(LOOP_INSTRUCTIONS_LEAST), " instructions: as it must")
-	counts_log(loop, "counters: the loop (a measure): ")
+	system.log_fact(.Info, Loop_Retired{turns = u64(LOOP_TURNS), least_instructions = u64(LOOP_INSTRUCTIONS_LEAST)})
+	counts_log(loop, "the loop")
 
 	// 4. The thread goes on counting.
 	later := read_or_fail(machine, "a second time")
 	if later.instructions_retired < loop.instructions_retired || later.cycles < loop.cycles || later.cache_misses < loop.cache_misses || later.branch_misses < loop.branch_misses {
-		fail("counters: failed: a second read gave a count below the first")
+		// A line with no value stays text: a fact type needs a field.
+		system.log(.Info, "counters: failed: a second read gave a count below the first")
+		system.stop(.Failed)
 	}
 	system.log(.Info, "counters: a second read gave no count below the first: as it must")
 
 	// 5. One data layout read in two orders.
 	region, created := system.memory_create(REGION_PAGES)
 	if created != .Ok {
-		fail("counters: failed: Memory_Create of the region gave ", created)
+		step_failed("Memory_Create of the region", created)
 	}
 	address, mapped := system.memory_map(region, {.Write})
 	if mapped != .Ok {
-		fail("counters: failed: Memory_Map of the region gave ", mapped)
+		step_failed("Memory_Map of the region", mapped)
 	}
 	words := ([^]u64)(address)
 	// Each page gets its frame before the measures, so neither order pays
@@ -199,19 +218,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	sum_by_page := sum_of_words(words, true)
 	by_page := difference(read_or_fail(machine, "after the reads by page"), start_by_page)
 	if sum_in_order != sum_by_page {
-		fail("counters: failed: the two orders read other words: ", sum_in_order, " and ", sum_by_page)
+		system.log_fact(.Info, Orders_Read_Other_Words{sum_in_order = sum_in_order, sum_by_page = sum_by_page})
+		system.stop(.Failed)
 	}
-	system.log(.Info, "counters: ", u64(REGION_PAGES * WORDS_IN_A_PAGE), " reads of ", u64(WORD_BYTES), " bytes in ", u64(REGION_PAGES), " pages, in order and by page, read the same words: as it must")
-	counts_log(in_order, "counters: the reads in order (a measure): ")
-	counts_log(by_page, "counters: the reads by page (a measure): ")
+	system.log_fact(.Info, Orders_Read_Same_Words{reads = u64(REGION_PAGES * WORDS_IN_A_PAGE), word_bytes = u64(WORD_BYTES), region_pages = u64(REGION_PAGES)})
+	counts_log(in_order, "the reads in order")
+	counts_log(by_page, "the reads by page")
 
 	// 6. A stopped thread has no count. The stop takes no handle: it only
 	// takes a capability away.
 	if status := system.thread_counters_stop(); status != .Ok {
-		fail("counters: failed: Stop_Counters with no handle gave ", status)
+		step_failed("Stop_Counters with no handle", status)
 	}
 	if _, after_stop := system.thread_counters_read(machine); after_stop != .Bad_State {
-		fail("counters: failed: Read_Counters after Stop_Counters gave ", after_stop, ", not Bad_State")
+		step_not_refused("Read_Counters after Stop_Counters", after_stop, .Bad_State)
 	}
 	system.log(.Info, "counters: Stop_Counters with no handle gave Ok, and Read_Counters after it gave Bad_State: as it must")
 	system.log(.Info, "counters: ok")
