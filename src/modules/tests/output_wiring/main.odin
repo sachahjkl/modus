@@ -281,6 +281,32 @@ stopped_wait :: proc "contextless" (processes: []system.Handle) {
 	}
 }
 
+// budget_settled_wait waits until the budget of this process holds the
+// pages that it held at the start of a case. A case ends when its children
+// are Stopped, but the root service ends their wirings only when it reaps
+// them, in its own loop and later: then it closes the end page of each
+// wiring and, with the last one, the wiring page of this asker, which this
+// budget paid. A refusal of the next case would else see those pages come
+// back during its call. Each round waits for one answer of the root
+// service, whose loop reaps between its answers: no round waits a time,
+// and the hang bound ends a wait that never settles.
+@(private = "file")
+budget_settled_wait :: proc "contextless" (wanted: u64, case_name: string) {
+	deadline := hang_deadline()
+	asker_name := system.name_pack("output_wiring")
+	for {
+		held := budget_pages()
+		if held == wanted {
+			return
+		}
+		if system.time() >= deadline {
+			system.log(.Error, "output_wiring: WRONG: after ", case_name, ", the budget held ", held, " pages within the hang bound, and ", wanted, " at its start")
+			system.stop(.Failed)
+		}
+		root_call(.Grants, {asker_name[0], asker_name[1], asker_name[2], asker_name[3], 0, 0, 0})
+	}
+}
+
 // grant_wirings_revoke revokes the grant wirings of this process, which
 // ends each of its wirings, and checks their count.
 @(private = "file")
@@ -427,6 +453,7 @@ lent_return_case :: proc "contextless" () {
 // 5; the refusals of a wiring between them, and the count One after.
 @(private = "file")
 probes_case :: proc "contextless" () {
+	settled := budget_pages()
 	first_reader := start_child("output_reader")
 	second_reader := start_child("output_reader")
 	rows := [1]output.Wiring{row(.Child, 0, WRITER_PROBES, .Started, 1, READER_PROBES)}
@@ -554,6 +581,7 @@ probes_case :: proc "contextless" () {
 	for process in processes {
 		system.close(process)
 	}
+	budget_settled_wait(settled, "the probes")
 }
 
 // start_case: the refusals of Start and of its list.
@@ -608,6 +636,7 @@ start_case :: proc "contextless" () {
 // end_words_case: Writer_Stopped and Reader_Stopped.
 @(private = "file")
 end_words_case :: proc "contextless" () {
+	settled := budget_pages()
 	cases := [2][2]u32{{WRITER_UNENDED, READER_UNENDED}, {WRITER_WATCHED, READER_WATCHED}}
 	for pair in cases {
 		reader := start_child("output_reader")
@@ -624,6 +653,7 @@ end_words_case :: proc "contextless" () {
 		system.close(writer)
 		system.close(reader)
 	}
+	budget_settled_wait(settled, "the end words")
 	system.log(.Info, "output_wiring: the writer that stopped and the reader that stopped: as it must")
 }
 
@@ -632,6 +662,7 @@ end_words_case :: proc "contextless" () {
 // wirings.
 @(private = "file")
 limit_case :: proc "contextless" () {
+	settled := budget_pages()
 	writer := start_child("output_writer")
 	numbers: [output.WIRINGS_OF_AN_ASKER_MOST]u32
 	for &number in numbers {
@@ -657,6 +688,7 @@ limit_case :: proc "contextless" () {
 	processes := [1]system.Handle{writer}
 	stopped_wait(processes[:])
 	system.close(writer)
+	budget_settled_wait(settled, "the limit of an asker")
 	system.log(.Info, "output_wiring: ", u64(output.WIRINGS_OF_AN_ASKER_MOST), " wirings, one past them refused with Wire and with a Start, each with its status and its error record and the budget unchanged, then the revocation of the grant wirings: as it must")
 }
 
@@ -668,6 +700,7 @@ limit_case :: proc "contextless" () {
 // limit, and their ends leave its own wiring ring, which stays read.
 @(private = "file")
 side_case :: proc "contextless" () {
+	settled := budget_pages()
 	rows := [1]output.Wiring{row(.Child, 0, SIDE_ECHO, .Asker, 0, 0)}
 	list_write(rows[:], nil)
 	status, answer := start_listed("output_side", true)
@@ -744,6 +777,7 @@ side_case :: proc "contextless" () {
 	processes := [1]system.Handle{side}
 	stopped_wait(processes[:])
 	system.close(side)
+	budget_settled_wait(settled, "the side")
 	system.log(.Info, "output_wiring: the end that a side refused ended with Refused, the wiring that a side closed gave its probe then Side_Closed, and ", u64(SIDE_RING_CAPACITY), " ends filled the wiring ring that it does not read, then one more refused with Busy, its status and its error record and the budget unchanged: as it must")
 }
 
