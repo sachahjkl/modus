@@ -131,6 +131,7 @@ row_start :: proc "contextless" (index: int) -> bool {
 			return false
 		}
 		list_page = ([^]u8)(address)[:wiring_rows.PAGE_BYTES]
+		system.close(system.Handle(values[1])) // The root service gives a start policy no end to read: its wiring ring stays empty.
 	}
 	prepared := wiring_rows.row_list_prepare(&list, index, running[:list.row_count], list_page, reader_lend)
 	if prepared.give_back {

@@ -1055,6 +1055,10 @@ scenario := [?]Step {
 	// reader reads every number from the joined record of 0. The pair runs
 	// beside the rest of the start, so its lines have no fixed place.
 	{kind = .Wait, text = "wired_writer: wrote 16 numbers to 1 reader, and ended numbers", any_order = true, fails_on = "wired_writer: wrote 16 numbers to 0 reader"},
+	// A reader with no writer stops with Done and a plain fact, as on a
+	// machine of a principal: the test fails on that fact, then on a
+	// record that breaks the order. Each step names one failure.
+	{kind = .Wait, text = "wired_reader: read the joined record of 0, the 16 numbers of wired_writer in order, and a clean end", any_order = true, fails_on = "wired_reader: no writer came"},
 	{kind = .Wait, text = "wired_reader: read the joined record of 0, the 16 numbers of wired_writer in order, and a clean end", any_order = true, fails_on = "wired_reader: WRONG"},
 	{kind = .Wait, text = "root: ok"},
 	// The kernel refuses a stop code past one byte, and the machine runs on.

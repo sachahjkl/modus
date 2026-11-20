@@ -475,13 +475,13 @@ START_POLICY_SOURCE_LINE_LIMIT :: 400
 @(rodata)
 START_POLICY_ALLOWED_IMPORTS := [?]string{"modus:contract/start_list", "modus:contract/root_ring", "modus:contract/ring", "modus:contract/operation", "modus:contract/value_kinds", "modus:private/start_policy/wiring_rows", "modus:support/system"}
 
-// start_policy_source_problems gives each fault of the sources of the
-// start policy, tests not counted: more lines than the bound in all its
-// files, and an import that is not base: or of the allowed set. sources
-// holds each file as its path and its text.
-start_policy_source_problems :: proc(sources: [][2]string) -> []string {
-	problems := make([dynamic]string, context.temp_allocator)
-	lines := 0
+// source_import_problems gives each import of the sources, tests not
+// counted, that allowed refuses, each foreign import or block, and each
+// import with no path; why ends each sentence. sources holds each file as
+// its path and its text. lines is the count of the lines, tests not
+// counted.
+source_import_problems :: proc(sources: [][2]string, allowed: proc(imported: string) -> bool, why: string) -> (problems: [dynamic]string, lines: int) {
+	problems = make([dynamic]string, context.temp_allocator)
 	for source in sources {
 		path, text := source[0], source[1]
 		if strings.has_suffix(path, "_test.odin") {
@@ -493,7 +493,7 @@ start_policy_source_problems :: proc(sources: [][2]string) -> []string {
 			// A foreign import or block reaches code that no description of
 			// a module names, past the allowed set: refused whole.
 			if strings.has_prefix(trimmed, "foreign") {
-				append(&problems, fmt.tprintf("%s: a foreign import or block: %s: the start policy holds no code of its own past its imports", path, trimmed))
+				append(&problems, fmt.tprintf("%s: a foreign import or block: %s: %s", path, trimmed, why))
 				continue
 			}
 			// A bare `import` and a grouped `import (` are imports too: the
@@ -508,34 +508,69 @@ start_policy_source_problems :: proc(sources: [][2]string) -> []string {
 				continue
 			}
 			imported := trimmed[first + 1:last]
-			allowed := strings.has_prefix(imported, "base:")
-			for name in START_POLICY_ALLOWED_IMPORTS {
-				allowed ||= imported == name
-			}
-			if !allowed {
-				append(&problems, fmt.tprintf("%s: the import %s is not base: or one of %v: the start policy holds no logic of its own", path, imported, START_POLICY_ALLOWED_IMPORTS))
+			if !allowed(imported) {
+				append(&problems, fmt.tprintf("%s: the import %s is refused: %s", path, imported, why))
 			}
 		}
 	}
+	return
+}
+
+// start_policy_source_problems gives each fault of the sources of the
+// start policy, tests not counted: more lines than the bound in all its
+// files, and an import that is not base: or of the allowed set.
+start_policy_source_problems :: proc(sources: [][2]string) -> []string {
+	allowed :: proc(imported: string) -> bool {
+		for name in START_POLICY_ALLOWED_IMPORTS {
+			if imported == name {
+				return true
+			}
+		}
+		return strings.has_prefix(imported, "base:")
+	}
+	problems, lines := source_import_problems(sources, allowed, fmt.tprintf("the start policy imports base: and %v only, and holds no logic of its own", START_POLICY_ALLOWED_IMPORTS))
 	if lines > START_POLICY_SOURCE_LINE_LIMIT {
 		append(&problems, fmt.tprintf("the source of the start policy has %d lines, tests not counted, past the bound of %d: it reads a list in its order, and holds no graph and no logic", lines, START_POLICY_SOURCE_LINE_LIMIT))
 	}
 	return problems[:]
 }
 
-// start_policy_source_check reads the source folder of the start policy and
-// stops the build at a fault.
+// The library part of the wiring rows of the start policy: it makes no
+// call of the kernel, so its host tests reach each decision
+// (src/md/features/start_policy.md, "The rescue start policy").
+WIRING_ROWS_FOLDER :: foundation.SOURCE_FOLDER_PRIVATE + "/start_policy/wiring_rows"
+
+// wiring_rows_source_problems gives each import of the sources of
+// wiring_rows, tests not counted, that is not base: or a contract: a
+// support package, as system, calls the kernel, and a package of core:
+// calls the host.
+wiring_rows_source_problems :: proc(sources: [][2]string) -> []string {
+	allowed :: proc(imported: string) -> bool {
+		return strings.has_prefix(imported, "base:") || strings.has_prefix(imported, "modus:contract/")
+	}
+	problems, _ := source_import_problems(sources, allowed, "wiring_rows imports base: and the contracts only: it makes no call of the kernel")
+	return problems[:]
+}
+
+// start_policy_source_check reads the source folders of the start policy
+// and of wiring_rows, and stops the build at a fault.
 start_policy_source_check :: proc() -> bool {
-	folder := foundation.join(foundation.SYSTEM_MODULE_SOURCES, foundation.START_POLICY_MODULE)
-	paths := foundation.files_with_suffix(folder, ".odin") or_return
-	sources := make([dynamic][2]string, context.temp_allocator)
-	for path in paths {
-		text := foundation.read_text_file(path) or_return
-		append(&sources, [2]string{path, text})
+	checks := [2]struct {
+		folder:   string,
+		problems: proc(sources: [][2]string) -> []string,
+	}{{foundation.join(foundation.SYSTEM_MODULE_SOURCES, foundation.START_POLICY_MODULE), start_policy_source_problems}, {WIRING_ROWS_FOLDER, wiring_rows_source_problems}}
+	ok := true
+	for check in checks {
+		paths := foundation.files_with_suffix(check.folder, ".odin") or_return
+		sources := make([dynamic][2]string, context.temp_allocator)
+		for path in paths {
+			text := foundation.read_text_file(path) or_return
+			append(&sources, [2]string{path, text})
+		}
+		for problem in check.problems(sources[:]) {
+			fmt.eprintfln("modustool: %s", problem)
+			ok = false
+		}
 	}
-	problems := start_policy_source_problems(sources[:])
-	for problem in problems {
-		fmt.eprintfln("modustool: %s", problem)
-	}
-	return len(problems) == 0
+	return ok
 }

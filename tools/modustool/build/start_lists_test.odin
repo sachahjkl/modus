@@ -269,3 +269,30 @@ a_start_policy_past_its_bound_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(start_policy_source_problems(allowed)), 0)
 	testing.expect(t, start_policy_source_check(), "the source of the start policy of the repository is refused")
 }
+
+// The imports of wiring_rows: the support package system, which calls the
+// kernel, another support package, a private part, a package of core:, a
+// foreign import, and an import with no path are each refused. A test file
+// is not read. base: and the contracts pass last, and so does the source
+// of the repository.
+@(test)
+wiring_rows_that_call_the_kernel_are_refused :: proc(t: ^testing.T) {
+	refused := [?]string{"import \"modus:support/system\"\n", "import \"modus:support/storage\"\n", "import \"modus:private/root/start_policy_rules\"\n", "import \"core:fmt\"\n", "foreign import code \"code.asm\"\n", "import\n"}
+	for line in refused {
+		source := [][2]string{{"wiring_rows.odin", strings.concatenate({"package wiring_rows\n", line}, context.temp_allocator)}}
+		testing.expectf(t, len(wiring_rows_source_problems(source)) == 1, "the import %q is taken", line)
+	}
+	with_a_test := [][2]string{{"wiring_rows_test.odin", "package wiring_rows\nimport \"core:testing\"\nimport \"modus:support/system\"\n"}}
+	testing.expect_value(t, len(wiring_rows_source_problems(with_a_test)), 0)
+	allowed := [][2]string{{"wiring_rows.odin", "package wiring_rows\n\nimport \"base:intrinsics\"\nimport op \"modus:contract/operation\"\nimport \"modus:contract/output\"\nimport \"modus:contract/start_list\"\n"}}
+	testing.expect_value(t, len(wiring_rows_source_problems(allowed)), 0)
+	paths, listed := foundation.files_with_suffix(WIRING_ROWS_FOLDER, ".odin")
+	testing.expect(t, listed && len(paths) > 0, "the folder of wiring_rows has no source")
+	sources := make([dynamic][2]string, context.temp_allocator)
+	for path in paths {
+		text, read := foundation.read_text_file(path)
+		testing.expect(t, read)
+		append(&sources, [2]string{path, text})
+	}
+	testing.expectf(t, len(wiring_rows_source_problems(sources[:])) == 0, "the source of wiring_rows is refused: %v", wiring_rows_source_problems(sources[:]))
+}

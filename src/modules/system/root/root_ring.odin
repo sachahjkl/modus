@@ -278,8 +278,9 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 }
 
 // start_process_handle_give gives the asker of a start the handle of the
-// process with the right Read only, through its root ring: the handle that
-// a Wire names, and whose stop ends a wait of the asker.
+// process with the rights Read and Give, through its root ring: the handle
+// that a Wire names, whose stop ends a wait of the asker, and that a start
+// policy lends to a list as the reader of a wiring row.
 start_process_handle_give :: proc "contextless" (asker: ^Started, process: ^Started) -> (u64, system.Status) {
 	// Give, so that the asker can lend the handle back through its root
 	// ring, where Wire names the process as a Started end. A copy carries

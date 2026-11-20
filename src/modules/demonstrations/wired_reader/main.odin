@@ -11,7 +11,9 @@
 //
 // **Start**: by the default start policy. **What a reader sees**: no
 // window; one line "wired_reader: read the joined record of 0, the 16
-// numbers of wired_writer in order, and a clean end: ...", or a line
+// numbers of wired_writer in order, and a clean end: ...". With no writer
+// within the hang bound, the fact "wired_reader: no writer came ..." and
+// the stop Done. A record that breaks the order gives a line
 // "wired_reader: WRONG: ..." and the stop Failed.
 package wired_reader
 
@@ -43,8 +45,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// numbers at once, so each wait ends within the hang bound.
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for !system.input_has_writer(&numbers) {
+		// A writer that the start policy does not start, or whose wiring
+		// the root service refuses, is a state of the machine, not a fault
+		// of this reader: one plain fact, and a clean stop.
 		if system.time() >= deadline {
-			wrong("no writer came within the hang bound, in milliseconds:", system.TEST_HANG_BOUND_MILLISECONDS)
+			system.log_fact(.Info, No_Writer_Came{milliseconds = system.TEST_HANG_BOUND_MILLISECONDS})
+			system.stop(.Done)
 		}
 		system.wiring_wait(deadline)
 	}
