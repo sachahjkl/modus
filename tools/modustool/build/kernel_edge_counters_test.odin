@@ -7,7 +7,8 @@ import "modustool:foundation"
 
 // The IR of a counted kernel after the pass, in a short form: the comdat of
 // the constructor of the pass, two arrays of guards, a global of another
-// section, a list of constructors, the constructor, and code of the kernel
+// section, a list of constructors, the list of the used globals that keeps
+// the constructor, the constructor, and code of the kernel
 // before and after it.
 @(private = "file")
 INSTRUMENTED_IR :: `$sancov.module_ctor_trace_pc_guard = comdat any
@@ -15,6 +16,7 @@ INSTRUMENTED_IR :: `$sancov.module_ctor_trace_pc_guard = comdat any
 @__sancov_gen_.1 = private global [12 x i32] zeroinitializer, section "__sancov_guards", align 4, !associated !2
 @kernel.table = internal global [8 x i32] zeroinitializer, section ".data.table", align 4
 @llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 2, ptr @sancov.module_ctor_trace_pc_guard, ptr @sancov.module_ctor_trace_pc_guard }]
+@llvm.used = appending global [1 x ptr] [ptr @sancov.module_ctor_trace_pc_guard], section "llvm.metadata"
 define void @kernel.enter() {
   call void @__sanitizer_cov_trace_pc_guard(ptr @__sancov_gen_)
   ret void
@@ -103,6 +105,12 @@ the_constructor_of_the_pass_leaves_the_ir :: proc(t: ^testing.T) {
 	without_carriage_returns, _, crlf_constructors := kernel_ir_constructors_removed(with_carriage_returns)
 	testing.expect_value(t, crlf_constructors, 1)
 	testing.expect(t, strings.contains(without_carriage_returns, "define void @kernel.after()"), "the code after the constructor left with it")
+	// A list of the used globals that holds another global too stays whole,
+	// so its reference to the constructor stays, and the build stops on it.
+	shared_used :: `@llvm.used = appending global [2 x ptr] [ptr @sancov.module_ctor_trace_pc_guard, ptr @kernel.table], section "llvm.metadata"`
+	with_shared := strings.concatenate({INSTRUMENTED_IR, shared_used, "\n"}, context.temp_allocator)
+	without_shared, _, _ := kernel_ir_constructors_removed(with_shared)
+	testing.expect(t, strings.contains(without_shared, shared_used), "a list of the used globals with another global left the IR")
 }
 
 // Only the counted kernel gets the pass and the file of the callback, and

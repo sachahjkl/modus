@@ -50,10 +50,14 @@ module_edge_counter_command :: proc(build: foundation.Module_Build) -> []string 
 // __sanitizer_cov_trace_pc_guard_init, and the start of its comdat line.
 KERNEL_IR_PASS_CONSTRUCTOR :: "@sancov.module_ctor_trace_pc_guard"
 KERNEL_IR_PASS_CONSTRUCTOR_COMDAT_START :: "$sancov.module_ctor_trace_pc_guard "
+// The start of the list of the used globals when the constructor is its one
+// element, as the pass writes it.
+KERNEL_IR_USED_ONLY_CONSTRUCTOR :: "@llvm.used = appending global [1 x ptr] [ptr " + KERNEL_IR_PASS_CONSTRUCTOR + "]"
 
 // kernel_ir_constructors_removed gives the IR with no list of the
 // constructors and with no constructor of the pass: its definition, from
-// its `define` line to the `}` that ends it, and its comdat line. The
+// its `define` line to the `}` that ends it, its comdat line, and the list
+// of the used globals that holds only it. The
 // kernel runs no constructor, the conversion refuses a module with one, and
 // the counters need no init: the place of a guard in its section is its
 // edge, and the boot line names the counters. A constructor left in the IR
@@ -75,6 +79,11 @@ kernel_ir_constructors_removed :: proc(ir: string, allocator := context.temp_all
 			lists += 1
 			continue
 		case strings.has_prefix(line, KERNEL_IR_PASS_CONSTRUCTOR_COMDAT_START):
+			continue
+		case strings.has_prefix(line, KERNEL_IR_USED_ONLY_CONSTRUCTOR):
+			// The pass keeps its constructor from removal with this list.
+			// A list that holds other globals too stays, and its reference
+			// to the constructor stops the build after this removal.
 			continue
 		case strings.has_prefix(line, "define ") && strings.contains(line, KERNEL_IR_PASS_CONSTRUCTOR + "("):
 			constructors += 1

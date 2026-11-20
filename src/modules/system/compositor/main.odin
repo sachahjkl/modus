@@ -1534,7 +1534,6 @@ rectangles_of_areas :: proc "contextless" (areas: []Rectangle, rectangles: []int
 // (one measure run, docs/INTERFACE.md, section 12).
 frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Client, x, y: int, focus, pointer_over: bool) {
 	outer_width := client.width + 2 * BORDER
-	outer_height := client.height + TITLE_HEIGHT + BORDER
 	start := graphics.Color(focus ? graphics.colors.title : graphics.colors.title_quiet)
 	end := graphics.Color(focus ? graphics.colors.title_end : graphics.colors.title_quiet_end)
 	// The title and the borders reach one logical pixel under the surface
