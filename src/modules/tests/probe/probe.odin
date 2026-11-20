@@ -56,6 +56,11 @@ count :: proc "c" () -> i64 {
 // time, so other processes go on.
 @(export, link_name = "spin")
 spin :: proc "c" () -> i64 {
+	// The console marks the call as one that Escape stops before it sends
+	// the call: a test waits for this line before it presses Escape. An
+	// Escape before the call is a key of the next line, by design
+	// (docs/CONSOLE.md, "When a line ends, and the keys typed during a line").
+	system.log(.Info, "probe: spin runs, and never returns")
 	for {
 		intrinsics.volatile_store(&calls, intrinsics.volatile_load(&calls) + 1)
 	}
