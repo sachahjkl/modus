@@ -274,7 +274,7 @@ rights_of :: proc "contextless" (file: []u8, function: module.Function) -> (righ
 		// refuses it.
 		type := module.type_of_word(word) or_continue
 		switch type {
-		case .None, .Integer, .Text, .Table, .Bytes:
+		case .None, .Integer, .Text, .Table, .Bytes, .Enum:
 			// No handle: the parameter asks no right.
 		case .Handle:
 			rights += transmute(op.Rights)function.parameter_details[number]
@@ -300,6 +300,7 @@ result_names := [module.Type]string {
 	.Handle  = "Handle",
 	.Table   = "Table",
 	.Bytes   = "Bytes",
+	.Enum    = "Enum",
 }
 
 @(private)

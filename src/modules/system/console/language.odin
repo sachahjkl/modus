@@ -85,6 +85,8 @@ kind_of_type :: proc "contextless" (type: module.Type) -> (kind: Kind) {
 		kind = .Table
 	case .Bytes:
 		kind = .Bytes
+	case .Enum:
+		kind = .Enum
 	}
 	return kind
 }
@@ -106,7 +108,9 @@ type_of_kind :: proc "contextless" (kind: Kind) -> (type: module.Type) {
 		type = .Table
 	case .Bytes:
 		type = .Bytes
-	case .Stream, .Record_Input, .Record_Literal:
+	case .Enum:
+		type = .Enum
+	case .Stream, .Record_Input, .Record_Literal, .Member:
 		// No type of the module contract: no export takes one, and
 		// type_text names it itself.
 		type = .None
@@ -134,12 +138,15 @@ kind_names := [Kind]string {
 	.Stream         = "Stream",
 	.Record_Input   = "Record_Input",
 	.Record_Literal = "a record literal",
+	.Enum           = "Enum",
+	.Member         = "a member",
 }
 
-// type_text gives the name of a type: "Integer", the name of a record,
-// "Handle(Read)", or "Stream(Counted)". The text lasts for one line.
+// type_text gives the name of a type: "Integer", the name of a record or of
+// an enum, "Handle(Read)", or "Stream(Counted)". The text lasts for one
+// line.
 type_text :: proc "contextless" (file: []u8, kind: Kind, detail: u32) -> string {
-	if kind == .None || kind == .Record_Literal {
+	if kind == .None || kind == .Record_Literal || kind == .Member {
 		return kind_names[kind]
 	}
 	if kind == .Stream || kind == .Record_Input {
@@ -351,10 +358,11 @@ assign :: proc "contextless" (name: string, value: Value) {
 	slot.name_count = copy(slot.name[:], name)
 	slot.value = value
 	switch value.kind {
-	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal:
+	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member:
 		// The value holds no memory of the line: the slot keeps it as it is.
 		// A Bytes value and a Stream were refused above; the evaluator
-		// refuses a literal that nothing typed.
+		// refuses a literal and a member that nothing typed. An Enum names
+		// the module file of its enum, which stays while the module does.
 	case .Text:
 		count := copy(slot.text[:], value.text)
 		slot.value.text = string(slot.text[:count])
@@ -453,7 +461,31 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 		}
 	case .Cycle:
 		fail("the binding ", record.command, " needs its own value: a let cannot read a binding in its own value")
+	case .Member_No_Type:
+		if record.parameter == 0 {
+			fail("a member takes the enum of the parameter that receives it, and nothing receives this one")
+		} else {
+			fail(record.command, ": argument ", i64(record.parameter), " is ", kind_names[record.right_kind], ", not a member: a member takes the enum of a parameter Enum")
+		}
+	case .Member_Unknown:
+		described, _ := module.enum_type(record.file, record.detail)
+		fail(record.command, ": ", module.enum_name(record.file, described), " has no member .", record.field, "; its members are ", enum_members_text(record.file, record.detail))
 	}
+}
+
+// enum_members_text gives the members of an enum as a line names them:
+// ".united_states, .french". The text lasts for one line.
+enum_members_text :: proc "contextless" (file: []u8, enum_index: u32) -> string {
+	described, problem := module.enum_type(file, enum_index)
+	if problem != .None {
+		return "none that the module file describes"
+	}
+	start := scratch_count
+	for number in 0 ..< described.member_count {
+		member, _ := module.enum_member(file, described, number)
+		scratch_text(number == 0 ? "." : ", .", module.string_at(file, member.name_offset, member.name_count))
+	}
+	return string(scratch[start:scratch_count])
 }
 
 // record_name gives the name of a record of a module.
@@ -576,6 +608,13 @@ host_command_find :: proc "contextless" (data: rawptr, name: string) -> (signatu
 		if item.parameters[index] == .Record && item.run == nil && item.record == 0 {
 			signature.files[index], signature.details[index] = item.file, item.function.parameter_details[index]
 		}
+		// An Enum parameter: its enum names the members that a line gives
+		// it, and an optional one may be left out.
+		if item.parameters[index] == .Enum {
+			enum_index, _ := module.enum_detail_of(item.function.parameter_details[index])
+			signature.files[index], signature.details[index] = item.file, enum_index
+			signature.optional[index] = module.parameter_optional(item.function, index)
+		}
 	}
 	return signature, true
 }
@@ -695,6 +734,12 @@ argument_accepted :: proc "contextless" (found: ^Command, index: int, argument: 
 	if argument.kind != kind {
 		return false
 	}
+	// An Enum agrees when the two enums are one description: a member of
+	// another enum with the same value is no member of this one.
+	if kind == .Enum {
+		enum_index, _ := module.enum_detail_of(found.function.parameter_details[index])
+		return module.enums_equal(found.file, enum_index, argument.file, argument.detail)
+	}
 	// A Record agrees when the two descriptions are equal: a record of one
 	// module is a record of another module with the same fields. A command
 	// of the console (run) takes a Table of any record.
@@ -737,6 +782,14 @@ call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 	}
 	for kind, index in found.parameters[:count] {
 		argument := &arguments[index]
+		// An optional Enum that the line leaves out has no value: the call
+		// gives the absent word, which names no member.
+		if kind == .Enum && argument.kind == .None && found.run == nil && module.parameter_optional(found.function, index) {
+			enum_index, _ := module.enum_detail_of(found.function.parameter_details[index])
+			described, _ := module.enum_type(found.file, enum_index)
+			argument^ = {kind = .Enum, integer = module.enum_absent_word(described), file = found.file, detail = enum_index}
+			continue
+		}
 		if !argument_accepted(found, index, argument^) {
 			return argument_refusal(name, found, index, argument^)
 		}
@@ -960,7 +1013,7 @@ literal_of :: proc "contextless" (text: string, place: int) -> (type: module.Typ
 		return .Integer, value, true
 	case .Text:
 		return .Text, 0, !negative
-	case .None, .Name, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe:
+	case .None, .Name, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe, .Member:
 		// A variable, a call, an expression: its kind comes when it runs.
 	}
 	return .None, 0, false
@@ -1096,10 +1149,14 @@ result_knowledge :: proc "contextless" (found: ^Command) -> (value: Value, knowl
 			value.file, value.detail = found.file, found.function.result_detail
 			knowledge = .Whole
 		}
+	case .Enum:
+		// The enum of an export is in its description.
+		value.file, value.detail = found.file, found.function.result_detail
+		knowledge = .Whole
 	case .Handle, .Bytes:
 		// The rights of a Handle come with the value.
 		knowledge = .Kind
-	case .Stream, .Record_Input, .Record_Literal:
+	case .Stream, .Record_Input, .Record_Literal, .Member:
 		// A command of the console makes a Stream, and the record of the
 		// record output comes with the value when the line runs.
 		knowledge = .Kind

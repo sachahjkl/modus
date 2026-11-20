@@ -4,7 +4,6 @@ import "core:mem"
 import "core:slice"
 import "modus:contract/enum_word"
 import "modus:contract/palette_table"
-import "modus:contract/settings"
 import "modus:contract/text_encoding"
 import "modustool:foundation"
 
@@ -123,19 +122,11 @@ fuzz_palette_entries_check :: proc() -> Fuzz_Verdict {
 		if !text_encoding.identifier_words_valid(name) || string(entry.signature[:entry.name_length]) != string(name) {
 			return fuzz_broken(.Contract, "the accepted entry %d has the name %q", number, string(name))
 		}
-		// A second reader of the setting: the names of the values of the
-		// setting, not the border of the contract. The entry names a value
-		// by its word on the settings page; the place of that word in the
-		// names must hold a name.
-		if kind == .Setting {
-			setting, setting_known := enum_word.member_of_word(settings.Setting, u64(entry.setting))
-			place, place_known := 0, false
-			if setting_known {
-				place, place_known = settings.value_place_of_word(setting, u32(entry.setting_value))
-			}
-			if !setting_known || !place_known || u32(place) >= settings.descriptions[setting].value_count {
-				return fuzz_broken(.Contract, "the accepted entry %d names the value %d of the setting %d", number, entry.setting_value, entry.setting)
-			}
+		// A second reader of a setting row, not the border of the
+		// contract: an entry that joins a row is a Provider_Setting with
+		// no parameter, and each of its buttons has a name.
+		if entry.setting_name_length != 0 && (kind != .Provider_Setting || entry.parameter_count != 0 || entry.value_name_length == 0) {
+			return fuzz_broken(.Contract, "the accepted entry %d joins a setting row and is a %v with %d parameters", number, kind, entry.parameter_count)
 		}
 	}
 	return FUZZ_PASSED
@@ -278,18 +269,13 @@ fuzz_palette_entry_of :: proc(kind: palette_table.Entry_Kind, name: string, abou
 		entry.parameters[0], entry.parameters[1] = u8(palette_table.Value_Kind.Text), u8(palette_table.Value_Kind.Text)
 		entry.result = u8(palette_table.Value_Kind.Integer)
 		entry.parameter_name_lengths[0] = u8(copy(entry.parameter_names[0][:], "name"))
-	case .Setting:
-		// The value light of the appearance, by its word on the page, as its
-		// names below say.
-		entry.setting = u8(settings.Setting.Appearance)
-		entry.setting_value = u8(settings.word_of_value(.Appearance, int(settings.descriptions[.Appearance].value_count - 1)))
+	case .Provider_Setting:
+		// The member light of the parameter appearance of settings.set, in
+		// use.
+		entry.flags = {.In_Use}
 		entry.setting_name_length = u8(copy(entry.setting_name[:], "appearance"))
 		entry.value_name_length = u8(copy(entry.value_name[:], "light"))
 		entry.act_name_length = u8(copy(entry.act_name[:], "settings.set:appearance"))
-	case .Provider_Setting:
-		entry.flags = {.In_Use}
-		entry.setting_name_length = u8(copy(entry.setting_name[:], "strategy"))
-		entry.value_name_length = u8(copy(entry.value_name[:], "eevdf"))
 	}
 	return entry
 }

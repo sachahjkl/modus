@@ -486,7 +486,7 @@ scenario_power_loss_settings_first := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"settings\")"},
 	{kind = .Wait, text = "[console]   module     settings"},
-	{kind = .Wait, text = "[console]   commands   3"},
+	{kind = .Wait, text = "[console]   commands   11"},
 	{kind = .Wait, text = "[console]   call       service"},
 	// The disk counts from before the line: the console saves its line
 	// history after each line, and the save of the line before can still

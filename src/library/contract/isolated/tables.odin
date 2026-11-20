@@ -384,7 +384,7 @@ room_missing :: proc "contextless" (file: []u8, function: module.Function, argum
 			return {}
 		}
 		switch type {
-		case .None, .Integer, .Handle:
+		case .None, .Integer, .Handle, .Enum:
 			// The field of the argument record holds the whole value.
 		case .Text:
 			next += u64(len(arguments[index].text))

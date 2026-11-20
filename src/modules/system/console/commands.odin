@@ -1802,6 +1802,8 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 		case .None:
 			return false
 		case .Integer, .Text, .Handle:
+		case .Enum:
+			// function_enums_check below reads the enum and its getter.
 		case .Record:
 			if _, ok := module.record_type(file, function.parameter_details[index]); !ok {
 				return false
@@ -1819,6 +1821,12 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 				return false
 			}
 		}
+	}
+	// The console names the members of each enum and the palette calls
+	// each getter: an enum or a getter that breaks a rule of the format
+	// makes the export not callable.
+	if _, problem := module.function_enums_check(file, function); problem != .None {
+		return false
 	}
 	return isolated.directions_valid(function)
 }
@@ -1886,11 +1894,11 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 			integers[index] = u64(uintptr(&argument.text))
 		case .Record:
 			integers[index] = u64(uintptr(raw_data(argument.record)))
-		case .None, .Integer, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal:
+		case .None, .Integer, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member:
 			// The check of the line gave each other kind its integer: a
-			// handle is its number, and a Table or Bytes parameter took its
-			// place above. An export takes no Stream: argument_accepted
-			// refused it.
+			// handle is its number, a member its value or the absent word,
+			// and a Table or Bytes parameter took its place above. An export
+			// takes no Stream: argument_accepted refused it.
 			integers[index] = u64(argument.integer)
 		}
 	}
@@ -1944,6 +1952,8 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 	switch item.result {
 	case .Integer:
 		return {kind = .Integer, integer = i64(results[0])}
+	case .Enum:
+		return enum_result(item, i64(results[0]))
 	case .Text:
 		if results[0] > u64(len(buffer)) {
 			return fail("the result of ", item.name, " has ", results[0], " bytes: it does not fit")
@@ -1954,11 +1964,27 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
 	case .Table:
 		return table_take(item, &table, results[0])
-	case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal:
+	case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member:
 		// None gives no value; callable_by_console refuses an export with
 		// a Handle or a Bytes result, and no export gives a Stream.
 	}
 	return {}
+}
+
+// enum_result gives the Enum value of the integer result of an export: the
+// low bytes of the size of its enum (module.enum_value_of_register). A
+// value that names no member is refused: the export broke its contract,
+// and the line never holds a member that the enum does not have.
+enum_result :: proc "contextless" (item: ^Command, register: i64) -> Value {
+	described, problem := module.enum_type(item.file, item.function.result_detail)
+	if problem != .None {
+		return fail("the result of ", item.name, " names an enum that its module file does not describe")
+	}
+	value := module.enum_value_of_register(described, register)
+	if _, named := module.enum_name_of_value(item.file, described, value); !named {
+		return fail(item.name, " gave ", value, ", which names no member of ", module.enum_name(item.file, described))
+	}
+	return {kind = .Enum, integer = value, file = item.file, detail = item.function.result_detail}
 }
 
 // sandbox_create makes the call ring and the call region of a sandbox, and
@@ -2442,7 +2468,9 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 					}
 					copy(bytes, rows)
 					return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
-				case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal:
+				case .Enum:
+					return enum_result(item, i64(completion.values[0]))
+				case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member:
 					// None gives no value; callable_by_console refuses an
 					// export with a Handle or a Bytes result, and no export
 					// gives a Stream.
@@ -3484,10 +3512,20 @@ list_variables :: proc "contextless" (arguments: []Value) -> Value {
 			buffer = value_buffer[:],
 		}
 		switch value.kind {
-		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal:
+		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member:
 			// No value, and bytes with no description: the cell stays empty.
-			// No variable keeps a Stream.
+			// No variable keeps a Stream or a member not typed.
 		case .Integer:
+			system.write_part(&value_writer, value.integer)
+		case .Enum:
+			// The member, as a line names it.
+			if described, problem := module.enum_type(value.file, value.detail); problem == .None {
+				if name, named := module.enum_name_of_value(value.file, described, value.integer); named {
+					system.write_part(&value_writer, ".")
+					system.write_part(&value_writer, name)
+					break
+				}
+			}
 			system.write_part(&value_writer, value.integer)
 		case .Handle:
 			system.write_part(&value_writer, u64(value.integer))

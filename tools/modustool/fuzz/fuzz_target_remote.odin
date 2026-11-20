@@ -314,7 +314,7 @@ fuzz_remote_client_table_seeds :: proc(seeds: ^[dynamic][]u8) {
 // integer at 8}, 16 bytes; record 2 is {name: Text of 16 bytes at 0,
 // integer at 16}, 24 bytes. A Record or Table parameter names one of them.
 @(private = "file")
-fuzz_call_module: [512]u8
+fuzz_call_module: [1024]u8
 @(private = "file")
 fuzz_call_module_size: int
 
@@ -495,7 +495,7 @@ fuzz_isolated_call_seeds :: proc(seeds: ^[dynamic][]u8) {
 				arguments[index].record = record
 			case .Handle:
 				arguments[index].integer = 5
-			case .None, .Table, .Bytes:
+			case .None, .Table, .Bytes, .Enum:
 				// The seeds name no such parameter.
 			}
 		}

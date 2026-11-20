@@ -181,7 +181,7 @@ field_check :: proc "contextless" (item: module.Field, comparison: Comparison) -
 		if kind == .Text_View {
 			return equality ? .None : .No_Order
 		}
-	case .None, .Record, .Table:
+	case .None, .Record, .Table, .Enum:
 	}
 	return .Not_Comparable
 }
@@ -247,7 +247,7 @@ value_check :: proc "contextless" (item: module.Field, kind: module.Type, value:
 		if field_kind, field_kind_ok := module.field_kind(item); field_kind_ok && field_kind == .Text_View {
 			return kind == .Text ? .None : .Wrong_Kind
 		}
-	case .None, .Record, .Table:
+	case .None, .Record, .Table, .Enum:
 	}
 	return .Not_Comparable
 }
@@ -287,7 +287,7 @@ field_value_of :: proc "contextless" (row: []u8, item: module.Field, area: []u8 
 		return {integer = i64(handle), unsigned = true}, true
 	case .Text:
 		return {is_text = true, text = module.field_text(row, item)}, true
-	case .Bytes, .None, .Record, .Table:
+	case .Bytes, .None, .Record, .Table, .Enum:
 	}
 	return {}, false
 }
@@ -433,6 +433,7 @@ TYPE_NAMES := [module.Type]string {
 	.Handle  = "Handle",
 	.Table   = "Table",
 	.Bytes   = "Bytes",
+	.Enum    = "Enum",
 }
 
 // field_names_write writes the names of the fields of a record, separated

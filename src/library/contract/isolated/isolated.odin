@@ -269,7 +269,7 @@ field_size :: proc "contextless" (word: u8) -> u64 {
 		return 0
 	}
 	switch type {
-	case .Integer, .Record, .Handle:
+	case .Integer, .Record, .Handle, .Enum:
 		return 8
 	case .Text:
 		return size_of(Slice)
@@ -287,7 +287,7 @@ field_size :: proc "contextless" (word: u8) -> u64 {
 result_field_size :: proc "contextless" (word: u8) -> (size: u64, ok: bool) {
 	type := module.type_of_word(word) or_return
 	switch type {
-	case .None, .Integer:
+	case .None, .Integer, .Enum:
 		return 0, true
 	case .Text, .Table:
 		return size_of(Slice), true
@@ -375,7 +375,9 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 		switch type {
 		case .None:
 			// record_size refused a parameter of no type.
-		case .Integer:
+		case .Integer, .Enum:
+			// An Enum is the value of its member: the export checks it at
+			// its border (enum_word.member_of_argument).
 			store(region, field, arguments[index].integer)
 		case .Text:
 			text := arguments[index].text
@@ -421,7 +423,7 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 		return 0, 0, {}, {}, false
 	}
 	switch result_type {
-	case .None, .Integer:
+	case .None, .Integer, .Enum:
 		// No buffer: the result is in the completion.
 	case .Handle, .Bytes:
 		// record_size refused these results.
@@ -543,7 +545,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		switch type {
 		case .None:
 			// record_size refused a parameter of no type.
-		case .Integer:
+		case .Integer, .Enum:
 			call.arguments[index] = load(record[:], field, u64)
 		case .Text:
 			slice := load(record[:], field, Slice)
@@ -593,7 +595,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		return refuse(refusal, .Bad_Value, .None, 0, u64(function.result), 0)
 	}
 	switch result_type {
-	case .None, .Integer:
+	case .None, .Integer, .Enum:
 		// No buffer: the result is in the completion.
 	case .Handle, .Bytes:
 		// record_size refused these results.

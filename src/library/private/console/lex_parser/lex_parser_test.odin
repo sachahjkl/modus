@@ -65,7 +65,7 @@ node_form_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, index: No
 		return
 	}
 	switch node.kind {
-	case .Integer, .Text:
+	case .Integer, .Text, .Member:
 		strings.write_string(builder, node_text(tree, index))
 	case .Name:
 		// A name that a let binds is marked with '@'.
@@ -408,6 +408,10 @@ parse_trees_of_each_form :: proc(t: ^testing.T) {
 		{"join(columns(a(), h), columns(b(), h, n), \"h\")", "join(columns(a(), {h}), columns(b(), {h, n}), \"h\")"},
 		{"columns(t,name,slot)", "columns(t, {name,slot})"},
 		{"columns(t, name , slot )", "columns(t, {name , slot })"},
+		// Members of an enum, by place and by name.
+		{".french", ".french"},
+		{"settings.set(keyboard_layout = .french)", "settings.set(keyboard_layout = .french)"},
+		{"f(.a_1, b = .c)", "f(.a_1, b = .c)"},
 	}
 	for item in cases {
 		tree := parse_of(item.text)
@@ -547,6 +551,14 @@ parse_refusals_of_the_forms :: proc(t: ^testing.T) {
 		{"f(with = 1)", .Word_As_Name, 3, "f(!Word_As_Name)"},
 		{"f(a == 1)", .Comma_Or_Close_Missing, 5, "f(a, !Comma_Or_Close_Missing)"},
 		{"f(a = )", .Unexpected, 7, "f(a = !Unexpected)"},
+		// A member: a "." with no name after it, a digit or a space after
+		// the ".", and a second "." after the name.
+		{"f(a = .)", .Unexpected, 7, "f(a = !Unexpected)"},
+		{"f(.1)", .Unexpected, 3, "f(!Unexpected)"},
+		{"f(. a)", .Unexpected, 3, "f(!Unexpected)"},
+		{".", .Unexpected, 1, "!Unexpected"},
+		{"f(.a.b)", .Comma_Or_Close_Missing, 5, "f(.a, !Comma_Or_Close_Missing)"},
+		{"f(a = .french", .Comma_Or_Close_Missing, 14, "f(a = .french, !Comma_Or_Close_Missing)"},
 		// A let: no name, no "=", no "in", a name twice, no body.
 		{"let", .Let_Name_Missing, 4, "let(!Let_Name_Missing)"},
 		{"let 1 = 2 in 3", .Let_Name_Missing, 5, "let(!Let_Name_Missing)"},

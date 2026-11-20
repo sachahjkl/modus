@@ -444,7 +444,7 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 			break each
 		}
 		switch type {
-		case .None, .Integer, .Text:
+		case .None, .Integer, .Text, .Enum:
 			// No handle and no memory object: nothing to lend.
 		case .Handle:
 			result: Handle

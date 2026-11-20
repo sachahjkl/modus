@@ -3,8 +3,9 @@
 // theme, the grid fit of the vector font, the layout of the keyboard, the
 // appearance of the desktop and the time zone. The window shows each
 // setting as a row of buttons and the text of the system at its three
-// sizes; the exports set() and get() make the same changes from the console
-// and from `modustool call`.
+// sizes; the export set() and a getter for each setting make the same
+// changes and give the same values from the console and from
+// `modustool call`.
 //
 // The time zone (src/md/features/time_zone.md) is a fixed offset from UTC,
 // "+08:00". This process writes it on the settings page; the process `date`
@@ -36,7 +37,7 @@
 // **Start**: `start("settings")` in the console, or the bar of the desktop.
 // Keys: Tab moves between the buttons, Enter presses one; a click works
 // too. From the console, with no window: `connect("settings")`, then
-// `settings.set("font", "spleen")`.
+// `settings.set(font = .spleen)`.
 //
 // **Grants**, as the root service gives them:
 //
@@ -44,7 +45,8 @@
 //   can write it.
 // - **Store**: its private store, which keeps the record of the settings
 //   across a stop of the machine.
-// - **Serve**: the exports `set`, `get` and `repeat`.
+// - **Serve**: the exports `set`, `set_time_zone`, `repeat`, and a getter
+//   for each setting and for the time zone.
 //
 // **What a reader sees**: a card with one row of buttons for each setting,
 // and a card with the text of the system at its three sizes. The log has
@@ -222,135 +224,176 @@ copied :: proc "contextless" (text: string, buffer: []u8) -> (string, bool) {
 	return string(buffer[:count]), true
 }
 
-// setting_of finds a setting by its name.
-@(private = "file")
-setting_of :: proc "contextless" (name: string) -> (setting: settings.Setting, found: bool) {
-	for description, each in settings.descriptions {
-		if description.name == name {
-			return each, true
-		}
-	}
-	return {}, false
-}
-
-// set changes a setting of the system, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off"); set("keyboard_layout", "us" or "french"); set("appearance", "auto", "dark" or "light"); set("scale", "1.25" or "1.375"); set("time_zone", "+08:00").
+// set changes one setting of the system or more, and keeps them in the store: set(font = .spleen), set(keyboard_layout = .french, appearance = .light).
 //
-// Every window draws again: the settings page wakes the compositor, which gives the new font, pointer theme and
-// appearance to each window. The order is the store first, then the page, so a stop of the machine between the two
-// keeps the new value. A value equal to the value of the page changes nothing and returns 1. The setting
-// `appearance` `auto` gives the light appearance from 07:00 to 19:00 of the local time and the dark one at night:
-// the page holds the appearance in force, which the log says with the time that the rule read.
+// Each setting is one optional argument of the enum of its values: a line names the parameter and a member, and
+// the console completes both and refuses a member that the enum does not have before the call. A setting that the
+// call leaves out keeps its value. Every window draws again: the settings page wakes the compositor, which gives
+// the new font, pointer theme and appearance to each window. The order is the store first, then the page, so a
+// stop of the machine between the two keeps the new values. Values equal to the values of the page change nothing
+// and return 1. The setting `appearance` `.auto` gives the light appearance from 07:00 to 19:00 of the local time
+// and the dark one at night: the page holds the appearance in force, which the log says with the time that the
+// rule read.
 //
-// The scale factor of the desktop is a count of eighths: 1.25 is the default. Each window lets its surface go,
-// makes a surface of its size at the scale that the compositor names from its own budget, and draws again. The
-// scales from 1.5 to 2 have names, and are refused until each window fits their logical screen.
+// The scale factor of the desktop is a count of eighths: `.ten_eighths`, 1.25, is the default. Each window lets
+// its surface go, makes a surface of its size at the scale that the compositor names from its own budget, and
+// draws again. The scales from `.twelve_eighths`, 1.5, to `.sixteen_eighths`, 2, are members, and are refused
+// until each window fits their logical screen.
 //
-// The time zone is a fixed offset from UTC, with no summer time: a sign, the hours and the minutes, from "-12:00"
-// to "+14:00", by quarters of an hour; "+00:00", UTC, is the default. The bar then shows the local time, and the
-// rule of `auto` counts its hours in it.
+// Each parameter names its getter: the export of the same name gives the value in use, and the palette marks its
+// button with it.
 //
-// - **name**: the name of a setting: `font`, `subpixel_order`, `pointer_theme`, `grid_fit`, `keyboard_layout`,
-//   `appearance`, `scale` or `time_zone`; 32 bytes at most.
-// - **value**: one of the values of that setting, as above; 32 bytes at most.
+// - **font**: `.vector` or `.spleen`.
+// - **subpixel_order**: `.red_green_blue`, `.blue_green_red` or `.none`.
+// - **pointer_theme**: `.of_the_owner` or `.of_the_system`.
+// - **grid_fit**: `.on` or `.off`.
+// - **keyboard_layout**: `.united_states` or `.french`.
+// - **appearance**: `.auto`, `.dark` or `.light`.
+// - **scale**: `.ten_eighths` and the other counts of eighths up to `.sixteen_eighths`.
 //
 // The caller must act for the principal (**Acts_For_Principal**): the console and the host have it. The result is
 // 1, or a negative number with an error record:
 //
 // - `No_Grant` (-1): the caller does not act for the principal.
-// - `Absent` (-2): no setting has this name.
-// - `Too_Long` (-3): the name or the value has more than 32 bytes; the record names the argument.
-// - `Bad_Value` (-3): the setting has no such value.
-// - `Out_Of_Range` (-3): a scale from "1.5" to "2", past the largest scale whose logical screen each window fits;
-//   the record holds the count of eighths and the largest count, 11. The scale in force stays.
-// - `Refused` (-4): the store did not keep the value. The page changed all the same, so the windows show the new
-//   value until the next start of the machine.
+// - `Absent` (-2): the call gives no setting.
+// - `Bad_Value` (-3): a value that names no member of the enum of its setting; the record names the argument and
+//   holds the value. No setting changes.
+// - `Out_Of_Range` (-3): a scale from `.twelve_eighths` to `.sixteen_eighths`, past the largest scale whose
+//   logical screen each window fits; the record holds the count of eighths and the largest count, 11. No setting
+//   changes.
+// - `Refused` (-4): the store did not keep the values. The page changed all the same, so the windows show the new
+//   values until the next start of the machine.
 //
-// Example: `settings.set("font", "spleen")`, then `settings.get("font")` gives "spleen".
-@(export, link_name = "set")
-set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> i64 {
+// Example: `settings.set(font = .spleen)`, then `settings.font()` gives `.spleen`.
+@(export, link_name = "set", enum_getters = "font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance, scale = scale", optional_parameters = "font, subpixel_order, pointer_theme, grid_fit, keyboard_layout, appearance, scale")
+set :: proc "c" (font: settings.Font, subpixel_order: settings.Subpixel_Order, pointer_theme: settings.Pointer_Theme, grid_fit: settings.Grid_Fit, keyboard_layout: settings.Keyboard_Layout, appearance: settings.Appearance, scale: scale_factor.Scale, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	name_buffer, value_buffer: [32]u8
-	wanted, name_ok := copied(name^, name_buffer[:])
-	given, value_ok := copied(value^, value_buffer[:])
-	if !name_ok || !value_ok {
-		return errors.fail(error, ERROR_VALUE, .Too_Long, .Bytes, name_ok ? 2 : 1, i64(max(len(name^), len(value^))), 32)
+	current, _ := settings.read(page)
+	arguments := settings.Set_Arguments{font, subpixel_order, pointer_theme, grid_fit, keyboard_layout, appearance, scale}
+	changed, refused, problem := settings.choice_of_arguments(current, arguments)
+	// The argument of a setting is its place in the parameters, from 1: the
+	// parameters are in the order of the settings.
+	argument := i64(refused) + 1
+	words := settings.values_of({font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance, scale = scale})
+	switch problem {
+	case .None:
+	case .Nothing_Given:
+		return errors.fail(error, ERROR_NAME, .Absent, .None, 0)
+	case .Bad_Value:
+		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, argument, i64(words[refused]))
+	case .Past_Window_Bound:
+		return errors.fail(error, ERROR_VALUE, .Out_Of_Range, .None, argument, i64(scale), i64(scale_factor.WINDOW_BOUND))
 	}
-	if wanted == settings.TIME_ZONE_NAME {
-		zone, zone_ok := settings.zone_parse(given)
-		if !zone_ok {
-			return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
-		}
-		current, _ := settings.read(page)
-		if !change(current, zone) {
-			return errors.fail(error, ERROR_STORE, .Refused, .None, 2)
-		}
-		return 1
+	if !change(changed, current.zone_offset_minutes) {
+		return errors.fail(error, ERROR_STORE, .Refused, .None, 0)
 	}
-	setting, found := setting_of(wanted)
-	if !found {
-		return errors.fail(error, ERROR_NAME, .Absent, .None, 1)
-	}
-	description := &settings.descriptions[setting]
-	for value_name, place in description.value_names[:description.value_count] {
-		if value_name == given {
-			current, _ := settings.read(page)
-			changed, changed_ok, scale_problem := with_value(current, setting, place)
-			if scale_problem == .Past_Window_Bound {
-				return errors.fail(error, ERROR_VALUE, .Out_Of_Range, .None, 2, i64(settings.word_of_value(setting, place)), i64(scale_factor.WINDOW_BOUND))
-			}
-			if !changed_ok {
-				return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
-			}
-			if !change(changed, current.zone_offset_minutes) {
-				return errors.fail(error, ERROR_STORE, .Refused, .None, 2)
-			}
-			return 1
-		}
-	}
-	return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
+	return 1
 }
 
-// get gives the value of a setting of the system as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit"), get("keyboard_layout"), get("appearance"), get("scale"), get("time_zone").
+// font gives the font of the text of the system: `.vector` or `.spleen`.
 //
-// It reads the settings page, which each process can read too: so it needs no grant, and each caller gets the
-// value.
-//
-// - **name**: the name of a setting, 32 bytes at most.
-//
-// The result is the length of the value name, and the text holds the value name: "+08:00" for the time zone. A
-// text shorter than the value gets its first bytes; the result still counts them all. The result is a negative
-// number with an error record when the call fails:
-//
-// - `Absent` (-2): no setting has this name.
-// - `Too_Long` (-3): the name has more than 32 bytes.
-@(export, link_name = "get")
-get :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	name_buffer: [32]u8
-	wanted, ok := copied(name^, name_buffer[:])
-	if !ok {
-		return errors.fail(error, ERROR_VALUE, .Too_Long, .Bytes, 1, i64(len(name^)), len(name_buffer))
-	}
-	if wanted == settings.TIME_ZONE_NAME {
-		zone_buffer: [settings.ZONE_TEXT_SIZE]u8
-		current, _ := settings.read(page)
-		zone_name := settings.zone_text(zone_buffer[:], current.zone_offset_minutes)
-		copy(result^, zone_name)
-		return i64(len(zone_name))
-	}
-	setting, found := setting_of(wanted)
-	if !found {
-		return errors.fail(error, ERROR_NAME, .Absent, .None, 1)
-	}
-	// A refused page gives the defaults, which each process draws with.
+// Each getter reads the settings page, which each process can read too: so it needs no grant, and each caller
+// gets the value. A refused page gives the defaults, which each process draws with.
+@(export, link_name = "font")
+font_get :: proc "c" () -> settings.Font {
 	current, _ := settings.read(page)
-	values := settings.values_of(current)
-	// The count of the whole text: a caller with a smaller buffer sees that
-	// it does not fit.
-	value_name := settings.value_name_of(setting, values[setting])
-	copy(result^, value_name)
-	return i64(len(value_name))
+	return current.font
+}
+
+// subpixel_order gives the order of the color stripes of the screen: `.red_green_blue`, `.blue_green_red` or `.none`.
+@(export, link_name = "subpixel_order")
+subpixel_order_get :: proc "c" () -> settings.Subpixel_Order {
+	current, _ := settings.read(page)
+	return current.subpixel_order
+}
+
+// pointer_theme gives the pointer theme that the compositor draws: `.of_the_owner` or `.of_the_system`.
+@(export, link_name = "pointer_theme")
+pointer_theme_get :: proc "c" () -> settings.Pointer_Theme {
+	current, _ := settings.read(page)
+	return current.pointer_theme
+}
+
+// grid_fit gives whether the glyphs sit on whole pixels: `.on` or `.off`.
+@(export, link_name = "grid_fit")
+grid_fit_get :: proc "c" () -> settings.Grid_Fit {
+	current, _ := settings.read(page)
+	return current.grid_fit
+}
+
+// keyboard_layout gives the layout of the keyboard: `.united_states` or `.french`.
+@(export, link_name = "keyboard_layout")
+keyboard_layout_get :: proc "c" () -> settings.Keyboard_Layout {
+	current, _ := settings.read(page)
+	return current.keyboard_layout
+}
+
+// appearance gives the appearance that the principal chose: `.auto`, `.dark` or `.light`.
+@(export, link_name = "appearance")
+appearance_get :: proc "c" () -> settings.Appearance {
+	current, _ := settings.read(page)
+	return current.appearance
+}
+
+// scale gives the scale factor of the desktop, in eighths: `.ten_eighths` is 1.25.
+@(export, link_name = "scale")
+scale_get :: proc "c" () -> scale_factor.Scale {
+	current, _ := settings.read(page)
+	return current.scale
+}
+
+// set_time_zone changes the time zone of the system, and keeps it in the store: set_time_zone("+08:00").
+//
+// The time zone is a fixed offset from UTC, with no summer time: a sign, the hours and the minutes, from "-12:00"
+// to "+14:00", by quarters of an hour; "+00:00", UTC, is the default. The bar then shows the local time, and the
+// rule of the appearance `.auto` counts its hours in it. A zone is a number of minutes, not a member of a closed
+// set: so it is a Text, and not an argument of `set`.
+//
+// - **zone**: the zone, 32 bytes at most.
+//
+// The caller must act for the principal (**Acts_For_Principal**). The result is 1, or a negative number with an
+// error record:
+//
+// - `No_Grant` (-1): the caller does not act for the principal.
+// - `Too_Long` (-3): the zone has more than 32 bytes.
+// - `Bad_Value` (-3): the text is no zone: "+8:00", "+08:10", "+15:00", "UTC".
+// - `Refused` (-4): the store did not keep the zone. The page changed all the same.
+//
+// Example: `settings.set_time_zone("+08:00")`, then `settings.time_zone()` gives "+08:00".
+@(export, link_name = "set_time_zone")
+set_time_zone :: proc "c" (zone: ^string, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	zone_buffer: [32]u8
+	given, zone_ok := copied(zone^, zone_buffer[:])
+	if !zone_ok {
+		return errors.fail(error, ERROR_VALUE, .Too_Long, .Bytes, 1, i64(len(zone^)), len(zone_buffer))
+	}
+	minutes, parsed := settings.zone_parse(given)
+	if !parsed {
+		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1)
+	}
+	current, _ := settings.read(page)
+	if !change(current, minutes) {
+		return errors.fail(error, ERROR_STORE, .Refused, .None, 1)
+	}
+	return 1
+}
+
+// time_zone gives the time zone of the system as a text: "+08:00".
+//
+// The result is the length of the text, 6. A buffer shorter than the text gets its first bytes; the result still
+// counts them all.
+@(export, link_name = "time_zone")
+time_zone_get :: proc "c" (result: ^[]u8) -> i64 {
+	zone_buffer: [settings.ZONE_TEXT_SIZE]u8
+	current, _ := settings.read(page)
+	zone_name := settings.zone_text(zone_buffer[:], current.zone_offset_minutes)
+	copy(result^, zone_name)
+	return i64(len(zone_name))
 }
 
 // repeat keeps count records in the store, one commit each, with the font and the subpixel order of each record from its number: the case of the loss of power of the machine test (a loss in the middle gives the record before or the record in flight, never a mix).
@@ -534,9 +577,10 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 				}
 			}
 			if in_use {
-				// The palette sets this setting with the export set, and
-				// its entry has the same act name: "settings.set:" and the
-				// name of the setting (src/modules/system/console/palette_provider.odin).
+				// The palette sets this setting with the parameter of the
+				// same name of the export set, and its row has the same act
+				// name: "settings.set:" and the name of the parameter
+				// (src/modules/system/console/palette_provider.odin).
 				// The button of the value in use is where go to puts the
 				// focus.
 				act: interface.Text_Builder
@@ -547,7 +591,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		}
 	}
 	zone_row(&frame, content.x, content.y + len(settings.Setting) * ROW, choice)
-	interface.draw_text(frame.table, content.x, content.y + rows_height + 8, "the console: settings.set(\"font\", \"spleen\")", graphics.colors.dim)
+	interface.draw_text(frame.table, content.x, content.y + rows_height + 8, "the console: settings.set(font = .spleen)", graphics.colors.dim)
 
 	top := 8 + 40 + rows_height + 32 + 8
 	vector := choice.font == .Vector && graphics.text_vector_drawn()

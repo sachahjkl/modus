@@ -32,6 +32,7 @@ BYTE_LAYOUT_FENCE_LANGUAGE :: "byte-layout"
 BYTE_LAYOUT_FORMAT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/format.odin"
 BYTE_LAYOUT_FACTS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/facts.odin"
 BYTE_LAYOUT_RECORD_STREAMS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/record_streams.odin"
+BYTE_LAYOUT_ENUMS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/enums.odin"
 BYTE_LAYOUT_OUTPUT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/output/output.odin"
 BYTE_LAYOUT_WIRING_LIST_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/output/wiring_list.odin"
 BYTE_LAYOUT_DRAW_RECORD_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/draw_record/draw_record.odin"
@@ -114,6 +115,8 @@ byte_layout_table_sources :: proc() -> [module.Table_Kind]Byte_Layout_Source {
 		.Own_Hash      = {key = "module.Own_Hash_Place", file = BYTE_LAYOUT_FACTS_FILE, declaration = "Own_Hash_Place", info = type_info_of(module.Own_Hash_Place), what = "the record 1 of the table Own_Hash"},
 		.Record_Outputs = {key = "module.Record_Output", file = BYTE_LAYOUT_RECORD_STREAMS_FILE, declaration = "Record_Output", info = type_info_of(module.Record_Output), what = "one record of the table Record_Outputs"},
 		.Record_Inputs  = {key = "module.Record_Input", file = BYTE_LAYOUT_RECORD_STREAMS_FILE, declaration = "Record_Input", info = type_info_of(module.Record_Input), what = "one record of the table Record_Inputs"},
+		.Enums          = {key = "module.Enum_Type", file = BYTE_LAYOUT_ENUMS_FILE, declaration = "Enum_Type", info = type_info_of(module.Enum_Type), what = "one record of the table Enums"},
+		.Members        = {key = "module.Member", file = BYTE_LAYOUT_ENUMS_FILE, declaration = "Member", info = type_info_of(module.Member), what = "one record of the table Members"},
 	}
 }
 

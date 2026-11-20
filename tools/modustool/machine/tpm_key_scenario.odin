@@ -122,7 +122,7 @@ tpm_key_new_disk_and_font := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"settings\")"},
 	{kind = .Wait, text = "[console]   call       service"},
-	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
+	{kind = .Type, text = "settings.set(font = .spleen)"},
 	{kind = .Wait, text = "settings: font spleen, "},
 }
 

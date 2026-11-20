@@ -66,7 +66,7 @@ A concept is not a text on the track: the track holds the label of a button in t
 
 ## The setting and the appearance in force
 
-- **The setting `appearance`**: `auto`, the default, `dark` or `light`. The principal changes it as each other setting: the process `settings`, `settings.set("appearance", "light")` in the console, or the palette.
+- **The setting `appearance`**: `auto`, the default, `dark` or `light`. The principal changes it as each other setting: the process `settings`, `settings.set(appearance = .light)` in the console, or the palette.
 - **The appearance in force** is `dark` or `light`: the appearance that each process draws now. It is one word of the settings page, `appearance_in_force`, beside the values. With the setting `dark` or `light` it is that value. With `auto` it follows the rule of the day.
 - **The rule of the day.** The light appearance from 07:00 to 19:00 of the local time, the dark one from 19:00 to 07:00. At 07:00:00 the light appearance holds; at 19:00:00 the dark one. A system with no date is dark. The rule is one pure procedure, `appearance.in_force_of` (`src/library/support/appearance`): the process `settings`, the root service and the modus tool call it, and a host test checks it at each edge.
 - **The local time** is the date of the date page and its time zone (`zone_offset_seconds`). The principal chooses the zone with the setting `time_zone`, and the process `date` copies it into the date page ([time_zone.md](time_zone.md)). The default zone is 0: UTC.

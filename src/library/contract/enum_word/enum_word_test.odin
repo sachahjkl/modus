@@ -52,3 +52,48 @@ member_of_word_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) {
 		testing.expect_value(t, read, member)
 	}
 }
+
+// An argument that names no member is refused, and so is a value past the
+// enum that is not the absent word: one past the last member, a value
+// between two, the absent word less one, a word with one byte of the
+// absent word. The absent word is taken as not given, at each size. Each
+// member comes back last.
+@(test)
+member_of_argument_refuses_a_value_past_the_enum :: proc(t: ^testing.T) {
+	Font :: enum u32 {
+		Vector = 0,
+		Spleen = 1,
+	}
+	Scale :: enum u8 {
+		Ten    = 10,
+		Eleven = 11,
+	}
+	Signed :: enum i16 {
+		Below = -2,
+		Zero  = 0,
+	}
+	for word in ([?]u32{2, 0xFFFF_FFFE, 0x0000_00FF, 0xFF00_0000, 0x7FFF_FFFF}) {
+		_, given, ok := member_of_argument(Font(word))
+		testing.expectf(t, given && !ok, "the argument %d of Font is taken", word)
+	}
+	for word in ([?]u8{0, 9, 12, 0xFE}) {
+		_, given, ok := member_of_argument(Scale(word))
+		testing.expectf(t, given && !ok, "the argument %d of Scale is taken", word)
+	}
+	for word in ([?]i16{-3, 1, max(i16), min(i16)}) {
+		_, given, ok := member_of_argument(Signed(word))
+		testing.expectf(t, given && !ok, "the argument %d of Signed is taken", word)
+	}
+	_, font_given, font_ok := member_of_argument(Font(0xFFFF_FFFF))
+	_, scale_given, scale_ok := member_of_argument(Scale(0xFF))
+	_, signed_given, signed_ok := member_of_argument(Signed(-1))
+	testing.expect(t, !font_given && font_ok && !scale_given && scale_ok && !signed_given && signed_ok)
+	for member in Font {
+		read, given, ok := member_of_argument(member)
+		testing.expect(t, given && ok && read == member)
+	}
+	for member in Signed {
+		read, given, ok := member_of_argument(member)
+		testing.expect(t, given && ok && read == member)
+	}
+}

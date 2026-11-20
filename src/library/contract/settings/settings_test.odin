@@ -318,3 +318,85 @@ an_all_zero_page_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, choice.scale, scale_factor.DEFAULT)
 	testing.expect_value(t, created.values[Setting.Scale], u32(scale_factor.DEFAULT))
 }
+
+// The arguments of a call that leaves out each setting: the absent word,
+// each bit of the size of the enum set, as the console writes it.
+@(private = "file")
+nothing_given :: proc() -> Set_Arguments {
+	return {
+		font            = Font(max(u32)),
+		subpixel_order  = Subpixel_Order(max(u32)),
+		pointer_theme   = Pointer_Theme(max(u32)),
+		grid_fit        = Grid_Fit(max(u32)),
+		keyboard_layout = Keyboard_Layout(max(u32)),
+		appearance      = Appearance(max(u32)),
+		scale           = scale_factor.Scale(max(u8)),
+	}
+}
+
+// The border of the export set refuses a value past each enum, and
+// changes nothing then: one past the last member, the absent word less
+// one, a word of the scale under its first member, and a member of
+// another enum written into this one. A call that gives nothing is
+// refused, and so is a scale that no window fits.
+@(test)
+the_arguments_of_set_refuse_a_value_past_the_enum :: proc(t: ^testing.T) {
+	current := choice_default()
+	current.zone_offset_minutes, current.change_count = 60, 8
+	Case :: struct {
+		arguments: Set_Arguments,
+		refused:   Setting,
+		problem:   Set_Problem,
+	}
+	past := make([dynamic]Case, context.temp_allocator)
+	for word in ([?]u32{u32(max(Font)) + 1, max(u32) - 1, 1 << 16}) {
+		arguments := nothing_given()
+		arguments.font = Font(word)
+		append(&past, Case{arguments, .Font, .Bad_Value})
+	}
+	for word in ([?]u32{u32(max(Keyboard_Layout)) + 1, max(u32) - 1}) {
+		arguments := nothing_given()
+		arguments.keyboard_layout = Keyboard_Layout(word)
+		append(&past, Case{arguments, .Keyboard_Layout, .Bad_Value})
+	}
+	for word in ([?]u8{0, 9, u8(max(scale_factor.Scale)) + 1, max(u8) - 1}) {
+		arguments := nothing_given()
+		arguments.scale = scale_factor.Scale(word)
+		append(&past, Case{arguments, .Scale, .Bad_Value})
+	}
+	// The member None of the subpixel order, 2, written as a layout of the
+	// keyboard, which has two members: a member of another enum is no
+	// member of this one.
+	another := nothing_given()
+	another.keyboard_layout = Keyboard_Layout(Subpixel_Order.None)
+	append(&past, Case{another, .Keyboard_Layout, .Bad_Value})
+	// A good value before a bad one changes nothing either.
+	mixed := nothing_given()
+	mixed.font, mixed.appearance = .Spleen, Appearance(3)
+	append(&past, Case{mixed, .Appearance, .Bad_Value})
+	append(&past, Case{nothing_given(), {}, .Nothing_Given})
+	beyond := nothing_given()
+	beyond.scale = .Twelve_Eighths
+	append(&past, Case{beyond, .Scale, .Past_Window_Bound})
+	largest := nothing_given()
+	largest.scale = max(scale_factor.Scale)
+	append(&past, Case{largest, .Scale, .Past_Window_Bound})
+	for item in past {
+		changed, refused, problem := choice_of_arguments(current, item.arguments)
+		testing.expectf(t, problem == item.problem && refused == item.refused, "%v gives %v of %v, not %v of %v", item.arguments, problem, refused, item.problem, item.refused)
+		testing.expectf(t, changed == current, "a refused call changed the choice: %v", changed)
+	}
+	// The successes come last: one setting, the others kept, and the count,
+	// the zone and the appearance in force kept.
+	layout := nothing_given()
+	layout.keyboard_layout = .French
+	changed, _, problem := choice_of_arguments(current, layout)
+	testing.expect_value(t, problem, Set_Problem.None)
+	expected := current
+	expected.keyboard_layout = .French
+	testing.expect_value(t, changed, expected)
+	each := Set_Arguments{font = .Spleen, subpixel_order = .None, pointer_theme = .Of_The_System, grid_fit = .Off, keyboard_layout = .French, appearance = .Light, scale = .Eleven_Eighths}
+	changed, _, problem = choice_of_arguments(current, each)
+	testing.expect_value(t, problem, Set_Problem.None)
+	testing.expect(t, changed.font == .Spleen && changed.subpixel_order == .None && changed.scale == .Eleven_Eighths && changed.zone_offset_minutes == 60 && changed.change_count == 8)
+}

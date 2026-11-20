@@ -684,6 +684,88 @@ processes_collect :: proc "contextless" (quote_place: int) {
 	}
 }
 
+// The names of the members with their ".", for the candidates at the start
+// of an argument: a candidate keeps its name until the next list.
+completion_member_names: [CANDIDATE_CAPACITY * (module.ENUM_MEMBER_NAME_CAPACITY + 1)]u8
+
+// members_of_an_argument fills a table of candidates with the members of
+// the enum of an Enum parameter of an export, when the caret is in a member
+// of an argument of its call (`settings.set(font = .sp`), by the name of
+// the argument or by its place; or, with Tab, at the start of such an
+// argument, where each member comes with its ".". It gives the place of
+// the completion, and false for another place.
+members_of_an_argument :: proc "contextless" (table: ^Candidate_Table, text: string, caret_asked: int, by_tab: bool) -> (place: line_editor.Completion_Context, is_member: bool) {
+	caret := clamp(caret_asked, 0, len(text))
+	start, end := caret, caret
+	for start > 0 && line_editor.name_character(text[start - 1]) {
+		start -= 1
+	}
+	for end < len(text) && line_editor.name_character(text[end]) {
+		end += 1
+	}
+	has_dot := start > 0 && text[start - 1] == '.'
+	// A "." after a name is a part of that name: owner.export.
+	if has_dot && start > 1 && (line_editor.name_character(text[start - 2]) || text[start - 2] == '.') {
+		return {}, false
+	}
+	if !has_dot && (start != caret || !by_tab) {
+		return {}, false
+	}
+	argument_place := has_dot ? start - 1 : start
+	before := completion_token_before(text, argument_place)
+	if before.kind != .Operator || (text[before.start] != '(' && text[before.start] != ',' && text[before.start] != '=') {
+		return {}, false
+	}
+	groups: [GROUP_DEPTH_MOST]Open_Group
+	depth, found := groups_at(text, argument_place, &groups)
+	if !found || depth == 0 || groups[depth - 1].brace {
+		return {}, false
+	}
+	name, name_start := name_before(text, groups[depth - 1].start)
+	item := command_find(name)
+	if item == nil || item.run != nil || item.record != 0 {
+		return {}, false
+	}
+	parameter := groups[depth - 1].commas + (console_language.pipe_before(text, name_start) ? 1 : 0)
+	if text[before.start] == '=' {
+		argument_name, _ := name_before(text, before.start)
+		parameter = -1
+		for parameter_name, index in item.parameter_names[:clamp(item.parameter_count, 0, ARGUMENT_CAPACITY)] {
+			if parameter_name != "" && parameter_name == argument_name {
+				parameter = index
+			}
+		}
+	}
+	if parameter < 0 || parameter >= item.parameter_count || item.parameters[parameter] != .Enum {
+		return {}, false
+	}
+	enum_index, _ := module.enum_detail_of(item.function.parameter_details[parameter])
+	described, problem := module.enum_type(item.file, enum_index)
+	if problem != .None {
+		return {}, false
+	}
+	table.count, table.dropped = 0, 0
+	used := 0
+	for number in 0 ..< described.member_count {
+		member, _ := module.enum_member(item.file, described, number)
+		member_name := module.string_at(item.file, member.name_offset, member.name_count)
+		if has_dot {
+			candidate_add(table, member_name, .Member, int(number))
+			continue
+		}
+		if used + 1 + len(member_name) > len(completion_member_names) {
+			table.dropped += 1
+			continue
+		}
+		completion_member_names[used] = '.'
+		copy(completion_member_names[used + 1:], member_name)
+		candidate_add(table, string(completion_member_names[used:][:1 + len(member_name)]), .Member, int(number))
+		used += 1 + len(member_name)
+	}
+	place = {place = .Name, query = text[start:caret], word_start = start, replace_start = start, replace_end = end}
+	return place, true
+}
+
 // names_rank makes the list of the names for the place of the caret.
 // by_tab: the input asked with Tab: an empty name lists all the names, and
 // a name that is already whole stays in the list.
@@ -691,6 +773,11 @@ names_rank :: proc "contextless" (by_tab: bool) {
 	text := line_editor.line_text(&line)
 	place := line_editor.completion_context(text, line.caret, by_tab)
 	opens := by_tab || place.place == .Member || place.place == .Quoted || place.place == .Name && len(place.query) > 0
+	// A "." at an argument of an Enum parameter opens the list of its
+	// members, before a letter of the name is typed.
+	if line.caret > 0 && text[line.caret - 1] == '.' {
+		opens = true
+	}
 	if !opens {
 		completion_close()
 		return
@@ -699,9 +786,14 @@ names_rank :: proc "contextless" (by_tab: bool) {
 	if place.place != .Quoted {
 		completion.processes_kept = false
 	}
-	// An argument that its call reads as names, or the fields of a record
-	// literal: the names of that place only.
-	if !names_of_a_record_literal(&completion.names, place, text) && !names_of_a_call(&completion.names, place, text, line.caret) {
+	// The members of the enum of an argument: after its ".", or at its
+	// start with Tab.
+	if member_place, is_member := members_of_an_argument(&completion.names, text, line.caret, by_tab); is_member {
+		place = member_place
+		// At the start of an argument: the names of the parameters too,
+		// for a named argument.
+		parameter_names_add(&completion.names, place, text)
+	} else if !names_of_a_record_literal(&completion.names, place, text) && !names_of_a_call(&completion.names, place, text, line.caret) {
 		names_collect(&completion.names, place)
 		// At the start of an argument of a call whose parameters have
 		// names: those names too, for a named argument.

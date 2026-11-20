@@ -202,7 +202,7 @@ writer_condition_of_terms :: proc "contextless" (bytes: []u8, file: []u8, descri
 			field_type = .Text
 		case .Hexadecimal, .Status, .Hash, .Fact_Values, .Hexadecimal_Sixteen_Digits, .Hash_Head, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day, .Text_View, .Log_Body:
 		}
-	case .Handle, .Bytes, .None, .Record, .Table:
+	case .Handle, .Bytes, .None, .Record, .Table, .Enum:
 		// A handle names nothing for the writer, and Bytes have no value
 		// that a condition compares.
 	}

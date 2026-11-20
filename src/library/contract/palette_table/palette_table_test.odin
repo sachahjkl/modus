@@ -184,12 +184,19 @@ a_provider_setting_entry_is_checked :: proc(t: ^testing.T) {
 	entry.parameter_count = 1
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
 	entry.parameter_count = 0
-	entry.setting_value = 1 // It names no setting of the settings contract.
-	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
-	entry.setting_value = 0
+	// The bytes where a Setting entry named a setting and its value are
+	// reserved now: each byte that is not 0 is refused.
+	entry.reserved_first = 1
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+	entry.reserved_first = 0
+	for place in 0 ..< 2 {
+		entry.reserved[place] = max(u8)
+		testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+		entry.reserved[place] = 0
+	}
 	entry.kind = u8(Entry_Kind.Command)
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
-	entry.kind = u8(Entry_Kind.Setting) // The value in use of a setting is in the settings page, not in a flag.
+	entry.kind = u8(Entry_Kind.Export)
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
 	entry.flags = {}
 	testing.expect_value(t, entry_problem(&entry), Problem.None)
@@ -240,25 +247,14 @@ entry_kind_of_word_refuses_a_word_that_names_no_kind :: proc(t: ^testing.T) {
 	}
 }
 
-// A Setting entry names a setting and a value that the machine has.
+// The name of a parameter: its length and its bytes.
 @(test)
-a_setting_entry_is_checked :: proc(t: ^testing.T) {
+a_parameter_name_is_checked :: proc(t: ^testing.T) {
 	entry: Entry
-	entry.kind = u8(Entry_Kind.Setting)
-	entry.name_length = u8(copy(entry.name[:], "set font to spleen"))
-	entry.signature_length = u8(copy(entry.signature[:], "set font to spleen"))
-	entry.setting, entry.setting_value = 0, 1
+	entry.kind = u8(Entry_Kind.Command)
+	entry.name_length = u8(copy(entry.name[:], "settings.set"))
+	entry.signature_length = u8(copy(entry.signature[:], "settings.set"))
 	testing.expect_value(t, entry_problem(&entry), Problem.None)
-	entry.setting_value = 2 // The font has two values.
-	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
-	entry.setting, entry.setting_value = 200, 0
-	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
-	entry.setting, entry.parameter_count = 0, 1
-	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
-	entry.kind, entry.parameter_count, entry.setting_value = u8(Entry_Kind.Command), 0, 1
-	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
-	// The name of a parameter: its length and its bytes.
-	entry.setting_value = 0
 	entry.parameter_name_lengths[2] = PARAMETER_NAME_CAPACITY + 1
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Length)
 	entry.parameter_name_lengths[2] = 2
@@ -305,6 +301,9 @@ candidates_and_arguments_are_checked :: proc(t: ^testing.T) {
 	_, _, good = argument_unpack(argument_pack(0, .Text, 0, "a\tb"))
 	testing.expect(t, !good)
 	_, _, good = argument_unpack(argument_pack(0, .Table, 0, ""))
+	testing.expect(t, !good)
+	// A member goes as the Text of its name, never as a kind Enum.
+	_, _, good = argument_unpack(argument_pack(0, .Enum, 0, "french"))
 	testing.expect(t, !good)
 	_, _, good = argument_unpack(argument_pack(PARAMETER_CAPACITY, .Integer, 1, ""))
 	testing.expect(t, !good)
@@ -358,10 +357,9 @@ a_word_that_names_no_kind_or_outcome_is_refused :: proc(t: ^testing.T) {
 @(test)
 an_act_name_and_a_setting_row_are_checked :: proc(t: ^testing.T) {
 	entry: Entry
-	entry.kind = u8(Entry_Kind.Setting)
-	entry.name_length = u8(copy(entry.name[:], "set font to spleen"))
-	entry.signature_length = u8(copy(entry.signature[:], "set font to spleen"))
-	entry.setting_value = 1
+	entry.kind = u8(Entry_Kind.Provider_Setting)
+	entry.name_length = u8(copy(entry.name[:], "settings.set font to spleen"))
+	entry.signature_length = u8(copy(entry.signature[:], "settings.set font to spleen"))
 	entry.act_name_length = u8(copy(entry.act_name[:], "settings.set:font"))
 	entry.setting_name_length = u8(copy(entry.setting_name[:], "font"))
 	entry.value_name_length = u8(copy(entry.value_name[:], "spleen"))
@@ -381,7 +379,7 @@ an_act_name_and_a_setting_row_are_checked :: proc(t: ^testing.T) {
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
 	entry.reserved_end = 0
 	// A command can have an act name, and joins no setting row.
-	entry.kind, entry.setting_value = u8(Entry_Kind.Command), 0
+	entry.kind = u8(Entry_Kind.Command)
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
 	entry.setting_name_length, entry.value_name_length = 0, 0
 	testing.expect_value(t, entry_problem(&entry), Problem.None)

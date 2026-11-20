@@ -164,7 +164,7 @@ Do not use: glyph atlas, local cache, per-program cache.
 
 A setting is one choice of the principal of the machine that each process follows: the font, the order of the subpixel bands, the pointer theme, the grid fit, the layout of the keyboard, the appearance or the time zone.
 
-Each setting is one value of the settings page, with 0 as its default: `font`, `subpixel_order`, `pointer_theme`, `grid_fit`, `keyboard_layout`, `appearance`, and `time_zone`, a fixed offset from UTC. The process `settings` is the one writer: its window, `settings.set(name, value)` and `settings.get(name)`. A caller that does not act for the principal gets `No_Grant`. A change takes effect while processes run, and the values survive a stop in the private store of `settings`. A setting is not a configuration file of one process, and the scheduling strategy is not a setting.
+Each setting is one value of the settings page, with 0 as its default: `font`, `subpixel_order`, `pointer_theme`, `grid_fit`, `keyboard_layout`, `appearance`, and `time_zone`, a fixed offset from UTC. The process `settings` is the one writer: its window, `settings.set(keyboard_layout = .french)`, `settings.set_time_zone(zone)`, and the getters, `settings.font()`. A caller that does not act for the principal gets `No_Grant`. A change takes effect while processes run, and the values survive a stop in the private store of `settings`. A setting is not a configuration file of one process, and the scheduling strategy is not a setting.
 
 The design: `docs/FONTS.md`, "7. The setting".
 

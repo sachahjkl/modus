@@ -1102,6 +1102,9 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 					write_part(writer, u64(value.detail))
 				}
 			}
+		case .Enum:
+			write_part(writer, "the enum ")
+			write_part(writer, module.name_get(&value.record))
 		case .Text, .Handle, .Bytes:
 			write_parameter_type(writer, nil, type, value.detail, value.direction)
 		}

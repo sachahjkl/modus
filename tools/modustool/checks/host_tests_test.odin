@@ -65,7 +65,7 @@ host_test_commands_take_the_kernel_parts_where_they_compile :: proc(t: ^testing.
 		// fact type: the compiler then needs to know the attribute.
 		attribute_flag_count := 0
 		for word in command {
-			if word == foundation.LOG_FACT_ATTRIBUTE_FLAG {
+			if word == foundation.CUSTOM_ATTRIBUTES_FLAG {
 				attribute_flag_count += 1
 			}
 		}

@@ -356,9 +356,11 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 		services_check()
 		run_line(string(work.text[:work.count]))
 		// The palette: the answer to its choice, then the table of the
-		// commands of now (palette_provider.odin).
+		// commands of now (palette_provider.odin). A choice of the palette
+		// can set a member of a row: its getters say the new member in use.
+		chosen_by_palette := palette_tag != 0
 		palette_line_ended()
-		palette_table_write()
+		palette_table_write(call_getters = chosen_by_palette)
 		// The line ends when its result is drawn: the keys that waited
 		// act now. The save of the line history comes after, and holds no
 		// key: it is a commit of the storage service, which takes

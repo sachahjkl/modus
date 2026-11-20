@@ -82,7 +82,7 @@ a_call_from_the_host_takes_nine_arguments :: proc(t: ^testing.T) {
 	}
 	// One value too few: refused before a call.
 	_, problem = call_prepare(&client, `nine.combine(1, "two", 3, 4, 5, 6, 7, 8)`)
-	testing.expect_value(t, problem, "nine.combine has 9 parameters; the call gives 8")
+	testing.expect_value(t, problem, "nine.combine has 9 parameters; the call gives 8, with no value_9")
 }
 
 // The text of a call: the service, the export, and the typed arguments.
@@ -109,6 +109,30 @@ call_parse_reads :: proc(t: ^testing.T) {
 	}
 	_, _, arguments, problem = call_parse("sample.sum_values([])")
 	testing.expect(t, problem == "" && len(arguments) == 1 && arguments[0].is_table && len(arguments[0].rows) == 0, "an empty table")
+}
+
+// A named argument and a member of an enum: a name given twice, an argument
+// with no name after a named one, a dot with no name, a name with no value,
+// and a member in a row of a table are refused; then a member by its place
+// and by its name are read.
+@(test)
+call_parse_reads_names_and_members :: proc(t: ^testing.T) {
+	for text in ([]string{"settings.set(font = .a, font = .b)", "settings.set(font = .a, .b)", "settings.set(font = .)", "settings.set(font = )", "settings.set(.)", "s.f([(.a, 1)])"}) {
+		_, _, arguments, problem := call_parse(text)
+		refused := problem != ""
+		// A member in a row is read, and the table refuses it before a call.
+		if text == "s.f([(.a, 1)])" {
+			refused = len(arguments) == 1 && arguments[0].is_table && arguments[0].rows[0][0].is_member
+		}
+		testing.expectf(t, refused, "%s is refused", text)
+	}
+	_, _, arguments, problem := call_parse("settings.set(.spleen, keyboard_layout = .french, scale = 11)")
+	testing.expect_value(t, problem, "")
+	if testing.expect_value(t, len(arguments), 3) {
+		testing.expect(t, arguments[0].is_member && arguments[0].text == "spleen" && arguments[0].name == "")
+		testing.expect(t, arguments[1].is_member && arguments[1].text == "french" && arguments[1].name == "keyboard_layout")
+		testing.expect(t, !arguments[2].is_member && arguments[2].integer == 11 && arguments[2].name == "scale")
+	}
 }
 
 // Each malformed text gives a sentence, and no call.

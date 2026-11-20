@@ -583,8 +583,10 @@ field_size :: proc "contextless" (item: Field) -> u32 {
 		return 4
 	case .Text, .Bytes:
 		return detail <= RECORD_SIZE_LIMIT ? detail : 0
-	case .None, .Record, .Table:
+	case .None, .Record, .Table, .Enum:
 		// A record holds values only: no record in a record, and no table.
+		// An enum field is an Integer of the field kind Status, whose enum
+		// the contract names.
 	}
 	return 0
 }

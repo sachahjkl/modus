@@ -128,6 +128,28 @@ expect_refusal :: proc(t: ^testing.T, parts: Module_Parts, refusal: Refusal, tab
 	}
 }
 
+// expect_last_check_refusal checks a refusal that only the readers of the
+// written file find: the plan takes the parts, and write refuses them and
+// leaves each byte of the file at zero.
+@(private = "file")
+expect_last_check_refusal :: proc(t: ^testing.T, parts: Module_Parts, refusal: Refusal, table: module.Table_Kind, index: u64, loc := #caller_location) {
+	size, needed := file_size_needed(parts)
+	testing.expect_value(t, needed.refusal, Refusal.None, loc)
+	output := make([]u8, int(size))
+	defer delete(output)
+	written_size, written := write(parts, output)
+	testing.expect_value(t, written.refusal, refusal, loc)
+	testing.expect_value(t, written.table, table, loc)
+	testing.expect_value(t, written.index, index, loc)
+	testing.expect_value(t, written_size, 0, loc)
+	for item in output {
+		if item != 0 {
+			testing.expect(t, false, "a refused file kept a byte", loc = loc)
+			break
+		}
+	}
+}
+
 // write_to_memory writes the parts into memory of the exact size.
 @(private = "file")
 write_to_memory :: proc(t: ^testing.T, parts: Module_Parts, loc := #caller_location) -> []u8 {
@@ -255,6 +277,64 @@ exports_with_no_description_are_refused :: proc(t: ^testing.T) {
 	storage.exports[1].code_offset = CODE_OFFSET + module.PAGE_SIZE - 1
 	file = write_to_memory(t, parts)
 	delete(file)
+}
+
+// An Enum parameter names an enum of the parts and a getter among the
+// exports, an optional bit is on an Enum parameter, an Enum result names an
+// enum, and a member has a name of a member: each edge is refused, and the
+// written file is checked by the readers of the enums last.
+@(test)
+enums_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
+	storage: Test_Storage
+	members := [2]Member_Description{{"slow", 0}, {"fast", 1}}
+	enums := [1]Enum_Description{{"Mode", 4, true, members[:]}}
+	enum_parts :: proc(storage: ^Test_Storage, enums: []Enum_Description) -> Module_Parts {
+		parts := test_parts(storage)
+		parts.enums = enums
+		storage.parameters[1] = .Enum
+		storage.details[1], _ = module.enum_detail_make(1, 0)
+		return parts
+	}
+	// An enum of no description: 0, then one past the last.
+	parts := enum_parts(&storage, enums[:])
+	storage.details[1] = 0
+	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
+	storage.details[1], _ = module.enum_detail_make(2, 0)
+	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
+	// A getter past the exports, and a getter whose form a reader refuses:
+	// the entry gives no Enum.
+	storage.details[1], _ = module.enum_detail_make(1, u32(len(storage.exports)) + 1)
+	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
+	storage.details[1], _ = module.enum_detail_make(1, 1)
+	expect_last_check_refusal(t, parts, .Enum_Not_Valid, .Functions, 1)
+	// An optional bit on a parameter that is no Enum, and past the
+	// parameters.
+	parts = enum_parts(&storage, enums[:])
+	storage.exports[1].optional_parameters = 0b01
+	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
+	storage.exports[1].optional_parameters = 0b100
+	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
+	// An Enum result of no enum.
+	parts = enum_parts(&storage, enums[:])
+	storage.exports[1].result, storage.exports[1].error_record = .Enum, 0
+	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
+	// A member with no name of a member, then a member that the reader
+	// refuses in the written file: the absent word.
+	parts = enum_parts(&storage, enums[:])
+	members[1].name = "Fast"
+	expect_refusal(t, parts, .Not_A_Name, .Members, 0)
+	members[1] = {"fast", 0xFFFF_FFFF}
+	expect_last_check_refusal(t, parts, .Enum_Not_Valid, .Enums, 0)
+	// The success comes last: an optional Enum parameter, read back.
+	members[1] = {"fast", 1}
+	parts = enum_parts(&storage, enums[:])
+	storage.exports[1].optional_parameters = 0b10
+	file := write_to_memory(t, parts)
+	defer delete(file)
+	function, _ := module.function(file, 2)
+	described, problem := module.enum_type(file, 1)
+	value, found := module.enum_value_of_name(file, described, "fast")
+	testing.expect(t, problem == .None && found && value == 1 && module.parameter_optional(function, 1) && !module.parameter_optional(function, 0))
 }
 
 @(test)

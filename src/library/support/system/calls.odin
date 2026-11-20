@@ -61,7 +61,7 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 	if _, described := isolated.record_size(function); !described || len(arguments) != int(function.parameter_count) {
 		return not_done(error, 0, u64(len(arguments)))
 	}
-	if function.result != u8(module.Type.Integer) && function.result != u8(module.Type.None) {
+	if function.result != u8(module.Type.Integer) && function.result != u8(module.Type.None) && function.result != u8(module.Type.Enum) {
 		return not_done(error, 0, u64(function.result))
 	}
 	integers: [CALL_INTEGERS]u64
@@ -76,7 +76,7 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 			return not_done(error, index + 1, u64(word))
 		}
 		switch type {
-		case .None, .Integer, .Handle:
+		case .None, .Integer, .Handle, .Enum:
 			integers[index] = argument.integer
 		case .Text:
 			slices[index] = {u64(uintptr(raw_data(argument.text))), u64(len(argument.text))}

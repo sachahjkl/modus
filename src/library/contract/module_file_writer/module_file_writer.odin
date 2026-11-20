@@ -67,10 +67,28 @@ Export_Part :: struct {
 	// a Record or a Table: the number of its record, from 1, in
 	// Module_Parts.records. At most one for each parameter; a missing one is 0.
 	parameter_details:    []u32,
+	// An Enum parameter: module.enum_detail_make of the number of its enum,
+	// from 1, in Module_Parts.enums, and of the number of its getter, from
+	// 1, in Module_Parts.exports, or 0.
 	parameter_directions: []module.Direction, // At most one for each parameter; a missing one is Read.
+	optional_parameters:  u16, // Bit n: a call may leave out the parameter n, an Enum (module.Function.optional_parameters).
 	result:               module.Type,
-	result_detail:        u32, // A Record or Table result: the number of its record, from 1.
+	result_detail:        u32, // A Record or Table result: the number of its record, from 1. An Enum result: the number of its enum, from 1.
 	error_record:         u32, // Not 0: the number of the record of its error record, from 1.
+}
+
+// The description of an enum: what module.Enum_Type and its members hold.
+Enum_Description :: struct {
+	name:     string, // The name of the type in its source.
+	size:     u8, // 1, 2, 4 or 8.
+	unsigned: bool,
+	members:  []Member_Description,
+}
+
+// One member of an enum: what module.Member holds.
+Member_Description :: struct {
+	name:  string, // A name that module.enum_member_name_valid takes.
+	value: i64,
 }
 
 // The description of a record: what module.Record and its fields hold.
@@ -137,6 +155,7 @@ Module_Parts :: struct {
 	slots:              []module.Slot, // Each in writable data, its import an index of imports from 1.
 	rebases:            []u64, // The memory offsets that a loader rebases: in order, each one time, each in writable data.
 	records:            []Record_Description,
+	enums:              []Enum_Description, // The file has the tables Enums and Members when there is one.
 	facts:              []Fact_Part,
 	has_own_hash_place: bool, // The module has an own-hash place: a module that writes a fact must have one.
 	own_hash_place:     u64, // module.HASH_SIZE bytes in a segment with Write and no Execute.
@@ -180,6 +199,10 @@ Refusal :: enum u32 {
 	// generic record input or with two. index: the row from 1, 0 for the tables; value: the
 	// module.Record_Stream_Fault.
 	Record_Streams_Not_Valid      = 24,
+	// An Enum parameter or result names no enum of the parts or a getter past the exports, an optional bit is on
+	// a parameter that is no Enum, or module.enum_type and module.function_enums_check refuse the written file.
+	// value: the module.Enum_Problem, or the number that names nothing.
+	Enum_Not_Valid                = 25,
 }
 
 // The refusal of the writer, and where it is.
@@ -311,6 +334,7 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 		{.Slots, len(parts.slots)},
 		{.Exports, len(parts.exports)},
 		{.Records, len(parts.records)},
+		{.Enums, len(parts.enums)},
 		{.Facts, len(parts.facts)},
 	}
 	for item in counts {
@@ -352,6 +376,13 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 	if field_count > TABLE_RECORDS_MOST {
 		return {}, {refusal = .Table_Past_Bound, table = .Fields, value = field_count}
 	}
+	member_count := u64(1)
+	for item in parts.enums {
+		member_count = sum_or_most(member_count, u64(len(item.members)))
+	}
+	if member_count > TABLE_RECORDS_MOST {
+		return {}, {refusal = .Table_Past_Bound, table = .Members, value = member_count}
+	}
 	string_bytes := string_bytes_needed(parts)
 	if string_bytes > TABLE_RECORDS_MOST {
 		return {}, {refusal = .Table_Past_Bound, table = .Strings, value = string_bytes}
@@ -388,6 +419,10 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 	}
 	if len(parts.record_inputs) > 0 {
 		add(&layout, &cursor, .Record_Inputs, u64(len(parts.record_inputs)) + 1, size_of(module.Record_Input))
+	}
+	if len(parts.enums) > 0 {
+		add(&layout, &cursor, .Enums, u64(len(parts.enums)) + 1, size_of(module.Enum_Type))
+		add(&layout, &cursor, .Members, member_count, size_of(module.Member))
 	}
 	add(&layout, &cursor, .Strings, string_bytes, 1)
 	add(&layout, &cursor, .Documentation, 2, size_of(module.Documentation))
@@ -465,6 +500,16 @@ names_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 	for item, index in parts.facts {
 		if !is_name(item.package_name) {
 			return {refusal = .Not_A_Name, table = .Facts, index = u64(index)}
+		}
+	}
+	for item, index in parts.enums {
+		if !is_name(item.name) {
+			return {refusal = .Not_A_Name, table = .Enums, index = u64(index)}
+		}
+		for member in item.members {
+			if !module.enum_member_name_valid(member.name) {
+				return {refusal = .Not_A_Name, table = .Members, index = u64(index)}
+			}
 		}
 	}
 	for item, index in parts.record_outputs {
@@ -559,17 +604,41 @@ exports_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 			return where_it_is
 		}
 		for type, parameter in item.parameters {
+			detail := parameter < len(item.parameter_details) ? item.parameter_details[parameter] : 0
+			if module.parameter_optional({optional_parameters = item.optional_parameters}, parameter) && type != .Enum {
+				where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(module.Enum_Problem.Bad_Optional)
+				return where_it_is
+			}
+			if type == .Enum {
+				enum_number, getter := module.enum_detail_of(detail)
+				if enum_number == 0 || u64(enum_number) > u64(len(parts.enums)) {
+					where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(enum_number)
+					return where_it_is
+				}
+				if u64(getter) > u64(len(parts.exports)) {
+					where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(getter)
+					return where_it_is
+				}
+				continue
+			}
 			if type != .Record && type != .Table {
 				continue
 			}
-			detail := parameter < len(item.parameter_details) ? item.parameter_details[parameter] : 0
 			if !described(detail, parts.records) {
 				where_it_is.refusal, where_it_is.value = .Export_Without_Description, u64(detail)
 				return where_it_is
 			}
 		}
+		if item.optional_parameters >> u16(min(len(item.parameters), 16)) != 0 {
+			where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(module.Enum_Problem.Bad_Optional)
+			return where_it_is
+		}
 		if (item.result == .Record || item.result == .Table) && !described(item.result_detail, parts.records) {
 			where_it_is.refusal, where_it_is.value = .Export_Without_Description, u64(item.result_detail)
+			return where_it_is
+		}
+		if item.result == .Enum && (item.result_detail == 0 || u64(item.result_detail) > u64(len(parts.enums))) {
+			where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(item.result_detail)
 			return where_it_is
 		}
 		if item.error_record != 0 && !described(item.error_record, parts.records) {
@@ -680,6 +749,12 @@ string_bytes_needed :: proc "contextless" (parts: Module_Parts) -> u64 {
 		total = sum_or_most(total, u64(len(item.name)))
 		total = sum_or_most(total, u64(len(item.about)))
 		total = sum_or_most(total, u64(len(item.text)))
+	}
+	for item in parts.enums {
+		total = sum_or_most(total, u64(len(item.name)))
+		for member in item.members {
+			total = sum_or_most(total, u64(len(member.name)))
+		}
 	}
 	return total
 }
@@ -819,6 +894,7 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 			about_count     = u32(len(item.about)),
 			text_count      = u32(len(item.text)),
 			parameter_count = u8(len(item.parameters)),
+			optional_parameters = item.optional_parameters,
 			result          = u8(item.result),
 			result_detail   = item.result_detail,
 			error_record    = item.error_record,
@@ -918,6 +994,28 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 		row.text_offset = string_append(&strings, item.text)
 		store(file, place(directory, .Record_Inputs, index + 1), row)
 	}
+	// The enums, and the members of each enum one after the other.
+	member_number := 1
+	for item, index in parts.enums {
+		row := module.Enum_Type {
+			name_count   = u32(len(item.name)),
+			first_member = u32(member_number),
+			member_count = u32(len(item.members)),
+			size         = item.size,
+			unsigned     = item.unsigned,
+		}
+		row.name_offset = string_append(&strings, item.name)
+		store(file, place(directory, .Enums, index + 1), row)
+		for member in item.members {
+			member_row := module.Member {
+				name_count = u32(len(member.name)),
+				value      = member.value,
+			}
+			member_row.name_offset = string_append(&strings, member.name)
+			store(file, place(directory, .Members, member_number), member_row)
+			member_number += 1
+		}
+	}
 	if parts.has_own_hash_place {
 		store(file, place(directory, .Own_Hash, 1), module.Own_Hash_Place{memory_offset = parts.own_hash_place})
 	}
@@ -960,6 +1058,20 @@ written_file_check :: proc "contextless" (parts: Module_Parts, file: []u8) -> Re
 	for index in 0 ..< len(parts.facts) {
 		if _, _, ok := module.fact(file, u32(index + 1)); !ok {
 			return {refusal = .Fact_Not_Valid, table = .Facts, index = u64(index), value = parts.facts[index].key}
+		}
+	}
+	// The members, their values and each getter: the readers take an enum
+	// through these two procedures, so the writer writes none that they
+	// refuse.
+	for index in 0 ..< len(parts.enums) {
+		if _, problem := module.enum_type(file, u32(index + 1)); problem != .None {
+			return {refusal = .Enum_Not_Valid, table = .Enums, index = u64(index), value = u64(problem)}
+		}
+	}
+	for index in 0 ..< len(parts.exports) {
+		function, _ := module.function(file, u32(index + 1))
+		if _, problem := module.function_enums_check(file, function); problem != .None {
+			return {refusal = .Enum_Not_Valid, table = .Functions, index = u64(index), value = u64(problem)}
 		}
 	}
 	// The reader of the root service checks the record streams of a file

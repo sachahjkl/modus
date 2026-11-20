@@ -124,8 +124,9 @@ SETTING_CAPACITY :: 8 // The page and the kept record have room for 8 values.
 VALUE_NAME_CAPACITY :: 8 // The most values of one setting.
 
 // Description: the name of a setting, the names of its values and the word
-// of the first one, for the exports, the window of `settings` and the
-// palette.
+// of the first one, for the window of `settings`. The exports take the
+// enums themselves, and the module file names their members for the
+// console and the palette (src/md/features/enum_parameters.md).
 Description :: struct {
 	name:        string, // The name in the exports and in the console: "subpixel_order".
 	title:       string, // For the window.
@@ -392,6 +393,81 @@ choice_of_values :: proc "contextless" (values: [Setting]u32) -> (choice: Choice
 		}
 	}
 	return choice, {}, true
+}
+
+// The arguments of the export `set` of the process `settings`, each of the
+// enum of its setting, as its caller wrote them in the registers
+// (src/md/features/enum_parameters.md). A setting that the call leaves out
+// holds the absent word: each bit of its size set.
+Set_Arguments :: struct {
+	font:            Font,
+	subpixel_order:  Subpixel_Order,
+	pointer_theme:   Pointer_Theme,
+	grid_fit:        Grid_Fit,
+	keyboard_layout: Keyboard_Layout,
+	appearance:      Appearance,
+	scale:           scale_factor.Scale,
+}
+
+// Why choice_of_arguments refuses the arguments of a call.
+Set_Problem :: enum u8 {
+	None              = 0, // The choice holds each given value.
+	Nothing_Given     = 1, // The call gives no setting.
+	Bad_Value         = 2, // A value that names no member of its enum: `refused` says which setting.
+	Past_Window_Bound = 3, // A scale past scale_factor.WINDOW_BOUND, which no window fits yet.
+}
+
+// choice_of_arguments is the border of the export `set`: the choice of now
+// with each setting that the call gives, or a refusal, which changes no
+// value. Each argument comes in a register, so a value can name no member:
+// enum_word.member_of_argument refuses it, as each word that crosses a
+// border. A setting left out keeps its value. The appearance in force, the
+// time zone and the count are those of current.
+choice_of_arguments :: proc "contextless" (current: Choice, arguments: Set_Arguments) -> (changed: Choice, refused: Setting, problem: Set_Problem) {
+	changed = current
+	given_count := 0
+	given_ok: bool
+	take :: proc "contextless" (argument: $Enum, member: ^Enum, given_count: ^int) -> (ok: bool) {
+		value, given, valid := enum_word.member_of_argument(argument)
+		if !valid {
+			return false
+		}
+		if given {
+			member^ = value
+			given_count^ += 1
+		}
+		return true
+	}
+	if given_ok = take(arguments.font, &changed.font, &given_count); !given_ok {
+		return current, .Font, .Bad_Value
+	}
+	if given_ok = take(arguments.subpixel_order, &changed.subpixel_order, &given_count); !given_ok {
+		return current, .Subpixel_Order, .Bad_Value
+	}
+	if given_ok = take(arguments.pointer_theme, &changed.pointer_theme, &given_count); !given_ok {
+		return current, .Pointer_Theme, .Bad_Value
+	}
+	if given_ok = take(arguments.grid_fit, &changed.grid_fit, &given_count); !given_ok {
+		return current, .Grid_Fit, .Bad_Value
+	}
+	if given_ok = take(arguments.keyboard_layout, &changed.keyboard_layout, &given_count); !given_ok {
+		return current, .Keyboard_Layout, .Bad_Value
+	}
+	if given_ok = take(arguments.appearance, &changed.appearance, &given_count); !given_ok {
+		return current, .Appearance, .Bad_Value
+	}
+	if given_ok = take(arguments.scale, &changed.scale, &given_count); !given_ok {
+		return current, .Scale, .Bad_Value
+	}
+	if given_count == 0 {
+		return current, {}, .Nothing_Given
+	}
+	// A member of the scale that no window fits yet: the border of the
+	// page refuses it, so the export refuses it before any write.
+	if _, scale_problem := scale_factor.scale_of_word(u64(changed.scale)); scale_problem != .None {
+		return current, .Scale, .Past_Window_Bound
+	}
+	return changed, {}, .None
 }
 
 // values_of gives the word of each value of a choice: the form of the page,

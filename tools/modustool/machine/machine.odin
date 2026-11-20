@@ -368,9 +368,9 @@ scenario_persist_first := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"settings\")"},
 	{kind = .Wait, text = "[console]   module     settings"},
-	{kind = .Wait, text = "[console]   commands   3"},
+	{kind = .Wait, text = "[console]   commands   11"},
 	{kind = .Wait, text = "[console]   call       service"},
-	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
+	{kind = .Type, text = "settings.set(font = .spleen)"},
 	{kind = .Wait, text = "settings: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; kept in the store"},
 	// A line for the next machine: the console keeps its line history in
 	// its store, after each line and before shutdown().
@@ -424,9 +424,9 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "[console] 18"},
 	{kind = .Type, text = "connect(\"settings\")"},
 	{kind = .Wait, text = "[console]   module     settings"},
-	{kind = .Wait, text = "[console]   commands   3"},
+	{kind = .Wait, text = "[console]   commands   11"},
 	{kind = .Wait, text = "[console]   call       service"},
-	{kind = .Type, text = "settings.set(\"font\", \"vector\")"},
+	{kind = .Type, text = "settings.set(font = .vector)"},
 	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; kept in the store"},
 	{kind = .Front, text = "notes"},
 	{kind = .Key, text = "tab"},
@@ -1424,6 +1424,11 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
 	{kind = .Wait, text = "compositor: the window settings gave 6 act names", any_order = true},
 	{kind = .Wait, text = "settings: ok, ", any_order = true},
+	// The rows of the settings come from the enum parameters of the export
+	// set: the console lists them once it is connected to the service.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"settings\")"},
+	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = ":font"},
@@ -1436,19 +1441,19 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the palette chooses the value spleen of font"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette sets font to spleen, by a key"},
-	{kind = .Wait, text = "compositor: the palette sends set font to spleen to the console", any_order = true},
-	{kind = .Wait, text = "console: the palette runs setting(\"font\", \"spleen\")"},
+	{kind = .Wait, text = "compositor: the palette sends settings.set font to spleen to the console", any_order = true},
+	{kind = .Wait, text = "console: the palette runs settings.set(font = .spleen)"},
 	{kind = .Wait, text = "settings: font spleen, ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen", any_order = true},
-	{kind = .Wait, text = "compositor: the palette did: set font to spleen"},
+	{kind = .Wait, text = "compositor: the palette did: settings.set font to spleen"},
 	{kind = .Shot, text = "palette_setting_row"},
 	{kind = .Key, text = "left"},
 	{kind = .Wait, text = "compositor: the palette chooses the value vector of font"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "console: the palette runs setting(\"font\", \"vector\")"},
+	{kind = .Wait, text = "console: the palette runs settings.set(font = .vector)"},
 	{kind = .Wait, text = "settings: font vector, ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector", any_order = true},
-	{kind = .Wait, text = "compositor: the palette did: set font to vector"},
+	{kind = .Wait, text = "compositor: the palette did: settings.set font to vector"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	// Go to: the window of settings names what the row of the grid fit
@@ -1458,10 +1463,10 @@ scenario := [?]Step {
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = ":grid"},
-	{kind = .Wait, text = " for \":grid\": grid fit (setting)"},
+	{kind = .Wait, text = " for \":grid\": grid_fit (setting)"},
 	{kind = .Shot, text = "palette_go_to"},
 	{kind = .Key, text = "shift-ret"},
-	{kind = .Wait, text = "compositor: the palette goes to grid fit in the window settings, now in front", any_order = true},
+	{kind = .Wait, text = "compositor: the palette goes to grid_fit in the window settings, now in front", any_order = true},
 	{kind = .Wait, text = "interface: settings: the focus is on the element of settings.set:grid_fit", any_order = true},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
@@ -3665,9 +3670,9 @@ scenario := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"settings\")"},
 	{kind = .Wait, text = "[console]   module     settings"},
-	{kind = .Wait, text = "[console]   commands   3"},
+	{kind = .Wait, text = "[console]   commands   11"},
 	{kind = .Wait, text = "[console]   call       service"},
-	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
+	{kind = .Type, text = "settings.set(font = .spleen)"},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; ", any_order = true},
 	// The interface text of the console follows the setting: Spleen cells.
 	// The terminal reads the setting at each turn of its loop, so its line
@@ -3676,33 +3681,36 @@ scenario := [?]Step {
 	{kind = .Wait, text = "settings: drawn with font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "font_spleen"},
-	{kind = .Call, text = "settings.get(\"font\")", expected = "spleen"},
-	{kind = .Call, text = "settings.set(\"font\", \"vector\")", expected = "1"},
+	{kind = .Call, text = "settings.font()", expected = ".spleen"},
+	{kind = .Call, text = "settings.set(font = .vector)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; ", any_order = true},
 	{kind = .Wait, text = "terminal: console draws its interface text in the interface font", any_order = true},
-	{kind = .Call, text = "settings.set(\"grid_fit\", \"off\")", expected = "1"},
+	{kind = .Call, text = "settings.set(grid_fit = .off)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us, appearance auto, scale 1.25; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us"},
 	{kind = .Shot, text = "font_without_grid_fit"},
-	{kind = .Call, text = "settings.set(\"pointer_theme\", \"system\")", expected = "1"},
+	{kind = .Call, text = "settings.set(pointer_theme = .of_the_system)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme system, grid fit off, keyboard layout us, appearance auto, scale 1.25; "},
 	{kind = .Point, inside_window = "settings", x = 100, y = 12, text = "move"}, // The title bar, in the theme of the system.
-	{kind = .Call, text = "settings.set(\"subpixel_order\", \"bgr\")", expected = "1"},
+	{kind = .Call, text = "settings.set(subpixel_order = .blue_green_red)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr, pointer theme system, grid fit off, keyboard layout us, appearance auto, scale 1.25; "},
-	{kind = .Call, text = "settings.get(\"subpixel_order\")", expected = "bgr"},
-	{kind = .Call, text = "settings.get(\"colour\")", outcome = .Failed, expected = "error: settings.get: the argument name names nothing that exists (-2)"},
-	{kind = .Call, text = "settings.set(\"font\", \"comic\")", outcome = .Failed, expected = "(-3)"},
-	{kind = .Call, text = "settings.set(\"colour\", \"red\")", outcome = .Failed, expected = "(-2)"},
-	{kind = .Call, text = "settings.set(\"subpixel_order\", \"rgb\")", expected = "1"},
-	{kind = .Call, text = "settings.set(\"pointer_theme\", \"owner\")", expected = "1"},
-	{kind = .Call, text = "settings.set(\"grid_fit\", \"on\")", expected = "1"},
+	{kind = .Call, text = "settings.subpixel_order()", expected = ".blue_green_red"},
+	// The refusals: a name that is no member, a member of another enum and
+	// a parameter that the export does not have are refused before the
+	// call; a call that gives no setting is refused by the export.
+	{kind = .Call, text = "settings.set(font = .comic)", outcome = .Wrong, expected = "error: the parameter font of settings.set is the enum Font, which has no member comic: its members are .vector, .spleen"},
+	{kind = .Call, text = "settings.set(font = .french)", outcome = .Wrong, expected = "which has no member french"},
+	{kind = .Call, text = "settings.set(colour = .red)", outcome = .Wrong, expected = "error: settings.set has no parameter colour"},
+	{kind = .Call, text = "settings.set()", outcome = .Failed, expected = "(-2)"},
+	// Three settings in one call.
+	{kind = .Call, text = "settings.set(subpixel_order = .red_green_blue, pointer_theme = .of_the_owner, grid_fit = .on)", expected = "1"},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
 	// The layout of the keyboard: with the layout of France, the key that
 	// gives q in the layout of the United States gives a. The setting holds
 	// from the next key, and the tool sets it from the host: a line typed
 	// under the other layout would not be the line that the tool means.
 	{kind = .Front, text = "console"},
-	{kind = .Call, text = "settings.set(\"keyboard_layout\", \"french\")", expected = "1"},
+	{kind = .Call, text = "settings.set(keyboard_layout = .french)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout french, appearance auto, scale 1.25; "},
 	// A typed name opens the completion list: Escape closes it, so that
 	// Enter runs the line and does not take a candidate.
@@ -3767,7 +3775,7 @@ scenario := [?]Step {
 	// The vector font draws é, ê, ^ and € from the glyph cache: no
 	// replacement box in the console.
 	{kind = .Shot, text = "keys_french"},
-	{kind = .Call, text = "settings.set(\"keyboard_layout\", \"us\")", expected = "1"},
+	{kind = .Call, text = "settings.set(keyboard_layout = .united_states)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; "},
 	{kind = .Keys, text = "q"},
 	{kind = .Key, text = "esc"},
@@ -3779,7 +3787,7 @@ scenario := [?]Step {
 	// (machine_clock.odin), so auto gives the dark one; the step
 	// Appearance_Auto checks the line by the rule over the date that it
 	// names, and that date against the clock of the machine.
-	{kind = .Call, text = "settings.set(\"appearance\", \"light\")", expected = "1"},
+	{kind = .Call, text = "settings.set(appearance = .light)", expected = "1"},
 	// Each window of a process takes each color from the tokens
 	// (src/md/features/appearance.md, "The colors of the processes"). A
 	// window writes one line at its first frame in the new appearance; a
@@ -3812,15 +3820,15 @@ scenario := [?]Step {
 	{kind = .Shot, text = "rings_light"},
 	{kind = .Front, text = "clock"},
 	{kind = .Shot, text = "clock_light"},
-	{kind = .Call, text = "settings.set(\"appearance\", \"dark\")", expected = "1"},
+	{kind = .Call, text = "settings.set(appearance = .dark)", expected = "1"},
 	{kind = .Wait, text = "settings: the appearance in force is dark: the setting dark"},
 	{kind = .Wait, text = "compositor: the pointer form in use: dark", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance dark, scale 1.25; the appearance in force dark; "},
 	{kind = .Point, x = 116, y = 14, text = "pointing_hand", form = "dark"},
-	{kind = .Call, text = "settings.set(\"appearance\", \"auto\")", expected = "1"},
+	{kind = .Call, text = "settings.set(appearance = .auto)", expected = "1"},
 	{kind = .Appearance_Auto, text = "settings: the appearance in force is "},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; the appearance in force dark; "},
-	{kind = .Call, text = "settings.get(\"appearance\")", expected = "auto"},
+	{kind = .Call, text = "settings.appearance()", expected = ".auto"},
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "settings"},
 	// The time zone (src/md/features/time_zone.md). The clock of the
@@ -3830,16 +3838,16 @@ scenario := [?]Step {
 	// shows the local time. The compositor can tell the windows of the zone
 	// and of the appearance in one line or in two: the step waits for the
 	// last state only.
-	{kind = .Call, text = "settings.set(\"time_zone\", \"+08:00\")", expected = "1"},
+	{kind = .Call, text = "settings.set_time_zone(\"+08:00\")", expected = "1"},
 	{kind = .Wait, text = "settings: time zone +08:00; kept in the store"},
 	{kind = .Bar_Local_Time, text = "compositor: the bar shows the local time ", expected = "+08:00", any_order = true},
 	{kind = .Wait, text = "date: the time zone of the date page is +08:00, from the setting time_zone"},
 	{kind = .Appearance_Auto, text = "root: the appearance in force is ", expected = "28800"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; the appearance in force light; the time zone +08:00; "},
-	{kind = .Call, text = "settings.get(\"time_zone\")", expected = "+08:00"},
-	{kind = .Call, text = "settings.set(\"time_zone\", \"+8:00\")", outcome = .Failed, expected = "(-3)"},
+	{kind = .Call, text = "settings.time_zone()", expected = "+08:00"},
+	{kind = .Call, text = "settings.set_time_zone(\"+8:00\")", outcome = .Failed, expected = "(-3)"},
 	// Back to UTC: the night again, before the next pictures.
-	{kind = .Call, text = "settings.set(\"time_zone\", \"+00:00\")", expected = "1"},
+	{kind = .Call, text = "settings.set_time_zone(\"+00:00\")", expected = "1"},
 	{kind = .Wait, text = "settings: time zone +00:00; kept in the store"},
 	{kind = .Bar_Local_Time, text = "compositor: the bar shows the local time ", expected = "+00:00", any_order = true},
 	{kind = .Wait, text = "date: the time zone of the date page is +00:00, from the setting time_zone"},
@@ -3859,7 +3867,7 @@ scenario := [?]Step {
 	// not named here too, so a window that froze between two surfaces
 	// fails the step. No step clicks at 1.375: the places of the tool are
 	// at 1.25 (scale_places.odin).
-	{kind = .Call, text = "settings.set(\"scale\", \"1.375\")", expected = "1"},
+	{kind = .Call, text = "settings.set(scale = .eleven_eighths)", expected = "1"},
 	{kind = .Wait, text = "display: monitor: the surface of 715x880 at 11 eighths", any_order = true, fails_on = "the compositor refused the surface"},
 	{kind = .Wait, text = "display: rings: the surface of 990x743 at 11 eighths", any_order = true, fails_on = "the compositor refused the surface"},
 	{kind = .Wait, text = "display: settings: the surface of 770x814 at 11 eighths", any_order = true, fails_on = "the compositor refused the surface"},
@@ -3869,7 +3877,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.375; "},
 	{kind = .Wait, text = " windows shows a surface at 11 eighths", fails_on = "the compositor refused the surface"},
 	{kind = .Shot, text = "desktop_at_1_375"},
-	{kind = .Call, text = "settings.set(\"scale\", \"1.25\")", expected = "1"},
+	{kind = .Call, text = "settings.set(scale = .ten_eighths)", expected = "1"},
 	{kind = .Wait, text = "display: monitor: the surface of 650x800 at 10 eighths", any_order = true, fails_on = "the compositor refused the surface"},
 	{kind = .Wait, text = "display: rings: the surface of 900x675 at 10 eighths", any_order = true, fails_on = "the compositor refused the surface"},
 	{kind = .Wait, text = "display: settings: the surface of 700x740 at 10 eighths", any_order = true, fails_on = "the compositor refused the surface"},

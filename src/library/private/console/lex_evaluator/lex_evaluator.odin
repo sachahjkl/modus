@@ -50,6 +50,8 @@ Kind :: enum u8 {
 	Stream         = 7, // A record output of a process, read while the line runs. No variable keeps one.
 	Record_Input   = 8, // A record input of a process, by its typed name: wire names it. No variable keeps one.
 	Record_Literal = 9, // A record literal not typed yet: integer is its node. Its receiver types it; nothing else keeps one.
+	Enum           = 10, // A member of an enum: integer is its value; file and detail name the enum (module.enum_type). A parameter: an Enum of an export.
+	Member         = 11, // A member not typed yet, `.french`: integer is its node. The Enum parameter that receives it types it; nothing else keeps one.
 }
 
 // The fields of a record at most: those of a record that a call carries.
@@ -91,6 +93,8 @@ Refusal :: enum u8 {
 	With_Records_Differ   = 18, // `with` on two records of two descriptions: file, detail, other_file, other_detail.
 	Field_Unknown         = 19, // `binding.field` with no such field: field, and file and detail of a record, or left_kind.
 	Cycle                 = 20, // A binding that its own value needs: command is its name.
+	Member_No_Type        = 21, // A member that nothing types: the value of the line, or a parameter that is no Enum (command, parameter, right_kind).
+	Member_Unknown        = 22, // A member that the enum of its parameter does not have: field is its name; command, parameter, file and detail name the enum.
 }
 
 // The first refusal of an evaluation, and what its sentence needs.
@@ -120,10 +124,11 @@ Command_Signature :: struct {
 	has_effect:      bool, // An effect: mode `declaration` refuses the call.
 	parameter_count: int,
 	optional_last:   bool, // A call may leave out the last parameter.
+	optional:        [lex_parser.ARGUMENT_CAPACITY]bool, // A call may leave out this parameter, an Enum: the host gives its absent word.
 	names:           [lex_parser.ARGUMENT_CAPACITY]string, // The name of each parameter, or "": the command has none.
 	kinds:           [lex_parser.ARGUMENT_CAPACITY]Kind,
-	files:           [lex_parser.ARGUMENT_CAPACITY][]u8, // A Record parameter: the module that describes its record, or nil.
-	details:         [lex_parser.ARGUMENT_CAPACITY]u32, // A Record parameter: its description in the module.
+	files:           [lex_parser.ARGUMENT_CAPACITY][]u8, // A Record or an Enum parameter: the module that describes its record or its enum, or nil.
+	details:         [lex_parser.ARGUMENT_CAPACITY]u32, // A Record parameter: its description in the module. An Enum parameter: the index of its enum.
 }
 
 // What only the host knows. Each procedure that gives ok false has written
@@ -189,11 +194,15 @@ line_force :: proc "contextless" (evaluation: ^Evaluation) -> (value: Value, ok:
 	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name:
 	}
 	value = force(evaluation, tree.root) or_return
-	// The value of a line is drawn or kept: a literal that nothing typed
-	// has no type to draw or keep.
+	// The value of a line is drawn or kept: a literal or a member that
+	// nothing typed has no type to draw or keep.
 	if value.kind == .Record_Literal {
 		literal := lex_parser.Node_Index(value.integer)
 		return refuse(evaluation, {refusal = .Literal_No_Type, place = lex_parser.node_at(tree, literal).place, node = literal})
+	}
+	if value.kind == .Member {
+		member := lex_parser.Node_Index(value.integer)
+		return refuse(evaluation, {refusal = .Member_No_Type, place = lex_parser.node_at(tree, member).place, node = member})
 	}
 	return value, true
 }
@@ -292,6 +301,9 @@ compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_I
 		return {kind = .Record_Literal, integer = i64(index)}, true
 	case .Let:
 		return let_compute(evaluation, node)
+	case .Member:
+		// The name only; the Enum parameter that receives it gives the enum.
+		return {kind = .Member, integer = i64(index)}, true
 	case .Literal_Field, .Named_Argument, .Let_Binding:
 		// Their parent forces their value.
 		break
@@ -413,7 +425,7 @@ binding_value :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.
 		if field_index != lex_parser.NO_NODE {
 			return force(evaluation, lex_parser.node_at(tree, field_index).first_child)
 		}
-	case .None, .Integer, .Text, .Handle, .Table, .Bytes, .Stream, .Record_Input:
+	case .None, .Integer, .Text, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Enum, .Member:
 		// A value with no fields.
 	}
 	return refuse(evaluation, record)
@@ -440,7 +452,7 @@ record_field_value :: proc "contextless" (value: Value, name: string) -> (result
 		case .Bytes:
 			// A hash: the console draws its bytes.
 			return {kind = .Bytes, record = module.field_bytes(value.record, item)}, true
-		case .None, .Record, .Table:
+		case .None, .Record, .Table, .Enum:
 			// A field of a record holds no such value: the field gives none.
 			return {}, false
 		}
@@ -613,7 +625,7 @@ literal_typed :: proc "contextless" (evaluation: ^Evaluation, value: Value, file
 				return refuse(evaluation, record)
 			}
 			copy(bytes[item.offset:][:item.detail], field_value.record)
-		case .None, .Record, .Table:
+		case .None, .Record, .Table, .Enum:
 			return refuse(evaluation, record)
 		}
 	}
@@ -667,7 +679,7 @@ call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 			if slots[slot] != lex_parser.NO_NODE {
 				return refuse(evaluation, {refusal = .Argument_Twice, place = argument_node.place, node = argument, command = name, field = argument_name})
 			}
-		case .Integer, .Text, .Name, .Call, .Negate, .Binary, .Condition, .Fact_Name, .Field_Names, .Record_Literal, .Literal_Field, .Let, .Let_Binding:
+		case .Integer, .Text, .Name, .Call, .Negate, .Binary, .Condition, .Fact_Name, .Field_Names, .Record_Literal, .Literal_Field, .Let, .Let_Binding, .Member:
 			if positional == len(slots) {
 				continue
 			}
@@ -685,17 +697,31 @@ call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 				return {}, false
 			}
 		}
-	}
-	// A call with named arguments gives each parameter, but the last one
-	// that it may leave out.
-	if named {
-		for parameter in 0 ..< parameter_count {
-			if slots[parameter] != lex_parser.NO_NODE || parameter == parameter_count - 1 && signature.optional_last {
-				continue
+		// A member is checked against the enum of its parameter here, at
+		// its place, before any argument of the call runs.
+		if member_node := lex_parser.node_at(tree, literal); member_node != nil && member_node.kind == .Member && slot < parameter_count {
+			if _, typed := member_typed(evaluation, literal, name, slot, signature); !typed {
+				return {}, false
 			}
+		}
+	}
+	// A parameter that the call does not give: an optional one, and the
+	// last one that a call may leave out, get no value; the host gives an
+	// optional Enum its absent word. A call with named arguments gives each
+	// other parameter; a call by place that misses one is refused by the
+	// host, which counts its arguments.
+	missing := false
+	for parameter in 0 ..< parameter_count {
+		if slots[parameter] != lex_parser.NO_NODE || parameter == parameter_count - 1 && signature.optional_last || signature.optional[parameter] {
+			continue
+		}
+		if named {
 			return refuse(evaluation, {refusal = .Argument_Missing, place = node.place, node = index, command = name, field = signature.names[parameter]})
 		}
-		count = max(count, parameter_count - (signature.optional_last && slots[parameter_count - 1] == lex_parser.NO_NODE ? 1 : 0))
+		missing = true
+	}
+	if named || !missing {
+		count = max(count, parameter_count - (signature.optional_last && parameter_count > 0 && slots[parameter_count - 1] == lex_parser.NO_NODE ? 1 : 0))
 	}
 	// The values, in the order of the line.
 	arguments: [lex_parser.ARGUMENT_CAPACITY]Value
@@ -726,10 +752,43 @@ call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 			}
 			argument_value = literal_typed(evaluation, argument_value, signature.files[slot], signature.details[slot], nil) or_return
 		}
+		if argument_value.kind == .Member {
+			argument_value = member_typed(evaluation, lex_parser.Node_Index(argument_value.integer), name, slot, signature) or_return
+		}
 		arguments[slot] = argument_value
 	}
 	value, ok = host.call_run(host.data, name, arguments[:count])
 	return host_answer(evaluation, index, node, value, ok)
+}
+
+// member_typed gives the value of a member node for the parameter slot of a
+// call: the value of the member of the same name in the enum of the
+// parameter. A parameter that is no Enum, and a name that the enum does not
+// have, are refused at the place of the member.
+@(private)
+member_typed :: proc "contextless" (evaluation: ^Evaluation, member: lex_parser.Node_Index, command_name: string, slot: int, signature: Command_Signature) -> (value: Value, ok: bool) {
+	tree := evaluation.tree
+	member_node := lex_parser.node_at(tree, member)
+	if member_node == nil {
+		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = tree.refusal.place, node = member})
+	}
+	if slot < 0 || slot >= clamp(signature.parameter_count, 0, lex_parser.ARGUMENT_CAPACITY) || signature.kinds[slot] != .Enum || signature.files[slot] == nil {
+		right_kind := slot >= 0 && slot < lex_parser.ARGUMENT_CAPACITY ? signature.kinds[slot] : .None
+		return refuse(evaluation, {refusal = .Member_No_Type, place = member_node.place, node = member, command = command_name, parameter = slot + 1, right_kind = right_kind})
+	}
+	text := lex_parser.node_text(tree, member)
+	member_name := len(text) > 0 ? text[1:] : text
+	file, enum_index := signature.files[slot], signature.details[slot]
+	record := Refusal_Record{refusal = .Member_Unknown, place = member_node.place, node = member, command = command_name, parameter = slot + 1, field = member_name, file = file, detail = enum_index}
+	described, problem := module.enum_type(file, enum_index)
+	if problem != .None {
+		return refuse(evaluation, record)
+	}
+	member_value, found := module.enum_value_of_name(file, described, member_name)
+	if !found {
+		return refuse(evaluation, record)
+	}
+	return {kind = .Enum, integer = member_value, file = file, detail = enum_index}, true
 }
 
 // with_compute gives `left with right`: the record on the left, with the
@@ -746,7 +805,7 @@ with_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 				return refuse(evaluation, {refusal = .With_Records_Differ, place = node.place, node = index, file = left.file, detail = left.detail, other_file = right.file, other_detail = right.detail})
 			}
 			return right, true
-		case .None, .Integer, .Text, .Handle, .Table, .Bytes, .Stream, .Record_Input:
+		case .None, .Integer, .Text, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Enum, .Member:
 		}
 	}
 	return refuse(evaluation, {refusal = .With_Kinds, place = node.place, node = index, operator = .With, left_kind = left.kind, right_kind = right.kind})

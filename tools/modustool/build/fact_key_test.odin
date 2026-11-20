@@ -5,7 +5,7 @@ import "modustool:foundation"
 
 // A fact type of this test: a record type of the package scope with the
 // attribute of a fact type. The compile of the host tests gives the flag
-// of the attribute (foundation.LOG_FACT_ATTRIBUTE_FLAG), or the compiler
+// of the attribute (foundation.CUSTOM_ATTRIBUTES_FLAG), or the compiler
 // refuses this declaration ("Unknown attribute element name").
 @(log_fact = "build: the probe {value} of the fact key")
 Fact_Key_Probe :: struct {
@@ -84,7 +84,7 @@ each_compile_accepts_the_attribute_of_a_fact_type :: proc(t: ^testing.T) {
 	count_of_flag :: proc(command: []string) -> int {
 		count := 0
 		for word in command {
-			count += int(word == foundation.LOG_FACT_ATTRIBUTE_FLAG)
+			count += int(word == foundation.CUSTOM_ATTRIBUTES_FLAG)
 		}
 		return count
 	}
@@ -95,5 +95,5 @@ each_compile_accepts_the_attribute_of_a_fact_type :: proc(t: ^testing.T) {
 	testing.expect_value(t, count_of_flag(boot_program_compile_command(release_boot_volume())), 1)
 	tool := TOOL_COMPILE_COMMAND
 	testing.expect_value(t, count_of_flag(tool[:]), 1)
-	testing.expect_value(t, foundation.LOG_FACT_ATTRIBUTE_FLAG, "-custom-attribute:log_fact")
+	testing.expect_value(t, foundation.CUSTOM_ATTRIBUTES_FLAG, "-custom-attribute:log_fact,enum_getters,optional_parameters")
 }

@@ -112,6 +112,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 		describe_file(file, &list, &state) or_return
 	}
 	description.records = state.records[:]
+	description.enums = state.enum_descriptions[:]
 	for item, index in list {
 		for other in list[:index] {
 			if other.name == item.name {
@@ -119,6 +120,9 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 				return {}, false
 			}
 		}
+	}
+	if !enum_getters_resolve(list[:], description.enums) {
+		return {}, false
 	}
 	description.about = about_of(documentation_text_of_markdown(description.text), "")
 	if description.about == "" {
@@ -137,13 +141,24 @@ Struct_Source :: struct {
 	prefix: string, // "package." for a struct of an imported package: the names of its fields are in that package.
 }
 
+// An enum of the package or of an imported package, as the source
+// declares it.
+Enum_Source :: struct {
+	base:   string, // The text of its backing type: "u32". "" when the source gives none.
+	type:   ^ast.Enum_Type,
+	path:   string,
+	source: string,
+}
+
 // What the tool keeps while it reads a package.
 Describe_State :: struct {
 	structs: map[string]Struct_Source, // By name; a struct of an imported package by "package.Name".
 	imports: map[string]string, // The folder of each package that the files import, by the name that the files use.
 	read:    map[string]bool, // The imported packages whose structs are in `structs`.
-	enums:   map[string]string, // The backing type of each enum, by name as `structs`.
+	enums:   map[string]Enum_Source, // Each enum, by name as `structs`.
 	records: [dynamic]Record_Description, // The records that an export uses, each one time.
+	enum_descriptions: [dynamic]Enum_Description, // The enums that an export takes or gives, each one time.
+	enum_keys:         [dynamic]string, // The key in `enums` of each of enum_descriptions.
 }
 
 @(private = "file")
@@ -197,7 +212,7 @@ structs_add :: proc(file: ^ast.File, prefix: string, state: ^Describe_State) {
 		state.structs = make(map[string]Struct_Source, context.temp_allocator)
 	}
 	if state.enums == nil {
-		state.enums = make(map[string]string, context.temp_allocator)
+		state.enums = make(map[string]Enum_Source, context.temp_allocator)
 	}
 	for statement in file.decls {
 		declaration, is_value := statement.derived.(^ast.Value_Decl)
@@ -212,8 +227,9 @@ structs_add :: proc(file: ^ast.File, prefix: string, state: ^Describe_State) {
 		if type, is_struct := declaration.values[0].derived.(^ast.Struct_Type); is_struct {
 			state.structs[key] = {type, file.fullpath, file.src, prefix}
 		}
-		if type, is_enum := declaration.values[0].derived.(^ast.Enum_Type); is_enum && type.base_type != nil {
-			state.enums[key] = type_text(file.src, type.base_type)
+		if type, is_enum := declaration.values[0].derived.(^ast.Enum_Type); is_enum {
+			base := type.base_type != nil ? type_text(file.src, type.base_type) : ""
+			state.enums[key] = {base, type, file.fullpath, file.src}
 		}
 	}
 }
@@ -537,13 +553,96 @@ integer_size :: proc(state: ^Describe_State, prefix, text: string) -> (size: u32
 	case "u8":
 		return 1, true
 	}
-	if base, is_enum := state.enums[strings.concatenate({prefix, text}, context.temp_allocator)]; is_enum {
-		return integer_size(state, prefix, base)
+	if found, is_enum := state.enums[strings.concatenate({prefix, text}, context.temp_allocator)]; is_enum && found.base != "" {
+		return integer_size(state, prefix, found.base)
 	}
-	if base, is_enum := state.enums[text]; is_enum {
-		return integer_size(state, "", base)
+	if found, is_enum := state.enums[text]; is_enum && found.base != "" {
+		return integer_size(state, "", found.base)
 	}
 	return 0, false
+}
+
+// enum_of gives the number of the description of an enum of the package,
+// or of an imported package of the library, from 1: the type of an Enum
+// parameter or of an Enum result. The description is made at the first use
+// of the enum: its name, its size and sign from its backing type, and each
+// member in lower case with its value. is_enum is false for a type that is
+// no enum that the tool knows; ok is false for an enum that the format
+// cannot describe, with a line that says why.
+enum_of :: proc(state: ^Describe_State, type: ^ast.Expr) -> (number: u32, is_enum, ok: bool) {
+	key, name := struct_name(state, type)
+	found, known := state.enums[key]
+	if key == "" || !known {
+		return 0, false, false
+	}
+	for item, index in state.enum_keys {
+		if item == key {
+			return u32(index + 1), true, true
+		}
+	}
+	size, unsigned := integer_size(state, "", found.base)
+	if found.base == "" || size == 0 {
+		return 0, true, describe_fail(found.path, found.type, "the enum %s has no backing type of 1, 2, 4 or 8 bytes: write enum u32 {{...}}", name)
+	}
+	members := make([dynamic]Member_Description, context.temp_allocator)
+	next := i64(0)
+	for item in found.type.fields {
+		member_name: string
+		value_expression: ^ast.Expr
+		#partial switch field in item.derived {
+		case ^ast.Ident:
+			member_name = field.name
+		case ^ast.Field_Value:
+			identifier, is_identifier := field.field.derived.(^ast.Ident)
+			if !is_identifier {
+				return 0, true, describe_fail(found.path, item, "the enum %s: a member is a name, with a value or none", name)
+			}
+			member_name, value_expression = identifier.name, field.value
+		case:
+			return 0, true, describe_fail(found.path, item, "the enum %s: a member is a name, with a value or none", name)
+		}
+		if value_expression != nil {
+			negative := false
+			if unary, is_unary := value_expression.derived.(^ast.Unary_Expr); is_unary && unary.op.kind == .Sub {
+				negative, value_expression = true, unary.expr
+			}
+			literal, is_literal := value_expression.derived.(^ast.Basic_Lit)
+			if !is_literal {
+				return 0, true, describe_fail(found.path, item, "the enum %s: the value of %s is an integer literal: the module file holds each value, and the tool evaluates no expression", name, member_name)
+			}
+			value, readable := integer_literal_value(literal)
+			if !readable || negative && value > u64(max(i64)) + 1 {
+				return 0, true, describe_fail(found.path, item, "the enum %s: the value of %s is not an integer of 64 bits", name, member_name)
+			}
+			next = negative ? -i64(value) : i64(value)
+		}
+		lower := strings.to_lower(member_name, context.temp_allocator)
+		if !module.enum_member_name_valid(lower) {
+			return 0, true, describe_fail(found.path, item, "the enum %s: the member %s has no name that a line can write: in lower case, a letter, then letters, digits and _, %d bytes at most", name, member_name, module.ENUM_MEMBER_NAME_CAPACITY)
+		}
+		append(&members, Member_Description{name = lower, value = next})
+		next += 1
+	}
+	described := Enum_Description{name = name, size = u8(size), unsigned = unsigned, members = members[:]}
+	// The rules of the reader, here with a sentence: a value that the size
+	// does not hold, the absent word, a name or a value given twice.
+	if len(members) == 0 || len(members) > module.ENUM_MEMBER_CAPACITY {
+		return 0, true, describe_fail(found.path, found.type, "the enum %s has %d members: an enum parameter has 1 to %d", name, len(members), module.ENUM_MEMBER_CAPACITY)
+	}
+	absent := module.enum_absent_word({size = described.size, unsigned = unsigned})
+	for member, index in members {
+		if !module.enum_value_fits(described.size, unsigned, member.value) || member.value == absent {
+			return 0, true, describe_fail(found.path, found.type, "the enum %s: the value %d of %s is past its backing type, or is the word of each bit set, which says that a call leaves the parameter out", name, member.value, member.name)
+		}
+		for other in members[:index] {
+			if other.name == member.name || other.value == member.value {
+				return 0, true, describe_fail(found.path, found.type, "the enum %s: %s and %s have one name or one value: a line names a member, and a call carries its value", name, other.name, member.name)
+			}
+		}
+	}
+	append(&state.enum_descriptions, described)
+	append(&state.enum_keys, key)
+	return u32(len(state.enum_descriptions)), true, true
 }
 
 // text_size reads a type [N]u8: a Text field of N bytes. is_text is false
@@ -667,7 +766,7 @@ struct_record_named :: proc(state: ^Describe_State, key, record_name: string, re
 // describe_source adds the descriptions of the exports of one source file.
 // package_text receives the documentation text of the package, if the file
 // has one. records receives the records that the exports use.
-describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description, package_text: ^string = nil, records: ^[]Record_Description = nil) -> bool {
+describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description, package_text: ^string = nil, records: ^[]Record_Description = nil, enums: ^[]Enum_Description = nil) -> bool {
 	context.allocator = context.temp_allocator
 	state: Describe_State
 	state.records = make([dynamic]Record_Description, context.temp_allocator)
@@ -677,8 +776,12 @@ describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description
 		package_text^ = text_of(file.docs)
 	}
 	describe_file(file, list, &state) or_return
+	enum_getters_resolve(list[:], state.enum_descriptions[:]) or_return
 	if records != nil {
 		records^ = state.records[:]
+	}
+	if enums != nil {
+		enums^ = state.enum_descriptions[:]
 	}
 	return true
 }
@@ -699,6 +802,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		}
 		name := identifier.name
 		exported := false
+		getters_text, optional_text := "", ""
 		for attribute in declaration.attributes {
 			for element in attribute.elems {
 				#partial switch item in element.derived {
@@ -707,11 +811,29 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 				case ^ast.Field_Value:
 					field, is_field := item.field.derived.(^ast.Ident)
 					literal, is_literal := item.value.derived.(^ast.Basic_Lit)
-					if is_field && is_literal && field.name == "link_name" {
-						name = strings.trim(literal.tok.text, "\"`")
+					if !is_field {
+						continue
+					}
+					switch field.name {
+					case "link_name", foundation.ENUM_GETTERS_ATTRIBUTE_NAME, foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME:
+						if !is_literal || literal.tok.kind != .String {
+							return describe_fail(path, declaration, "the attribute %s takes a text", field.name)
+						}
+					}
+					text := is_literal ? strings.trim(literal.tok.text, "\"`") : ""
+					switch field.name {
+					case "link_name":
+						name = text
+					case foundation.ENUM_GETTERS_ATTRIBUTE_NAME:
+						getters_text = text
+					case foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME:
+						optional_text = text
 					}
 				}
 			}
+		}
+		if !exported && (getters_text != "" || optional_text != "") {
+			return describe_fail(path, declaration, "%s is no export: the attributes %s and %s describe the parameters of an export", name, foundation.ENUM_GETTERS_ATTRIBUTE_NAME, foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME)
 		}
 		if !exported {
 			continue
@@ -817,6 +939,15 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 					kind, detail = .Handle, transmute(u32)rights
 					break
 				}
+				if number, is_enum, enum_ok := enum_of(state, field.type); is_enum {
+					if !enum_ok {
+						return false
+					}
+					// The getter joins the detail once each export of the
+					// package is known (enum_getters_resolve).
+					kind, detail = .Enum, number
+					break
+				}
 				if table_kind, number, table_direction, is_parameter, parameter_ok := table_parameter(state, field.type); is_parameter {
 					if !parameter_ok {
 						return describe_fail(path, field, "%s: a table parameter is ^Table_To_Read(Name), ^Table_To_Change(Name) or ^Table_To_Append(Name), with Name a struct with no handle, or ^Bytes_To_Read, ^Bytes_To_Change or ^Bytes_To_Append", name)
@@ -864,23 +995,34 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 				append(&directions, direction)
 			}
 		}
+		result_enum: u32
+		result_is_enum := false
+		if result_text != "" && result_text != "i64" && description.result == .None {
+			number, is_enum, enum_ok := enum_of(state, type.results.list[0].type)
+			if is_enum && !enum_ok {
+				return false
+			}
+			result_enum, result_is_enum = number, is_enum
+		}
 		switch {
 		case description.result == .Record:
 			if result_text != "" {
 				return describe_fail(path, declaration, "%s: the callee writes a Record result in the memory of the caller: the export has no result type", name)
 			}
+		case result_is_enum:
+			description.result, description.result_detail = .Enum, result_enum
 		case result_text == "i64":
 			if description.result != .Text && description.result != .Table {
 				description.result = .Integer
 			}
 		case result_text != "":
-			return describe_fail(path, declaration, "%s: the result type %s has no description. Use i64", name, result_text)
+			return describe_fail(path, declaration, "%s: the result type %s has no description. Use i64, or an enum with a backing type", name, result_text)
 		case description.result == .Text:
 			return describe_fail(path, declaration, "%s: a Text result gives its count of bytes: the result type is i64", name)
 		case description.result == .Table:
 			return describe_fail(path, declaration, "%s: a Table result gives its count of records: the result type is i64", name)
 		}
-		if description.error_record != 0 && (description.result == .Record || description.result == .None) {
+		if description.error_record != 0 && (description.result == .Record || description.result == .None || description.result == .Enum) {
 			return describe_fail(path, declaration, "%s: an export with an error record gives an i64 result: it fails when the result is negative", name)
 		}
 		if arguments := module.call_argument_count(len(parameters), u8(description.result), description.error_record != 0); arguments > module.PARAMETER_CAPACITY {
@@ -890,6 +1032,10 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		description.names = names[:]
 		description.details = details[:]
 		description.directions = directions[:]
+		description.getter_names = make([]string, len(parameters))
+		if !parameter_attributes_read(path, declaration, &description, getters_text, optional_text) {
+			return false
+		}
 		handles := 0
 		for kind, index in parameters {
 			#partial switch kind {
@@ -911,6 +1057,112 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 			return describe_fail(path, declaration, "%s has no comment: the first sentence of the comment is the help of the export", name)
 		}
 		append(list, description)
+	}
+	return true
+}
+
+// parameter_attributes_read reads the two attributes of an export that
+// describe its Enum parameters (src/md/features/enum_parameters.md):
+//
+// - `enum_getters = "font = font, scale = scale"`: each pair names an Enum
+//   parameter, then the export that gives its value in use, its getter.
+// - `optional_parameters = "font, scale"`: the Enum parameters that a call
+//   may leave out.
+//
+// A name of no parameter, a parameter that is no Enum, a name given twice
+// and a pair with no "=" are refused. The getter is resolved into the
+// detail once each export of the package is known (enum_getters_resolve).
+@(private = "file")
+parameter_attributes_read :: proc(path: string, declaration: ^ast.Value_Decl, description: ^Export_Description, getters_text, optional_text: string) -> bool {
+	parameter_find :: proc(description: ^Export_Description, name: string) -> int {
+		for item, index in description.names {
+			if item == name {
+				return index
+			}
+		}
+		return -1
+	}
+	if strings.trim_space(optional_text) != "" {
+		for part in strings.split(optional_text, ",", context.temp_allocator) {
+			parameter_name := strings.trim_space(part)
+			index := parameter_find(description, parameter_name)
+			switch {
+			case index < 0:
+				return describe_fail(path, declaration, "%s: the attribute %s names %q, which is no parameter", description.name, foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME, parameter_name)
+			case description.parameters[index] != .Enum:
+				return describe_fail(path, declaration, "%s: the attribute %s names %s, which is no enum: only an enum parameter has a word that says that a call leaves it out", description.name, foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME, parameter_name)
+			case description.optional_parameters >> u16(index) & 1 != 0:
+				return describe_fail(path, declaration, "%s: the attribute %s names %s twice", description.name, foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME, parameter_name)
+			}
+			description.optional_parameters |= 1 << u16(index)
+		}
+	}
+	if strings.trim_space(getters_text) == "" {
+		return true
+	}
+	for part in strings.split(getters_text, ",", context.temp_allocator) {
+		pair := strings.split(part, "=", context.temp_allocator)
+		if len(pair) != 2 {
+			return describe_fail(path, declaration, "%s: the attribute %s holds pairs `parameter = getter`, separated by commas; %q is none", description.name, foundation.ENUM_GETTERS_ATTRIBUTE_NAME, strings.trim_space(part))
+		}
+		parameter_name, getter_name := strings.trim_space(pair[0]), strings.trim_space(pair[1])
+		index := parameter_find(description, parameter_name)
+		switch {
+		case index < 0:
+			return describe_fail(path, declaration, "%s: the attribute %s names %q, which is no parameter", description.name, foundation.ENUM_GETTERS_ATTRIBUTE_NAME, parameter_name)
+		case description.parameters[index] != .Enum:
+			return describe_fail(path, declaration, "%s: the attribute %s names %s, which is no enum: a getter gives the member in use of an enum parameter", description.name, foundation.ENUM_GETTERS_ATTRIBUTE_NAME, parameter_name)
+		case description.getter_names[index] != "":
+			return describe_fail(path, declaration, "%s: the attribute %s names %s twice", description.name, foundation.ENUM_GETTERS_ATTRIBUTE_NAME, parameter_name)
+		case getter_name == "":
+			return describe_fail(path, declaration, "%s: the attribute %s gives %s no getter", description.name, foundation.ENUM_GETTERS_ATTRIBUTE_NAME, parameter_name)
+		}
+		description.getter_names[index] = getter_name
+	}
+	return true
+}
+
+// enum_getters_resolve writes the getter of each Enum parameter into its
+// detail, once each export of the package is known: export n + 1 of the
+// module is exports[n]. A getter that names no export, that takes a
+// parameter or gives an error record, or that gives another enum, is
+// refused with a line that names the export and the parameter. Two enums
+// are one when they are one description (enums is the list of the
+// package).
+enum_getters_resolve :: proc(exports: []Export_Description, enums: []Enum_Description) -> bool {
+	for &item in exports {
+		for getter_name, index in item.getter_names {
+			if getter_name == "" {
+				continue
+			}
+			getter := -1
+			for other, other_index in exports {
+				if other.name == getter_name {
+					getter = other_index
+				}
+			}
+			if getter < 0 {
+				fmt.eprintfln("modustool: describe %s(%d): %s: the getter %s of the parameter %s names no export of the module", item.file, item.line, item.name, getter_name, item.names[index])
+				return false
+			}
+			found := exports[getter]
+			if len(found.parameters) != 0 || found.error_record != 0 || found.result != .Enum {
+				fmt.eprintfln("modustool: describe %s(%d): %s: the getter %s of the parameter %s must take no parameter, give no error record, and give the enum of the parameter", item.file, item.line, item.name, getter_name, item.names[index])
+				return false
+			}
+			enum_number := item.details[index]
+			if found.result_detail != enum_number {
+				given := found.result_detail >= 1 && int(found.result_detail) <= len(enums) ? enums[found.result_detail - 1].name : "?"
+				fmt.eprintfln("modustool: describe %s(%d): %s: the getter %s gives %s, and the parameter %s takes %s", item.file, item.line, item.name, getter_name, given, item.names[index], enums[enum_number - 1].name)
+				return false
+			}
+			detail, made := module.enum_detail_make(enum_number, u32(getter + 1))
+			if !made {
+				fmt.eprintfln("modustool: describe %s(%d): %s: the module has more than %d exports or enums: the detail of an enum parameter holds no larger index", item.file, item.line, item.name, module.ENUM_DETAIL_INDEX_MOST)
+				return false
+			}
+			item.details[index] = detail
+		}
 	}
 	return true
 }
@@ -1226,7 +1478,7 @@ field_value :: proc(record: []u8, item: module.Field) -> string {
 		return strings.clone(text, context.temp_allocator)
 	}
 	switch type {
-	case .None, .Record, .Table:
+	case .None, .Record, .Table, .Enum:
 		// record_type refuses a field of these types: it has no value.
 	case .Bytes:
 		bytes := module.field_bytes(record, item)

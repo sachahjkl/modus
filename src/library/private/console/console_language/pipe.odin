@@ -195,7 +195,7 @@ pipe_nested_form :: proc "contextless" (text: string, first: int, memory: []u8, 
 					unmatched_close = token.start
 				}
 			}
-		case .None, .Name, .Number, .Text, .Text_Unfinished, .Arrow:
+		case .None, .Name, .Number, .Text, .Text_Unfinished, .Arrow, .Member:
 		}
 	}
 	// The placeholders, before any form is written: a '_' out of its place
@@ -693,7 +693,7 @@ pipe_left_read :: proc "contextless" (text: string, stage: ^Pipe_Stage, start, e
 			stage.left = .Text
 		case .Name:
 			stage.left, stage.left_start, stage.left_end = .Name, first.start, first.end
-		case .None, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe:
+		case .None, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe, .Member:
 		}
 		return
 	}

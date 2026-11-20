@@ -380,6 +380,54 @@ The design: `docs/MODULE_CONTRACT.md`, "Tables and bytes as parameters".
 
 Do not use: blob, buffer, byte array, binary.
 
+### Enum parameter
+
+An enum parameter is a parameter of an export of the type Enum: one member of a closed set, whose members the module file names.
+
+An enum parameter lets each front end read one description of a closed set: the console completes the members and refuses a wrong one before the call, and the palette shows one button for each member. In Odin the type of the parameter is the enum itself, `keyboard_layout: settings.Keyboard_Layout`, with a backing type of 1, 2, 4 or 8 bytes. An enum parameter is not a Text that names a value, and not an Integer: a number of another set is refused.
+
+Example: `settings.set(keyboard_layout = .french)`.
+
+The design: `docs/MODULE_CONTRACT.md`, "Enum parameters".
+
+Do not use: choice parameter, keyword parameter.
+
+### Member
+
+A member is one value of an enum that a module file describes: a name in lower case and the value that a call carries.
+
+A line of the console names a member after a dot, `.french`, and never by its number: the Enum parameter that receives it gives its enum, and the console writes the value of the member of that name. A member of a contract enum in a condition, `level = Warning`, is the name of a status field, with no dot.
+
+Example: `.united_states` and `.french` are the members of `Keyboard_Layout`.
+
+The design: `docs/MODULE_CONTRACT.md`, "Enum parameters".
+
+Do not use: enumerator, enum case, enum variant.
+
+### Getter
+
+A getter is the export that an Enum parameter names in its module file to give the member in use: it takes no parameter, gives no error record, and gives the same enum.
+
+The palette calls the getter of each row of buttons when it opens, and marks the member that it gives. The pairing of a parameter and its getter is written in the module file, from the attribute `enum_getters` of the source: no reader finds a getter by its name. A getter is not an export that a call must make before the setter.
+
+Example: `settings.keyboard_layout()` is the getter of the parameter `keyboard_layout` of `settings.set`.
+
+The design: `docs/MODULE_CONTRACT.md`, "Enum parameters".
+
+Do not use: accessor, property getter.
+
+### Optional parameter
+
+An optional parameter is an Enum parameter that a call may leave out: the caller then gives its absent word.
+
+The bit of the parameter in `Function.optional_parameters` says it, from the attribute `optional_parameters` of the source. The absent word is each bit of the size of the enum set, which no member may have: the export reads it with `enum_word.member_of_argument`, which says that the call did not give it. A parameter of another type is never optional; the last parameter of a built-in command that a call may leave out is a fact of that command, not of the format.
+
+Example: `settings.set(font = .spleen)` leaves out the six other settings, which keep their values.
+
+The design: `docs/MODULE_CONTRACT.md`, "Enum parameters".
+
+Do not use: default parameter, nullable parameter.
+
 ### Direction
 
 A direction says what the callee does with the memory of a table parameter or of a Bytes parameter: Read, Change or Append.

@@ -138,17 +138,21 @@ module_read :: proc(client: ^Call_Client, service: string) -> (file: []u8, hash:
 
 // Parsed argument of the text of a call.
 Call_Argument :: struct {
-	is_text:  bool,
-	integer:  i64,
-	text:     string,
-	is_table: bool,
-	rows:     [][]Call_Argument, // A table: the values of the fields of each row, in order.
+	is_text:   bool,
+	integer:   i64,
+	text:      string,
+	is_table:  bool,
+	rows:      [][]Call_Argument, // A table: the values of the fields of each row, in order.
+	name:      string, // A named argument: the name of its parameter. "": by its place.
+	is_member: bool, // A member of an enum, ".french": its name is in text.
 }
 
 // call_parse reads "service.export(argument, ...)": an argument is an
 // integer (decimal, or hexadecimal after 0x), a text in double quotes,
-// with \" \\ and \n, or a table: rows in square brackets, each row the
-// values of its fields in parentheses, [(1, "a"), (2, "b")].
+// with \" \\ and \n, a member of an enum after a dot, .french, or a table:
+// rows in square brackets, each row the values of its fields in
+// parentheses, [(1, "a"), (2, "b")]. An argument can name its parameter,
+// `keyboard_layout = .french`; the arguments with no name come first.
 call_parse :: proc(call_text: string) -> (service, export: string, arguments: [dynamic]Call_Argument, problem: string) {
 	text := strings.trim_space(call_text)
 	open := strings.index_byte(text, '(')
@@ -172,9 +176,43 @@ call_parse :: proc(call_text: string) -> (service, export: string, arguments: [d
 values_parse :: proc(text: string, tables: bool) -> (values: [dynamic]Call_Argument, rest: string, problem: string) {
 	values = make([dynamic]Call_Argument, context.temp_allocator)
 	rest = strings.trim_space(text)
+	name_end :: proc(text: string, start: int) -> int {
+		end := start
+		for end < len(text) && (text[end] >= 'a' && text[end] <= 'z' || text[end] >= 'A' && text[end] <= 'Z' || text[end] >= '0' && text[end] <= '9' || text[end] == '_') {
+			end += 1
+		}
+		return end
+	}
+	named_seen := false
 	for len(rest) > 0 && rest[0] != ')' && rest[0] != ']' {
 		argument: Call_Argument
+		// `name = value` names its parameter; a row of a table names none.
+		if end := name_end(rest, 0); tables && end > 0 && rest[0] > '9' {
+			after := strings.trim_left_space(rest[end:])
+			if len(after) > 0 && after[0] == '=' && (len(after) == 1 || after[1] != '=') {
+				argument.name = rest[:end]
+				for value in values {
+					if value.name == argument.name {
+						return values, rest, fmt.tprintf("the parameter %s is named twice", argument.name)
+					}
+				}
+				named_seen = true
+				rest = strings.trim_space(after[1:])
+			}
+		}
+		if named_seen && argument.name == "" {
+			return values, rest, "an argument with no name comes after a named one: the arguments with no name come first"
+		}
 		switch {
+		case len(rest) > 1 && rest[0] == '.':
+			end := name_end(rest, 1)
+			if end == 1 {
+				return values, rest, "a member of an enum is a name after the dot: .french"
+			}
+			argument.is_member, argument.text = true, rest[1:end]
+			rest = rest[end:]
+		case len(rest) == 0:
+			return values, rest, "a value is missing after the name of a parameter"
 		case rest[0] == '"':
 			builder := strings.builder_make(context.temp_allocator)
 			index := 1
@@ -202,7 +240,7 @@ values_parse :: proc(text: string, tables: bool) -> (values: [dynamic]Call_Argum
 			if !closed {
 				return values, rest, "a text has no closing double quote"
 			}
-			argument = {is_text = true, text = strings.to_string(builder)}
+			argument = {is_text = true, text = strings.to_string(builder), name = argument.name}
 			rest = rest[index:]
 		case rest[0] == '[':
 			if !tables {
@@ -227,7 +265,7 @@ values_parse :: proc(text: string, tables: bool) -> (values: [dynamic]Call_Argum
 			if len(rest) == 0 || rest[0] != ']' {
 				return values, rest, "a table is rows in parentheses between square brackets: [(1, 2), (3, 4)]"
 			}
-			argument = {is_table = true, rows = rows[:]}
+			argument = {is_table = true, rows = rows[:], name = argument.name}
 			rest = rest[1:]
 		case:
 			end := 0
@@ -239,7 +277,7 @@ values_parse :: proc(text: string, tables: bool) -> (values: [dynamic]Call_Argum
 			if !ok {
 				return values, rest, fmt.tprintf("%q is not an integer, not a text in double quotes and not a table", word)
 			}
-			argument = {integer = value}
+			argument = {integer = value, name = argument.name}
 			rest = rest[end:]
 		}
 		append(&values, argument)
@@ -272,6 +310,9 @@ table_bytes :: proc(file: []u8, detail: u32, rows: [][]Call_Argument) -> (bytes:
 		record := bytes[number * int(described.size):][:described.size]
 		for value, index in row {
 			item, _ := module.field(file, described, u32(index))
+			if value.is_member {
+				return nil, fmt.tprintf("row %d: the field %s holds no member of an enum", number + 1, module.string_at(file, item.name_offset, item.name_count))
+			}
 			type, type_ok := module.field_type(item)
 			if !type_ok {
 				return nil, fmt.tprintf("row %d: the field %s has the byte %d of a type, which names no type", number + 1, module.string_at(file, item.name_offset, item.name_count), item.type)
@@ -293,7 +334,7 @@ table_bytes :: proc(file: []u8, detail: u32, rows: [][]Call_Argument) -> (bytes:
 					return nil, fmt.tprintf("row %d: the field %s is a Text of %d bytes at most", number + 1, module.string_at(file, item.name_offset, item.name_count), item.detail)
 				}
 				copy(record[item.offset:], value.text)
-			case .None, .Record, .Handle, .Table, .Bytes:
+			case .None, .Record, .Handle, .Table, .Bytes, .Enum:
 				// A handle of the host has no meaning in the machine, and
 				// record_type refuses the other types in a record.
 				return nil, fmt.tprintf("row %d: the field %s has no text form", number + 1, module.string_at(file, item.name_offset, item.name_count))
@@ -301,6 +342,17 @@ table_bytes :: proc(file: []u8, detail: u32, rows: [][]Call_Argument) -> (bytes:
 		}
 	}
 	return bytes, ""
+}
+
+// enum_members_text gives the members of an enum as a line names them:
+// ".united_states, .french".
+enum_members_text :: proc(file: []u8, described: module.Enum_Type) -> string {
+	names := make([dynamic]string, context.temp_allocator)
+	for number in 0 ..< described.member_count {
+		member, _ := module.enum_member(file, described, number)
+		append(&names, fmt.tprintf(".%s", module.string_at(file, member.name_offset, member.name_count)))
+	}
+	return strings.join(names[:], ", ", context.temp_allocator)
 }
 
 parameter_type_name :: proc(file: []u8, function: module.Function, number: int) -> string {
@@ -338,20 +390,71 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 	// the text of the call does not.
 	details_index, has_details := module.error_details_parameter(file, function)
 	written_parameters := has_details ? details_index : int(function.parameter_count)
-	if written_parameters != len(arguments) {
-		return {}, fmt.tprintf("%s.%s has %d parameters; the call gives %d", service, export, written_parameters, len(arguments))
+	parameter_name :: proc(file: []u8, function: module.Function, number: int) -> string {
+		return module.string_at(file, function.parameter_names[number], u32(function.parameter_name_counts[number]))
+	}
+	// Each argument at its parameter: by its place first, then by its name.
+	// A parameter that the call does not give is refused, but an optional
+	// one, which gets the absent word.
+	by_parameter := make([]Call_Argument, written_parameters, context.temp_allocator)
+	given := make([]bool, written_parameters, context.temp_allocator)
+	for argument, number in arguments {
+		place := number
+		if argument.name != "" {
+			place = -1
+			for index in 0 ..< written_parameters {
+				if parameter_name(file, function, index) == argument.name {
+					place = index
+				}
+			}
+			if place < 0 {
+				return {}, fmt.tprintf("%s.%s has no parameter %s", service, export, argument.name)
+			}
+			if given[place] {
+				return {}, fmt.tprintf("%s.%s: the parameter %s is given twice", service, export, argument.name)
+			}
+		} else if number >= written_parameters {
+			return {}, fmt.tprintf("%s.%s has %d parameters; the call gives %d", service, export, written_parameters, len(arguments))
+		}
+		by_parameter[place], given[place] = argument, true
+	}
+	for number in 0 ..< written_parameters {
+		if !given[number] && !module.parameter_optional(function, number) {
+			return {}, fmt.tprintf("%s.%s has %d parameters; the call gives %d, with no %s", service, export, written_parameters, len(arguments), parameter_name(file, function, number))
+		}
 	}
 	encoded := make([]isolated.Argument, function.parameter_count, context.temp_allocator)
 	if has_details {
 		encoded[details_index].table = {records = make([]u8, CALL_ERROR_DETAILS * size_of(errors.Error_Record), context.temp_allocator), count = 0}
 	}
-	for argument, number in arguments {
-		name := module.string_at(file, function.parameter_names[number], u32(function.parameter_name_counts[number]))
+	for argument, number in by_parameter {
+		name := parameter_name(file, function, number)
 		type, type_ok := module.function_parameter_type(function, number)
 		if !type_ok {
 			return {}, fmt.tprintf("the parameter %s of %s.%s has the byte %d of a type, which names no type", name, service, export, function.parameters[number])
 		}
+		if argument.is_member && type != .Enum {
+			return {}, fmt.tprintf("the parameter %s of %s.%s is %s, the argument is a member of an enum", name, service, export, parameter_type_name(file, function, number))
+		}
 		switch type {
+		case .Enum:
+			enum_index, _ := module.enum_detail_of(function.parameter_details[number])
+			described, problem := module.enum_type(file, enum_index)
+			if problem != .None {
+				return {}, fmt.tprintf("the parameter %s of %s.%s names an enum that the module file does not describe: %v", name, service, export, problem)
+			}
+			if !given[number] {
+				encoded[number] = {integer = u64(module.enum_absent_word(described))}
+				break
+			}
+			if !argument.is_member {
+				return {}, fmt.tprintf("the parameter %s of %s.%s is the enum %s: give one of its members, %s", name, service, export, module.enum_name(file, described), enum_members_text(file, described))
+			}
+			value, found := module.enum_value_of_name(file, described, argument.text)
+			if !found {
+				return {}, fmt.tprintf("the parameter %s of %s.%s is the enum %s, which has no member %s: its members are %s", name, service, export, module.enum_name(file, described), argument.text, enum_members_text(file, described))
+			}
+			encoded[number] = {integer = u64(value)}
 		case .Integer:
 			if argument.is_text {
 				return {}, fmt.tprintf("the parameter %s of %s.%s is an Integer, the argument is a Text", name, service, export)
@@ -414,7 +517,7 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 			return {}, fmt.tprintf("the parameter %d of %s.%s has the byte %d of a type, which names no type", number + 1, service, export, word)
 		}
 		switch type {
-		case .None, .Integer, .Handle:
+		case .None, .Integer, .Handle, .Enum:
 			// The field of the argument record holds the whole value: it
 			// names no bytes of the region.
 		case .Text:
@@ -440,7 +543,7 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 		return {}, fmt.tprintf("the result of %s.%s has the byte %d of a type, which names no type", service, export, function.result)
 	}
 	switch result_type {
-	case .None, .Integer:
+	case .None, .Integer, .Enum:
 		// No buffer: the result is in the answer.
 	case .Handle, .Bytes:
 		// isolated.record_size refuses these results, and encode before.
@@ -467,7 +570,7 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 		error_start  = u32(error.start),
 		details_end  = u32(details_end),
 	}
-	if result_type == .Integer || result_type == .None {
+	if result_type == .Integer || result_type == .None || result_type == .Enum {
 		request.result_start, request.result_count = 0, 0
 	}
 	remote.name_set(&request.service, service)
@@ -676,6 +779,16 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		append(&outcome.lines, "done")
 	case .Integer:
 		append(&outcome.lines, fmt.tprintf("%d", answer.value))
+	case .Enum:
+		// The name of the member, as a line names it; a value that names no
+		// member is its number, never the name of another member.
+		described, problem := module.enum_type(call.file, call.function.result_detail)
+		value := module.enum_value_of_register(described, answer.value)
+		if name, named := module.enum_name_of_value(call.file, described, value); problem == .None && named {
+			append(&outcome.lines, fmt.tprintf(".%s", name))
+		} else {
+			append(&outcome.lines, fmt.tprintf("%d", value))
+		}
 	case .Text:
 		for line in strings.split_lines(string(result), context.temp_allocator) {
 			append(&outcome.lines, line)

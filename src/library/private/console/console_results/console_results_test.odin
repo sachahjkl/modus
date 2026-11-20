@@ -3,6 +3,7 @@ package console_results
 
 import "modus:contract/errors"
 import module "modus:contract/module"
+import "modus:contract/module_file_writer"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:support/graphics"
@@ -141,6 +142,33 @@ long_text_has_the_cut_mark :: proc(t: ^testing.T) {
 	row_text_set(row[:], table.columns[1], "a name that is longer than twenty-four bytes")
 	text := module.field_text(row[:], column_field(table.columns[1]))
 	testing.expectf(t, strings.contains(text, "... and ") && strings.has_suffix(text, " bytes more"), "the text is %q", text)
+}
+
+// A value that names no member, and an enum that the file does not
+// describe, are drawn as a number, never as another member; a member is
+// drawn as a line names it.
+@(test)
+a_member_is_drawn_by_its_name_and_a_value_of_no_member_by_its_number :: proc(t: ^testing.T) {
+	memory: [4096]u8
+	members := [2]module_file_writer.Member_Description{{"united_states", 0}, {"french", 1}}
+	enums := [1]module_file_writer.Enum_Description{{"Keyboard_Layout", 4, true, members[:]}}
+	size, refusal := module_file_writer.write({enums = enums[:]}, memory[:])
+	testing.expect_value(t, refusal.refusal, module_file_writer.Refusal.None)
+	file := memory[:size]
+	drawn := new(Drawn, context.temp_allocator)
+	sink := drawn_sink(drawn)
+	for value in ([3]i64{2, -1, max(i64)}) {
+		drawn^ = {}
+		draw_member(&sink, file, 1, value)
+		testing.expectf(t, drawn.parts[Part.Status] == 0 && drawn.parts[Part.Number] > 0, "the value %d is drawn as a member", value)
+	}
+	drawn^ = {}
+	draw_member(&sink, file, 2, 1)
+	testing.expect_value(t, drawn_text(drawn), "1\n")
+	drawn^ = {}
+	draw_member(&sink, file, 1, 1)
+	testing.expect_value(t, drawn_text(drawn), ".french\n")
+	testing.expect_value(t, drawn.parts[Part.Status], 7)
 }
 
 @(test)

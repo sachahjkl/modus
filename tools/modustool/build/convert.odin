@@ -34,6 +34,8 @@ Export_Description :: struct {
 	// a Handle: the rights that the callee needs.
 	details:       []u32,
 	directions:    []module.Direction, // The direction of each Table or Bytes parameter (module.Function.parameter_directions).
+	optional_parameters: u16, // Bit n: a call may leave out the Enum parameter n (module.Function.optional_parameters).
+	getter_names:  []string, // The name of the getter export of each Enum parameter, "" for none: describe writes it into the detail.
 	result_detail: u32,
 	error_record:  u32, // Not 0: the export gives an error record, with this record (module.Function.error_record).
 	// Where the source declares it: the site links each export to its line.
@@ -46,6 +48,8 @@ Export_Description :: struct {
 // that the file holds.
 Record_Description :: module_file_writer.Record_Description
 Field_Description :: module_file_writer.Field_Description
+Enum_Description :: module_file_writer.Enum_Description
+Member_Description :: module_file_writer.Member_Description
 
 // The description of a module: what its source says to a reader, and its exports.
 Module_Description :: struct {
@@ -54,6 +58,7 @@ Module_Description :: struct {
 	markdown: string, // The comment of the package, as its author wrote it: the site renders it.
 	exports:  []Export_Description,
 	records:  []Record_Description, // The records that the exports, the log facts and the record streams use. Record n + 1 of the module is records[n].
+	enums:    []Enum_Description, // The enums that the exports take and give. Enum n + 1 of the module is enums[n].
 	budget:   Budget_Description, // The budget that the module asks for: the table Budget.
 	facts:    []Fact_Description, // The log facts that the module writes, sorted by key (facts_merge): the table Facts.
 	record_outputs: []Record_Stream_Description, // The record outputs that the module declares, sorted by name (record_streams_merge): the table Record_Outputs.
@@ -257,6 +262,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 			parameter_names      = description.names,
 			parameter_details    = description.details,
 			parameter_directions = description.directions,
+			optional_parameters  = description.optional_parameters,
 			result               = description.result,
 			result_detail        = description.result_detail,
 			error_record         = description.error_record,
@@ -348,6 +354,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		slots              = slot_records[:],
 		rebases            = rebases[:],
 		records            = description.records,
+		enums              = description.enums,
 		facts              = fact_parts,
 		has_own_hash_place = has_place,
 		own_hash_place     = own_hash_place,
@@ -419,6 +426,10 @@ module_file_refusal_text :: proc(parts: module_file_writer.Module_Parts, refusal
 			if index < u64(len(parts.record_inputs)) {
 				part = fmt.tprintf(" (record input %s)", parts.record_inputs[index].name)
 			}
+		}
+	case .Enums, .Members:
+		if refusal.index < u64(len(parts.enums)) {
+			part = fmt.tprintf(" (enum %s)", parts.enums[refusal.index].name)
 		}
 	case .None, .Segments, .Imports, .Slots, .Rebases, .Strings, .Documentation, .Budget, .Facts, .Own_Hash:
 	}

@@ -273,7 +273,7 @@ record_fields_check :: proc "contextless" (record: []u8, file: []u8, description
 				}
 			}
 		case .Bytes:
-		case .Handle, .None, .Record, .Table:
+		case .Handle, .None, .Record, .Table, .Enum:
 			return .Bad_Field, errors.error_make(.Bad_Value, .None, 0, i64(item.type), 0, part)
 		}
 	}

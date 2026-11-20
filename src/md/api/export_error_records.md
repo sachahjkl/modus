@@ -36,7 +36,7 @@ The check names the file, the line of the `return` and the export. It reads a pr
 
 - `manual.about`, `manual.problem`: `Absent` with the unit `Modules` for a name that names no module. An empty text stays the answer of a module with no documentation, and of a module that keeps each rule.
 - `manual.signature`: `Absent` for the name; `Bad_Value` of argument 2 for a number that names no export, with the count of the described exports as `limit`.
-- `settings.get`: `Absent` for a name that names no setting, `Too_Long` for a name of more than 32 bytes, with the codes of `settings.set`.
+- `settings.get`, which took the name of a setting: `Absent` for a name that names no setting. The getters of the enum parameters took its place, and a getter cannot fail ([../features/enum_parameters.md](../features/enum_parameters.md)); `settings.set` gives `Absent` for a call that gives no setting.
 - `storage.stores`: `No_Grant` with the unit `Acts_For_Principal` for a caller that does not act for a principal. It gave the text "no grant to see the stores": a text that says no is a failure that a process cannot read.
 - `math.next_prime`: `Bad_Value` above 2^40. It gave 0, which a caller can take as a prime.
 
@@ -62,6 +62,6 @@ The check names the file, the line of the `return` and the export. It reads a pr
 
 ## What is built and what is left
 
-Built: the rule, the check in `modustool check` and `modustool rule-checks` with its host tests, the conversion of each export that the check found and of each export whose failure gave an empty answer, the host tests of their sentences, and the machine test of the console for `manual.show`, `manual.about`, `manual.signature`, `math.next_prime` and `hostile_exports.look`, and from the host for `settings.get` and `storage.stores`.
+Built: the rule, the check in `modustool check` and `modustool rule-checks` with its host tests, the conversion of each export that the check found and of each export whose failure gave an empty answer, the host tests of their sentences, and the machine test of the console for `manual.show`, `manual.about`, `manual.signature`, `math.next_prime` and `hostile_exports.look`, and from the host for `settings.set` and `storage.stores`.
 
 Left: nothing of the rule. A new export that answers a failure with 0 is found by review only.

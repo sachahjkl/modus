@@ -7,7 +7,7 @@
 //   expression = sum { "with" sum }
 //   sum        = term { ("+" | "-") term }
 //   term       = factor { ("*" | "/" | "%") factor }
-//   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" expression ")"
+//   factor     = "-" factor | integer | "text" | name | "." name | name "(" arguments ")" | "(" expression ")"
 //              | "{" [ name "=" expression { "," name "=" expression } ] "}"
 //              | "let" name "=" expression { "," name "=" expression } "in" expression
 //   arguments  = argument { "," argument }
@@ -102,6 +102,7 @@ Node_Kind :: enum u8 {
 	Named_Argument = 12, // An argument `name = value`: the bytes are the name, the child the value.
 	Let            = 13, // "let … in …": the bytes are "let", the children its bindings, then its body.
 	Let_Binding    = 14, // A binding of a let: the bytes are its name, the child its value.
+	Member         = 15, // A member of an enum, `.french`: the bytes are the '.' and the name. The parameter that receives it gives its enum.
 }
 
 // The operators of a Binary node.
@@ -590,6 +591,15 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	case character == '{':
 		parser.position += 1
 		return literal_read(parser, start)
+	case character == '.':
+		// A member names no variable: its enum comes from the parameter
+		// that receives it, as the type of a record literal does.
+		token := console_language.token_next(text, start)
+		if token.kind != .Member {
+			return refuse(parser, .Unexpected, start, len(text), NO_NODE)
+		}
+		parser.position = token.end
+		return node_add(parser, .Member, start, token.end)
 	case console_language.name_first(character):
 		name := read_name(parser)
 		if name == "let" {
