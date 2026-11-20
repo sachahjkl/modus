@@ -274,6 +274,8 @@ What changed: the command of the flake compiled the whole tool at each call (`od
 
 So the sources of the tool are what its compiler read, not a list that the tool writes: an import of a new package is in the next list with no change of the tool.
 
+**A host process of the tool runs its parent's binary.** A command starts the tool again for a step of a module, a boot volume, an outside module and the notes of a release. It starts `/proc/self/exe`, not the path of `build/tool/modustool`: a command after a change of the sources compiles a new binary and renames it over that file, maybe while a long command runs (`screenshots` waits many minutes for the check of the flake). The path then names a file that is gone, and every module step of the long command failed with `cannot start …/build/tool/modustool (deleted)`; or it names a binary of other sources, whose module steps would be of another build. The kernel keeps the file of a running process, so `/proc/self/exe` runs the code of the parent whatever happened to the path. Refused: a lock on `build/tool` during a command, which would stop a second command for the length of the first; a copy of the binary for each command, which costs a write of the binary at each call.
+
 **The one way to call it** stays `nix develop -c modustool <command>`.
 
 **The measure.** Each compile of the binary of the shell prints `modustool: measure: the compile of the tool: <seconds> s`. The derivation compiles with `-show-timings`, so its build log gives the time of each phase of the compiler. Each is a measure: nothing reads it. No claim of speed is made without such a number.

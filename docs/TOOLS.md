@@ -1139,6 +1139,7 @@ The tool is compiled once for each change of its sources, not at each command. T
 - **In the check of the flake and in the release shell**, `modustool` is the binary of the derivation `modustoolBinary`, compiled from the `.odin` files that are not tests of those folders, and from the font that a fuzz target loads. Nix builds it again only when one of those files changes. That binary never compiles itself.
 - **The measure.** Each compile in the development shell prints `modustool: measure: the compile of the tool: <seconds> s`. The derivation compiles with `-show-timings`: its build log (`nix log`) gives the time of each phase of the compiler. Each is a measure, never a condition.
 - **A compile that fails** prints the errors of the compiler and runs no command; the next command compiles again.
+- **A command that runs while the tool is compiled again.** A command starts the tool again for each step of a module, each boot volume and each outside module, through `/proc/self/exe`: the binary of the command itself. A second command after a change of the sources replaces `build/tool/modustool`, and the first command goes on with its own binary.
 - **The first command of a new work tree** compiles the tool two times: the command of the flake makes the first binary with no record, then that binary compiles again with its record.
 
 ### The host tests of the check
