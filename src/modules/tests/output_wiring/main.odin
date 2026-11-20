@@ -424,15 +424,20 @@ probes_case :: proc "contextless" () {
 	refused("one number in two places", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Lent_Handles, 0, 2, 1))
 	// Memory handles in place of process handles, in more rounds than the
 	// handle table of the root service holds: each one is closed with its
-	// refusal, so each round finds the same room.
+	// refusal, so each round finds the same room. The memory that this
+	// process lends is paid by its own budget: the rounds compare with the
+	// budget after its creation, and the refusals after its close compare
+	// with the budget before it, which comes back only if the root service
+	// closed each lent copy.
 	memory, memory_status := system.memory_create(1)
 	if memory_status != .Ok {
 		wrong("the memory to lend was refused with the status", u64(memory_status))
 	}
+	with_memory := budget_pages()
 	for _ in 0 ..< LENT_MEMORY_ROUNDS {
 		memories := [2]u32{lend(memory), lend(memory)}
 		status, answer = wire(row(.Started, 1, WRITER_PROBES, .Started, 2, READER_PROBES), memories[:])
-		refused("a lent memory handle", before, status, answer, .Bad_Handle, fail(.Wire, .Handle_Kind, .Lent_Handles, 0, 1, i64(op.Object_Kind.Process), i64(op.Object_Kind.Memory)))
+		refused("a lent memory handle", with_memory, status, answer, .Bad_Handle, fail(.Wire, .Handle_Kind, .Lent_Handles, 0, 1, i64(op.Object_Kind.Process), i64(op.Object_Kind.Memory)))
 	}
 	system.close(memory)
 	// A process that this process did not start, and a service for which
