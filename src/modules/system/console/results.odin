@@ -224,7 +224,7 @@ value_draw :: proc "contextless" (value: Value) {
 		console_results.draw_handle(&sink, u64(value.integer), kind, rights)
 	case .Bytes:
 		console_results.draw_bytes(&sink, value.record, RESULT_BYTE_LIMIT, u64(value.integer))
-	case .None, .Stream, .Record_Input:
+	case .None, .Stream, .Record_Input, .Record_Literal:
 		// run_line draws a Stream one row at a time, with no lock held
 		// while it waits (stream_draw).
 	}

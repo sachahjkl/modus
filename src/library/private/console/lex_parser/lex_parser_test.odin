@@ -46,6 +46,17 @@ tree_form :: proc(tree: ^Syntax_Tree, index: Node_Index) -> string {
 	return strings.to_string(builder)
 }
 
+// children_write writes a list of nodes, separated.
+@(private = "file")
+children_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, first: Node_Index, separator: string) {
+	for child := first; child != NO_NODE; child = next_of(tree, child) {
+		if child != first {
+			strings.write_string(builder, separator)
+		}
+		node_form_write(builder, tree, child)
+	}
+}
+
 @(private = "file")
 node_form_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, index: Node_Index) {
 	node := node_at(tree, index)
@@ -54,8 +65,25 @@ node_form_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, index: No
 		return
 	}
 	switch node.kind {
-	case .Integer, .Text, .Name:
+	case .Integer, .Text:
 		strings.write_string(builder, node_text(tree, index))
+	case .Name:
+		// A name that a let binds is marked with '@'.
+		if node.binding != NO_NODE {
+			strings.write_string(builder, "@")
+		}
+		strings.write_string(builder, node_text(tree, index))
+	case .Record_Literal:
+		strings.write_string(builder, "#{")
+		children_write(builder, tree, node.first_child, ", ")
+		strings.write_string(builder, "}")
+	case .Literal_Field, .Named_Argument, .Let_Binding:
+		fmt.sbprintf(builder, "%s = ", node_text(tree, index))
+		node_form_write(builder, tree, node.first_child)
+	case .Let:
+		strings.write_string(builder, "let(")
+		children_write(builder, tree, node.first_child, "; ")
+		strings.write_string(builder, ")")
 	case .Call:
 		strings.write_string(builder, node_text(tree, index))
 		strings.write_string(builder, "(")
@@ -294,13 +322,15 @@ parse_refusal_values :: proc(t: ^testing.T) {
 }
 
 // The form of an argument comes from the lookup: with no lookup, `where`
-// takes expressions, so `=` after a name ends the argument.
+// takes expressions, so `level = 1` is a named argument, not a condition.
 @(test)
 parse_reads_the_form_of_the_lookup :: proc(t: ^testing.T) {
 	tree := parse_with("where(t, level = 1)", {})
-	testing.expect_value(t, tree.refusal.refusal, Refusal.Comma_Or_Close_Missing)
-	testing.expect_value(t, tree.refusal.place.column, u32(16))
-	testing.expect_value(t, tree_form(tree, tree.root), "where(t, level, !Comma_Or_Close_Missing)")
+	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	testing.expect_value(t, tree_form(tree, tree.root), "where(t, level = 1)")
+	testing.expect_value(t, node_at(tree, next_of(tree, node_at(tree, tree.root).first_child)).kind, Node_Kind.Named_Argument)
+	tree = parse_of("where(t, level = 1)")
+	testing.expect_value(t, tree_form(tree, tree.root), "where(t, [level = 1])")
 	tree = parse_with("facts(t, a.B)", {})
 	testing.expect_value(t, tree_form(tree, tree.root), "facts(t, a.B)")
 	testing.expect_value(t, node_at(tree, next_of(tree, node_at(tree, tree.root).first_child)).kind, Node_Kind.Name)
@@ -460,6 +490,16 @@ parse_nested_forms_of_the_pipe :: proc(t: ^testing.T) {
 		{"t = processes() |> rows", "t = rows(processes())"},
 		{"where(x |> f, a = 1)", "where(f(x), a = 1)"},
 		{"log.records() |> facts(storage.Bad_Block) |> where(block = 12)", "where(facts(log.records(), storage.Bad_Block), block = 12)"},
+		// The placeholder, and the pieces of the forms of records.
+		{"x |> f(b, _)", "f(b, x)"},
+		{"x |> f(n = _)", "f(n = x)"},
+		{"x |> f(_, y) |> g(1, _)", "g(1, f(x, y))"},
+		{"f(x |> g(_), y)", "f(g(x), y)"},
+		{"f(n = x |> g)", "f(n = g(x))"},
+		{"{a = x |> g, b = 2}", "{a = g(x), b = 2}"},
+		{"x |> f({a = 1, b = 2})", "f(x, {a = 1, b = 2})"},
+		{"let a = x |> g in a |> h", "let a = g(x) in h(a)"},
+		{"x |> f(let a = 1, b = 2 in a)", "f(x, let a = 1, b = 2 in a)"},
 	}
 	for item in cases {
 		form := console_language.pipe_nested_form(item.piped, console_language.expression_start(item.piped), memory[:], stages[:])
@@ -472,4 +512,179 @@ parse_nested_forms_of_the_pipe :: proc(t: ^testing.T) {
 		testing.expect_value(t, tree_form(piped, piped.root), tree_form(nested, nested.root))
 		testing.expect_value(t, piped.assigned_name, nested.assigned_name)
 	}
+}
+
+// Each refusal of the forms of records, at its place, with the tree before
+// it: a literal, a named argument, a let, `with` and the words of Lex.
+@(test)
+parse_refusals_of_the_forms :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:    string,
+		refusal: Refusal,
+		column:  u32,
+		form:    string,
+	}
+	cases := [?]Case {
+		// A record literal: no name, no "=", no end, a field twice.
+		{"{", .Literal_Name_Missing, 2, "#{!Literal_Name_Missing}"},
+		{"{= 1}", .Literal_Name_Missing, 2, "#{!Literal_Name_Missing}"},
+		{"{1}", .Literal_Name_Missing, 2, "#{!Literal_Name_Missing}"},
+		{"{a = 1,}", .Literal_Name_Missing, 8, "#{a = 1, !Literal_Name_Missing}"},
+		{"{a}", .Literal_Equal_Missing, 3, "#{!Literal_Equal_Missing}"},
+		{"{a 1}", .Literal_Equal_Missing, 4, "#{!Literal_Equal_Missing}"},
+		{"{a == 1}", .Literal_Equal_Missing, 4, "#{!Literal_Equal_Missing}"},
+		{"{a = 1", .Literal_Close_Missing, 7, "#{a = 1, !Literal_Close_Missing}"},
+		{"{a = 1 b = 2}", .Literal_Close_Missing, 8, "#{a = 1, !Literal_Close_Missing}"},
+		{"{a = }", .Unexpected, 6, "#{a = !Unexpected}"},
+		{"{a = 1, a = 2}", .Literal_Field_Twice, 9, "#{a = 1, !Literal_Field_Twice}"},
+		{"{_ = 1}", .Word_As_Name, 2, "#{!Word_As_Name}"},
+		{"{in = 1}", .Word_As_Name, 2, "#{!Word_As_Name}"},
+		// Named arguments: a name twice, an argument with no name after
+		// one, a word of Lex as a name; "==" is no "=".
+		{"f(a = 1, 2)", .Positional_After_Named, 10, "f(a = 1, !Positional_After_Named)"},
+		{"f(a = 1, a = 2)", .Named_Argument_Twice, 10, "f(a = 1, !Named_Argument_Twice)"},
+		{"f(_ = 1)", .Word_As_Name, 3, "f(!Word_As_Name)"},
+		{"f(with = 1)", .Word_As_Name, 3, "f(!Word_As_Name)"},
+		{"f(a == 1)", .Comma_Or_Close_Missing, 5, "f(a, !Comma_Or_Close_Missing)"},
+		{"f(a = )", .Unexpected, 7, "f(a = !Unexpected)"},
+		// A let: no name, no "=", no "in", a name twice, no body.
+		{"let", .Let_Name_Missing, 4, "let(!Let_Name_Missing)"},
+		{"let 1 = 2 in 3", .Let_Name_Missing, 5, "let(!Let_Name_Missing)"},
+		{"let a", .Let_Equal_Missing, 6, "let(!Let_Equal_Missing)"},
+		{"let a = 1", .Let_In_Missing, 10, "let(a = 1; !Let_In_Missing)"},
+		{"let a = 1 a", .Let_In_Missing, 11, "let(a = 1; !Let_In_Missing)"},
+		{"let a = 1, a = 2 in a", .Let_Name_Twice, 12, "let(a = 1; !Let_Name_Twice)"},
+		{"let in = 1 in 2", .Word_As_Name, 5, "let(!Word_As_Name)"},
+		{"let a = 1 in", .Line_Ends_Too_Soon, 13, "let(a = 1; !Line_Ends_Too_Soon)"},
+		// `with` with no right side, and the words where a value or a
+		// variable is read.
+		{"r with", .Line_Ends_Too_Soon, 7, "(r with !Line_Ends_Too_Soon)"},
+		{"with r", .Word_As_Name, 1, "!Word_As_Name"},
+		{"_", .Word_As_Name, 1, "!Word_As_Name"},
+		{"in", .Word_As_Name, 1, "!Word_As_Name"},
+		{"1 + _", .Word_As_Name, 5, "(1 + !Word_As_Name)"},
+		{"_ = 1", .Word_As_Name, 1, "!Word_As_Name"},
+		{"let = 1", .Word_As_Name, 1, "!Word_As_Name"},
+		{"with = 1", .Word_As_Name, 1, "!Word_As_Name"},
+	}
+	for item in cases {
+		tree := parse_of(item.text)
+		form := tree_form(tree, tree.root)
+		testing.expectf(t, tree.refusal.refusal == item.refusal && tree.refusal.place.column == item.column && form == item.form, "%q: %v at column %d, %q; not %v at column %d, %q", item.text, tree.refusal.refusal, tree.refusal.place.column, form, item.refusal, item.column, item.form)
+		testing.expectf(t, tree.refusal.place == place_of_offset(item.text, int(tree.refusal.place.offset)), "%q: the offset %d is not at its line and column", item.text, tree.refusal.place.offset)
+	}
+	// The record names the word or the name that it refuses.
+	tree := parse_of("{a = 1, a = 2}")
+	testing.expect_value(t, node_text(tree, next_of(tree, node_at(tree, tree.root).first_child)), "a")
+	tree = parse_of("let _ = 1 in 2")
+	testing.expect_value(t, tree.refusal.refusal, Refusal.Word_As_Name)
+	testing.expect_value(t, node_text(tree, node_at(tree, tree.root).first_child), "_")
+}
+
+// The edges of a literal: none of its fields, the most fields that a line
+// holds, and the deepest nesting of literals, then one more level.
+@(test)
+parse_literal_edges :: proc(t: ^testing.T) {
+	tree := parse_of("{}")
+	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	testing.expect_value(t, tree_form(tree, tree.root), "#{}")
+	testing.expect_value(t, node_at(tree, tree.root).first_child, NO_NODE)
+	tree = parse_of("{ }")
+	testing.expect_value(t, tree_form(tree, tree.root), "#{}")
+
+	// Fields of two letters, "xy=1," each: 39 in a line of 196 bytes.
+	builder := strings.builder_make(context.temp_allocator)
+	strings.write_string(&builder, "{")
+	most := (TEXT_BYTES_MOST - 2) / 5
+	for field in 0 ..< most {
+		if field > 0 {
+			strings.write_string(&builder, ",")
+		}
+		strings.write_byte(&builder, u8('a' + field / 26))
+		strings.write_byte(&builder, u8('a' + field % 26))
+		strings.write_string(&builder, "=1")
+	}
+	strings.write_string(&builder, "}")
+	widest := strings.to_string(builder)
+	testing.expect(t, len(widest) <= TEXT_BYTES_MOST)
+	tree = parse_of(widest)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	fields := 0
+	for field := node_at(tree, tree.root).first_child; field != NO_NODE; field = next_of(tree, field) {
+		fields += 1
+	}
+	testing.expect_value(t, fields, most)
+
+	// "{a=" and "}": four bytes for each level.
+	levels := (TEXT_BYTES_MOST - 1) / 4
+	deepest := strings.concatenate({strings.repeat("{a=", levels, context.temp_allocator), "1", strings.repeat("}", levels, context.temp_allocator)}, context.temp_allocator)
+	tree = parse_of(deepest)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	depth := 0
+	for index := tree.root; node_at(tree, index).kind == .Record_Literal; index = node_at(tree, node_at(tree, index).first_child).first_child {
+		depth += 1
+	}
+	testing.expect_value(t, depth, levels)
+	tree = parse_of(strings.concatenate({strings.repeat("{a=", levels + 1, context.temp_allocator), "1", strings.repeat("}", levels + 1, context.temp_allocator)}, context.temp_allocator))
+	testing.expect_value(t, tree.refusal.refusal, Refusal.Text_Too_Long)
+}
+
+// The trees of the forms of records, and the binding of each name that a
+// let reads.
+@(test)
+parse_trees_of_the_forms :: proc(t: ^testing.T) {
+	Case :: struct {
+		text: string,
+		form: string,
+	}
+	cases := [?]Case {
+		// Record literals.
+		{"{a = 1}", "#{a = 1}"},
+		{"{ a = 1 , b = 2 }", "#{a = 1, b = 2}"},
+		{"{a = 1, b = \"x\", c = f(2)}", "#{a = 1, b = \"x\", c = f(2)}"},
+		{"{a = {b = 1}}", "#{a = #{b = 1}}"},
+		{"f({x = 1}, 2)", "f(#{x = 1}, 2)"},
+		// Named arguments.
+		{"f(x, by = 2)", "f(x, by = 2)"},
+		{"f(a = 1, b = {c = 2})", "f(a = 1, b = #{c = 2})"},
+		{"sum_values(x_y)", "sum_values(x_y)"},
+		// `with`: the lowest priority, from the left.
+		{"r with {width = 10}", "(r with #{width = 10})"},
+		{"r with {a = 1} with {b = 2}", "((r with #{a = 1}) with #{b = 2})"},
+		{"r with s + t", "(r with (s + t))"},
+		{"withdraw(x)", "withdraw(x)"},
+		// let: a name of a binding is bound, a later one too, and an inner
+		// let hides an outer one.
+		{"let a = 1 in a + 1", "let(a = 1; (@a + 1))"},
+		{"let a = 1, b = a + 1 in {x = a, y = b}", "let(a = 1; b = (@a + 1); #{x = @a, y = @b})"},
+		{"let a = b, b = 1 in a", "let(a = @b; b = 1; @a)"},
+		{"let s = {x = 1} in s.x", "let(s = #{x = 1}; @s.x)"},
+		{"f(let a = 1 in a, 2)", "f(let(a = 1; @a), 2)"},
+		{"let a = 1 in f(a = a)", "let(a = 1; f(a = @a))"},
+		{"let a = 1 in b", "let(a = 1; b)"},
+		{"let a = a in a", "let(a = @a; @a)"},
+	}
+	for item in cases {
+		tree := parse_of(item.text)
+		form := tree_form(tree, tree.root)
+		testing.expectf(t, tree.refusal.refusal == .None && form == item.form, "%q: %v %q, not %q", item.text, tree.refusal.refusal, form, item.form)
+	}
+
+	// An inner let hides an outer one: the name reads the inner binding.
+	tree := parse_of("let a = 1 in let a = 2 in a")
+	testing.expect_value(t, tree_form(tree, tree.root), "let(a = 1; let(a = 2; @a))")
+	inner := next_of(tree, node_at(tree, tree.root).first_child)
+	inner_binding := node_at(tree, inner).first_child
+	body := next_of(tree, inner_binding)
+	testing.expect_value(t, node_at(tree, body).binding, inner_binding)
+
+	// An assignment of a let, and its places.
+	tree = parse_of("x = let a = 1 in a")
+	testing.expect_value(t, tree.assigned_name, "x")
+	testing.expect_value(t, node_at(tree, tree.root).kind, Node_Kind.Let)
+	testing.expect_value(t, node_at(tree, tree.root).place.column, u32(5))
+	tree = parse_of("{width = 1}")
+	field := node_at(tree, tree.root).first_child
+	testing.expect_value(t, node_at(tree, field).place.column, u32(2))
+	testing.expect_value(t, node_at(tree, node_at(tree, field).first_child).place.column, u32(10))
 }

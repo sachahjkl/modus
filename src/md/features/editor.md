@@ -63,7 +63,7 @@ The walk keeps the generation that the editor shows after a restore, and a list 
 |---|---|
 | Edit the text of the editor | `start("edit")` |
 | Edit a text of a store | `edit(notes, "today.txt")` |
-| Edit a source of a project, in its environment | `enter(kernel_dev)`, then `edit(kernel, "src/kernel/enter.odin")`, where `kernel` is the store that the environment gives |
+| Edit a source of a project, in its console | `enter(kernel)`, then `edit(kernel, "src/kernel/enter.odin")`; in the child console, `kernel` is the store that the field `console` of the project grants |
 | See the versions of the text | `versions(notes, "today.txt")` |
 
 ## The refused forms

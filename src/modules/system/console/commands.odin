@@ -1886,7 +1886,7 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 			integers[index] = u64(uintptr(&argument.text))
 		case .Record:
 			integers[index] = u64(uintptr(raw_data(argument.record)))
-		case .None, .Integer, .Handle, .Table, .Bytes, .Stream, .Record_Input:
+		case .None, .Integer, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal:
 			// The check of the line gave each other kind its integer: a
 			// handle is its number, and a Table or Bytes parameter took its
 			// place above. An export takes no Stream: argument_accepted
@@ -1954,7 +1954,7 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
 	case .Table:
 		return table_take(item, &table, results[0])
-	case .None, .Handle, .Bytes, .Stream, .Record_Input:
+	case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal:
 		// None gives no value; callable_by_console refuses an export with
 		// a Handle or a Bytes result, and no export gives a Stream.
 	}
@@ -2442,7 +2442,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 					}
 					copy(bytes, rows)
 					return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
-				case .None, .Handle, .Bytes, .Stream, .Record_Input:
+				case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal:
 					// None gives no value; callable_by_console refuses an
 					// export with a Handle or a Bytes result, and no export
 					// gives a Stream.
@@ -3484,7 +3484,7 @@ list_variables :: proc "contextless" (arguments: []Value) -> Value {
 			buffer = value_buffer[:],
 		}
 		switch value.kind {
-		case .None, .Bytes, .Stream, .Record_Input:
+		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal:
 			// No value, and bytes with no description: the cell stays empty.
 			// No variable keeps a Stream.
 		case .Integer:

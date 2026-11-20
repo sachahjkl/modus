@@ -397,6 +397,149 @@ names_of_a_call :: proc "contextless" (table: ^Candidate_Table, place: line_edit
 	return false
 }
 
+// The groups that the completion follows inside each other, at most.
+GROUP_DEPTH_MOST :: 16
+
+// One group open at the caret: a call or a record literal.
+Open_Group :: struct {
+	brace:  bool, // A record literal; else parentheses.
+	start:  int, // The byte of its '(' or '{'.
+	commas: int, // The ',' of the group before the caret.
+}
+
+// groups_at gives the groups open at a byte place, outside the quotes.
+// found is false past GROUP_DEPTH_MOST groups.
+groups_at :: proc "contextless" (text: string, place: int, groups: ^[GROUP_DEPTH_MOST]Open_Group) -> (depth: int, found: bool) {
+	quoted := false
+	too_deep := 0
+	for index in 0 ..< clamp(place, 0, len(text)) {
+		character := text[index]
+		if character == '"' {
+			quoted = !quoted
+			continue
+		}
+		if quoted {
+			continue
+		}
+		switch character {
+		case '(', '{':
+			if depth == GROUP_DEPTH_MOST {
+				too_deep += 1
+			} else {
+				groups[depth] = {brace = character == '{', start = index}
+				depth += 1
+			}
+		case ')', '}':
+			if too_deep > 0 {
+				too_deep -= 1
+			} else if depth > 0 {
+				depth -= 1
+			}
+		case ',':
+			if too_deep == 0 && depth > 0 {
+				groups[depth - 1].commas += 1
+			}
+		}
+	}
+	return depth, too_deep == 0
+}
+
+// name_before gives the name that ends before a byte place, after its
+// spaces: the name of a call before its '('.
+name_before :: proc "contextless" (text: string, place: int) -> (name: string, start: int) {
+	end := clamp(place, 0, len(text))
+	for end > 0 && text[end - 1] == ' ' {
+		end -= 1
+	}
+	start = end
+	for start > 0 && (console_language.name_first(text[start - 1]) || console_language.digit(text[start - 1]) || text[start - 1] == '.') {
+		start -= 1
+	}
+	return text[start:end], start
+}
+
+// argument_starts says if the word at word_start starts an argument or a
+// field: the token before it opens the group or is one of its ','.
+argument_starts :: proc "contextless" (text: string, word_start: int) -> bool {
+	before := completion_token_before(text, word_start)
+	return before.kind == .Operator && (text[before.start] == '(' || text[before.start] == '{' || text[before.start] == ',')
+}
+
+// names_of_a_record_literal fills a table of candidates with the fields of
+// the record that a literal takes, when the caret is at the name of a field
+// inside its braces: the literal is an argument of an export whose
+// parameter is that record, by its place or by its name. It gives false for
+// another place.
+names_of_a_record_literal :: proc "contextless" (table: ^Candidate_Table, place: line_editor.Completion_Context, text: string) -> bool {
+	if place.place != .Name || !argument_starts(text, place.word_start) {
+		return false
+	}
+	groups: [GROUP_DEPTH_MOST]Open_Group
+	depth, found := groups_at(text, place.word_start, &groups)
+	if !found || depth < 2 || !groups[depth - 1].brace || groups[depth - 2].brace {
+		return false
+	}
+	literal, call := groups[depth - 1], groups[depth - 2]
+	name, name_start := name_before(text, call.start)
+	item := command_find(name)
+	if item == nil || item.run != nil || item.record != 0 {
+		return false
+	}
+	// The parameter: by the name before "= {", or by the place of the
+	// argument, after the value on the left of a "|>".
+	parameter := call.commas + (console_language.pipe_before(text, name_start) ? 1 : 0)
+	equal := completion_token_before(text, literal.start)
+	if equal.kind == .Operator && text[equal.start] == '=' {
+		argument_name, _ := name_before(text, equal.start)
+		parameter = -1
+		for parameter_name, index in item.parameter_names[:clamp(item.parameter_count, 0, ARGUMENT_CAPACITY)] {
+			if parameter_name != "" && parameter_name == argument_name {
+				parameter = index
+			}
+		}
+	}
+	if parameter < 0 || parameter >= item.parameter_count || item.parameters[parameter] != .Record {
+		return false
+	}
+	table.count, table.dropped = 0, 0
+	file, detail := item.file, item.function.parameter_details[parameter]
+	described, described_ok := module.record_type(file, detail)
+	if !described_ok {
+		return false
+	}
+	for number in 0 ..< described.field_count {
+		field_item, field_ok := module.field(file, described, number)
+		if field_ok {
+			candidate_add(table, module.string_at(file, field_item.name_offset, field_item.name_count), .Field, int(number))
+		}
+	}
+	return true
+}
+
+// parameter_names_add adds the names of the parameters of a call to a
+// table of candidates, when the word at the caret starts an argument of the
+// call, and the call has names: a named argument `name = value`.
+parameter_names_add :: proc "contextless" (table: ^Candidate_Table, place: line_editor.Completion_Context, text: string) {
+	if place.place != .Name || !argument_starts(text, place.word_start) {
+		return
+	}
+	groups: [GROUP_DEPTH_MOST]Open_Group
+	depth, found := groups_at(text, place.word_start, &groups)
+	if !found || depth == 0 || groups[depth - 1].brace {
+		return
+	}
+	name, _ := name_before(text, groups[depth - 1].start)
+	item := command_find(name)
+	if item == nil {
+		return
+	}
+	for parameter_name, index in item.parameter_names[:clamp(item.parameter_count, 0, ARGUMENT_CAPACITY)] {
+		if item.parameter_forms[index] == .Expression {
+			candidate_add(table, parameter_name, .Field, index)
+		}
+	}
+}
+
 // completion_token_before gives the token that ends at or before a byte
 // place: the last token of text[:place].
 completion_token_before :: proc "contextless" (text: string, place: int) -> console_language.Token {
@@ -556,10 +699,13 @@ names_rank :: proc "contextless" (by_tab: bool) {
 	if place.place != .Quoted {
 		completion.processes_kept = false
 	}
-	// An argument that its call reads as names: the names of that
-	// argument only.
-	if !names_of_a_call(&completion.names, place, text, line.caret) {
+	// An argument that its call reads as names, or the fields of a record
+	// literal: the names of that place only.
+	if !names_of_a_record_literal(&completion.names, place, text) && !names_of_a_call(&completion.names, place, text, line.caret) {
 		names_collect(&completion.names, place)
+		// At the start of an argument of a call whose parameters have
+		// names: those names too, for a named argument.
+		parameter_names_add(&completion.names, place, text)
 		// A name with a dot whose owner is no service: the whole name is
 		// the query, against all the names.
 		if place.place == .Member && completion.names.count == 0 {

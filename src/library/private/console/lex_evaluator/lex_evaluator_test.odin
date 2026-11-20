@@ -3,7 +3,9 @@ package lex_evaluator
 
 import "core:strings"
 import "core:testing"
+import module "modus:contract/module"
 import "modus:private/console/console_language"
+import "modus:private/console/console_results"
 import "modus:private/console/lex_parser"
 
 // The fake host of the tests. Each call is an effect: the host writes its
@@ -11,19 +13,35 @@ import "modus:private/console/lex_parser"
 // run as its value. `fails` runs and fails, as an export that fails.
 // `missing` names no command. `pure` has no effect. `x` is 7, `t` is
 // "tee", and `rows_a`, `rows_b` and `rows_other` are Tables, the last of
-// another record; no other name is a variable.
+// another record; `rect` is a Rectangle and `labelled` a Labelled; no other
+// name is a variable.
+//
+// The commands with parameters: `area(rectangle: Rectangle)` gives width
+// times height; `grow(rectangle: Rectangle, [by: Integer])` gives the count
+// of its arguments; `label(labelled: Labelled)` gives its count;
+// `pair(first: Integer, second: Integer)` gives first * 10 + second;
+// `any(Value)` takes any value and has no names.
 @(private = "file")
 Fake :: struct {
-	log:        [32]string,
-	log_count:  int,
-	finds:      int, // The commands that the evaluator asked for.
-	join:       [256]u8,
-	join_count: int,
-	last_text:  string, // The Text that a call took last as its last argument.
+	log:                   [32]string,
+	log_count:             int,
+	finds:                 int, // The commands that the evaluator asked for.
+	join:                  [256]u8,
+	join_count:            int,
+	last_text:             string, // The Text that a call took last as its last argument.
+	rectangle_description: [512]u8,
+	rectangle_file:        []u8, // Rectangle: x, y, width, height, Integers of 8 bytes.
+	labelled_description:  [512]u8,
+	labelled_file:         []u8, // Labelled: name, a Text of 4 bytes, and count, an Integer of 1 byte.
+	rect:                  [32]u8, // A Rectangle 1, 2, 30, 4.
+	labelled:              [8]u8, // A Labelled "ab", 5.
+	memory:                [512]u8, // The records that literals make.
+	memory_used:           int,
 }
 
 @(private = "file")
 fake_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: Value, ok: bool) {
+	fake := (^Fake)(data)
 	switch name {
 	case "x":
 		return {kind = .Integer, integer = 7}, true
@@ -35,18 +53,41 @@ fake_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: Va
 		return {kind = .Table, record = transmute([]u8)string("cd"), detail = 1}, true
 	case "rows_other":
 		return {kind = .Table, record = transmute([]u8)string("ef"), detail = 2}, true
+	case "rect":
+		return {kind = .Record, record = fake.rect[:], file = fake.rectangle_file, detail = 1}, true
+	case "labelled":
+		return {kind = .Record, record = fake.labelled[:], file = fake.labelled_file, detail = 1}, true
 	}
 	return {}, false
 }
 
 @(private = "file")
-fake_command_find :: proc "contextless" (data: rawptr, name: string) -> (has_effect: bool, found: bool) {
+fake_command_find :: proc "contextless" (data: rawptr, name: string) -> (signature: Command_Signature, found: bool) {
 	fake := (^Fake)(data)
 	fake.finds += 1
-	if name == "missing" {
-		return false, false
+	switch name {
+	case "missing":
+		return {}, false
+	case "area":
+		signature.parameter_count = 1
+		signature.names[0], signature.kinds[0], signature.files[0], signature.details[0] = "rectangle", .Record, fake.rectangle_file, 1
+	case "grow":
+		signature.parameter_count, signature.optional_last = 2, true
+		signature.names[0], signature.kinds[0], signature.files[0], signature.details[0] = "rectangle", .Record, fake.rectangle_file, 1
+		signature.names[1], signature.kinds[1] = "by", .Integer
+	case "label":
+		signature.parameter_count = 1
+		signature.names[0], signature.kinds[0], signature.files[0], signature.details[0] = "labelled", .Record, fake.labelled_file, 1
+	case "pair":
+		signature.parameter_count = 2
+		signature.names[0], signature.kinds[0] = "first", .Integer
+		signature.names[1], signature.kinds[1] = "second", .Integer
+	case "any":
+		signature.parameter_count = 1
+		signature.kinds[0] = .None
 	}
-	return name != "pure", true
+	signature.has_effect = name != "pure"
+	return signature, true
 }
 
 @(private = "file")
@@ -57,10 +98,48 @@ fake_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Va
 	if len(arguments) > 0 && arguments[len(arguments) - 1].kind == .Text {
 		fake.last_text = arguments[len(arguments) - 1].text
 	}
-	if name == "fails" {
+	switch name {
+	case "fails":
 		return {}, false
+	case "area":
+		width, _ := record_field_value(arguments[0], "width")
+		height, _ := record_field_value(arguments[0], "height")
+		return {kind = .Integer, integer = width.integer * height.integer}, true
+	case "grow":
+		return {kind = .Integer, integer = i64(len(arguments))}, true
+	case "label":
+		count, _ := record_field_value(arguments[0], "count")
+		return count, true
+	case "pair":
+		return {kind = .Integer, integer = arguments[0].integer * 10 + arguments[1].integer}, true
 	}
 	return {kind = .Integer, integer = i64(fake.log_count)}, true
+}
+
+@(private = "file")
+fake_record_memory :: proc "contextless" (data: rawptr, size: int) -> (bytes: []u8, ok: bool) {
+	fake := (^Fake)(data)
+	start := (fake.memory_used + 7) &~ 7
+	if size > len(fake.memory) - start {
+		return nil, false
+	}
+	fake.memory_used = start + size
+	return fake.memory[start:fake.memory_used], true
+}
+
+// fake_records_make writes the descriptions of the records of the fake,
+// and its two record values.
+@(private = "file")
+fake_records_make :: proc(fake: ^Fake) {
+	rectangle := [4]console_results.Column{console_results.integer_column("x"), console_results.integer_column("y"), console_results.integer_column("width"), console_results.integer_column("height")}
+	fake.rectangle_file, _, _ = console_results.description_write(fake.rectangle_description[:], "Rectangle", rectangle[:])
+	labelled := [2]console_results.Column{console_results.text_column("name", 4), {name = "count", type = .Integer, detail = 1}}
+	fake.labelled_file, _, _ = console_results.description_write(fake.labelled_description[:], "Labelled", labelled[:])
+	for value, index in ([4]i64{1, 2, 30, 4}) {
+		module.field_integer_set(fake.rect[:], console_results.column_field(rectangle[index]), value)
+	}
+	copy(fake.labelled[labelled[0].offset:], "ab")
+	module.field_integer_set(fake.labelled[:], console_results.column_field(labelled[1]), 5)
 }
 
 // The condition of the fake forces its value, as the console does for a
@@ -123,6 +202,7 @@ Run :: struct {
 @(private = "file")
 run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVALUATION_BUDGET_STEPS) -> ^Run {
 	run := new(Run, context.temp_allocator)
+	fake_records_make(&run.fake)
 	lex_parser.parse(text, {form_of = test_form_of}, &run.tree)
 	host := Evaluation_Host {
 		data            = &run.fake,
@@ -132,6 +212,7 @@ run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVAL
 		condition_value = fake_condition_value,
 		fact_name_value = fake_fact_name_value,
 		values_add      = fake_values_add,
+		record_memory   = fake_record_memory,
 	}
 	evaluation_start(&run.evaluation, &run.tree, mode, host, budget)
 	run.value, run.ok = line_force(&run.evaluation)
@@ -439,4 +520,208 @@ evaluation_values :: proc(t: ^testing.T) {
 	testing.expect(t, run.ok)
 	expect_log(t, run, {"f", "columns"}, "columns(f(), name, slot)")
 	testing.expect_value(t, run.fake.last_text, "name, slot")
+}
+
+// Each refusal of the forms of records, at its place, with its record, and
+// the effects before it: the names of a literal and of the named arguments
+// are checked when their call starts, before its arguments run; the kinds
+// of the values when they are known, before the call runs.
+@(test)
+evaluation_refusals_of_the_forms :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:       string,
+		refusal:    Refusal,
+		column:     u32,
+		field:      string,
+		left_kind:  Kind,
+		right_kind: Kind,
+		effects:    []string,
+	}
+	cases := [?]Case {
+		// A literal against its record: an unknown field, a missing one,
+		// before any argument runs.
+		{"area({x = 1, y = 2, widht = 3, height = 4})", .Literal_Field_Unknown, 21, "widht", .None, .None, nil},
+		{"area({x = g(), y = 0, widht = 1, height = 1})", .Literal_Field_Unknown, 23, "widht", .None, .None, nil},
+		{"area({x = 1, y = 2, width = 3})", .Literal_Field_Missing, 6, "height", .None, .None, nil},
+		{"area({})", .Literal_Field_Missing, 6, "x", .None, .None, nil},
+		{"grow(rectangle = {x = 1}, by = g())", .Literal_Field_Missing, 18, "y", .None, .None, nil},
+		// The kind and the range of a value, after the values ran.
+		{"area({x = \"a\", y = 2, width = 3, height = 4})", .Literal_Field_Kind, 7, "x", .Text, .None, nil},
+		{"area({x = g(), y = \"b\", width = 3, height = 4})", .Literal_Field_Kind, 16, "y", .Text, .None, {"g"}},
+		{"area({x = {a = 1}, y = 0, width = 1, height = 1})", .Literal_Field_Kind, 7, "x", .Record_Literal, .None, nil},
+		{"label({name = \"abcde\", count = 1})", .Literal_Field_Range, 8, "name", .Text, .None, nil},
+		{"label({name = \"ab\", count = 128})", .Literal_Field_Range, 21, "count", .Integer, .None, nil},
+		{"label({name = \"ab\", count = -129})", .Literal_Field_Range, 21, "count", .Integer, .None, nil},
+		// A literal that nothing types.
+		{"{a = 1}", .Literal_No_Type, 1, "", .None, .None, nil},
+		{"r = {a = 1}", .Literal_No_Type, 5, "", .None, .None, nil},
+		{"pair({a = 1}, g())", .Literal_No_Type, 6, "", .None, .Integer, nil},
+		{"any({a = 1})", .Literal_No_Type, 5, "", .None, .None, nil},
+		{"f({a = 1})", .Literal_No_Type, 3, "", .None, .None, nil},
+		{"let s = {x = 1} in pair(s, 2)", .Literal_No_Type, 25, "", .None, .Integer, nil},
+		{"{a = 1} + 1", .Operator_Kinds, 9, "", .Record_Literal, .Integer, nil},
+		// Named arguments: an unknown name, a parameter twice, a missing
+		// one, a command with no names; before any argument runs.
+		{"pair(first = 1, third = 2)", .Argument_Unknown, 17, "third", .None, .None, nil},
+		{"pair(g(), third = 2)", .Argument_Unknown, 11, "third", .None, .None, nil},
+		{"pair(1, first = 2)", .Argument_Twice, 9, "first", .None, .None, nil},
+		{"pair(second = g())", .Argument_Missing, 1, "first", .None, .None, nil},
+		{"f(by = 1)", .Argument_Unknown, 3, "by", .None, .None, nil},
+		// with: on two records only, of one description.
+		{"1 with {a = 1}", .With_Kinds, 3, "", .Integer, .Record_Literal, nil},
+		{"rect with 1", .With_Kinds, 6, "", .Record, .Integer, nil},
+		{"{a = 1} with {a = 2}", .With_Kinds, 9, "", .Record_Literal, .Record_Literal, nil},
+		{"rect with labelled", .With_Records_Differ, 6, "", .None, .None, nil},
+		{"rect with {widht = 1}", .Literal_Field_Unknown, 12, "widht", .None, .None, nil},
+		{"g() with {width = 1}", .With_Kinds, 5, "", .Integer, .Record_Literal, {"g"}},
+		// let: a cycle at the name that closes it, a field that the value
+		// does not have.
+		{"let a = a + 1 in a", .Cycle, 9, "", .None, .None, nil},
+		{"let a = b, b = a in a", .Cycle, 16, "", .None, .None, nil},
+		{"let s = rect in s.z", .Field_Unknown, 17, "z", .Record, .None, nil},
+		{"let s = {x = 1} in s.y", .Field_Unknown, 20, "y", .Record_Literal, .None, nil},
+		{"let n = g() in n.x", .Field_Unknown, 16, "x", .Integer, .None, {"g"}},
+	}
+	for item in cases {
+		run := run_of(item.text)
+		record := run.evaluation.refusal
+		testing.expectf(t, !run.ok && record.refusal == item.refusal && record.place.column == item.column && record.field == item.field, "%q: %v at column %d, field %q; not %v at column %d, field %q", item.text, record.refusal, record.place.column, record.field, item.refusal, item.column, item.field)
+		if item.left_kind != .None || item.right_kind != .None {
+			testing.expectf(t, record.left_kind == item.left_kind && record.right_kind == item.right_kind, "%q: the kinds %v and %v, not %v and %v", item.text, record.left_kind, record.right_kind, item.left_kind, item.right_kind)
+		}
+		expect_log(t, run, item.effects, item.text)
+	}
+
+	// The values of the records: the command, the parameter, the record.
+	run := run_of("pair({a = 1}, 2)")
+	testing.expect_value(t, run.evaluation.refusal.command, "pair")
+	testing.expect_value(t, run.evaluation.refusal.parameter, 1)
+	run = run_of("area({x = 1, y = 2, widht = 3, height = 4})")
+	testing.expect(t, raw_data(run.evaluation.refusal.file) == raw_data(run.fake.rectangle_file))
+	testing.expect_value(t, run.evaluation.refusal.detail, u32(1))
+	run = run_of("label({name = \"ab\", count = 128})")
+	testing.expect_value(t, run.evaluation.refusal.left, i64(128))
+	run = run_of("label({name = \"abcde\", count = 1})")
+	testing.expect_value(t, run.evaluation.refusal.right, i64(5))
+	run = run_of("rect with labelled")
+	testing.expect(t, raw_data(run.evaluation.refusal.other_file) == raw_data(run.fake.labelled_file))
+	run = run_of("let a = a + 1 in a")
+	testing.expect_value(t, run.evaluation.refusal.command, "a")
+	run = run_of("pair(second = g())")
+	testing.expect_value(t, run.evaluation.refusal.command, "pair")
+	// A word of Lex that the console did not nest is a refusal of the text.
+	run = run_of("pair(_, 1)")
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Text)
+	testing.expect_value(t, run.evaluation.refusal.text_refusal, lex_parser.Refusal.Word_As_Name)
+}
+
+// The order of the effects with the forms of records: the bindings of a
+// let from the left, in mode console, even when the body reads none of
+// them; the values of named arguments in the order of the line; the
+// placeholder, whose value runs where the call reads it.
+@(test)
+evaluation_order_of_the_forms :: proc(t: ^testing.T) {
+	run := run_of("let a = g(), b = h() in pair(b, a)")
+	testing.expect(t, run.ok)
+	expect_log(t, run, {"g", "h", "pair"}, "let a = g(), b = h() in pair(b, a)")
+	testing.expect_value(t, run.value.integer, i64(21))
+
+	run = run_of("let a = g() in 1")
+	testing.expect(t, run.ok)
+	expect_log(t, run, {"g"}, "let a = g() in 1, mode console")
+	run = run_of("let a = g() in 1", .Declaration)
+	testing.expect(t, run.ok)
+	testing.expect_value(t, run.value.integer, i64(1))
+	expect_log(t, run, {}, "let a = g() in 1, mode declaration")
+
+	// An effect runs once, though its value is read twice.
+	run = run_of("let v = g() in pair(v, v)")
+	testing.expect(t, run.ok)
+	expect_log(t, run, {"g", "pair"}, "let v = g() in pair(v, v)")
+	testing.expect_value(t, run.value.integer, i64(11))
+
+	run = run_of("pair(second = h(), first = g())")
+	testing.expect(t, run.ok)
+	expect_log(t, run, {"h", "g", "pair"}, "pair(second = h(), first = g())")
+	testing.expect_value(t, run.value.integer, i64(21))
+
+	// `_` and the order of the effects: the value on the left runs where
+	// the call reads it, after the arguments before the '_'.
+	memory: [lex_parser.TEXT_BYTES_MOST]u8
+	stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
+	Piped :: struct {
+		text:    string,
+		effects: []string,
+	}
+	piped := [?]Piped {
+		{"g() |> pair(h(), _)", {"h", "g", "pair"}},
+		{"g() |> pair(_, h())", {"g", "h", "pair"}},
+		{"g() |> pair(second = _, first = h())", {"g", "h", "pair"}},
+	}
+	for item in piped {
+		form := console_language.pipe_nested_form(item.text, console_language.expression_start(item.text), memory[:], stages[:])
+		if !testing.expectf(t, form.refusal == .None, "%q: %v", item.text, form.refusal) {
+			continue
+		}
+		run = run_of(form.nested)
+		testing.expect(t, run.ok)
+		expect_log(t, run, item.effects, item.text)
+	}
+}
+
+// The values of the forms of records.
+@(test)
+evaluation_values_of_the_forms :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:    string,
+		integer: i64,
+	}
+	cases := [?]Case {
+		// Literals typed by the parameter, in any order of their fields.
+		{"area({x = 1, y = 2, width = 30, height = 4})", 120},
+		{"area({height = 4, width = 30, y = 0, x = 0})", 120},
+		{"label({name = \"abcd\", count = -128})", -128},
+		{"label({name = \"\", count = 127})", 127},
+		// with: some fields of a whole record, or a record of one
+		// description.
+		{"area(rect)", 120},
+		{"area(rect with {width = 10})", 40},
+		{"area(rect with {width = 10} with {height = 5})", 50},
+		{"area(rect with rect)", 120},
+		// Named arguments, and the last parameter that a call may leave out.
+		{"pair(second = 2, first = 1)", 12},
+		{"pair(1, second = 2)", 12},
+		{"grow(rect)", 1},
+		{"grow(rectangle = rect)", 1},
+		{"grow(by = 2, rectangle = rect)", 2},
+		{"grow(rectangle = {x = 0, y = 0, width = 1, height = 1}, by = 2)", 2},
+		// let, a later binding, a literal that two receivers type, a field
+		// of a binding.
+		{"let a = 1, b = a + 1 in a * 10 + b", 12},
+		{"let a = b + 1, b = 2 in a", 3},
+		{"let s = {x = 0, y = 0, width = 6, height = 7} in area(s) + area(s)", 84},
+		{"let s = rect in s.width", 30},
+		{"let s = {x = 5} in s.x", 5},
+		{"area(let w = 3 in {x = 0, y = 0, width = w, height = w})", 9},
+		{"let a = 1 in let a = 2 in a", 2},
+	}
+	for item in cases {
+		run := run_of(item.text)
+		testing.expectf(t, run.ok && run.value.kind == .Integer && run.value.integer == item.integer, "%q: %v %v %d, not %d (%v)", item.text, run.ok, run.value.kind, run.value.integer, item.integer, run.evaluation.refusal.refusal)
+	}
+
+	// A record that `with` gives keeps the fields that it does not name,
+	// and the record of the variable stays as it was.
+	run := run_of("rect with {width = 10}")
+	testing.expect(t, run.ok)
+	testing.expect_value(t, run.value.kind, Kind.Record)
+	width, _ := record_field_value(run.value, "width")
+	x, _ := record_field_value(run.value, "x")
+	testing.expect_value(t, width.integer, i64(10))
+	testing.expect_value(t, x.integer, i64(1))
+	original, _ := record_field_value({kind = .Record, record = run.fake.rect[:], file = run.fake.rectangle_file, detail = 1}, "width")
+	testing.expect_value(t, original.integer, i64(30))
+	// A text of a literal is written whole, with zero bytes after it.
+	run = run_of("label({name = \"ab\", count = 1}) + 0")
+	testing.expect(t, run.ok)
 }
