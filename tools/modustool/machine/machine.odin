@@ -2790,9 +2790,10 @@ scenario := [?]Step {
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe.value)"},
 	{kind = .Wait, text = "[console] error: facts: no fact type has the name log_reader.Fact_Probe.value; the fact types are "},
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probes)"},
-	// The console names the fact types of a module in the order of their
-	// keys: the measures of log_reader add two fact types around Fact_Probe.
-	{kind = .Wait, text = "[console] error: facts: no fact type has the name log_reader.Fact_Probes; the fact types of log_reader are log_reader.Measured_Bad_Block, log_reader.Fact_Probe, log_reader.Measured_Connected"},
+	// The console names the fact types of the package of the name: each line
+	// of log_reader is a fact, so the list is long, and the wait reads its
+	// start.
+	{kind = .Wait, text = "[console] error: facts: no fact type has the name log_reader.Fact_Probes; the fact types of log_reader are log_reader."},
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe) |> where(level >= Warning)"},
 	{kind = .Wait, text = "[console] error: where: the field level is Status(Log_Level): it takes = and != only, because the order of the members is no order of weight"},
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe) |> where(level = \"Warning\")"},
