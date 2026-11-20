@@ -267,7 +267,16 @@ status
 2 rows of Counted
 ```
 
-**The counts of the writer.** `stream_counts(stream)` wires the record output, waits for the first compartment of the ring, the joined record, which the writer writes at its next write even when the condition leaves that record out, and gives the `Record` `Writer_Counts`: the records `written`, `discarded` (no reader, or the condition of each reader left them out) and `refused` as `Full`, as the writer published them at its last write before the read. They are the claim of the writer, not a fact that the console checks.
+**The counts of the writer.** `stream_counts(stream)` wires the record output, waits for the first compartment of the ring, the joined record, which the writer writes at its next write even when the condition leaves that record out, and gives the `Record` `Writer_Counts`: the records `written`, `discarded` (no reader, the condition of each reader left them out, or each reader's ring was full and counted them in its gap), `refused` as `Full`, the writes that a full ring `held` until it had room, and the readers whose ring the writer closed as their gap reached its largest count (`rings_past_gap`), as the writer published them at its last write before the read. `held` and `refused` overlap: a write that waited and then reached its deadline counts in both. They are the claim of the writer, not a fact that the console checks.
+
+**The records of a service.** A service that the console connected to gives its record outputs by the same typed names. `server` writes the access record of each request into `requests`:
+
+```
+> connect("server")
+> server.requests |> where(status = 404) |> first(5)
+```
+
+The rows come from the next request on: the console draws "joined after N records", where N counts the requests that `server` answered before the read. The condition goes to `server`, which writes into the ring of the console only the records of the status 404. `server` never waits for the console: a ring that the console does not read in time refuses the next records with `Full`, and `stream_counts(server.requests)` says how many.
 
 **A record input, and a wiring list.** A typed name also names a record input: `output_count_reader.counts` is a value of the kind `Record_Input`, which only `wire` takes. A typed name may name a module that does not run yet: its module file in the boot image gives its record outputs and its record inputs, for the list of its own start. `wire(from, to)` gives a `Table` of one `Wiring`: `writer`, `output`, `reader`, `input`, the `condition` as a text, and its terms. `+` joins two of them, and `start(module, list)` starts the module with the wirings of the list, made before its first instruction:
 
@@ -471,7 +480,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `loaded()` | Table of `Loaded_Module` | The modules and the services whose exports are commands, and the imports of the modules: `module`, `call`, `imported_by`, `in_place_of`, `hash_head` |
 | `start(name)`, `start(name, list)`, `stop(name)` | none | `start` takes a wiring list that `wire` gives, or none. When the module declares a record output, `start` keeps the handle of the process while it runs, for its typed names ("Streams") |
 | `wire(from, to)` | Table of `Wiring` | One row of a wiring list: `writer`, `output`, `reader`, `input`, `condition`, and the terms `field`, `comparison`, `value_kind`, `integer`, `text` ("Streams") |
-| `stream_counts(stream)` | Record `Writer_Counts` | `written`, `discarded`, `refused`, as the writer published them at its last write before the read, after the first compartment of the ring ("Streams") |
+| `stream_counts(stream)` | Record `Writer_Counts` | `written`, `discarded`, `refused`, `held`, `rings_past_gap`, as the writer published them at its last write before the read, after the first compartment of the ring ("Streams") |
 | `record_outputs(module)` | Table of `Record_Output` | One row for each record output of a module of the boot image: `output`, `record` (`any record` for a generic one), `about` |
 | `table(stream)` | Table | The rows of a `Stream` until its end ("Streams") |
 | `start_from_disk(name, hash)` | none | A disk process: its module file is an object of the store `module_files`, and `hash` is 64 hexadecimal digits, or empty for the file of the row of the nickname (`MODULE_CONTRACT.md`, "A module from a disk") |

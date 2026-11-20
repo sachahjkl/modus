@@ -822,7 +822,7 @@ stream_counts :: proc "contextless" (arguments: []Value) -> Value {
 	if status != .Ok || !counted {
 		return fail("stream_counts: the record stream ", stream.owner, ".", stream.stream_name, " ended before its first compartment")
 	}
-	columns := [3]Column{integer_column("written"), integer_column("discarded"), integer_column("refused")}
+	columns := [5]Column{integer_column("written"), integer_column("discarded"), integer_column("refused"), integer_column("held"), integer_column("rings_past_gap")}
 	table, made := made_table("Writer_Counts", columns[:])
 	if !made {
 		return fail("stream_counts: the line has no room for the description")
@@ -831,6 +831,8 @@ stream_counts :: proc "contextless" (arguments: []Value) -> Value {
 	made_integer(&table, row, 0, i64(min(counts.written, u64(max(i64)))))
 	made_integer(&table, row, 1, i64(min(counts.discarded, u64(max(i64)))))
 	made_integer(&table, row, 2, i64(min(counts.refused, u64(max(i64)))))
+	made_integer(&table, row, 3, i64(min(counts.held, u64(max(i64)))))
+	made_integer(&table, row, 4, i64(min(counts.rings_past_gap, u64(max(i64)))))
 	return made_record(&table, "stream_counts")
 }
 

@@ -9,10 +9,9 @@ import "modus:support/web"
 // fields are the last fields: the serial line of a fact stops at its last
 // byte that is not zero.
 //
-// The access record of a request is the log fact Access_Record
-// (docs/glossary/network.md, "Access record"), until the record output
-// `requests` holds it. The row of the window that shows the last requests
-// is Access_Row.
+// The access record of a request is no log fact: the record output
+// `requests` holds it (requests.odin). The row of the window that shows the
+// last requests is Access_Row.
 //
 // The body of /sink writes its hash in 16 hexadecimal digits, as
 // system.Hex wrote it.
@@ -61,18 +60,6 @@ CAUSE_FIELD_BYTES :: 56
 @(log_fact = "server: {cause}")
 Run_Failed :: struct {
 	cause: [56]u8,
-}
-
-// One request answered: its method, its target, its status, the bytes of
-// its answer, its time from the first byte of its head, and its host.
-@(log_fact = "server: {method} {target} {status}, {answer_size}, {answer_time}, {peer}")
-Access_Record :: struct {
-	status:      u64,
-	answer_size: value_kinds.Size_In_Bytes,
-	answer_time: value_kinds.Time_In_Microseconds,
-	method:      [8]u8,
-	target:      [56]u8,
-	peer:        [32]u8,
 }
 
 // The time of one draw of the window.
@@ -190,7 +177,6 @@ Page_Removed :: struct {
 }
 
 #assert(PAGE_FIELD_BYTES > web.PAGE_NAME_LIMIT)
-#assert(size_of(Access_Record) == 24 + METHOD_FIELD_BYTES + TARGET_FIELD_BYTES + PEER_FIELD_BYTES)
 #assert(size_of(Connection_Ended) == 56 + PEER_FIELD_BYTES + HOW_FIELD_BYTES)
 #assert(size_of(Page_Stored) == 8 + PAGE_FIELD_BYTES)
 

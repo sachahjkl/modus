@@ -364,7 +364,7 @@ The glossary entry "Channel" (`docs/glossary/running_code.md`) left with the fie
 | `entropy`, `date` | 2 each | the process of the same name | (c) | The process, and the fact type `entropy_device_service.Device_Ready`. |
 | `boot` | 1 call, 7 lines | the kernel: the stages of the boot | (a), the kernel keeps text | The machine test waits for the lines on the serial port, as today. |
 | `frame` | 1 | the frame service | (c) | The process and the fact types of `frame_service`. |
-| `requests` | 1 | `server`: one access record for each request | (b) a stream of records disguised as text | The record `Access_Record` (`docs/glossary/network.md`, "Access record"). It is the first user of record outputs: the record output `requests` ([module_outputs.md](module_outputs.md), "The migration"). Until record outputs exist, `server` writes it as the log fact `server.Access_Record`, and its window keeps its last records. |
+| `requests` | 1 | `server`: one access record for each request | (b) a stream of records disguised as text | The record `Access_Record` (`docs/glossary/network.md`, "Access record"). It is the first user of record outputs: the record output `requests` holds it ([module_outputs.md](module_outputs.md), "The migration"), and the log fact `server.Access_Record` left with its limit of 100 lines in each second. Its window keeps its last records. |
 
 No other channel is a stream of records. The element places come near: the tool reads each one to press an element, and a lost line fails the test. But their reader is a test, which the log serves, and a loss fails the test with its cause: they stay log facts.
 
@@ -376,7 +376,7 @@ No other channel is a stream of records. The element places come near: the tool 
 - **The rows of `log.records`** and the row of `log_reader`: the field left, and the text has 168 bytes, as the record.
 - **The example of [log_reader_scope.md](log_reader_scope.md)**: a reader chooses its rows by a field, `log.records(0) |> where(level = Warning)`, and by a fact type, `log.records(0) |> facts(storage.Bad_Block)`.
 - **The tool, where it reads the head of a line**: the head is `[name]`. The waits of the scenarios with a channel head took the head of the process.
-- **`server` and its access records**: one plain line at the level Info for each request, until the log fact `server.Access_Record`, then the record output `requests`.
+- **`server` and its access records**: one plain line at the level Info for each request, then the log fact `server.Access_Record`, then the record output `requests`, which a reader wires: the log holds no access record.
 
 ### Filters of a reader: one form
 

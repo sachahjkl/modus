@@ -29,6 +29,9 @@ Measure_Process :: struct {
 	// "": none.
 	service:    string,
 	ready:      string,
+	// The processes that the process starts and that print measures of
+	// their own: the run prints their lines after those of the process.
+	helpers:    [2]string,
 }
 
 @(rodata)
@@ -43,6 +46,11 @@ measure_processes := [?]Measure_Process {
 	// log_reader connects to the service log, which is the window log: the
 	// main test launches that window before it, and so does this run.
 	{name = "log_reader", lines = {"log_reader: measure: the write of one line, ", "log_reader: measure: the render of a log fact "}, done = "log_reader: ok", start_line = "start(\"log_reader\")", service = "log", ready = "[log] log: ok, "},
+	// The measures of the record outputs: a write against a log fact, the
+	// wake, and the fan-out to 1, 2, 4 and 8 readers
+	// (src/md/features/module_outputs.md, "The measures that decide it").
+	// The writer and the reader print them.
+	{name = "output_measure", lines = {"output_measure_writer: one log fact of the same record: ", "output_measure_reader: the wake: "}, done = "output_measure: the writer with 1, 2, 4 and 8 readers, each record read in order by each reader: as it must", start_line = "start(\"output_measure\")", helpers = {"output_measure_writer", "output_measure_reader"}},
 }
 
 // measure_process_output gives the log of the measure run of a process.
@@ -109,6 +117,14 @@ measure_process_run :: proc(part: ^Test_Part_Run, process: Measure_Process) -> b
 	fmt.printfln("modustool: the measure run of %s (%s):", process.name, output)
 	for line in checks.measure_process_lines(log, process.name) {
 		fmt.println(line)
+	}
+	for helper in process.helpers {
+		if helper == "" {
+			continue
+		}
+		for line in checks.measure_process_lines(log, helper) {
+			fmt.println(line)
+		}
 	}
 	return true
 }

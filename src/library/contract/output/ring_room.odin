@@ -71,9 +71,27 @@ ring_part_of :: proc "contextless" (skips: bool, room: Ring_Room, pace: Wiring_P
 	return .Broken
 }
 
+// ring_takes_record says if one ring takes the record of a write that
+// passed its decision: skips says that the record fails the condition of
+// the ring, room what ring_room_of decided at the push. Only a ring with
+// room takes it: a ring that refuses it for its reader counts it in its
+// gap, and a ring that broke is closed.
+ring_takes_record :: proc "contextless" (skips: bool, room: Ring_Room) -> bool {
+	if skips {
+		return false
+	}
+	switch room {
+	case .Room:
+		return true
+	case .Holds, .Refuses, .Broken:
+	}
+	return false
+}
+
 // counts_after_write gives the counts of a record output after a write
 // that passed its decision: written when a ring took the record, else
-// discarded, as each ring left it out by its condition.
+// discarded, as each ring left it out by its condition or refused it for
+// its reader.
 counts_after_write :: proc "contextless" (counts: Writer_Counts, taken: bool) -> Writer_Counts {
 	after := counts
 	if taken {
@@ -82,6 +100,109 @@ counts_after_write :: proc "contextless" (counts: Writer_Counts, taken: bool) ->
 		after.discarded += 1
 	}
 	return after
+}
+
+// The records that a ring of the pace Never_Holds_Writer refused for its
+// reader since its last gap record.
+Gap_State :: struct {
+	count: u32, // 0: no gap waits.
+	first: u32, // The serial of the first refused record, when count is not 0.
+}
+
+// What a ring does with one more record that it refuses for its reader.
+Gap_Step :: enum u8 {
+	Counted        = 0, // The count of the gap grows by one: the gap record says it when the ring has room again.
+	Past_The_Count = 1, // The count is the largest that a gap record of this ring carries: one more would give a gap that the reader refuses. The writer closes the end, and the reader reads Side_Closed after the records that its ring holds.
+}
+
+// gap_count_most gives the largest count of a gap record of a ring. A gap
+// moves the next serial of the reader by its count. On a ring with a
+// condition, the reader takes a serial that moves forward by less than
+// SERIAL_FORWARD_MOST, so a gap of that count or more would put the next
+// serial half of the serials or more past the first lost one: the reader
+// could no longer tell a record ahead of it from one behind. On a ring
+// with no condition, the count stops below the wrap of its 32 bits, which
+// would give a gap of no record.
+gap_count_most :: proc "contextless" (filtered: bool) -> u32 {
+	return filtered ? SERIAL_FORWARD_MOST - 1 : max(u32)
+}
+
+// gap_after_refused_record gives the gap of a ring after it refused the
+// record of serial: a new gap starts at that serial, a gap that waits grows
+// by one. A gap at its largest count stays as it is, and the step says that
+// the writer closes the end; the other rings of the write are not touched.
+gap_after_refused_record :: proc "contextless" (gap: Gap_State, serial: u32, filtered: bool) -> (after: Gap_State, step: Gap_Step) {
+	if gap.count >= gap_count_most(filtered) {
+		return gap, .Past_The_Count
+	}
+	after = gap
+	if after.count == 0 {
+		after.first = serial
+	}
+	after.count += 1
+	return after, .Counted
+}
+
+// write_counts_after gives the counts of a record output after one look of
+// a write at its rings: step is write_step_of of that look, waited says
+// that an earlier look of the same write waited, and timed_out that the
+// wait of this look reached its deadline. A write counts once in held
+// however many looks it waits, as a wake can come before the room; a write
+// that waited and then reached its deadline counts in held and in refused:
+// the two counts overlap.
+write_counts_after :: proc "contextless" (counts: Writer_Counts, step: Write_Step, waited, timed_out: bool) -> Writer_Counts {
+	after := counts
+	switch step {
+	case .Write:
+	case .Full:
+		after.refused += 1
+	case .Wait:
+		if !waited {
+			after.held += 1
+		}
+		if timed_out {
+			after.refused += 1
+		}
+	}
+	return after
+}
+
+// What a reader that waits for its ring to be full and to hold its writer
+// does after one look at the counters that it loaded once.
+Full_Wait_Step :: enum u8 {
+	Held          = 0, // The ring is full and its writer waits for room in it, or will.
+	Broken        = 1, // The counters are no counters of an honest writer (reader_ring_fault_of): the reader closes the end.
+	Past_Deadline = 2, // The deadline passed: the reader stops its wait.
+	Wait          = 3, // The reader waits on the write of the writer and on its flag writer_waits, until the deadline.
+	No_End        = 4, // The record input has no end that opens: no ring to wait on.
+	Ended         = 5, // The end ended by its end word: the reader reads it, after the records that its ring holds.
+}
+
+// full_wait_step_of decides one look of a reader that waits, with no read,
+// for its ring to be full while its writer waits on it: whether it has an
+// end that opened, the end word of that end, the counters of the
+// compartments and of the completions as it loaded them, the flag
+// writer_waits, the time and the deadline. With no end, the counters are
+// not read. An end word ends the wait before the counters, as the reader
+// then reads it. A broken ring is refused before any decision on the
+// counters, so a hostile count never reads as full.
+full_wait_step_of :: proc "contextless" (has_end: bool, end_word: End_Word, write, read, capacity, completions_write, completions_read, completions_capacity: u32, writer_waits: bool, now, deadline: u64) -> (step: Full_Wait_Step, refusal: errors.Error_Record) {
+	if !has_end {
+		return .No_End, {}
+	}
+	if end_word != .None {
+		return .Ended, {}
+	}
+	if fault, fault_refusal := reader_ring_fault_of(write, read, capacity, completions_write, completions_read, completions_capacity); fault != .None {
+		return .Broken, fault_refusal
+	}
+	if write - read == capacity && writer_waits {
+		return .Held, {}
+	}
+	if now >= deadline {
+		return .Past_Deadline, {}
+	}
+	return .Wait, {}
 }
 
 // What a write does after it looked at each ring.

@@ -433,10 +433,16 @@ a_condition_holds_by_the_value_of_its_field :: proc(t: ^testing.T) {
 the_counts_of_the_writer_go_through_the_head_page :: proc(t: ^testing.T) {
 	head: [512]u64
 	head[0] = 7
-	writer_counts_write(&head[0], {written = 3, discarded = max(u64), refused = 1})
+	writer_counts_write(&head[0], {written = 3, discarded = max(u64), refused = 1, held = 5, rings_past_gap = 2})
 	counts := writer_counts_read(&head[0])
-	testing.expect(t, counts.written == 3 && counts.discarded == max(u64) && counts.refused == 1)
+	testing.expect(t, counts.written == 3 && counts.discarded == max(u64) && counts.refused == 1 && counts.held == 5 && counts.rings_past_gap == 2)
 	testing.expect_value(t, head[0], 7)
+	// The reserved words are written by no one: they read back as 0.
+	testing.expect_value(t, counts.reserved, [3]u64{})
+	words := (^[8]u64)(rawptr(uintptr(&head[0]) + WRITER_COUNTS_OFFSET))
+	for index in 5 ..< 8 {
+		testing.expect_value(t, words[index], 0)
+	}
 }
 
 // A filtered ring takes a serial that moves forward by less than 2^31, and

@@ -26,13 +26,14 @@ scenario_tcp := [?]Step {
 	{kind = .Wait, text = "root: started server"},
 	{kind = .Wait, text = "server: listening on the TCP port 80, a table of 48 connections, the secret of the initial sequence numbers from the generator of the process"},
 	// A page, and a close from the peer first.
+	// The peer checks each answer; the access records are no lines of the
+	// log, but records of the record output requests, which no one reads
+	// in this scenario.
 	{kind = .Peer, text = "page"},
 	{kind = .Wait, text = "server: 1 connections open at once"},
-	{kind = .Wait, text = "server: GET / 200, "},
 	{kind = .Wait, text = " closed, the remote first: "},
 	// 1 MiB each way, and a close from the server first.
 	{kind = .Peer, text = "large"},
-	{kind = .Wait, text = "server: GET /large 200, 1048576 bytes, "},
 	{kind = .Wait, text = " closed, this server first: "},
 	{kind = .Peer, text = "sink"},
 	{kind = .Wait, text = "server: received /sink: 1048576 bytes, fnv1a64 e7867887f2822325, "},
@@ -136,10 +137,30 @@ scenario_tcp_real := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "server"},
 	{kind = .Wait, text = "server: listening on the TCP port 80"},
+	// The access records of server through the console
+	// (src/md/features/module_outputs.md, "The migration"): 10 requests
+	// with no reader, then a stream of the records of the status 404. Its
+	// joined record counts the 10 records before it; its first row is the
+	// next request, a 404. The wait for the wiring comes before that
+	// request: a record written before the wiring is not in the ring.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"server\")"},
+	{kind = .Wait, text = "root: connected console to the service server"},
+	{kind = .Http, text = "requests 10"},
+	{kind = .Type, text = "server.requests |> where(status = 404)"},
+	{kind = .Wait, text = "root: wired the record output 1 of server to its asker console, wiring "},
+	{kind = .Http, text = "missing nothing.txt"},
+	{kind = .Wait, text = "[console] joined after 10 records"},
+	{kind = .Wait, text = "/nothing.txt"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "[console] Escape closed the stream after "},
+	// first gives a Table once one record of the status 404 came.
+	{kind = .Type, text = "server.requests |> where(status = 404) |> first(1)"},
+	{kind = .Wait, text = "root: wired the record output 1 of server to its asker console, wiring "},
+	{kind = .Http, text = "missing other.txt"},
+	{kind = .Wait, text = "[console] 1 row of Access_Record"},
 	{kind = .Fetch, text = "/"},
-	{kind = .Wait, text = "server: GET / 200, "},
 	{kind = .Fetch, text = "/large"},
-	{kind = .Wait, text = "server: GET /large 200, 1048576 bytes, "},
 	{kind = .Fetch, text = "/sink"},
 	{kind = .Wait, text = "server: received /sink: 1048576 bytes, fnv1a64 e7867887f2822325, "},
 	{kind = .Front, text = "console"},
@@ -161,10 +182,8 @@ scenario_tcp_real := [?]Step {
 	{kind = .Shot, text = "fetch"},
 	// A page in the private store of server, from the console, through its
 	// exports, functions with typed parameters: then the host fetches it,
-	// byte for byte.
+	// byte for byte. The console connected to server above.
 	{kind = .Front, text = "console"},
-	{kind = .Type, text = "connect(\"server\")"},
-	{kind = .Wait, text = "root: connected console to the service server"},
 	{kind = .Type, text = "server.put(\"hello.txt\", \"kept in the store of server\")"},
 	{kind = .Wait, text = "server: the page /hello.txt is in the store: 27 bytes"},
 	{kind = .Http, text = "page hello.txt", expected = "kept in the store of server"},
@@ -174,6 +193,26 @@ scenario_tcp_real := [?]Step {
 	// request, pipelining, a split body, HEAD, 16 clients, each refusal.
 	{kind = .Http, text = "keep-alive"},
 	{kind = .Wait, text = " requests on one connection of 10.0.2.2 port ", any_order = true},
+	// The measure of a reader (src/md/features/module_outputs.md, "The
+	// measures that decide it", 6): the same 1000 requests while the
+	// console draws each record of requests. The case prints the rate; the
+	// counts of the writer then print the records that the console took
+	// and those that its full ring refused with Full. Nothing is asserted:
+	// the speed of the console decides both.
+	{kind = .Type, text = "server.requests"},
+	{kind = .Wait, text = "root: wired the record output 1 of server to its asker console, wiring "},
+	{kind = .Http, text = "keep-alive"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "[console] Escape closed the stream after "},
+	{kind = .Type, text = "stream_counts(server.requests)"},
+	{kind = .Wait, text = "root: wired the record output 1 of server to its asker console, wiring "},
+	{kind = .Http, text = "requests 1"},
+	{kind = .Wait, text = "[console] Writer_Counts"},
+	// Each count is a row of the record, the last one the rings that the
+	// writer closed past their gap: the console reads none of a ring of
+	// no condition here, and server closed none.
+	{kind = .Wait, text = "held "},
+	{kind = .Wait, text = "rings_past_gap  0"},
 	{kind = .Http, text = "new-connections"},
 	// The ends of connections have their own budget on the log.
 	{kind = .Wait, text = " ends of connections in one second are not on the log (the limit is 50)", any_order = true},
@@ -204,7 +243,36 @@ scenario_tcp_real := [?]Step {
 	{kind = .Http, text = "page kept.txt", expected = "the first text"},
 	{kind = .Front, text = "server"},
 	{kind = .Shot, text = "server_real"},
+	// Fan-out and the pace (src/md/features/module_outputs.md, "Fan-out
+	// and flow control"): requests_pace starts a slow reader and a new
+	// server whose requests go to three readers. The slow reader opens
+	// each of its phases on a state of its rings, never on a time; the
+	// tool sends the 80 requests of the test in three parts, each after the
+	// line of the phase before, and each reader checks its
+	// order and its counts.
+	{kind = .Close, text = "server"},
+	{kind = .Wait, text = "root: server stopped: a holder"},
+	{kind = .Wait, text = "network: the endpoint of server ended: "},
 	{kind = .Front, text = "console"},
+	{kind = .Type, text = "start(\"requests_pace\")"},
+	{kind = .Wait, text = "requests_pace: server runs with three readers of requests: held of the pace Always_Holds_Writer and gapped of the pace Never_Holds_Writer, in rings of 32, and this process, the fast reader", fails_on = "requests_pace: WRONG"},
+	{kind = .Wait, text = "server: listening on the TCP port 80"},
+	// The 80 requests in three parts, each sent after the slow reader said
+	// that it drained its rings: no request is in flight while it drains,
+	// so the server waits exactly once in each phase.
+	{kind = .Http, text = "requests 32"},
+	{kind = .Wait, text = "requests_reader: phase 1 read", fails_on = "requests_reader: WRONG"},
+	{kind = .Http, text = "requests 32"},
+	{kind = .Wait, text = "requests_reader: phase 2 read", fails_on = "requests_reader: WRONG"},
+	{kind = .Http, text = "requests 16"},
+	{kind = .Wait, text = "requests_pace: the fast reader read the 80 records; it waits for the stop of server", fails_on = "requests_pace: WRONG"},
+	// The tool has the answer of each request: the principal stops server,
+	// and the readers read the end of their rings.
+	{kind = .Type, text = "stop(\"server\")"},
+	{kind = .Wait, text = "root: server stopped: "},
+	{kind = .Wait, text = "requests_reader: held, of the pace Always_Holds_Writer: the joined record of 0 and the 80 records in order, no gap, with a ring of 32 that held the server twice: as it must", fails_on = "requests_reader: WRONG", any_order = true},
+	{kind = .Wait, text = "requests_reader: gapped, of the pace Never_Holds_Writer: the joined record of 0, 48 records, and one gap record of exactly 32 records from the serial 31, which the records around it meet: as it must", fails_on = "requests_reader: WRONG", any_order = true},
+	{kind = .Wait, text = "requests_pace: the fast reader: the joined record of 0 and the 80 records in order, no gap; the server was held 2 times by the slow reader of the pace Always_Holds_Writer and refused no record: as it must", fails_on = "requests_pace: WRONG"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

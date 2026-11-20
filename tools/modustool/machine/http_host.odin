@@ -2,6 +2,7 @@ package machine
 
 import "core:fmt"
 import "core:net"
+import "core:strconv"
 import "core:strings"
 import "core:time"
 import "modus:support/web"
@@ -179,6 +180,32 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 		}
 		took := time.tick_since(start)
 		foundation.test_passed_print("%d requests on one connection of the host through libslirp, each 200: %.0f requests in one second (the clock of the host)", COUNT, f64(COUNT) / time.duration_seconds(took))
+	case "requests":
+		// A count of requests one after the other on one connection, each
+		// 200: the record output requests of the server gets exactly that
+		// count of records, which a reader of the test checks.
+		count, parsed := strconv.parse_int(parts[1] if len(parts) > 1 else "")
+		if !parsed || count <= 0 {
+			fmt.eprintfln("modustool: the HTTP case \"requests\" needs a count of requests: %q", case_text)
+			return false
+		}
+		connection, ok := http_host_connect(forward)
+		if !ok {
+			return false
+		}
+		defer http_host_close(&connection)
+		for index in 0 ..< count {
+			if !http_host_send(&connection, "GET /counts.json HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n") {
+				return false
+			}
+			answer := http_host_answer(&connection)
+			if !answer.ok || answer.status != 200 {
+				fmt.eprintfln("modustool: the request %d of %d: status %d", index, count, answer.status)
+				return false
+			}
+			free_all(context.temp_allocator)
+		}
+		foundation.test_passed_print("%d requests on one connection of the host through libslirp, each 200", count)
 	case "new-connections":
 		// One connection for each request.
 		COUNT :: 300
