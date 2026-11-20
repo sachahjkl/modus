@@ -145,7 +145,9 @@ the_facts_of_settings_write_the_lines_of_before :: proc(t: ^testing.T) {
 	for count in COUNTS {
 		facts_expect_line(t, render(t, file, "Records_Repeated", {{"records", count}}), line_of_before("settings: kept ", count, " records, one commit each"))
 	}
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"font", 6}, {"subpixel_order", 6}, {"pointer_theme", 6}, {"grid_fit", 6}, {"keyboard_layout", 6}, {"appearance", 6}, {"store", u32(len(stores[1]))}, {"zone", 6}, {"in_force", 5}, {"setting_value", 5}, {"local_time", 5}))
+	// The scale is written by the name of its value: "1.375", "1.625" and
+	// "1.875" are the longest, 5 bytes.
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"font", 6}, {"subpixel_order", 6}, {"pointer_theme", 6}, {"grid_fit", 6}, {"keyboard_layout", 6}, {"appearance", 6}, {"scale", u32(len("1.375"))}, {"store", u32(len(stores[1]))}, {"zone", 6}, {"in_force", 5}, {"setting_value", 5}, {"local_time", 5}))
 }
 
 // The facts of inspect: the counts at their edges, the longest process
@@ -580,6 +582,9 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	for setting_field in ([7]string{"font", "subpixel_order", "pointer_theme", "grid_fit", "keyboard_layout", "appearance", "in_force"}) {
 		most[setting_field] = 6
 	}
+	// The name of the value of the scale: "1.375", "1.625" and "1.875" are
+	// the longest, 5 bytes.
+	most["scale"] = u32(len("1.375"))
 	most["candidate"] = 31
 	most["theme_file"] = u32(len(pointer_pictures.RESOURCE_OF_THE_SYSTEM))
 	most["typed"] = 64

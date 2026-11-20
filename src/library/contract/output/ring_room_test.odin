@@ -153,17 +153,23 @@ the_writes_that_waited_count_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, write_counts_after(before, .Write, false, false), before)
 	full := write_counts_after(before, write_step_of(true, false, false), false, false)
 	testing.expect(t, full.held == 4 && full.refused == 3)
-	// A write with no wait that a full ring of the pace Always_Holds_Writer
-	// held, beside a full ring of the pace Writer_Chooses: the first ring
-	// closes during the wait, and the next look finds the second, which
-	// gives Full. One hold and one refusal, each counted once.
+	// A write with no wait beside a full ring of the pace
+	// Always_Holds_Writer and a full ring of the pace Writer_Chooses: the
+	// second gives Full at the first look, before any wait, so the write
+	// counts one refusal and no hold. A write that waited never meets a
+	// full ring of the pace Writer_Chooses at a later look: only the writer
+	// fills a ring, and it pushes nothing while it waits; its one way to
+	// Full is its deadline, above.
 	first_look := write_step_of(true, true, false)
-	testing.expect_value(t, first_look, Write_Step.Wait)
-	waited := write_counts_after(before, first_look, false, false)
-	second_look := write_step_of(true, false, false)
-	testing.expect_value(t, second_look, Write_Step.Full)
-	then_full := write_counts_after(waited, second_look, true, false)
-	testing.expect(t, then_full.held == 5 && then_full.refused == 3 && then_full.written == 3)
+	testing.expect_value(t, first_look, Write_Step.Full)
+	refused_at_once := write_counts_after(before, first_look, false, false)
+	testing.expect(t, refused_at_once.held == 4 && refused_at_once.refused == 3 && refused_at_once.written == 3)
+	// With no wait, a full ring of the pace Always_Holds_Writer alone holds
+	// the write, and its deadline ends it: one hold and one refusal.
+	held_look := write_step_of(false, true, false)
+	testing.expect_value(t, held_look, Write_Step.Wait)
+	held_then_full := write_counts_after(write_counts_after(before, held_look, false, false), held_look, true, true)
+	testing.expect(t, held_then_full.held == 5 && held_then_full.refused == 3 && held_then_full.written == 3)
 }
 
 // The rings that take the record of a write: only a ring with room; a ring

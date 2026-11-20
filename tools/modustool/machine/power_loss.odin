@@ -512,8 +512,9 @@ kept_settings_of :: proc(contents: ^fuzz.Disk_Contents) -> (text: string, found:
 		values := settings.values_of(choice)
 		builder := strings.builder_make(context.temp_allocator)
 		for setting in settings.Setting {
-			description := settings.descriptions[setting]
-			fmt.sbprintf(&builder, "%s%s %s", setting == .Font ? "" : ", ", description.title, description.value_names[values[setting]])
+			// A value is kept as its word, which is its place only for a
+			// setting whose first word is 0.
+			fmt.sbprintf(&builder, "%s%s %s", setting == .Font ? "" : ", ", settings.descriptions[setting].title, settings.value_name_of(setting, u32(values[setting])))
 		}
 		return strings.to_string(builder), true, true
 	}

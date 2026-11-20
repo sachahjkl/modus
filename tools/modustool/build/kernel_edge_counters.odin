@@ -46,20 +46,53 @@ module_edge_counter_command :: proc(build: foundation.Module_Build) -> []string 
 	return command[:]
 }
 
-// kernel_ir_constructors_removed gives the IR with no line of the list of
-// the constructors, and the count of the lines that it removed. The kernel
-// runs no constructor, and the conversion refuses a module with one.
-kernel_ir_constructors_removed :: proc(ir: string, allocator := context.temp_allocator) -> (without: string, removed: int) {
+// The constructor that the pass adds, which calls
+// __sanitizer_cov_trace_pc_guard_init, and the start of its comdat line.
+KERNEL_IR_PASS_CONSTRUCTOR :: "@sancov.module_ctor_trace_pc_guard"
+KERNEL_IR_PASS_CONSTRUCTOR_COMDAT_START :: "$sancov.module_ctor_trace_pc_guard "
+// The start of the list of the used globals when the constructor is its one
+// element, as the pass writes it.
+KERNEL_IR_USED_ONLY_CONSTRUCTOR :: "@llvm.used = appending global [1 x ptr] [ptr " + KERNEL_IR_PASS_CONSTRUCTOR + "]"
+
+// kernel_ir_constructors_removed gives the IR with no list of the
+// constructors and with no constructor of the pass: its definition, from
+// its `define` line to the `}` that ends it, its comdat line, and the list
+// of the used globals that holds only it. The
+// kernel runs no constructor, the conversion refuses a module with one, and
+// the counters need no init: the place of a guard in its section is its
+// edge, and the boot line names the counters. A constructor left in the IR
+// is a procedure that no code calls, which the measure of the kernel stack
+// refuses. lists and constructors count what it removed.
+kernel_ir_constructors_removed :: proc(ir: string, allocator := context.temp_allocator) -> (without: string, lists, constructors: int) {
 	builder := strings.builder_make(allocator)
 	rest := ir
+	in_constructor := false
 	for line in strings.split_lines_after_iterator(&rest) {
-		if strings.has_prefix(line, KERNEL_IR_CONSTRUCTORS_LINE_START) {
-			removed += 1
+		if in_constructor {
+			if strings.trim_right(line, "\r\n") == "}" {
+				in_constructor = false
+			}
+			continue
+		}
+		switch {
+		case strings.has_prefix(line, KERNEL_IR_CONSTRUCTORS_LINE_START):
+			lists += 1
+			continue
+		case strings.has_prefix(line, KERNEL_IR_PASS_CONSTRUCTOR_COMDAT_START):
+			continue
+		case strings.has_prefix(line, KERNEL_IR_USED_ONLY_CONSTRUCTOR):
+			// The pass keeps its constructor from removal with this list.
+			// A list that holds other globals too stays, and its reference
+			// to the constructor stops the build after this removal.
+			continue
+		case strings.has_prefix(line, "define ") && strings.contains(line, KERNEL_IR_PASS_CONSTRUCTOR + "("):
+			constructors += 1
+			in_constructor = true
 			continue
 		}
 		strings.write_string(&builder, line)
 	}
-	return strings.to_string(builder), removed
+	return strings.to_string(builder), lists, constructors
 }
 
 // The words before the type of a global of the IR.
@@ -128,15 +161,18 @@ kernel_linked_guard_count :: proc(module_name: string) -> (count: int, ok: bool)
 }
 
 // kernel_edge_counters_instrument runs the pass on the IR of a counted
-// kernel, removes the list of the constructors, and gives the count of the
-// guards for nasm.
+// kernel, removes the list of the constructors and the constructor of the
+// pass, and gives the count of the guards for nasm.
 kernel_edge_counters_instrument :: proc(build: foundation.Module_Build) -> (guard_count: int, ok: bool) {
 	foundation.run(module_edge_counter_command(build)) or_return
 	path := foundation.join(foundation.module_build_folder, "/", build.name, "/", build.name, ".ll")
 	ir := foundation.read_file(path) or_return
-	without, removed := kernel_ir_constructors_removed(string(ir))
-	if removed == 0 {
-		fmt.eprintfln("modustool: the IR of %s after the pass has no list of constructors: the pass of opt did not run as the tool expects", build.name)
+	without, lists, constructors := kernel_ir_constructors_removed(string(ir))
+	// A pass of another form (another constructor, a second one, a
+	// reference that stays) would leave code that no entry reaches, or a
+	// call of an init that the kernel does not define.
+	if lists == 0 || constructors != 1 || strings.contains(without, KERNEL_IR_PASS_CONSTRUCTOR) {
+		fmt.eprintfln("modustool: the IR of %s after the pass has %d lists of constructors and %d constructors %s, and the tool removes one list and that one constructor with each reference to it: the pass of opt did not run as the tool expects", build.name, lists, constructors, KERNEL_IR_PASS_CONSTRUCTOR)
 		return 0, false
 	}
 	count, counted := kernel_ir_guard_count(without)

@@ -43,14 +43,10 @@ __sanitizer_cov_trace_pc_guard:
 .done:
 	ret
 
-; (start, end: ^u32): the constructor that the pass adds calls it. The
-; kernel runs no constructor, and the tool removes the list of the
-; constructors from the IR; the constructor itself stays, with this call,
-; so the symbol is defined here: a symbol with no definition would be an
-; import, and the kernel has none.
-global __sanitizer_cov_trace_pc_guard_init
-__sanitizer_cov_trace_pc_guard_init:
-	ret
+; The pass also adds a constructor that calls an init of the guards. The
+; kernel runs no constructor and needs no init, so the tool removes that
+; constructor from the IR (tools/modustool/build/kernel_edge_counters.odin),
+; and no code calls an init.
 
 section .rodata
 

@@ -1,5 +1,5 @@
-// A reader of the measures of the record outputs
-// (src/md/features/module_outputs.md, "The measures that decide it", 2).
+// A reader of the measure 2 of the record outputs
+// (src/md/features/module_outputs.md, "The measures that decide it").
 // The test module `output_measure` starts it, then starts
 // `output_measure_writer` with a wiring list whose rows wire `samples` to
 // this record input.

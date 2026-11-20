@@ -26,10 +26,13 @@ import terminal "modus:support/terminal"
 // console checks against the fact tables of the image before any call,
 // never a text.
 
-FACT_NAME_CAPACITY :: 256 // The fact names of the boot image that the console knows: a name past them is not offered and not found.
+// The fact names of the boot image that the console knows: a name past them
+// is not offered and not found. Every line of a module is a fact, so the
+// image holds about 2000 fact types; the bound keeps room for twice that.
+FACT_NAME_CAPACITY :: 4096
 FACT_NAME_BYTES :: 64 // The bytes of one fact name, "package.Type": a longer one is not offered and not found.
 FACT_MATCH_CAPACITY :: 16 // The modules whose fact table holds one fact name, that facts() reads; more are left out.
-FACT_FILE_CAPACITY :: 64 // The module files of the boot image with a fact table that the console keeps; the facts of a module past them show raw.
+FACT_FILE_CAPACITY :: 160 // The module files of the boot image with a fact table that the console keeps; the facts of a module past them show raw.
 
 // The fact names of the boot image: each pair of a package name and a
 // record name that a table Facts holds, once. The image does not change

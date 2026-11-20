@@ -1,6 +1,6 @@
-// The writer of the measures of the record outputs
-// (src/md/features/module_outputs.md, "The measures that decide it", 1, 2
-// and 4). The test module `output_measure` starts it with a wiring list
+// The writer of the measures 1, 2 and 4 of the record outputs
+// (src/md/features/module_outputs.md, "The measures that decide it"). The
+// test module `output_measure` starts it with a wiring list
 // whose rows wire its record output `samples` to each of its readers, so
 // each ring exists before its first instruction and each reader joins at 0.
 //
