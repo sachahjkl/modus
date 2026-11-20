@@ -1617,6 +1617,9 @@ scenario := [?]Step {
 	// The picture shows spin() that runs: the console entered it. The keys
 	// of the next line wait unseen until the line ends.
 	{kind = .Wait, text = "[console] > spin()"},
+	// The echo comes before the call: Escape stops the call only once it
+	// runs, and an Escape before it is a key of the next line.
+	{kind = .Wait, text = "probe: spin runs, and never returns"},
 	{kind = .Shot, text = "running"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "console: Escape stops the line after "},
@@ -1628,6 +1631,9 @@ scenario := [?]Step {
 	// exact line, and no queue of the path of a key wrote that a record is
 	// lost (docs/ARCHITECTURE.md, "The path of a key").
 	{kind = .Type, text = "spin()"},
+	// Escape must come once the call runs: the keys before it wait in any
+	// case, so the wait for the call comes before them.
+	{kind = .Wait, text = "probe: spin runs, and never returns"},
 	{kind = .Keys, text = KEYS_HELD_LINE},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "console: Escape stops the line after "},
