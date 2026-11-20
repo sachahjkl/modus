@@ -19,6 +19,7 @@
 package hierarchy
 
 import "modus:contract/errors"
+import "modus:contract/storage_status"
 import format "modus:contract/store"
 import "modus:support/storage"
 import "modus:support/system"
@@ -90,13 +91,13 @@ outcome :: proc "contextless" (good: bool, what: string, parts: ..system.Part) {
 
 // refused_with says if a call failed with an error kind, and writes its
 // sentence.
-refused_with :: proc "contextless" (status: storage.Status, error: ^errors.Error_Record, kind: errors.Kind) -> bool {
+refused_with :: proc "contextless" (status: storage_status.Status, error: ^errors.Error_Record, kind: errors.Kind) -> bool {
 	return status == .Failed && error.kind == i64(kind)
 }
 
 // count_entries counts the entries of the tree of a place, page by page,
 // and checks that each page continues the order of the one before.
-count_entries :: proc "contextless" (connection: ^storage.Client, place: storage.Place) -> (objects: int, trees: int, in_order: bool, status: storage.Status) {
+count_entries :: proc "contextless" (connection: ^storage.Client, place: storage.Place) -> (objects: int, trees: int, in_order: bool, status: storage_status.Status) {
 	rows: [PAGE_ROWS]storage.Listed
 	names: [PAGE_ROWS * 64]u8
 	last: [64]u8
@@ -147,7 +148,7 @@ name_after :: proc "contextless" (name, before: []u8) -> bool {
 }
 
 // add_names makes entries of one kind under a place, in one commit.
-add_names :: proc "contextless" (place: storage.Place, prefix: string, count: int, kind: storage.Entry_Kind) -> (storage.Status, i64) {
+add_names :: proc "contextless" (place: storage.Place, prefix: string, count: int, kind: storage.Entry_Kind) -> (storage_status.Status, i64) {
 	rows: [OBJECTS_IN_PART]storage.Add_Row
 	names: [OBJECTS_IN_PART * 16]u8
 	used := 0

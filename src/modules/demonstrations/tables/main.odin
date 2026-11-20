@@ -39,6 +39,7 @@ package tables
 
 import "base:intrinsics"
 import "modus:contract/errors"
+import "modus:contract/call_status"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -140,7 +141,7 @@ export_of :: proc "contextless" (name: string) -> (index: u32, function: module.
 }
 
 // call_hostile runs one export of hostile_exports in one way.
-call_hostile :: proc "contextless" (way: Way, name: string, arguments: []isolated.Argument) -> (result: i64, status: system.Call_Status) {
+call_hostile :: proc "contextless" (way: Way, name: string, arguments: []isolated.Argument) -> (result: i64, status: call_status.Call_Status) {
 	index := module.export_find(hostile_file, name)
 	function, _ := module.function(hostile_file, index)
 	address, _ := module.export_address(hostile_file, uintptr(hostile_base), index)
@@ -157,7 +158,7 @@ call_hostile :: proc "contextless" (way: Way, name: string, arguments: []isolate
 }
 
 // call runs one export with the same arguments in one way.
-call :: proc "contextless" (way: Way, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: system.Call_Status) {
+call :: proc "contextless" (way: Way, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: call_status.Call_Status) {
 	index, function, address := export_of(name)
 	switch way {
 	case .Direct:

@@ -48,6 +48,7 @@ import "modus:contract/fixed_addresses"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import "modus:contract/ring"
+import "modus:contract/storage_status"
 import store_contract "modus:contract/store"
 import "modus:support/system"
 
@@ -100,7 +101,7 @@ export_error_of_result :: proc "contextless" (result: i64) -> (answer: Export_Er
 
 // export_failed_with says if a call failed with one answer: the status
 // Failed and the result of that member.
-export_failed_with :: proc "contextless" (status: Status, result: i64, answer: Export_Error) -> bool {
+export_failed_with :: proc "contextless" (status: storage_status.Status, result: i64, answer: Export_Error) -> bool {
 	read, ok := export_error_of_result(result)
 	return status == .Failed && ok && read == answer
 }
@@ -116,16 +117,6 @@ Client :: struct {
 	file:          []u8, // The file of the storage service: the descriptions of its exports.
 	tag:           u32, // The tag of the last call.
 	gone:          bool, // The connection ended: each call gives Gone.
-}
-
-// The result of a call of this client, beside the result of the export.
-Status :: enum {
-	Ok, // The export ran and answered a number that is not negative.
-	Gone, // The connection ended: the grant was revoked, or the storage service stopped.
-	Refused, // The storage service refused the call: see isolated.Status.
-	Damaged, // The storage service has the object and cannot give its bytes: a block has a wrong check, or the disk gave an error.
-	Failed, // The export answered a negative number: the error record says why.
-	Too_Small, // The bytes do not fit in the buffer of the caller: the count of the bytes is the result.
 }
 
 // open opens the connection that the root service gave in the context of
@@ -179,7 +170,7 @@ connected :: proc "contextless" (client: ^Client) -> bool {
 // text has the bytes in the call region: copy them before the next call.
 // When the export answers a negative number, the status is Failed and error
 // has its error record, as the storage service wrote it.
-call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: Status) {
+call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: storage_status.Status) {
 	sent: Sent_Call
 	if sent, status = call_send(client, name, arguments); status != .Ok {
 		return 0, nil, status
@@ -214,7 +205,7 @@ Sent_Call :: struct {
 // call_send sends one isolated call of the export with a name, and does
 // not wait: call_answer reads its answer. One call is in flight at a time:
 // a call uses the call region whole.
-call_send :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument) -> (sent: Sent_Call, status: Status) {
+call_send :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument) -> (sent: Sent_Call, status: storage_status.Status) {
 	if !connected(client) {
 		return {}, .Gone
 	}
@@ -246,7 +237,7 @@ call_send :: proc "contextless" (client: ^Client, name: string, arguments: []iso
 // answered is false when it did not, and the caller waits on the
 // completions of the call ring, or does other work. arguments are the
 // arguments of call_send. The results are those of call.
-call_answer :: proc "contextless" (client: ^Client, sent: ^Sent_Call, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: Status, answered: bool) {
+call_answer :: proc "contextless" (client: ^Client, sent: ^Sent_Call, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: storage_status.Status, answered: bool) {
 	for _ in 0 ..< ring.CAPACITY {
 		completion, has := system.receive(&client.calls.completions)
 		if !has {
@@ -294,7 +285,7 @@ call_answer :: proc "contextless" (client: ^Client, sent: ^Sent_Call, arguments:
 // commit. The result is the generation of the commit, or a negative number
 // with the status Failed and the error record (see the export write of the
 // storage service).
-write :: proc "contextless" (client: ^Client, place: Place, name: string, data: []u8, error: ^errors.Error_Record = nil) -> (generation: i64, status: Status) {
+write :: proc "contextless" (client: ^Client, place: Place, name: string, data: []u8, error: ^errors.Error_Record = nil) -> (generation: i64, status: storage_status.Status) {
 	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {text = data}}
 	generation, _, status = call(client, "write", arguments[:], error)
 	return generation, status
@@ -304,7 +295,7 @@ write :: proc "contextless" (client: ^Client, place: Place, name: string, data: 
 // and its versions, or a tree and all under it. The result is the
 // generation of the commit, or a negative number with the status Failed and
 // the error record (Export_Error.Absent: no entry with this name).
-remove :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (generation: i64, status: Status) {
+remove :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (generation: i64, status: storage_status.Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
 	generation, _, status = call(client, "remove", arguments[:], error)
 	return generation, status
@@ -314,7 +305,7 @@ remove :: proc "contextless" (client: ^Client, place: Place, name: string, error
 // found is false when the tree has no such object. The status Damaged says
 // that the store has the object and that its bytes did not come: the
 // caller must not take it for an empty object.
-read :: proc "contextless" (client: ^Client, place: Place, name: string, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, found: bool, status: Status) {
+read :: proc "contextless" (client: ^Client, place: Place, name: string, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, found: bool, status: storage_status.Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
 	size: i64
 	size, _, status = call(client, "size", arguments[:], error)
@@ -345,7 +336,7 @@ read :: proc "contextless" (client: ^Client, place: Place, name: string, result:
 
 // size gives the count of bytes of the object `name` under a place, with
 // the pending changes of this connection.
-size :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (bytes: i64, status: Status) {
+size :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (bytes: i64, status: storage_status.Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
 	bytes, _, status = call(client, "size", arguments[:], error)
 	return bytes, status
@@ -354,7 +345,7 @@ size :: proc "contextless" (client: ^Client, place: Place, name: string, error: 
 // read_range copies the bytes of an object from `offset` into result, up
 // to its end, as this connection sees it: with its pending changes. A hole
 // reads as zero bytes. bytes is empty at the end.
-read_range :: proc "contextless" (client: ^Client, place: Place, name: string, offset: u64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: Status) {
+read_range :: proc "contextless" (client: ^Client, place: Place, name: string, offset: u64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: storage_status.Status) {
 	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = offset}}
 	count: i64
 	text: []u8
@@ -375,7 +366,7 @@ read_range :: proc "contextless" (client: ^Client, place: Place, name: string, o
 // write_range writes data at `offset` of an object as a pending change of
 // this connection: no commit, no hash. The result is the size of the object
 // with the pending changes. commit makes the pending changes one commit.
-write_range :: proc "contextless" (client: ^Client, place: Place, name: string, offset: u64, data: []u8, error: ^errors.Error_Record = nil) -> (size: i64, status: Status) {
+write_range :: proc "contextless" (client: ^Client, place: Place, name: string, offset: u64, data: []u8, error: ^errors.Error_Record = nil) -> (size: i64, status: storage_status.Status) {
 	arguments := [4]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = offset}, {text = data}}
 	size, _, status = call(client, "write_range", arguments[:], error)
 	return size, status
@@ -383,7 +374,7 @@ write_range :: proc "contextless" (client: ^Client, place: Place, name: string, 
 
 // set_size makes the size of an object `size` bytes, as a pending change of
 // this connection: a cut, or an extension with zero bytes.
-set_size :: proc "contextless" (client: ^Client, place: Place, name: string, size: u64, error: ^errors.Error_Record = nil) -> Status {
+set_size :: proc "contextless" (client: ^Client, place: Place, name: string, size: u64, error: ^errors.Error_Record = nil) -> storage_status.Status {
 	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = size}}
 	_, _, status := call(client, "set_size", arguments[:], error)
 	return status
@@ -405,7 +396,7 @@ Commit_Measure :: struct {
 // commit makes the pending changes of this connection on an object one
 // commit, on the disk at the return. The measure says what it hashed and
 // wrote.
-commit :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (measure: Commit_Measure, status: Status) {
+commit :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (measure: Commit_Measure, status: storage_status.Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
 	bytes: []u8
 	_, bytes, status = call(client, "commit", arguments[:], error)
@@ -416,7 +407,7 @@ commit :: proc "contextless" (client: ^Client, place: Place, name: string, error
 }
 
 // open_tree gives the place of the tree `name` under a place.
-open_tree :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (opened: Place, status: Status) {
+open_tree :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (opened: Place, status: storage_status.Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
 	result: i64
 	result, _, status = call(client, "open", arguments[:], error)
@@ -426,7 +417,7 @@ open_tree :: proc "contextless" (client: ^Client, place: Place, name: string, er
 // open_store gives a place on the root of another store, for a caller
 // that can name it (the export open_store): a caller that acts for the
 // principal. Another caller gets Failed with Export_Error.Acts_For_Principal.
-open_store :: proc "contextless" (client: ^Client, store: string, error: ^errors.Error_Record = nil) -> (opened: Place, status: Status) {
+open_store :: proc "contextless" (client: ^Client, store: string, error: ^errors.Error_Record = nil) -> (opened: Place, status: storage_status.Status) {
 	arguments := [1]isolated.Argument{{text = transmute([]u8)store}}
 	result: i64
 	result, _, status = call(client, "open_store", arguments[:], error)
@@ -434,7 +425,7 @@ open_store :: proc "contextless" (client: ^Client, store: string, error: ^errors
 }
 
 // close_tree frees a place.
-close_tree :: proc "contextless" (client: ^Client, place: Place, error: ^errors.Error_Record = nil) -> Status {
+close_tree :: proc "contextless" (client: ^Client, place: Place, error: ^errors.Error_Record = nil) -> storage_status.Status {
 	arguments := [1]isolated.Argument{{integer = u64(place)}}
 	_, _, status := call(client, "close", arguments[:], error)
 	return status
@@ -474,7 +465,7 @@ Add_Row :: struct {
 // rows := [2]storage.Add_Row{{0, 6, i64(storage.Entry_Kind.Tree)}, {6, 5, i64(storage.Entry_Kind.Object)}}
 // generation, status := storage.add(&client, storage.ROOT, rows[:], transmute([]u8)names)
 // ```
-add :: proc "contextless" (client: ^Client, place: Place, rows: []Add_Row, names: []u8, error: ^errors.Error_Record = nil) -> (generation: i64, status: Status) {
+add :: proc "contextless" (client: ^Client, place: Place, rows: []Add_Row, names: []u8, error: ^errors.Error_Record = nil) -> (generation: i64, status: storage_status.Status) {
 	arguments: [3]isolated.Argument
 	arguments[0].integer = u64(place)
 	arguments[1].table = {records = ([^]u8)(raw_data(rows))[:len(rows) * size_of(Add_Row)], count = u64(len(rows))}
@@ -495,7 +486,7 @@ Listed :: struct {
 // list gives a page of the entries of the tree of a place, after the name
 // `after` ("" from the start), as many as `rows` and `names` hold. An
 // empty page: no more entries.
-list :: proc "contextless" (client: ^Client, place: Place, after: string, rows: []Listed, names: []u8, error: ^errors.Error_Record = nil) -> (page: []Listed, status: Status) {
+list :: proc "contextless" (client: ^Client, place: Place, after: string, rows: []Listed, names: []u8, error: ^errors.Error_Record = nil) -> (page: []Listed, status: storage_status.Status) {
 	arguments: [4]isolated.Argument
 	arguments[0].integer = u64(place)
 	arguments[1].text = transmute([]u8)after
@@ -511,7 +502,7 @@ list :: proc "contextless" (client: ^Client, place: Place, after: string, rows: 
 
 // rename moves the entry `name` under a place to `to_name` under
 // `to_place`, in one commit.
-rename :: proc "contextless" (client: ^Client, place: Place, name: string, to_place: Place, to_name: string, error: ^errors.Error_Record = nil) -> (generation: i64, status: Status) {
+rename :: proc "contextless" (client: ^Client, place: Place, name: string, to_place: Place, to_name: string, error: ^errors.Error_Record = nil) -> (generation: i64, status: storage_status.Status) {
 	arguments := [4]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(to_place)}, {text = transmute([]u8)to_name}}
 	generation, _, status = call(client, "rename", arguments[:], error)
 	return generation, status
@@ -528,7 +519,7 @@ Shared :: struct {
 // share makes a new connection whose root is the tree of a place, and
 // gives a Client of it: its two handles can go to another process, which
 // opens it with open_handles. number is for unshare.
-share :: proc "contextless" (client: ^Client, place: Place, read_only: bool, error: ^errors.Error_Record = nil) -> (shared: Client, number: i64, status: Status) {
+share :: proc "contextless" (client: ^Client, place: Place, read_only: bool, error: ^errors.Error_Record = nil) -> (shared: Client, number: i64, status: storage_status.Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {integer = read_only ? 1 : 0}}
 	bytes: []u8
 	_, bytes, status = call(client, "share", arguments[:], error)
@@ -571,7 +562,7 @@ open_handles :: proc "contextless" (ring_memory, region_memory: system.Handle, s
 }
 
 // unshare ends a share that this connection made.
-unshare :: proc "contextless" (client: ^Client, number: i64, error: ^errors.Error_Record = nil) -> Status {
+unshare :: proc "contextless" (client: ^Client, number: i64, error: ^errors.Error_Record = nil) -> storage_status.Status {
 	arguments := [1]isolated.Argument{{integer = u64(number)}}
 	_, _, status := call(client, "unshare", arguments[:], error)
 	return status
@@ -596,7 +587,7 @@ Usage :: struct {
 USAGE_NOT_COUNTED :: -1
 
 // usage gives the counts of the store of the connection.
-usage :: proc "contextless" (client: ^Client) -> (counts: Usage, status: Status) {
+usage :: proc "contextless" (client: ^Client) -> (counts: Usage, status: storage_status.Status) {
 	bytes: []u8
 	_, bytes, status = call(client, "usage", nil)
 	if status == .Ok && len(bytes) >= size_of(Usage) {
@@ -624,7 +615,7 @@ Version :: struct {
 // versions copies the states of an object of the store of the process into
 // `into`, the oldest first, the current version last. total is the count of
 // all the states: more than len(rows) when they did not fit.
-versions :: proc "contextless" (client: ^Client, place: Place, name: string, into: []Version, error: ^errors.Error_Record = nil) -> (rows: []Version, total: i64, status: Status) {
+versions :: proc "contextless" (client: ^Client, place: Place, name: string, into: []Version, error: ^errors.Error_Record = nil) -> (rows: []Version, total: i64, status: storage_status.Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
 	bytes: []u8
 	total, bytes, status = call(client, "versions", arguments[:], error)
@@ -640,7 +631,7 @@ versions :: proc "contextless" (client: ^Client, place: Place, name: string, int
 
 // version copies the bytes of an object at a generation (a version, or the
 // current version) into result. Too_Small: result is smaller than the bytes.
-version :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: Status) {
+version :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: storage_status.Status) {
 	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(generation)}}
 	size: i64
 	text: []u8
@@ -671,7 +662,7 @@ Byte_Range :: struct {
 // compare copies into `into` the ranges of bytes that differ between two
 // states of an object (two generations). The ranges that do not fit in
 // `into` are not given.
-compare :: proc "contextless" (client: ^Client, place: Place, name: string, first: i64, second: i64, into: []Byte_Range, error: ^errors.Error_Record = nil) -> (rows: []Byte_Range, status: Status) {
+compare :: proc "contextless" (client: ^Client, place: Place, name: string, first: i64, second: i64, into: []Byte_Range, error: ^errors.Error_Record = nil) -> (rows: []Byte_Range, status: storage_status.Status) {
 	arguments := [4]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(first)}, {integer = u64(second)}}
 	bytes: []u8
 	_, bytes, status = call(client, "compare", arguments[:], error)
@@ -700,7 +691,7 @@ Erase_Measure :: struct {
 // Only a process with the grant Versions_Erase may call it, on its own
 // store: another process, and a share, get Failed with No_Grant. An object
 // with no version gives a row of zeros, and the disk does not change.
-erase_versions :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (measure: Erase_Measure, status: Status) {
+erase_versions :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (measure: Erase_Measure, status: storage_status.Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
 	bytes: []u8
 	_, bytes, status = call(client, "erase_versions", arguments[:], error)
@@ -712,7 +703,7 @@ erase_versions :: proc "contextless" (client: ^Client, place: Place, name: strin
 
 // restore makes a version of an object its current version again, in one
 // commit. The result is the generation of the commit.
-restore :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, error: ^errors.Error_Record = nil) -> (commit: i64, status: Status) {
+restore :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, error: ^errors.Error_Record = nil) -> (commit: i64, status: storage_status.Status) {
 	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(generation)}}
 	commit, _, status = call(client, "restore", arguments[:], error)
 	return commit, status

@@ -36,6 +36,7 @@ package root
 
 import "base:intrinsics"
 import "modus:contract/errors"
+import "modus:contract/storage_status"
 import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:support/disk_process"
@@ -506,7 +507,7 @@ persisted_table_send :: proc "contextless" (principal: u64, call: Persisted_Tabl
 		table.argument_count = 3
 		export = "write"
 	}
-	status: storage.Status
+	status: storage_status.Status
 	table.sent, status = storage.call_send(&table.client, export, table.arguments[:table.argument_count])
 	if status != .Ok {
 		return false

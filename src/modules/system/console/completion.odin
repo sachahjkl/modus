@@ -349,8 +349,8 @@ names_of_a_call :: proc "contextless" (table: ^Candidate_Table, place: line_edit
 				if kind, _ := module.field_kind(field_item); kind != .Status || !which_ok {
 					return true
 				}
-				for word in 0 ..< op.contract_enum_member_count(which) {
-					if member, named := op.contract_enum_member_name(which, word); named {
+				for word in 0 ..< module.contract_enum_member_count(which) {
+					if member, named := module.contract_enum_member_name(which, word); named {
 						candidate_add(table, member, .Member, int(which))
 					}
 				}

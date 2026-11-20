@@ -322,6 +322,83 @@ each_field_kind_has_its_value_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, field_kind_value_kind(.Hash_Head), Value_Kind.Version)
 	testing.expect_value(t, field_kind_value_kind(.Hundredths), Value_Kind.Number)
 	testing.expect_value(t, field_kind_value_kind(.Nanoseconds_As_Microseconds), Value_Kind.Time)
+	testing.expect_value(t, field_kind_value_kind(.Tenths), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Hexadecimal_No_Leading_Zero), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Time_Of_Day), Value_Kind.Time)
+	testing.expect_value(t, field_kind_value_kind(.Text_View), Value_Kind.None)
+}
+
+// view_of gives the 16 bytes of a text view as a writer makes them: a
+// text of at most 12 bytes whole, a longer one by its offset in an area.
+@(private = "file")
+view_of :: proc(text: string, offset: u64) -> (view: [TEXT_VIEW_BYTES]u8) {
+	length := u32(len(text))
+	view[0], view[1], view[2], view[3] = u8(length), u8(length >> 8), u8(length >> 16), u8(length >> 24)
+	if len(text) <= TEXT_VIEW_INLINE_BYTES_MOST {
+		copy(view[4:], text)
+		return
+	}
+	copy(view[4:8], text)
+	for index in 0 ..< 8 {
+		view[8 + index] = u8(offset >> (8 * u64(index)))
+	}
+	return
+}
+
+// A view that breaks its form is refused: a byte past a short text that
+// is not zero, a long text past its area, at the largest offset, with a
+// prefix that is not its start, and a view of another size. Then the
+// edges of the length are read whole: 0, 1, 4, 12, 13, the first text out
+// of line, and a text at the end of its area.
+@(test)
+a_text_view_is_read_with_its_checks :: proc(t: ^testing.T) {
+	area := "0123456789abcdefghij"
+	dirty := view_of("abc", 0)
+	dirty[15] = 1
+	_, dirty_ok := text_view_read(dirty[:], transmute([]u8)area)
+	testing.expect(t, !dirty_ok)
+	past := view_of("0123456789abc", 8)
+	_, past_ok := text_view_read(past[:], transmute([]u8)area)
+	testing.expect(t, !past_ok)
+	largest := view_of("0123456789abc", max(u64))
+	_, largest_ok := text_view_read(largest[:], transmute([]u8)area)
+	testing.expect(t, !largest_ok)
+	wrong_prefix := view_of("x123456789abc", 0)
+	_, prefix_ok := text_view_read(wrong_prefix[:], transmute([]u8)area)
+	testing.expect(t, !prefix_ok)
+	_, size_ok := text_view_read(wrong_prefix[:15], transmute([]u8)area)
+	testing.expect(t, !size_ok)
+	for text in ([?]string{"", "a", "abcd", "abcdefghijkl"}) {
+		view := view_of(text, 0)
+		read, ok := text_view_read(view[:], nil)
+		testing.expectf(t, ok && string(read) == text, "the short text %q reads %q", text, string(read))
+	}
+	first_out := view_of("0123456789abc", 0)
+	read, ok := text_view_read(first_out[:], transmute([]u8)area)
+	testing.expect(t, ok && string(read) == "0123456789abc")
+	at_end := view_of("789abcdefghij", 7)
+	read, ok = text_view_read(at_end[:], transmute([]u8)area)
+	testing.expect(t, ok && string(read) == "789abcdefghij")
+}
+
+// The comparison from the fixed record: another length or another prefix
+// differ with no read of the area; a short text is decided whole; a long
+// text with the same length and prefix asks for its area.
+@(test)
+a_text_view_is_compared_by_its_head_first :: proc(t: ^testing.T) {
+	short := view_of("hello", 0)
+	testing.expect_value(t, text_view_compare_head(short[:], "hello"), Text_View_Comparison.Equal)
+	testing.expect_value(t, text_view_compare_head(short[:], "hellp"), Text_View_Comparison.Different)
+	testing.expect_value(t, text_view_compare_head(short[:], "hell"), Text_View_Comparison.Different)
+	testing.expect_value(t, text_view_compare_head(short[:], ""), Text_View_Comparison.Different)
+	empty: [TEXT_VIEW_BYTES]u8
+	testing.expect_value(t, text_view_compare_head(empty[:], ""), Text_View_Comparison.Equal)
+	long := view_of("/modules/a/b/c", 0)
+	testing.expect_value(t, text_view_compare_head(long[:], "/modules/a/b/c"), Text_View_Comparison.Read_Area)
+	testing.expect_value(t, text_view_compare_head(long[:], "/modulez/a/b/c"), Text_View_Comparison.Read_Area)
+	testing.expect_value(t, text_view_compare_head(long[:], "/mod"), Text_View_Comparison.Different)
+	testing.expect_value(t, text_view_compare_head(long[:], "xmodules/a/b/c"), Text_View_Comparison.Different)
+	testing.expect_value(t, text_view_compare_head(long[:15], "/modules/a/b/c"), Text_View_Comparison.Different)
 }
 
 // The table of the types of a field kind gives each name once, with the
@@ -349,6 +426,10 @@ each_field_kind_type_has_its_size :: proc(t: ^testing.T) {
 		{"Hash_Head_Field", size_of(Hash_Head_Field), false},
 		{"Hundredths", size_of(Hundredths), intrinsics.type_is_unsigned(Hundredths)},
 		{"Nanoseconds_As_Microseconds", size_of(Nanoseconds_As_Microseconds), intrinsics.type_is_unsigned(Nanoseconds_As_Microseconds)},
+		{"Tenths", size_of(Tenths), intrinsics.type_is_unsigned(Tenths)},
+		{"Hexadecimal_No_Leading_Zero", size_of(Hexadecimal_No_Leading_Zero), intrinsics.type_is_unsigned(Hexadecimal_No_Leading_Zero)},
+		{"Time_Of_Day", size_of(Time_Of_Day), intrinsics.type_is_unsigned(Time_Of_Day)},
+		{"Text_View", size_of(Text_View), false},
 	}
 	testing.expect_value(t, len(FIELD_KIND_TYPES), len(sizes))
 	for item, index in FIELD_KIND_TYPES {

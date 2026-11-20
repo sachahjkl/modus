@@ -83,6 +83,23 @@ Status :: enum u32 {
 	Unsupported  = 5, // The device cannot do this request.
 }
 
+// The name of each status, as Status names it: a reader of a log fact
+// writes it (value_kinds.Contract_Enum).
+@(rodata)
+STATUS_NAMES := [Status]string {
+	.Ok           = "Ok",
+	.Bad_Command  = "Bad_Command",
+	.Out_Of_Range = "Out_Of_Range",
+	.No_Region    = "No_Region",
+	.Device_Error = "Device_Error",
+	.Unsupported  = "Unsupported",
+}
+
+// The word of a Status in 8 bytes, for a record that holds it beside
+// fields of 8 bytes with no padding (value_kinds.Contract_Enum_Type).
+Status_Word :: distinct u64
+#assert(size_of(Status_Word) >= size_of(Status))
+
 // The bound of a wait for the device, in milliseconds: the hang bound of a
 // process (system.ANSWER_BOUND_MILLISECONDS, which the block service checks
 // against it), never a measure of a disk. It is the limit of the record of
