@@ -107,6 +107,14 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 	system.stop(.Failed)
 }
 
+// wrong_refused stops as wrong does, and writes the seven words of the
+// error record of the completion too: several limits of the root service
+// give one status, and the record names the one that refused.
+wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
+	system.log(.Error, "output_wiring: WRONG: ", text, " ", u64(status), "; the error record: ", answer[0], " ", answer[1], " ", answer[2], " ", answer[3], " ", answer[4], " ", answer[5], " ", answer[6])
+	system.stop(.Failed)
+}
+
 // root_call sends one command on the root ring and waits for its
 // completion.
 @(private = "file")
@@ -183,7 +191,7 @@ start_listed :: proc "contextless" (name: string, listed: bool) -> (system.Statu
 start_child :: proc "contextless" (name: string) -> system.Handle {
 	status, answer := start_listed(name, false)
 	if status != .Ok || answer[0] == 0 {
-		wrong("the start of a child gave the status", u64(status))
+		wrong_refused("the start of a child gave the status", status, answer)
 	}
 	return system.Handle(answer[0])
 }
@@ -399,7 +407,7 @@ probes_case :: proc "contextless" () {
 	list_write(rows[:], handles[:])
 	status, answer := start_listed("output_writer", true)
 	if status != .Ok || answer[0] == 0 {
-		wrong("the start of the writer with its list gave the status", u64(status))
+		wrong_refused("the start of the writer with its list gave the status", status, answer)
 	}
 	writer := system.Handle(answer[0])
 
@@ -544,7 +552,7 @@ end_words_case :: proc "contextless" () {
 		list_write(rows[:], handles[:])
 		status, answer := start_listed("output_writer", true)
 		if status != .Ok || answer[0] == 0 {
-			wrong("the start of a writer of an end word gave the status", u64(status))
+			wrong_refused("the start of a writer of an end word gave the status", status, answer)
 		}
 		writer := system.Handle(answer[0])
 		processes := [2]system.Handle{writer, reader}
@@ -684,7 +692,7 @@ asker_case :: proc "contextless" () -> ! {
 	list_write(rows[:], nil)
 	status, answer := start_listed("output_writer", true)
 	if status != .Ok || answer[1] == 0 {
-		wrong("the start of the writer with a row of the asker gave the status", u64(status))
+		wrong_refused("the start of the writer with a row of the asker gave the status", status, answer)
 	}
 	number := u32(answer[1])
 	probe: Probe
