@@ -42,6 +42,7 @@
 package module_files
 
 import "modus:contract/blake3"
+import "modus:contract/storage_status"
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -254,7 +255,7 @@ remote_ended :: proc "contextless" (index: int) -> bool {
 // network_failure writes the line of a failure of the fetch, and gives the
 // result of the export.
 network_failure :: proc "contextless" (error: ^errors.Error_Record, result: i64, kind: errors.Kind, unit: errors.Unit, path: string, why: string, found: i64 = 0) -> i64 {
-	system.log(.Info, "module_files: GET ", path, ": ", why, ": nothing is stored")
+	system.log_fact(.Info, Get_Failed{problem = value_kinds.text_field(why, GET_PROBLEM_FIELD_BYTES)}, path)
 	return errors.fail(error, result, kind, unit, 2, 0, 0, found)
 }
 
@@ -354,7 +355,7 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 // error record of the export; each other status is an answer that the
 // export does not allow. The subjects of an entry of a listing are checks
 // of this service, whose status is always Refused.
-store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^errors.Error_Record, status: storage.Status, subject: Store_Subject, nickname := "") -> i64 {
+store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^errors.Error_Record, status: storage_status.Status, subject: Store_Subject, nickname := "") -> i64 {
 	switch subject {
 	case .File:
 		if status == .Failed {
@@ -474,7 +475,7 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	}
 	digits: [disk_process.HASH_DIGITS]u8
 	disk_process.hash_write(&digits, hash)
-	system.log(.Info, "module_files: stored ", system.Module_Name{name}, " from ", request_path, ": ", u64(size), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
+	system.log_fact(.Info, File_Stored{size = value_kinds.Size_In_Bytes(size), file_hash = value_kinds.Hash_Field(hash), nickname = value_kinds.module_name_field(name)}, request_path)
 	copy(result^, digits[:])
 	return disk_process.HASH_DIGITS
 }

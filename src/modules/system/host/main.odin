@@ -103,10 +103,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	error := (^module.Load_Error)(raw_data(region))
 	index, loaded := system.module_space_load(&space, file, error)
 	if !loaded {
-		buffer: [512]u8
-		writer := system.Writer{buffer = buffer[:]}
-		system.load_error_text(&writer, error)
-		system.log(.Info, "host: cannot load the module: ", system.written(&writer))
+		load_failure_log(error)
 		system.send(&queue.completions, ring.Record{kind = u32(isolated.Status.Load_Failed)})
 		system.stop(.Failed)
 	}

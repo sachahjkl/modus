@@ -368,7 +368,7 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	}
 	for item in ([?]Run_Read{{HEAD + " 01z02", 20}, {HEAD + " 01zz02", 40}, {HEAD + " 01zzg02", 41}}) {
 		read, read_ok := fact_line_parse(item.text)
-		expected: [op.LOG_FACT_VALUE_CAPACITY]u8
+		expected: [op.LOG_FACT_VALUES_MOST]u8
 		expected[0], expected[item.zeros + 1] = 0x01, 0x02
 		testing.expectf(t, read_ok && read.value_count == item.zeros + 2 && read.values == expected, "%q does not read back as %d zero bytes between two bytes", item.text, item.zeros)
 		testing.expect_value(t, fact_render_line(hash, FACT_RENDER_KEY, expected[:item.zeros + 2]), item.text)
@@ -378,7 +378,7 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	// value alone and after each run, and a Text field of its whole size.
 	for byte_value in 1 ..= 255 {
 		for zeros in ([?]int{0, 1, op.LOG_FACT_LINE_ZERO_RUN_MOST, op.LOG_FACT_LINE_ZERO_RUN_MOST + 1}) {
-			bytes: [op.LOG_FACT_VALUE_CAPACITY]u8
+			bytes: [op.LOG_FACT_VALUES_MOST]u8
 			bytes[zeros] = u8(byte_value)
 			read, read_ok := fact_line_parse(fact_render_line(hash, FACT_RENDER_KEY, bytes[:zeros + 1]))
 			testing.expectf(t, read_ok && read.value_count == zeros + 1 && read.values == bytes && read.key_tag == op.log_fact_key_tag(FACT_RENDER_KEY), "the byte %d after %d zero bytes reads back wrong", byte_value, zeros)
@@ -389,7 +389,7 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 		value = 'a' + u8(index % 26)
 	}
 	whole_text, whole_text_ok := fact_line_parse(fact_render_line(hash, FACT_RENDER_KEY, text_field[:]))
-	testing.expect(t, whole_text_ok && whole_text.value_count == op.LOG_FACT_VALUE_CAPACITY && whole_text.values == text_field)
+	testing.expect(t, whole_text_ok && whole_text.value_count == op.LOG_FACT_VALUE_CAPACITY && string(whole_text.values[:op.LOG_FACT_VALUE_CAPACITY]) == string(text_field[:]))
 
 	// Lines that stay raw: another module, another key tag, more values
 	// than the record.

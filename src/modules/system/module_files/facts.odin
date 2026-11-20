@@ -121,8 +121,33 @@ Listing_Entry_Name_Refused :: struct {}
 @(log_fact = "module_files: the store module_files refused the listing of its root tree: an entry has a kind that names no kind: the storage service gave no answer that its export allows")
 Listing_Entry_Kind_Refused :: struct {}
 
+// The bytes of the Text field of the problem of a GET: the longest, "the
+// answer has no Content-Length of 1 to 4194304 bytes", has 54 bytes, and a
+// zero byte.
+GET_PROBLEM_FIELD_BYTES :: 64
+
+// A GET of a module file failed, and nothing is stored. The path of the
+// request has up to PATH_LIMIT bytes: a text view, the last field.
+@(log_fact = "module_files: GET {path}: {problem}: nothing is stored")
+Get_Failed :: struct {
+	problem: [64]u8,
+	path:    value_kinds.Text_View,
+}
+
+// A module file fetched whole and stored under its nickname, with the hash
+// of its bytes. The path of the request is a text view, the last field.
+@(log_fact = "module_files: stored {nickname} from {request_path}: {size}, the BLAKE3 hash of its bytes {file_hash}")
+File_Stored :: struct {
+	size:         value_kinds.Size_In_Bytes,
+	file_hash:    value_kinds.Hash_Field,
+	nickname:     value_kinds.Module_Name_Field,
+	request_path: value_kinds.Text_View,
+}
+
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
+#assert(size_of(Get_Failed) == GET_PROBLEM_FIELD_BYTES + value_kinds.TEXT_VIEW_BYTES)
+#assert(size_of(File_Stored) == 8 + value_kinds.HASH_FIELD_BYTES + value_kinds.MODULE_NAME_FIELD_BYTES + value_kinds.TEXT_VIEW_BYTES)
 #assert(size_of(File_Store_Refused) == size_of(errors.Error_Record_Fact_Fields) + value_kinds.MODULE_NAME_FIELD_BYTES)
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
 #assert(size_of(File_Not_Hashed) == 8 + FILE_NAME_FIELD_BYTES)

@@ -1,8 +1,10 @@
 package build
 
 import debug_object "modus:contract/debug_object"
+import "modus:contract/cut_mark"
 import "modus:contract/errors"
 import module "modus:contract/module"
+import "modus:contract/storage_status"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:support/sentence"
@@ -61,7 +63,11 @@ system_module_text_bytes_most :: proc() -> map[string]u32 {
 	most["remote_address"] = len("255.255.255.255")
 	most["time_zone"] = len("+08:00")
 	most["utc_date"] = 31
-	most["storage_status"] = len("Too_Small")
+	most["module_name"] = module.NAME_SIZE
+	most["imported_name"] = module.NAME_SIZE
+	most["replacement_name"] = module.NAME_SIZE
+	most["subject_name"] = module.NAME_SIZE
+	most["export"] = module.NAME_SIZE
 	most["nickname"] = 23
 	most["refusal_sentence"] = 119
 	most["writer_refusal"] = len("Segment_Written_And_Executed")
@@ -518,7 +524,7 @@ status_words :: proc() -> []u64 {
 // member, or its number for a word that names no member.
 @(private = "file")
 status_text :: proc(word: u64) -> string {
-	if name, named := op.contract_enum_member_name(.Status, word); named {
+	if name, named := module.contract_enum_member_name(.Status, word); named {
 		return name
 	}
 	return fmt.tprintf("%d", word)
@@ -691,9 +697,19 @@ the_late_facts_of_round_two_write_the_lines_of_before :: proc(t: ^testing.T) {
 		type_name := fmt.tprintf("Debug_Object_Refused_%v", fault)
 		facts_expect_line(t, fact_test_render(t, debugger, "debugger", type_name, {{"module_hash", hash}, {"debugged_process", name}}), line_of_before("debugger: refused the debug object ", sentence.Hash{hash[:]}, " of ", sentence.Module_Name{name}, ": ", debug_object.fault_sentences[fault]))
 	}
-	storage_statuses := [?]string{"Ok", "Gone", "Refused", "Damaged", "Failed", "Too_Small"}
-	for status in storage_statuses {
-		facts_expect_line(t, fact_test_render(t, debugger, "debugger", "Debug_Object_Size_Status_Refused", {{"module_hash", hash}, {"debugged_process", name}, {"storage_status", status}}), line_of_before("debugger: no debug object for ", sentence.Module_Name{name}, ": the storage service refused the size of ", sentence.Hash{hash[:]}, ", status ", status))
+	// The status of the client of the storage service, a contract enum: each
+	// member by its name, and a word past the last member by its number.
+	storage_words := make([dynamic]u64, context.temp_allocator)
+	for status in storage_status.Status {
+		append(&storage_words, u64(status))
+	}
+	append(&storage_words, u64(max(storage_status.Status)) + 1, u64(max(u8)))
+	for word in storage_words {
+		status, named := module.contract_enum_member_name(.Storage_Status, word)
+		if !named {
+			status = fmt.tprintf("%d", word)
+		}
+		facts_expect_line(t, fact_test_render(t, debugger, "debugger", "Debug_Object_Size_Status_Refused", {{"status", word}, {"module_hash", hash}, {"debugged_process", name}}), line_of_before("debugger: no debug object for ", sentence.Module_Name{name}, ": the storage service refused the size of ", sentence.Hash{hash[:]}, ", status ", status))
 	}
 
 	// The fault of the engine and the erase of versions of the storage
@@ -754,4 +770,203 @@ the_late_facts_of_round_two_write_the_lines_of_before :: proc(t: ^testing.T) {
 	for diagnostic in diagnostics {
 		facts_expect_line(t, fact_test_render(t, c_compiler, "c_compiler", "Diagnostic_Line", {{"diagnostic", diagnostic}}), line_of_before("c_compiler: ", diagnostic))
 	}
+}
+
+// fact_test_render_texts gives the sentence of a fact type whose last
+// fields are text views, with the values of its other fields and one text
+// for each view, which it writes into the views and the out-of-line area
+// as system.log_fact writes them: a text of at most
+// value_kinds.TEXT_VIEW_INLINE_BYTES_MOST bytes in its view, a longer one
+// in the area, cut with the cut mark when the area has no room for it.
+@(private = "file")
+fact_test_render_texts :: proc(t: ^testing.T, file: []u8, package_name, type_name: string, values: []Fact_Test_Field, texts: []string) -> string {
+	key, record, made := fact_test_record(t, file, package_name, type_name, values)
+	if !made {
+		return ""
+	}
+	whole := make([]u8, len(record) + op.LOG_FACT_TEXT_AREA_BYTES_MOST, context.temp_allocator)
+	copy(whole, record)
+	views_start := len(record) - len(texts) * value_kinds.TEXT_VIEW_BYTES
+	if !testing.expectf(t, views_start >= 0, "the fact type %s has fewer views than %d texts", type_name, len(texts)) {
+		return ""
+	}
+	area := whole[len(record):]
+	area_count := 0
+	for text, index in texts {
+		view := whole[views_start + index * value_kinds.TEXT_VIEW_BYTES:][:value_kinds.TEXT_VIEW_BYTES]
+		length := len(text)
+		if length <= value_kinds.TEXT_VIEW_INLINE_BYTES_MOST {
+			copy(view[4:], text)
+		} else {
+			room := area[area_count:]
+			length = copy(room, text)
+			if length < len(text) {
+				length, _, _ = cut_mark.apply(room, length, len(text) - length)
+			}
+			copy(view[4:8], room[:value_kinds.TEXT_VIEW_PREFIX_BYTES])
+			offset := u64(area_count)
+			for place in 0 ..< 8 {
+				view[8 + place] = u8(offset >> (8 * u64(place)))
+			}
+			area_count += length
+		}
+		for place in 0 ..< 4 {
+			view[place] = u8(u32(length) >> (8 * u32(place)))
+		}
+	}
+	sentence, rendered := fact_values_render(file, key, whole[:len(record) + area_count])
+	testing.expectf(t, rendered, "the fact %s.%s with its texts is refused", package_name, type_name)
+	return sentence
+}
+
+// The paths that the views of these tests take: 0 bytes, 12 (the most of a
+// view alone), 13 (the least of the area), 200 (PATH_LIMIT), and past the
+// area, which the write cuts with the cut mark.
+@(private = "file")
+view_texts :: proc() -> [5]string {
+	return {"", "/abcdefghijk", "/abcdefghijkl", strings.repeat("p", 200, context.temp_allocator), strings.repeat("q", op.LOG_FACT_TEXT_AREA_BYTES_MOST + 300, context.temp_allocator)}
+}
+
+// view_text_written gives a text as a view holds it: whole when the area
+// has room for it, else its first bytes and the cut mark.
+@(private = "file")
+view_text_written :: proc(text: string) -> string {
+	if len(text) <= op.LOG_FACT_TEXT_AREA_BYTES_MOST {
+		return text
+	}
+	buffer := make([]u8, op.LOG_FACT_TEXT_AREA_BYTES_MOST, context.temp_allocator)
+	given := copy(buffer, text)
+	count, _, _ := cut_mark.apply(buffer, given, len(text) - given)
+	return string(buffer[:count])
+}
+
+// Each fact type of module_files with the path of a request writes the
+// line of before, the path in a text view: a path of 0, 12, 13 and 200
+// bytes whole, and a path past the area cut with its mark, never whole.
+@(test)
+the_facts_of_a_path_write_the_lines_of_before :: proc(t: ^testing.T) {
+	file, ok := facts_file_of_folder(t, foundation.SYSTEM_MODULE_SOURCES + "module_files")
+	if !ok {
+		return
+	}
+	hash: [module.HASH_SIZE]u8
+	for &value, index in hash {
+		value = u8(0xE0 + index)
+	}
+	problems := [2]string{"the answer has no Content-Length of 1 to 4194304 bytes", "no answer before the deadline"}
+	nicknames := [2]string{strings.repeat("n", 23, context.temp_allocator), "n"}
+	sizes := edges_make().sizes
+	paths := view_texts()
+	for path in paths {
+		written := view_text_written(path)
+		if len(path) > op.LOG_FACT_TEXT_AREA_BYTES_MOST {
+			testing.expect(t, len(written) <= op.LOG_FACT_TEXT_AREA_BYTES_MOST && written != path[:len(written)])
+		}
+		texts := [1]string{path}
+		for problem in problems {
+			facts_expect_line(t, fact_test_render_texts(t, file, "module_files", "Get_Failed", {{"problem", problem}}, texts[:]), line_of_before("module_files: GET ", written, ": ", problem, ": nothing is stored"))
+		}
+		for nickname in nicknames {
+			for size in sizes {
+				facts_expect_line(t, fact_test_render_texts(t, file, "module_files", "File_Stored", {{"size", size}, {"file_hash", hash}, {"nickname", nickname}}, texts[:]), line_of_before("module_files: stored ", sentence.Module_Name{nickname}, " from ", written, ": ", size, " bytes, the BLAKE3 hash of its bytes ", sentence.Hash{hash[:]}))
+			}
+		}
+	}
+}
+
+// hash_head_text gives the head of a hash as a field of the kind Hash_Head
+// writes it.
+@(private = "file")
+hash_head_text :: proc(hash: [module.HASH_SIZE]u8) -> string {
+	return fmt.tprintf("%02x%02x%02x%02x%s", hash[0], hash[1], hash[2], hash[3], value_kinds.HASH_HEAD_MARK)
+}
+
+// load_fields_render gives the sentence of a fact type of a load error of
+// the call host, from the shape of its stage, whose bytes are the record.
+@(private = "file")
+load_fields_render :: proc(t: ^testing.T, file: []u8, type_name: string, fields: $T) -> string {
+	bytes := transmute([size_of(T)]u8)fields
+	sentence, rendered := fact_values_render(file, fact_key("host", type_name), bytes[:])
+	testing.expectf(t, rendered, "the fact host.%s is refused", type_name)
+	return sentence
+}
+
+// Each stage of a load error is a fact of the call host with the fields of
+// its stage: names of 31 bytes and empty, a hash and no hash, each member
+// of what failed and a word past them, and the edges of a number.
+@(test)
+the_facts_of_a_load_error_write_the_fields_of_each_stage :: proc(t: ^testing.T) {
+	file, ok := facts_file_of_folder(t, foundation.SYSTEM_MODULE_SOURCES + "host")
+	if !ok {
+		return
+	}
+	HEAD :: "host: cannot load the module: "
+	names := [2]string{strings.repeat("m", module.NAME_SIZE - 1, context.temp_allocator), ""}
+	hashes: [2][module.HASH_SIZE]u8
+	for index in 0 ..< module.HASH_SIZE {
+		hashes[0][index] = u8(0xA0 + index)
+	}
+	numbers := [3]u32{0, 1, max(u32)}
+	for name in names {
+		for hash in hashes {
+			error: module.Load_Error
+			module.name_set(&error.module.name, name)
+			module.name_set(&error.imported.name, "imported")
+			module.name_set(&error.replacement.name, "replacement")
+			module.name_set(&error.export, name)
+			error.module.hash = hash
+			error.imported.hash = hash
+			head := hash_head_text(hash)
+
+			find := module.load_find_fact_fields(&error)
+			facts_expect_line(t, load_fields_render(t, file, "Load_Find_Failed", find), fmt.tprintf("%sthe load of %s (%s) found no file of its import imported (%s)", HEAD, name, head, head))
+			cycle := module.load_cycle_fact_fields(&error)
+			facts_expect_line(t, load_fields_render(t, file, "Load_Cycle_Failed", cycle), fmt.tprintf("%san import cycle: %s imports imported, and imported still loads its imports", HEAD, name))
+			room := module.load_room_fact_fields(&error)
+			facts_expect_line(t, load_fields_render(t, file, "Load_Room_Failed", room), fmt.tprintf("%sno room for %s (%s): a process has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts, and its modules fit below the fixed ranges of the system", HEAD, name, head))
+
+			// Read: each member of module.Error, and a word past them.
+			for word in 0 ..= u64(max(module.Error)) + 1 {
+				error.file_error = module.Error(word)
+				read := module.load_read_fact_fields(&error)
+				file_error, named := module.contract_enum_member_name(.Module_Error, word)
+				if !named {
+					file_error = fmt.tprintf("%d", word)
+				}
+				// The stage concerns the import when the error names one, else
+				// the module itself.
+				subject := hash != {} ? "imported" : name
+				facts_expect_line(t, load_fields_render(t, file, "Load_Read_Failed", read), fmt.tprintf("%sthe file of %s (%s) is refused: %s", HEAD, subject, head, file_error))
+			}
+			// Check: each member of module.Difference, at the edges of the
+			// parameter.
+			for word in 0 ..= u64(max(module.Difference)) + 1 {
+				for number in numbers {
+					error.difference = module.Difference(word)
+					error.parameter = number
+					check := module.load_check_fact_fields(&error)
+					difference, named := module.contract_enum_member_name(.Load_Difference, word)
+					if !named {
+						difference = fmt.tprintf("%d", word)
+					}
+					facts_expect_line(t, load_fields_render(t, file, "Load_Check_Failed", check), fmt.tprintf("%s%s imports imported, and the export %s of its replacement fails the check: %s, parameter %d", HEAD, name, name, difference, number))
+				}
+			}
+			// Bind: the edges of the slot.
+			for number in numbers {
+				error.slot = number
+				bind := module.load_bind_fact_fields(&error)
+				facts_expect_line(t, load_fields_render(t, file, "Load_Bind_Failed", bind), fmt.tprintf("%sslot %d of %s cannot be bound: export %s of imported", HEAD, number, name, name))
+			}
+			// Map and Unmap: each status of the kernel, and a word past them.
+			for word in status_words() {
+				error.status = u32(word)
+				memory := module.load_memory_fact_fields(&error)
+				status := status_text(word)
+				facts_expect_line(t, load_fields_render(t, file, "Load_Map_Failed", memory), fmt.tprintf("%sthe kernel refused to map %s (%s): status %s", HEAD, name, head, status))
+				facts_expect_line(t, load_fields_render(t, file, "Load_Unmap_Failed", memory), fmt.tprintf("%sthe kernel refused to remove %s (%s): status %s", HEAD, name, head, status))
+			}
+		}
+	}
+	facts_expect_line(t, fact_test_render(t, file, "host", "Load_Failed_Without_Stage", {}), "host: cannot load the module: the load error names no stage")
 }

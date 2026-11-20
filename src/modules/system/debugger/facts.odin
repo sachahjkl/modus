@@ -4,7 +4,7 @@ import debug_object "modus:contract/debug_object"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:support/disk_process"
-import "modus:support/storage"
+import "modus:contract/storage_status"
 import "modus:support/system"
 
 // The log facts of the debugger (src/md/features/log_facts.md): the debug
@@ -192,30 +192,14 @@ Stop_Report_Read :: struct {
 	debugged_process: value_kinds.Module_Name_Field,
 }
 
-// The bytes of the Text field of the name of a status of the client of the
-// storage service: the longest, "Too_Small", has 9 bytes.
-STORAGE_STATUS_FIELD_BYTES :: 16
-
-// The words of each status of the client of the storage service. The enum
-// is of a support package, which no reader of a fact compiles in, so the
-// field holds the name of the member, as the root service holds the name
-// of a grant.
-@(rodata)
-STORAGE_STATUS_NAMES := [storage.Status]string {
-	.Ok        = "Ok",
-	.Gone      = "Gone",
-	.Refused   = "Refused",
-	.Damaged   = "Damaged",
-	.Failed    = "Failed",
-	.Too_Small = "Too_Small",
-}
-
-// The storage service refused the size of the debug object.
-@(log_fact = "debugger: no debug object for {debugged_process}: the storage service refused the size of {module_hash}, status {storage_status}")
+// The storage service refused the size of the debug object. The status of
+// the client is a contract enum, which a reader writes by the name of its
+// member.
+@(log_fact = "debugger: no debug object for {debugged_process}: the storage service refused the size of {module_hash}, status {status}")
 Debug_Object_Size_Status_Refused :: struct {
+	status:           storage_status.Status,
 	module_hash:      value_kinds.Hash_Field,
 	debugged_process: value_kinds.Module_Name_Field,
-	storage_status:   [16]u8,
 }
 
 // The kernel gave no memory for the bytes of the debug object.
@@ -301,7 +285,7 @@ debug_object_refused_log :: proc "contextless" (fault: debug_object.Fault, named
 
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
-#assert(size_of(Debug_Object_Size_Status_Refused) == 64 + STORAGE_STATUS_FIELD_BYTES)
+#assert(size_of(Debug_Object_Size_Status_Refused) == size_of(storage_status.Status) + 64)
 #assert(size_of(Debug_Object_Read_Stopped) == value_kinds.MODULE_NAME_FIELD_BYTES + READ_PROBLEM_FIELD_BYTES)
 #assert(size_of(Debugging_Ended) == value_kinds.MODULE_NAME_FIELD_BYTES + SESSION_END_FIELD_BYTES)
 #assert(size_of(Thread_Stopped) == 8 + value_kinds.MODULE_NAME_FIELD_BYTES + STOP_KIND_FIELD_BYTES)

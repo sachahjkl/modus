@@ -1,6 +1,7 @@
 package build
 
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "modus:support/sentence"
 import "core:strings"
 import "core:testing"
@@ -213,6 +214,11 @@ facts_expect_text_fields_last :: proc(t: ^testing.T, file: []u8, text_bytes_most
 		for number in 0 ..< description.field_count {
 			item, item_ok := module.field(file, description, number)
 			if !testing.expect(t, item_ok) {
+				continue
+			}
+			// A text view is the last field of all, after the Text fields:
+			// the build refuses a field after a view.
+			if item.kind == u8(value_kinds.Field_Kind.Text_View) {
 				continue
 			}
 			if item.type != u8(module.Type.Text) {
