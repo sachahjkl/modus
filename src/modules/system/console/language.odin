@@ -4,16 +4,18 @@ import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:private/console/console_condition"
 import "modus:private/console/console_language"
+import "modus:private/console/lex_evaluator"
 import "modus:private/console/lex_parser"
 import "modus:support/system"
 
-// The evaluation of a line of Lex.
+// The console as the evaluation host of Lex in mode `console`.
 //
 // The parser of Lex (src/library/private/console/lex_parser) gives the
-// syntax tree of a line, and this file evaluates it from the left, as the
-// console read and ran a line in one pass before: the calls before a fault
-// of the text run, then the line fails with the sentence of the fault. The
-// form of each parameter of a command (Parameter_Form) says which argument
+// syntax tree of a line, and the evaluator
+// (src/library/private/console/lex_evaluator) forces it whole, from the
+// left: the calls before a fault run, then the line fails. This file gives
+// the evaluator the names, the commands and the runs of the calls, and
+// writes the sentence of each refusal. The form of each parameter of a command (Parameter_Form) says which argument
 // the parser reads there: an expression, a condition on a field of the
 // table of the first argument (`where(t, block = 12)`), or the name of a
 // fact type (`facts(t, storage.Bad_Block)`). In a condition, a name is a
@@ -40,28 +42,10 @@ import "modus:support/system"
 // command writes to the terminal: the console draws the result of the line
 // by its kind (results.odin).
 
-// The values are those of module.Type: the kind of a parameter is its type.
-Kind :: enum u8 {
-	None    = 0,
-	Integer = 1,
-	Text    = 2,
-	Record  = 3,
-	Handle  = 4,
-	Table   = 5,
-	Bytes   = 6, // A parameter: a Text value is its argument. A value: bytes with no description, which the console draws.
-}
-
-// A parameter of a command of the console with the kind None takes a value
-// of any kind: the command checks it.
-Value :: struct {
-	kind:      Kind,
-	integer:   i64, // An Integer. A Handle: the handle.
-	text:      string,
-	record:    []u8, // A Record: its bytes. A Table: the bytes of its records.
-	file:      []u8, // A Record or a Table: the module that has the description of the record.
-	detail:    u32, // A Record or a Table: the index of the description of the record in the module.
-	condition: ^Condition, // The argument of a parameter of the form Condition, in line_conditions: the parser read it, not an expression.
-}
+// The kinds and the values of Lex are those of the evaluator. A value of a
+// condition points into line_conditions.
+Kind :: lex_evaluator.Kind
+Value :: lex_evaluator.Value
 
 // The conditions of the line that runs. A value names one by its address,
 // so that a value stays small: a call keeps 12 of them on the stack.
@@ -248,6 +232,23 @@ line_stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
 // its texts are parts of the nested form.
 line_tree: lex_parser.Syntax_Tree
 
+// The evaluation of the tree of the line that runs: its thunks keep values
+// whose texts are parts of the nested form and of scratch, for one line.
+line_evaluation: lex_evaluator.Evaluation
+
+// console_host gives the console as the evaluation host. Each procedure
+// that fails the line gives ok false, and the evaluator stops.
+console_host :: proc "contextless" () -> lex_evaluator.Evaluation_Host {
+	return {
+		name_value = host_name_value,
+		command_find = host_command_find,
+		call_run = host_call_run,
+		condition_value = host_condition_value,
+		fact_name_value = host_fact_name_value,
+		text_join = host_text_join,
+	}
+}
+
 scratch_text :: proc "contextless" (parts: ..system.Part) -> string {
 	text := system.format(scratch[scratch_count:], ..parts)
 	scratch_count += len(text)
@@ -355,166 +356,116 @@ assign :: proc "contextless" (name: string, value: Value) {
 	}
 }
 
-// line_evaluate evaluates the tree of the line, from the left. A refusal of
-// the text is a node in its place: the parts before it run, then the line
-// fails with its sentence, as when the console read and ran the line in one
-// pass.
+// line_evaluate forces the tree of the line whole, in mode `console`, then
+// writes the sentence of the refusal of the evaluator, if any. A refusal of
+// the host has written its own.
 line_evaluate :: proc "contextless" () -> Value {
-	// The bounds of the parser: no line that the console runs reaches them,
-	// and a tree past one is not whole in its places, so nothing of it runs.
-	switch line_tree.refusal.refusal {
-	case .Text_Too_Long:
-		return fail("the line has more than ", i64(lex_parser.TEXT_BYTES_MOST), " bytes")
-	case .Nodes_Full:
-		return fail("the line has more parts than the console reads: ", i64(lex_parser.NODE_CAPACITY))
-	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused:
-	}
-	return evaluate(line_tree.root)
-}
-
-// evaluate gives the value of a node of the tree of the line.
-evaluate :: proc "contextless" (index: lex_parser.Node_Index) -> Value {
-	node := lex_parser.node_at(&line_tree, index)
-	if node == nil {
-		return fail("the line ends too soon")
-	}
-	switch node.kind {
-	case .Integer:
-		return {kind = .Integer, integer = node.integer}
-	case .Text:
-		quoted := lex_parser.node_text(&line_tree, index)
-		return {kind = .Text, text = quoted[1:len(quoted) - 1]}
-	case .Name:
-		return name_evaluate(lex_parser.node_text(&line_tree, index))
-	case .Call:
-		return call(index)
-	case .Negate:
-		return negate_evaluate(node)
-	case .Binary:
-		return binary_evaluate(node)
-	case .Refused:
-		return refused_evaluate(index)
-	case .Condition, .Fact_Name:
-		// The parser makes these only as an argument of a call, and call
-		// reads them there.
-		return fail("unexpected \"", line_tree.text[int(node.place.offset):], "\"")
-	}
-	return {}
-}
-
-// binary_evaluate gives the value of an operator on two values. The left
-// one runs first.
-binary_evaluate :: proc "contextless" (node: ^lex_parser.Node) -> Value {
-	left := evaluate(node.first_child)
-	if failed {
+	lex_evaluator.evaluation_start(&line_evaluation, &line_tree, .Console, console_host())
+	value, ok := lex_evaluator.line_force(&line_evaluation)
+	if !ok {
+		evaluation_refusal_fail(line_evaluation.refusal)
 		return {}
 	}
-	right := evaluate(lex_parser.next_of(&line_tree, node.first_child))
-	if failed {
-		return {}
-	}
-	operator := lex_parser.OPERATOR_TEXTS[node.operator]
-	switch node.operator {
-	case .Add, .Subtract:
-		switch {
-		case left.kind == .Integer && right.kind == .Integer:
-			result: i64
-			fits: bool
-			if node.operator == .Add {
-				result, fits = console_language.integer_add(left.integer, right.integer)
-			} else {
-				result, fits = console_language.integer_subtract(left.integer, right.integer)
-			}
-			if !fits {
-				return fail_overflow(operator, left.integer, right.integer)
-			}
-			left.integer = result
-		case left.kind == .Text && right.kind == .Text && node.operator == .Add:
-			left.text = scratch_text(left.text, right.text)
-		case:
-			return fail("\"", operator, "\" does not take ", kind_names[left.kind], " and ", kind_names[right.kind])
-		}
-	case .Multiply, .Divide, .Remainder:
-		if left.kind != .Integer || right.kind != .Integer {
-			return fail("\"", operator, "\" does not take ", kind_names[left.kind], " and ", kind_names[right.kind])
-		}
-		if node.operator == .Multiply {
-			product, fits := console_language.integer_multiply(left.integer, right.integer)
-			if !fits {
-				return fail_overflow("*", left.integer, right.integer)
-			}
-			left.integer = product
-			break
-		}
-		if right.integer == 0 {
-			return fail("division by zero")
-		}
-		quotient, rest, fits := console_language.integer_divide(left.integer, right.integer)
-		if !fits {
-			return fail_overflow("/", left.integer, right.integer)
-		}
-		left.integer = node.operator == .Divide ? quotient : rest
-	case .None:
-		// The parser gives each Binary node its operator.
-		return fail("unexpected \"", line_tree.text[int(node.place.offset):], "\"")
-	}
-	return left
-}
-
-// negate_evaluate gives the opposite of an Integer.
-negate_evaluate :: proc "contextless" (node: ^lex_parser.Node) -> Value {
-	value := evaluate(node.first_child)
-	if failed {
-		return {}
-	}
-	if value.kind != .Integer {
-		return fail("\"-\" does not take ", kind_names[value.kind])
-	}
-	opposite, fits := console_language.integer_negate(value.integer)
-	if !fits {
-		return fail_overflow("-", 0, value.integer)
-	}
-	value.integer = opposite
 	return value
 }
 
-// refused_evaluate evaluates the part that the parser read before a fault
-// of the text, then fails the line with the sentence of the fault.
-refused_evaluate :: proc "contextless" (index: lex_parser.Node_Index) -> Value {
-	node := lex_parser.node_at(&line_tree, index)
-	if node.first_child != lex_parser.NO_NODE {
-		evaluate(node.first_child)
-		if failed {
-			return {}
+// evaluation_refusal_fail fails the line with the sentence of a refusal of
+// the evaluator.
+evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
+	operator := lex_parser.OPERATOR_TEXTS[record.operator]
+	switch record.refusal {
+	case .None, .Host_Refused:
+		// The host wrote the failure of the line.
+	case .Text:
+		text_refusal_fail(record)
+	case .Operator_Kinds:
+		fail("\"", operator, "\" does not take ", kind_names[record.left_kind], " and ", kind_names[record.right_kind])
+	case .Negate_Kind:
+		fail("\"-\" does not take ", kind_names[record.left_kind])
+	case .Overflow:
+		fail_overflow(operator, record.left, record.right)
+	case .Division_By_Zero:
+		fail("division by zero")
+	case .Budget_Exceeded:
+		already := failed
+		fail("the line needs more than ", i64(record.steps), " steps of the evaluator: it stopped at column ", i64(record.place.column))
+		if !already {
+			failure_record_set(errors.error_make(.Over_Limit, .None, 0, i64(record.steps) + 1, i64(record.steps)), "the evaluation", nil)
 		}
+	case .Effect_Refused:
+		fail(record.command, " has an effect, and an evaluation in mode declaration runs none")
 	}
-	switch node.refusal {
+}
+
+// text_refusal_fail fails the line with the sentence of a refusal of the
+// parser, which the evaluator met in its place.
+text_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
+	rest := line_tree.text[min(int(record.place.offset), len(line_tree.text)):]
+	switch record.text_refusal {
 	case .Line_Ends_Too_Soon:
-		return fail("the line ends too soon")
-	case .Unexpected:
-		return fail("unexpected \"", line_tree.text[int(node.place.offset):], "\"")
+		fail("the line ends too soon")
 	case .Number_Too_Large:
 		// The record: the limit is the largest Integer; the sentence has
 		// the digits, which no Integer holds.
-		result := fail("the number ", lex_parser.node_text(&line_tree, index), " does not fit in an Integer: the largest is ", i64(console_language.INTEGER_MOST))
-		failure_record_set(errors.error_make(.Over_Limit, .None, 0, 0, console_language.INTEGER_MOST), "a number", nil)
-		return result
+		already := failed
+		fail("the number ", lex_parser.node_text(&line_tree, record.node), " does not fit in an Integer: the largest is ", i64(console_language.INTEGER_MOST))
+		if !already {
+			failure_record_set(errors.error_make(.Over_Limit, .None, 0, 0, console_language.INTEGER_MOST), "a number", nil)
+		}
 	case .Text_Without_End_Quote:
-		return fail("the text has no end quote")
+		fail("the text has no end quote")
 	case .Close_Parenthesis_Missing:
-		return fail("\")\" is missing")
+		fail("\")\" is missing")
 	case .Comma_Or_Close_Missing:
-		return fail("\",\" or \")\" is missing")
+		fail("\",\" or \")\" is missing")
 	case .Too_Many_Arguments:
-		return fail("too many arguments")
+		fail("too many arguments")
 	case .Text_Too_Long:
-		return fail("the line has more than ", i64(lex_parser.TEXT_BYTES_MOST), " bytes")
+		fail("the line has more than ", i64(lex_parser.TEXT_BYTES_MOST), " bytes")
 	case .Nodes_Full:
-		return fail("the line has more parts than the console reads: ", i64(lex_parser.NODE_CAPACITY))
-	case .None, .Fact_Name_Missing, .Condition_Head_Refused:
-		// A Fact_Name or a Condition node holds these; a Refused node never.
+		fail("the line has more parts than the console reads: ", i64(lex_parser.NODE_CAPACITY))
+	case .Unexpected, .None, .Fact_Name_Missing, .Condition_Head_Refused:
+		// A Fact_Name or a Condition node holds the last two, and the
+		// console reads them itself.
+		fail("unexpected \"", rest, "\"")
 	}
-	return fail("unexpected \"", line_tree.text[int(node.place.offset):], "\"")
+}
+
+// ---- The procedures of the evaluation host.
+
+host_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: Value, ok: bool) {
+	value = name_evaluate(name)
+	return value, !failed
+}
+
+// host_command_find fails the line for a name that no command has, before
+// the arguments of the call. Each command of the console has an effect: the
+// names of the evaluation, which have none, are not built.
+host_command_find :: proc "contextless" (data: rawptr, name: string) -> (has_effect: bool, found: bool) {
+	if command_find(name) == nil {
+		fail("no command has the name ", name, "; try help()")
+		return false, false
+	}
+	return true, true
+}
+
+host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Value) -> (value: Value, ok: bool) {
+	value = call_run(name, arguments)
+	return value, !failed
+}
+
+host_condition_value :: proc "contextless" (data: rawptr, evaluation: ^lex_evaluator.Evaluation, command_name: string, before: []Value, node: lex_parser.Node_Index) -> (value: Value, ok: bool) {
+	value = condition_evaluate(command_name, before, node)
+	return value, !failed && !lex_evaluator.refused(evaluation)
+}
+
+host_fact_name_value :: proc "contextless" (data: rawptr, evaluation: ^lex_evaluator.Evaluation, command_name: string, node: lex_parser.Node_Index) -> (value: Value, ok: bool) {
+	value = fact_name_evaluate(command_name, node)
+	return value, !failed
+}
+
+host_text_join :: proc "contextless" (data: rawptr, left, right: string) -> (joined: string, ok: bool) {
+	return scratch_text(left, right), true
 }
 
 // name_evaluate gives the value of a name alone: a variable, or one field
@@ -593,39 +544,14 @@ argument_accepted :: proc "contextless" (found: ^Command, index: int, argument: 
 	return true
 }
 
-// call evaluates the arguments of a Call node from the left, checks their
-// types against the parameters, and calls the function.
-call :: proc "contextless" (call_node: lex_parser.Node_Index) -> Value {
-	name := lex_parser.node_text(&line_tree, call_node)
+// call_run checks the arguments of a call, which the evaluator forced from
+// the left, against the parameters of its command, and calls the function.
+call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 	found := command_find(name)
 	if found == nil {
 		return fail("no command has the name ", name, "; try help()")
 	}
-	arguments: [ARGUMENT_CAPACITY]Value
-	count := 0
-	for argument := lex_parser.node_at(&line_tree, call_node).first_child; argument != lex_parser.NO_NODE; argument = lex_parser.next_of(&line_tree, argument) {
-		// A fact name and a condition are names that the console checks,
-		// never an expression: `block` is a field, not a variable. A
-		// refusal of the text after the arguments before it fails here.
-		value: Value
-		switch lex_parser.node_at(&line_tree, argument).kind {
-		case .Fact_Name:
-			value = fact_name_evaluate(name, argument)
-		case .Condition:
-			value = condition_evaluate(name, arguments[:count], argument)
-		case .Integer, .Text, .Name, .Call, .Negate, .Binary, .Refused:
-			value = evaluate(argument)
-		}
-		if failed {
-			return {}
-		}
-		// The parser ends the arguments with a refusal at this count.
-		if count == ARGUMENT_CAPACITY {
-			return fail("too many arguments")
-		}
-		arguments[count] = value
-		count += 1
-	}
+	count := len(arguments)
 	if count != found.parameter_count {
 		return fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(count))
 	}

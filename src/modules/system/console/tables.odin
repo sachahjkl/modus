@@ -3,6 +3,7 @@ package console
 import module "modus:contract/module"
 import "modus:private/console/console_condition"
 import "modus:private/console/console_results"
+import "modus:private/console/lex_evaluator"
 import "modus:private/console/lex_parser"
 import "modus:support/sentence"
 
@@ -325,8 +326,10 @@ condition_evaluate :: proc "contextless" (command_name: string, before: []Value,
 		}
 		condition.compared = i64(word)
 	} else {
-		value := evaluate(node.first_child)
-		if failed {
+		// The value is a thunk of the evaluation: its refusal stops the
+		// evaluation, which writes the sentence.
+		value, forced := lex_evaluator.force(&line_evaluation, node.first_child)
+		if !forced || failed {
 			return {}
 		}
 		details.value_type = type_of_kind(value.kind)

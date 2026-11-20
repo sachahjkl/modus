@@ -133,7 +133,7 @@ The exports with an effect are the commands `apply`, `rollback`, `build`, `enter
 - Mode `declaration` refuses each effect: each command with an effect, an export of a module, an export of a service, a Stream. Each case checks the error record, and that nothing changed: no call reached the export, no store was written.
 - Mode `console` runs each effect of a line once, in the order of its data: an export whose result no other part uses, an export in a `let` binding that the result does not name, and an export whose result two parts use, which runs once.
 
-**The cost.** The eager evaluator of the console of today is replaced by the shared evaluator in mode `console`. That is layer 2 of the build order ("The build order"), with no change of behaviour.
+**The cost.** The eager evaluator of the console was replaced by the shared evaluator in mode `console`, layer 2 of the build order ("The evaluator package"). Each line runs its effects in the same order as before.
 
 **A value of a declaration at the console.** The console evaluates no text of a declaration ("An evaluation in the console process" in the refused forms). `declaration(here())`, `catalog` and `kernel.tools` give a declaration reference at the console: the hash of the declaration, the chain of the field names, and the records that a `with` composed with it. Each part is a typed value. Forcing the reference in mode `console` gives the reference itself. A command that needs the value, such as `build` or `apply`, sends the reference to the evaluation process, which forces the fields in mode `declaration` and gives back typed values.
 
@@ -151,7 +151,7 @@ The parser of Lex is `src/library/private/console/lex_parser`. It reads a text a
 
 **What it took from the console.** The console read and ran a line in one pass. `expression`, `term`, `factor` and `call` of `language.odin` read a token and computed its value at once, `condition_read` of `tables.odin` read the field and the operator of a condition, and `fact_name_read` of `facts.odin` the name of a fact type. A call ran when the parser reached its `)`, so the calls before a fault of the text ran before the parser found the fault. The parser package now holds that grammar, the arguments by their form, the head of a condition and the fact name. The console keeps:
 
-- the evaluation of each node: the values, the operators, the variables and the commands, the checks of a call, the checks of a condition against the record of its table, the fact names of the image;
+- the evaluation of each node, which the evaluator package now holds ("The evaluator package"), and what the evaluator asks of the console: the variables and the commands, the checks of a call, the checks of a condition against the record of its table, the fact names of the image;
 - the sentence of each refusal;
 - `pipe_nested_form` and the checks of `|>` before the run, which read the line before its nested form ([pipe_operator.md](pipe_operator.md));
 - the scanner of `console_language`, which the colors share, and `console_condition`, which the tool shares.
@@ -181,6 +181,37 @@ Subtle points:
 - **A name that no command has.** The parser reads its arguments as expressions; the evaluation refuses the name before it reaches them, as the one pass did.
 - **A status reads one token.** When the value is a longer expression, the parser read more than the one pass. The node says that the first token does not end the argument, and the evaluation fails with `"," or ")" is missing`, the sentence of the one pass.
 - **A zero byte** ends the text for the parser, as it did for the one pass. The line editor types no such byte.
+
+### The evaluator package
+
+The evaluator of Lex is `src/library/private/console/lex_evaluator`, a private part of the console for the reason of the parser ("The parser package"). It evaluates a syntax tree in an evaluation mode. It holds the values of Lex (`Value` and its `Kind`), the thunks, the order of the forcing, the operators with their refusals, the evaluation budget and the mode. An evaluation host ([`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md), "Evaluation host") gives it what only the host knows: the value of a name, the command of a call and its effect, the run of a call, a condition, a fact name, and the memory of a joined text. The console is the host in mode `console`; the evaluation process is the host in mode `declaration`.
+
+**A thunk for each node.** The thunks are an array indexed by the nodes of the tree, so an evaluation needs no allocator. A thunk is unforced, then forced with its value. A second force of a forced thunk gives the kept value: it costs no step and runs no effect again. Today no node has two readers, so a second force comes only from the host; `let` and `with` of layer 3 give a node two readers.
+
+**The order of the forcing.** A call asks the host for its command first, so a name that no command has fails before its arguments, as before. Then it forces its arguments from the left, then the host runs it. An operator forces its left operand, then its right one. A refusal of the text forces the part before it, then stops. So the effects run in the order of the data, which is the order of the line with calls in calls.
+
+**Mode `console` forces the whole line.** The evaluator forces the root of the tree, and each node of a line is reached from the root through the force of its parent. The value of a status condition is one name, which has no effect, and the console reads it as a member without a force. A variable takes the value of the root.
+
+**Mode `declaration` refuses an effect at its border.** When a call reaches a command that has an effect, the evaluator stops with the record `Effect_Refused`, which names the command and its place, before it forces the arguments and before any run. Today every command of the console has an effect: the names of the evaluation, which have none, come with layer 6.
+
+**The budget.** A step is one thunk computed; a force of a forced thunk and the work of the host are no steps. Past the budget the evaluation stops with the record `Budget_Exceeded` at the place of the node that needed the step. The constant `EVALUATION_BUDGET_STEPS` is 2^20 until the measure of layer 6 sets it ("The evaluation budget"): the longest line of the console has 201 nodes, so the bound is more than 5000 times the largest count of steps that a line reaches today. A host test gives a smaller budget to the evaluation, so that a tree of the parser reaches it; each host gives the constant.
+
+**The refusals are records.** The first refusal ends the evaluation, and each later force gives nothing. A record holds its member, the place and node, and the values that its sentence needs: the operator, the kinds, the operands, the refusal of the parser, the command. The host writes the sentence; the evaluator writes no text. When the host refuses (an unknown name, a call that fails), it has written its own failure, and the record is `Host_Refused`.
+
+**What a reader sees change.** `%` of the least Integer by `-1` gives 0, its true remainder; before, the console refused it as a division that does not fit. A line past the budget fails with a new sentence, which no line of the console reaches today. Every other sentence is the one of before.
+
+Refused forms:
+
+- **The evaluator generic over a value of each host.** The two hosts evaluate one language with one set of values; a type parameter on each procedure buys nothing.
+- **The values kept in the console, with the evaluator asking the host for each operator.** The operators and their refusals are then two codes, one in each host.
+- **The check of an effect after the arguments.** In mode `declaration` the arguments of a refused call are then forced for nothing.
+- **A step as a time.** A budget of time gives another error on another machine.
+- **A step for each force, also of a forced thunk.** A value that many readers share then costs at each read, and the count says more about the readers than about the work.
+
+Subtle points:
+
+- **A kept value points into the memory of the line.** A Text of a thunk is a part of the nested form or of the line memory of the console, so the thunks live for one line, as the values did.
+- **The budget is not reached by the console today.** The lines are shorter than the budget by far; the test of its bound uses a smaller budget, and a test checks that the densest line stays below the constant.
 
 ### A record literal is typed by its use
 
@@ -213,7 +244,7 @@ Recursion is allowed. Each evaluation, in either mode, has the evaluation budget
 
 The budget is one constant of the evaluator, the same in both modes:
 
-- A measure sets it when the evaluator first runs a declaration: the largest count of steps over the declarations of the system (the catalog declaration, the system plan and the project of this repository) and the lines of the console tests, with a margin that the measure states.
+- A measure sets it when the evaluator first runs a declaration: the largest count of steps over the declarations of the system (the catalog declaration, the system plan and the project of this repository) and the lines of the console tests, with a margin that the measure states. Until then it is 2^20, far above each line of the console ("The evaluator package").
 - The tool prints the count of steps of each of these declarations as a measure, never as a condition.
 - A declaration cannot ask for more: a foreign declaration then takes the processor time that it wants, and the bound protects nothing. A declaration that needs more is a declaration to change, or a change of the constant, with its measure.
 
@@ -376,7 +407,7 @@ From each root it follows the imports of each module, the debug object of each m
 Each layer adds one capability to a system that works, and each is a tested commit:
 
 1. **The parser in one library package.** The parser leaves the console for one library package, with no change of behaviour: the same trees and the same refusals. The package is a private part of the console until the evaluation process is its second owner ("The parser package").
-2. **The shared lazy evaluator in mode `console`.** It replaces the eager evaluator of the console, with no change of behaviour: each line is forced whole, and the effects run in the order of their data.
+2. **The shared lazy evaluator in mode `console`.** It replaces the eager evaluator of the console: each line is forced whole, and the effects run in the order of their data. The mode is a parameter, and mode `declaration` already refuses an effect at its border ("The evaluator package").
 3. **The record literal, named arguments, `let`, `with`, and the placeholder `_` of `|>`.**
 4. **Functions `(x) => …`**, used by `map`.
 5. **Mode `declaration` and the evaluation process.**
@@ -385,6 +416,6 @@ Each layer adds one capability to a system that works, and each is a tested comm
 
 ## State
 
-Built: layer 1 of the build order. The parser of Lex is the private part `lex_parser` of the console, with host tests of each form of the console and each refusal with its place; the console evaluates its tree.
+Built: layers 1 and 2 of the build order. The parser of Lex is the private part `lex_parser` of the console, with host tests of each form of the console and each refusal with its place. The evaluator is the private part `lex_evaluator`: thunks forced at most once, the order of the effects, the budget, and the refusal of an effect in mode `declaration`, with host tests over a fake host. The console is its host in mode `console`.
 
-Left: layers 2 to 7, and the move of the parser to `src/library/support` with the evaluation process.
+Left: layers 3 to 7, the budget measured, and the move of the parser and the evaluator to `src/library/support` with the evaluation process.

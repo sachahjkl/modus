@@ -992,6 +992,16 @@ The design: `src/md/features/declarations.md`, "One parser, one lazy evaluator, 
 
 Do not use: eager evaluator, lazy evaluator, interpreter, REPL.
 
+### Evaluation host
+
+An evaluation host is the code that gives the evaluator of Lex what only it knows, and runs the calls.
+
+It gives the value of a name, the command of a call and whether it has an effect, a condition, a fact name, and the memory of a joined text, and it runs a call. The console is the host in the evaluation mode `console`; the evaluation process is the host in mode `declaration`. A host test gives a fake host, so the evaluator runs with no process. The host writes the sentence of each refusal; the evaluator gives records.
+
+The design: `src/md/features/declarations.md`, "The evaluator package".
+
+Do not use: runtime, environment (for this), call layer.
+
 ### Thunk
 
 A thunk is a value of the evaluator of Lex that is not computed yet: the expression of a field or of a `let` binding, with the names that it can read.

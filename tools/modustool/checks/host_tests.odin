@@ -289,6 +289,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PRIVATE + "/console/console_results",
 	foundation.SOURCE_FOLDER_PRIVATE + "/console/console_condition",
 	foundation.SOURCE_FOLDER_PRIVATE + "/console/lex_parser",
+	foundation.SOURCE_FOLDER_PRIVATE + "/console/lex_evaluator",
 	foundation.SOURCE_FOLDER_SUPPORT + "/key_path",
 	foundation.SOURCE_FOLDER_SUPPORT + "/kind_icons",
 	foundation.SOURCE_FOLDER_CONTRACT + "/manual_pages",

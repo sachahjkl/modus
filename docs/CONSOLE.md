@@ -39,9 +39,9 @@ The console owns the line that the input edits: its bytes, the caret, the line h
 
 ## Lex
 
-A line of the console is one expression of Lex, the language of the console, or a variable that takes the value of one. The console evaluates a line once, from the left, and runs its commands. One lazy evaluator of Lex in two evaluation modes, with the same meaning for a line, is designed and not built: mode `console` forces each line whole, and mode `declaration` reads a declaration with no effect (`src/md/features/declarations.md`). The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No process receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between processes").
+A line of the console is one expression of Lex, the language of the console, or a variable that takes the value of one. The console evaluates a line once, from the left, and runs its commands. The evaluator of Lex is lazy and has two evaluation modes, with the same meaning for a line: the console runs it in mode `console`, which forces each line whole, and mode `declaration` will read a declaration with no effect (`src/md/features/declarations.md`). Each part of a line is computed at most once, and an evaluation takes at most 1048576 steps, one for each part computed; a line of the console takes a few hundred at most. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No process receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between processes").
 
-The code is `src/library/private/console/lex_parser` (the parser: the syntax tree of a line), `src/modules/system/console/language.odin` (the evaluation of the tree and the values), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line), `src/modules/system/console/facts.odin` (the log facts), `src/library/private/console/console_results` (the drawers) and `src/library/private/console/console_condition` (the conditions of `where`).
+The code is `src/library/private/console/lex_parser` (the parser: the syntax tree of a line), `src/library/private/console/lex_evaluator` (the evaluator: the values, the thunks, the operators and the budget), `src/modules/system/console/language.odin` (the console as the host of the evaluator: the names, the calls and the sentences), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line), `src/modules/system/console/facts.odin` (the log facts), `src/library/private/console/console_results` (the drawers) and `src/library/private/console/console_condition` (the conditions of `where`).
 
 ### The form of a line
 
@@ -58,7 +58,7 @@ arguments  = pipeline { "," pipeline }
 - **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each.
 - **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/private/console/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. A text has no escape, so it cannot hold a quote.
-- **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them. A division by zero is an error. So is the one division whose result does not fit: the least integer by `-1`. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
+- **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them. A division by zero is an error. So is the one division whose result does not fit: the least integer `/` `-1`. Its remainder fits: the least integer `%` `-1` is 0. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
 
 Examples:
 
@@ -286,10 +286,11 @@ A line that fails has one result: its error. The first error ends the line: the 
 | An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8), then the values of the record |
 | The root service refuses | `error: root.Stop: the argument name names a process of the system: ...`: the sentence of the error record of the root ring, then its values |
 | A call in an isolated process that faults | `error: the process agenda stopped: a fault, invalid instruction`, then the instruction and the frames of its stop report, each after `error: ` |
+| A line past the evaluation budget, which no line of the console reaches | `error: the line needs more than 1048576 steps of the evaluator: it stopped at column 12`, with an error record `Over_Limit` |
 
 An overflow has an error record of the kind `Over_Limit`: `value` is the left value, `found` the right value, and `limit` the largest integer.
 
-A call that runs before the error keeps its effect: in `length(start("life"))`, `start` runs, then `length` refuses its argument. The line draws only its error.
+A call that runs before the error keeps its effect: in `length(start("life"))`, `start` runs, then `length` refuses its argument. The line draws only its error. The calls run in the order of the data: the arguments of a call from the left, before the call, so `f(g(), h())` runs `g`, then `h`, then `f`.
 
 ## Results and their drawers
 
