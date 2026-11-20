@@ -124,8 +124,6 @@ import "modus:contract/palette_table"
 import "modus:contract/start_grant"
 import "modus:contract/value_kinds"
 
-ROOT_MARK :: "root: ok"
-
 // What a process receives, by name: a start grant. The list and the name of
 // each one are a contract, because the reader of an error record names the
 // start grant that refused a debug access (src/library/contract/start_grant).
@@ -230,7 +228,7 @@ own_records_amount_of :: proc "contextless" (caller: ^Started) -> u64 {
 	}
 	amount, ok := log_scope.own_records_amount(slot, serial)
 	if !ok {
-		system.log(.Warning, "root: the process slot ", slot, " or the process serial ", serial, " of ", system.Module_Name{system.name_of(caller.name[:])}, " does not fit the grant of the log service: it reads no record")
+		system.log_fact(.Warning, Log_Scope_Refused{slot = u64(slot), serial = u64(serial), caller = module_name_field(system.name_of(caller.name[:]))})
 		return 0
 	}
 	return amount
@@ -648,7 +646,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			fail("Machine_Stop did not refuse a code past one byte with its error record", refused)
 		}
 	}
-	system.log(.Info, "root: Machine_Stop refused the codes ", refused_codes[0], " and ", refused_codes[1], " with Bad_Operation and the record Bad_Value of the code, limit ", u64(op.MACHINE_STOP_CODE_MOST), ", and the machine runs on: as it must")
+	system.log_fact(.Info, Machine_Stop_Codes_Refused{first_code = refused_codes[0], second_code = refused_codes[1], code_limit = u64(op.MACHINE_STOP_CODE_MOST)})
 	// The screen first: a failure of the check below stays on it.
 	screen_at_the_start := boot_display_take(ctx)
 	// The boot image against the system description, before any process
@@ -722,7 +720,7 @@ boot_image_take :: proc "contextless" (ctx: ^system.Context) {
 		fail("cannot map the boot image", status)
 	}
 	image = ([^]u8)(address)[:ctx.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE]]
-	system.log(.Info, ROOT_MARK, ", ", u64(len(system.image_entries(image))), " modules in the boot image")
+	system.log_fact(.Info, Root_Ready{image_modules = u64(len(system.image_entries(image)))})
 	debug_image_take(ctx)
 }
 
@@ -1052,14 +1050,14 @@ control_ring_serve :: proc "contextless" () {
 	for record in system.receive(&control.completions) {
 		control_word, known := enum_word.member_of_word(display.Control, u64(record.kind))
 		if !known {
-			system.log(.Warning, "root: refused a record of the compositor of the kind ", u64(record.kind), ", which names no control")
+			system.log_fact(.Warning, Compositor_Record_Unknown{record_kind = u64(record.kind)})
 			continue
 		}
 		switch control_word {
 		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started:
 			// This service sends these to the compositor, and takes none
 			// from it.
-			system.log(.Warning, "root: refused a record of the compositor of the kind ", u64(record.kind), ", which this service sends and does not take")
+			system.log_fact(.Warning, Compositor_Record_Not_Taken{record_kind = u64(record.kind)})
 		case .Start:
 			// The desktop starts a process in the session that runs.
 			name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
@@ -1288,7 +1286,7 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 			return .Bad_State
 		}
 		values[0] = debug_end(target)
-		system.log(.Info, "root: ", system.Module_Name{system.name_of(holder.name[:])}, " ended the debugging of ", system.Module_Name{name}, " for ", system.Module_Name{system.name_of(caller.name[:])})
+		system.log_fact(.Info, Debugging_Ended{debugger = module_name_field(system.name_of(holder.name[:])), target = module_name_field(name), caller = module_name_field(system.name_of(caller.name[:]))})
 		return .Ok
 	}
 	if target == caller || target == holder {
@@ -1305,7 +1303,7 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 	}
 	if grant, refuses := debug_refusing_grant(caller, target); refuses {
 		values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1, 0, 0, 1 + i64(grant))
-		system.log(.Info, "root: refused ", system.Module_Name{system.name_of(caller.name[:])}, " the debug access to ", system.Module_Name{name}, ": the grant ", start_grant.GRANT_NAMES[grant], " of the process refuses it")
+		system.log_fact(.Info, Debug_Access_Refused{caller = module_name_field(system.name_of(caller.name[:])), target = module_name_field(name), grant = text_field(start_grant.GRANT_NAMES[grant], 24)})
 		return .Bad_State
 	}
 	// One debugger for one process: the kernel has the same rule.
@@ -1385,7 +1383,7 @@ debug_check_again :: proc "contextless" (caller: ^Started) {
 		_, refuses := debug_refusing_grant(caller, &other)
 		if refuses || .Acts_For_Principal not_in grants_held(caller) {
 			debug_end(&other)
-			system.log(.Info, "root: ended the debugging of ", system.Module_Name{system.name_of(other.name[:])}, " for ", system.Module_Name{system.name_of(caller.name[:])}, ": the rule no longer gives the debug access, after a revocation")
+			system.log_fact(.Info, Debugging_Ended_After_Revocation{target = module_name_field(system.name_of(other.name[:])), caller = module_name_field(system.name_of(caller.name[:]))})
 		}
 	}
 }
@@ -1441,7 +1439,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		// service is the one writer of a service ring, so the room cannot
 		// shrink between the check and the sends.
 		if service := grant_room_short(item); service != nil {
-			system.log(.Warning, "root: refused the revocation of acts_for_principal of ", system.Module_Name{name}, ": the service ", system.Module_Name{system.name_of(service.name[:])}, " has no room for the new grants; nothing changed")
+			system.log_fact(.Warning, Acts_For_Principal_Revocation_Refused{holder = module_name_field(name), service = module_name_field(system.name_of(service.name[:]))})
 			return .No_Slot
 		}
 		item.granted -= {which}
@@ -1579,7 +1577,7 @@ palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> sys
 	caller.granted += {.Palette}
 	values^ = {0 = u64(given_table), 1 = u64(given_ring)}
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Palette_Provider_Add), values = {0 = u64(palette_ring_in_compositor), 1 = u64(palette_table_in_compositor)}})
-	system.log(.Info, "root: ", system.Module_Name{system.name_of(caller.name[:])}, " is the palette provider")
+	system.log_fact(.Info, Palette_Provider_Set{provider = module_name_field(system.name_of(caller.name[:]))})
 	return .Ok
 }
 
@@ -1762,7 +1760,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		// principal of the row.
 		principal_of_the_store := client.place != 0 ? client.principal : caller.principal
 		if !principals.store_name_write(&store_name, process_of_the_store, principal_of_the_store, history) {
-			system.log(.Warning, "root: the name of the store of ", system.Module_Name{system.name_of(caller.name[:])}, " for principal ", caller.principal, " has more than 31 bytes: no connection")
+			system.log_fact(.Warning, Store_Name_Too_Long{principal = caller.principal, caller = module_name_field(system.name_of(caller.name[:]))})
 			return nil, nil, 0, 0, .Bad_Operation
 		}
 	} else {

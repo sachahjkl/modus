@@ -9,6 +9,7 @@ import "modus:private/root/entropy_read_deadline"
 import "modus:support/pci"
 import "modus:support/random"
 import "modus:support/system"
+import "modus:contract/value_kinds"
 
 // The entropy service (src/md/features/entropy_device.md): the device
 // service of the entropy device, with this service as its one client. This
@@ -69,7 +70,7 @@ entropy_service_start :: proc "contextless" () {
 	}
 	identity := pci.read_32(place, 0)
 	if identity != (pci.VENDOR_VIRTIO | pci.DEVICE_VIRTIO_ENTROPY << 16) {
-		system.log(.Info, "root: no entropy device at the place ", u64(place.device), " of the bus: the random seed of the system has the sources of the processor only")
+		system.log_fact(.Info, Entropy_Device_Absent{device = u64(place.device)})
 		return
 	}
 	driver, ring_memory, status := driver_start(place, DRIVER_ENTROPY)
@@ -140,7 +141,7 @@ entropy_answers :: proc "contextless" (wait: ^system.Wait) {
 		if !at_start {
 			fresh_bytes_refresh_end(mixed)
 		} else if entropy_reads_answered == ENTROPY_READS_AT_START {
-			system.log(.Info, "root: the entropy device gave ", entropy_bytes_given, " bytes in ", u64(ENTROPY_READS_AT_START), " reads: ", u64(entropy_report.device_bytes), " bytes mixed into the random generator of the system; refused reads: ", u64(entropy_report.device_reads_refused))
+			system.log_fact(.Info, Entropy_Start_Bytes{bytes_given = value_kinds.Size_In_Bytes(entropy_bytes_given), start_reads = u64(ENTROPY_READS_AT_START), bytes_mixed = value_kinds.Size_In_Bytes(entropy_report.device_bytes), refused_start_reads = u64(entropy_report.device_reads_refused)})
 			fresh_bytes_deadline = system.time() + FRESH_BYTES_PERIOD_MILLISECONDS
 		}
 	}

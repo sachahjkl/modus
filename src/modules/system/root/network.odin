@@ -70,7 +70,7 @@ network_refuse :: proc "contextless" (cause: string) {
 		return
 	}
 	network_refused = true
-	system.log(.Warning, "root: ", cause, ": no process with an endpoint of the network starts until the machine starts again; the other processes start")
+	system.log_fact(.Warning, Network_Refused{network_cause = text_field(cause, 40)})
 }
 
 // network_service gives the network service that runs, or starts it.

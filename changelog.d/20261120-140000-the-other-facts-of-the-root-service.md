@@ -1,0 +1,3 @@
+type: Changed
+
+**The other lines of the root service are log facts.** The root service writes as log facts, with the same sentences, its lines of the budgets and the mappings of a start, the devices, the debugging, the resources, the replacements, the imports of a disk process, the disk grants of a nickname, the reads and writes of the disk grant tables, the client keys of remote, the principals and their sessions, the trust of the boot and the choice of the start policy: a reader filters them by field, as `log.records(0) |> facts(root.Table_Written) |> where(principal = 0)`. The lines with no value, with a status as its number, with an address or a hash head, or with the sentence of an error record stay text.

@@ -50,7 +50,7 @@ text_settings_create :: proc "contextless" () {
 		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size]); problem.kind == .None {
 			font_outlines_mapping = mapping
 		} else {
-			system.log(.Warning, "root: the font outlines are refused: ", font_outlines.problem_sentences[problem.kind], ", value ", problem.value, ": they are not given")
+			system.log_fact(.Warning, Font_Outlines_Refused{problem_value = problem.value, problem = text_field(font_outlines.problem_sentences[problem.kind], 80)})
 		}
 	}
 	if font_outlines_mapping.page_count == 0 {

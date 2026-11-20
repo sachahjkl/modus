@@ -22,7 +22,7 @@ date_page_create :: proc "contextless" () {
 // without it, and reads nothing at its fixed range, as its bit is clear; a
 // list that a new mapping fills says so at once, not by a missing picture.
 mapping_dropped_log :: proc "contextless" (what: string, capacity: int) {
-	system.log(.Warning, "root: no room for ", what, " in the mappings of a start, which holds ", u64(capacity), ": the process starts without it")
+	system.log_fact(.Warning, Mapping_Dropped{capacity = u64(capacity), mapping = text_field(what, 40)})
 }
 
 // mapping_needed_log writes the one line of a mapping that a process cannot
@@ -30,7 +30,7 @@ mapping_dropped_log :: proc "contextless" (what: string, capacity: int) {
 // when the list of the mappings of its start is full: the start fails with
 // this line, and the list never takes an index past its end.
 mapping_needed_log :: proc "contextless" (what: string, name: string, capacity: int) {
-	system.log(.Warning, "root: no room for ", what, " in the mappings of a start, which holds ", u64(capacity), ": the start of ", system.Module_Name{name}, " fails")
+	system.log_fact(.Warning, Mapping_Needed{capacity = u64(capacity), refused_process = module_name_field(name), mapping = text_field(what, 40)})
 }
 
 // date_page_give adds the date page, read-only, to the mappings of a

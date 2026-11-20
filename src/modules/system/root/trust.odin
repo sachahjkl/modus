@@ -4,6 +4,7 @@ import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import op "modus:contract/operation"
 import "modus:contract/system_description"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The check of the root service (docs/TRUSTED_BOOT.md, "Layer 1: the signed system description").
@@ -55,9 +56,9 @@ trust_check :: proc "contextless" () {
 		}
 		fail(text, .Bad_State)
 	}
-	system.log(.Info, "root: the boot image agrees with the system description that the boot program verified: ", trust.entry_count - 1, " modules and resources checked in ", system.Duration{spent / 1000, .Microseconds}, "; the kernel was checked by the boot program only")
+	system.log_fact(.Info, Boot_Image_Agrees{checked_entries = trust.entry_count - 1, check_time = value_kinds.Time_In_Microseconds(spent / 1000)})
 	if report.cycle_frequency != 0 {
-		system.log(.Info, "root: the boot program checked the signature and every hash in ", system.Duration{trust.check_cycles * 1_000_000 / report.cycle_frequency, .Microseconds})
+		system.log_fact(.Info, Boot_Program_Check_Time{check_time = value_kinds.Time_In_Microseconds(trust.check_cycles * 1_000_000 / report.cycle_frequency)})
 	}
 	if trust.key_kind == .Test {
 		system.log(.Warning, "root: the system description is signed by the test signing key, whose private key is published: this system is not trusted")
@@ -69,8 +70,7 @@ trust_check :: proc "contextless" () {
 	}
 	switch trust.measure {
 	case .Measured:
-		digits := system_description.hexadecimal(trust.measure_value)
-		system.log(.Info, "root: measured: PCR ", trust.measure_register, " = ", string(digits[:]), ", at try ", trust.measure_tries)
+		system.log_fact(.Info, System_Description_Measured{measure_register = trust.measure_register, measure_tries = trust.measure_tries, measure_value = value_kinds.Hash_Field(trust.measure_value)})
 	case .No_Tpm:
 		system.log(.Info, "root: the system description is not measured into the TPM: the firmware has no TPM")
 	case .Refused:
@@ -82,13 +82,13 @@ trust_check :: proc "contextless" () {
 	}
 	// The TPM floors that the boot program compared
 	// (src/md/features/rollback_floors.md).
-	system.log(.Info, "root: the TPM floors before this start: the key floor ", trust.key_floor, " for the key number ", trust.key_number, ", the version floor of that key number ", trust.version_floor, " for the security version ", trust.security_version)
+	system.log_fact(.Info, Tpm_Floors{key_floor = trust.key_floor, key_number = trust.key_number, version_floor = trust.version_floor, security_version = trust.security_version})
 	for word in ([2]u64{trust.key_floor_state, trust.version_floor_state}) {
 		// The trust record comes through the boot report of the kernel: a
 		// word that names no state is said, never read as a state.
 		state, state_known := info.floor_state_of_word(word)
 		if !state_known {
-			system.log(.Warning, "root: the boot record names the floor state ", word, ", which names no state")
+			system.log_fact(.Warning, Floor_State_Unknown{floor_state = word})
 			continue
 		}
 		switch state {

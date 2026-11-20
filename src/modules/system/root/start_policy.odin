@@ -173,7 +173,7 @@ start_policy_begin :: proc "contextless" () {
 	request, source, known := info.start_request_of_words(report.start_request, report.start_request_source)
 	start_policy_request = .Chosen
 	if !known {
-		system.log(.Warning, "root: the boot record names the start request ", report.start_request, " with the source ", report.start_request_source, ", which the border refuses: the rescue start policy starts")
+		system.log_fact(.Warning, Start_Request_Refused{start_request = report.start_request, start_request_source = report.start_request_source})
 		start_policy_request = .Rescue_By_Refused_Record
 	} else {
 		switch request {
@@ -311,7 +311,7 @@ start_policy_none :: proc "contextless" (cause: string) {
 	start_policy_stage = .No_Policy
 	start_policy_process = nil
 	start_policy_deadline = system.WAIT_FOREVER
-	system.log(.Error, "root: no start policy at all: ", cause, "; this service serves the root ring of each process that runs, and starts nothing more")
+	system.log_fact(.Error, No_Start_Policy{failure_cause = text_field(cause, 72)})
 	failure_show(cause, .Bad_State)
 }
 
@@ -396,7 +396,7 @@ start_policy_step :: proc "contextless" () {
 			return
 		}
 		if left > 0 {
-			system.log(.Warning, "root: ", u64(left), " processes of the failed start policy did not stop within the hang bound of ", u64(START_POLICY_HANG_BOUND_MILLISECONDS), " ms: the rescue start policy starts beside them")
+			system.log_fact(.Warning, Start_Policy_Processes_Late{left_processes = u64(left), bound = START_POLICY_HANG_BOUND_MILLISECONDS})
 		}
 		start_policy_launch(.Rescue)
 	case .Running:
@@ -465,7 +465,7 @@ start_policy_start :: proc "contextless" (sender: ^Started, name: string, values
 	if restart_status != .Ok {
 		values^ = restart_record
 		written^ = true
-		system.log(.Warning, "root: refused a start of ", system.Module_Name{name}, " by the start policy from the disk: past its ", u64(start_list.RESTART_LIMIT), " restarts, or past the ", u64(start_policy_rules.RESTARTED_NAME_CAPACITY), " names whose starts the root service counts, it stays stopped")
+		system.log_fact(.Warning, Start_Policy_Restart_Refused{restart_limit = u64(start_list.RESTART_LIMIT), counted_names = u64(start_policy_rules.RESTARTED_NAME_CAPACITY), refused_process = module_name_field(name)})
 		return restart_status
 	}
 	status: system.Status

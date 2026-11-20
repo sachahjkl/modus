@@ -196,7 +196,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			changed := client_table.clients[place]
 			changed.uses = remote.client_uses_word(held + asked)
 			client_row_write(place, changed)
-			system.log(.Info, "root: principal ", principal, " gave the client key ", key_head_text(&head, key), " more uses: ", client_uses_text(held + asked))
+			system.log_fact(.Info, Client_Key_Uses_Added{principal = principal, client_key = text_field(key_head_text(&head, key), 24), uses = text_field(client_uses_text(held + asked), 24)})
 			return .Ok
 		}
 		// A key of Calls goes into the disk grant table of the principal: a
@@ -233,7 +233,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			client_serial_last += 1
 			client_row_write(free, {key = key, principal = principal, serial = client_serial_last, session_locked = locked, uses = remote.client_uses_word(asked), not_in_front = client_not_in_front(principal)})
 			if .Calls not_in asked {
-				system.log(.Info, "root: principal ", principal, " allowed the client key ", key_head_text(&head, key), " for the remote display: ", client_uses_text(asked), "; the uses of the remote display last until the machine stops")
+				system.log_fact(.Info, Client_Key_Allowed_For_Display{principal = principal, client_key = text_field(key_head_text(&head, key), 24), uses = text_field(client_uses_text(asked), 24)})
 				return .Ok
 			}
 			// It fits: the count of the keys of the table is under the
@@ -252,7 +252,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			// out of the table, and the key holds again for the other.
 			if disk_process.table_client_key_remove(table, key) == .None {
 				values[0] = 0
-				system.log(.Info, "root: principal ", principal, " revoked the client key ", key_head_text(&head, key), " of remote, which was contested: connections to services ended: 0")
+				system.log_fact(.Info, Client_Key_Revoked_Contested{principal = principal, client_key = text_field(key_head_text(&head, key), 24)})
 				values[1] = persisted_table_revocation(principal, key) ? root_ring.REMOTE_CLIENT_KEY_CAN_COME_BACK : 0
 				client_contest_end(principal, key)
 				return .Ok
@@ -265,7 +265,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		count := client_connections_end(place)
 		values^ = {}
 		values[0] = count
-		system.log(.Info, "root: principal ", principal, " revoked the client key ", key_head_text(&head, key), " (", client_uses_text(revoked_uses), "): connections to services ended: ", count)
+		system.log_fact(.Info, Client_Key_Revoked{principal = principal, connections_ended = count, client_key = text_field(key_head_text(&head, key), 24), uses = text_field(client_uses_text(revoked_uses), 24)})
 		// Only a key of Calls is in the disk grant table; a key of the view
 		// alone has no write to make.
 		if disk_process.table_client_key_remove(table, key) == .None || .Calls in revoked_uses {
@@ -352,7 +352,7 @@ client_keys_restore :: proc "contextless" () {
 				client_serial_last += 1
 				// The disk keeps the uses of Calls only.
 				client_row_write(place, {key = key, principal = principal, serial = client_serial_last, session_locked = locked, uses = remote.client_uses_word({.Calls}), not_in_front = client_not_in_front(principal)})
-				system.log(.Info, "root: the client key ", key_head_text(&head, key), " of remote holds again for principal ", principal, ", from its disk grant table: each call of that client acts for it")
+				system.log_fact(.Info, Client_Key_Restored{principal = principal, client_key = text_field(key_head_text(&head, key), 24)})
 			case .Contest:
 				changed := client_table.clients[place]
 				client_serial_last += 1
@@ -364,7 +364,7 @@ client_keys_restore :: proc "contextless" () {
 			case .No_Free_Row:
 				// The rows of every principal fit (the assertion at the top
 				// of this file), so this is a fault; it is said, not hidden.
-				system.log(.Warning, "root: the client table of remote has no free row for the client key ", key_head_text(&head, key), " of principal ", principal, ": the key holds for no principal")
+				system.log_fact(.Warning, Client_Table_Full{principal = principal, client_key = text_field(key_head_text(&head, key), 24)})
 			}
 		}
 	}
@@ -384,7 +384,7 @@ client_contest_end :: proc "contextless" (revoking_principal: u64, key: [32]u8) 
 	changed.contested = 0
 	client_row_write(place, changed)
 	head: [16]u8
-	system.log(.Info, "root: the client key ", key_head_text(&head, key), " of remote holds again for principal ", changed.principal, ": principal ", revoking_principal, " revoked it, so it is no longer contested")
+	system.log_fact(.Info, Client_Key_Contest_Ended{principal = changed.principal, revoking_principal = revoking_principal, client_key = text_field(key_head_text(&head, key), 24)})
 }
 
 // client_keys_after_read makes the client table hold the keys of the disk
@@ -409,7 +409,7 @@ client_keys_after_read :: proc "contextless" (principal: u64) {
 		}
 		client_row_write(place, {})
 		count := client_connections_end(place)
-		system.log(.Warning, "root: the client key ", key_head_text(&head, row.key), " of remote, which principal ", principal, " allowed before its disk grant table was read, is not in that table: its grant ends; connections to services ended: ", count)
+		system.log_fact(.Warning, Client_Key_Not_In_Table{principal = principal, connections_ended = count, client_key = text_field(key_head_text(&head, row.key), 24)})
 	}
 	client_keys_restore()
 }
@@ -476,9 +476,9 @@ remote_clients_front_follow :: proc "contextless" () {
 			client_row_write(place, changed)
 			count := client_connections_end(place)
 			if flag == 1 {
-				system.log(.Info, "root: the client key ", key_head_text(&head, row.key), " of principal ", row.principal, " loses the view and the input while the session of principal ", in_front, " is in front; connections to services ended: ", count)
+				system.log_fact(.Info, Client_Key_View_Paused{principal = row.principal, front_principal = in_front, connections_ended = count, client_key = text_field(key_head_text(&head, row.key), 24)})
 			} else {
-				system.log(.Info, "root: the client key ", key_head_text(&head, row.key), " of principal ", row.principal, " has the view again: the session of its principal is in front")
+				system.log_fact(.Info, Client_Key_View_Back{principal = row.principal, client_key = text_field(key_head_text(&head, row.key), 24)})
 			}
 			continue
 		}
@@ -524,7 +524,7 @@ client_grant_of :: proc "contextless" (caller: ^Started, row_number: u64, serial
 		// to a contested row; the check holds the rule here too, as this
 		// service does not trust remote with it.
 		head: [16]u8
-		system.log(.Warning, "root: refused a connection of remote for the client key ", key_head_text(&head, row.key), ": it is contested between principal ", row.principal, " and principal ", row.contested - 1, ", and acts for neither")
+		system.log_fact(.Warning, Remote_Connection_Refused_Contested{principal = row.principal, other_principal = row.contested - 1, client_key = text_field(key_head_text(&head, row.key), 24)})
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return {}, .Bad_State
 	}

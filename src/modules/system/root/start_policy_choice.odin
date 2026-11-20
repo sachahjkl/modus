@@ -95,7 +95,7 @@ start_policy_choice_step :: proc "contextless" () {
 			return
 		}
 		if system.time() >= start_policy_choice_deadline {
-			system.log(.Warning, "root: unlock gave no machine key within the hang bound of ", u64(START_POLICY_HANG_BOUND_MILLISECONDS), " ms: the choice of principal 0 is not read, and unlock is stopped")
+			system.log_fact(.Warning, Unlock_Machine_Key_Late{bound = START_POLICY_HANG_BOUND_MILLISECONDS})
 			if running := find("unlock"); running != nil {
 				root_stop_ask(running)
 			}
@@ -110,7 +110,7 @@ start_policy_choice_step :: proc "contextless" () {
 			return
 		}
 		if system.time() >= start_policy_choice_deadline {
-			system.log(.Warning, "root: unlock did not stop within the hang bound of ", u64(START_POLICY_HANG_BOUND_MILLISECONDS), " ms after its stop was asked: the start policy starts, and its row unlock does not start while it runs")
+			system.log_fact(.Warning, Unlock_Stop_Late{bound = START_POLICY_HANG_BOUND_MILLISECONDS})
 			start_policy_choice_end()
 		}
 	case .Table:
@@ -126,7 +126,7 @@ start_policy_choice_table_check :: proc "contextless" () {
 		return
 	}
 	if system.time() >= start_policy_choice_deadline {
-		system.log(.Warning, "root: the read of the disk grant table of principal 0 did not end within the hang bound of ", u64(START_POLICY_HANG_BOUND_MILLISECONDS), " ms: the choice of principal 0 is not read")
+		system.log_fact(.Warning, Machine_Table_Read_Late{bound = START_POLICY_HANG_BOUND_MILLISECONDS})
 		start_policy_choice_end()
 	}
 }
@@ -189,12 +189,12 @@ start_policy_chosen_load_begin :: proc "contextless" (row: ^disk_process.Grant_R
 	// or a boot image that holds a new module of this name, can name what
 	// the choice refused.
 	if nickname_reserved_for_a_start_policy(nickname) {
-		system.log(.Warning, "root: the chosen start policy \"", nickname, "\" is not read: the root service gives this name a grant, or a module of the boot image has it: the rescue start policy starts")
+		system.log_fact(.Warning, Chosen_Start_Policy_Name_Reserved{nickname = module_name_field(nickname)})
 		start_policy_launch(.Rescue)
 		return
 	}
 	if disk_load.stage != .Idle {
-		system.log(.Warning, "root: the chosen start policy \"", nickname, "\" is not read: another load from the disk runs: the rescue start policy starts")
+		system.log_fact(.Warning, Chosen_Start_Policy_Load_Busy{nickname = module_name_field(nickname)})
 		start_policy_launch(.Rescue)
 		return
 	}
@@ -212,7 +212,7 @@ start_policy_chosen_load_begin :: proc "contextless" (row: ^disk_process.Grant_R
 		system.close(ring_memory)
 		system.close(region_memory)
 		disconnect(connection)
-		system.log(.Warning, "root: the chosen start policy \"", nickname, "\" is not read: the call ring and the call region of the storage service do not map: the rescue start policy starts")
+		system.log_fact(.Warning, Chosen_Start_Policy_Not_Mapped{nickname = module_name_field(nickname)})
 		start_policy_launch(.Rescue)
 		return
 	}
@@ -230,7 +230,7 @@ start_policy_chosen_load_begin :: proc "contextless" (row: ^disk_process.Grant_R
 		for_start_policy = true,
 	}
 	start_policy_choice_stage = .Load
-	system.log(.Info, "root: reads the chosen start policy \"", nickname, "\", the file ", system.Hash{row.hash[:]}, ", from the store ", disk_process.STORE_NAME, " of principal 0")
+	system.log_fact(.Info, Chosen_Start_Policy_Read{hash = value_kinds.Hash_Field(row.hash), nickname = module_name_field(nickname)})
 	if !disk_load_ask("size", 0, false) {
 		disk_load_end(.Bad_State, disk_refused(nickname, {}, "the storage service took no call"))
 	}
@@ -306,7 +306,7 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 		// and an attestation would not see it. The rescue starts in its
 		// place, and is measured, or says why not.
 		if !start_policy_measure(hash, {}, system.format(words[:], "(nickname \"", name, "\")")) {
-			system.log(.Warning, "root: the chosen start policy \"", name, "\" does not run unmeasured: it is not started")
+			system.log_fact(.Warning, Chosen_Start_Policy_Unmeasured{nickname = module_name_field(name)})
 			status = .Bad_State
 		}
 	}
@@ -366,7 +366,7 @@ start_policy_choice_command :: proc "contextless" (caller: ^Started, record: rin
 	switch refusal {
 	case .None:
 	case .Named_Principal:
-		system.log(.Warning, "root: refused a choice of a start policy: the caller acts for principal ", caller.principal, ", and only principal 0 chooses the start policy of the machine")
+		system.log_fact(.Warning, Start_Policy_Choice_Refused_Principal{principal = caller.principal})
 	case .No_Machine_Key:
 		system.log(.Warning, "root: refused a choice of a start policy: the machine has no machine key, so the disk grant table of principal 0 lasts until the machine stops, and no choice reaches the next start; machine_seal() makes a machine key")
 	case .Passphrase:
@@ -411,24 +411,24 @@ start_policy_choice_command :: proc "contextless" (caller: ^Started, record: rin
 	// that a module of the boot image has, would take them.
 	if nickname_reserved_for_a_start_policy(nickname) {
 		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
-		system.log(.Warning, "root: refused the start policy ", system.Module_Name{nickname}, ": the root service gives this name a grant, or a module of the boot image has it, and the start policy runs under its nickname")
+		system.log_fact(.Warning, Start_Policy_Refused_Reserved_Name{nickname = module_name_field(nickname)})
 		return .Bad_Operation
 	}
 	switch disk_process.table_start_policy_choose(table, nickname, hash) {
 	case .None:
 	case .No_File:
 		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
-		system.log(.Warning, "root: refused the start policy ", system.Module_Name{nickname}, ": the nickname names no module, as it has no row in the disk grant table of principal 0; name the hash of its file")
+		system.log_fact(.Warning, Start_Policy_Refused_No_Row{nickname = module_name_field(nickname)})
 		return .Bad_Handle
 	case .Other_File:
 		named := disk_process.table_find(table, nickname)
 		head := transmute([4]u64)named.hash
 		values^ = errors.ring_fail(kind, .Exists, .Grants, 2, i64(head[0]))
-		system.log(.Warning, "root: refused the start policy ", system.Module_Name{nickname}, ": the nickname names the file ", system.Hash{named.hash[:]}, ", and the command names the file ", system.Hash{hash[:]})
+		system.log_fact(.Warning, Start_Policy_Refused_Other_File{named_hash = value_kinds.Hash_Field(named.hash), hash = value_kinds.Hash_Field(hash), nickname = module_name_field(nickname)})
 		return .Bad_Operation
 	case .Holds_Store:
 		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
-		system.log(.Warning, "root: refused the start policy ", system.Module_Name{nickname}, ": its row holds the grant store, and a start policy holds the grant Start_Policy and nothing else")
+		system.log_fact(.Warning, Start_Policy_Refused_Holds_Store{nickname = module_name_field(nickname)})
 		return .Bad_Operation
 	case .Full:
 		values^ = errors.ring_fail(kind, .Full, .Grants, 0, 0, disk_process.ROW_CAPACITY)
@@ -442,7 +442,7 @@ start_policy_choice_command :: proc "contextless" (caller: ^Started, record: rin
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	system.log(.Info, "root: principal 0 chose the start policy ", system.Module_Name{nickname}, ", the file ", system.Hash{row.hash[:]}, ": it runs at the next start of the machine, with the grant Start_Policy only; the machine key keeps the choice on the disk")
+	system.log_fact(.Info, Start_Policy_Chosen{hash = value_kinds.Hash_Field(row.hash), nickname = module_name_field(nickname)})
 	persisted_table_changed(principals.MACHINE)
 	return .Ok
 }

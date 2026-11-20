@@ -146,7 +146,7 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		place := pci.Place{device = pci.SOUND_DEVICE}
 		for &item in started {
 			if item.process != 0 && item.is_driver && item.device == place {
-				system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": the sound device plays for another process; one process plays at a time")
+				system.log_fact(.Warning, Start_Refused_Sound_Device_Busy{refused_process = module_name_field(name)})
 				return .Bad_State
 			}
 		}
@@ -504,7 +504,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 			if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Started), values = {0 = u64(work.slot.client), 1 = started_at}}) {
 				// A measure, not a part of the start: the window runs, and
 				// has no line of its start.
-				system.log(.Warning, "root: the control ring of the compositor is full: the start of the window of ", name, " is not measured")
+				system.log_fact(.Warning, Window_Start_Not_Measured{window_process = module_name_field(name)})
 			}
 		}
 		return .Ok

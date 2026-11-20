@@ -19,6 +19,7 @@ import module "modus:contract/module"
 import "modus:support/disk_process"
 import "modus:support/storage"
 import "modus:contract/root_ring"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // One page of the list: its rows, and the bytes of their names.
@@ -74,7 +75,7 @@ disk_imports_begin :: proc "contextless" (wait: ^system.Wait) {
 		disk_load_start()
 		return
 	}
-	system.log(.Info, "root: ", system.Module_Name{name}, " imports ", u64(imports.scan.wanted_count), " modules that the boot image does not hold: the import scan reads the store ", disk_process.STORE_NAME, " to find them by the hash of their bytes")
+	system.log_fact(.Info, Import_Scan_Started{imports = u64(imports.scan.wanted_count), loaded_process = module_name_field(name)})
 	load.stage = .List
 	if !disk_import_list_ask() {
 		disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service took no call")
@@ -314,7 +315,7 @@ disk_import_bytes_answer :: proc "contextless" (text: []u8, wait: ^system.Wait) 
 	imports.bytes = nil
 	item := &imports.scan.wanted[wanted]
 	name := string(load.name[:load.name_length])
-	system.log(.Info, "root: ", system.Module_Name{name}, ": the import ", system.Hash{hash[:]}, " of ", system.Module_Name{disk_import_importer_name(item.importer)}, " is the file ", system.Module_Name{entry_name}, " of the store ", disk_process.STORE_NAME, ", checked on its bytes")
+	system.log_fact(.Info, Import_Found{hash = value_kinds.Hash_Field(hash), loaded_process = module_name_field(name), importer = module_name_field(disk_import_importer_name(item.importer)), file = text_field(entry_name, 24)})
 	if !disk_import_replaced(hash) {
 		disk_imports_want(imports.files[wanted].bytes, imports.reading, item.level + 1)
 	}
