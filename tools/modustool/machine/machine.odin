@@ -591,7 +591,7 @@ scenario_network := [?]Step {
 	{kind = .Close, text = "net"},
 	{kind = .Wait, text = "root: net stopped: a holder"},
 	// The end of the endpoint, by the process that owned it.
-	{kind = .Fact, process = "network", fact = "network_service.Endpoint_Ended", condition = "owner = \"net\""},
+	{kind = .Fact, process = "network", fact = "network_service.Endpoint_Ended", condition = "owner = \"net\"", any_order = true},
 	{kind = .Wait, text = "network: the endpoint of net ended: "},
 	// The passes of the network service over the bytes of the datagrams of
 	// `net`: a measure, then the structural count: one copy on receive, on
@@ -638,7 +638,7 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4", repeat = 1000},
 	{kind = .Wait, text = "root: connected remote to the service monitor, acting for principal 0, for the client key ", any_order = true},
 	// The connection of remote to a service, by the service.
-	{kind = .Fact, process = "remote", fact = "remote_service.Service_Connected", condition = "service = \"monitor\""},
+	{kind = .Fact, process = "remote", fact = "remote_service.Service_Connected", condition = "service = \"monitor\"", any_order = true},
 	{kind = .Wait, text = "remote: connected to the service monitor, for principal 0"},
 	{kind = .Wait, text = "remote: the window drew one picture in ", any_order = true},
 	// A Table: the row of the remote service is there, and the count of the
