@@ -23,6 +23,7 @@
 package ranges
 
 import "modus:contract/errors"
+import "modus:contract/storage_status"
 import format "modus:contract/store"
 import "modus:contract/value_kinds"
 import "modus:support/storage"
@@ -74,7 +75,7 @@ LOOP_MARKER :: "ranges: the first commit of the loop of range commits"
 client: storage.Client
 wrong_cases: int
 
-refused_with :: proc "contextless" (status: storage.Status, error: ^errors.Error_Record, kind: errors.Kind, unit: errors.Unit) -> bool {
+refused_with :: proc "contextless" (status: storage_status.Status, error: ^errors.Error_Record, kind: errors.Kind, unit: errors.Unit) -> bool {
 	return status == .Failed && error.kind == i64(kind) && error.unit == i64(unit)
 }
 
@@ -360,7 +361,7 @@ twin_write :: proc "contextless" (name: string) -> (measure: storage.Commit_Meas
 		_, status := storage.write_range(&client, storage.ROOT, name, at, chunk[:])
 		good &&= status == .Ok
 	}
-	status: storage.Status
+	status: storage_status.Status
 	measure, status = storage.commit(&client, storage.ROOT, name)
 	return measure, good && status == .Ok
 }

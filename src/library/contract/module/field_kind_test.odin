@@ -153,6 +153,20 @@ a_field_kind_on_the_wrong_field_is_refused :: proc(t: ^testing.T) {
 		{type = INTEGER, detail = 8, unsigned = true, kind = NANOSECONDS, contract_enum = LEVEL},
 		{type = TEXT, detail = 8, kind = NANOSECONDS},
 		{type = BYTES, detail = 8, kind = NANOSECONDS},
+		// Tenths: an Integer only, with no unit and no enum.
+		{type = INTEGER, detail = 8, kind = u8(value_kinds.Field_Kind.Tenths), integer_unit = value_kinds.time_in(.Seconds)},
+		{type = TEXT, detail = 8, kind = u8(value_kinds.Field_Kind.Tenths)},
+		// Hexadecimal_No_Leading_Zero: an unsigned Integer of 8 bytes only.
+		{type = INTEGER, detail = 8, kind = u8(value_kinds.Field_Kind.Hexadecimal_No_Leading_Zero)},
+		{type = INTEGER, detail = 4, unsigned = true, kind = u8(value_kinds.Field_Kind.Hexadecimal_No_Leading_Zero)},
+		// Time_Of_Day: an unsigned Integer only.
+		{type = INTEGER, detail = 8, kind = u8(value_kinds.Field_Kind.Time_Of_Day)},
+		{type = BYTES, detail = 8, kind = u8(value_kinds.Field_Kind.Time_Of_Day)},
+		// Text_View: Bytes of 16 bytes only, with no enum.
+		{type = BYTES, detail = value_kinds.TEXT_VIEW_BYTES - 1, kind = u8(value_kinds.Field_Kind.Text_View)},
+		{type = BYTES, detail = value_kinds.TEXT_VIEW_BYTES + 1, kind = u8(value_kinds.Field_Kind.Text_View)},
+		{type = TEXT, detail = value_kinds.TEXT_VIEW_BYTES, kind = u8(value_kinds.Field_Kind.Text_View)},
+		{type = BYTES, detail = value_kinds.TEXT_VIEW_BYTES, kind = u8(value_kinds.Field_Kind.Text_View), contract_enum = LEVEL},
 		// The enums of an error record: an unsigned Integer only.
 		{type = INTEGER, detail = 8, kind = STATUS, contract_enum = ERROR_KIND},
 		{type = TEXT, detail = 8, unsigned = true, kind = STATUS, contract_enum = ERROR_UNIT},
@@ -243,6 +257,10 @@ each_field_kind_on_its_type_is_taken :: proc(t: ^testing.T) {
 		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Error_Kind)},
 		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Error_Unit)},
 		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Status)},
+		{type = u8(Type.Integer), detail = 8, kind = u8(value_kinds.Field_Kind.Tenths)},
+		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Hexadecimal_No_Leading_Zero)},
+		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Time_Of_Day)},
+		{type = u8(Type.Bytes), detail = value_kinds.TEXT_VIEW_BYTES, kind = u8(value_kinds.Field_Kind.Text_View)},
 	}
 	for item in accepted {
 		testing.expectf(t, field_kind_valid(item), "the field %v is refused", item)

@@ -245,6 +245,21 @@ imported_structs :: proc(name: string, state: ^Describe_State) -> bool {
 			return false
 		}
 		structs_add(file, strings.concatenate({name, "."}), state)
+		// The imports of the package, under "package.name": a type of a
+		// field of its structs names a package by the name that its own
+		// files use (contract_type_name).
+		for item in file.imports {
+			full := strings.trim(item.fullpath, "\"")
+			imported_folder, in_source_library := foundation.source_library_package_folder(full, context.allocator)
+			if !in_source_library {
+				continue
+			}
+			alias := item.name.text
+			if alias == "" {
+				alias = imported_folder[strings.last_index_byte(imported_folder, '/') + 1:]
+			}
+			state.imports[strings.concatenate({name, ".", alias})] = imported_folder
+		}
 	}
 	return true
 }
@@ -263,6 +278,13 @@ struct_name :: proc(state: ^Describe_State, type: ^ast.Expr) -> (key: string, na
 		}
 	}
 	return "", ""
+}
+
+// imported_package_read reads the structs of a package that the parsed
+// files import by a name, one time: their keys are "name.Struct". false
+// for a name that the files do not import.
+imported_package_read :: proc(state: ^Describe_State, name: string) -> bool {
+	return imported_structs(name, state)
 }
 
 // is_contract_type says if a type is the type `name` of the contract
@@ -372,7 +394,13 @@ contract_type_name :: proc(state: ^Describe_State, type: ^ast.Expr, package_name
 	if !is_name {
 		return ""
 	}
-	folder, imported := state.imports[library.name]
+	// A struct of an imported package names a package by the name of the
+	// imports of its own files; a struct of the package by the names of
+	// the files of the module.
+	folder, imported := state.imports[strings.concatenate({prefix, library.name}, context.temp_allocator)]
+	if !imported && prefix == "" {
+		folder, imported = state.imports[library.name]
+	}
 	if !imported || folder != contract_folder {
 		return ""
 	}
@@ -391,12 +419,16 @@ field_kind_field :: proc(state: ^Describe_State, type: ^ast.Expr, prefix := "") 
 		// 8 bytes keep the detail 0 of the Integer fields before the sizes.
 		integer_detail := row.size == 8 ? 0 : row.size
 		switch row.kind {
-		case .Hexadecimal, .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds:
+		case .Hexadecimal, .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
 			return {type = .Integer, detail = integer_detail, unsigned = row.unsigned, kind = row.kind}, row.size, row.size, true
 		case .Module_Name:
 			return {type = .Text, detail = row.size, kind = .Module_Name}, row.size, 1, true
 		case .Hash, .Hash_Head, .Fact_Values:
 			return {type = .Bytes, detail = row.size, kind = row.kind}, row.size, 1, true
+		case .Text_View:
+			// value_kinds.Text_View starts with its length, a u32: the
+			// compiler places it on 4 bytes, and so does the tool.
+			return {type = .Bytes, detail = row.size, kind = .Text_View}, row.size, 4, true
 		case .Plain, .Status:
 			// No type of the table has these kinds: a test of value_kinds
 			// checks it.
@@ -414,11 +446,11 @@ field_kind_field :: proc(state: ^Describe_State, type: ^ast.Expr, prefix := "") 
 		case name == "":
 			continue
 		case name == row.name:
-			enum_field_size = op.CONTRACT_ENUM_SIZES[which]
+			enum_field_size = module.CONTRACT_ENUM_SIZES[which]
 		case row.word_name != "" && name == row.word_name:
 			// The word type holds the word whole, at its own size: a
 			// status of 8 bytes beside fields of 8 bytes leaves no padding.
-			enum_field_size = op.CONTRACT_ENUM_WORD_SIZES[which]
+			enum_field_size = module.CONTRACT_ENUM_WORD_SIZES[which]
 		case:
 			continue
 		}
@@ -1227,13 +1259,13 @@ field_value :: proc(record: []u8, item: module.Field) -> string {
 				return strings.to_string(digits)
 			case .Status:
 				which, which_ok := module.field_contract_enum(item)
-				if name, named := op.contract_enum_member_name(which, u64(value)); which_ok && named {
+				if name, named := module.contract_enum_member_name(which, u64(value)); which_ok && named {
 					return name
 				}
-			case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head:
+			case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View:
 				// A decimal number: record_type refuses each of them but
 				// Plain on an Integer.
-			case .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds:
+			case .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
 				// module.field_kind_text wrote them above.
 			}
 			return fmt.tprintf("%d", value)

@@ -1,15 +1,22 @@
 package visitor
 
 import op "modus:contract/operation"
+import "modus:contract/storage_status"
 
 // The log facts of the disk process visitor (src/md/features/log_facts.md):
 // each line, as a record of fields. Each fact template is the sentence
 // that the line wrote before it was a fact, so a wait of a machine test on
-// that sentence reads it as before; a status of the kernel that the line
-// wrote as its number is now the name of its member. A status of the
-// storage service keeps its number: the storage service has no enum of a
-// status in a contract. They are in a file of their own: the machine test
-// of the disk processes names lines of main.odin, which must not move.
+// that sentence reads it as before; a status of the kernel or of the
+// storage service that the line wrote as its number is now the name of its
+// member. They are in a file of their own: the machine test of the disk
+// processes names lines of main.odin, which must not move, so main.odin
+// takes no new import and converts a status with storage_status_word.
+
+// storage_status_word gives the word of a status of the storage service,
+// for a field of a fact.
+storage_status_word :: proc "contextless" (status: storage_status.Status) -> storage_status.Status_Word {
+	return storage_status.Status_Word(status)
+}
 //
 // The copies of this module that the test builds outside the sources
 // (outsider, outsider_fault) write these facts with their own module hash:
@@ -51,9 +58,9 @@ Wrong_Root_Ring :: struct {
 }
 
 // The store did not give the count of the visits.
-@(log_fact = "visitor: the store did not give the count: status {storage_status}: WRONG")
+@(log_fact = "visitor: the store did not give the count: status {status}: WRONG")
 Wrong_Count_Not_Read :: struct {
-	storage_status: u64,
+	status: storage_status.Status_Word,
 }
 
 // The count of the visits in the store is not 8 bytes.
@@ -63,9 +70,9 @@ Wrong_Count_Size :: struct {
 }
 
 // The store did not keep the new count.
-@(log_fact = "visitor: the store did not keep the count: status {storage_status}: WRONG")
+@(log_fact = "visitor: the store did not keep the count: status {status}: WRONG")
 Wrong_Count_Not_Kept :: struct {
-	storage_status: u64,
+	status: storage_status.Status_Word,
 }
 
 // The count read again is not the count written.

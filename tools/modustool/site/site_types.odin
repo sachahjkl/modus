@@ -222,6 +222,15 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Log_Record", type_info_of(op.Log_Record)},
 		{"operation", "Log_Record_Form", type_info_of(op.Log_Record_Form)},
 		{"operation", "Log_Fact", type_info_of(op.Log_Fact)},
+		{"operation", "Log_Fact_Call", type_info_of(op.Log_Fact_Call)},
+		{"operation", "Log_Fact_Part", type_info_of(op.Log_Fact_Part)},
+		{"operation", "Log_Fact_Join", type_info_of(op.Log_Fact_Join)},
+		{"operation", "Log_Fact_Join_Fault", type_info_of(op.Log_Fact_Join_Fault)},
+		{"operation", "Status_Word", type_info_of(op.Status_Word)},
+		{"operation", "Log_Record_Form_Word", type_info_of(op.Log_Record_Form_Word)},
+		{"operation", "Stop_Cause_Word", type_info_of(op.Stop_Cause_Word)},
+		{"operation", "Stop_Outcome_Word", type_info_of(op.Stop_Outcome_Word)},
+		{"operation", "Object_Kind_Word", type_info_of(op.Object_Kind_Word)},
 		{"operation", "Mapping_Flag", type_info_of(op.Mapping_Flag)},
 		{"operation", "Mapping_Run", type_info_of(op.Mapping_Run)},
 		{"operation", "Mapping_Report", type_info_of(op.Mapping_Report)},
@@ -238,6 +247,8 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"errors", "End", type_info_of(errors.End)},
 		{"errors", "Unanswered", type_info_of(errors.Unanswered)},
 		{"errors", "Error_Record_Fact_Fields", type_info_of(errors.Error_Record_Fact_Fields)},
+		{"errors", "Kind_Word", type_info_of(errors.Kind_Word)},
+		{"errors", "Unit_Word", type_info_of(errors.Unit_Word)},
 		// src/library/contract/fixed_addresses
 		{"fixed_addresses", "Fixed_Range", type_info_of(fixed_addresses.Fixed_Range)},
 		{"fixed_addresses", "Fixed_Ranges", type_info_of(fixed_addresses.Fixed_Ranges)},
@@ -248,6 +259,16 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"module", "Described", type_info_of(module.Described)},
 		{"module", "Named", type_info_of(module.Named)},
 		{"module", "Load_Error", type_info_of(module.Load_Error)},
+		{"module", "Load_Stage_Word", type_info_of(module.Load_Stage_Word)},
+		{"module", "Error_Word", type_info_of(module.Error_Word)},
+		{"module", "Difference_Word", type_info_of(module.Difference_Word)},
+		{"module", "Load_Find_Fields", type_info_of(module.Load_Find_Fields)},
+		{"module", "Load_Read_Fields", type_info_of(module.Load_Read_Fields)},
+		{"module", "Load_Cycle_Fields", type_info_of(module.Load_Cycle_Fields)},
+		{"module", "Load_Check_Fields", type_info_of(module.Load_Check_Fields)},
+		{"module", "Load_Bind_Fields", type_info_of(module.Load_Bind_Fields)},
+		{"module", "Load_Memory_Fields", type_info_of(module.Load_Memory_Fields)},
+		{"module", "Load_Room_Fields", type_info_of(module.Load_Room_Fields)},
 		{"module", "Machine", type_info_of(module.Machine)},
 		{"module", "Header", type_info_of(module.Header)},
 		{"module", "Table_Kind", type_info_of(module.Table_Kind)},
@@ -814,6 +835,14 @@ site_record_field_type_text :: proc(field: build.Field_Description, size: int) -
 		return fmt.tprintf("hundredths %s%d", field.unsigned ? "u" : "i", size * 8)
 	case .Nanoseconds_As_Microseconds:
 		return fmt.tprintf("nanoseconds as microseconds u%d", size * 8)
+	case .Tenths:
+		return fmt.tprintf("tenths %s%d", field.unsigned ? "u" : "i", size * 8)
+	case .Hexadecimal_No_Leading_Zero:
+		return "hexadecimal with no leading zero"
+	case .Time_Of_Day:
+		return fmt.tprintf("time of day u%d", size * 8)
+	case .Text_View:
+		return "Text_View"
 	case .Plain:
 	}
 	switch field.type {

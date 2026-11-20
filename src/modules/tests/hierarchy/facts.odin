@@ -1,6 +1,7 @@
 package hierarchy
 
 import op "modus:contract/operation"
+import "modus:contract/storage_status"
 import "modus:contract/value_kinds"
 import "modus:support/system"
 
@@ -15,9 +16,9 @@ import "modus:support/system"
 // values, then its verdict, a Text field that holds "as it must" or
 // "WRONG" (outcome). `where(verdict = "WRONG")` keeps the cases that
 // failed. A case that fails writes its verdict at the end of its sentence,
-// as the other test modules do. A status of the storage service keeps its
-// number: the storage service has no enum of a status in a contract. A
-// Text field is the last field, and is [N]u8 with N written out, as the
+// as the other test modules do. A status of the storage service is the
+// word of its contract enum, written by the name of its member. A Text
+// field is the last field, and is [N]u8 with N written out, as the
 // tool reads it.
 
 // The bytes of the Text field of a verdict: "as it must" has 10 bytes,
@@ -66,30 +67,30 @@ Run_Done :: struct {
 }
 
 // The add of the top trees failed.
-@(log_fact = "hierarchy: the top trees: status {storage_status}: {verdict}")
+@(log_fact = "hierarchy: the top trees: status {status}: {verdict}")
 Top_Trees_Refused :: struct {
-	storage_status: u64,
+	status: storage_status.Status_Word,
 	verdict:        [16]u8,
 }
 
 // The open of a top tree failed.
-@(log_fact = "hierarchy: open a top tree: status {storage_status}: {verdict}")
+@(log_fact = "hierarchy: open a top tree: status {status}: {verdict}")
 Top_Tree_Open_Refused :: struct {
-	storage_status: u64,
+	status: storage_status.Status_Word,
 	verdict:        [16]u8,
 }
 
 // The open of a part failed.
-@(log_fact = "hierarchy: open a part: status {storage_status}: {verdict}")
+@(log_fact = "hierarchy: open a part: status {status}: {verdict}")
 Part_Open_Refused :: struct {
-	storage_status: u64,
+	status: storage_status.Status_Word,
 	verdict:        [16]u8,
 }
 
 // The add of the objects of a part failed.
-@(log_fact = "hierarchy: add the objects of a part: status {storage_status}: {verdict}")
+@(log_fact = "hierarchy: add the objects of a part: status {status}: {verdict}")
 Part_Objects_Refused :: struct {
-	storage_status: u64,
+	status: storage_status.Status_Word,
 	verdict:        [16]u8,
 }
 
@@ -173,17 +174,17 @@ First_Run_Left :: struct {
 }
 
 // The add or the open of the tree of the scrambled names failed.
-@(log_fact = "hierarchy: the tree scrambled: status {storage_status} {open_storage_status}: {verdict}")
+@(log_fact = "hierarchy: the tree scrambled: status {status} {open_status}: {verdict}")
 Scrambled_Tree_Refused :: struct {
-	storage_status:      u64,
-	open_storage_status: u64,
+	status:      storage_status.Status_Word,
+	open_status: storage_status.Status_Word,
 	verdict:             [16]u8,
 }
 
 // An add of the scrambled names failed.
-@(log_fact = "hierarchy: the scrambled adds: status {storage_status}: {verdict}")
+@(log_fact = "hierarchy: the scrambled adds: status {status}: {verdict}")
 Scrambled_Adds_Refused :: struct {
-	storage_status: u64,
+	status: storage_status.Status_Word,
 	verdict:        [16]u8,
 }
 

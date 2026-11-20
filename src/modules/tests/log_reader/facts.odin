@@ -1,5 +1,6 @@
 package log_reader
 
+import "modus:contract/call_status"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
@@ -20,10 +21,11 @@ import "modus:contract/value_kinds"
 // - the line of a bad block and the line of a connection of the measures:
 //   the measure compares their write as text with their write as a fact.
 //
-// A status of a call of the support library (system.Call_Status), the
-// kind of an object (op.Object_Kind) and the form of a record beside
-// fields of 8 bytes keep their number: no field kind names their members
-// at that size.
+// A status of a call, the kind of an object and the form of a record are
+// the words of their contract enums, written by the names of their
+// members. A field of a status of a call is named `status`, not after the
+// package call_status, so that a field and a local of that name never
+// hide the package; main.odin converts with call_status_word.
 //
 // A field of the name of a process holds the name and a zero byte; the
 // name of a refused call or of an edge is a Text field of its own size.
@@ -323,14 +325,15 @@ Refused_Facts_Checked :: struct {
 Wrong_Facts_Changed_Budget :: struct {}
 
 // A fact read back does not hold what the kernel must write. The form is
-// its number: a field of the enum of 1 byte among fields of 8 would pad
-// the record, and the enum has no word type.
-@(log_fact = "log_reader: WRONG: the fact {index} has the form {form_word}, more {continues}, the reserved bytes {reserved}, the key {key}, {value_count} value bytes, the first {first_values} and the last {last_value}")
+// its word type: the enum of 1 byte among fields of 8 would pad the
+// record.
+@(log_fact = "log_reader: WRONG: the fact {index} has the form {form}, more {continues}, the part {part} of {part_count}, the key {key}, {value_count} value bytes, the first {first_values} and the last {last_value}")
 Wrong_Fact_Row :: struct {
 	index:        u64,
-	form_word:    u64,
+	form:         op.Log_Record_Form_Word,
 	continues:    i64,
-	reserved:     value_kinds.Hexadecimal_Sixteen_Digits,
+	part:         u64,
+	part_count:   u64,
 	key:          value_kinds.Hexadecimal_Sixteen_Digits,
 	value_count:  i64,
 	first_values: value_kinds.Hexadecimal_Sixteen_Digits,
@@ -345,9 +348,9 @@ Refused_Calls_Checked :: struct {
 }
 
 // The call with the process handle of the log service was not refused.
-@(log_fact = "log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status {call_status}")
+@(log_fact = "log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status {status}")
 Wrong_Service_Handle_Call :: struct {
-	call_status: u64,
+	status:      call_status.Call_Status_Word,
 }
 
 // The process handle of the log service, which has no Give, is not lent.
@@ -355,27 +358,27 @@ Wrong_Service_Handle_Call :: struct {
 Service_Handle_Not_Lent :: struct {}
 
 // The call of log.process_records for a child did not come back.
-@(log_fact = "log_reader: WRONG: the call of log.process_records for {child} gave the status {call_status}")
+@(log_fact = "log_reader: WRONG: the call of log.process_records for {child} gave the status {status}")
 Wrong_Child_Records_Call :: struct {
-	call_status: u64,
+	status:      call_status.Call_Status_Word,
 	child:       value_kinds.Module_Name_Field,
 }
 
 // The call of log.process_value_runs for a child did not come back.
-@(log_fact = "log_reader: WRONG: the call of log.process_value_runs for {child} gave the status {call_status}")
+@(log_fact = "log_reader: WRONG: the call of log.process_value_runs for {child} gave the status {status}")
 Wrong_Child_Runs_Call :: struct {
-	call_status: u64,
+	status:      call_status.Call_Status_Word,
 	child:       value_kinds.Module_Name_Field,
 }
 
 // The log service did not refuse a memory object in place of a process
 // handle with the kind Handle_Kind.
-@(log_fact = "log_reader: WRONG: a memory object in place of a process handle gave the status {call_status}, the kind {kind}, the argument {argument} and the found kind {found_kind}")
+@(log_fact = "log_reader: WRONG: a memory object in place of a process handle gave the status {status}, the kind {kind}, the argument {argument} and the found kind {found_kind}")
 Wrong_Memory_Lent :: struct {
-	call_status: u64,
+	status:      call_status.Call_Status_Word,
 	kind:        errors.Kind_Word,
 	argument:    i64,
-	found_kind:  i64,
+	found_kind:  op.Object_Kind_Word,
 }
 
 // The log service refused a memory object in place of a process handle.
@@ -386,6 +389,24 @@ Memory_Lent_Refused :: struct {}
 @(log_fact = "log_reader: WRONG: {problem}")
 Wrong_Check :: struct {
 	problem: [96]u8,
+}
+
+// Two facts of several records, given to Log and read back whole.
+@(log_fact = "log_reader: a fact of {short_bytes} value bytes in {short_records} records and a fact of {long_bytes} value bytes in {long_records} records, at the bound of a call, read back: each record with its part, the count of its parts and its value bytes, joined whole into the bytes given: as it must")
+Long_Facts_Read_Back :: struct {
+	short_bytes:   u64,
+	short_records: u64,
+	long_bytes:    u64,
+	long_records:  u64,
+}
+
+// The log limit of a child refused each fact of more records than it had
+// left, whole.
+@(log_fact = "log_reader: a child with a log limit of {log_limit} records a second: a fact of {most_records} records and one of {past_limit_records} were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in one second was refused; its records hold whole facts only: as it must")
+Fact_Budget_Checked :: struct {
+	log_limit:          u64,
+	most_records:       u64,
+	past_limit_records: u64,
 }
 
 // Each check passed.
@@ -400,6 +421,12 @@ Checked :: struct {}
 // refusal_name_field gives the Text field of the name of a refused call.
 refusal_name_field :: proc "contextless" (name: string) -> [REFUSAL_NAME_FIELD_BYTES]u8 {
 	return value_kinds.text_field(name, REFUSAL_NAME_FIELD_BYTES)
+}
+
+// call_status_word gives the word of the status of a call, for a field
+// of a fact.
+call_status_word :: proc "contextless" (status: call_status.Call_Status) -> call_status.Call_Status_Word {
+	return call_status.Call_Status_Word(status)
 }
 
 // problem_field gives the Text field of the reason of a failure.

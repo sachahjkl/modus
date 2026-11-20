@@ -1,6 +1,7 @@
 package console
 
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "modus:private/console/console_condition"
 import "modus:private/console/console_results"
 import "modus:support/sentence"
@@ -249,8 +250,21 @@ table_where :: proc "contextless" (arguments: []Value) -> Value {
 		return {}
 	}
 	count := 0
+	if item.kind == u8(value_kinds.Field_Kind.Text_View) {
+		// A text view is decided from its 16 bytes: its length, its
+		// prefix, and a short text whole. A table carries no out-of-line
+		// area, so a long text with the length and the prefix of the
+		// condition cannot be decided, and the line fails: a row is never
+		// kept or left by a guess.
+		for index in 0 ..< table.rows {
+			_, _, decided := console_condition.text_view_condition_holds(table_row(table, arguments[0], index), item, nil, condition)
+			if !decided {
+				return fail("where: a row holds in ", condition.field, " a text of more than ", i64(value_kinds.TEXT_VIEW_INLINE_BYTES_MOST), " bytes with the length and the start of \"", condition.text, "\", whose next bytes the table does not carry")
+			}
+		}
+	}
 	for index in 0 ..< table.rows {
-		count += int(console_condition.condition_holds(row_field(table_row(table, arguments[0], index), item), condition))
+		count += int(table_row_holds(table_row(table, arguments[0], index), item, condition))
 	}
 	bytes := table_bytes(count * table.size)
 	if bytes == nil && count > 0 {
@@ -259,12 +273,23 @@ table_where :: proc "contextless" (arguments: []Value) -> Value {
 	place := 0
 	for index in 0 ..< table.rows {
 		row := table_row(table, arguments[0], index)
-		if console_condition.condition_holds(row_field(row, item), condition) {
+		if table_row_holds(row, item, condition) {
 			copy(bytes[place:], row)
 			place += table.size
 		}
 	}
 	return {kind = .Table, record = bytes, file = arguments[0].file, detail = arguments[0].detail}
+}
+
+// table_row_holds says if the field of a row passes a condition: a text
+// view by its 16 bytes (table_where checked that each one is decided),
+// each other field by its value.
+table_row_holds :: proc "contextless" (row: []u8, item: module.Field, condition: Condition) -> bool {
+	if item.kind == u8(value_kinds.Field_Kind.Text_View) {
+		holds, _, _ := console_condition.text_view_condition_holds(row, item, nil, condition)
+		return holds
+	}
+	return console_condition.condition_holds(row_field(row, item), condition)
 }
 
 // condition_fail fails the line with the sentence of a refusal of a

@@ -114,7 +114,7 @@ visits_count :: proc "contextless" (client: ^storage.Client) {
 	buffer: [16]u8
 	bytes, found, status := storage.read(client, storage.ROOT, VISITS_OBJECT, buffer[:])
 	if status != .Ok {
-		system.log_fact(.Info, Wrong_Count_Not_Read{storage_status = u64(status)})
+		system.log_fact(.Info, Wrong_Count_Not_Read{status = storage_status_word(status)})
 		return
 	}
 	before: u64
@@ -128,7 +128,7 @@ visits_count :: proc "contextless" (client: ^storage.Client) {
 	now := before + 1
 	written := transmute([8]u8)now
 	if _, write_status := storage.write(client, storage.ROOT, VISITS_OBJECT, written[:]); write_status != .Ok {
-		system.log_fact(.Info, Wrong_Count_Not_Kept{storage_status = u64(write_status)})
+		system.log_fact(.Info, Wrong_Count_Not_Kept{status = storage_status_word(write_status)})
 		return
 	}
 	again, found_again, read_status := storage.read(client, storage.ROOT, VISITS_OBJECT, buffer[:])

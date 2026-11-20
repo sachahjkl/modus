@@ -2693,6 +2693,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: a log fact with the value 42, the mark 0x4c4f4746 and the number 7", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
+	// A fact of several records through the kernel, read back and joined,
+	// and the log limit that refuses such a fact whole.
+	{kind = .Wait, text = "[log_reader] log_reader: a fact of 145 value bytes in 2 records and a fact of 1168 value bytes in 9 records, at the bound of a call, read back: each record with its part, the count of its parts and its value bytes, joined whole into the bytes given: as it must", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: a child with a log limit of 4 records a second: a fact of 9 records and one of 5 were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in one second was refused; its records hold whole facts only: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	// The stop of log_reader is a log fact of the root service, with its
 	// stop cause and its stop outcome as fields. The step reads the field
@@ -2753,6 +2757,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: a log fact with the value 42, the mark 0x4c4f4746 and the number 7", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: the three facts read back: the form Fact, no next record, the reserved bytes 0, the key of each writer, 0, 144 and 16 value bytes, and the hash of this module in the fact of system.log_fact: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and system.log_fact the fact Fact_Probe, each in one record: as it must", fails_on = "log_reader: WRONG"},
+	// A fact of several records through the kernel, read back and joined,
+	// and the log limit that refuses such a fact whole.
+	{kind = .Wait, text = "[log_reader] log_reader: a fact of 145 value bytes in 2 records and a fact of 1168 value bytes in 9 records, at the bound of a call, read back: each record with its part, the count of its parts and its value bytes, joined whole into the bytes given: as it must", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: a child with a log limit of 4 records a second: a fact of 9 records and one of 5 were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in one second was refused; its records hold whole facts only: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "stopped_process = \"log_reader\"", any_order = true},
 	{kind = .Wait, text = "root: log_reader stopped: itself, done"},

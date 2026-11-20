@@ -1,8 +1,11 @@
 package build
 
+import "modus:contract/block"
+import "modus:contract/call_status"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/storage_status"
 import "modus:contract/value_kinds"
 import "modus:support/sentence"
 import "core:strings"
@@ -428,12 +431,22 @@ the_statuses_and_causes_of_the_test_modules_write_their_sentences :: proc(t: ^te
 	facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_End", {{"status", max(u64)}, {"budget_pages_after", u64(0)}, {"budget_pages_before", u64(0)}}), line_of_before("arena: WRONG: the end gave ", max(u64), ", and the budget holds ", u64(0), " pages of ", u64(0)))
 	facts_expect_line(t, fact_test_render(t, debug_file, "debug_target", "Thread_Not_Started", {{"status", past_status}}), line_of_before("debug_target: the second thread did not start: status ", past_status))
 
-	// The statuses of another party keep their numbers: a status of the
-	// block service, of the storage service and of the device.
+	// A status of the block service and of the storage service: the names
+	// of their members, and the number of a word that names none.
+	for status in block.Status {
+		facts_expect_line(t, fact_test_render(t, iommu_file, "iommu_client", "Info_Refused", {{"status", u64(status)}}), line_of_before("iommu: the test device service gave the status ", block.STATUS_NAMES[status], " to Info"))
+	}
+	for status in storage_status.Status {
+		name := storage_status.STATUS_NAMES[status]
+		facts_expect_line(t, fact_test_render(t, visitor_file, "visitor", "Wrong_Count_Not_Read", {{"status", u64(status)}}), line_of_before("visitor: the store did not give the count: status ", name, ": WRONG"))
+		facts_expect_line(t, fact_test_render(t, visitor_file, "visitor", "Wrong_Count_Not_Kept", {{"status", u64(status)}}), line_of_before("visitor: the store did not keep the count: status ", name, ": WRONG"))
+	}
+	past_block := u64(max(block.Status)) + 1
+	facts_expect_line(t, fact_test_render(t, iommu_file, "iommu_client", "Info_Refused", {{"status", past_block}}), line_of_before("iommu: the test device service gave the status ", past_block, " to Info"))
+	facts_expect_line(t, fact_test_render(t, visitor_file, "visitor", "Wrong_Count_Not_Read", {{"status", max(u64)}}), line_of_before("visitor: the store did not give the count: status ", max(u64), ": WRONG"))
+	// A word of the device, which keeps its number, and the lines of the
+	// mailbox.
 	for count in TEST_FACT_COUNTS {
-		facts_expect_line(t, fact_test_render(t, iommu_file, "iommu_client", "Info_Refused", {{"block_status", count}}), line_of_before("iommu: the test device service gave the status ", count, " to Info"))
-		facts_expect_line(t, fact_test_render(t, visitor_file, "visitor", "Wrong_Count_Not_Read", {{"storage_status", count}}), line_of_before("visitor: the store did not give the count: status ", count, ": WRONG"))
-		facts_expect_line(t, fact_test_render(t, visitor_file, "visitor", "Wrong_Count_Not_Kept", {{"storage_status", count}}), line_of_before("visitor: the store did not keep the count: status ", count, ": WRONG"))
 		facts_expect_line(t, fact_test_render(t, fuzzing_file, "operation_fuzzing", "Mailbox_Ready", {{"mailbox_address", count}, {"mailbox_pages", max(u64) - count}}), line_of_before("operation_fuzzing: mailbox at ", count, ", ", max(u64) - count, " pages"))
 		facts_expect_line(t, fact_test_render(t, fuzzing_file, "operation_fuzzing", "Sequence_Ended", {{"sequence", count}}), line_of_before("operation_fuzzing: sequence ", count, " ended"))
 	}
@@ -475,16 +488,26 @@ the_cases_of_hierarchy_and_ranges_write_their_verdicts :: proc(t: ^testing.T) {
 	}
 	verdicts := [2]string{VERDICT_LONGEST, "WRONG"}
 	names := [2]string{SHARE_NAME_LONGEST, "."}
+	// A status of the storage service by the name of its member; a word
+	// that names none, and the largest word, by their numbers.
+	past_status := u64(max(storage_status.Status)) + 1
 	for verdict in verdicts {
+		for status in storage_status.Status {
+			name := storage_status.STATUS_NAMES[status]
+			word := u64(status)
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Top_Trees_Refused", {{"status", word}, {"verdict", verdict}}), line_of_before("hierarchy: the top trees: status ", name, ": ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Top_Tree_Open_Refused", {{"status", word}, {"verdict", verdict}}), line_of_before("hierarchy: open a top tree: status ", name, ": ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Part_Open_Refused", {{"status", word}, {"verdict", verdict}}), line_of_before("hierarchy: open a part: status ", name, ": ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Part_Objects_Refused", {{"status", word}, {"verdict", verdict}}), line_of_before("hierarchy: add the objects of a part: status ", name, ": ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Scrambled_Tree_Refused", {{"status", word}, {"open_status", past_status}, {"verdict", verdict}}), line_of_before("hierarchy: the tree scrambled: status ", name, " ", past_status, ": ", verdict))
+			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Scrambled_Adds_Refused", {{"status", word}, {"verdict", verdict}}), line_of_before("hierarchy: the scrambled adds: status ", name, ": ", verdict))
+		}
+		facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Scrambled_Adds_Refused", {{"status", max(u64)}, {"verdict", verdict}}), line_of_before("hierarchy: the scrambled adds: status ", max(u64), ": ", verdict))
 		for index in 0 ..< len(TEST_FACT_COUNTS) {
 			c := TEST_FACT_COUNTS[index]
 			s := TEST_FACT_SIGNED[index]
 			m := TEST_FACT_TIMES[min(index, len(TEST_FACT_TIMES) - 1)]
 			b := signed_bits(s)
-			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Top_Trees_Refused", {{"storage_status", c}, {"verdict", verdict}}), line_of_before("hierarchy: the top trees: status ", c, ": ", verdict))
-			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Top_Tree_Open_Refused", {{"storage_status", c}, {"verdict", verdict}}), line_of_before("hierarchy: open a top tree: status ", c, ": ", verdict))
-			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Part_Open_Refused", {{"storage_status", c}, {"verdict", verdict}}), line_of_before("hierarchy: open a part: status ", c, ": ", verdict))
-			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Part_Objects_Refused", {{"storage_status", c}, {"verdict", verdict}}), line_of_before("hierarchy: add the objects of a part: status ", c, ": ", verdict))
 			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Trees_Made", {{"objects", b}, {"trees", b}, {"commits", c}, {"elapsed", m}, {"blocks", b}, {"verdict", verdict}}), line_of_before("hierarchy: made ", s, " objects and ", s, " trees in ", c, " commits, in ", m, " ms, ", s, " blocks: ", verdict))
 			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Root_Listed", {{"trees", b}, {"verdict", verdict}}), line_of_before("hierarchy: the root in pages of 16: ", s, " trees, in order: ", verdict))
 			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Parts_Listed", {{"objects", b}, {"trees", b}, {"elapsed", m}, {"verdict", verdict}}), line_of_before("hierarchy: listed ", s, " objects in ", s, " trees in pages of 16, each page after the one before, in ", m, " ms: ", verdict))
@@ -493,8 +516,6 @@ the_cases_of_hierarchy_and_ranges_write_their_verdicts :: proc(t: ^testing.T) {
 			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Tree_Removed", {{"removing", b}, {"verdict", verdict}}), line_of_before("hierarchy: remove of a tree: the name is gone at its commit; ", s, " trees wait to be freed: ", verdict))
 			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Removal_Freed", {{"objects", b}, {"trees", b}, {"blocks", b}, {"elapsed", m}, {"verdict", verdict}}), line_of_before("hierarchy: the removal freed ", s, " objects, ", s, " trees and ", s, " blocks, in ", m, " ms: ", verdict))
 			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "First_Run_Left", {{"objects", b}, {"trees", b}, {"verdict", verdict}}), line_of_before("hierarchy: the first run leaves ", s, " objects and ", s, " trees: ", verdict))
-			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Scrambled_Tree_Refused", {{"storage_status", c}, {"open_storage_status", max(u64) - c}, {"verdict", verdict}}), line_of_before("hierarchy: the tree scrambled: status ", c, " ", max(u64) - c, ": ", verdict))
-			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Scrambled_Adds_Refused", {{"storage_status", c}, {"verdict", verdict}}), line_of_before("hierarchy: the scrambled adds: status ", c, ": ", verdict))
 			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Scrambled_Names_Checked", {{"added", b}, {"commits", c}, {"removed", b}, {"left", b}, {"elapsed", m}, {"verdict", verdict}}), line_of_before("hierarchy: added ", s, " names in a scrambled order in ", c, " commits, listed in order, each read back; removed ", s, " in another order, ", s, " left in order, in ", m, " ms: ", verdict))
 			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Share_Count_Checked", {{"share_took", b}, {"maker_took", b}, {"share_saw", b}, {"freed", b}, {"verdict", verdict}}), line_of_before("hierarchy: while a writable share of a tree is open, its write took ", s, " blocks of the count of its tree; the same bytes written by the maker outside the tree took ", s, " blocks of the store and ", s, " of the count of the share; the removal through the share freed ", s, ": the share sees the count of its own tree only: ", verdict))
 			facts_expect_line(t, render_hierarchy(t, hierarchy_file, "Guess_Hidden", {{"maker_took", b}, {"verdict", verdict}}), line_of_before("hierarchy: after unshare, the guess of the holder stays hidden: the same bytes written by the maker took ", s, " blocks: ", verdict))
@@ -561,18 +582,19 @@ the_facts_of_log_reader_of_its_checks_and_measures_write_their_sentences :: proc
 		b := signed_bits(s)
 		facts_expect_line(t, render(t, file, "Refused_Facts_Checked", {{"refusals", c}, {"own_records", o}}), line_of_before("log_reader: Log refused ", c, " wrong facts, each with its status and its error record: the form word, a run, the length below the head and past the whole fact, an address that the process cannot read, and the level; the own log ring kept the same ", o, " records, and the budget the same log records and the same refused count: as it must"))
 		facts_expect_line(t, render(t, file, "Refused_Calls_Checked", {{"refusals", c}, {"own_records", o}}), line_of_before("log_reader: Log refused ", c, " wrong calls, each with its status and its error record: the level word, the runs and the length past their bounds, an address that the process cannot read, and a text or its runs past the end of what it can read; the own log ring kept the same ", o, " records, and the budget the same log records and the same refused count: as it must"))
-		facts_expect_line(t, render(t, file, "Wrong_Fact_Row", {{"index", c}, {"form_word", o}, {"continues", b}, {"reserved", c}, {"key", o}, {"value_count", b}, {"first_values", c}, {"last_value", o}}), line_of_before("log_reader: WRONG: the fact ", c, " has the form ", o, ", more ", s, ", the reserved bytes ", sentence.Hex(c), ", the key ", sentence.Hex(o), ", ", s, " value bytes, the first ", sentence.Hex(c), " and the last ", o))
-		facts_expect_line(t, render(t, file, "Wrong_Service_Handle_Call", {{"call_status", c}}), line_of_before("log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status ", c))
-		for child in children {
-			facts_expect_line(t, render(t, file, "Wrong_Child_Records_Call", {{"call_status", c}, {"child", child}}), line_of_before("log_reader: WRONG: the call of log.process_records for ", child, " gave the status ", c))
-			facts_expect_line(t, render(t, file, "Wrong_Child_Runs_Call", {{"call_status", c}, {"child", child}}), line_of_before("log_reader: WRONG: the call of log.process_value_runs for ", child, " gave the status ", c))
+		for form in op.Log_Record_Form {
+			facts_expect_line(t, render(t, file, "Wrong_Fact_Row", {{"index", c}, {"form", u64(form)}, {"continues", b}, {"part", c}, {"part_count", o}, {"key", o}, {"value_count", b}, {"first_values", c}, {"last_value", o}}), line_of_before("log_reader: WRONG: the fact ", c, " has the form ", op.LOG_RECORD_FORM_NAMES[form], ", more ", s, ", the part ", c, " of ", o, ", the key ", sentence.Hex(o), ", ", s, " value bytes, the first ", sentence.Hex(c), " and the last ", o))
 		}
-		for kind in errors.Kind {
-			facts_expect_line(t, render(t, file, "Wrong_Memory_Lent", {{"call_status", c}, {"kind", u64(kind)}, {"argument", b}, {"found_kind", b}}), line_of_before("log_reader: WRONG: a memory object in place of a process handle gave the status ", c, ", the kind ", errors.KIND_NAMES[kind], ", the argument ", s, " and the found kind ", s))
-		}
-		// A kind word of -1, as a record of another party can hold: its
-		// number.
-		facts_expect_line(t, render(t, file, "Wrong_Memory_Lent", {{"call_status", c}, {"kind", max(u64)}, {"argument", b}, {"found_kind", b}}), line_of_before("log_reader: WRONG: a memory object in place of a process handle gave the status ", c, ", the kind ", max(u64), ", the argument ", s, " and the found kind ", s))
+		// A form word that names no member: its number.
+		past_form := u64(max(op.Log_Record_Form)) + 1
+		facts_expect_line(t, render(t, file, "Wrong_Fact_Row", {{"index", c}, {"form", past_form}, {"continues", b}, {"part", c}, {"part_count", o}, {"key", o}, {"value_count", b}, {"first_values", c}, {"last_value", o}}), line_of_before("log_reader: WRONG: the fact ", c, " has the form ", past_form, ", more ", s, ", the part ", c, " of ", o, ", the key ", sentence.Hex(o), ", ", s, " value bytes, the first ", sentence.Hex(c), " and the last ", o))
+		// A kind word of -1, as a record of another party can hold, and an
+		// object kind and a status of a call that name no member: their
+		// numbers.
+		past_call := u64(max(call_status.Call_Status)) + 1
+		past_object := u64(max(op.Object_Kind)) + 1
+		facts_expect_line(t, render(t, file, "Wrong_Memory_Lent", {{"status", past_call}, {"kind", max(u64)}, {"argument", b}, {"found_kind", past_object}}), line_of_before("log_reader: WRONG: a memory object in place of a process handle gave the status ", past_call, ", the kind ", max(u64), ", the argument ", s, " and the found kind ", past_object))
+		facts_expect_line(t, render(t, file, "Wrong_Service_Handle_Call", {{"status", past_call}}), line_of_before("log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status ", past_call))
 		facts_expect_line(t, render(t, file, "Write_Measured", {{"calls", c}, {"bad_block_text_least", o}, {"bad_block_text_median", c}, {"bad_block_fact_least", o}, {"bad_block_fact_median", c}, {"connected_text_least", o}, {"connected_text_median", c}, {"connected_fact_least", o}, {"connected_fact_median", c}}), line_of_before("log_reader: measure: the write of one line, in ns, the least and the median of ", c, " calls: a bad block as text ", o, " and ", c, ", as a fact ", o, " and ", c, "; a connection as text ", o, " and ", c, ", as a fact ", o, " and ", c))
 		facts_expect_line(t, render(t, file, "Log_Operation_Measured", {{"calls", c}, {"text_least", o}, {"text_median", c}, {"fact_least", o}, {"fact_median", c}, {"refused_least", o}, {"refused_median", c}}), line_of_before("log_reader: measure: the operation Log, in ns from the call to the return, the least and the median of ", c, " calls: the text of a bad block ", o, " and ", c, ", its fact ", o, " and ", c, ", a call that the kernel refuses at the border of the form ", o, " and ", c))
 		facts_expect_line(t, render(t, file, "Render_Measured", {{"renders", c}, {"render_least", o}, {"render_median", c}, {"window_rows", o}, {"window_rows_time", c}}), line_of_before("log_reader: measure: the render of a log fact by module.fact_sentence_write, in ns, the least and the median of ", c, " renders of two fact types of this module: ", o, " and ", c, "; ", o, " rows of the window of the log at the median: ", c, " ns"))
@@ -580,4 +602,33 @@ the_facts_of_log_reader_of_its_checks_and_measures_write_their_sentences :: proc
 	for problem in problems {
 		facts_expect_line(t, render(t, file, "Wrong_Check", {{"problem", problem}}), line_of_before("log_reader: WRONG: ", problem))
 	}
+	// A status of a call by the name of its member, and each object kind
+	// and each error kind by theirs.
+	for status in call_status.Call_Status {
+		name := call_status.CALL_STATUS_NAMES[status]
+		word := u64(status)
+		facts_expect_line(t, render(t, file, "Wrong_Service_Handle_Call", {{"status", word}}), line_of_before("log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status ", name))
+		for child in children {
+			facts_expect_line(t, render(t, file, "Wrong_Child_Records_Call", {{"status", word}, {"child", child}}), line_of_before("log_reader: WRONG: the call of log.process_records for ", child, " gave the status ", name))
+			facts_expect_line(t, render(t, file, "Wrong_Child_Runs_Call", {{"status", word}, {"child", child}}), line_of_before("log_reader: WRONG: the call of log.process_value_runs for ", child, " gave the status ", name))
+		}
+		for object in op.Object_Kind {
+			for kind in errors.Kind {
+				for signed in TEST_FACT_SIGNED {
+					facts_expect_line(t, render(t, file, "Wrong_Memory_Lent", {{"status", word}, {"kind", u64(kind)}, {"argument", signed_bits(signed)}, {"found_kind", u64(object)}}), line_of_before("log_reader: WRONG: a memory object in place of a process handle gave the status ", name, ", the kind ", errors.KIND_NAMES[kind], ", the argument ", signed, " and the found kind ", op.OBJECT_KIND_MEMBER_NAMES[object]))
+				}
+			}
+		}
+	}
+	// The facts of several records and the log limit of a child, at the
+	// edges of their counts.
+	for index in 0 ..< len(TEST_FACT_COUNTS) {
+		c := TEST_FACT_COUNTS[index]
+		o := max(u64) - c
+		facts_expect_line(t, render(t, file, "Long_Facts_Read_Back", {{"short_bytes", c}, {"short_records", o}, {"long_bytes", c}, {"long_records", o}}), line_of_before("log_reader: a fact of ", c, " value bytes in ", o, " records and a fact of ", c, " value bytes in ", o, " records, at the bound of a call, read back: each record with its part, the count of its parts and its value bytes, joined whole into the bytes given: as it must"))
+		facts_expect_line(t, render(t, file, "Fact_Budget_Checked", {{"log_limit", c}, {"most_records", o}, {"past_limit_records", c}}), line_of_before("log_reader: a child with a log limit of ", c, " records a second: a fact of ", o, " records and one of ", c, " were refused whole, each record counted as refused; a fact of as many records as its limit was taken, and one of 3 records after one of 2 in one second was refused; its records hold whole facts only: as it must"))
+	}
+	// The sentences that the machine test waits for, with the values that
+	// the process writes.
+	facts_expect_line(t, render(t, file, "Long_Facts_Read_Back", {{"short_bytes", u64(op.LOG_FACT_VALUE_CAPACITY + 1)}, {"short_records", u64(2)}, {"long_bytes", u64(op.LOG_FACT_VALUES_MOST)}, {"long_records", u64(op.LOG_FACT_RECORDS_MOST)}}), "log_reader: a fact of 145 value bytes in 2 records and a fact of 1168 value bytes in 9 records, at the bound of a call, read back: each record with its part, the count of its parts and its value bytes, joined whole into the bytes given: as it must")
 }

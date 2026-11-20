@@ -94,6 +94,14 @@
 //   `log.fact_records`;
 // - `log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and
 //   system.log_fact the fact Fact_Probe, each in one record: as it must`;
+// - `log_reader: a fact of 145 value bytes in 2 records and a fact of 1168
+//   value bytes in 9 records, at the bound of a call, read back: ...: as it
+//   must`: it gives Log two facts of several records and reads each record
+//   back, joined (long_facts.odin);
+// - `log_reader: a child with a log limit of 4 records a second: ...: as it
+//   must`: its child `log_reader fact budget` gives Log facts of more
+//   records than its limit has left, which the kernel refuses whole, and
+//   this process reads the records of the child (long_facts.odin);
 // - in a measure run only, three measures of the log facts, printed and not
 //   checked (measures.odin): `log_reader: measure: the write of one line,
 //   ...`, the time of `system.log` and of `system.log_fact` for the line of
@@ -118,6 +126,7 @@
 package log_reader
 
 import "modus:contract/blake3"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -128,7 +137,9 @@ import "modus:support/system"
 
 // Its rows and its call region, 64 pages, the budgets of its two children,
 // CHILD_PAGES each, and the budget of its storm child, STORM_PAGES: no
-// window, its one thread and the thread of each child.
+// window, its one thread and the thread of each child. The child of the
+// log limit runs after the storm child stopped, and takes CHILD_PAGES of
+// the pages that the storm gave back, its process and its thread.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1152, processes = 4, threads = 4}
 
 // The children: the same module, with the value VALUE_CHILD of the
@@ -149,11 +160,22 @@ child_names := [CHILD_COUNT]string{"log_reader child 1", "log_reader child 2"}
 @(rodata)
 child_lines := [CHILD_COUNT]string{CHILD_TEXT + "1", CHILD_TEXT + "2"}
 
-// The storm child: the same module, with the value VALUE_STORM of the
-// context, which the root service never sets. It writes more records than
-// the whole log keeps, after the records of this process and of its two
-// children. In the one ring of before, they pushed those records out.
-VALUE_STORM :: 8
+// The value of the context, which the root service never sets, that names
+// the run of a child that is not one of the two children: the storm, or
+// the child of the log limit of a fact. The word crosses a border: the
+// child takes it with enum_word.member_of_word, and refuses a word that
+// names no run.
+VALUE_CHILD_RUN :: 8
+Child_Run :: enum u64 {
+	None        = 0, // The starter itself, or one of the two children.
+	Storm       = 1, // The storm child.
+	Fact_Budget = 2, // The child of the log limit of a fact of several records.
+}
+
+// The storm child: the same module, with the run Storm. It writes more
+// records than the whole log keeps, after the records of this process and
+// of its two children. In the one ring of before, they pushed those
+// records out.
 STORM_NAME :: "log_reader storm"
 STORM_RECORDS :: op.LOG_RECORD_CAPACITY + 64
 STORM_LINE :: "log_reader storm: a record"
@@ -213,7 +235,8 @@ Fact_Row :: struct {
 	key:         u64,
 	module_hash: [32]u8,
 	value_count: i64,
-	reserved:    u64,
+	part:        u32,
+	part_count:  u32,
 	values:      [op.LOG_FACT_VALUE_CAPACITY]u8,
 }
 #assert(size_of(Fact_Row) == 224)
@@ -439,7 +462,13 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	if problem := log_operation_check(&connection, file, records_export); problem != "" {
 		return problem
 	}
-	return log_fact_check(&connection, file, records_export, fact_records_export, own_module_hash)
+	if problem := log_fact_check(&connection, file, records_export, fact_records_export, own_module_hash); problem != "" {
+		return problem
+	}
+	if problem := long_facts_check(&connection, file, records_export, fact_records_export); problem != "" {
+		return problem
+	}
+	return fact_budget_check(ctx, image, &connection, file, process_records_export)
 }
 
 // The arguments of the operation Log, from 1, as its error record names
@@ -524,6 +553,7 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 	body := u64(uintptr(&fact_body))
 	head := u64(op.LOG_FACT_HEAD_BYTES)
 	whole := u64(size_of(op.Log_Fact))
+	call_most := u64(op.LOG_FACT_CALL_BYTES_MOST)
 	info := u64(op.Log_Level.Info)
 	fact := u64(op.Log_Record_Form.Fact)
 	refusals := [?]Fact_Refusal {
@@ -533,7 +563,7 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 		{"a fact with one run", body, head, info, 1, fact, .Bad_Operation, .Too_Long, LOG_ARGUMENT_RUNS, 1},
 		{"a fact of 0 bytes", body, 0, info, 0, fact, .Bad_Address, .Too_Small, LOG_ARGUMENT_LENGTH, 0},
 		{"a fact one byte shorter than its head", body, head - 1, info, 0, fact, .Bad_Address, .Too_Small, LOG_ARGUMENT_LENGTH, head - 1},
-		{"a fact one byte longer than a whole fact", body, whole + 1, info, 0, fact, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, whole + 1},
+		{"a fact one byte longer than the longest fact", body, call_most + 1, info, 0, fact, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, call_most + 1},
 		{"a fact of the largest length", body, max(u64), info, 0, fact, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, max(u64)},
 		{"a fact at the address 0", 0, head, info, 0, fact, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, 0},
 		{"a fact past the end of a mapped page", last_byte_of_page, head, info, 0, fact, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, last_byte_of_page},
@@ -569,6 +599,7 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 	for &byte_value in fact_body.reserved {
 		byte_value = FACT_BODY_RESERVED_BYTE
 	}
+	fact_body.part, fact_body.part_count = FACT_BODY_RESERVED_BYTE, FACT_BODY_RESERVED_BYTE
 	counted_before, counted_read := own_record_count(connection, file, records_export)
 	if !counted_read {
 		return "log.records did not give the count of the own records"
@@ -644,12 +675,14 @@ fact_rows_check :: proc "contextless" (connection: ^system.Call_Connection, file
 	}
 	for &row, index in fact_rows[:3] {
 		wanted := &expected[index]
-		if row.form != wanted.form || row.continues != 0 || row.reserved != 0 || row.key != wanted.key || row.value_count != wanted.value_count || row.values != wanted.values || row.module_hash != wanted.module_hash {
+		// The kernel writes the part and the count of the parts of a fact
+		// of one record, over the bytes that this process gave there.
+		if row.form != wanted.form || row.continues != 0 || row.part != 0 || row.part_count != 1 || row.key != wanted.key || row.value_count != wanted.value_count || row.values != wanted.values || row.module_hash != wanted.module_hash {
 			first_values: u64
 			for place in 0 ..< 8 {
 				first_values |= u64(row.values[place]) << (8 * u64(place))
 			}
-			system.log_fact(.Error, Wrong_Fact_Row{index = u64(index), form_word = u64(row.form), continues = row.continues, reserved = value_kinds.Hexadecimal_Sixteen_Digits(row.reserved), key = value_kinds.Hexadecimal_Sixteen_Digits(row.key), value_count = row.value_count, first_values = value_kinds.Hexadecimal_Sixteen_Digits(first_values), last_value = u64(row.values[len(row.values) - 1])})
+			system.log_fact(.Error, Wrong_Fact_Row{index = u64(index), form = op.Log_Record_Form_Word(row.form), continues = row.continues, part = u64(row.part), part_count = u64(row.part_count), key = value_kinds.Hexadecimal_Sixteen_Digits(row.key), value_count = row.value_count, first_values = value_kinds.Hexadecimal_Sixteen_Digits(first_values), last_value = u64(row.values[len(row.values) - 1])})
 			return "a fact record does not hold what the kernel must write"
 		}
 	}
@@ -862,7 +895,7 @@ lent_service_handle_refused :: proc "contextless" (connection: ^system.Call_Conn
 	call_arguments := [2]isolated.Argument{{integer = u64(connection.process)}, {integer = 0}}
 	_, call_status := system.call_isolated(connection, file, records_export, call_arguments[:], nil, false, bytes_of(record_rows[:]))
 	if call_status != .Lend_Failed {
-		system.log_fact(.Info, Wrong_Service_Handle_Call{call_status = u64(call_status)})
+		system.log_fact(.Info, Wrong_Service_Handle_Call{status = call_status_word(call_status)})
 		return "the call with the process handle of the log service was not refused"
 	}
 	system.log_fact(.Info, Service_Handle_Not_Lent{})
@@ -987,7 +1020,7 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	grants[op.CONTEXT_LOG] = {ctx.handles[op.CONTEXT_LOG], {.Write}}
 	values: [op.CONTEXT_VALUES]u64
-	values[VALUE_STORM] = 1
+	values[VALUE_CHILD_RUN] = u64(Child_Run.Storm)
 	child, status := system.process_start(file, STORM_NAME, grants, random.values_with_seed(&process_generator, values), STORM_AMOUNTS, nil, nil, {image = image})
 	if status != .Ok {
 		system.log_fact(.Info, Wrong_Child_Not_Started{status = status, child = value_kinds.module_name_field(STORM_NAME)})
@@ -1029,7 +1062,7 @@ child_records_check :: proc "contextless" (connection: ^system.Call_Connection, 
 	arguments := [2]isolated.Argument{{integer = u64(children[index])}, {integer = 0}}
 	count, status := system.call_isolated(connection, file, records_export, arguments[:], nil, false, bytes_of(record_rows[:]))
 	if status != .Ok {
-		system.log_fact(.Info, Wrong_Child_Records_Call{call_status = u64(status), child = value_kinds.module_name_field(name)})
+		system.log_fact(.Info, Wrong_Child_Records_Call{status = call_status_word(status), child = value_kinds.module_name_field(name)})
 		return "the call of log.process_records did not come back"
 	}
 	given := min(max(int(count), 0), ROWS)
@@ -1056,7 +1089,7 @@ child_records_check :: proc "contextless" (connection: ^system.Call_Connection, 
 	run_arguments := [2]isolated.Argument{{integer = u64(children[index])}, {integer = 0}}
 	run_count, run_status := system.call_isolated(connection, file, value_runs_export, run_arguments[:], nil, false, bytes_of(run_rows[:]))
 	if run_status != .Ok {
-		system.log_fact(.Info, Wrong_Child_Runs_Call{call_status = u64(run_status), child = value_kinds.module_name_field(name)})
+		system.log_fact(.Info, Wrong_Child_Runs_Call{status = call_status_word(run_status), child = value_kinds.module_name_field(name)})
 		return "the call of log.process_value_runs did not come back"
 	}
 	runs_given := min(max(int(run_count), 0), ROWS)
@@ -1083,7 +1116,7 @@ lent_memory_refused :: proc "contextless" (connection: ^system.Call_Connection, 
 	refusal: errors.Error_Record
 	_, status := system.call_isolated(connection, file, records_export, arguments[:], &refusal, false, bytes_of(record_rows[:]))
 	if status != .Failed || refusal.kind != i64(errors.Kind.Handle_Kind) || refusal.argument != LENT_PROCESS_ARGUMENT || refusal.limit != i64(op.Object_Kind.Process) || refusal.found != i64(op.Object_Kind.Memory) {
-		system.log_fact(.Info, Wrong_Memory_Lent{call_status = u64(status), kind = errors.Kind_Word(refusal.kind), argument = refusal.argument, found_kind = refusal.found})
+		system.log_fact(.Info, Wrong_Memory_Lent{status = call_status_word(status), kind = errors.Kind_Word(refusal.kind), argument = refusal.argument, found_kind = op.Object_Kind_Word(refusal.found)})
 		return "the log service did not refuse a memory object in place of a process handle"
 	}
 	system.log_fact(.Info, Memory_Lent_Refused{})
@@ -1108,8 +1141,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log(.Info, CHILD_TEXT, number)
 		system.stop(.Done)
 	}
-	if ctx.values[VALUE_STORM] != 0 {
+	run, run_known := enum_word.member_of_word(Child_Run, ctx.values[VALUE_CHILD_RUN])
+	if !run_known {
+		system.stop(.Refused)
+	}
+	switch run {
+	case .None:
+	case .Storm:
 		storm(ctx)
+	case .Fact_Budget:
+		fact_budget_run(ctx)
 	}
 	system.log(.Info, OWN_TEXT, u64(OWN_VALUE))
 	if problem := check(ctx); problem != "" {

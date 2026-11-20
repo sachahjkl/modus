@@ -33,7 +33,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if record.tag == 1 && block.Status(record.kind) == .Ok {
 				system.log_fact(.Info, Machine_Goes_On{})
 			} else {
-				system.log_fact(.Info, Info_Refused{block_status = u64(record.kind)})
+				system.log_fact(.Info, Info_Refused{status = block.Status_Word(record.kind)})
 				system.stop(.Failed)
 			}
 			system.stop(.Done)

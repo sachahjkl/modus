@@ -1,5 +1,7 @@
 package iommu_client
 
+import "modus:contract/block"
+
 // The log facts of the client of the test device service of the IOMMU
 // (src/md/features/log_facts.md): each line, as a record of fields. Each
 // fact template is the sentence that the line wrote before it was a fact,
@@ -19,12 +21,12 @@ Block_Ring_Full :: struct {}
 Machine_Goes_On :: struct {}
 
 // The test device service answered Info with another status than Ok. The
-// status is the kind word of the answer of the block service: block.Status
-// is no contract enum that a field can name, so the field keeps its
-// number, as the line wrote it.
-@(log_fact = "iommu: the test device service gave the status {block_status} to Info")
+// status is the kind word of the answer of the block service, carried as
+// it is: a reader writes the name of its member, or its number when it
+// names none.
+@(log_fact = "iommu: the test device service gave the status {status} to Info")
 Info_Refused :: struct {
-	block_status: u64,
+	status: block.Status_Word,
 }
 
 // The test device service did not answer within the hang bound.
