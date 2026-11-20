@@ -163,6 +163,8 @@ expected_fields :: proc() -> []Expected_Field {
 		{"output.Wiring", "capacity", offset_of(output.Wiring, capacity), size_of(wiring.capacity)},
 		{"output.Wiring", "terms_offset", offset_of(output.Wiring, terms_offset), size_of(wiring.terms_offset)},
 		{"output.Wiring", "terms_count", offset_of(output.Wiring, terms_count), size_of(wiring.terms_count)},
+		{"output.Wiring", "condition_offset", offset_of(output.Wiring, condition_offset), size_of(wiring.condition_offset)},
+		{"output.Wiring", "condition_count", offset_of(output.Wiring, condition_count), size_of(wiring.condition_count)},
 		{"output.Wiring", "reserved", offset_of(output.Wiring, reserved), size_of(wiring.reserved)},
 		{"draw_record.Draw_Record", "kind", offset_of(draw_record.Draw_Record, kind), size_of(draw.kind)},
 		{"draw_record.Draw_Record", "reserved", offset_of(draw_record.Draw_Record, reserved), size_of(draw.reserved)},

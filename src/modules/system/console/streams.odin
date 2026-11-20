@@ -1,6 +1,7 @@
 package console
 
 import "modus:contract/blake3"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/output"
@@ -376,7 +377,13 @@ stream_where :: proc "contextless" (value: Value, condition: ^Condition) -> Valu
 	bytes := transmute([size_of(output.Condition_Terms)]u8)terms
 	resolved, refusal, resolved_ok := output.writer_condition_of_terms(bytes[:], stream.file, described)
 	if !resolved_ok {
-		return condition_terms_fail(condition^, output.Condition_Terms_Field(refusal.argument))
+		// The argument of the refusal names the part of the terms that it
+		// refuses; a word that names no part gives the general sentence.
+		part, part_ok := enum_word.member_of_word(output.Condition_Terms_Field, u64(refusal.argument))
+		if !part_ok {
+			part = .Whole
+		}
+		return condition_terms_fail(condition^, part)
 	}
 	resolved_bytes := transmute([size_of(output.Writer_Condition)]u8)resolved
 	checked, checked_ok := output.writer_condition_check(resolved_bytes[:], u32(stream.size))

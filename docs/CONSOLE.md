@@ -89,7 +89,7 @@ Each value has one kind. The kinds are those of the module contract (`MODULE_CON
 
 A parameter of the kind `Bytes` takes a `Text` value as its argument, or the `Bytes` of a memory object that `bytes(memory, first, count)` read: `assemble(bytes(t, 0, n), f)` gives the text that `compile` wrote to the assembler. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
 
-A command gives a result and never prints. A command that does something and has nothing to give has no result: `start`, `stop`, `clear`. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing. The section "Results and their drawers" has the result of each built-in command.
+A command gives a result and never prints. A command that does something and has nothing to give has no result: `start`, `stop`, `clear`. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing. A last parameter that a call may leave out is in brackets, `start(Text, [Table])`, and the names of fields of `columns` are `Field...`: `columns(Table, Field...) -> Table`. The section "Results and their drawers" has the result of each built-in command.
 
 ### Calls
 

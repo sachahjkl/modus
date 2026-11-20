@@ -735,6 +735,16 @@ signature_write :: proc "contextless" (writer: ^system.Writer, item: ^Command, m
 		if index == marked {
 			marked_start = writer.count
 		}
+		// A last parameter that a call may leave out is in brackets:
+		// start(Text, [Table]). The site writes the same signature
+		// (foundation.console_signature).
+		optional := item.optional_last && index == item.parameter_count - 1
+		if optional {
+			system.write_part(writer, "[")
+		}
+		defer if optional {
+			system.write_part(writer, "]")
+		}
 		if item.parameter_names[index] != "" {
 			system.write_part(writer, item.parameter_names[index])
 			system.write_part(writer, ": ")
@@ -745,7 +755,7 @@ signature_write :: proc "contextless" (writer: ^system.Writer, item: ^Command, m
 		case item.parameter_forms[index] == .Condition:
 			system.write_part(writer, "Condition") // A field, an operator and a value: `block = 12`.
 		case item.parameter_forms[index] == .Field_Names:
-			system.write_part(writer, "Field, ...") // One name of a field or more: `slot, name`.
+			system.write_part(writer, "Field...") // One name of a field or more: `slot, name`.
 		case kind == .Stream || kind == .Record_Input:
 			system.write_part(writer, kind_names[kind])
 		case kind == .None:

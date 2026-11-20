@@ -99,7 +99,7 @@ The refused forms:
 
 ### The pointer of a viewer, and the echo of the input (protocol version 2)
 
-A remote desktop feels immediate when the pointer never waits for the machine. The native viewer draws its cursor itself: the cursor of its host, at the place of the host pointer, moved by the host system. The machine then owes it three facts that version 1 does not give: the shape of its pointer, the moves that it makes itself, and which input a frame shows. The design of the viewer side is `src/md/features/immediacy.md` of the viewer.
+A remote desktop feels immediate when the pointer never waits for the machine. The native viewer draws its cursor itself: the cursor of its host, at the place of the host pointer, moved by the host system. The machine then owes it three facts that version 1 does not give: the shape of its pointer, the moves that it makes itself, and which input a frame shows. The design of the viewer side is [immediacy.md in the repository of the viewer](https://github.com/sachahjkl/modus-viewer/blob/master/src/md/features/immediacy.md).
 
 What exists in version 1:
 

@@ -211,9 +211,13 @@ names_count: int
 // units: what the Integer of each parameter counts, in the order of the
 // parameters; a command whose numbers are plain counts gives none. forms:
 // what the parser reads for each parameter; none is an expression each.
-command :: proc "contextless" (name: string, parameters: []Kind, result: Kind, about: string, run: proc "contextless" (arguments: []Value) -> Value, units: []value_kinds.Integer_Unit = nil, forms: []Parameter_Form = nil) {
+// optional_last: a call may leave out the last parameter. The site reads
+// these arguments from the line of each command
+// (tools/modustool/foundation/site_source_readers.odin), so a command is
+// one line, with its named arguments on it.
+command :: proc "contextless" (name: string, parameters: []Kind, result: Kind, about: string, run: proc "contextless" (arguments: []Value) -> Value, units: []value_kinds.Integer_Unit = nil, forms: []Parameter_Form = nil, optional_last := false) {
 	item := &commands[command_count]
-	item^ = {name = name, parameter_count = len(parameters), result = result, about = about, run = run}
+	item^ = {name = name, parameter_count = len(parameters), result = result, about = about, run = run, optional_last = optional_last}
 	copy(item.parameters[:], parameters)
 	copy(item.parameter_units[:], units)
 	copy(item.parameter_forms[:], forms)
@@ -490,8 +494,7 @@ commands_start :: proc "contextless" () {
 	// twice, an end that does not run, a list past its 32 rows or its 16
 	// lent handles; the console keeps the handles of 8 started processes
 	// with a record output at most.
-	command("start", {.Text, .Table}, .None, "start a process, by module name, with a wiring list or none", start_process)
-	commands[command_count - 1].optional_last = true
+	command("start", {.Text, .Table}, .None, "start a process, by module name, with a wiring list or none", start_process, optional_last = true)
 	// Asks the root service to start a disk process: a process whose module
 	// file is an object of the store `module_files` of the storage service, and
 	// not a file of the boot image. It gives nothing.

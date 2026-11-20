@@ -502,6 +502,10 @@ signature_runs :: proc "contextless" (text: string, first: int, runs: []terminal
 		case .Unknown, .Pipe:
 			if place == .Words {
 				kind = .Words
+			} else if bytes == "[" || bytes == "]" {
+				// The brackets of a parameter that a call may leave out:
+				// start(Text, [Table]).
+				kind = .Operator
 			}
 		}
 		after_of = token.kind == .Name && bytes == "of" && place == .Words
