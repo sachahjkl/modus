@@ -195,11 +195,17 @@ scenario_tcp_real := [?]Step {
 	{kind = .Wait, text = " requests on one connection of 10.0.2.2 port ", any_order = true},
 	// The measure of a reader (src/md/features/module_outputs.md, "The
 	// measures that decide it", 6): the same 1000 requests while the
-	// console draws each record of requests. The case prints the rate; the
-	// counts of the writer then print the records that the console took
-	// and those that its full ring refused with Full. Nothing is asserted:
-	// the speed of the console decides both.
-	{kind = .Type, text = "server.requests"},
+	// console holds a ring of requests whose condition no request passes:
+	// the server tests the condition and publishes its counts at each
+	// write, and writes the joined record once. The case prints the rate;
+	// the counts of the writer then print what each write did. Nothing is
+	// asserted. The console draws no row here: it writes each line that it
+	// draws to its log, and 1000 rows in less than one second spend the
+	// log records of its second, so the kernel refuses its next lines, the
+	// line of Escape among them, and the wait for that line never ends.
+	// The server is not held by the ring of the console in any case: the
+	// pace Writer_Chooses and a write with no wait refuse with Full.
+	{kind = .Type, text = "server.requests |> where(status = 500)"},
 	{kind = .Wait, text = "root: wired the record output 1 of server to its asker console, wiring "},
 	{kind = .Http, text = "keep-alive"},
 	{kind = .Key, text = "esc"},
@@ -267,7 +273,10 @@ scenario_tcp_real := [?]Step {
 	{kind = .Http, text = "requests 16"},
 	{kind = .Wait, text = "requests_pace: the fast reader read the 80 records; it waits for the stop of server", fails_on = "requests_pace: WRONG"},
 	// The tool has the answer of each request: the principal stops server,
-	// and the readers read the end of their rings.
+	// and the readers read the end of their rings. The window of the server
+	// that requests_pace started is in front since its start: the console
+	// comes in front first, or the keys of the command go to the server.
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"server\")"},
 	{kind = .Wait, text = "root: server stopped: "},
 	{kind = .Wait, text = "requests_reader: held, of the pace Always_Holds_Writer: the joined record of 0 and the 80 records in order, no gap, with a ring of 32 that held the server twice: as it must", fails_on = "requests_reader: WRONG", any_order = true},

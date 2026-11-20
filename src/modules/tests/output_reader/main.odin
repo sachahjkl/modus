@@ -85,7 +85,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.stop(.Done)
 		}
 		if system.time() >= deadline {
-			wrong("no record input had a writer within the hang bound", 0)
+			wrong("no record input had a writer within the hang bound, in milliseconds:", system.TEST_HANG_BOUND_MILLISECONDS)
 		}
 		system.wiring_wait(deadline)
 	}

@@ -124,10 +124,16 @@ fuzz_palette_entries_check :: proc() -> Fuzz_Verdict {
 			return fuzz_broken(.Contract, "the accepted entry %d has the name %q", number, string(name))
 		}
 		// A second reader of the setting: the names of the values of the
-		// setting, not the border of the contract.
+		// setting, not the border of the contract. The entry names a value
+		// by its word on the settings page; the place of that word in the
+		// names must hold a name.
 		if kind == .Setting {
 			setting, setting_known := enum_word.member_of_word(settings.Setting, u64(entry.setting))
-			if !setting_known || u32(entry.setting_value) >= settings.descriptions[setting].value_count {
+			place, place_known := 0, false
+			if setting_known {
+				place, place_known = settings.value_place_of_word(setting, u32(entry.setting_value))
+			}
+			if !setting_known || !place_known || u32(place) >= settings.descriptions[setting].value_count {
 				return fuzz_broken(.Contract, "the accepted entry %d names the value %d of the setting %d", number, entry.setting_value, entry.setting)
 			}
 		}
@@ -273,8 +279,10 @@ fuzz_palette_entry_of :: proc(kind: palette_table.Entry_Kind, name: string, abou
 		entry.result = u8(palette_table.Value_Kind.Integer)
 		entry.parameter_name_lengths[0] = u8(copy(entry.parameter_names[0][:], "name"))
 	case .Setting:
-		entry.setting = u8(max(settings.Setting))
-		entry.setting_value = u8(settings.descriptions[max(settings.Setting)].value_count - 1)
+		// The value light of the appearance, by its word on the page, as its
+		// names below say.
+		entry.setting = u8(settings.Setting.Appearance)
+		entry.setting_value = u8(settings.word_of_value(.Appearance, int(settings.descriptions[.Appearance].value_count - 1)))
 		entry.setting_name_length = u8(copy(entry.setting_name[:], "appearance"))
 		entry.value_name_length = u8(copy(entry.value_name[:], "light"))
 		entry.act_name_length = u8(copy(entry.act_name[:], "settings.set:appearance"))

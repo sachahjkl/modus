@@ -6,6 +6,8 @@ import "core:strings"
 import "core:testing"
 import "modus:contract/draw_record"
 import "modus:contract/palette_table"
+import "modus:contract/scale_factor"
+import "modus:contract/settings"
 import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -15,6 +17,27 @@ import "modus:support/line_editor"
 
 @(private = "file")
 MODULE_NAMES := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "sample", "clock"}
+
+// The value in use of a Setting entry. Refusals first: the byte of a
+// setting one past the last member and the largest byte name no setting,
+// and never index the values in use; the scale named by the place of its
+// value (1) and not by its word (11) is not the value in use. Then each
+// setting at its word in use, the last member, the scale, included.
+@(test)
+the_value_in_use_of_a_setting_entry :: proc(t: ^testing.T) {
+	in_use: [settings.Setting]u8
+	for setting in settings.Setting {
+		in_use[setting] = u8(settings.word_of_value(setting, 1))
+	}
+	in_use[.Scale] = u8(scale_factor.Scale.Eleven_Eighths)
+	testing.expect(t, !setting_value_in_use(&in_use, u8(len(settings.Setting)), 1))
+	testing.expect(t, !setting_value_in_use(&in_use, max(u8), 1))
+	testing.expect(t, !setting_value_in_use(&in_use, u8(settings.Setting.Scale), 1))
+	testing.expect(t, !setting_value_in_use(&in_use, u8(settings.Setting.Scale), u8(scale_factor.Scale.Ten_Eighths)))
+	for setting in settings.Setting {
+		testing.expectf(t, setting_value_in_use(&in_use, u8(setting), in_use[setting]), "the setting %v is not at its value in use", setting)
+	}
+}
 
 // A panel and its list, in one allocation: the panel is its first field.
 @(private = "file")
@@ -1460,7 +1483,7 @@ the_prefixes :: proc(t: ^testing.T) {
 	type_text(panel, ":font")
 	testing.expect_value(t, panel.list.row_count, 2)
 	testing.expect_value(t, chosen_of(panel), Chosen.Sends)
-	panel.settings_in_use[0] = 1
+	panel.settings_in_use[.Font] = 1
 	testing.expect(t, !setting_in_use(panel, &panel.list.entries[panel.list.rows[0].entry]))
 	testing.expect(t, setting_in_use(panel, &panel.list.entries[panel.list.rows[1].entry]))
 }
@@ -1933,7 +1956,7 @@ the_strategy_in_use_is_the_mark_of_the_provider :: proc(t: ^testing.T) {
 	testing.expect(t, !setting_in_use(panel, fair))
 	testing.expect(t, setting_in_use(panel, eevdf))
 	// The settings page of the owner says nothing of it.
-	panel.settings_in_use[0] = 1
+	panel.settings_in_use[.Font] = 1
 	testing.expect(t, !setting_in_use(panel, fair))
 	// The mark is a part of what the panel shows: a table that moves it
 	// gives a list with another content, which the panel draws again.
@@ -2002,7 +2025,7 @@ the_values_of_one_setting_are_one_row :: proc(t: ^testing.T) {
 	// seven shades one by one.
 	testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1 + 1 + 2 + 7)
 	panel.state = .Search
-	panel.settings_in_use[0] = 1 // The machine uses Spleen.
+	panel.settings_in_use[.Font] = 1 // The machine uses Spleen.
 	type_text(panel, ":font")
 	testing.expect_value(t, row_text(panel, 0), "font (setting)")
 	row := chosen_entry(panel)

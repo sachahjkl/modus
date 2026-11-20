@@ -156,6 +156,45 @@ the_window_and_the_compositor_at_two_scales :: proc(t: ^testing.T) {
 	testing.expect_value(t, machine.serial, 7)
 }
 
+// The picture that a window owes. No picture is owed in the phases with no
+// surface to draw, whatever serial was presented, nor after a Present of
+// the serial of the machine. A picture is owed for the first surface before
+// its first Present, for a taken rescale before the Present of its serial
+// (the window that froze), for an offered surface and a resize, and after
+// a refused resize, whose surface before it must be drawn again.
+@(test)
+the_picture_that_a_window_owes :: proc(t: ^testing.T) {
+	for phase in ([?]Rescale_Phase{.Releasing, .Released}) {
+		for presented in ([?]u64{0, 4, 5, max(u64)}) {
+			testing.expectf(t, !picture_owed_of({phase = phase, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 5}, presented), "a picture is owed in %v", phase)
+		}
+	}
+	for phase in ([?]Rescale_Phase{.Steady, .Offered, .Resizing}) {
+		testing.expect(t, !picture_owed_of({phase = phase, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 5}, 5))
+	}
+	testing.expect(t, picture_owed_of({phase = .Steady, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 1}, 0))
+	// The sequence of a change of the scale: the taken offer is Steady at
+	// the new serial, and owes its picture until a Present names it.
+	machine := Rescale_Machine{phase = .Steady, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 1}
+	presented: u64 = 1
+	_, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Eleven_Eighths})
+	testing.expect(t, !picture_owed_of(machine, presented))
+	_, _ = rescale_step(&machine, {kind = .Released, serial = 1})
+	testing.expect(t, picture_owed_of(machine, presented))
+	_, _ = rescale_step(&machine, {kind = .Taken, serial = 2})
+	testing.expect_value(t, machine.phase, Rescale_Phase.Steady)
+	testing.expect(t, picture_owed_of(machine, presented))
+	presented = machine.serial
+	testing.expect(t, !picture_owed_of(machine, presented))
+	// A refused resize: the window drew the new surface, and owes a
+	// picture of the surface before it.
+	_, _ = rescale_step(&machine, {kind = .Resize_Offered})
+	testing.expect(t, picture_owed_of(machine, presented))
+	presented = machine.serial
+	_, _ = rescale_step(&machine, {kind = .Resize_Refused, serial = 3})
+	testing.expect(t, picture_owed_of(machine, presented))
+}
+
 // The answers of a resize. Refusals first: an answer of a resize in each
 // phase that is not Resizing, and of another serial, changes nothing and
 // ends no resize; a resize offered outside Steady takes no serial. Then the

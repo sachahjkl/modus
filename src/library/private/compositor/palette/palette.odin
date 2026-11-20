@@ -22,7 +22,9 @@
 package palette
 
 import process_page "modus:contract/disk_process_page"
+import "modus:contract/enum_word"
 import "modus:contract/palette_table"
+import "modus:contract/settings"
 import "modus:support/display"
 import "modus:support/interface"
 import "modus:support/line_editor"
@@ -236,7 +238,7 @@ Panel :: struct {
 	recents:       [RECENT_CAPACITY]Recent, // The chosen entries, the newest first.
 	recent_count:  int, // The remembered choices in use.
 	form:          Form, // Arguments: the fields of the chosen entry.
-	settings_in_use: [palette_table.PARAMETER_CAPACITY]u8, // For the owner: the value in use of each setting of the machine, by its number: the color of the icon of a Setting entry.
+	settings_in_use: [settings.Setting]u8, // For the owner: the word of the value in use of each setting of the machine, as the settings page holds it: the color of the icon of a Setting entry (setting_value_in_use).
 	sent_name:     [NAME_CAPACITY]u8, // Running and Result: the name of the entry that the panel sent.
 	sent_length:   int, // The bytes of `sent_name` in use.
 	result:        Result, // Result: what the entry gave.
@@ -752,6 +754,16 @@ row_add :: proc "contextless" (list: ^List, row: Row) {
 		list.rows[list.row_count] = row
 		list.row_count += 1
 	}
+}
+
+// setting_value_in_use says if the value that a Setting entry names is the
+// value in use of its setting. The byte of the setting crosses from the
+// table of a provider: one that names no setting is refused here, so it
+// never indexes the values in use. The value is a word of the settings
+// page, as the border of the table checks it (palette_table, Bad_Setting).
+setting_value_in_use :: proc "contextless" (in_use: ^[settings.Setting]u8, setting_byte, value_word: u8) -> bool {
+	setting, known := enum_word.member_of_word(settings.Setting, u64(setting_byte))
+	return known && in_use[setting] == value_word
 }
 
 // row_is_entry says if a row of the list is an entry: a row that the input

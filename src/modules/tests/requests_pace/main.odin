@@ -159,7 +159,7 @@ stopped_wait :: proc "contextless" (processes: []system.Handle) {
 			return
 		}
 		if system.time() >= deadline {
-			wrong("a process did not stop within the hang bound", 0)
+			wrong("a process did not stop within the hang bound, in milliseconds:", system.TEST_HANG_BOUND_MILLISECONDS)
 		}
 		system.wait_end(&wait, deadline)
 	}

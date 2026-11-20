@@ -1183,11 +1183,12 @@ palette_refresh :: proc "contextless" () {
 	if display.settings_page != nil {
 		in_use, _ := settings.read(display.settings_page)
 		values := settings.values_of(in_use)
-		// The entries name a value by its place in the names of its
-		// setting, which is not its word for the scale.
+		// The entries name a value by its word on the page, which the
+		// border of the table of a provider checks. The array has one place
+		// for each setting, so no setting writes past it. The read gives
+		// members only, whose words are at most 16.
 		for setting in settings.Setting {
-			place, _ := settings.value_place_of_word(setting, values[setting])
-			palette_panel.settings_in_use[int(setting)] = u8(place)
+			palette_panel.settings_in_use[setting] = u8(values[setting])
 		}
 	}
 	// The band offers go to when a window in front of the others names
