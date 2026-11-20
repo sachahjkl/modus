@@ -119,6 +119,16 @@ Gap_Step :: enum u8 {
 	Not_Contiguous = 2,
 }
 
+// room_wait_of says if a writer that keeps its record on Full waits for the
+// room of one ring: only when the last write gave Full with this ring among
+// the rings that held it (refused_full), and the ring still has no room at
+// the read that this write loaded (room). A write that filled the ring
+// exactly keeps no record: a wait on its read would end at the next read of
+// the reader, and the writer would turn with nothing to write.
+room_wait_of :: proc "contextless" (refused_full: bool, room: Ring_Room) -> bool {
+	return refused_full && room == .Holds
+}
+
 // gap_count_most gives the largest count of a gap record of a ring. A gap
 // moves the next serial of the reader by its count. On a ring with a
 // condition, the reader takes a serial that moves forward by less than

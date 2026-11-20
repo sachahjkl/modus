@@ -507,13 +507,6 @@ wiring_row_resolve :: proc "contextless" (work: ^Wiring_Work, number: u32) -> sy
 		if row.pace == .Never_Holds_Writer {
 			return wiring_refuse(work, .Bad_Operation, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Pace), i64(row.pace), 0, found)
 		}
-		// A reader of log holds its writer: the starter takes that cost for
-		// its child. A child that exports a service would make each of its
-		// callers wait for the reader of the starter too, so its log is not
-		// wired. The role of the child is known before it exists.
-		if .Serve in plan.writer.role.grants {
-			return wiring_refuse(work, .No_Right, .No_Grant, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), 0, found)
-		}
 		plan.writer_file = log_output_file_of()
 		if len(plan.writer_file) == 0 {
 			return wiring_refuse(work, .Bad_State, .Absent, .Modules, 0, 0, 0, found)

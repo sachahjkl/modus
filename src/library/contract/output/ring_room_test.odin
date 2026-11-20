@@ -107,6 +107,33 @@ a_gap_count_stops_at_its_largest_count :: proc(t: ^testing.T) {
 	testing.expect_value(t, gap_count_most(true), SERIAL_FORWARD_MOST - 1)
 }
 
+// The wait of a writer that keeps its record on Full, on a ring of 4. A
+// write that fills the ring exactly keeps no record: no wait, before and
+// after the reader reads, though the ring is full at the read of that
+// write. A write refused with Full: a wait, on the read of that write, also
+// after the reader read (the wait then ends at once, and the next write
+// goes through). A ring that refuses for its reader alone, a ring with
+// room, and a ring that broke: no wait.
+@(test)
+a_writer_waits_only_on_a_ring_that_refused_its_record :: proc(t: ^testing.T) {
+	CAPACITY :: 4
+	// The last write took the fourth compartment: its decision loaded the
+	// read 0, and the write is now 4.
+	filled := ring_room_of(4, 0, CAPACITY, 1, .Writer_Chooses)
+	testing.expect_value(t, filled, Ring_Room.Holds)
+	testing.expect(t, !room_wait_of(false, filled))
+	// The follower read one: the read of the last decision is still 0.
+	testing.expect(t, !room_wait_of(false, ring_room_of(4, 0, CAPACITY, 1, .Writer_Chooses)))
+	// The next write found the ring full and gave Full.
+	refused := ring_room_of(4, 0, CAPACITY, 1, .Writer_Chooses)
+	testing.expect(t, room_wait_of(true, refused))
+	// Each other look: no wait.
+	testing.expect(t, !room_wait_of(true, ring_room_of(4, 0, CAPACITY, 1, .Never_Holds_Writer)))
+	testing.expect(t, !room_wait_of(true, ring_room_of(3, 0, CAPACITY, 1, .Writer_Chooses)))
+	testing.expect(t, !room_wait_of(true, ring_room_of(4, 5, CAPACITY, 1, .Writer_Chooses)))
+	testing.expect(t, !room_wait_of(false, ring_room_of(3, 0, CAPACITY, 1, .Writer_Chooses)))
+}
+
 // Three rings refuse one write: the one at its largest count closes, and
 // counts once in the rings past their gap; the two others count the
 // record, each in its own gap.

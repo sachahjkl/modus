@@ -3833,8 +3833,9 @@ CONTEXT_WIRING_RING :: 16 // The wiring ring.
 // The handle 17: the output ring of the record output `log`, a memory
 // object with **Read** and **Write**, when the wiring list of the start of
 // the process wires `log`; 0 for each other process. The library writes
-// each log record of the process there before it gives it to the kernel
-// (modus:contract/output, Log_Output_Record). The end of `log` never goes
+// there each log record that the kernel took, or refused for its budget
+// alone, after it gave it to the kernel (modus:contract/output,
+// Log_Output_Record). The end of `log` never goes
 // through the wiring ring: a process whose only wiring is `log` has none.
 // See [record output log](term:record-output-log).
 CONTEXT_LOG_OUTPUT :: 17 // The output ring of the record output log.

@@ -765,8 +765,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_wiring(&wait)
 		// A follower whose full ring refused a row: its read wakes the
 		// pump, which writes the row that it kept, or the gap of the
-		// records that the kernel wrote over meanwhile.
-		system.wait_output_room(&wait, &follow, FOLLOW_RINGS_WAITED_MOST)
+		// records that the kernel wrote over meanwhile. The count of the
+		// refused rings past FOLLOW_RINGS_WAITED_MOST is dropped: such a
+		// ring loses nothing, its row comes at the next wake for another
+		// cause, and no reader of this service asks for the count.
+		_ = system.wait_output_room(&wait, &follow, FOLLOW_RINGS_WAITED_MOST)
 		system.service_wait(&wait, &service)
 		system.wait_end(&wait)
 		system.service_run(&service)

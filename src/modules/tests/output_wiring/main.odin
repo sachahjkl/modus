@@ -727,13 +727,6 @@ start_case :: proc "contextless" () {
 	list_write(log_rows[:], nil, no_terms[:])
 	status, answer = start_listed("output_writer", true)
 	refused("a condition on the log", before, status, answer, .Bad_Operation, fail(.Start, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Condition_Offset), i64(conditioned.condition_offset), 0, 1))
-	// The log of a child that exports a service: its reader would hold
-	// each caller of the service. heron serves, and the main test closed
-	// its window long before this case, so no other refusal comes first.
-	log_rows[0] = log_row
-	list_write(log_rows[:], nil)
-	status, answer = start_listed("heron", true)
-	refused("the log of a service", before, status, answer, .No_Right, fail(.Start, .No_Grant, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), 0, 1))
 	// One row of the asker past six.
 	asker_rows: [output.WIRING_ASKER_ROWS_OF_A_START + 1]output.Wiring
 	for &each in asker_rows {
@@ -895,11 +888,16 @@ log_case :: proc "contextless" () {
 	log_text_expect(next, &record, string(line[:count]), .Info, 0, 1)
 	next += 1
 	// 5. The end of the reader while the writer waits: log_flood writes
-	// more lines than the ring holds, which this asker never reads, so it
-	// waits for room; this asker closes its end. The end word ends that
-	// wait, and log_flood stops with Done: its log never holds it past the
-	// end of its reader. If the close comes before the ring is full, the
-	// end word ends the output at the next line, with the same outcome.
+	// more lines than the ring holds, which this asker never reads. This
+	// asker waits, by a state and within the hang bound, until the ring is
+	// full and log_flood waits for room in it; then it closes its end. The
+	// end word ends that wait, and log_flood stops with Done: its log never
+	// holds it past the end of its reader.
+	full, held_now, capacity := system.asker_full_and_writer_waits(number, output.Log_Output_Record, hang_deadline())
+	if full != .Held || held_now != capacity {
+		system.log(.Error, "output_wiring: WRONG: the ring of the log of log_flood was not full with log_flood waiting on it: the end ", u64(full), ", ", u64(held_now), " compartments of ", u64(capacity))
+		system.stop(.Failed)
+	}
 	if !system.asker_close(number) {
 		wrong("the end of the log of log_flood was not an end of this asker", u64(number))
 	}
