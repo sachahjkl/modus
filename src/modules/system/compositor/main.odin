@@ -108,6 +108,7 @@ import "modus:support/key_path"
 import "modus:support/system"
 import "modus:contract/pointer_pictures"
 import process_page "modus:contract/disk_process_page"
+import "modus:contract/value_kinds"
 import "base:intrinsics"
 
 // Its loop, and the thread that makes the lists of the palette. The
@@ -444,7 +445,7 @@ bar_layout_update :: proc "contextless" () {
 	damage_add(0, 0, screen.width, BAR_HEIGHT)
 	damage_menu_of(bar_layout)
 	if in_interface_font {
-		system.log(.Info, "compositor: the bar is in the interface font: start ", u64(layout.label_width), " pixels, windows ", u64(layout.windows_label_width), ", the widest name ", u64(layout.longest_name_width))
+		system.log_fact(.Info, Bar_In_Interface_Font{start_width = u64(layout.label_width), windows_width = u64(layout.windows_label_width), name_width = u64(layout.longest_name_width)})
 	} else {
 		system.log(.Info, "compositor: the bar is in the font of the cells")
 	}
@@ -484,7 +485,7 @@ windows_log :: proc "contextless" () {
 	// service gave, faded beside its nickname.
 	for &client in clients {
 		if client.surface.pixels != nil && client.from_disk {
-			system.log(.Info, "compositor: the menu of the windows shows the disk process ", system.name_of(client.title[:]), " with the hash prefix ", string(client.hash_prefix[:]), ", from the root service")
+			system.log_fact(.Info, Disk_Process_In_Menu{hash_prefix = value_kinds.text_field(string(client.hash_prefix[:]), HASH_PREFIX_FIELD_BYTES), window = window_field(client.title[:])})
 		}
 	}
 }
@@ -638,7 +639,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	needed_pages: u64 = 2 * canvas_pages
 	budget_left, budget_status := system.budget_read()
 	if budget_status != .Ok || budget_left.pages < needed_pages {
-		system.log(.Info, "compositor: a screen of ", u64(width), "x", u64(height), " needs ", needed_pages, " pages, the budget holds ", budget_left.pages)
+		system.log_fact(.Info, Screen_Past_Budget{width = u64(width), height = u64(height), needed_pages = needed_pages, budget_pages = u64(budget_left.pages)})
 		system.stop(.Failed)
 	}
 	frame = canvas_create(width, height)
@@ -654,7 +655,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	pointer_theme_open(ctx) // pointer_picture.odin
 	damage_add(0, 0, width, height)
 	full_measure = true
-	system.log(.Info, "compositor: ok ", u64(width), "x", u64(height))
+	system.log_fact(.Info, Compositor_Ready{width = u64(width), height = u64(height)})
 	quality_profile_log() // quality_measures.odin
 	service_start(ctx) // exports.odin
 	// The text of the desktop: the settings of the principal and the font
@@ -1139,7 +1140,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	// alone. A test that moves the pointer with no other way to read it
 	// learns from this line where the press landed.
 	if pressed {
-		system.log(.Info, "compositor: a press of the left button at ", u64(pointer_x), ",", u64(pointer_y))
+		system.log_fact(.Info, Left_Button_Pressed{x = u64(pointer_x), y = u64(pointer_y)})
 	}
 
 	if palette_is_open() {
@@ -1157,8 +1158,8 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		} else {
 			// The input put the window down: the log has its new place.
 			client := &clients[dragging]
-			system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " moved to ", u64(max(client.x, 0)), ",", u64(client.y))
-			system.log(.Info, "compositor: the move of ", system.name_of(client.title[:]), ": ", move_frames, " frames, ", move_time / max(move_frames, 1) / 1000, " us per frame, ", move_longest / 1000, " us the longest")
+			system.log_fact(.Info, Window_Moved{x = u64(max(client.x, 0)), y = u64(client.y), window = window_field(client.title[:])})
+			system.log_fact(.Info, Window_Move_Measured{frames = move_frames, time_per_frame = value_kinds.Time_In_Microseconds(move_time / max(move_frames, 1) / 1000), longest_frame = value_kinds.Time_In_Microseconds(move_longest / 1000), window = window_field(client.title[:])})
 			move_frames, move_time, move_longest = 0, 0, 0
 			dragging = -1
 			damage_add(0, 0, screen.width, screen.height)
@@ -1385,7 +1386,7 @@ screen_put :: proc "contextless" (areas: []Rectangle) {
 		// The device kept another offset: it shows no page that this
 		// service knows. The page 0 then takes each frame, as with no
 		// device, from this whole frame on.
-		system.log(.Info, "compositor: the display refused the page flip to the screen page ", u64(hidden), ": each later frame is written into the screen page 0, which the display shows")
+		system.log_fact(.Info, Page_Flip_Refused{screen_page = u64(hidden)})
 		bochs_display.page_show(display_registers, 0, screen.height)
 		screen_page_count, screen_page_shown = 1, 0
 		screen_copy(screen_pages[0], {0, 0, screen.width, screen.height})
@@ -1566,7 +1567,7 @@ memory_measure :: proc "contextless" () {
 		system.log(.Info, string(line[:count]))
 	}
 	_, ebx, _, edx := intrinsics.x86_cpuid(7, 0)
-	system.log(.Info, "compositor: the processor: ERMS ", ebx >> 9 & 1 != 0 ? "yes" : "no", ", FSRM ", edx >> 4 & 1 != 0 ? "yes" : "no")
+	system.log_fact(.Info, Processor_Copy_Features{erms = value_kinds.text_field(ebx >> 9 & 1 != 0 ? "yes" : "no", YES_NO_FIELD_BYTES), fsrm = value_kinds.text_field(edx >> 4 & 1 != 0 ? "yes" : "no", YES_NO_FIELD_BYTES)})
 }
 
 // loop_copy copies count bytes 16 at a time, with no call of memcpy: the
@@ -1676,7 +1677,7 @@ screen_draw_part :: proc "contextless" (table: ^interface.Draw_Table, first, cou
 		return
 	}
 	screen_refusal_logged = true
-	system.log(.Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_18 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
+	system.log_fact(.Warning, Screen_Draw_Refused{error_kind = u64(max(refused.kind, 0)), error_argument = u64(max(refused.argument, 0))})
 }
 
 // screen_draw draws the parts of the screen table into the frame, from the
@@ -1800,7 +1801,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		if zone != bar_zone_logged {
 			bar_zone_logged = zone
 			zone_buffer: [settings.ZONE_TEXT_SIZE]u8
-			system.log(.Info, "compositor: the bar shows the local time ", shown, " with the time zone ", settings.zone_text(zone_buffer[:], i32(zone / 60)), ", at ", milliseconds / 1000, " s since 1970")
+			system.log_fact(.Info, Bar_Local_Time{date = value_kinds.Time_In_Seconds(milliseconds / 1000), local_time = value_kinds.text_field(shown, LOCAL_TIME_FIELD_BYTES), zone = value_kinds.text_field(settings.zone_text(zone_buffer[:], i32(zone / 60)), ZONE_FIELD_BYTES)})
 		}
 	} else {
 		x += CLOCK_WIDTH - 8 * 8

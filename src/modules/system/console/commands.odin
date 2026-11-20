@@ -1039,7 +1039,7 @@ process_modules :: proc "contextless" (arguments: []Value) -> Value {
 			if writer, writer_ok := op.module_writer_of_word(item.writer); writer_ok {
 				made_text(&table, row, 5, op.module_writer_name(writer))
 			} else {
-				system.log(.Info, "console: process_modules: the module record at ", item.base, " of the process slot ", slot, " has the writer word ", item.writer, ", which names no writer")
+				system.log_fact(.Info, Module_Writer_Refused{base = item.base, slot = u64(slot), writer_word = item.writer})
 			}
 		}
 	}
@@ -1397,7 +1397,7 @@ isolate_from_memory :: proc "contextless" (arguments: []Value) -> Value {
 	loaded[loaded_count] = {hash = hash, name = sandbox.name, file = file, place = -1, sandbox = number}
 	loaded_count += 1
 	commands_add(file, "", number, 0)
-	system.log(.Info, "console: ", sandbox.name, " is a module from memory: ", u64(size), " bytes, the hash ", system.Hash{hash[:]})
+	system.log_fact(.Info, Module_From_Memory{size = value_kinds.Size_In_Bytes(size), module_hash = value_kinds.Hash_Field(hash), module_name = value_kinds.module_name_field(sandbox.name)})
 	return loaded_record(sandbox.name, callable, "isolated", hash)
 }
 

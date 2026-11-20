@@ -42,6 +42,7 @@ package monitor
 
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/draw_record"
+import "modus:contract/value_kinds"
 import op "modus:contract/operation"
 import "modus:private/monitor/sample_history"
 import "modus:support/display"
@@ -187,7 +188,7 @@ disk_process_log :: proc "contextless" (slot: u64, process_serial: u64, nickname
 	prefix: [process_page.HASH_PREFIX_DIGITS]u8
 	process_page.hash_prefix_write(&prefix, row.hash[0])
 	hash := transmute([process_page.HASH_SIZE]u8)row.hash
-	system.log(.Info, "monitor: the disk process ", nickname, ", hash prefix ", string(prefix[:]), ", the file ", system.Hash{hash[:]}, ", from the root service")
+	system.log_fact(.Info, Disk_Process_Shown{file_hash = value_kinds.Hash_Field(hash), hash_prefix = value_kinds.text_field(string(prefix[:]), HASH_PREFIX_FIELD_BYTES), nickname = value_kinds.text_field(nickname, NICKNAME_FIELD_BYTES)})
 }
 
 // The entry of the monitor: it opens its window and its service, then draws

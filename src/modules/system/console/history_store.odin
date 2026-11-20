@@ -26,6 +26,7 @@ package console
 import "modus:contract/blake3"
 import "modus:contract/errors"
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "modus:support/line_editor"
 import "modus:support/storage"
 import "modus:support/system"
@@ -130,12 +131,12 @@ history_load :: proc "contextless" () {
 	case !found:
 		system.log(.Info, "console: no line history kept: the history starts empty")
 	case len(bytes) > line_editor.HISTORY_FILE_SIZE_LIMIT:
-		system.log(.Info, "console: the line history has more than ", u64(line_editor.HISTORY_FILE_SIZE_LIMIT), " bytes: the history starts empty")
+		system.log_fact(.Info, History_Too_Long{limit = value_kinds.Size_In_Bytes(line_editor.HISTORY_FILE_SIZE_LIMIT)})
 	case:
 		if problem := line_editor.history_file_read(bytes, &history); problem != .None {
-			system.log(.Info, "console: the line history is refused, ", line_editor.history_file_problem_texts[problem], ": the history starts empty")
+			system.log_fact(.Info, History_Refused{history_problem = value_kinds.text_field(line_editor.history_file_problem_texts[problem], HISTORY_PROBLEM_FIELD_BYTES)})
 		} else {
-			system.log(.Info, "console: the line history: ", u64(line_editor.history_count(&history)), " lines kept from before the stop")
+			system.log_fact(.Info, History_Restored{lines = u64(line_editor.history_count(&history))})
 		}
 	}
 	history_saved_lines = history.lines_written

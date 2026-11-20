@@ -1,6 +1,7 @@
 package inspect
 
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:private/inspect/addresses"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -178,7 +179,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	samples_drawn += 1
 	damage_total += u64(damage)
 	if system.measure_run() && samples_drawn == 20 {
-		system.log(.Info, "inspect: the interface: ", u64(window_memory.drawing.now.record_count), " records; 20 frames with ", damage_total, " damage rectangles in all; the last frame: build ", window_memory.drawing.build_time / 1000, " us, difference ", window_memory.drawing.difference_time / 1000, " us, draw ", window_memory.drawing.draw_time / 1000, " us")
+		system.log_fact(.Info, Interface_Measured{records = u64(window_memory.drawing.now.record_count), damage_rectangles = damage_total, build_time = value_kinds.Time_In_Microseconds(window_memory.drawing.build_time / 1000), difference_time = value_kinds.Time_In_Microseconds(window_memory.drawing.difference_time / 1000), draw_time = value_kinds.Time_In_Microseconds(window_memory.drawing.draw_time / 1000)})
 	}
 }
 

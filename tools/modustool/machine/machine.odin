@@ -2606,6 +2606,7 @@ scenario := [?]Step {
 	// The log: records of processes. The kernel sets the process of each
 	// record; a process with the grant reads the records.
 	{kind = .Launch, text = "log"},
+	{kind = .Fact, process = "log", fact = "log.Log_Memory", condition = "memory > 0", any_order = true},
 	// The window loses no record once it reads the log: the records gone
 	// before its start depend on the length of the boot, and are only a
 	// measure (src/md/features/log_window_losses.md).
@@ -2618,12 +2619,14 @@ scenario := [?]Step {
 	// service: from here on some checks read the process and the level of
 	// a record (step Record), not only a line of text.
 	{kind = .Call, text = "log.records(0)", expected = " rows of Record"},
-	// Each record keeps the kind of each value of its text: the process log
-	// writes the size of the memory of the log as a size. The value runs
-	// are read from the number of that record: the records of the boot can
-	// be gone from the ring by now.
+	// The process log writes the size of the memory of the log as a log
+	// fact, whose field memory is a size in KiB: the step Record reads its
+	// sentence, which the tool writes from the fields, and the step Fact
+	// reads the field itself, which the check before the run finds in the
+	// fact table of the module log. The step Fact comes just after the
+	// launch: it reads the serial port after the last Wait, and the line
+	// comes before the line "log: ok".
 	{kind = .Record, process = "log", level = "Info", text = "log: the memory of the log: "},
-	{kind = .Call, text = "log.value_runs({record})", expected = "  size"},
 	{kind = .Front, text = "console"},
 	// The kernel writes a record of its own, and the log keeps it: a
 	// process that fails gives a warning of the kernel. A record of now,

@@ -115,6 +115,7 @@
 package console
 
 import "modus:contract/text_encoding"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/key_path"
 import "modus:support/line_editor"
@@ -274,7 +275,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 			// it is a key of the next line, as the keys before it.
 			switch line_editor.running_key_action(pressed.code == display.KEY_ESCAPE, stoppable, pending_count, PENDING_CAPACITY) {
 			case .Stop_Call:
-				system.log(.Info, "console: Escape stops the line after ", system.time() - work.since, " ms; keys that wait: ", u64(pending_count))
+				system.log_fact(.Info, Escape_Stops_Line{line_time = value_kinds.Time_In_Milliseconds(system.time() - work.since), waiting_keys = u64(pending_count)})
 				intrinsics.atomic_store(&work.cancel, 1)
 				system.word_wake(&work.cancel)
 			case .Wait:
@@ -286,14 +287,14 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 				// The console must read each key to find an Escape that
 				// stops the call, and it has no place for this one.
 				if key_path.loss_count(&keys_loss) {
-					system.log(.Info, "console: ", u64(PENDING_CAPACITY), " keys wait for the end of the line, and the console reads on to find an Escape: a new key is lost")
+					system.log_fact(.Info, Waiting_Keys_Full{capacity = u64(PENDING_CAPACITY)})
 				}
 			}
 		}
 		if running && intrinsics.atomic_load_explicit(&work.finished, .Relaxed) == work.started {
 			running = false
 			if lost, ended := key_path.loss_end(&keys_loss); ended {
-				system.log(.Info, "console: the line ended: ", lost, " keys were lost while it ran")
+				system.log_fact(.Info, Line_Ended_With_Lost_Keys{lost_keys = lost})
 			}
 			// The keys that waited, until one of them starts a line.
 			taken := 0

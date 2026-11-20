@@ -61,6 +61,7 @@ import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/settings"
+import "modus:contract/value_kinds"
 import "modus:support/appearance"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -198,15 +199,12 @@ change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32)
 		return true
 	}
 	kept := keep(choice, zone)
-	kept_text := kept ? "; kept in the store" : "; NOT kept: the store refused"
 	if !values_same {
-		buffer: [256]u8
-		writer := system.Writer{buffer = buffer[:]}
-		system.log(.Info, "settings: ", values_text(&writer, choice), kept_text)
+		system.log_fact(.Info, Values_Changed{font = value_field(choice, .Font), subpixel_order = value_field(choice, .Subpixel_Order), pointer_theme = value_field(choice, .Pointer_Theme), grid_fit = value_field(choice, .Grid_Fit), keyboard_layout = value_field(choice, .Keyboard_Layout), appearance = value_field(choice, .Appearance), store = store_field(kept)})
 	}
 	if current.zone_offset_minutes != zone {
 		zone_buffer: [settings.ZONE_TEXT_SIZE]u8
-		system.log(.Info, "settings: ", settings.TIME_ZONE_TITLE, " ", settings.zone_text(zone_buffer[:], zone), kept_text)
+		system.log_fact(.Info, Zone_Changed{zone = value_kinds.text_field(settings.zone_text(zone_buffer[:], zone), ZONE_FIELD_BYTES), store = store_field(kept)})
 	}
 	page_write(choice, zone)
 	return kept
@@ -385,7 +383,7 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 		}
 	}
 	page_write(choice, choice.zone_offset_minutes)
-	system.log(.Info, "settings: kept ", u64(count), " records, one commit each")
+	system.log_fact(.Info, Records_Repeated{records = u64(count)})
 	return count
 }
 
@@ -562,9 +560,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	bar_result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar)
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	if choice.change_count != drawn_change && drawn_change != 1 {
-		buffer: [256]u8
-		writer := system.Writer{buffer = buffer[:]}
-		system.log(.Info, "settings: drawn with ", values_text(&writer, choice))
+		system.log_fact(.Info, Values_Drawn{font = value_field(choice, .Font), subpixel_order = value_field(choice, .Subpixel_Order), pointer_theme = value_field(choice, .Pointer_Theme), grid_fit = value_field(choice, .Grid_Fit), keyboard_layout = value_field(choice, .Keyboard_Layout), appearance = value_field(choice, .Appearance)})
 	}
 	drawn_change = choice.change_count
 	return bar_result
@@ -603,7 +599,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	page_handle := ctx.handles[settings.GRANT_PAGE]
 	address, status := system.memory_map(page_handle)
 	if status != .Ok {
-		system.log(.Info, "settings: no settings page: status ", u64(status))
+		system.log_fact(.Info, No_Settings_Page{status_word = u64(status)})
 		system.stop(system.stop_outcome_of_grant(page_handle, status))
 	}
 	page = (^settings.Page)(address)
@@ -618,10 +614,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	service, _ = system.service_open(ctx)
 	draw_with_bar(&window)
-	buffer: [256]u8
-	writer := system.Writer{buffer = buffer[:]}
 	started, _ := settings.read(page)
-	system.log(.Info, "settings: ok, ", values_text(&writer, started))
+	system.log_fact(.Info, Window_Ready{font = value_field(started, .Font), subpixel_order = value_field(started, .Subpixel_Order), pointer_theme = value_field(started, .Pointer_Theme), grid_fit = value_field(started, .Grid_Fit), keyboard_layout = value_field(started, .Keyboard_Layout), appearance = value_field(started, .Appearance)})
 	for {
 		wait := system.wait_begin()
 		display.wait_events(&wait, &window)

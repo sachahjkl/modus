@@ -759,11 +759,11 @@ link_pages_open :: proc "contextless" () {
 	}
 	pages, problem := manual_pages.validate(bytes)
 	if problem != .None {
-		system.log(.Warning, "manual: the link pages break the rule ", u64(problem), " of their format: not read")
+		system.log_fact(.Warning, Link_Pages_Refused{rule = u64(problem)})
 		return
 	}
 	link_pages = pages
-	system.log(.Info, "manual: ", u64(pages.count), " link pages")
+	system.log_fact(.Info, Link_Pages_Read{pages = u64(pages.count)})
 }
 
 // link_page_build writes a link page: its title as its heading, where it
@@ -824,5 +824,5 @@ markdown_check :: proc "contextless" () {
 		system.log(.Info, "manual: the Markdown of its page: bold, italics, code, list items and links that open a page; no mark is left and no row passes the window: as it must")
 		return
 	}
-	system.log(.Info, "manual: the Markdown of its page: FAILED: ", u64(marks.bold), " bold, ", u64(marks.italic), " italics, ", u64(marks.code), " code, ", u64(marks.items), " list items, ", u64(marks.links_that_open), " links that open a page of ", u64(marks.links), ", ", u64(marks_left), " marks left, the widest row ", u64(widest), " of ", u64(TEXT_WIDTH), " pixels")
+	system.log_fact(.Info, Markdown_Check_Failed{bold = u64(marks.bold), italics = u64(marks.italic), code = u64(marks.code), list_items = u64(marks.items), links_that_open = u64(marks.links_that_open), links = u64(marks.links), marks_left = u64(marks_left), widest = u64(widest), text_width = u64(TEXT_WIDTH)})
 }

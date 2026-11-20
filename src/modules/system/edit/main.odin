@@ -44,6 +44,7 @@
 package edit
 
 import "modus:contract/errors"
+import "modus:contract/value_kinds"
 import "modus:private/edit/text_model"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -160,12 +161,12 @@ store_open :: proc "contextless" (ctx: ^system.Context) {
 		system.log(.Info, "edit: a new store: an empty text")
 	case len(bytes) > text_model.TEXT_CAPACITY:
 		problem_shown = .Too_Long
-		system.log(.Info, "edit: the text in the store has more than ", u64(text_model.TEXT_CAPACITY), " bytes: the editor starts empty and keeps nothing")
+		system.log_fact(.Info, Stored_Text_Too_Long{text_capacity = value_kinds.Size_In_Bytes(text_model.TEXT_CAPACITY)})
 	case:
 		count, replaced, problem := text_model.text_clean(bytes, clean_buffer[:])
 		if problem != .None {
 			problem_shown = .Too_Long
-			system.log(.Info, "edit: the text in the store passes ", u64(text_model.TEXT_CAPACITY), " bytes with its replacement characters: the editor starts empty and keeps nothing")
+			system.log_fact(.Info, Cleaned_Text_Too_Long{text_capacity = value_kinds.Size_In_Bytes(text_model.TEXT_CAPACITY)})
 			return
 		}
 		text_model.text_replace_whole(&text, clean_buffer[:count])
@@ -173,9 +174,9 @@ store_open :: proc "contextless" (ctx: ^system.Context) {
 		keeping = true
 		text_model.layout_compute(&layout, &text)
 		if replaced > 0 {
-			system.log(.Info, "edit: restored a text of ", u64(count), " bytes, ", u64(layout.line_count), " lines, with ", u64(replaced), " invalid sequences replaced by the replacement character")
+			system.log_fact(.Info, Text_Restored_With_Replacements{length = value_kinds.Size_In_Bytes(count), lines = u64(layout.line_count), replaced = u64(replaced)})
 		} else {
-			system.log(.Info, "edit: restored a text of ", u64(count), " bytes, ", u64(layout.line_count), " lines")
+			system.log_fact(.Info, Text_Restored{length = value_kinds.Size_In_Bytes(count), lines = u64(layout.line_count)})
 		}
 	}
 }
@@ -309,7 +310,7 @@ selection_log :: proc "contextless" () {
 	}
 	first_line := layout.rows[text_model.row_of(&layout, first)].line
 	last_line := layout.rows[text_model.row_of(&layout, last)].line
-	system.log(.Info, "edit: the selection has ", u64(last - first), " bytes, from byte ", u64(first), " to byte ", u64(last), ", over ", u64(last_line - first_line + 1), " lines")
+	system.log_fact(.Info, Selection_Made{selected = value_kinds.Size_In_Bytes(last - first), first = u64(first), last = u64(last), lines = u64(last_line - first_line + 1)})
 }
 
 // versions_list gives the generations of the versions of the text, the
@@ -322,7 +323,7 @@ versions_list :: proc "contextless" (action: string) -> (generations: []i64, ok:
 		return nil, false
 	}
 	if total > i64(len(rows)) {
-		system.log(.Info, "edit: ", action, ": the text has ", total, " versions, more than the ", u64(VERSION_ROWS_CAPACITY), " that the editor lists")
+		system.log_fact(.Info, Too_Many_Versions{versions = total, listed_versions = u64(VERSION_ROWS_CAPACITY), action = value_kinds.text_field(action, ACTION_FIELD_BYTES)})
 		return nil, false
 	}
 	for row, index in rows {
@@ -343,7 +344,7 @@ version_restore :: proc "contextless" (generation: i64, action: string) -> bool 
 	}
 	count, replaced, problem := text_model.text_clean(bytes, clean_buffer[:])
 	if problem != .None {
-		system.log(.Info, "edit: ", action, ": the version of generation ", generation, " is too long for the editor")
+		system.log_fact(.Info, Version_Too_Long{generation = generation, action = value_kinds.text_field(action, ACTION_FIELD_BYTES)})
 		return false
 	}
 	commit, restore_status := storage.restore(&client, storage.ROOT, OBJECT_NAME, generation, &error)
@@ -353,7 +354,7 @@ version_restore :: proc "contextless" (generation: i64, action: string) -> bool 
 	}
 	text_model.text_replace_whole(&text, clean_buffer[:count])
 	layout_refresh()
-	system.log(.Info, "edit: ", action, ": the text has ", u64(count), " bytes, the caret at byte ", u64(text.caret), ", the version of generation ", generation, replaced > 0 ? ", with invalid sequences replaced" : "")
+	system.log_fact(.Info, Version_Restored{length = value_kinds.Size_In_Bytes(count), caret = u64(text.caret), generation = generation, action = value_kinds.text_field(action, ACTION_FIELD_BYTES), replaced_words = value_kinds.text_field(replaced > 0 ? REPLACED_WORDS : "", REPLACED_WORDS_FIELD_BYTES)})
 	return true
 }
 
@@ -369,7 +370,7 @@ undo :: proc "contextless" () {
 	}
 	step, problem := text_model.walk_back(&walk, generations)
 	if problem != .None {
-		system.log(.Info, "edit: undo: ", text_model.walk_problem_texts[problem])
+		system.log_fact(.Info, Walk_Refused{action = value_kinds.text_field("undo", ACTION_FIELD_BYTES), walk_problem = value_kinds.text_field(text_model.walk_problem_texts[problem], WALK_PROBLEM_FIELD_BYTES)})
 		return
 	}
 	if version_restore(step.to, "undo") {
@@ -381,7 +382,7 @@ redo :: proc "contextless" () {
 	group_commit()
 	step, problem := text_model.walk_forward(&walk)
 	if problem != .None {
-		system.log(.Info, "edit: redo: ", text_model.walk_problem_texts[problem])
+		system.log_fact(.Info, Walk_Refused{action = value_kinds.text_field("redo", ACTION_FIELD_BYTES), walk_problem = value_kinds.text_field(text_model.walk_problem_texts[problem], WALK_PROBLEM_FIELD_BYTES)})
 		return
 	}
 	if !keeping {

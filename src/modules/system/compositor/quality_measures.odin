@@ -145,7 +145,7 @@ quality_frame_flipped :: proc "contextless" () {
 		// named past its keys, when they changed.
 		if key_table.lost != keys_lost_logged || key_table.refused != serials_refused_logged {
 			keys_lost_logged, serials_refused_logged = key_table.lost, key_table.refused
-			system.log(.Info, "compositor: the measure of the keys to the screen: ", key_table.lost, " keys left the table before a flip showed them, and ", key_table.refused, " serials that a window named were past the keys that it got, since the start")
+			system.log_fact(.Info, Key_Measure_Losses{lost_keys = key_table.lost, refused_serials = key_table.refused})
 		}
 	} else if frames_since_line >= FRAMES_OF_A_LINE {
 		quality_frame_line()

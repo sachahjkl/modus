@@ -165,7 +165,7 @@ completion_key :: proc "contextless" (pressed: Key) -> (taken: bool) {
 		// A machine test takes the picture of the search after this line:
 		// the list that the terminal shows then has the search and its choice.
 		if completion.mode == .History {
-			system.log(.Info, "console: the history search \"", string(completion.search[:completion.search_count]), "\" chooses the row ", u64(completion.chosen + 1), " of ", u64(completion.ranked_count))
+			system.log_fact(.Info, History_Search_Chose{row = u64(completion.chosen + 1), rows = u64(completion.ranked_count), search = value_kinds.text_field(string(completion.search[:completion.search_count]), SEARCH_FIELD_BYTES)})
 		}
 		// While the search is open, each key is for the search.
 		return true
