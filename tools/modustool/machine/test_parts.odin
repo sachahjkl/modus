@@ -33,6 +33,9 @@ Test_Part :: struct {
 	// (MACHINE_ENGINE_READS): the test inputs must hold them
 	// (test_derivations.odin).
 	reads:             Build_File_Kinds,
+	// The part starts no QEMU: it holds no memory of a machine, and the
+	// bound by memory does not count it (test_part_memory_mib).
+	starts_no_machine: bool,
 }
 
 // What one run of a part keeps across its machines. Two parts that run at
@@ -113,10 +116,10 @@ test_parts := [?]Test_Part {
 	{name = "quic-real", does = "The QUIC client of OpenSSL against `quic_echo`, through the UDP relay of the peer", run = quic_real_tests_run, procedures = {"quic_real_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	// No machine starts: the part needs the built modules, which the build
 	// of a volume gives.
-	{name = "outside_module", does = "No machine: the build of the examples of a module outside the sources, as a developer types it", run = outside_module_tests_run, procedures = {"outside_module_tests_run", "outside_module_examples_check"}, volumes = {build.BOOT_VOLUME}},
+	{name = "outside_module", does = "No machine: the build of the examples of a module outside the sources, as a developer types it", run = outside_module_tests_run, procedures = {"outside_module_tests_run", "outside_module_examples_check"}, volumes = {build.BOOT_VOLUME}, starts_no_machine = true},
 	// The debug objects are checked against the linked files, which only a
 	// build holds: `check` runs that test after its build.
-	{name = "host_modules", does = "No machine: the loader and the descriptions of the exports of the build, on the host", run = host_modules_tests_run, procedures = {"host_modules_tests_run", "test_modules", "test_descriptions", "module_facts", "module_facts_of_sources"}, volumes = {build.BOOT_VOLUME}, reads = {.Module_File, .Module_Source_List, .Reached_Fact_List}},
+	{name = "host_modules", does = "No machine: the loader and the descriptions of the exports of the build, on the host", run = host_modules_tests_run, procedures = {"host_modules_tests_run", "test_modules", "test_descriptions", "module_facts", "module_facts_of_sources"}, volumes = {build.BOOT_VOLUME}, reads = {.Module_File, .Module_Source_List, .Reached_Fact_List}, starts_no_machine = true},
 	{
 		name = "iommu_amd",
 		does = "The machine with the IOMMU of AMD with interrupt remapping (`amd-iommu,dma-remap=on,intremap=on`, `kernel-irqchip=split`), with the disk of the measures and an entropy device behind a conventional bridge (`i82801b11-bridge`) at the place 28 of bus 0: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, which also holds the registers of the entropy device, so the kernel gives both one domain of the requester of the bridge; its message interrupt arrives through the interrupt table of that requester, and its device does not reach a page that it did not declare, with the line of the DMA fault from the event log; QEMU records no event for a refused message, so no line of a refused interrupt is waited for; without the registers of the entropy device, its declaration is refused, with the line of the kernel, and a read of the disk into a page that it declared before does not end: the tool stops the machine (which ends each read that QEMU took), gives the disk a new size with `block_resize` and starts it again, and the service then finds its page as it was and no interrupt of the device, the configuration interrupt of the new size too; then `net` through a device window",
@@ -280,12 +283,70 @@ remembered_values_forget :: proc(part: ^Test_Part_Run) {
 	clear(&part.remembered_values)
 }
 
-// The processors of each test machine: the -smp of machine_command. The
-// whole test starts at most one part for each MACHINE_PROCESSOR_COUNT
-// processors of the host, so that each machine can have its processors.
-// A part runs its machines one after the other.
-test_parts_at_once :: proc(part_count: int, processors: int) -> int {
-	return max(1, min(part_count, processors / MACHINE_PROCESSOR_COUNT))
+// The memory of the host that the bound by memory keeps out of the
+// machines: QEMU holds memory of its own beside the memory of its guest,
+// and the tool, Nix and the desktop of the developer run beside the
+// machines. A host that swaps the memory of a machine can stop it for
+// minutes, and its step then fails at its bound with no fault of the
+// system (src/md/infrastructure/machine_test_parts.md, "The chosen form").
+HOST_MEMORY_MARGIN_MIB :: 4096
+
+// test_part_memory_mib gives the memory that one part holds at most: one
+// machine at a time, each with the -m of machine_command, or none for a
+// part that starts no QEMU.
+test_part_memory_mib :: proc(part: Test_Part) -> u64 {
+	return part.starts_no_machine ? 0 : u64(MACHINE_MEMORY_MIB)
+}
+
+// test_parts_largest_memory_mib gives the memory of the largest part of a
+// list: the bound by memory counts each part at that size.
+test_parts_largest_memory_mib :: proc(parts: []Test_Part) -> (largest: u64) {
+	for part in parts {
+		largest = max(largest, test_part_memory_mib(part))
+	}
+	return largest
+}
+
+// test_parts_at_once gives how many parts run at the same time: the
+// smaller of two bounds, at least one, and never more than the parts.
+//   - By processors: one part for each MACHINE_PROCESSOR_COUNT processors,
+//     the -smp of machine_command, so that each machine has its processors.
+//   - By memory: the available memory of the host at the start, less
+//     HOST_MEMORY_MARGIN_MIB, divided by the memory of the largest part.
+//     A list whose parts start no machine has no bound by memory.
+// A part runs its machines one after the other. One part always runs,
+// also when it is larger than the memory: the test then runs one part at
+// a time, and a part alone is the case that a developer runs.
+test_parts_at_once :: proc(part_count: int, processors: int, available_memory_mib: u64, largest_part_memory_mib: u64) -> int {
+	bound := max(processors / MACHINE_PROCESSOR_COUNT, 0)
+	if largest_part_memory_mib > 0 {
+		memory_bound: u64 = 0
+		if available_memory_mib > HOST_MEMORY_MARGIN_MIB {
+			memory_bound = (available_memory_mib - HOST_MEMORY_MARGIN_MIB) / largest_part_memory_mib
+		}
+		if memory_bound < u64(bound) {
+			bound = int(memory_bound)
+		}
+	}
+	return max(1, min(part_count, bound))
+}
+
+// test_parts_at_once_on_this_host gives the bound of test_parts_at_once for
+// a list of parts on this host, and prints its inputs: the processors that
+// the test counts on, and the available memory of the host now. A host
+// whose available memory the tool cannot read has no bound by memory, and
+// the line says so.
+test_parts_at_once_on_this_host :: proc(parts: []Test_Part, processors: int) -> int {
+	largest := test_parts_largest_memory_mib(parts)
+	available, known := host_memory_available_mib()
+	if !known {
+		at_once := test_parts_at_once(len(parts), processors, max(u64), largest)
+		fmt.printfln("modustool: %d parts of the machine test, at most %d at once: %d processors, %d for each machine; the available memory of the host is unknown, so no bound by memory", len(parts), at_once, processors, MACHINE_PROCESSOR_COUNT)
+		return at_once
+	}
+	at_once := test_parts_at_once(len(parts), processors, available, largest)
+	fmt.printfln("modustool: %d parts of the machine test, at most %d at once: %d processors, %d for each machine; %d MiB of available memory, %d MiB kept for the host, %d MiB for the largest part", len(parts), at_once, processors, MACHINE_PROCESSOR_COUNT, available, HOST_MEMORY_MARGIN_MIB, largest)
+	return at_once
 }
 
 // The pictures that the parts of this run saved, by name, with the part of

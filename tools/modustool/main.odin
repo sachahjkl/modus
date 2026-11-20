@@ -714,12 +714,13 @@ run_test :: proc(args: []string) -> int {
 			}
 		}
 	}
-	processors := foundation.test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
-	at_once := machine.test_parts_at_once(len(parts), processors)
-	machine.picture_names_forget(&machine.picture_names)
+	// One part runs alone: the bound and its line are for the whole test.
+	at_once := 1
 	if len(parts) > 1 {
-		fmt.printfln("modustool: %d parts of the machine test, at most %d at once: %d processors, %d for each machine", len(parts), at_once, processors, machine.MACHINE_PROCESSOR_COUNT)
+		processors := foundation.test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
+		at_once = machine.test_parts_at_once_on_this_host(parts, processors)
 	}
+	machine.picture_names_forget(&machine.picture_names)
 	runs, passed := machine.test_parts_run(parts, at_once)
 	defer {
 		for &part_run in runs {
@@ -807,11 +808,12 @@ run_screenshots :: proc(args: []string) -> int {
 	} else {
 		fmt.println("modustool: measure: the test parts of the check of the flake: no count, the evaluation failed")
 	}
-	// Each machine has its processors, and a part runs its machines one
-	// after the other: Nix runs at most as many part derivations at once as
-	// the pool of `modustool test` would run parts.
+	// Each machine has its processors and its memory, and a part runs its
+	// machines one after the other: Nix runs at most as many part
+	// derivations at once as the pool of `modustool test` would run parts,
+	// by the processors and by the available memory of the host.
 	processors := foundation.test_processors_of(os.get_processor_core_count(), "")
-	most_jobs := machine.test_parts_at_once(len(machine.test_parts), processors)
+	most_jobs := machine.test_parts_at_once_on_this_host(machine.test_parts[:], processors)
 	// The check of the flake runs the host checks, each test part and the
 	// second build in the sandbox; it fails when one of them fails.
 	if !foundation.run({"nix", "build", FLAKE_CHECK_ATTRIBUTE, "--out-link", FLAKE_CHECK_LINK, "--print-build-logs", "--max-jobs", fmt.tprintf("%d", most_jobs)}) {

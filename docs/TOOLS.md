@@ -1260,7 +1260,7 @@ A raw target reads its input as the bytes that the system reads. A generated tar
 
 The machine test is a list of test parts. A test part is one or more machines that share a data disk, a TPM state or a value from one machine to the next; two test parts share nothing. The design is in `src/md/infrastructure/machine_test_parts.md`.
 
-`modustool test` with no argument runs every part, several at once: at most one part for each four processors of the host, since each machine has four. The parts start in the order of the table below, the longest first. After a part fails no new part starts, and the parts that run end. Each part starts from a new data disk of its own, `build/test_data_disk_<part>.img`, so it does the same work alone and in the whole test; the disk of a part that failed stays. Each machine writes its log in a file `build/test_output*.txt`, the other files of the machine beside its log (the picture of the screen that QEMU writes, the disk of the measures, the variable store of its firmware), and its pictures in `build/screenshots`. The lines of two parts that run at once are mixed on the terminal; the line `modustool: measure: the part <name> passed` ends each part, and the summary marks a part that did not start after a failure "not started". Each machine boots its volume with `snapshot=on`: several machines read one volume at once, and no machine writes it. All the pictures go to one folder, so a part that saves a picture with the name of a picture of another part fails its step. In the sandbox of Nix, `NIX_BUILD_CORES` bounds the count of the processors.
+`modustool test` with no argument runs every part, several at once: at most one part for each four processors of the host, since each machine has four, and at most one part for each GiB of the available memory of the host (`MemAvailable` at the start) past a margin of 4 GiB, since each machine has 1 GiB. One part runs even when the memory holds none. The first line gives the count and its inputs: "modustool: 33 parts of the machine test, at most 2 at once: 16 processors, 4 for each machine; 6144 MiB of available memory, 4096 MiB kept for the host, 1024 MiB for the largest part". A host that swaps the memory of a machine can stop it for minutes, longer than any bound of a hang. The parts start in the order of the table below, the longest first. After a part fails no new part starts, and the parts that run end. Each part starts from a new data disk of its own, `build/test_data_disk_<part>.img`, so it does the same work alone and in the whole test; the disk of a part that failed stays. Each machine writes its log in a file `build/test_output*.txt`, the other files of the machine beside its log (the picture of the screen that QEMU writes, the disk of the measures, the variable store of its firmware), and its pictures in `build/screenshots`. The lines of two parts that run at once are mixed on the terminal; the line `modustool: measure: the part <name> passed` ends each part, and the summary marks a part that did not start after a failure "not started". Each machine boots its volume with `snapshot=on`: several machines read one volume at once, and no machine writes it. All the pictures go to one folder, so a part that saves a picture with the name of a picture of another part fails its step. In the sandbox of Nix, `NIX_BUILD_CORES` bounds the count of the processors.
 
 In the check of the flake, each part runs in a part derivation of its own ("The derivations of the check").
 
@@ -1314,20 +1314,34 @@ In the check of the flake, each test part is a part derivation of its own, `mach
 - **The host checks** (`hostChecks`) run `modustool check without_machines` on the whole tree, with the test of the debug objects against the linked files.
 - **The join.** `boot-test` runs `modustool test_join`, which joins the logs and the pictures of the host checks and of each part, adds up their counts of checks, and names the file of the times of each part `test_times_<part>.txt`. It refuses a part that lacks, a part twice and two outputs that write one file.
 - **What runs again.** A change of a guide, an intent file, a news entry or a host test gives the same test inputs and the same binary of the tool, so Nix takes each part from the store, unless the change reaches the pages of the manual of the boot image. A change of a source of `src` or `resources` runs every part again: a part reads some sources at its run. A change of the sources of the tool changes its binary, so every part runs again.
-- **At once.** Nix runs the part derivations at once, up to its `max-jobs`. Each part uses four processors, one machine at a time: pass `--max-jobs` with the processors of the host divided by four to `nix flake check`; `screenshots` passes that count itself. A larger count runs slower, never wrong.
+- **At once.** Nix runs the part derivations at once, up to its `max-jobs`. Each part uses four processors and 1 GiB of memory, one machine at a time. `screenshots` passes `--max-jobs` itself, with the bound of `modustool test`: the smaller of the processors divided by four and the available memory less 4 GiB, in GiB, at least one. Pass the same count to `nix flake check`; the line of `screenshots` gives it. A count above the bound by processors runs slower; a count above the bound by memory makes the host swap, and a machine that gets no processor fails its step.
 - **The measure.** `screenshots` prints "modustool: measure: the test parts of the check of the flake: <n> taken from the store, <m> run". The evaluation of the flake builds the test inputs first, because it reads their hash: a whole build after any change of the tree.
 - **The proof.** `modustool part_cache` copies the tracked files into three trees under `build/part_cache`, adds a line to an intent file in one and to a host test of the tool in another, and requires the same derivation of each part in the three, and another derivation of the whole build in each changed tree.
 
 ### A step that fails
 
-A step that ends at its bound says only that a line did not come. So when a step of a machine fails while QEMU runs, the first act of the tool, before the picture of the firmware and before it stops QEMU, is to read the state of each processor:
-
-1. Through the machine protocol, it stops the machine if it runs, sends `info registers -a` and `info cpus` to the monitor of QEMU (`human-monitor-command`), then lets the machine run again. The stop gives the registers of each processor at one moment.
-2. It writes the two texts as the monitor printed them in a file beside the log of the machine: `build/test_output_tpm_key_4_processors.txt` for `build/test_output_tpm_key_4.txt`.
-3. It prints, in one write:
+A step that ends at its bound says only that a line did not come: the system can hang, or the host can give the machine no processor. So the line of a step Wait that ends at its bound says what the host gave the machine over the wait. At the start of the step and at its failure the tool reads utime plus stime and run_delay of each thread of the QEMU of the machine (`/proc/<pid>/task/<tid>/stat` and `schedstat`), and the total of the line `full` of `/proc/pressure/memory`:
 
 ```
-modustool: the processors of build/test_output_tpm_key_4.txt at the failure: build/test_output_tpm_key_4_processors.txt
+modustool: test failed: step 3: the machine did not print "compositor: surface console" within 2m0s; the host ran the machine for 400 ms of the 120.0 s of the wait; its threads waited 118000 ms in all for a processor; every task of the host waited for memory for 3000 ms: the host starved the machine, which is no hang of the system
+```
+
+The end of the line is a verdict, given only when the counters that it rests on are known:
+
+- **The machine had the processor**: it ran for more than a tenth of the wait, so the line did not come from the system. Read the system.
+- **The host starved the machine**: it ran for a tenth of the wait or less, and the wait of its threads for a processor plus the memory stall of the host make half of the wait or more. The test ran more parts at once than the host holds, or another program took the host.
+- **The machine was idle**: it ran for a tenth of the wait or less, and the host did not stall it. Its processors halted on an event that did not come: read the system.
+
+A counter that the tool cannot read, or that went backwards over the wait (a thread of QEMU ended), is "unknown", with its reason. These numbers are facts of one failure, never a condition of a test.
+
+Then, while QEMU runs, the first act of the tool, before the picture of the firmware and before it stops QEMU, is to read the state of each processor:
+
+1. Through the machine protocol, it reads the run state of QEMU (`query-status`), stops the machine if it runs, sends `info registers -a` and `info cpus` to the monitor of QEMU (`human-monitor-command`), then lets the machine run again. The stop gives the registers of each processor at one moment.
+2. It writes the two texts as the monitor printed them in a file beside the log of the machine: `build/test_output_tpm_key_4_processors.txt` for `build/test_output_tpm_key_4.txt`.
+3. It prints, in one write, with the run state of QEMU: `running`, or the state of a machine that QEMU stopped itself (`io-error` after a write error of a disk, `internal-error`, `guest-panicked`), whose processors stand still with no fault of the system:
+
+```
+modustool: the processors of build/test_output_tpm_key_4.txt at the failure, QEMU in the state running: build/test_output_tpm_key_4_processors.txt
     processor 0, halted, at 0xffffffff80012345: the kernel: idle_wait + 0x1
     processor 1, running, at 0x7e8c2a0: no known code
     processor 2, running, at 0x7f6a1000: the firmware, in system management mode

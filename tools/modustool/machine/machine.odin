@@ -4103,6 +4103,8 @@ Machine :: struct {
 	started_unix: i64, // When QEMU started, in seconds since 1970: no date that the machine prints is before it.
 	clock_offset_seconds: i64, // The seconds that the real-time clock of the machine is ahead of the clock of the host (machine_clock.odin).
 	times:       Machine_Step_Times, // The times of the step that runs (test_times.odin).
+	wait_share:  Host_Share_Sample, // The counters of the host at the start of the step Wait that runs (host_share.odin).
+	wait_started: time.Tick, // When that step began.
 	echo:        Console_Echo, // The lines typed into the console whose echo the tool waits for (console_echo.odin).
 	memory_file: string, // The file of the memory of the machine, or "" (Machine_Options).
 	fact_catalog: ^build.Fact_Catalog, // The module files whose log facts log_read renders; nil until the log holds a fact.
@@ -5060,6 +5062,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			was_first_wait := first_wait
 			first_wait = false
+			// The counters of the host now: a wait that ends at its bound
+			// then says what the host gave the machine meanwhile.
+			machine.wait_share = host_share_sample(machine.host_process.pid)
+			machine.wait_started = time.tick_now()
 			if step.fails_on != "" {
 				failure_line, text_found := log_wait_or_failure(machine, step.text, step.fails_on, limit)
 				if failure_line != "" {
@@ -5067,12 +5073,12 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					return false
 				}
 				if !text_found {
-					fmt.eprintfln("modustool: test failed: step %d: the machine printed neither \"%s\" nor \"%s\" within %v", index + 1, step.text, step.fails_on, limit)
+					fmt.eprintfln("modustool: test failed: step %d: the machine printed neither \"%s\" nor \"%s\" within %v; %s", index + 1, step.text, step.fails_on, limit, wait_share_sentence(machine))
 					return false
 				}
 			}
 			if !log_wait(machine, step.text, step.any_order, limit) {
-				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\" within %v", index + 1, step.text, limit)
+				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\" within %v; %s", index + 1, step.text, limit, wait_share_sentence(machine))
 				return false
 			}
 			if was_first_wait {
@@ -5943,6 +5949,15 @@ measure_windows :: proc(part: ^Test_Part_Run) -> bool {
 		fmt.printfln("%-20s %12s %12s %12s", window.name, values[0], values[1], values[2])
 	}
 	return true
+}
+
+// wait_share_sentence reads the counters of the host again at the failure
+// of a step Wait, and says what the host gave the machine since the start
+// of the step (host_share.odin).
+wait_share_sentence :: proc(machine: ^Machine) -> string {
+	after := host_share_sample(machine.host_process.pid)
+	waited := u64(max(time.tick_since(machine.wait_started), 0) / time.Millisecond)
+	return host_share_sentence(machine.wait_share, after, waited)
 }
 
 // load_of_the_host gives the load of the host over one minute, from /proc/loadavg.
