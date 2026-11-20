@@ -63,7 +63,7 @@ facts_file_of_folder :: proc(t: ^testing.T, folder: string) -> (file: []u8, ok: 
 // facts_module_file writes the tables Records, Fields, Facts and Strings of
 // a description, as the conversion writes them: the row 0 of each table is
 // empty, and the facts are sorted by key (facts_merge).
-@(private = "file")
+@(private)
 facts_module_file :: proc(description: Module_Description) -> []u8 {
 	TABLES :: module.TABLE_COUNT
 	file := make([dynamic]u8, size_of(module.Header) + TABLES * size_of(module.Table_Entry), context.temp_allocator)

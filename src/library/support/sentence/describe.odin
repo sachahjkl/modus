@@ -190,6 +190,22 @@ write_field_type :: proc "contextless" (writer: ^Writer, file: []u8, item: modul
 		write_part(writer, u64(item.detail))
 		write_part(writer, ")")
 		return
+	case .Hexadecimal_Sixteen_Digits:
+		write_part(writer, "Hexadecimal_Sixteen_Digits")
+		return
+	case .Hash_Head:
+		write_part(writer, "Hash_Head(")
+		write_part(writer, u64(item.detail))
+		write_part(writer, ")")
+		return
+	case .Hundredths:
+		write_part(writer, "Hundredths")
+		write_field_size(writer, item.detail)
+		return
+	case .Nanoseconds_As_Microseconds:
+		write_part(writer, "Nanoseconds_As_Microseconds")
+		write_field_size(writer, item.detail)
+		return
 	}
 	if item.type != u8(module.Type.Integer) {
 		write_type_word(writer, file, item.type, item.detail)

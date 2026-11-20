@@ -322,7 +322,17 @@ Field_Kind :: enum u8 {
 	Module_Name = 3, // A Text: the name of a module or of a process. The value kind is Module.
 	Hash        = 4, // A field of the type Bytes: a hash, or its head, written as two hexadecimal digits for each byte. The value kind is Version.
 	Fact_Values = 5, // A field of the type Bytes of FACT_VALUES_FIELD_BYTES: the values of a log fact, whose description the module hash and the fact key of the same record name. A reader with no description writes two hexadecimal digits for each byte up to the last byte that is not zero. The value kind is Number.
+	Hexadecimal_Sixteen_Digits  = 6, // An unsigned Integer of 8 bytes with no unit, written as 16 hexadecimal digits with no "0x", as a line wrote an address or a code before the facts. The value kind is Number.
+	Hash_Head                   = 7, // A field of the type Bytes of HASH_FIELD_BYTES: a whole hash, written as its head, the hexadecimal digits of its first HASH_HEAD_BYTES bytes and HASH_HEAD_MARK. The value kind is Version.
+	Hundredths                  = 8, // An Integer with no unit that counts hundredths: n is written as n / 100 with two decimals, "1.05", "-0.50". The value kind is Number.
+	Nanoseconds_As_Microseconds = 9, // An unsigned Integer with no unit that counts nanoseconds, written as microseconds with one decimal cut, not rounded, then " us": 812_499 is "812.4 us". The value kind is Time.
 }
+
+// The bytes of a hash that a field of the kind Hash_Head writes: the head
+// of 8 hexadecimal digits that a line names a start policy by.
+HASH_HEAD_BYTES :: 4
+// The mark after the head of a hash, which says that the hash goes on.
+HASH_HEAD_MARK :: "…"
 
 // field_kind_of_word is the border of the byte of a field kind in a module
 // file: the member, or false for a byte that names none.
@@ -347,6 +357,14 @@ field_kind_value_kind :: proc "contextless" (kind: Field_Kind) -> Value_Kind {
 		return .Version
 	case .Fact_Values:
 		return .Number
+	case .Hexadecimal_Sixteen_Digits:
+		return .Number
+	case .Hash_Head:
+		return .Version
+	case .Hundredths:
+		return .Number
+	case .Nanoseconds_As_Microseconds:
+		return .Time
 	}
 	return .None
 }
@@ -364,6 +382,8 @@ Contract_Enum :: enum u8 {
 	Log_Record_Form = 3, // operation.Log_Record_Form: what a log record holds, a text or a fact.
 	Stop_Cause      = 4, // operation.Stop_Cause: why a process stopped, as the kernel recorded it.
 	Stop_Outcome    = 5, // operation.Stop_Outcome: what a process said of its work when it stopped itself.
+	Error_Kind      = 6, // errors.Kind: what is wrong, in an error record.
+	Error_Unit      = 7, // errors.Unit: what the values of an error record count.
 }
 
 // contract_enum_of_word is the border of the byte of a contract enum in a
@@ -373,10 +393,18 @@ contract_enum_of_word :: proc "contextless" (word: u8) -> (which: Contract_Enum,
 }
 
 // The type of the source of a field of the kind Status: the package of the
-// contract that declares the enum, and its name there.
+// contract that declares the enum, and its name there. An enum whose words
+// a process carries from another party, or that a record holds beside
+// fields of 8 bytes, also has a word type: a distinct unsigned or signed
+// integer at least as large as the enum (operation.CONTRACT_ENUM_WORD_SIZES),
+// which holds the word as it came. A writer of a log fact copies a word
+// that names no member with no cast to the enum, and a field of 8 bytes
+// leaves no padding; the reader writes the name of the member, or the
+// number.
 Contract_Enum_Type :: struct {
 	package_name: string, // The folder of the package under src/library/contract.
 	name:         string, // The name of the enum in that package.
+	word_name:    string, // The name of its word type in that package, or "" when it has none.
 }
 
 // The type of the source of each contract enum: the one table that names
@@ -384,11 +412,13 @@ Contract_Enum_Type :: struct {
 @(rodata)
 CONTRACT_ENUM_TYPES := [Contract_Enum]Contract_Enum_Type {
 	.None      = {},
-	.Status    = {package_name = "operation", name = "Status"},
+	.Status    = {package_name = "operation", name = "Status", word_name = "Status_Word"},
 	.Log_Level = {package_name = "operation", name = "Log_Level"},
 	.Log_Record_Form = {package_name = "operation", name = "Log_Record_Form"},
 	.Stop_Cause      = {package_name = "operation", name = "Stop_Cause"},
 	.Stop_Outcome    = {package_name = "operation", name = "Stop_Outcome"},
+	.Error_Kind      = {package_name = "errors", name = "Kind", word_name = "Kind_Word"},
+	.Error_Unit      = {package_name = "errors", name = "Unit", word_name = "Unit_Word"},
 }
 
 // The types that a field of a record takes to state its field kind, in
@@ -441,6 +471,14 @@ HASH_FIELD_BYTES :: 32
 // A field of the type Bytes that holds a BLAKE3 hash.
 Hash_Field :: distinct [HASH_FIELD_BYTES]u8
 
+// The bytes of the head of a hash that a line writes whole, as 32
+// hexadecimal digits, before "...".
+HASH_SIXTEEN_BYTES :: 16
+// A field of the type Bytes of the kind Hash that holds the first 16 bytes
+// of a hash: a reader writes its 32 digits, and the template writes what
+// follows them.
+Hash_Sixteen_Bytes_Field :: distinct [HASH_SIXTEEN_BYTES]u8
+
 // The bytes of the values of one log fact: operation.LOG_FACT_VALUE_CAPACITY,
 // which module checks, because this package imports no other.
 FACT_VALUES_FIELD_BYTES :: 144
@@ -449,25 +487,48 @@ FACT_VALUES_FIELD_BYTES :: 144
 // (src/md/features/log_facts.md, "The reader path").
 Fact_Values_Field :: distinct [FACT_VALUES_FIELD_BYTES]u8
 
-// The name of a type of a field with a field kind, its kind, and its size
-// in bytes.
+// An Integer field of 8 bytes, written as 16 hexadecimal digits with no
+// "0x": an address, or a response code of a device.
+Hexadecimal_Sixteen_Digits :: distinct u64
+
+// A field of the type Bytes that holds a whole BLAKE3 hash, which a reader
+// writes as its head: "1a2b3c4d…". The field keeps the whole hash, so a
+// reader that filters or compares has each byte.
+Hash_Head_Field :: distinct [HASH_FIELD_BYTES]u8
+
+// An Integer field of 8 bytes with a sign that counts hundredths: 105 is
+// written "1.05", -50 "-0.50".
+Hundredths :: distinct i64
+
+// An Integer field of 8 bytes that counts nanoseconds, written as
+// microseconds with one decimal: 812_499 is "812.4 us".
+Nanoseconds_As_Microseconds :: distinct u64
+
+// The name of a type of a field with a field kind, its kind, its size in
+// bytes, and its sign for an Integer.
 Field_Kind_Type :: struct {
-	name: string, // The name of the type in this package.
-	kind: Field_Kind, // How a reader writes the value.
-	size: u32, // The bytes of the field.
+	name:     string, // The name of the type in this package.
+	kind:     Field_Kind, // How a reader writes the value.
+	size:     u32, // The bytes of the field.
+	unsigned: bool, // An Integer: true for an unsigned integer.
 }
 
 // Each type of a field with a field kind: the one table that names them
-// for the tool. A test checks each size against the type.
+// for the tool. A test checks each size and each sign against the type.
 @(rodata)
 FIELD_KIND_TYPES := [?]Field_Kind_Type {
-	{"Hexadecimal_8", .Hexadecimal, 1},
-	{"Hexadecimal_16", .Hexadecimal, 2},
-	{"Hexadecimal_32", .Hexadecimal, 4},
-	{"Hexadecimal_64", .Hexadecimal, 8},
-	{"Module_Name_Field", .Module_Name, MODULE_NAME_FIELD_BYTES},
-	{"Hash_Field", .Hash, HASH_FIELD_BYTES},
-	{"Fact_Values_Field", .Fact_Values, FACT_VALUES_FIELD_BYTES},
+	{"Hexadecimal_8", .Hexadecimal, 1, true},
+	{"Hexadecimal_16", .Hexadecimal, 2, true},
+	{"Hexadecimal_32", .Hexadecimal, 4, true},
+	{"Hexadecimal_64", .Hexadecimal, 8, true},
+	{"Module_Name_Field", .Module_Name, MODULE_NAME_FIELD_BYTES, false},
+	{"Hash_Field", .Hash, HASH_FIELD_BYTES, false},
+	{"Hash_Sixteen_Bytes_Field", .Hash, HASH_SIXTEEN_BYTES, false},
+	{"Fact_Values_Field", .Fact_Values, FACT_VALUES_FIELD_BYTES, false},
+	{"Hexadecimal_Sixteen_Digits", .Hexadecimal_Sixteen_Digits, 8, true},
+	{"Hash_Head_Field", .Hash_Head, HASH_FIELD_BYTES, false},
+	{"Hundredths", .Hundredths, 8, false},
+	{"Nanoseconds_As_Microseconds", .Nanoseconds_As_Microseconds, 8, true},
 }
 
 // field_kind_of_type_name gives the row of FIELD_KIND_TYPES of the name of
