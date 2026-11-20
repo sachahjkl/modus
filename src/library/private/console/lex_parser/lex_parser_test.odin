@@ -700,3 +700,21 @@ parse_trees_of_the_forms :: proc(t: ^testing.T) {
 	testing.expect_value(t, node_at(tree, field).place.column, u32(2))
 	testing.expect_value(t, node_at(tree, node_at(tree, field).first_child).place.column, u32(10))
 }
+
+// The names of a module file that the palette puts in a line: each text
+// that adds a call, an argument, a text or a member to the line is no name,
+// and neither is a word of Lex, a dotted name or a name that starts with a
+// digit. A module file with such a name gives no command.
+@(test)
+a_name_of_a_module_file_adds_nothing_to_a_line :: proc(t: ^testing.T) {
+	injected := []string {
+		"a=shutdown(),b", "a, b", "b)", "f(", "x = .y", "a\"", "\"", "a b", " a", "a ", "a.b", ".a", "a-b", "a+b",
+		"a{", "a}", "a:b", "a|>b", "a<b", "a!", "1a", "9", "", "_", "let", "in", "with", "é", "a\x00", "a\n",
+	}
+	for name in injected {
+		testing.expectf(t, !name_valid(name), "%q is refused as a name", name)
+	}
+	for name in ([]string{"a", "set", "keyboard_layout", "_hidden", "value_9", "A1", "letter", "inner", "within"}) {
+		testing.expectf(t, name_valid(name), "%q is a name", name)
+	}
+}

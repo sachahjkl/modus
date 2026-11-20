@@ -201,7 +201,8 @@ Refusal :: enum u32 {
 	Record_Streams_Not_Valid      = 24,
 	// An Enum parameter or result names no enum of the parts or a getter past the exports, an optional bit is on
 	// a parameter that is no Enum, or module.enum_type and module.function_enums_check refuse the written file.
-	// value: the module.Enum_Problem, or the number that names nothing.
+	// value: the module.Enum_Problem: No_Enum for a number of an enum that names nothing, No_Getter for a getter
+	// past the exports, Bad_Optional for an optional bit.
 	Enum_Not_Valid                = 25,
 }
 
@@ -612,11 +613,11 @@ exports_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 			if type == .Enum {
 				enum_number, getter := module.enum_detail_of(detail)
 				if enum_number == 0 || u64(enum_number) > u64(len(parts.enums)) {
-					where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(enum_number)
+					where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(module.Enum_Problem.No_Enum)
 					return where_it_is
 				}
 				if u64(getter) > u64(len(parts.exports)) {
-					where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(getter)
+					where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(module.Enum_Problem.No_Getter)
 					return where_it_is
 				}
 				continue
@@ -637,8 +638,10 @@ exports_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 			where_it_is.refusal, where_it_is.value = .Export_Without_Description, u64(item.result_detail)
 			return where_it_is
 		}
+		// The detail of an Enum result is the number of its enum only: a
+		// getter bit makes it past the enums.
 		if item.result == .Enum && (item.result_detail == 0 || u64(item.result_detail) > u64(len(parts.enums))) {
-			where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(item.result_detail)
+			where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(module.Enum_Problem.No_Enum)
 			return where_it_is
 		}
 		if item.error_record != 0 && !described(item.error_record, parts.records) {

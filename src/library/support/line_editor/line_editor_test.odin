@@ -254,7 +254,7 @@ system_names := [?]string {
 	"manual.modules", "manual.exports", "manual.imports", "manual.importers", "manual.exporters",
 	"manual.described", "manual.handles", "manual.slots", "manual.segments", "manual.running",
 	"manual.replacements", "manual.problem", "manual.overview", "manual.show", "manual.about", "manual.signature",
-	"compositor.pointer", "compositor.windows", "settings.set", "settings.get", "date.now",
+	"compositor.pointer", "compositor.windows", "settings.set", "settings.font", "date.now",
 }
 
 expect_order :: proc(t: ^testing.T, query: string, expected: []string) {
@@ -280,9 +280,9 @@ order_of_real_names :: proc(t: ^testing.T) {
 	expect_order(t, "stwr", {"storage.write"})
 	// 84 for the three counts: c after a dot; 81: c at the start, n far.
 	expect_order(t, "cnt", {"monitor.count", "monitor.counts", "monitor.counts_named", "compositor.pointer", "manual.replacements"})
-	// 112 for the two names that start with "set" (get before set: the
-	// bytes); then the spread matches: 69, 67, 67 (shorter first), 65, 64.
-	expect_order(t, "set", {"settings.get", "settings.set", "storage.stores", "storage.write", "storage.restore", "storage.objects", "manual.segments"})
+	// 112 for the two names that start with "set" (set before font: the
+	// shorter name); then the spread matches: 69, 67, 67 (shorter first), 65, 64.
+	expect_order(t, "set", {"settings.set", "settings.font", "storage.stores", "storage.write", "storage.restore", "storage.objects", "manual.segments"})
 	// 104: "mod" side by side after a dot; 65, 59: spread from the start; 34: no start.
 	expect_order(t, "mod", {"manual.modules", "monitor.served", "monitor.counts_named", "compositor.windows"})
 	// A query that is a whole name and the start of two others: the whole

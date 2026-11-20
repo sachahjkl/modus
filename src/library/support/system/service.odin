@@ -385,11 +385,7 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 		error := (^errors.Error_Record)(raw_data(region[prepared.error.start:]))
 		error.operation = i64(command.kind)
 	}
-	// For a Text or Table result, this is the count; the bytes are in the
-	// call region.
-	if function.result == u8(module.Type.Integer) || function.result == u8(module.Type.Text) || function.result == u8(module.Type.Table) {
-		completion.values[0] = out[0]
-	}
+	completion.values[0] = isolated.completion_value(function, out[0])
 	return completion
 }
 

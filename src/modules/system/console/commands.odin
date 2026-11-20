@@ -16,6 +16,7 @@ import "modus:support/principals"
 import "modus:support/random"
 import "modus:contract/root_ring"
 import "modus:contract/enum_word"
+import "modus:private/console/lex_parser"
 import "modus:support/system"
 import "base:intrinsics"
 
@@ -1827,6 +1828,17 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 	// makes the export not callable.
 	if _, problem := module.function_enums_check(file, function); problem != .None {
 		return false
+	}
+	// The palette runs a line made of the name of the export and of its
+	// parameters, `h.f(a = .x)`: a name that is no name of Lex could put a
+	// call of its own in that line, as the console.
+	if !lex_parser.name_valid(module.string_at(file, function.name_offset, function.name_count)) {
+		return false
+	}
+	for index in 0 ..< int(function.parameter_count) {
+		if !lex_parser.name_valid(module.string_at(file, function.parameter_names[index], u32(function.parameter_name_counts[index]))) {
+			return false
+		}
 	}
 	return isolated.directions_valid(function)
 }

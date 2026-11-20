@@ -672,6 +672,25 @@ lent_handle_add :: proc "contextless" (call: ^Call, handle: u64, rights: u32) ->
 	return true
 }
 
+// completion_value gives the value of the completion of a call from the
+// result register of its export. An Integer and an Enum are the value
+// itself: the caller reads the low bytes of an Enum by its description. A
+// Text and a Table give their count, whose bytes are in the call region.
+// No result, and a Record result, whose bytes are in the call region, give
+// 0; so does a byte that names no type, which record_size refused before.
+completion_value :: proc "contextless" (function: module.Function, register: u64) -> u64 {
+	type, type_ok := module.type_of_word(function.result)
+	if !type_ok {
+		return 0
+	}
+	switch type {
+	case .Integer, .Enum, .Text, .Table:
+		return register
+	case .None, .Record, .Handle, .Bytes:
+	}
+	return 0
+}
+
 // result_store copies the Record result of a call to its place in the call
 // region. Call it after the export returned.
 result_store :: proc "contextless" (function: module.Function, call: ^Call, region: []u8) {

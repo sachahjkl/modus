@@ -143,8 +143,10 @@ Work :: struct {
 	text:     [LINE_CAPACITY]u8,
 	count:    int,
 	since:    u64, // The time when the line started.
-	started:  u32, // The lines that the first thread gave. The second thread waits on this word.
+	started:  u32, // The lines that the first thread gave.
 	finished: u32, // The lines that the second thread ran.
+	refresh:  u32, // 1: the second thread calls the getters of the palette when no line waits.
+	wake:     u32, // The first thread adds 1 for a line or a refresh. The second thread waits on this word.
 	cancel:   u32, // 1: the input pressed Escape. An isolated call waits on this word.
 	// 1: the line is in a call that Escape can stop (a call of a sandboxed
 	// process or of a service). The second thread writes it; the first
@@ -345,11 +347,18 @@ keys_are_taken :: proc "contextless" () -> bool {
 
 // run_lines is the entry of the second thread: it runs each line that the
 // first thread gives.
+// A line comes first; a refresh of the marks of the palette waits for the
+// end of the lines that were given before it.
 run_lines :: proc "c" (parameter: rawptr) -> ! {
 	done: u32
 	for {
-		system.word_wait(&work.started, done)
-		if intrinsics.atomic_load_explicit(&work.started, .Relaxed) == done {
+		seen := intrinsics.atomic_load_explicit(&work.wake, .Acquire)
+		if intrinsics.atomic_load_explicit(&work.started, .Acquire) == done {
+			if intrinsics.atomic_exchange(&work.refresh, 0) != 0 {
+				palette_table_write(call_getters = true)
+				continue
+			}
+			system.word_wait(&work.wake, seen)
 			continue
 		}
 		done += 1
@@ -357,10 +366,14 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 		run_line(string(work.text[:work.count]))
 		// The palette: the answer to its choice, then the table of the
 		// commands of now (palette_provider.odin). A choice of the palette
-		// can set a member of a row: its getters say the new member in use.
-		chosen_by_palette := palette_tag != 0
+		// can set a member of a row: its getters say the new member in use,
+		// in a refresh after the line ends, so the keys never wait for
+		// them.
+		if palette_tag != 0 {
+			intrinsics.atomic_store(&work.refresh, 1)
+		}
 		palette_line_ended()
-		palette_table_write(call_getters = chosen_by_palette)
+		palette_table_write()
 		// The line ends when its result is drawn: the keys that waited
 		// act now. The save of the line history comes after, and holds no
 		// key: it is a commit of the storage service, which takes
@@ -370,6 +383,20 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 		change()
 		history_save()
 	}
+}
+
+// second_thread_wake tells the second thread that the first thread gave it
+// a line or a refresh.
+second_thread_wake :: proc "contextless" () {
+	intrinsics.atomic_add(&work.wake, 1)
+	system.word_wake(&work.wake)
+}
+
+// palette_refresh_ask asks the second thread to call the getters of the
+// rows of the palette, and returns at once.
+palette_refresh_ask :: proc "contextless" () {
+	intrinsics.atomic_store(&work.refresh, 1)
+	second_thread_wake()
 }
 
 // change tells the first thread that the second thread changed something.
@@ -428,7 +455,7 @@ line_enter :: proc "contextless" () {
 		intrinsics.atomic_store(&work.cancel, 0)
 		running = true
 		intrinsics.atomic_add(&work.started, 1)
-		system.word_wake(&work.started)
+		second_thread_wake()
 	}
 	history_place = 0
 	line_editor.line_clear(&line)

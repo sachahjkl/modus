@@ -9,6 +9,7 @@ import "modus:contract/ring"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:private/console/console_results"
+import "modus:private/console/lex_parser"
 import "modus:support/line_editor"
 import "modus:support/system"
 import "base:intrinsics"
@@ -262,34 +263,49 @@ palette_row_takes :: proc "contextless" (item: ^Command) -> bool {
 	return true
 }
 
+// PALETTE_GETTERS_LIMIT bounds one refresh of the marks, all getters
+// together: a service that is slow, or many rows, cannot hold the thread
+// of the lines past it.
+PALETTE_GETTERS_LIMIT :: 1000 // Milliseconds.
+
+// One refresh of the marks: its end, and the sandboxes and services that
+// missed a getter in it, which it asks nothing more.
+Palette_Getters :: struct {
+	limit:  u64,
+	missed: bit_set[0 ..< SANDBOX_CAPACITY],
+}
+
 // palette_getter_value calls the getter of an Enum parameter of a command:
-// the export getter of its module, with no argument. It gives the value of
-// its member, or ok false: the getter is no command now, the process that
-// serves it does not run, or it gave no answer within the bound of a hang.
-// The thread that writes the table calls it, when no line runs.
-palette_getter_value :: proc "contextless" (item: ^Command, getter: u32, enum_type: module.Enum_Type) -> (value: i64, ok: bool) {
+// the export getter of its module, with no argument, in an isolated
+// process or a service, within the bound of the refresh. It gives the
+// value of its member, or ok false: the getter is no command now, its
+// module is in the process of the console, the process that serves it
+// does not run or missed a getter before in this refresh, or it gave no
+// answer before the end of the refresh.
+//
+// A module that the console loaded in its own process is never called: a
+// direct call has no bound, and a getter that loops would hold the console
+// for good. Only the thread of the lines calls it, when no line runs: it
+// owns the rings of the sandboxes and of the services.
+palette_getter_value :: proc "contextless" (refresh: ^Palette_Getters, item: ^Command, getter: u32, enum_type: module.Enum_Type) -> (value: i64, ok: bool) {
 	found: ^Command
 	for &command in commands[:command_count] {
 		if command.run == nil && command.record == 0 && command.export == getter && raw_data(command.file) == raw_data(item.file) {
 			found = &command
 		}
 	}
-	if found == nil {
+	if found == nil || found.address != 0 || found.sandbox == 0 || int(found.sandbox) > SANDBOX_CAPACITY {
 		return 0, false
 	}
-	if found.address != 0 {
-		register, status := system.call_direct(found.file, found.address, found.function, nil)
-		if status != .Ok {
-			return 0, false
-		}
-		return module.enum_value_of_register(enum_type, register), true
-	}
-	if found.sandbox == 0 {
+	place := int(found.sandbox - 1)
+	sandbox := &sandboxes[place]
+	if sandbox.process == 0 || place in refresh.missed || system.time() >= refresh.limit {
 		return 0, false
 	}
-	sandbox := &sandboxes[found.sandbox - 1]
-	if sandbox.process == 0 {
-		return 0, false
+	// Each way out below that gives no member is a miss of the service.
+	missed := true
+	defer if missed {
+		refresh.missed += {place}
 	}
 	offset, size, _, _, encoded := isolated.encode(found.file, found.function, nil, sandbox.region)
 	if !encoded {
@@ -299,7 +315,6 @@ palette_getter_value :: proc "contextless" (item: ^Command, getter: u32, enum_ty
 	if !system.send(&sandbox.ring.commands, ring.Record{kind = getter, tag = sandbox.calls, values = {0 = offset, 1 = size}}) {
 		return 0, false
 	}
-	limit := system.time() + LINE_RECORD_ANSWER_LIMIT
 	for {
 		wait := system.wait_begin()
 		for _ in 0 ..< ring.CAPACITY {
@@ -316,40 +331,49 @@ palette_getter_value :: proc "contextless" (item: ^Command, getter: u32, enum_ty
 			if !call_status_ok || call_status != .Ok {
 				return 0, false
 			}
+			missed = false
 			return module.enum_value_of_register(enum_type, i64(completion.values[0])), true
 		}
 		if state, _, _ := system.process_state(sandbox.process); state == .Stopped {
 			return 0, false
 		}
 		system.wait_records(&wait, &sandbox.ring.completions)
-		if system.wait_end(&wait, limit) >= limit {
+		if system.wait_end(&wait, refresh.limit) >= refresh.limit {
 			return 0, false
 		}
 	}
 }
 
 // palette_row_in_use gives the member in use of the row of an act name:
-// from its getter when call_getters, which it keeps, or else the value that
-// the getter gave last.
-palette_row_in_use :: proc "contextless" (act: string, item: ^Command, getter: u32, enum_type: module.Enum_Type, call_getters: bool) -> (value: i64, known: bool) {
-	kept: ^Palette_Row_In_Use
-	for &row in palette_rows_in_use[:palette_rows_in_use_count] {
+// from its getter in a refresh, which it keeps, or else the value that the
+// getter gave last. A getter that gives no member removes the value that
+// the row kept, so the row shows no old mark.
+palette_row_in_use :: proc "contextless" (act: string, item: ^Command, getter: u32, enum_type: module.Enum_Type, refresh: ^Palette_Getters) -> (value: i64, known: bool) {
+	kept_place := -1
+	for &row, place in palette_rows_in_use[:palette_rows_in_use_count] {
 		if string(row.act[:row.act_length]) == act {
-			kept = &row
+			kept_place = place
 		}
 	}
-	if !call_getters {
-		if kept == nil {
+	if refresh == nil {
+		if kept_place < 0 {
 			return 0, false
 		}
-		return kept.value, true
+		return palette_rows_in_use[kept_place].value, true
 	}
-	if getter == 0 {
-		return 0, false
+	if getter != 0 {
+		value, known = palette_getter_value(refresh, item, getter, enum_type)
 	}
-	value, known = palette_getter_value(item, getter, enum_type)
 	if !known {
+		if kept_place >= 0 {
+			palette_rows_in_use_count -= 1
+			palette_rows_in_use[kept_place] = palette_rows_in_use[palette_rows_in_use_count]
+		}
 		return 0, false
+	}
+	kept: ^Palette_Row_In_Use
+	if kept_place >= 0 {
+		kept = &palette_rows_in_use[kept_place]
 	}
 	if kept == nil && palette_rows_in_use_count < PALETTE_ROW_CAPACITY {
 		kept = &palette_rows_in_use[palette_rows_in_use_count]
@@ -362,17 +386,33 @@ palette_row_in_use :: proc "contextless" (act: string, item: ^Command, getter: u
 	return value, true
 }
 
+// palette_line_name_valid says if the name of a command is names of Lex
+// joined by '.': the service, then the export. The line of a row starts
+// with it, so it must add nothing to that line.
+palette_line_name_valid :: proc "contextless" (name: string) -> bool {
+	start := 0
+	for index in 0 ..= len(name) {
+		if index == len(name) || name[index] == '.' {
+			if !lex_parser.name_valid(name[start:index]) {
+				return false
+			}
+			start = index + 1
+		}
+	}
+	return true
+}
+
 // palette_enum_rows_write adds the rows of buttons of the Enum parameters
 // of the commands after count entries, and gives the new count: one entry
 // for each member, whose line is the call with that member. The entries of
 // one parameter follow each other, with one row name and one act name, so
 // the panel joins them into one row. The member in use has the flag
 // In_Use.
-palette_enum_rows_write :: proc "contextless" (start: int, call_getters: bool) -> (count: int) {
+palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Getters) -> (count: int) {
 	count = start
 	commands_loop: for number in 0 ..< command_count {
 		item := &commands[number]
-		if !palette_row_takes(item) || len(item.name) > palette_table.NAME_CAPACITY {
+		if !palette_row_takes(item) || len(item.name) > palette_table.NAME_CAPACITY || !palette_line_name_valid(item.name) {
 			continue
 		}
 		for &later in commands[number + 1:command_count] {
@@ -384,7 +424,7 @@ palette_enum_rows_write :: proc "contextless" (start: int, call_getters: bool) -
 			enum_index, getter := module.enum_detail_of(item.function.parameter_details[parameter])
 			described, problem := module.enum_type(item.file, enum_index)
 			parameter_name := item.parameter_names[parameter]
-			if problem != .None || parameter_name == "" {
+			if problem != .None || !lex_parser.name_valid(parameter_name) {
 				continue
 			}
 			act_buffer: [palette_table.ACT_NAME_CAPACITY]u8
@@ -396,7 +436,7 @@ palette_enum_rows_write :: proc "contextless" (start: int, call_getters: bool) -
 				continue
 			}
 			act := string(act_buffer[:act_writer.count])
-			in_use, in_use_known := palette_row_in_use(act, item, getter, described, call_getters)
+			in_use, in_use_known := palette_row_in_use(act, item, getter, described, refresh)
 			for member_number in 0 ..< described.member_count {
 				if count == palette_table.ENTRY_CAPACITY {
 					return count
@@ -490,16 +530,16 @@ palette_strategy_in_use :: proc "contextless" () -> op.Strategy {
 // palette_table_write writes the entry table from the command table of
 // now and the scheduling strategy of now, when it differs from the table
 // before. The writer adds 1 to the change count before the change and 1
-// after it, and wakes the reader. One thread writes at a time: the first
-// thread at the start, and when the panel opens while no line runs
-// (Refresh); the thread that runs the lines after each line, before the
-// first thread learns that the line ended. call_getters: call the getter of
-// each row of buttons for its member in use; else each row keeps the mark
-// of the last call.
+// after it, and wakes the reader. One thread writes: the first thread at
+// the start, before the thread of the lines runs; then only the thread of
+// the lines, after each line and for each refresh. call_getters: call the
+// getter of each row of buttons for its member in use, all within
+// PALETTE_GETTERS_LIMIT; else each row keeps the mark of the last call.
 palette_table_write :: proc "contextless" (call_getters := false) {
 	if !palette_active() {
 		return
 	}
+	refresh := Palette_Getters{limit = system.time() + PALETTE_GETTERS_LIMIT}
 	count := 0
 	for number in 0 ..< command_count {
 		if count == palette_table.ENTRY_CAPACITY {
@@ -513,7 +553,7 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 	// One row of buttons for each Enum parameter of an export whose call
 	// with one member is one choice: "settings.set font to spleen". Its
 	// help is the line that the console runs for it.
-	count = palette_enum_rows_write(count, call_getters)
+	count = palette_enum_rows_write(count, call_getters ? &refresh : nil)
 	// One entry for each scheduling strategy: "set strategy to eevdf". Its
 	// help is the line that the console runs for it. The strategy is a
 	// state of the kernel that no page holds: the console reads it in the
@@ -672,11 +712,12 @@ palette_turn :: proc "contextless" () {
 			continue
 		case .Refresh:
 			// The panel opened: the strategy and the member in use of each
-			// row can have changed with no line of the console, so each
-			// getter is called. No line runs now, so this thread is the
-			// one writer of the table, and the one user of the rings of
-			// the services.
-			palette_table_write(call_getters = true)
+			// row can have changed with no line of the console. The thread
+			// of the lines calls the getters, which wait for other
+			// processes: this thread holds the keys and never waits for
+			// one. The panel shows the table of now, and the marks of the
+			// getters when they answer.
+			palette_refresh_ask()
 			continue
 		case .Manual:
 			palette_manual_page(record)

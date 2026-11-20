@@ -313,8 +313,13 @@ fuzz_remote_client_table_seeds :: proc(seeds: ^[dynamic][]u8) {
 // The module of the descriptions of the target: record 1 is {handle at 0,
 // integer at 8}, 16 bytes; record 2 is {name: Text of 16 bytes at 0,
 // integer at 16}, 24 bytes. A Record or Table parameter names one of them.
+// The bytes of that module: the header, the directory, 3 records with the
+// record 0, and 5 fields with the field 0. A new table of the format grows
+// the directory, and the size with it.
 @(private = "file")
-fuzz_call_module: [1024]u8
+FUZZ_CALL_MODULE_SIZE :: size_of(module.Header) + module.TABLE_COUNT * size_of(module.Table_Entry) + 3 * size_of(module.Record) + 5 * size_of(module.Field)
+@(private = "file")
+fuzz_call_module: [FUZZ_CALL_MODULE_SIZE]u8
 @(private = "file")
 fuzz_call_module_size: int
 
@@ -340,6 +345,7 @@ fuzz_isolated_call_start :: proc() -> bool {
 	copy(file, mem.ptr_to_bytes(&header))
 	copy(file[size_of(module.Header):], mem.ptr_to_bytes(&directory))
 	fuzz_call_module_size = int(offset)
+	#assert(size_of(Directory) == module.TABLE_COUNT * size_of(module.Table_Entry))
 	// A module that the reader does not take makes each Record and Table
 	// input a refusal: the target then reaches no code behind them, so it
 	// stops before its first execution.

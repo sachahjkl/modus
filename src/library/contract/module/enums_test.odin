@@ -77,6 +77,14 @@ file_of :: proc(functions: []Function, enums: []Test_Enum) -> []u8 {
 	return file[:]
 }
 
+// enum_record_in gives the record of the enum index in the bytes of a file
+// of file_of, for a test that breaks it.
+@(private = "file")
+enum_record_in :: proc(file: []u8, index: u32) -> ^Enum_Type {
+	entry := (^Table_Entry)(&file[size_of(Header) + int(Table_Kind.Enums) * size_of(Table_Entry)])^
+	return (^Enum_Type)(&file[entry.offset + u64(index) * u64(entry.record_size)])
+}
+
 // setter_of gives the description of an export with one Enum parameter of
 // the enum enum_index, its getter the export getter, optional or not.
 @(private = "file")
@@ -155,11 +163,25 @@ an_enum_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		_, problem := enum_type(file, 1)
 		testing.expectf(t, problem == item.problem, "the enum %v gives %v, not %v", item.item, problem, item.problem)
 	}
-	// An index of no enum: 0, and one past the table.
+	// An index of no enum: 0, one past the table, and the largest index.
 	file := file_of(nil, {{"Font", 4, true, FONT_MEMBERS[:], {}}})
-	for index in ([2]u32{0, 2}) {
+	for index in ([3]u32{0, 2, max(u32)}) {
 		_, problem := enum_type(file, index)
 		testing.expect_value(t, problem, Enum_Problem.No_Enum)
+	}
+	// Members outside the table Members: the range ends one past the
+	// table, starts past it, starts at its largest index, or starts at 0,
+	// the record of no member, with members. The file has 2 members, at 1
+	// and 2.
+	Range :: struct {
+		first, count: u32,
+	}
+	for item in ([?]Range{{2, 2}, {3, 1}, {max(u32), 1}, {max(u32), max(u32)}, {0, 1}, {0, 2}}) {
+		ranged := file_of(nil, {{"Font", 4, true, FONT_MEMBERS[:], {}}})
+		described := enum_record_in(ranged, 1)
+		described.first_member, described.member_count = item.first, item.count
+		_, problem := enum_type(ranged, 1)
+		testing.expectf(t, problem == .Bad_Member_Count, "the members %v give %v", item, problem)
 	}
 	// The edges that are taken: a value at the top of each size and sign,
 	// the last value under the absent word, a name of the largest length.
@@ -224,6 +246,13 @@ a_getter_or_an_optional_bit_that_breaks_a_rule_is_refused :: proc(t: ^testing.T)
 		parameter, problem := function_enums_check(file, described)
 		testing.expectf(t, problem == item.problem && parameter == item.parameter, "%v gives %v at %d, not %v at %d", item.functions, problem, parameter, item.problem, item.parameter)
 	}
+	// The entry export is no getter, even with the form of one: it starts
+	// the process, and no caller calls it.
+	entry_file := file_of({setter_of(1, 2, false), getter_of(1)}, enums)
+	(^Header)(&entry_file[0]).entry_export = 2
+	entry_setter, _ := function(entry_file, 1)
+	_, entry_problem := function_enums_check(entry_file, entry_setter)
+	testing.expect_value(t, entry_problem, Enum_Problem.No_Getter)
 	// The detail holds an index up to its largest, and refuses one past it.
 	_, past_enum := enum_detail_make(ENUM_DETAIL_INDEX_MOST + 1, 0)
 	_, past_getter := enum_detail_make(1, ENUM_DETAIL_INDEX_MOST + 1)

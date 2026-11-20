@@ -3682,6 +3682,14 @@ scenario := [?]Step {
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "font_spleen"},
 	{kind = .Call, text = "settings.font()", expected = ".spleen"},
+	// The console refuses a member that the enum of its parameter does not
+	// have, before the call, with the members that it has: the call of the
+	// tool checks its own members, so only this line shows the check of
+	// the console.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "settings.set(font = .comic)"},
+	{kind = .Wait, text = "[console] error: settings.set: Font has no member .comic; its members are .vector, .spleen"},
+	{kind = .Front, text = "settings"},
 	{kind = .Call, text = "settings.set(font = .vector)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; ", any_order = true},
 	{kind = .Wait, text = "terminal: console draws its interface text in the interface font", any_order = true},

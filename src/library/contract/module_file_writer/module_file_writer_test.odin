@@ -295,29 +295,47 @@ enums_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
 		storage.details[1], _ = module.enum_detail_make(1, 0)
 		return parts
 	}
-	// An enum of no description: 0, then one past the last.
+	// The value of each refusal is the Enum_Problem, never a number of the
+	// parts.
+	expect_problem :: proc(t: ^testing.T, parts: Module_Parts, problem: module.Enum_Problem, loc := #caller_location) {
+		expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1, loc)
+		_, needed := file_size_needed(parts)
+		testing.expect_value(t, needed.value, u64(problem), loc)
+	}
+	// An enum of no description: 0, then one past the last, and the
+	// largest index.
 	parts := enum_parts(&storage, enums[:])
 	storage.details[1] = 0
-	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
+	expect_problem(t, parts, .No_Enum)
 	storage.details[1], _ = module.enum_detail_make(2, 0)
-	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
+	expect_problem(t, parts, .No_Enum)
+	storage.details[1], _ = module.enum_detail_make(module.ENUM_DETAIL_INDEX_MOST, 0)
+	expect_problem(t, parts, .No_Enum)
 	// A getter past the exports, and a getter whose form a reader refuses:
 	// the entry gives no Enum.
 	storage.details[1], _ = module.enum_detail_make(1, u32(len(storage.exports)) + 1)
-	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
+	expect_problem(t, parts, .No_Getter)
 	storage.details[1], _ = module.enum_detail_make(1, 1)
 	expect_last_check_refusal(t, parts, .Enum_Not_Valid, .Functions, 1)
 	// An optional bit on a parameter that is no Enum, and past the
 	// parameters.
 	parts = enum_parts(&storage, enums[:])
 	storage.exports[1].optional_parameters = 0b01
-	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
+	expect_problem(t, parts, .Bad_Optional)
 	storage.exports[1].optional_parameters = 0b100
-	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
-	// An Enum result of no enum.
+	expect_problem(t, parts, .Bad_Optional)
+	// An Enum result of no enum: 0, one past the last, the largest word,
+	// and the enum with the bits of a getter, which a result never has.
+	// Each is an enum refusal, never a refusal of a record.
 	parts = enum_parts(&storage, enums[:])
 	storage.exports[1].result, storage.exports[1].error_record = .Enum, 0
-	expect_refusal(t, parts, .Enum_Not_Valid, .Exports, 1)
+	for detail in ([]u32{0, 2, max(u32), 1 | 1 << 16}) {
+		storage.exports[1].result_detail = detail
+		expect_problem(t, parts, .No_Enum)
+	}
+	storage.exports[1].result_detail = 1
+	enum_result := write_to_memory(t, parts)
+	delete(enum_result)
 	// A member with no name of a member, then a member that the reader
 	// refuses in the written file: the absent word.
 	parts = enum_parts(&storage, enums[:])

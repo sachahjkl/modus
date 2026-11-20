@@ -302,10 +302,14 @@ function_enums_check :: proc "contextless" (file: []u8, function: Function) -> (
 }
 
 // function_of_export gives the description of an export, by its index,
-// for a check: the index 0 and an index past the table are none.
+// for a check of a getter: the index 0, an index past the table and the
+// entry export are none. The entry starts the process: no caller calls it.
 @(private)
 function_of_export :: proc "contextless" (file: []u8, export_index: u32) -> (value: Function, ok: bool) {
 	if export_index == 0 || export_index >= count(file, .Exports) {
+		return {}, false
+	}
+	if head, head_error := header(file); head_error != .None || export_index == head.entry_export {
 		return {}, false
 	}
 	return function(file, export_index)
