@@ -42,12 +42,20 @@ Any_Record :: struct {}
 // (module.record_stream_indexes_write): the library finds the ends of the
 // variable in the wiring ring by that index. 0: the module file names no
 // place, and no end reaches the variable.
+//
+// One thread writes one record output: the counts below are plain words
+// of that thread, with no lock and no atomic, and each queue keeps its one
+// writer. A process that writes one record output from several threads
+// holds its own lock around each write (src/md/features/module_outputs.md,
+// "Subtle points").
 Output_State :: struct {
 	index:       u32, // The loader writes it.
 	next_serial: u32, // The serial of the next record of the record output, in each ring.
 	written:     u64, // The records that one ring or more took.
-	discarded:   u64, // The records that no ring took: the record output had no reader, or the condition of each ring left the record out.
+	discarded:   u64, // The records that no ring took: the record output had no reader, the condition of each ring left the record out, or each ring of the pace Never_Holds_Writer was full and counted it in its gap.
 	refused:     u64, // The writes refused with Full: no ring took them, and they have no serial.
+	held:        u64, // The writes that waited for room in a full ring that holds the writer, once each.
+	rings_past_gap: u64, // The rings that the writer closed as their gap reached its largest count (output.gap_after_refused_record).
 	refused_by_readers: u64, // The compartments that a reader refused (output.Completion_Kind.Bad_Record): the writer closes each such ring.
 	ended:       bool, // output_end ended the record output.
 	last_end:    output.End_Word, // The end word of the last ring that ended by an end word.

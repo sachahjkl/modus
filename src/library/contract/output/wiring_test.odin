@@ -373,6 +373,51 @@ expect_difference :: proc(t: ^testing.T, file: []u8, index: u32, other_file: []u
 	testing.expectf(t, back == difference && back_part == part, "the difference back is %v at %d, not %v at %d", back, back_part, difference, part, loc = loc)
 }
 
+// The access record of `server`, as its writer and the readers of its
+// test declare it: status, answer_size, answer_time, method, target, peer.
+@(private = "file")
+access_fields :: proc() -> [6]Test_Field {
+	return {
+		{name = "status", type = .Integer, unsigned = true},
+		{name = "answer_size", type = .Integer, integer_unit = value_kinds.size_in(.Bytes)},
+		{name = "answer_time", type = .Integer, integer_unit = value_kinds.time_in(.Microseconds)},
+		{name = "method", type = .Text, detail = 8},
+		{name = "target", type = .Text, detail = 56},
+		{name = "peer", type = .Text, detail = 32},
+	}
+}
+
+// A reader whose copy of the access record of `server` changed one field
+// is refused at the wiring, with the unit Record_Types and the number of
+// that field: a unit of time in place of a unit of size, a field renamed,
+// a signed status, and a target cut by 8 bytes with a peer longer by 8,
+// which keep the size. The copy as the writer declares it is equal.
+@(test)
+a_copy_of_the_access_record_with_one_field_changed_is_refused :: proc(t: ^testing.T) {
+	writer := access_fields()
+	writer_file := typed_file("Access_Record", writer[:])
+
+	timed_size := access_fields()
+	timed_size[1].integer_unit = value_kinds.time_in(.Microseconds)
+	expect_difference(t, writer_file, 1, typed_file("Access_Record", timed_size[:]), 1, .Field, 2)
+
+	renamed := access_fields()
+	renamed[4].name = "path"
+	expect_difference(t, writer_file, 1, typed_file("Access_Record", renamed[:]), 1, .Field, 5)
+
+	signed := access_fields()
+	signed[0].unsigned = false
+	expect_difference(t, writer_file, 1, typed_file("Access_Record", signed[:]), 1, .Field, 1)
+
+	moved := access_fields()
+	moved[4].detail -= 8
+	moved[5].detail += 8
+	expect_difference(t, writer_file, 1, typed_file("Access_Record", moved[:]), 1, .Field, 5)
+
+	same := access_fields()
+	expect_difference(t, writer_file, 1, typed_file("Access_Record", same[:]), 1, .Equal, 0)
+}
+
 // A description that a reader cannot take is never compared: the index 0
 // (a generic end whose type no wiring fixed), an index past the table, and
 // a record with a Handle field, even beside itself.

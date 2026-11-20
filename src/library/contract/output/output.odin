@@ -145,6 +145,7 @@ Compartment_Fault :: enum u8 {
 	Bad_Text         = 9, // A Text field is not UTF-8 with no control character, then zero bytes.
 	Bad_Status       = 10, // A Status field holds a word that names no member of its contract enum.
 	Bad_Field        = 11, // The description has a field that the border cannot read, or a Handle.
+	Gap_Past_Window  = 12, // On a ring with a condition, a gap of SERIAL_FORWARD_MOST records or more: past it the reader cannot tell a serial ahead from one behind (gap_count_most).
 }
 
 // record_of_compartment is the border of the reader of an output ring: it takes
@@ -160,7 +161,8 @@ Compartment_Fault :: enum u8 {
 //   each record adds 1, a gap of N adds N, and the end record holds it; on
 //   a ring with a condition (state.filtered), a serial behind the next
 //   one or past it by SERIAL_FORWARD_MOST or more (serial_follows);
-// - a gap of 0 records;
+// - a gap of 0 records, and on a ring with a condition a gap of
+//   SERIAL_FORWARD_MOST records or more (gap_count_most);
 // - a byte that the kind does not name and that is not 0: past the count
 //   of a gap, past the error record of an end, past the compartment word of a
 //   joined record, past the record in its compartment;
@@ -204,6 +206,9 @@ record_of_compartment :: proc "contextless" (state: ^Read_State, compartment: []
 		count := u32(compartment[GAP_COUNT_OFFSET]) | u32(compartment[GAP_COUNT_OFFSET + 1]) << 8 | u32(compartment[GAP_COUNT_OFFSET + 2]) << 16 | u32(compartment[GAP_COUNT_OFFSET + 3]) << 24
 		if count == 0 {
 			return {}, .Empty_Gap, errors.error_make(.Bad_Value, .Records, 0, 0, 0, 0)
+		}
+		if count > gap_count_most(state.filtered) {
+			return {}, .Gap_Past_Window, errors.error_make(.Out_Of_Range, .Records, 0, i64(count), i64(gap_count_most(state.filtered)), 0)
 		}
 		taken.gap_count = count
 		named_end = GAP_COUNT_OFFSET + size_of(u32)

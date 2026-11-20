@@ -33,7 +33,6 @@ SINK_LIMIT :: 16 << 20 // The largest body of /sink: 413 over it.
 ANSWER_HEAD_CAPACITY :: 6144 // The head of an answer, and a body that the server makes (a page of counts).
 
 ACCESS_HISTORY :: 18 // The last requests, that the window shows.
-REQUEST_LOG_LIMIT :: 100 // Request log records in one second, of the log limit of this process (1000).
 
 // Where the body of an answer comes from.
 Answer_Body :: enum u8 {
@@ -84,8 +83,8 @@ Session :: struct {
 
 sessions: [CAPACITY]Session
 
-// One request, as the access table of the window shows it. The log writes
-// it as the fact Access_Record (facts.odin).
+// One request, as the access table of the window shows it. The record
+// output requests carries it as an Access_Record (requests.odin).
 Access_Row :: struct {
 	remote_address: u32,
 	remote_port:    u16,
@@ -101,9 +100,6 @@ access_records: [ACCESS_HISTORY]Access_Row
 access_next: int
 requests_answered: u64
 status_classes: [6]u64 // Answers by class: index 2 is 2xx, 4 is 4xx, 5 is 5xx.
-request_log_second: u64
-request_log_count: u64
-requests_not_logged: u64
 
 // The measures of requests in one second.
 second_start: u64 // Milliseconds.
@@ -323,18 +319,10 @@ request_finish :: proc "contextless" (index: int) {
 	record.target_length = len(system.format(record.target[:], string(web.request_target(request))))
 	access_records[access_next] = record
 	access_next = (access_next + 1) % ACCESS_HISTORY
-	// The log of the requests, within the log limit of this process.
-	second := system.time() / 1000
-	if second != request_log_second {
-		request_log_second, request_log_count = second, 0
-	}
-	if request_log_count < REQUEST_LOG_LIMIT {
-		request_log_count += 1
-		method := web.request_method_name(request.method)
-		system.log_fact(.Info, Access_Record{status = u64(session.answer_status), answer_size = value_kinds.Size_In_Bytes(session.answer_bytes), answer_time = value_kinds.Time_In_Microseconds(microseconds_taken), method = value_kinds.text_field(method == "" ? "-" : method, METHOD_FIELD_BYTES), target = value_kinds.text_field(string(record.target[:record.target_length]), TARGET_FIELD_BYTES), peer = peer_field(connection.remote_address, connection.remote_port)})
-	} else {
-		requests_not_logged += 1
-	}
+	// The access record goes to each reader of requests: no limit of the
+	// log, as a record output refuses with a count in place of a drop.
+	method := web.request_method_name(request.method)
+	requests_write({status = u64(session.answer_status), answer_size = value_kinds.Size_In_Bytes(session.answer_bytes), answer_time = value_kinds.Time_In_Microseconds(microseconds_taken), method = value_kinds.text_field(method == "" ? "-" : method, METHOD_FIELD_BYTES), target = value_kinds.text_field(string(record.target[:record.target_length]), TARGET_FIELD_BYTES), peer = peer_field(connection.remote_address, connection.remote_port)})
 	if session.answer_status == 200 && request.method == .Post {
 		system.log_fact(.Info, Sink_Received{body_size = value_kinds.Size_In_Bytes(session.body_bytes), body_hash = value_kinds.Hexadecimal_Sixteen_Digits(session.body_hash), rate = kilobytes_per_second(u64(session.body_bytes), now - session.request_started_at) / 1000})
 	}

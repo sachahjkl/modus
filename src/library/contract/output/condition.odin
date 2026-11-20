@@ -438,9 +438,16 @@ WRITER_COUNTS_OFFSET :: 1024
 // them and checks nothing against them: they change no decision.
 Writer_Counts :: struct {
 	written:   u64, // The records that one ring or more took.
-	discarded: u64, // The records that no ring took: no reader.
+	discarded: u64, // The records that no ring took: no reader, the condition of each ring, or each ring full for its reader alone.
 	refused:   u64, // The writes refused with Full.
-	reserved:  [5]u64, // 0.
+	// The writes that waited for room in a full ring that holds the writer:
+	// the proof by count that a slow reader of the pace Always_Holds_Writer,
+	// or a full ring of a writer that waits, set the speed of the writer.
+	held:      u64,
+	// The rings that the writer closed as their gap reached its largest
+	// count (gap_after_refused_record): their readers read Side_Closed.
+	rings_past_gap: u64,
+	reserved:  [3]u64, // 0.
 }
 #assert(size_of(Writer_Counts) == 64)
 #assert(WRITER_COUNTS_OFFSET >= size_of(ring.Counters) && WRITER_COUNTS_OFFSET + size_of(Writer_Counts) <= ring.PAGE_SIZE / 2)
@@ -452,6 +459,8 @@ writer_counts_write :: proc "contextless" (head: rawptr, counts: Writer_Counts) 
 	intrinsics.atomic_store_explicit(&words[0], counts.written, .Relaxed)
 	intrinsics.atomic_store_explicit(&words[1], counts.discarded, .Relaxed)
 	intrinsics.atomic_store_explicit(&words[2], counts.refused, .Relaxed)
+	intrinsics.atomic_store_explicit(&words[3], counts.held, .Relaxed)
+	intrinsics.atomic_store_explicit(&words[4], counts.rings_past_gap, .Relaxed)
 }
 
 // writer_counts_read reads the counts of the head page of a ring, one word
@@ -462,6 +471,8 @@ writer_counts_read :: proc "contextless" (head: rawptr) -> (counts: Writer_Count
 	counts.written = intrinsics.atomic_load_explicit(&words[0], .Relaxed)
 	counts.discarded = intrinsics.atomic_load_explicit(&words[1], .Relaxed)
 	counts.refused = intrinsics.atomic_load_explicit(&words[2], .Relaxed)
+	counts.held = intrinsics.atomic_load_explicit(&words[3], .Relaxed)
+	counts.rings_past_gap = intrinsics.atomic_load_explicit(&words[4], .Relaxed)
 	return counts
 }
 

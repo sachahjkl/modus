@@ -23,6 +23,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **The ring loop of the writer of a record output under a host test.** A host seam of the library seeds the gap of a ring, so a test runs the loop of `system.output_write` itself past the largest count of a gap: the ring closes, the writer counts it in `rings_past_gap`, and its other rings take the record. Today the host tests reach the pure rules that the loop calls, and not the loop. [Design](src/md/features/module_outputs.md)
 - **The count of the handles and the mappings of a process in its report.** The report of a process gives the handles and the mappings that it holds and the most that it held, so a developer measures the peak of the root service and sets the limits of the wirings from a measure. [Design](src/md/features/module_outputs.md)
 - **The object cache and its protocol, with a cache at cache.modus.froment.software.** A machine fetches objects by hash and the signed realisations of their recipes over QUIC, from the cache of the project, a mirror, a peer or a removable disk, and trusts only a hash or a signer that its substitution policy names. A developer then gets the tools of a project on modus with no build on the machine. [Design](src/md/features/recipes.md)
 - **The C of the C compiler past addition.** The assembler takes the instructions that `chibicc` writes for comparisons, loops, calls, multiplications, divisions and the small integer types, so a C function with any of them runs on modus. [Design](src/md/features/c_compiler.md)

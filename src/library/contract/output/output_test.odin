@@ -261,6 +261,107 @@ a_stream_is_taken_in_order :: proc(t: ^testing.T) {
 	testing.expect(t, top_joined == .None && top_record == .None && top_gap == .None && top_next == .None && top.next_serial == 3)
 }
 
+// The count of a gap at its edges, as a slow reader of the pace
+// Never_Holds_Writer reads it: one record lost, a whole ring lost, and the
+// largest count of the type, which wraps the serial to one before the
+// first lost one. In each case a gap that does not start at the next
+// serial is refused first with nothing changed, the record that the gap
+// claims to cover after it is refused too, and the record right after the
+// gap is taken last.
+@(test)
+a_gap_moves_the_serial_by_its_exact_count :: proc(t: ^testing.T) {
+	file, description := test_file()
+	CAPACITY :: 32
+	Case :: struct {
+		first: u32, // The next serial when the gap comes: the first lost record.
+		count: u32,
+	}
+	cases := [?]Case{{first = 7, count = 1}, {first = 7, count = CAPACITY}, {first = 7, count = max(u32)}, {first = max(u32), count = 1}}
+	for item in cases {
+		state: Read_State
+		_, joined_fault, _ := record_of_compartment(&state, joined_at(item.first), file, description)
+		testing.expect_value(t, joined_fault, Compartment_Fault.None)
+		// A gap that starts one past the next serial, or one before it.
+		for wrong_first in ([?]u32{item.first + 1, item.first - 1}) {
+			early := new_compartment()
+			testing.expect(t, gap_compartment(early, wrong_first, item.count))
+			expect_refused(t, &state, early, file, description, .Wrong_Serial, i64(wrong_first), 0)
+		}
+		gap := new_compartment()
+		testing.expect(t, gap_compartment(gap, item.first, item.count))
+		taken, fault, refusal := record_of_compartment(&state, gap, file, description)
+		after := item.first + item.count
+		testing.expectf(t, fault == .None && taken.kind == .Gap && taken.serial == item.first && taken.gap_count == item.count && state.next_serial == after, "a gap of %d from %d gave %v, the next serial %d: %v", item.count, item.first, fault, state.next_serial, refusal)
+		// The last record that the gap covers is no next record.
+		expect_refused(t, &state, probe_compartment(after - 1), file, description, .Wrong_Serial, i64(after - 1), 0)
+		record, record_fault, _ := record_of_compartment(&state, probe_compartment(after), file, description)
+		testing.expectf(t, record_fault == .None && record.serial == after && state.next_serial == after + 1, "the record after a gap of %d gave %v", item.count, record_fault)
+	}
+}
+
+// On a ring with a condition, a gap moves the next serial by its count,
+// and the reader takes a serial forward by less than SERIAL_FORWARD_MOST:
+// a gap of that count or more is refused with nothing changed, at the
+// edge and at the largest count; one record less is taken, and the
+// record after it follows. A ring with no condition takes the same gap.
+@(test)
+a_filtered_ring_refuses_a_gap_past_its_window :: proc(t: ^testing.T) {
+	file, description := test_file()
+	for count in ([?]u32{SERIAL_FORWARD_MOST, SERIAL_FORWARD_MOST + 1, max(u32)}) {
+		filtered := Read_State{filtered = true}
+		_, joined_fault, _ := record_of_compartment(&filtered, joined_at(10), file, description)
+		testing.expect_value(t, joined_fault, Compartment_Fault.None)
+		gap := new_compartment()
+		testing.expect(t, gap_compartment(gap, 10, count))
+		expect_refused(t, &filtered, gap, file, description, .Gap_Past_Window, i64(count), 0)
+		plain: Read_State
+		_, _, _ = record_of_compartment(&plain, joined_at(10), file, description)
+		_, plain_fault, _ := record_of_compartment(&plain, gap, file, description)
+		testing.expectf(t, plain_fault == .None && plain.next_serial == 10 + count, "a ring with no condition refused a gap of %d: %v", count, plain_fault)
+	}
+	filtered := Read_State{filtered = true}
+	_, _, _ = record_of_compartment(&filtered, joined_at(10), file, description)
+	largest := new_compartment()
+	testing.expect(t, gap_compartment(largest, 10, SERIAL_FORWARD_MOST - 1))
+	taken, fault, _ := record_of_compartment(&filtered, largest, file, description)
+	testing.expect(t, fault == .None && taken.gap_count == SERIAL_FORWARD_MOST - 1 && filtered.next_serial == 10 + SERIAL_FORWARD_MOST - 1)
+	_, after_fault, _ := record_of_compartment(&filtered, probe_compartment(10 + SERIAL_FORWARD_MOST - 1), file, description)
+	testing.expect_value(t, after_fault, Compartment_Fault.None)
+}
+
+// A reader that joins in the middle of a burst: its joined record names
+// the serial of the next record that the writer writes, whatever came
+// before it. The records of the burst before that serial are refused with
+// nothing changed, as is a record that skips one; then each record of the
+// rest of the burst is taken in order, and a gap and the end follow it.
+@(test)
+a_reader_that_joins_in_the_middle_of_a_burst_takes_the_rest_in_order :: proc(t: ^testing.T) {
+	file, description := test_file()
+	BURST_START :: 1000
+	JOINED_AT :: BURST_START + 17
+	BURST_END :: BURST_START + 64
+	state: Read_State
+	taken, fault, _ := record_of_compartment(&state, joined_at(JOINED_AT), file, description)
+	testing.expect(t, fault == .None && taken.kind == .Joined && taken.serial == JOINED_AT && state.next_serial == JOINED_AT)
+	for before in ([?]u32{BURST_START, JOINED_AT - 1}) {
+		expect_refused(t, &state, probe_compartment(before), file, description, .Wrong_Serial, i64(before), 0)
+	}
+	expect_refused(t, &state, probe_compartment(JOINED_AT + 1), file, description, .Wrong_Serial, JOINED_AT + 1, 0)
+	for serial in u32(JOINED_AT) ..< BURST_END {
+		record, record_fault, refusal := record_of_compartment(&state, probe_compartment(serial), file, description)
+		if !testing.expectf(t, record_fault == .None && record.serial == serial, "the record %d of the burst gave %v: %v", serial, record_fault, refusal) {
+			return
+		}
+	}
+	gap := new_compartment()
+	testing.expect(t, gap_compartment(gap, BURST_END, 3))
+	_, gap_fault, _ := record_of_compartment(&state, gap, file, description)
+	end := new_compartment()
+	testing.expect(t, end_compartment(end, BURST_END + 3, {}))
+	_, end_fault, _ := record_of_compartment(&state, end, file, description)
+	testing.expect(t, gap_fault == .None && end_fault == .None && state.ended && state.next_serial == BURST_END + 3)
+}
+
 // A ring with a condition, through the whole border: a record that jumps
 // past the next serial is taken and the next serial follows it; a serial
 // behind is refused with nothing changed; a gap and the end record that
