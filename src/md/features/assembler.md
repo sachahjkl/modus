@@ -108,6 +108,7 @@ The console isolates a module from memory, a module whose file is in a memory ob
 - **A `%rip` displacement counts from the end of the instruction.** In `movq $1, x(%rip)` the immediate comes after the displacement; the assembler writes each displacement of a label once the whole instruction is placed.
 - **A 32-bit immediate of an `add`.** `addl $0xFFFFFFFF, %eax` is `-1` for the processor: the assembler takes the range -2³¹ to 2³² − 1 for a 32-bit operand, and writes the value in its 32 bits, so the short form `83` takes it.
 - **`(%rbp)` and `(%r13)`** have no form with no displacement: the assembler writes a displacement of one byte 0. **`(%rsp)` and `(%r12)`** need the byte SIB `24`.
+- **The name of a module from memory lives in its sandbox.** No file of the boot image holds it, so the entry of the console that names the module is a view of the sandbox, and `unload` sets the sandbox to zero. The record of `unload` takes the name from its argument.
 - **The zero bytes of a section are not stored.** `zero` adds to the extent of the section and writes no byte, so a test reaches a label 2 GiB away with no memory of 2 GiB.
 
 ## State
