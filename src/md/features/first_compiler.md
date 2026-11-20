@@ -47,11 +47,11 @@ An assembler module reads a subset of x86-64 assembly and writes a module file t
 
 ### 3. `chibicc`, ported
 
-`chibicc` is a C11 compiler of about 10 000 lines, in one pass, that emits assembly. Its output is the input of the assembler of step 2. The port replaces its `main` with the export `build`, and its reads and writes of files with the store of its input and the store "out".
+`chibicc` is a C11 compiler of about 9 000 lines, in one pass, that emits assembly. Its output is the input of the assembler of step 2. The module `c_compiler` replaces its `main` with the export `compile`, which takes the source as Bytes and writes the text of assembly into memory that the caller lends; the export `build` with the store "out" wraps the same entry when the builders exist. Its design, its patches and the gaps of the assembler are in [c_compiler.md](c_compiler.md).
 
 It is chosen over TCC: its code is easier to read, and it emits assembly that the assembler of step 2 reads, so it needs no writer of its own for the module format. TCC writes machine code, so its port needs a second writer of the module format inside it.
 
-`chibicc` is an outside module ([infrastructure/third_party_module.md](../infrastructure/third_party_module.md)): its source is not a source of `src/`.
+The source of `chibicc` is an outside source ([infrastructure/outside_source.md](../infrastructure/outside_source.md)): the flake fetches it at one commit and applies the patches of the system, so it is not a source of `src/`. The module is not an outside module of [infrastructure/third_party_module.md](../infrastructure/third_party_module.md): the console isolates a module of the boot image, so the module has a row of the module table, and an Odin package in `src/modules/system/c_compiler` states its export.
 
 ### 4. A thin libc over the handles
 
@@ -61,7 +61,7 @@ A C program needs a C library. The thin libc gives the part of it that a compile
 - `malloc` over a growable arena of the budget of the process ([memory_without_a_bound.md](memory_without_a_bound.md)), and a `free` that ends nothing until the arena ends;
 - no `printf` to a standard output: a diagnostic is a log fact or the error record of `build`.
 
-Step 3 needs the part of it that `chibicc` calls, so that part comes with step 3. Step 4 gives the rest to the next ported C programs.
+Step 3 needs the part of it that `chibicc` calls, so that part comes with step 3, in C beside `chibicc` ([c_compiler.md](c_compiler.md), "The thin libc"). Step 4 moves it to a place that the next ported C programs share, and gives them the rest.
 
 ### 5. The guest builder
 
@@ -101,4 +101,4 @@ For Odin, Rust and every other compiler that is not native, the guest builder of
 
 ## State
 
-Built: the module file writer, with its host tests, and the tool writes each module through it; the assembler module with its export `assemble`, its host tests and its machine step ([assembler.md](assembler.md), "State"). Left: the count of the budget in the writer, the export `build` of the assembler, the call of an import through a slot, the port of `chibicc`, the thin libc and the guest builder.
+Built: the module file writer, with its host tests, and the tool writes each module through it; the assembler module with its export `assemble`, its host tests and its machine step ([assembler.md](assembler.md), "State"); `chibicc` ported as the module `c_compiler` with its export `compile`, the part of the thin libc that it calls, and the machine step that compiles a C function, assembles it and calls it ([c_compiler.md](c_compiler.md), "State"). Left: the count of the budget in the writer, the export `build` of the assembler and of the compiler, the call of an import through a slot, the instructions that `chibicc` emits past the subset of the assembler, the thin libc in a shared place for the next ported C programs, and the guest builder.

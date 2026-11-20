@@ -50,6 +50,7 @@ A label is a name and `:` at the start of a statement. A statement ends at a new
 | `mov` | register to register, memory to register, register to memory, immediate to register (a 64-bit immediate with `B8+r`), immediate to memory |
 | `add`, `sub`, `cmp` | the forms of `mov` but a 64-bit immediate; an immediate of one byte with `83`, else `81` |
 | `lea` | memory to a 64-bit register |
+| `movsxd` | a 32-bit register or memory to a 64-bit register, with its sign: the C compiler loads each `int` with it ([c_compiler.md](c_compiler.md), "The gaps of the assembler") |
 | `push`, `pop` | a 64-bit register; `push` also an immediate |
 | `jmp`, `call`, the 16 conditional jumps (`jo` … `jg`) | a label of the code, with a displacement of 32 bits |
 | `ret` | none |
@@ -112,4 +113,4 @@ The console isolates a module from memory, a module whose file is in a memory ob
 
 ## State
 
-Built: the package with its host tests, the module `assemble` in the boot image, the command `isolate_memory` of the console, and the step of the main machine test. Left: the export `build` with the store "out", a call of an import through a slot, the rest of the subset that `chibicc` emits (the other sizes, the index registers, `imul`, `idiv`, the extensions of a sign), a `quad` of a label with a rebase, and the debug object of an assembled module.
+Built: the package with its host tests, the module `assemble` in the boot image, the command `isolate_memory` of the console, the step of the main machine test, and `movsxd`, with a host test of the whole text that the C compiler writes for a function that adds. Left: the export `build` with the store "out", a call of an import through a slot, the rest of the subset that `chibicc` emits (the other sizes, the index registers, `imul`, `idiv`, the other extensions of a sign, the `set` instructions, an indirect call; the list is in [c_compiler.md](c_compiler.md), "The gaps of the assembler"), a `quad` of a label with a rebase, and the debug object of an assembled module.
