@@ -16,7 +16,7 @@ The terms outside module and module build file are in [`docs/glossary/communicat
 
 1. A folder with one Odin package: the sources of the module, and its assembly files if it has some. The sources import the packages of the system from the source library `modus`, with the lines of a module of the system.
 2. In that folder, the module build file `module.txt`.
-3. A checkout of the system. For a module with an import, the checkout is built: the build of the system wrote the file of each module.
+3. A checkout of the system. For a module with an import, the checkout is built: the build of the system wrote the file of each module. The SDK of a release will take the place of the checkout: the parts of a built checkout that this build reads, at the same paths, with no Nix ([sdk.md](sdk.md)).
 
 ### The module build file
 
@@ -63,14 +63,14 @@ The tool runs in the folder of the system. Each path of a source of the system i
 2. It changes its working folder to the folder of the system.
 3. It builds, with the folder of the module as the source of the row.
 
-The folder of the system is, in this order: the argument `--system`, the environment variable `MODUS_SYSTEM`, the folder where the command runs.
+The folder of the system is, in this order: the argument `--system`, the environment variable `MODUS_SYSTEM`, the folder where the command runs. The SDK adds one place before the last: the SDK that holds the binary that runs ([sdk.md](sdk.md), "Where the tool finds the system").
 
 The command `modustool` of the flake runs the binary `build/tool/modustool` of the folder of the system, and compiles it first when it is absent; the binary compiles itself again when its sources changed ([repository_layout.md](repository_layout.md), the tool built once). The command reads `MODUS_SYSTEM` to find that folder, because it runs before the tool reads an argument. A developer who uses the command of the flake sets the variable. A caller that runs the file of the tool itself can give `--system`.
 
 The forms that were refused:
 
 - **A path of the system in each constant of the tool.** Each of about a hundred paths would take a prefix at run time. A path that is missed reads a folder of the developer with no error.
-- **The system from the store of Nix** (a run of the flake with no checkout). The store is read-only: the tool cannot compile itself there. A module with an import needs the built modules of the system, which the store does not hold. The machine that runs the module needs the same built system. So a checkout is not a cost that this form removes.
+- **The system from the store of Nix** (a run of the flake with no checkout). The store is read-only: the tool cannot compile itself there. A module with an import needs the built modules of the system, which the store does not hold. The machine that runs the module needs the same built system. So a checkout is not a cost that this form removes. The SDK removes it in another way: a release ships the built modules and a tool that does not compile itself.
 - **A copy of `src/library` and `src/runtime` in the project of the developer.** The copy is the thing that the source library was made to end.
 
 ## Where the outputs go
@@ -147,4 +147,4 @@ Built: a machine that runs the module (the command `module-disk` writes a data d
 Left:
 
 - **An import of another outside module.** An import names a module of the system. A developer with a library module and a module of their own that imports it needs a second place for the file of an import. The roadmap holds this work.
-- **A module in another language.** The description of the exports comes from the Odin source.
+- **A module in another language.** The description of the exports comes from the Odin source. The path of the other languages, through the language bindings, is in [sdk.md](sdk.md), "Other languages".

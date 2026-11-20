@@ -70,6 +70,26 @@ The rules: `docs/PROPERTIES.md`, "12. Module metadata in flat tables, read throu
 
 Do not use: section, blob.
 
+### Contract description
+
+The contract description is a file of the module format, with no code and no export, that describes the records, the enums and the constants of the contract packages.
+
+The describe step of the build writes it: the parser names each declaration of a contract package, and the compiler gives each size, offset and value. Its tables are those of the module format, with two more: `Enumerations` and `Constants`. Each language binding is written from it and from the module files of the library modules, never from the Odin source. The SDK holds it. It is planned work.
+
+The design: `src/md/infrastructure/sdk.md`, "The contract description".
+
+Do not use: interface definition, IDL, schema.
+
+### Language binding
+
+A language binding is the set of files that let a program of another language read and write the records of the contracts and call the exports of the library modules.
+
+The tool writes each one from the contract description and the module files, with one generator. The C language binding, a header for each contract package and for each library module, is the first; Zig and Rust are later targets. Each is a file of the release, signed with it. A check compiles a C program against it and compares each layout with the compiler of the contracts. It is a derived file: the module format stays the source of truth. It is planned work.
+
+The design: `src/md/infrastructure/sdk.md`, "The language bindings".
+
+Do not use: FFI, wrapper, stub, bindings (alone).
+
 ### Replacement
 
 A replacement is a record `{hash, hash}` that the starter of a process gives to the loader: where a module imports the first module, the loader loads the second one.

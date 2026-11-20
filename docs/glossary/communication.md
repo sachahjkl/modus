@@ -52,21 +52,31 @@ Do not use: condition variable, semaphore, signal, barrier.
 
 A source library is a named folder of source packages that a module compiles in.
 
-An import of the source names the library and the package: `modus:contract/ring`. The modules have one source library, `modus`, in the folder `src/library`. It has three parts: `contract` (what two parties agree on), `support` (what two modules or more compile in) and `private` (what one module alone compiles in). The kernel has a second source library of its own, `kernel`, in the folder `src/kernel`, for its kernel parts: `kernel:iommu`. A source library is not a module: it has no file, no hash and no edge in the module graph.
+An import of the source names the library and the package: `modus:contract/ring`. The system has three: `modus`, the public library; `internal`, for the internal parts; `kernel`, for the kernel parts (`kernel:iommu`). The flag of the compiler is `-collection`. Today the modules have one source library, `modus`, in `src/library`, in three parts: `contract`, `support` and `private`. A source library is not a module: it has no file, no hash and no edge in the module graph.
 
-The design: `docs/MODULE_CONTRACT.md`, "The source library of a module".
+The design: `src/md/infrastructure/repository_layout.md`, "The two source libraries of the modules".
 
-Do not use: collection, SDK, libc, static library.
+Do not use: collection, libc, static library.
 
-### Private part
+### Public library
 
-A private part is a package of the source library that one module alone compiles in, with its host tests.
+The public library is the source library `modus`: the contract packages and the support packages, the one part of the sources of the system that ships.
 
-A private part holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole module for the host. Its folder is `src/library/private/<module>/<part>`, and its import line names the module: `modus:private/storage/storage_tree`. The tool refuses an import of it from another module, and a support package that only one module reaches. The tool and the host tests of a caller of a library module read some private parts too (`cryptography_primitives`); that does not make them shared.
+Its folder is `src/library/modus`: `modus:contract/ring` for a contract, `modus:quic` for a support package. A module of the system and an outside module import it with the same lines. The SDK holds its folder whole. A package that a program outside the repository needs is a package of the public library. It holds no internal part and no kernel part. Today its packages are under `src/library/contract` and `src/library/support`.
 
-The design: `src/md/infrastructure/repository_layout.md`.
+The design: `src/md/infrastructure/repository_layout.md`, "The two source libraries of the modules".
 
-Do not use: internal package, helper package, program package.
+Do not use: standard library, runtime, framework.
+
+### Internal part
+
+An internal part is a package of the source library `internal` that one module alone compiles in, with its host tests.
+
+It holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole module for the host. Its folder is `src/library/internal/<module>/<part>`, and its import line names the module: `internal:storage/storage_tree`. The tool refuses its import from another module, and the compiler refuses it in the kernel and in an outside module, which get no flag `internal`. It never ships. Today its folder is `src/library/private/<module>/<part>`.
+
+The design: `src/md/infrastructure/repository_layout.md`, "Where the internal part of a module lives".
+
+Do not use: private part, private package, helper package, program package.
 
 ### Kernel part
 
@@ -107,6 +117,16 @@ Its developer writes one Odin package that imports the packages of the system fr
 The design: `docs/TOOLS.md`, "A module from a source outside the repository".
 
 Do not use: third-party module, external module, plugin.
+
+### SDK
+
+The SDK, the development kit of the system, is the archive of a release that holds what an outside module needs, with no checkout of the system and with no Nix.
+
+It holds the public library, the runtime, the module files of the module group `libraries` of the release, the contract description, the tool and a manifest of the hash of each file, at the paths of a checkout. Its file is `modus-sdk-<release number>.tar.zst`; the release signature covers it. The compiler that it names is a second archive of the release. A module that imports a library module runs on the release of its SDK. It is not a checkout: it holds no internal part and no kernel.
+
+The design: `src/md/infrastructure/sdk.md`.
+
+Do not use: devkit, toolchain, distribution.
 
 ### Outside source
 
