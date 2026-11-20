@@ -407,6 +407,10 @@ UNIT_MEMBER_NAMES := [Unit]string {
 	.Dropped_Writes     = "Dropped_Writes",
 	.Nanoseconds        = "Nanoseconds",
 	.Frames             = "Frames",
+	.Record_Types       = "Record_Types",
+	.Wiring_Rows        = "Wiring_Rows",
+	.Wiring_Terms       = "Wiring_Terms",
+	.Wirings            = "Wirings",
 }
 
 // The word of a Kind as the record of another party holds it: a field of a

@@ -455,7 +455,7 @@ fact_row_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result:
 	count^ += 1
 }
 
-// fact_records gives the log facts of the log scope of the caller from the number `after` on, one row each, with the bytes that its writer gave: the record form, the fact key, the module hash, the count of the value bytes, the reserved bytes and the first value bytes. The result is the count of the facts of the scope from `after` to the last record.
+// fact_records gives the log facts of the log scope of the caller from the number `after` on, one row each, with the bytes that its writer gave: the record form, the fact key, the module hash, the count of the value bytes, its part and its count of parts, and the value bytes of the record. The result is the count of the facts of the scope from `after` to the last record.
 //
 // **What it is for.** A log fact is a record with no text: its row in
 // `records` has its number, its time, its process and its level, and an
@@ -468,8 +468,9 @@ fact_row_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result:
 //
 // **A row** (`Fact_Row`): `number`, the record; `form`, `Fact`, a member
 // of `Log_Record_Form` as in a row of `records`; `continues`, its byte `more`; `key`; `module_hash`;
-// `value_count`; `reserved`; `values`, the 144 value bytes, with 0 past
-// `value_count`.
+// `value_count`; `part`, from 0, and `part_count`, the records of its fact
+// (src/md/features/log_facts.md, "A fact of several records"); `values`,
+// the 144 value bytes of the record, with 0 past `value_count`.
 //
 // **Grant**: the [log scope](term:log-scope) of the connection, as for
 // `records`.

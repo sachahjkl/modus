@@ -57,7 +57,7 @@ Demonstration_Text_Most :: struct {
 // and a zero byte. A field name means one text in one module, so each
 // module has its own table.
 @(test)
-the_texts_of_the_demonstration_facts_come_last_and_whole :: proc(t: ^testing.T) {
+the_texts_of_the_facts_from_imports_to_workers_come_last_and_whole :: proc(t: ^testing.T) {
 	LONGEST_PEER :: "255.255.255.255 port 65535"
 	// The names of a load error: a name of a module or of an export has
 	// module.NAME_SIZE bytes at most.

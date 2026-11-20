@@ -532,8 +532,8 @@ field_width :: proc "contextless" (item: module.Field) -> int {
 			// A word that names no member is drawn as its number.
 			width := integer_digits(size, true)
 			if which, which_ok := module.field_contract_enum(item); which_ok {
-				for word in 0 ..< op.contract_enum_member_count(which) {
-					if name, named := op.contract_enum_member_name(which, word); named {
+				for word in 0 ..< module.contract_enum_member_count(which) {
+					if name, named := module.contract_enum_member_name(which, word); named {
 						width = max(width, len(name))
 					}
 				}

@@ -263,7 +263,7 @@ record_fields_check :: proc "contextless" (record: []u8, file: []u8, description
 			if kind == .Status {
 				which, which_ok := module.field_contract_enum(item)
 				word := u64(module.field_integer(record, item))
-				if _, member := op.contract_enum_member_name(which, word); !which_ok || !member {
+				if _, member := module.contract_enum_member_name(which, word); !which_ok || !member {
 					return .Bad_Status, errors.error_make(.Bad_Value, .None, 0, i64(word), 0, part)
 				}
 			}

@@ -42,7 +42,9 @@ import "modustool:foundation"
 //     no field names;
 //   - the record has a Handle field: a handle number means nothing to a
 //     reader of the log;
-//   - the values pass op.LOG_FACT_VALUE_CAPACITY: a fact is one record;
+//   - the record passes op.LOG_FACT_VALUE_CAPACITY: the record of a fact
+//     type is in the first record of its fact, and only the out-of-line
+//     area of its text views goes in the records after it;
 //   - two fact types of the module have one key, or a key is 0;
 //   - the LLVM IR of the module does not hold the key of a fact type that
 //     a call names: the compiler gives the typeid another value.

@@ -180,18 +180,20 @@ writer_condition_of_terms :: proc "contextless" (bytes: []u8, file: []u8, descri
 	switch type {
 	case .Integer:
 		switch kind {
-		case .Plain, .Hexadecimal:
+		case .Plain, .Hexadecimal, .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
+			// A kind writes the integer in another form: the condition
+			// compares the integer that the record holds.
 			field_type = item.unsigned ? .Unsigned : .Signed
 		case .Status:
 			field_type, status = .Unsigned, true
-		case .Module_Name, .Hash, .Fact_Values:
+		case .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View:
 			// module.field_kind_valid takes no such kind on an Integer.
 		}
 	case .Text:
 		switch kind {
 		case .Plain, .Module_Name:
 			field_type = .Text
-		case .Hexadecimal, .Status, .Hash, .Fact_Values:
+		case .Hexadecimal, .Status, .Hash, .Fact_Values, .Hexadecimal_Sixteen_Digits, .Hash_Head, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day, .Text_View:
 		}
 	case .Handle, .Bytes, .None, .Record, .Table:
 		// A handle names nothing for the writer, and Bytes have no value

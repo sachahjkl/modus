@@ -20,9 +20,8 @@ import "modus:support/system"
 // op.Status_Word, which a reader writes by the name of its member: the
 // sentence says "status No_Right" where the line said "status 7"
 // (src/md/features/log_facts.md, "Field kinds"). A status of the client of
-// the store (storage.Status) is an Integer field, and the sentence keeps
-// its number: that enum is of a support package, and no reader has the
-// names of its members. A sentence from a closed set (a problem of a file,
+// the store (storage_status.Status) is an Integer field, and the sentence
+// keeps its number. A sentence from a closed set (a problem of a file,
 // the words of a step of the interface of the TPM, the request to the
 // TPM) is a Text field, as the cause of a silent disk is. A Text field is
 // the last field, and is [N]u8 with N written out, as the tool reads it.

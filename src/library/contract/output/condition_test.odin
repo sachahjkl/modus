@@ -44,13 +44,13 @@ condition_table_add :: proc(file: ^[dynamic]u8, directory: ^[module.TABLE_COUNT]
 }
 
 @(private = "file")
-condition_file :: proc() -> (file: []u8, description: module.Record) {
+condition_file :: proc(serial_kind: value_kinds.Field_Kind = .Plain, delta_kind: value_kinds.Field_Kind = .Plain) -> (file: []u8, description: module.Record) {
 	strings_table := make([dynamic]u8, context.temp_allocator)
 	append(&strings_table, 0)
 	fields := make([dynamic]module.Field, context.temp_allocator)
 	append(&fields, module.Field{})
-	condition_field_add(&fields, &strings_table, "serial", 0, .Integer, 8, true)
-	condition_field_add(&fields, &strings_table, "delta", 8, .Integer, 4, false)
+	condition_field_add(&fields, &strings_table, "serial", 0, .Integer, 8, true, serial_kind)
+	condition_field_add(&fields, &strings_table, "delta", 8, .Integer, 4, false, delta_kind)
 	condition_field_add(&fields, &strings_table, "level", 12, .Integer, 1, true, .Status, .Log_Level)
 	condition_field_add(&fields, &strings_table, "target", 16, .Text, 16, false)
 	condition_field_add(&fields, &strings_table, "lent", 32, .Handle, 0, false)
@@ -239,6 +239,39 @@ the_border_takes_each_valid_condition :: proc(t: ^testing.T) {
 	signed := terms_bytes(integer_terms(2, .Less, -3))
 	condition, _, ok = writer_condition_of_terms(signed[:], file, description)
 	testing.expect(t, ok && condition.offset == 8 && condition.size == 4 && condition.field_type == u32(Condition_Field_Type.Signed) && condition.integer == -3)
+}
+
+// A field of a kind that writes its integer in another form is compared by
+// the integer that the record holds, as a field of the kind Plain: the
+// signed field of 4 bytes refuses one past its edges as Tenths and as
+// Hundredths, and takes its edges and each operator; the unsigned field of
+// 8 bytes takes 0 and the largest bits as each unsigned kind.
+@(test)
+a_field_of_a_number_kind_is_compared_by_its_integer :: proc(t: ^testing.T) {
+	for kind in ([?]value_kinds.Field_Kind{.Tenths, .Hundredths}) {
+		file, description := condition_file(delta_kind = kind)
+		for value in ([?]i64{i64(max(i32)) + 1, i64(min(i32)) - 1}) {
+			bytes := terms_bytes(integer_terms(2, .Equal, value))
+			condition, refusal, ok := writer_condition_of_terms(bytes[:], file, description)
+			expected := errors.error_make(.Bad_Value, .Wiring_Terms, i64(Condition_Terms_Field.Integer), value, i64(max(i32)))
+			testing.expectf(t, !ok && condition == Writer_Condition{} && refusal == expected, "the field of %v takes %d: %v", kind, value, refusal)
+		}
+		for comparison in ([?]Condition_Comparison{.Equal, .Less, .Greater_Or_Equal}) {
+			for value in ([?]i64{i64(min(i32)), -5, 0, i64(max(i32))}) {
+				bytes := terms_bytes(integer_terms(2, comparison, value))
+				condition, refusal, ok := writer_condition_of_terms(bytes[:], file, description)
+				testing.expectf(t, ok && condition.field_type == u32(Condition_Field_Type.Signed) && condition.integer == value, "the field of %v refuses %v %d: %v", kind, comparison, value, refusal)
+			}
+		}
+	}
+	for kind in ([?]value_kinds.Field_Kind{.Hexadecimal_Sixteen_Digits, .Nanoseconds_As_Microseconds, .Hexadecimal_No_Leading_Zero, .Time_Of_Day}) {
+		file, description := condition_file(serial_kind = kind)
+		for value in ([?]i64{0, 25_440, -1}) {
+			bytes := terms_bytes(integer_terms(1, .Less_Or_Equal, value))
+			condition, refusal, ok := writer_condition_of_terms(bytes[:], file, description)
+			testing.expectf(t, ok && condition.field_type == u32(Condition_Field_Type.Unsigned) && condition.integer == value, "the field of %v refuses %d: %v", kind, value, refusal)
+		}
+	}
 }
 
 // A Text field longer than the text of a condition takes a count of 64,
