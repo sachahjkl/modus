@@ -1010,7 +1010,11 @@ wiring_list_deliver :: proc "contextless" (work: ^Wiring_Work) {
 		// One line for each wiring, of a Wire as of a Start.
 		system.log(.Info, "root: wired the record output ", u64(plan.row.writer_index), " of ", system.Module_Name{system.name_of(plan.writer.name[:])}, " to ", plan.row.reader_end == .Asker ? "its asker " : "", system.Module_Name{system.name_of(plan.reader.name[:])}, ", wiring ", u64(plan.number))
 	}
-	asker.granted += {.Wirings}
+	// The recorded grant shows while the asker holds a wiring: a list whose
+	// rows all ended before they reached their processes gives none.
+	if asker.wirings_asked > 0 {
+		asker.granted += {.Wirings}
+	}
 }
 
 // wiring_end ends one wiring: the end words, written with one mapping of
@@ -1031,6 +1035,12 @@ wiring_end :: proc "contextless" (asker: ^Started, page: ^Wiring_Page, kept: ^Wi
 	}
 	if kept.asked_counted {
 		asker.wirings_asked -= 1
+		// The last wiring of the asker ended: the recorded grant ends with
+		// it, so Grants never shows a grant that holds nothing, and a
+		// Revoke of it is refused as the Revoke of any grant not held.
+		if asker.wirings_asked == 0 {
+			asker.granted -= {.Wirings}
+		}
 	}
 	wirings_running -= 1
 	wiring_page_release(asker, page, kept)

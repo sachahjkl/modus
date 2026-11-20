@@ -138,12 +138,27 @@ wiring_wait :: proc "contextless" (deadline: u64, index: u32 = 0) {
 	wait_end(&waiting, deadline)
 }
 
+// stream_index_read reads the index that the loader wrote in the variable
+// of a record stream (module.record_stream_indexes_write), with a volatile
+// load. No code of the module stores the index: with plain loads, the
+// optimizer can take the variable for its zeros, as it would take the
+// own hash (text.odin), or split it into one variable for each field, whose
+// symbol the tool then does not find, so the loader writes nothing. The
+// index then reads 0, and the record stream never finds its ends. A
+// volatile load is an access that the optimizer cannot see through, so it
+// keeps the variable whole, at its symbol.
+@(private = "file")
+stream_index_read :: proc "contextless" (index: ^u32) -> u32 {
+	return intrinsics.volatile_load(index)
+}
+
 // input_has_writer says if a record input has an end now, after the ends
 // that wait in the wiring ring are taken.
 input_has_writer :: proc "contextless" (stream: ^Record_Input($Record_Type, $wirings)) -> bool {
 	stream_ends_take()
+	index := stream_index_read(&stream.index)
 	for &end in stream_ends {
-		if end.command == .Reader_End && end.index == stream.index && stream.index != 0 {
+		if end.command == .Reader_End && end.index == index && index != 0 {
 			return true
 		}
 	}
@@ -469,8 +484,9 @@ ring_room :: proc "contextless" (end: ^Stream_End) -> output.Ring_Room {
 @(private = "file")
 output_ends_of :: proc "contextless" (state: ^Output_State, record_size: u32) -> (live: int) {
 	stream_ends_take()
+	index := stream_index_read(&state.index)
 	for &end in stream_ends {
-		if end.command != .Writer_End || end.index != state.index || state.index == 0 {
+		if end.command != .Writer_End || end.index != index || index == 0 {
 			continue
 		}
 		if !stream_end_open(&end, record_size) {
@@ -554,6 +570,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 	if output.compartment_size(u32(len(bytes))) == 0 {
 		return .Bad_Record
 	}
+	index := stream_index_read(&state.index)
 	room_loop: for {
 		if output_ends_of(state, u32(len(bytes))) == 0 {
 			state.discarded += 1
@@ -563,7 +580,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		// A ring whose condition the record fails takes nothing of this
 		// write, and holds the writer for nothing.
 		for &end in stream_ends {
-			if end.command == .Writer_End && end.index == state.index && end.opened {
+			if end.command == .Writer_End && end.index == index && end.opened {
 				end.skips = end.condition_given && !output.writer_condition_holds(end.condition, bytes)
 			}
 		}
@@ -574,7 +591,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		waiting := wait_begin()
 		held_by_choice, held_always, broken := false, false, false
 		for &end in stream_ends {
-			if end.command != .Writer_End || end.index != state.index || !end.opened {
+			if end.command != .Writer_End || end.index != index || !end.opened {
 				continue
 			}
 			// A ring that skips the record is not read: it holds nothing.
@@ -624,7 +641,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 	counts := output.Writer_Counts{written = state.written, discarded = state.discarded, refused = state.refused}
 	taken := false
 	for &end in stream_ends {
-		if end.command != .Writer_End || end.index != state.index || !end.opened {
+		if end.command != .Writer_End || end.index != index || !end.opened {
 			continue
 		}
 		output.writer_counts_write(end.ring_address, counts)
@@ -686,8 +703,9 @@ output_end :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)
 	}
 	output_ends_of(state, u32(size_of(Record_Type)))
 	status := output.Stream_Status.Ok
+	index := stream_index_read(&state.index)
 	for &end in stream_ends {
-		if end.command != .Writer_End || end.index != state.index || !end.opened {
+		if end.command != .Writer_End || end.index != index || !end.opened {
 			continue
 		}
 		ended_by := output.End_Word.None
@@ -763,10 +781,11 @@ Input_Item :: struct {
 // tells the writer.
 input_read :: proc "contextless" (stream: ^Record_Input($Record_Type, $wirings), into: ^Record_Type, deadline: u64 = WAIT_FOREVER) -> (item: Input_Item, status: output.Stream_Status) {
 	state := &stream.state
-	if state.index == 0 {
+	index := stream_index_read(&state.index)
+	if index == 0 {
 		return {}, .No_Writer
 	}
-	item, status = stream_read(.Reader_End, state.index, 0, ([^]u8)(into)[:size_of(Record_Type)], deadline)
+	item, status = stream_read(.Reader_End, index, 0, ([^]u8)(into)[:size_of(Record_Type)], deadline)
 	if status == .Ok && item.kind == .Record {
 		state.read += 1
 	}

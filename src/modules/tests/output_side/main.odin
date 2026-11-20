@@ -6,10 +6,14 @@
 //
 // 1. the end of its start with a refusal: the root service ends that
 //    wiring with the end word Refused;
-// 2. a word Closed for a number that names no wiring of it: the root
-//    service drops it;
-// 3. the end of the Wire with Taken, then Closed, then Closed again: the
-//    root service drops the third word.
+// 2. once it holds the end of the Wire, a word Closed for a number that
+//    names no wiring of it: the root service drops it, with one line;
+// 3. the end of the Wire with Taken, then Taken again, one probe and
+//    Closed: the root service drops the second Taken, with one line.
+//
+// The words 2 and 3 are in one ring, in that order, and the root service
+// reads them in order: the end word Side_Closed that the asker reads
+// comes from the Closed of 3, so the root service read each word before.
 //
 // Then it reads no command: its wiring ring fills, and the root service
 // refuses the next end for it with Busy. Its asker stops it.
@@ -116,8 +120,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	wiring = opened
 	first := command_wait()
 	answer(output.wiring_completion(first.tag, .Bad_State, errors.error_make(.Refused, .Wirings)))
-	answer(output.wiring_closed_completion(NUMBER_OF_NO_WIRING))
 	second := command_wait()
+	// The word for no wiring comes while this process holds the end of the
+	// Wire: the root service keeps the wiring ring mapped then, and reads
+	// the word. After the refusal of the only end, the root service
+	// unmaps the ring at the end of its pass, and drops each word that
+	// waits in it when a later end maps it again, with no line.
+	answer(output.wiring_closed_completion(NUMBER_OF_NO_WIRING))
 	answer(output.wiring_completion(second.tag, .Ok))
 	// The second answer comes before Closed, so the wiring runs when the
 	// root service reads it, whatever the order of its passes: it drops it.
@@ -127,7 +136,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// this side and kept the wiring for the asker.
 	probe_write(second)
 	answer(output.wiring_closed_completion(second.tag))
-	system.log(.Info, "output_side: refused the end of its start, wrote Closed for a number of no wiring, then Taken, Taken again, one probe and Closed for the end of a Wire; it reads no more commands: as it must")
+	system.log(.Info, "output_side: refused the end of its start; for the end of a Wire, wrote Closed for a number of no wiring, then Taken, Taken again, one probe and Closed; it reads no more commands: as it must")
 	deadline := hang_deadline()
 	for system.time() < deadline {
 		wait := system.wait_begin()

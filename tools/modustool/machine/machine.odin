@@ -2836,7 +2836,7 @@ scenario := [?]Step {
 	// Busy.
 	{kind = .Wait, text = "root: output_side refused its end of the wiring ", fails_on = "output_wiring: WRONG", any_order = true},
 	{kind = .Wait, text = "root: output_side wrote a word of its wiring ring that names no wiring of it: it is dropped, and each later one is counted until its stop", fails_on = "output_wiring: WRONG", any_order = true},
-	{kind = .Wait, text = "output_side: refused the end of its start, wrote Closed for a number of no wiring, then Taken, Taken again, one probe and Closed for the end of a Wire; it reads no more commands: as it must", fails_on = "output_side: WRONG", any_order = true},
+	{kind = .Wait, text = "output_side: refused the end of its start; for the end of a Wire, wrote Closed for a number of no wiring, then Taken, Taken again, one probe and Closed; it reads no more commands: as it must", fails_on = "output_side: WRONG", any_order = true},
 	{kind = .Wait, text = "root: output_side wrote a word of its wiring ring for the wiring ", fails_on = "output_wiring: WRONG", any_order = true},
 	{kind = .Wait, text = "output_wiring: the end that a side refused ended with Refused, the wiring that a side closed gave its probe then Side_Closed, and 32 ends filled the wiring ring that it does not read, then one more refused with Busy, its status and its error record and the budget unchanged: as it must", fails_on = "output_wiring: WRONG"},
 	{kind = .Wait, text = "output_wiring: the wiring of this asker gave the joined record of 0 and the probe 0, after ", fails_on = "output_wiring: WRONG"},
@@ -2851,8 +2851,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "output_counter: it writes one record of counts each 200 ms while a reader is wired, and waits for a reader"},
 	{kind = .Type, text = "record_outputs(\"output_counter\")"},
 	{kind = .Wait, text = "[console] 1 row of Record_Output"},
-	{kind = .Type, text = "output_counter.count"},
-	{kind = .Wait, text = "[console] error: output_counter declares no record output count; its record outputs are counts"},
+	// A name that no record output begins with: the completion would end a
+	// prefix of `counts` into the name, and the line would run the stream.
+	{kind = .Type, text = "output_counter.missing"},
+	{kind = .Wait, text = "[console] error: output_counter declares no record output or record input missing; its record outputs are counts"},
 	{kind = .Type, text = "sort(output_counter.counts, \"serial\")"},
 	{kind = .Wait, text = "[console] error: sort takes a Table; a Stream has no end: first(s, n) or table(s) makes one"},
 	{kind = .Type, text = "kept = output_counter.counts"},
