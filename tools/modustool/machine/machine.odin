@@ -3988,6 +3988,10 @@ key_name :: proc(character: u8) -> string {
 		return "bracket_left"
 	case ']':
 		return "bracket_right"
+	case '{':
+		return "shift-bracket_left"
+	case '}':
+		return "shift-bracket_right"
 	case '^':
 		return "shift-6"
 	case '>':
