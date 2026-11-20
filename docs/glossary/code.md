@@ -672,7 +672,7 @@ Do not use: configuration file, flake, script.
 
 A declaration reference is the value of a declaration at the console: the hash of the declaration, a chain of field names, and the records that a `with` composed with it.
 
-The console never evaluates the text of a declaration. `kernel.tools` gives a reference, and a command that needs its value, such as `build`, sends the reference to the evaluation process, which forces it. A variable keeps the reference, never a thunk, so a declaration of any size takes one of the 16 variables. It is not a pin, which is the hash that a declaration input resolved to.
+The console never evaluates the text of a declaration. `kernel.tools` gives a reference, and a command that needs its value, such as `recipes.build`, gives the reference to its service, which has an evaluation process force it. A variable keeps the reference, never a thunk, so a declaration of any size takes one of the 16 variables. It is not a pin, which is the hash that a declaration input resolved to.
 
 The design: `src/md/features/declarations.md`, "One parser, one lazy evaluator, two modes".
 
@@ -682,7 +682,7 @@ Do not use: handle (for this), pointer, thunk (for this).
 
 A plan is the typed record that an evaluation gives and the root service applies: the hashes of modules, start rows, wirings, rows of the disk grant table, settings and a substitution policy.
 
-A plan names each object by its hash, so the root service never resolves a name. `plan { … }` is a value with no effect; `apply(p)` shows the difference of its grants against the current applied plan, then applies it. A plan runs nothing, and it is no text.
+A plan names each object by its hash, so the root service never resolves a name. `plan { … }` is a value with no effect; `plans.apply(p)` shows the difference of its grants against the current applied plan, then applies it. A plan runs nothing, and it is no text.
 
 The design: `src/md/features/declarations.md`.
 
@@ -690,9 +690,9 @@ Do not use: configuration, profile, manifest.
 
 ### Applied plan
 
-An applied plan is a plan that the root ring command `Apply` wrote in the store `plans` of a principal, with its number.
+An applied plan is a plan that the root ring command `Apply` wrote in the store `applied_plans` of a principal, with its number.
 
-Each `apply` writes the number after the highest one, then names it in the row "current plan" of the disk grant table: that write makes it current. `rollback()` names the applied plan before it again, and writes no plan. The applied plans that the store keeps are roots of the garbage collector of `module_files`. It is not a generation, which numbers a commit.
+Each `plans.apply` writes the number after the highest one, then names it in the row "current plan" of the disk grant table: that write makes it current. `plans.rollback()` names the applied plan before it again, and writes no plan. The applied plans that the store keeps are roots of the garbage collector of `module_files`. It is not a generation, which numbers a commit.
 
 The design: `src/md/features/declarations.md`.
 
@@ -720,19 +720,19 @@ Do not use: input (for this), dependency, flake input.
 
 ### Pin
 
-A pin is the tree hash that a declaration input resolved to, with the identity of its state in its format, kept in the entry `pins` of the source tree of a project or in a plan.
+A pin is the tree hash that a declaration input resolved to, with the identity of its state in its format, kept in `pins.lex` of the source tree of a project or in a plan.
 
-An evaluation reads the pins and never the network, so one declaration gives one plan. The tree hash of a project covers its pins, so its inputs do not move on another machine. `update()` runs the resolver of each input again and writes new pins; the store keeps the tree before as a version. `inputs` shows each pin with its publisher and its hash. No process parses a pin. It is not a pinned key of TLS.
+`pins.lex` is a record literal of Lex, one line for each input, so a review sees each input that moved. An evaluation reads the pins and never the network, so one declaration gives one plan. The tree hash of a project covers `pins.lex`. Only `projects.update` writes it; `projects.inputs(kernel)` shows each pin. It is not a pinned key of TLS.
 
 The design: `src/md/features/declarations.md`.
 
-Do not use: lock file, lock entry, pinned key (for this).
+Do not use: lock file, lock entry, `flake.lock`, pinned key (for this).
 
 ### Source module
 
-A source module is a module of the catalog declaration that turns a reference of one format of versions into a modus tree: a resolver that `update()` runs, and a fetch recipe.
+A source module is a module of the catalog declaration that turns a reference of one format of versions into a modus tree: a resolver that `projects.update` runs, and a fetch recipe.
 
-Git, Jujutsu, Mercurial, Pijul and an archive at an address are each one source module: `catalog.git.source(address, branch)`, `catalog.jj.source(address, change)`. The resolver has a network grant for the host of the address only; the fetch recipe refuses a tree whose hash is not the hash of the pin. A new format is one more module, with no change of Lex or of `update()`. It is not a substituter, which gives the output of a recipe.
+Git, Jujutsu, Mercurial, Pijul and an archive at an address are each one source module: `catalog.git.source(address, branch)`, `catalog.jj.source(address, change)`. The resolver has a network grant for the host of the address only; the fetch recipe refuses a tree whose hash is not the hash of the pin. A new format is one more module, with no change of Lex or of `projects.update`. It is not a substituter, which gives the output of a recipe.
 
 The design: `src/md/features/declarations.md`.
 
@@ -742,7 +742,7 @@ Do not use: fetcher plugin, VCS backend, remote.
 
 A release pointer is a record that a publisher signs: a name, a number that only grows, the hash of a tree, and the signature.
 
-`follow(publisher, name)` takes the newest release pointer of that name, and `update()` asks the sources of the substitution policy for it. Any source can give it, because the signature is checked against the key of the publisher. It does the work of a channel, with no server of authority. It is not a release of the changelog.
+`follow(publisher, name)` takes the newest release pointer of that name, and `projects.update` asks the sources of the substitution policy for it. Any source can give it, because the signature is checked against the key of the publisher. It does the work of a channel, with no server of authority. It is not a release of the changelog.
 
 The design: `src/md/features/declarations.md`.
 
@@ -750,19 +750,49 @@ Do not use: channel, tag, latest version.
 
 ### Project
 
-A project is a declaration of a source tree, its declaration inputs, its outputs and its console: `project { source = here(), inputs = {…}, outputs = {…}, console = {…} }`.
+A project is a tree that a principal shares: `project.lex`, its declaration, `pins.lex`, its pins, and its sources.
 
-`project` is the function `modus.project` of the catalog declaration under a short name: it adds no mechanism. `build(p)` realises `outputs.default`, `build(p.tools)` one output, and `enter(p)` starts a child console with the field `console` (`docs/glossary/desktop.md`, "Console of a project"). It is not the work of the repository of modus, which the group Project of this glossary names.
+`project.lex` holds `project { source = here(), inputs = {…}, outputs = {…}, console = {…} }`. The tree hash covers both files, so a project given by its hash is wholly fixed. `recipes.build(p)` realises `outputs.default`, `recipes.build(p.tools)` one output, and `projects.enter(p)` starts its child console (`docs/glossary/desktop.md`, "Console of a project"). It is not the work of the repository of modus, which the group Project of this glossary names.
 
-The design: `src/md/features/declarations.md`.
+The design: `src/md/features/declarations.md`, "Projects".
 
 Do not use: package, flake, workspace.
+
+### Plans service
+
+The plans service is the service `plans`: it gives the commands `plans.apply`, `plans.difference` and `plans.rollback`.
+
+It holds the right to send the root ring commands `Apply` and `Rollback` for the principal of the caller, and for no other. The root service computes the difference of a plan itself, so `plans` can hide no grant. It reads a plan through an evaluation process that it starts. The applied plans are in the store `applied_plans`.
+
+The design: `src/md/features/declarations.md`, "The services of the declarations".
+
+Do not use: declarations service, system manager.
+
+### Projects service
+
+The projects service is the service `projects`: it gives the commands `projects.update`, `projects.enter` and `projects.inputs`.
+
+`projects.update` runs the resolvers of the source modules and writes `pins.lex` in the store of the project, which the caller gives with Write. `projects.enter` asks the root service for a child console. In that console, a command with no project acts on the project of `here()`: `projects.update()`. It acts for the principal of the caller, and cannot apply a system.
+
+The design: `src/md/features/declarations.md`, "The services of the declarations".
+
+Do not use: package manager, project manager.
+
+### Recipes service
+
+The recipes service is the service `recipes`: it gives the commands `recipes.build` and `recipes.provenance`.
+
+It asks the root service to realise a recipe, from a realisation or by a build in a sandbox, and applies the substitution policy of the principal of the caller. It reads a declaration through an evaluation process that it starts. It cannot apply a system or write pins. It is not a builder, which is the module that a build runs.
+
+The design: `src/md/features/declarations.md`, "The services of the declarations"; `src/md/features/recipes.md`.
+
+Do not use: build daemon, builder (for this).
 
 ### Recipe
 
 A recipe is a builder hash, a table of the names and hashes of its inputs, and a typed argument record: it names how an output is made.
 
-The recipe hash, its identity, is the BLAKE3 hash of the builder hash, the inputs sorted by name, and the bytes of the argument record. `recipe(builder, arguments)` is a lazy value of Lex; forcing it gives its hash and builds nothing. `build` realises it, from a realisation or in a sandbox. It is a record, not a script.
+The recipe hash, its identity, is the BLAKE3 hash of the builder hash, the inputs sorted by name, and the bytes of the argument record. `recipe(builder, arguments)` is a lazy value of Lex; forcing it gives its hash and builds nothing. `recipes.build` realises it, from a realisation or in a sandbox. It is a record, not a script.
 
 The design: `src/md/features/recipes.md`.
 
@@ -812,7 +842,7 @@ Do not use: downloader, fixed-output derivation.
 
 The substitution policy is the typed record `Substitution` of a plan that says where a realisation can come from: its sources, its trusted signers and its mode.
 
-For each recipe, a machine uses its own realisation, else a realisation that a source gives and a trusted signer signed, else a build in the sandbox. The modes are `Prefer_Cache`, `Build_Only`, `Cache_Only` and `Verify`. Each principal has its own, in its plan; the named argument `build(kernel, substitution = {…})` changes it for one build.
+For each recipe, a machine uses its own realisation, else a realisation that a source gives and a trusted signer signed, else a build in the sandbox. The modes are `Prefer_Cache`, `Build_Only`, `Cache_Only` and `Verify`. Each principal has its own, in its plan; the named argument `recipes.build(kernel, substitution = {…})` changes it for one build.
 
 The design: `src/md/features/recipes.md`, "The substitution policy".
 

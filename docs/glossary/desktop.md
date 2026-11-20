@@ -986,7 +986,7 @@ Do not use: WebGPU implementation, software WebGPU.
 
 The console of a project is the field `console` of a project: the modules that a child console of the project connects, and the stores of the principal that it grants, with their rights.
 
-Example: `console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Write)] }`. `modules` is a list of module values, and the name of a module is the name of its commands, as with `connect`. `enter(p)` starts a child console that connects each module, by its hash, as `connect` does, and holds a connection to each store; `exit()` stops it. Nothing is installed, and no other console sees these commands. It is not a set of environment variables, and not the context of a process.
+Example: `console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Write)] }`. `modules` is a list of module values, and the name of a module is the name of its commands, as with `connect`. `projects.enter(p)` starts a child console that connects each module, by its hash, as `connect` does, and holds a connection to each store; `exit()` stops it. Nothing is installed, and no other console sees these commands. It is not a set of environment variables, and not the context of a process.
 
 The design: `src/md/features/declarations.md`, "The console of a project".
 
@@ -1036,7 +1036,7 @@ Do not use: promise, future, lazy value (for this).
 
 A record literal is a record written in Lex as `{ field = value, … }`, which takes the type of the parameter or the field that receives it.
 
-A field that the type does not have is refused, and so is a missing field with no default, each with an error that names the field and the type. A field whose type is a table of names, such as `outputs`, takes any name. A literal with no receiver has no type, and the console refuses it. Example: `build(kernel, substitution = { mode = .Verify })`.
+A field that the type does not have is refused, and so is a missing field with no default, each with an error that names the field and the type. A field whose type is a table of names, such as `outputs`, takes any name. A literal with no receiver has no type, and the console refuses it. Example: `recipes.build(kernel, substitution = { mode = .Verify })`.
 
 The design: `src/md/features/declarations.md`, "A record literal is typed by its use".
 
@@ -1054,7 +1054,7 @@ Do not use: keyword (for this), reserved name.
 
 ### Named argument
 
-A named argument is an argument of a call of Lex written with the name of its parameter: `build(kernel, substitution = { mode = .Verify })`.
+A named argument is an argument of a call of Lex written with the name of its parameter: `recipes.build(kernel, substitution = { mode = .Verify })`.
 
 It follows the rule of the record literal: the parameters of the call are the fields of a record. An unknown name, a parameter given twice, and a missing parameter with no default are refused before the call. It replaces an option after `with`, which composes two records only. Inside `where`, `=` is a comparison, never a named argument.
 

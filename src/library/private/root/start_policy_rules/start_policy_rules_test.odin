@@ -12,6 +12,56 @@ import "modus:contract/start_list"
 @(private = "file")
 RUNS :: Start_Facts{sender_runs = true, name_in_image = true}
 
+// The step before a Start of a start policy with a list. Refused first,
+// each with its status and its record, the lent numbers closed, and no
+// count changed: each name that the root service starts by its own
+// procedure, also when the facts allow it and from the disk; a refusal of
+// the facts; the restart bound from the disk. The same refusals with no
+// list close nothing. A Start with a list that the step allows comes last,
+// with its count.
+@(test)
+a_start_with_a_list_is_refused_before_any_start :: proc(t: ^testing.T) {
+	start := u32(root_ring.Root_Command.Start)
+	counts: Name_Counts
+	for procedure in start_list.Root_Procedure {
+		if procedure == .None {
+			continue
+		}
+		name := start_list.ROOT_PROCEDURE_NAMES[procedure]
+		for from_disk in ([2]bool{false, true}) {
+			step := start_step(true, RUNS, &counts, from_disk, name)
+			testing.expect_value(t, step, Start_Step{status = .Bad_Operation, refusal = errors.ring_fail(start, .Unsupported, .Wiring_Rows, 2), lent_close = true})
+			testing.expect_value(t, counts, Name_Counts{})
+		}
+		// With no list, the procedure of the name runs.
+		testing.expect_value(t, start_step(false, RUNS, &counts, false, name).status, op.Status.Ok)
+	}
+	runs := RUNS
+	runs.name_runs = true
+	step := start_step(true, runs, &counts, true, "wired_writer")
+	testing.expect_value(t, step, Start_Step{status = .Bad_State, refusal = errors.ring_fail(start, .Exists, .Processes, 1), lent_close = true})
+	testing.expect_value(t, counts, Name_Counts{})
+	testing.expect_value(t, start_step(false, runs, &counts, true, "wired_writer").lent_close, false)
+
+	// The bound of the restarts from the disk: the name has had each of
+	// its starts, and one more is refused, with its list closed.
+	full: Name_Counts
+	full[0].name_length = copy(full[0].name[:], "wired_writer")
+	full[0].starts = start_list.RESTART_LIMIT + 1
+	before := full
+	step = start_step(true, RUNS, &full, true, "wired_writer")
+	testing.expect_value(t, step.status, op.Status.No_Budget)
+	testing.expect_value(t, step.refusal, restart_record(start_list.RESTART_LIMIT + 1, false))
+	testing.expect(t, step.lent_close && step.counted == nil, "a refused restart keeps its lent numbers or a count")
+	testing.expect_value(t, full, before)
+	testing.expect_value(t, start_step(false, RUNS, &full, true, "wired_writer").lent_close, false)
+
+	step = start_step(true, RUNS, &counts, true, "wired_writer")
+	testing.expect_value(t, step.status, op.Status.Ok)
+	testing.expect(t, !step.lent_close && step.counted == &counts[0], "an allowed start closes its list or has no count")
+	testing.expect_value(t, start_step(true, RUNS, &counts, false, "wired_writer"), Start_Step{status = .Ok})
+}
+
 // Each refusal of a Start of a start policy, first: a start of a start
 // policy by itself gives Reserved, also from a sender that runs and for a
 // name that runs; a sender that no longer runs gives Absent; a name that

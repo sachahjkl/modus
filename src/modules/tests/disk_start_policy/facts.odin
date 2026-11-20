@@ -103,3 +103,16 @@ Not_Started_Without_Screen :: struct {
 Started :: struct {
 	started_process: value_kinds.Module_Name_Field,
 }
+
+// The root service refused the list page of this start policy, and each
+// Start with a list.
+@(log_fact = "disk_start_policy: its list page, and a Start with a list of input, of the console that runs and of wired_reader: refused, each with its status and its error record, twice, and nothing started: as it must")
+Wiring_Refused :: struct {}
+
+// One answer of the wiring refusals differs from the refusal: its case
+// (1: the list page) and its status.
+@(log_fact = "disk_start_policy: WRONG: the case {case_number} of the wiring refusals gave the status {status}")
+Wiring_Wrong :: struct {
+	case_number: u32,
+	status:      op.Status,
+}
