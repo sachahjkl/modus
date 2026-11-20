@@ -26,7 +26,7 @@ DEMONSTRATION_VERDICTS := [2]string{"as it must", "WRONG"}
 // its member, or its number when it names none.
 @(private = "file")
 status_text :: proc(word: u64) -> string {
-	if name, named := op.contract_enum_member_name(.Status, word); named {
+	if name, named := module.contract_enum_member_name(.Status, word); named {
 		return name
 	}
 	return fmt.tprint(word)
@@ -36,7 +36,7 @@ status_text :: proc(word: u64) -> string {
 // the name of its member, or its number when it names none.
 @(private = "file")
 kind_text :: proc(word: u64) -> string {
-	if name, named := op.contract_enum_member_name(.Error_Kind, word); named {
+	if name, named := module.contract_enum_member_name(.Error_Kind, word); named {
 		return name
 	}
 	return fmt.tprint(word)
@@ -45,7 +45,7 @@ kind_text :: proc(word: u64) -> string {
 // unit_text gives the words of the unit of an error record in a sentence.
 @(private = "file")
 unit_text :: proc(word: u64) -> string {
-	if name, named := op.contract_enum_member_name(.Error_Unit, word); named {
+	if name, named := module.contract_enum_member_name(.Error_Unit, word); named {
 		return name
 	}
 	return fmt.tprint(word)
