@@ -14,112 +14,14 @@ import "modustool:foundation"
 // root, and makes a module file of their table: a host test does not
 // depend on a build, or on the age of a module file that a build left.
 // Each sentence is compared with the parts of the old line written by
-// sentence.format, at the edges of each field.
-
-// A value of one field of a fact for these tests: an integer (the bits of
-// a signed one), a text of a name, or a whole hash.
-@(private)
-Fact_Test_Value :: union {
-	u64,
-	string,
-	[module.HASH_SIZE]u8,
-}
-
-@(private)
-Fact_Test_Field :: struct {
-	name:  string,
-	value: Fact_Test_Value,
-}
+// sentence.format, at the edges of each field. The helpers are in
+// fact_test_helpers_test.odin.
 
 // root_facts_file gives a module file with the table Facts of the root
 // service, made from the extraction of its sources.
 @(private = "file")
 root_facts_file :: proc(t: ^testing.T) -> (file: []u8, ok: bool) {
 	return facts_file_of_folder(t, foundation.SYSTEM_MODULE_SOURCES + "root")
-}
-
-// facts_file_of_folder gives a module file with the table Facts of the
-// fact types that the calls in the sources of one folder write, made from
-// the extraction of those sources: a host test does not depend on a build.
-@(private)
-facts_file_of_folder :: proc(t: ^testing.T, folder: string) -> (file: []u8, ok: bool) {
-	paths, listed := foundation.files_with_suffix(folder, ".odin")
-	if !testing.expectf(t, listed, "the sources of %s cannot be listed", folder) {
-		return nil, false
-	}
-	sources := make([dynamic]Fact_Source, context.temp_allocator)
-	for path in paths {
-		if strings.has_suffix(path, "_test.odin") {
-			continue
-		}
-		source, readable := foundation.read_file(path)
-		if !testing.expectf(t, readable, "the source %s cannot be read", path) {
-			return nil, false
-		}
-		append(&sources, Fact_Source{path = path, source = string(source)})
-	}
-	facts, extracted := facts_of_sources(sources[:])
-	if !testing.expectf(t, extracted && len(facts) > 0, "the extraction gives no fact type of %s", folder) {
-		return nil, false
-	}
-	description: Module_Description
-	if !testing.expectf(t, facts_merge(&description, facts), "the fact types of %s do not merge", folder) {
-		return nil, false
-	}
-	return facts_module_file(description), true
-}
-
-// facts_module_file writes the tables Records, Fields, Facts and Strings of
-// a description, as the conversion writes them: the row 0 of each table is
-// empty, and the facts are sorted by key (facts_merge).
-@(private = "file")
-facts_module_file :: proc(description: Module_Description) -> []u8 {
-	TABLES :: module.TABLE_COUNT
-	file := make([dynamic]u8, size_of(module.Header) + TABLES * size_of(module.Table_Entry), context.temp_allocator)
-	directory: [TABLES]module.Table_Entry
-	strings_table := make([dynamic]u8, context.temp_allocator)
-	append(&strings_table, 0)
-	put :: proc(table: ^[dynamic]u8, text: string) -> (offset, count: u32) {
-		offset = u32(len(table))
-		append(table, text)
-		return offset, u32(len(text))
-	}
-	records := make([dynamic]module.Record, context.temp_allocator)
-	fields := make([dynamic]module.Field, context.temp_allocator)
-	facts := make([dynamic]module.Fact, context.temp_allocator)
-	append(&records, module.Record{})
-	append(&fields, module.Field{})
-	append(&facts, module.Fact{})
-	for record in description.records {
-		row := module.Record{size = record.size, first_field = u32(len(fields)), field_count = u32(len(record.fields))}
-		row.name_offset, row.name_count = put(&strings_table, record.name)
-		append(&records, row)
-		for item in record.fields {
-			field := module.Field{offset = item.offset, type = u8(item.type), unsigned = item.unsigned, integer_unit = item.integer_unit, detail = item.detail, kind = u8(item.kind), contract_enum = u8(item.contract_enum)}
-			field.name_offset, field.name_count = put(&strings_table, item.name)
-			append(&fields, field)
-		}
-	}
-	for fact in description.facts {
-		row := module.Fact{key = fact.key, record = fact.record_index}
-		row.template_offset, row.template_count = put(&strings_table, fact.template)
-		row.package_offset, row.package_count = put(&strings_table, fact.package_name)
-		append(&facts, row)
-	}
-	add :: proc(file: ^[dynamic]u8, directory: ^[module.TABLE_COUNT]module.Table_Entry, kind: module.Table_Kind, bytes: []u8, count, record_size: u32) {
-		for len(file) % 8 != 0 {
-			append(file, 0)
-		}
-		directory[kind] = {offset = u64(len(file)), count = count, record_size = record_size}
-		append(file, ..bytes)
-	}
-	add(&file, &directory, .Records, ([^]u8)(raw_data(records[:]))[:len(records) * size_of(module.Record)], u32(len(records)), size_of(module.Record))
-	add(&file, &directory, .Fields, ([^]u8)(raw_data(fields[:]))[:len(fields) * size_of(module.Field)], u32(len(fields)), size_of(module.Field))
-	add(&file, &directory, .Facts, ([^]u8)(raw_data(facts[:]))[:len(facts) * size_of(module.Fact)], u32(len(facts)), size_of(module.Fact))
-	add(&file, &directory, .Strings, strings_table[:], u32(len(strings_table)), 1)
-	(^module.Header)(&file[0])^ = {magic = module.MAGIC, version = module.VERSION, header_size = size_of(module.Header), machine = .X86_64, table_count = TABLES}
-	(^[TABLES]module.Table_Entry)(&file[size_of(module.Header)])^ = directory
-	return file[:]
 }
 
 // root_fact_render gives the sentence of the fact type root.<type_name>
@@ -129,72 +31,9 @@ root_fact_render :: proc(t: ^testing.T, file: []u8, type_name: string, values: [
 	return fact_test_render(t, file, "root", type_name, values)
 }
 
-// fact_test_render gives the sentence of the fact type
-// <package_name>.<type_name> with the values of its fields, by the one
-// render of the contract. A field that the test names and the record does
-// not have, a value of another form than its field, and a refused render
-// fail the test.
-@(private)
-fact_test_render :: proc(t: ^testing.T, file: []u8, package_name, type_name: string, values: []Fact_Test_Field) -> string {
-	key, bytes, made := fact_test_record(t, file, package_name, type_name, values)
-	if !made {
-		return ""
-	}
-	buffer: [module.FACT_SENTENCE_BYTES_MOST]u8
-	count, _, refusal := module.fact_sentence_write(file, key, bytes, buffer[:], nil)
-	testing.expectf(t, refusal == .None, "the fact %s.%s is refused: %v", package_name, type_name, refusal)
-	return strings.clone(string(buffer[:count]), context.temp_allocator)
-}
-
-// fact_test_record gives the key of the fact type <package_name>.<type_name>
-// and the bytes of its record with the values of its fields, the other
-// bytes zero. made is false, and the test fails, for a fact type that the
-// file lacks and a field that its record lacks.
-@(private)
-fact_test_record :: proc(t: ^testing.T, file: []u8, package_name, type_name: string, values: []Fact_Test_Field) -> (key: u64, bytes: []u8, made: bool) {
-	key = fact_key(package_name, type_name)
-	_, _, description, found := module.fact_find(file, key)
-	if !testing.expectf(t, found, "the module file has no fact type %s.%s", package_name, type_name) {
-		return key, nil, false
-	}
-	bytes = make([]u8, description.size, context.temp_allocator)
-	for value in values {
-		item: module.Field
-		has_field := false
-		for number in 0 ..< description.field_count {
-			candidate, candidate_ok := module.field(file, description, number)
-			if candidate_ok && module.string_at(file, candidate.name_offset, candidate.name_count) == value.name {
-				item, has_field = candidate, true
-			}
-		}
-		if !testing.expectf(t, has_field, "the fact type %s has no field %s", type_name, value.name) {
-			return key, nil, false
-		}
-		place := bytes[item.offset:][:module.field_size(item)]
-		switch written in value.value {
-		case u64:
-			for index in 0 ..< len(place) {
-				place[index] = u8(written >> (8 * u64(index)))
-			}
-		case string:
-			testing.expectf(t, item.type == u8(module.Type.Text) && len(written) <= len(place), "the field %s of %s takes no text of %d bytes", value.name, type_name, len(written))
-			copy(place, written)
-		case [module.HASH_SIZE]u8:
-			hash := written
-			testing.expectf(t, len(place) == len(hash), "the field %s of %s takes no hash", value.name, type_name)
-			copy(place, hash[:])
-		}
-	}
-	return key, bytes, true
-}
-
 // root_old_line gives the line that the root service wrote before the
 // fact, with the parts of its call of system.log.
-@(private = "file")
-root_old_line :: proc(parts: ..sentence.Part) -> string {
-	buffer: [module.FACT_SENTENCE_BYTES_MOST]u8
-	return strings.clone(sentence.format(buffer[:], ..parts), context.temp_allocator)
-}
+root_old_line :: line_of_before
 
 // Each fact type of the root service writes the line of before, byte for
 // byte, at the edges of its fields: a process name of 31 bytes, the
@@ -281,4 +120,24 @@ the_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing.T) {
 		expect_line(t, root_fact_render(t, file, "Grant_Revoked_Holdings", {{"holder", process}, {"grant", grant}, {"holdings", u64(1)}}), root_old_line("root: revoked the grant ", grant, " of ", sentence.Module_Name{process}, ", holdings ended: ", u64(1)))
 	}
 	expect_line(t, root_fact_render(t, file, "Debug_Right_Given", {{"debugger", process}, {"target", service}, {"caller", remote_name}, {"principal", principal}}), root_old_line("root: gave ", sentence.Module_Name{process}, " the right to debug ", sentence.Module_Name{service}, " for ", sentence.Module_Name{remote_name}, ", for principal ", principal))
+}
+
+// Each fact type of the entropy lines of the root service writes the line
+// of before, byte for byte: the counts 0, 1 and max(u64), and the deadline
+// of 60 seconds that the reads have.
+@(test)
+the_entropy_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing.T) {
+	file, ok := root_facts_file(t)
+	if !ok {
+		return
+	}
+	counts := [3]u64{0, 1, max(u64)}
+	for count in counts {
+		facts_expect_line(t, root_fact_render(t, file, "Entropy_Answer_Out_Of_Order", {{"answered_read", count}, {"tagged_read", max(u64) - count}}), line_of_before("root: the entropy service answered the read ", count, " with the tag of the read ", max(u64) - count, ": the answer adds nothing"))
+		facts_expect_line(t, root_fact_render(t, file, "Entropy_Reads_Late", {{"deadline_seconds", u64(60)}, {"late_reads", count}}), line_of_before("root: the entropy device did not answer a read in ", u64(60), " seconds: ", count, " reads count as refused, and the entropy service stops: no more bytes of the device"))
+		facts_expect_line(t, root_fact_render(t, file, "Entropy_Reads_Late", {{"deadline_seconds", count}, {"late_reads", u64(2)}}), line_of_before("root: the entropy device did not answer a read in ", count, " seconds: ", u64(2), " reads count as refused, and the entropy service stops: no more bytes of the device"))
+		facts_expect_line(t, root_fact_render(t, file, "Fresh_Bytes_Reads_Refused_In_A_Row", {{"refused_reads", count}}), line_of_before("root: the entropy device gave ", count, " refused reads in a row: no more fresh bytes for the running processes"))
+		facts_expect_line(t, root_fact_render(t, file, "Fresh_Bytes_Read_Added_Nothing", {{"refused_reads", count}}), line_of_before("root: a read of the entropy device for the fresh bytes added nothing: the pages keep their bytes; refused reads in a row: ", count))
+		facts_expect_line(t, root_fact_render(t, file, "Entropy_Service_Stopped_Early", {{"answered_reads", count}, {"start_reads", u64(2)}}), line_of_before("root: the entropy service stopped after ", count, " of ", u64(2), " reads: the random seed of the system has the bytes of those reads only"))
+	}
 }
