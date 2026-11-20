@@ -311,9 +311,21 @@ budget_settled_wait :: proc "contextless" (wanted: u64, case_name: string) {
 // ends each of its wirings, and checks the status, then their count. With
 // no wiring held, this process holds no grant wirings: the revocation is
 // refused as the revocation of any grant not held, and checked whole.
+//
+// Before that refusal, the end of the last wiring must be over in the
+// root service: it writes the end word, then ends the grant and frees the
+// wiring page of this asker, in one call of its single pass. A process
+// that read the end word can read its budget while that call still runs
+// on another processor, and see the page come back during the Revoke. A
+// Grants that shows no grant was served after that call, so the budget
+// that this process reads after it no longer moves: the pages that the
+// sides hold come back only when the sides close them.
 @(private = "file")
 grant_wirings_revoke :: proc "contextless" (wanted: int) {
 	packed := system.name_pack("output_wiring")
+	if wanted == 0 {
+		grant_wirings_gone_wait("the grant wirings stayed after the last wiring of this process ended; the grants")
+	}
 	before := budget_pages()
 	status, revoked := root_call(.Revoke, {packed[0], packed[1], packed[2], packed[3], u64(system.Root_Grant.Wirings), 0, 0})
 	if wanted == 0 {
@@ -774,8 +786,9 @@ side_case :: proc "contextless" () {
 	}
 	// That wiring was the only one of this process: limit_case revoked
 	// its own, and the wirings of the cases before ended with their
-	// processes. The root service writes the end word and ends the grant
-	// in one call, so the grant is gone when the word is read.
+	// processes. The root service writes the end word before it ends the
+	// grant and frees the wiring page, so the revocation first waits for
+	// the end of that call (grant_wirings_revoke).
 	grant_wirings_revoke(0)
 
 	numbers: [output.WIRINGS_OF_AN_ASKER_MOST]u32
@@ -804,9 +817,8 @@ side_case :: proc "contextless" () {
 	}
 	// This reader said Closed in turn, before asker_read gave Side_Closed,
 	// and the wiring ends with the two Closed words. It was the only wiring
-	// of this process, so the grant ends with it: the wait reads the grants
-	// until the root service read the word, then the revocation is refused.
-	grant_wirings_gone_wait("the grant wirings stayed after the two sides of the only wiring of this process closed; the grants")
+	// of this process, so the grant ends with it: the revocation waits
+	// until the root service read the word, then it is refused.
 	grant_wirings_revoke(0)
 	for _ in 0 ..< SIDE_RING_CAPACITY {
 		if held == len(numbers) {
