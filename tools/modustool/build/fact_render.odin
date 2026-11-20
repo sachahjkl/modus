@@ -10,16 +10,17 @@ import "modustool:foundation"
 
 // The render of the serial line of a log fact on the host
 // (src/md/features/log_facts.md, "The serial port"). The kernel writes a
-// fact as bytes: "#", the first 8 bytes of the module hash, ":", the fact
-// key, and the value bytes up to their last byte that is not zero, in
-// hexadecimal (op.log_fact_line). The tool holds each module file that it
-// built: it finds the module by the 8 bytes, the fact type by its key, and
+// fact as bytes: "#", the module tag (the first bytes of the module hash),
+// ":", the key tag (the high bytes of the fact key), and the value bytes up
+// to their last byte that is not zero, with each run of zero bytes as
+// letters (op.log_fact_line). The tool holds each module file that it
+// built: it finds the module by its tag, the fact type by its key tag, and
 // writes the fact template with the values. A line whose module, fact or
 // description it does not find stays raw, as a reader with no module file
 // shows it.
 
 // The bytes of the module hash that the line of a fact names.
-FACT_LINE_HASH_BYTES :: 8
+FACT_LINE_MODULE_TAG_BYTES :: op.LOG_FACT_LINE_MODULE_HASH_BYTES
 
 // One module file of a catalog: its hash, and its bytes once a line names it.
 Fact_Catalog_Module :: struct {
@@ -37,16 +38,16 @@ Fact_Catalog :: struct {
 }
 
 // fact_catalog_add adds a module to a catalog, by its file or by its path
-// and its hash. It refuses a module whose hash has the first 8 bytes of
-// the hash of another one: a line of a fact names a module by them.
+// and its hash. It refuses a module whose hash has the module tag of the
+// hash of another one: a line of a fact names a module by its tag.
 fact_catalog_add :: proc(catalog: ^Fact_Catalog, hash: [module.HASH_SIZE]u8, path: string, file: []u8) -> (problem: string) {
-	prefix := hash_prefix_of(hash)
+	tag := module_tag_of(hash)
 	for item in catalog.modules {
 		if item.hash == hash {
 			return ""
 		}
-		if hash_prefix_of(item.hash) == prefix {
-			return fmt.tprintf("two module files have hashes that start with the same %d bytes, %x: the line of a log fact names its module by them", FACT_LINE_HASH_BYTES, prefix[:])
+		if module_tag_of(item.hash) == tag {
+			return fmt.tprintf("two module files have hashes that start with the same %d bytes, the module tag %x: the line of a log fact names its module by it", FACT_LINE_MODULE_TAG_BYTES, tag[:])
 		}
 	}
 	if catalog.allocator.procedure == nil {
@@ -61,7 +62,7 @@ fact_catalog_add :: proc(catalog: ^Fact_Catalog, hash: [module.HASH_SIZE]u8, pat
 
 // fact_catalog_of_build gives the catalog of each module file of the
 // build, with no file read but for its hash. problem: two hashes share
-// their first 8 bytes, or a file cannot be read.
+// their module tag, or a file cannot be read.
 fact_catalog_of_build :: proc(allocator: runtime.Allocator) -> (catalog: Fact_Catalog, problem: string) {
 	catalog.allocator = allocator
 	for build in foundation.module_builds {
@@ -77,11 +78,35 @@ fact_catalog_of_build :: proc(allocator: runtime.Allocator) -> (catalog: Fact_Ca
 	return catalog, ""
 }
 
-// fact_catalog_file gives the module file whose hash starts with prefix,
-// read one time. nil: no module of the catalog has it.
-fact_catalog_file :: proc(catalog: ^Fact_Catalog, prefix: [FACT_LINE_HASH_BYTES]u8) -> []u8 {
+// fact_catalog_add_modules adds modules from outside the build to a
+// catalog, as the outside modules of a test disk, which run beside the
+// modules of the build. problem: the module tag of one of them is the tag
+// of another module, so a line of a fact of one would render as a fact of
+// the other.
+fact_catalog_add_modules :: proc(catalog: ^Fact_Catalog, modules: []Fact_Catalog_Module) -> (problem: string) {
+	for item in modules {
+		if problem = fact_catalog_add(catalog, item.hash, item.path, item.file); problem != "" {
+			return problem
+		}
+	}
+	return ""
+}
+
+// outside_module_tags_check refuses outside modules whose module tag is
+// the tag of a module of the build or of another of them.
+outside_module_tags_check :: proc(modules: []Fact_Catalog_Module) -> (problem: string) {
+	catalog, catalog_problem := fact_catalog_of_build(context.temp_allocator)
+	if catalog_problem != "" {
+		return catalog_problem
+	}
+	return fact_catalog_add_modules(&catalog, modules)
+}
+
+// fact_catalog_file gives the module file whose hash has the module tag
+// `tag`, read one time. nil: no module of the catalog has it.
+fact_catalog_file :: proc(catalog: ^Fact_Catalog, tag: [FACT_LINE_MODULE_TAG_BYTES]u8) -> []u8 {
 	for &item in catalog.modules {
-		if hash_prefix_of(item.hash) != prefix {
+		if module_tag_of(item.hash) != tag {
 			continue
 		}
 		if item.file == nil && item.path != "" {
@@ -103,33 +128,38 @@ fact_catalog_file :: proc(catalog: ^Fact_Catalog, prefix: [FACT_LINE_HASH_BYTES]
 fact_catalog_file_of_hash :: proc(catalog: ^Fact_Catalog, hash: [module.HASH_SIZE]u8) -> []u8 {
 	for item in catalog.modules {
 		if item.hash == hash {
-			return fact_catalog_file(catalog, hash_prefix_of(hash))
+			return fact_catalog_file(catalog, module_tag_of(hash))
 		}
 	}
 	return nil
 }
 
-// hash_prefix_of gives the first bytes of a hash, which the line of a fact
-// names.
-hash_prefix_of :: proc(hash: [module.HASH_SIZE]u8) -> [FACT_LINE_HASH_BYTES]u8 {
+// module_tag_of gives the module tag of a hash: its first bytes, which the
+// line of a fact names.
+module_tag_of :: proc(hash: [module.HASH_SIZE]u8) -> [FACT_LINE_MODULE_TAG_BYTES]u8 {
+	// A parameter array cannot be sliced: it is copied first.
 	own := hash
-	prefix: [FACT_LINE_HASH_BYTES]u8
-	copy(prefix[:], own[:FACT_LINE_HASH_BYTES])
-	return prefix
+	tag: [FACT_LINE_MODULE_TAG_BYTES]u8
+	copy(tag[:], own[:FACT_LINE_MODULE_TAG_BYTES])
+	return tag
 }
 
 // The parts of the line of a fact after its head.
 Fact_Line :: struct {
-	hash_prefix: [FACT_LINE_HASH_BYTES]u8,
-	key:         u64,
+	module_tag:  [FACT_LINE_MODULE_TAG_BYTES]u8, // The first bytes of the module hash (docs/glossary/running_code.md, "Module tag").
+	key_tag:     u32, // The high bytes of the fact key (op.log_fact_key_tag): one fact type of a module has it.
 	values:      [op.LOG_FACT_VALUE_CAPACITY]u8,
 	value_count: int, // The value bytes that the line holds: the bytes after them are zero.
 }
 
 // fact_line_parse reads the line of a fact after its head, as
-// op.log_fact_line writes it: "#", 16 digits, ":", 16 digits, then a space
-// and an even count of digits, at most two for each value byte. A digit
-// is lower case. ok is false for any other text: it is not a fact.
+// op.log_fact_line writes it: "#", the digits of the module tag, ":", the
+// digits of the key tag, then a space and the value bytes, each two digits
+// or a letter of a run of zero bytes. A digit is lower case. ok is false
+// for any other text: it is not a fact. It also refuses each text that
+// op.log_fact_line never writes, so one line is one fact: a zero byte as
+// two digits, a run that ends the values, a letter after a letter that is
+// not the longest run, and a space with no value after it.
 fact_line_parse :: proc(text: string) -> (line: Fact_Line, ok: bool) {
 	digit :: proc(character: u8) -> (value: u8, ok: bool) {
 		switch character {
@@ -141,34 +171,84 @@ fact_line_parse :: proc(text: string) -> (line: Fact_Line, ok: bool) {
 		return 0, false
 	}
 	byte_at :: proc(text: string, place: int) -> (value: u8, ok: bool) {
+		if place + 1 >= len(text) {
+			return 0, false
+		}
 		high := digit(text[place]) or_return
 		low := digit(text[place + 1]) or_return
 		return high << 4 | low, true
 	}
-	HEAD :: 1 + 2 * FACT_LINE_HASH_BYTES + 1 + 16
-	if len(text) < HEAD || text[0] != '#' || text[1 + 2 * FACT_LINE_HASH_BYTES] != ':' {
+	HASH_DIGITS :: 2 * FACT_LINE_MODULE_TAG_BYTES
+	KEY_DIGITS :: 2 * op.LOG_FACT_LINE_KEY_BYTES
+	HEAD :: 1 + HASH_DIGITS + 1 + KEY_DIGITS
+	if len(text) < HEAD || text[0] != '#' || text[1 + HASH_DIGITS] != ':' {
 		return {}, false
 	}
-	for index in 0 ..< FACT_LINE_HASH_BYTES {
-		line.hash_prefix[index] = byte_at(text, 1 + 2 * index) or_return
+	for index in 0 ..< FACT_LINE_MODULE_TAG_BYTES {
+		line.module_tag[index] = byte_at(text, 1 + 2 * index) or_return
 	}
-	for index in 0 ..< 8 {
-		key_byte := byte_at(text, 2 + 2 * FACT_LINE_HASH_BYTES + 2 * index) or_return
-		line.key = line.key << 8 | u64(key_byte)
+	for index in 0 ..< op.LOG_FACT_LINE_KEY_BYTES {
+		key_byte := byte_at(text, 2 + HASH_DIGITS + 2 * index) or_return
+		line.key_tag = line.key_tag << 8 | u32(key_byte)
 	}
 	rest := text[HEAD:]
 	if len(rest) == 0 {
 		return line, true
 	}
-	digits := rest[1:]
-	if rest[0] != ' ' || len(digits) == 0 || len(digits) % 2 != 0 || len(digits) / 2 > op.LOG_FACT_VALUE_CAPACITY {
+	if rest[0] != ' ' || len(rest) == 1 {
 		return {}, false
 	}
-	for index in 0 ..< len(digits) / 2 {
-		line.values[index] = byte_at(digits, 2 * index) or_return
+	encoded := rest[1:]
+	RUN_LAST :: op.LOG_FACT_LINE_ZERO_RUN_FIRST + u8(op.LOG_FACT_LINE_ZERO_RUN_MOST - 1)
+	place, count := 0, 0
+	last_run := 0 // The zero bytes of the letter just before, or 0 after two digits.
+	for place < len(encoded) {
+		character := encoded[place]
+		if character >= op.LOG_FACT_LINE_ZERO_RUN_FIRST && character <= RUN_LAST {
+			if last_run != 0 && last_run != op.LOG_FACT_LINE_ZERO_RUN_MOST {
+				return {}, false
+			}
+			last_run = int(character - op.LOG_FACT_LINE_ZERO_RUN_FIRST) + 1
+			if count + last_run > op.LOG_FACT_VALUE_CAPACITY {
+				return {}, false
+			}
+			// The values of the line are zero already.
+			count += last_run
+			place += 1
+			continue
+		}
+		value := byte_at(encoded, place) or_return
+		if value == 0 || count >= op.LOG_FACT_VALUE_CAPACITY {
+			return {}, false
+		}
+		line.values[count] = value
+		count += 1
+		place += 2
+		last_run = 0
 	}
-	line.value_count = len(digits) / 2
+	if last_run != 0 {
+		return {}, false
+	}
+	line.value_count = count
 	return line, true
+}
+
+// fact_key_of_tag gives the fact key of a module file whose key tag is
+// tag. The build refuses two fact types of one module with one key tag
+// (facts_merge), so a tag names one key; a file that holds two, which the
+// tool did not build, gives none: a line of it stays raw.
+fact_key_of_tag :: proc(file: []u8, tag: u32) -> (key: u64, ok: bool) {
+	for row_index in 1 ..< module.count(file, .Facts) {
+		row, _, row_ok := module.fact(file, row_index)
+		if !row_ok || op.log_fact_key_tag(row.key) != tag {
+			continue
+		}
+		if ok {
+			return 0, false
+		}
+		key, ok = row.key, true
+	}
+	return key, ok
 }
 
 // fact_line_render gives the sentence of the line of a fact after its
@@ -181,15 +261,16 @@ fact_line_parse :: proc(text: string) -> (line: Fact_Line, ok: bool) {
 // bytes after them up to the size of the record are zero.
 fact_line_render :: proc(catalog: ^Fact_Catalog, text: string) -> (sentence: string, rendered: bool) {
 	line := fact_line_parse(text) or_return
-	file := fact_catalog_file(catalog, line.hash_prefix)
+	file := fact_catalog_file(catalog, line.module_tag)
 	if file == nil {
 		return "", false
 	}
-	_, _, description := module.fact_find(file, line.key) or_return
+	key := fact_key_of_tag(file, line.key_tag) or_return
+	_, _, description := module.fact_find(file, key) or_return
 	if line.value_count > int(description.size) {
 		return "", false
 	}
-	return fact_values_render(file, line.key, line.values[:description.size])
+	return fact_values_render(file, key, line.values[:description.size])
 }
 
 // fact_values_render gives the sentence of a fact of a module file from the

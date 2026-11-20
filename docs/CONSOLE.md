@@ -87,7 +87,7 @@ Each value has one kind. The kinds are those of the module contract (`MODULE_CON
 
 `Stream` is a kind of the console only: no export takes or gives one, and no variable keeps one.
 
-A parameter of the kind `Bytes` takes a `Text` value as its argument. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
+A parameter of the kind `Bytes` takes a `Text` value as its argument, or the `Bytes` of a memory object that `bytes(memory, first, count)` read: `assemble(bytes(t, 0, n), f)` gives the text that `compile` wrote to the assembler. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
 
 A command gives a result and never prints. A command that does something and has nothing to give has no result: `start`, `stop`, `clear`. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing. The section "Results and their drawers" has the result of each built-in command.
 
@@ -531,7 +531,7 @@ While a line calls an export, the console shows under the line the log records t
 - **Which records.** The records that a process called by the line wrote, from the first call of the line on: a service, a sandboxed process of `isolate`, and the console itself for a module that `load` put in it. A line follows 4 processes at most. A process that `start` starts is not followed: the line ends before the process writes.
 - **By process.** The records of one process follow one head line: the name of the process, in the color of a module. A record of another process starts a new group.
 - **The value runs.** Each value run of a record is in the color of its value kind, as in the window of the log (`docs/TOOLS.md`, "The log"). A record of the level `Error` is in the color of a failure.
-- **A log fact** is the sentence of its fact template, each value in the color of its kind: the console finds the module file that the fact names by its hash in the boot image, and writes the sentence with the one render of the contract (`module.fact_sentence_write`), which the window of the log and the tool call too. A fact whose module the boot image does not hold, the module of a disk process among them, is its raw form, the line of the serial port: `#`, the first 8 bytes of the module hash, `:`, the fact key, and the value bytes in hexadecimal.
+- **A log fact** is the sentence of its fact template, each value in the color of its kind: the console finds the module file that the fact names by its hash in the boot image, and writes the sentence with the one render of the contract (`module.fact_sentence_write`), which the window of the log and the tool call too. A fact whose module the boot image does not hold, the module of a disk process among them, is its raw form, the line of the serial port: `#`, the module tag, `:`, the key tag, and the value bytes in hexadecimal, each run of zero bytes as a letter (`TOOLS.md`, "Log facts").
 - **While the line runs.** During an isolated call or a call of a service, the console reads the new records each 100 ms (`STATUS_INTERVAL`), and once more when the line ends, before it draws the result. During a direct call the console waits in the module: the records show when the call returns.
 - **To the terminal only.** These lines do not go to the log: the records are in the log already.
 

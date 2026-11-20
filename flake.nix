@@ -182,6 +182,55 @@
       ];
     };
 
+    # chibicc, the C compiler of the module c_compiler: its source at one
+    # commit, the patches of the system, and the files of the system beside
+    # it, as one folder of the store. The tool compiles each .c file at the
+    # top of the folder; the variable CHIBICC_SOURCE names it
+    # (src/md/infrastructure/outside_source.md). The repository holds no
+    # source file of the work. The include files of chibicc become a C
+    # table, so the module reads no file.
+    chibiccSource = pkgs.stdenvNoCC.mkDerivation {
+      name = "chibicc-source";
+      src = pkgs.fetchFromGitHub {
+        owner = "rui314";
+        repo = "chibicc";
+        rev = "90d1f7f199cc55b13c7fdb5839d1409806633fdb";
+        hash = "sha256-sGSPQv9JPXTnyv+7CnmzWq1objCJRctK4wKII8GM26s=";
+      };
+      # The patches, in the order of their names.
+      patches = map (name: ./src/outside/chibicc/patches + "/${name}") (builtins.attrNames (builtins.readDir ./src/outside/chibicc/patches));
+      dontConfigure = true;
+      dontBuild = true;
+      installPhase = ''
+        runHook preInstall
+        mkdir -p $out/libc/include
+        # main.c is not copied: the entry of the system takes its place.
+        cp chibicc.h codegen.c hashmap.c parse.c preprocess.c strings.c tokenize.c type.c unicode.c $out/
+        cp ${./src/outside/chibicc/system}/* $out/
+        cp ${./src/outside/chibicc/libc}/*.c $out/
+        cp ${./src/outside/chibicc/libc/include}/*.h $out/libc/include/
+        {
+          echo '// This file is the output of the flake: the include files of chibicc, as a table.'
+          echo '#include "include_table.h"'
+          echo 'const Include_File include_files[] = {'
+          for header in include/*.h; do
+            echo "  {\"$header\","
+            sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/    "/' -e 's/$/\\n"/' "$header"
+            echo '  },'
+          done
+          echo '  {0, 0},'
+          echo '};'
+        } > $out/include_table.c
+        runHook postInstall
+      '';
+    };
+
+    # The folders of the store of the outside sources, for the tool: each
+    # shell and the check set them.
+    outsideSources = {
+      CHIBICC_SOURCE = "${chibiccSource}";
+    };
+
     preCommitCheck = inputs.git-hooks.lib.${system}.run {
       package = pkgs.prek;
       src = ./.;
@@ -300,7 +349,8 @@
       }
       // firmware
       # The source fonts: a test of the tool reads the feature "zero" of Paper Mono in them.
-      // vectorFontSources);
+      // vectorFontSources
+      // outsideSources);
   in {
     formatter.${system} = pkgs.alejandra;
 
@@ -318,7 +368,8 @@
         }
         // firmware
         // ownerPointerTheme
-        // vectorFontSources);
+        // vectorFontSources
+        // outsideSources);
 
       # The shell of the release workflow: the build tools and the firmware,
       # with no pointer theme of the owner and no hook. `modustool release
@@ -328,15 +379,17 @@
       release = pkgs.mkShell ({
           packages = buildTools ++ [modustoolBinary];
         }
-        // firmware);
+        // firmware
+        // outsideSources);
 
       # The shell of a developer who builds a module of their own project:
       # the build tools and the command "modustool", with no hook of this
       # repository. The default shell installs the hooks of this repository
       # in the repository where it starts.
-      module = pkgs.mkShell {
-        packages = buildTools ++ [modustool];
-      };
+      module = pkgs.mkShell ({
+          packages = buildTools ++ [modustool];
+        }
+        // outsideSources);
     };
   };
 }

@@ -120,6 +120,14 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	// names its frames with no attach.
 	fault_file, fault_debug_object := build.outside_module_for_a_disk(faults = true) or_return
 	fault_debug_file := build.module_debug_object_file(build.OUTSIDE_FAULT_MODULE, fault_file, fault_debug_object) or_return
+	// The two outside modules run beside the modules of the build: a line
+	// of a log fact names its module by the module tag, so a tag that one
+	// of them shares with a module of the build refuses the run.
+	outside_modules := [?]build.Fact_Catalog_Module{{hash = blake3.hash(outsider_file), file = outsider_file}, {hash = blake3.hash(fault_file), file = fault_file}}
+	if problem := build.outside_module_tags_check(outside_modules[:]); problem != "" {
+		fmt.eprintfln("modustool: test failed: the outside modules of the disk: %s", problem)
+		return false
+	}
 	forged: disk_process.Grant_Table
 	if disk_process.table_allow(&forged, foundation.DISK_MODULE_NAME, blake3.hash(module_file), .Store) != .None {
 		fmt.eprintln("modustool: the table of the disk of the disk processes takes no row")

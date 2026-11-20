@@ -32,11 +32,11 @@ What it means here:
 
 ## 3. The layout
 
-The taken code keeps the folders and the names of its origin, so that its imports need one rule. Beside it lie the compatibility layer that the system wrote and the manifest that names the origin of each file.
+The taken code keeps the folders of its origin, so that its import paths need one rule. Each package declares the name of its origin after the prefix `modus_` (`package modus_sha2`, `package modus__subtle`), so that a host program can import both the copy and `core:crypto`: Odin refuses two packages of one declared name in one program. The code calls a package by its import name, which comes from the import path, so no import and no call changes. Beside it lie the compatibility layer that the system wrote and the manifest that names the origin of each file. The design: [`src/md/infrastructure/cryptography_package_names.md`](../src/md/infrastructure/cryptography_package_names.md).
 
 | Path | What it is |
 |---|---|
-| `src/library/support/cryptography/<name>/` | The files that are taken, with the folder names of the origin (`_chacha20`, `chacha20`, `_subtle`, ...), so that the import paths of the origin need one rule only |
+| `src/library/support/cryptography/<name>/` | The files that are taken, with the folder names of the origin (`_chacha20`, `chacha20`, `_subtle`, ...), so that the import paths of the origin need one rule only. The files of a folder declare `package modus_<name of the origin package>`; an import names the package by the last element of its path, as in the origin: `import "modus:support/cryptography/sha2"` gives `sha2.` |
 | `src/library/support/cryptography/compatibility_crypto`, `compatibility_endian`, `compatibility_bits`, `compatibility_bytes`, `compatibility_memory` | The compatibility layer: the helpers of the origin (`zero_explicit`, `compare_constant_time`, the little-endian loads, `rotate_left32`, `add_u64`, `alias_inexactly`, and the `zero` and `zero_explicit` of `core:mem`) over the primitives of this system. The packages have their own names; the import keeps the name of the origin as its alias |
 | `src/library/support/cryptography/chacha20/chacha20_implementation_portable.odin` | A file of this system in the place of `chacha20_impl.odin` of the origin: that file chooses among three implementations with `core:sys/info`, which a module does not have. The one implementation here is the portable one of the origin, unchanged |
 | `src/library/support/cryptography/origin.manifest` | One line for each file that is taken: the file, the file of the origin, the BLAKE3 hash of the origin file |
@@ -54,16 +54,18 @@ A reader must be able to trust that the cryptography is the code of its origin, 
 - the origin file, under `ODIN_ROOT` of the compiler that built the tool, has the BLAKE3 hash of the manifest. If not, the compiler of the flake changed;
 - the origin with the listed changes is the file of the repository, byte for byte.
 
-The listed changes, all in `tools/modustool/checks/cryptography_origin.odin` (`cryptography_import_changes`, applied in this order):
-1. The first line: "// Altered source: Odin dev-2026-11a, <origin path>; only its imports changed (...)".
-2. `"core:crypto"` becomes `crypto "modus:support/cryptography/compatibility_crypto"`.
-3. `"core:crypto/hash"` becomes `hash "modus:support/cryptography/compatibility_hash"` (before the next rule, which would send it to a copy of the origin package).
-4. `"core:crypto/` becomes `"modus:support/cryptography/`.
-5. `"core:encoding/endian"`, `"core:math/bits"` and `"core:bytes"` become the compatibility packages, with the name of the origin as their alias.
+The listed changes, all in `tools/modustool/checks/cryptography_origin.odin` (`cryptography_packages` and `cryptography_import_changes`, applied in this order):
+1. The first line: "// Altered source: Odin dev-2026-11a, <origin path>; only its package name and its imports changed (...)".
+2. The line `package <name>` of the origin, a whole line exactly one time, becomes `package modus_<name>`. The name is the one of the row of the folder of the origin in `cryptography_packages`; a folder with no row, and a package line that is missing or doubled, fail the check.
+3. `"core:crypto"` becomes `crypto "modus:support/cryptography/compatibility_crypto"`.
+4. `"core:crypto/hash"` becomes `hash "modus:support/cryptography/compatibility_hash"` (before the next rule, which would send it to a copy of the origin package).
+5. `"core:crypto/` becomes `"modus:support/cryptography/`.
+6. `"core:encoding/endian"`, `"core:math/bits"` and `"core:bytes"` become the compatibility packages, with the name of the origin as their alias.
 
 The check also covers the folders, not only the listed files: Odin compiles each `.odin` file of a package folder, so a new file in a folder of a copy would change the code with no line of a manifest.
 - It walks each folder of `src/library/support/cryptography`. Each `.odin` file must be a line of `origin.manifest` or a line of `system_files.manifest`, and no file is in both or two times.
 - `system_files.manifest` lists the files that the system wrote (the compatibility layer, the files in the place of a hardware dispatch, the tests), each with its BLAKE3 hash. A change of one of them fails the check until its new hash is written: `modustool cryptography-system-hashes` prints the lines.
+- A file of the system in a folder of `cryptography_packages` has the package line of the copy, `package modus_<name>`, exactly one time: a file that keeps the name of the origin would bring back the clash with `core:crypto`.
 - An origin path starts with `core/crypto/` and holds no `..`; a file of the repository starts with `src/library/support/cryptography/` and holds no `..`. A line cannot take a file from another part of Odin or of the host.
 - A symbolic link anywhere under `src/library/support/cryptography` fails the check: a folder of a copy that points elsewhere would bring `.odin` files that no list names.
 - A file that is not a `.odin` file, a `LICENSE.*` file of the top folder or one of the two manifests fails the check: a `#load` or a `foreign import` could read it, and no list has its hash.

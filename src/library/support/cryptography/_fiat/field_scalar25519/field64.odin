@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_fiat/field_scalar25519/field64.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_fiat/field_scalar25519/field64.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 // The BSD 1-Clause License (BSD-1-Clause)
 //
 // Copyright (c) 2015-2020 the fiat-crypto authors (see the AUTHORS file)
@@ -23,7 +23,7 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-package field_scalar25519
+package modus_field_scalar25519
 
 // The file provides arithmetic on the field Z/(2^252+27742317777372353535851937790883648493)
 // using a 64-bit Montgomery form internal representation.  It is derived

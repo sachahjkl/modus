@@ -437,8 +437,10 @@ field_description_size :: proc(item: Field_Description) -> u32 {
 // facts_merge adds the fact types of a module to its description: the
 // record of each one in the records, where an equal description takes the
 // same index, and the facts sorted by key. It refuses a key of 0, two fact
-// types with one key, and a record of a fact type whose name an export
-// uses with another description.
+// types with one key, two fact types with one key tag (the first bytes of
+// the key, which the serial line of a fact writes: op.log_fact_key_tag),
+// and a record of a fact type whose name an export uses with another
+// description.
 facts_merge :: proc(description: ^Module_Description, facts: []Fact_Description) -> bool {
 	records := make([dynamic]Record_Description, context.temp_allocator)
 	append(&records, ..description.records)
@@ -450,6 +452,12 @@ facts_merge :: proc(description: ^Module_Description, facts: []Fact_Description)
 		for other in merged {
 			if other.key == fact.key {
 				return fact_fail(fact.file, fact.line, "the fact types %s.%s and %s.%s have one fact key, %d: rename one of them", fact.package_name, fact.type_name, other.package_name, other.type_name, fact.key)
+			}
+			// The serial line of a fact names its key by the key tag
+			// alone, so two fact types of one module with one tag would
+			// be one fact type for the tool.
+			if op.log_fact_key_tag(other.key) == op.log_fact_key_tag(fact.key) {
+				return fact_fail(fact.file, fact.line, "the fact types %s.%s and %s.%s have one key tag, %06x, the first %d bytes of their fact keys that the serial line of a fact writes: rename one of them", fact.package_name, fact.type_name, other.package_name, other.type_name, op.log_fact_key_tag(fact.key), op.LOG_FACT_LINE_KEY_BYTES)
 			}
 		}
 		item := fact

@@ -1,5 +1,5 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_fiat/field_curve25519/field.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
-package field_curve25519
+// Altered source: Odin dev-2026-11a, core/crypto/_fiat/field_curve25519/field.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+package modus_field_curve25519
 
 import crypto "modus:support/cryptography/compatibility_crypto"
 

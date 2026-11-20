@@ -1797,6 +1797,42 @@ scenario := [?]Step {
 	{kind = .Type, text = "unload(\"adder\")"},
 	{kind = .Wait, text = "[console]   module    adder", fails_on = "[console]   memory    its sandboxed process stopped"},
 	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
+	// The C compiler (src/md/features/c_compiler.md): chibicc, ported,
+	// writes a text that the assembler takes, and the console calls the
+	// function of the C source. An empty source is refused at the border,
+	// before the C part, so the one compile of the call host is still free;
+	// a second compile is refused. add(-7, 2)
+	// proves that an export that gives an int extends its sign.
+	{kind = .Type, text = "isolate(\"c_compiler\")"},
+	{kind = .Wait, text = "[c_compiler] host: ready, 1 exports"},
+	{kind = .Wait, text = "[console]   module     c_compiler"},
+	{kind = .Type, text = "t = buffer(1)"},
+	{kind = .Type, text = "compile(\"\", t)"},
+	{kind = .Wait, text = "[console] error: compile: "},
+	{kind = .Type, text = "n = compile(\"int add(int a, int b) { return a + b; }\", t)"},
+	{kind = .Wait, text = "c_compiler: a text of "},
+	{kind = .Type, text = "m = assemble(bytes(t, 0, n), f)"},
+	{kind = .Wait, text = "assemble: a module file of "},
+	{kind = .Type, text = "isolate_memory(\"c_adder\", f, m)"},
+	// The call host is ready before the console writes its line about the
+	// module: two processes, in either order.
+	{kind = .Wait, text = "[c_adder] host: ready, 1 exports", any_order = true},
+	{kind = .Wait, text = "console: c_adder is a module from memory: "},
+	{kind = .Type, text = "add(2, 3)"},
+	{kind = .Wait, text = "[console] > add(2, 3)"},
+	{kind = .Wait, text = "[console] 5"},
+	{kind = .Type, text = "add(-7, 2)"},
+	{kind = .Wait, text = "[console] > add(-7, 2)"},
+	{kind = .Wait, text = "[console] -5"},
+	{kind = .Type, text = "compile(\"int other;\", t)"},
+	{kind = .Wait, text = "c_compiler: a call host compiles one source: unload the module and isolate it again"},
+	{kind = .Type, text = "unload(\"c_adder\")"},
+	{kind = .Wait, text = "[console]   module    c_adder", fails_on = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Type, text = "unload(\"c_compiler\")"},
+	{kind = .Wait, text = "[console]   module    c_compiler", fails_on = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Type, text = "release(t)"},
 	{kind = .Type, text = "unload(\"assemble\")"},
 	{kind = .Wait, text = "[console]   module    assemble", fails_on = "[console]   memory    its sandboxed process stopped"},
 	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
@@ -2734,7 +2770,9 @@ scenario := [?]Step {
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe.value)"},
 	{kind = .Wait, text = "[console] error: facts: no fact type has the name log_reader.Fact_Probe.value; the fact types are "},
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probes)"},
-	{kind = .Wait, text = "[console] error: facts: no fact type has the name log_reader.Fact_Probes; the fact types of log_reader are log_reader.Fact_Probe"},
+	// The console names the fact types of a module in the order of their
+	// keys: the measures of log_reader add two fact types around Fact_Probe.
+	{kind = .Wait, text = "[console] error: facts: no fact type has the name log_reader.Fact_Probes; the fact types of log_reader are log_reader.Measured_Bad_Block, log_reader.Fact_Probe, log_reader.Measured_Connected"},
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe) |> where(level >= Warning)"},
 	{kind = .Wait, text = "[console] error: where: the field level is Status(Log_Level): it takes = and != only, because the order of the members is no order of weight"},
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe) |> where(level = \"Warning\")"},
@@ -4069,6 +4107,10 @@ key_name :: proc(character: u8) -> string {
 		return "bracket_left"
 	case ']':
 		return "bracket_right"
+	case '{':
+		return "shift-bracket_left"
+	case '}':
+		return "shift-bracket_right"
 	case '^':
 		return "shift-6"
 	case '>':
@@ -4756,7 +4798,13 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		// writes the sentence of the text line that the fact replaced, so
 		// the rendered line is the line of the text form, byte for byte
 		// (src/md/features/log_facts.md, "The measures that decide it").
-		fmt.printfln("modustool: measure: the serial lines of %d log facts of %s took %d bytes as values in hexadecimal; the same lines as text take %d bytes", len(machine.fact_lines), output, machine.fact_raw_bytes, machine.fact_sentence_bytes)
+		fmt.printfln("modustool: measure: the serial lines of %d log facts of %s took %d bytes as facts; the same lines as text take %d bytes", len(machine.fact_lines), output, machine.fact_raw_bytes, machine.fact_sentence_bytes)
+		// The records of the start, the module files of the first writers
+		// of facts and the lines by the bytes of their body, from the log
+		// of the main machine only: the measure record keeps its lines.
+		if output == checks.TEST_OUTPUT && !build.log_measures_write(output) {
+			passed = false
+		}
 		delete(machine.fact_rendered)
 		fact_lines_forget(&machine)
 		delete(machine.fact_lines)

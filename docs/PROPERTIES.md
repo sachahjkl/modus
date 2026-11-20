@@ -593,6 +593,7 @@ The table does not name the tools of the host that build and test the system (th
 | The field arithmetic of fiat-crypto, in Odin's port | `src/library/support/cryptography/_fiat` | BSD-1-Clause | `src/library/support/cryptography/LICENSE.fiat-crypto.txt` |
 | The runtime of the Odin compiler, in each module and in the boot program | `base:runtime` | Zlib | `src/library/support/cryptography/LICENSE.odin.txt` |
 | The package `reflect` of the core library of Odin, in the module `cryptography` | `core:reflect` | Zlib | `src/library/support/cryptography/LICENSE.odin.txt` |
+| The C compiler `chibicc`, at a pinned commit with four patches, in the module `c_compiler` | `src/outside/chibicc` | MIT | `src/outside/chibicc/LICENSE` |
 | The portrait of Jonathan Blow: a credited frame of a video | `resources/hall_of_fame/jonathan_blow.png` | NONE | `resources/hall_of_fame/CREDITS.md` |
 | The portrait of Andreas Kling | `resources/hall_of_fame/andreas_kling.png` | CC-BY-3.0 | `resources/hall_of_fame/CREDITS.md` |
 | The portrait of Michael Paulson | `resources/hall_of_fame/theprimeagen.png` | CC-BY-4.0 | `resources/hall_of_fame/CREDITS.md` |

@@ -96,18 +96,31 @@ fuzz_package_of_file :: proc(file_name: string, package_names: []string) -> (ind
 	return 0, false
 }
 
-// fuzz_package_name_of_line gives the name of a line `package <name>`: the
-// name ends at the first space, tab or "/", so a comment after it is no
-// part of it.
+// fuzz_package_name_of_line gives the name of a line `package <name>`: an
+// identifier, then only blanks or a comment. A line of prose in a comment
+// that starts with the same word ("package argon2id implements ...", in
+// the copy of the cryptography of Odin) has more words, and is no package
+// line.
 fuzz_package_name_of_line :: proc(line: string) -> (name: string, found: bool) {
 	if !strings.has_prefix(line, "package ") {
 		return "", false
 	}
-	name = strings.trim_left_space(line[len("package "):])
-	if end := strings.index_any(name, " \t\r/"); end >= 0 {
-		name = name[:end]
+	rest := strings.trim_left_space(line[len("package "):])
+	end := 0
+	for end < len(rest) {
+		character := rest[end]
+		letter := character == '_' || (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z')
+		digit := end > 0 && character >= '0' && character <= '9'
+		if !letter && !digit {
+			break
+		}
+		end += 1
 	}
-	return name, len(name) > 0
+	after := strings.trim_space(rest[end:])
+	if end == 0 || (len(after) > 0 && !strings.has_prefix(after, "//") && !strings.has_prefix(after, "/*")) {
+		return "", false
+	}
+	return rest[:end], true
 }
 
 // fuzz_package_name_of_folder gives the name that the sources of a folder

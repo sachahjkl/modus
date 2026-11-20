@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/chacha20poly1305/chacha20poly1305.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/chacha20poly1305/chacha20poly1305.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `AEAD_CHACHA20_POLY1305` and `AEAD_XChaCha20_Poly1305` algorithms.
 
@@ -8,7 +8,7 @@ See:
 - [[ https://www.rfc-editor.org/rfc/rfc8439 ]]
 - [[ https://datatracker.ietf.org/doc/html/draft-arciszewski-xchacha-03 ]]
 */
-package chacha20poly1305
+package modus_chacha20poly1305
 
 import crypto "modus:support/cryptography/compatibility_crypto"
 import "modus:support/cryptography/chacha20"

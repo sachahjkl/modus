@@ -543,7 +543,14 @@ measure_entries := [?]Measure_Entry {
 	{sentence = "TCP: 1 MiB that the process `fetch` sends to a server of the host", files = {TEST_OUTPUT_TCP_REAL, ""}, pattern = "fetch: POST /sink, 1 MiB", choice = .First, accent = graphics.DARK_MACHINE, place = .Numbers, required = true, reading = "The process `fetch` sends 1 MiB over TCP to a server of the host, which checks the hash. The rate includes the user networking of QEMU, which is not a part of the system."},
 	{sentence = "ChaCha20-Poly1305: the seal of one QUIC datagram of 1200 bytes, through the module `cryptography`", files = {TEST_OUTPUT_CRYPTOGRAPHY, ""}, pattern = "cryptography_vectors: seal ChaCha20-Poly1305", choice = .First, accent = graphics.DARK_PROCESS, place = .Numbers, required = true, reading = "The time of the seal of one datagram of 1200 bytes, the size of a QUIC datagram, by the module `cryptography`, and its rate."},
 	{sentence = "The same bytes after a second build", files = {build.REPRODUCIBLE_BUILD_RECORD, ""}, pattern = "the same bytes after a second build", choice = .Last, accent = graphics.DARK_KERNEL, place = .Build, required = true, reading = "Not a time: a fact. A second build gives each module, its LLVM IR, its object, the pointer theme files and the boot program, byte for byte. It holds for the compiler of the flake, on the host of the run."},
+	{sentence = LOG_RECORDS_OF_THE_START_SENTENCE, files = {build.LOG_MEASURES_RECORD, ""}, pattern = "measure: the records of the log of", choice = .First, accent = graphics.DARK_KERNEL, place = .Build, required = true, reading = "Not a time: a count. The log records that the main machine wrote up to the line \"kernel: ok\" and up to the line of the root service that the machine is usable, as the tool counts them on the serial log: one record for each fact, and one for each 168 bytes of a text. Each second of a budget holds a count of records, so a line that takes more records takes more of it. `modustool measure-compare` reads the count of two records."},
+	{sentence = LOG_MODULE_FILES_SENTENCE, files = {build.LOG_MEASURES_RECORD, ""}, pattern = "measure: the module files:", choice = .First, accent = graphics.DARK_PROCESS, place = .Build, required = true, reading = "Not a time: a size. The bytes of the module files of the root service and of the compositor, and the bytes of their segments of code. A log fact writes no text at its call, so a module that writes facts holds less code that formats; its fact templates are in the file. `modustool measure-compare` reads the sizes of two records."},
 }
+
+// The sentences of the measures of the log of the main machine, which the
+// table and its series both name.
+LOG_RECORDS_OF_THE_START_SENTENCE :: "The log records of the main machine up to the end of its start"
+LOG_MODULE_FILES_SENTENCE :: "The module files of the root service and of the compositor"
 
 // What each log is: the machine that wrote it and what else ran.
 Measure_Output_File :: struct {
@@ -562,6 +569,7 @@ measure_output_files := [?]Measure_Output_File {
 	{TEST_OUTPUT_CRYPTOGRAPHY, "The machine of `modustool test crypto`"},
 	{foundation.BUILD_FOLDER + "/test_output_persist_1.txt", "The first machine of the test of persistence of `modustool test`, on a new data disk"},
 	{build.REPRODUCIBLE_BUILD_RECORD, "Written by `modustool check`, after it built every module and the boot program a second time and compared the bytes"},
+	{build.LOG_MEASURES_RECORD, "Written by `modustool test`, after the main machine, from its serial log and the module files of the build"},
 }
 
 // log_line_choose finds the lines of a log that contain the pattern, and

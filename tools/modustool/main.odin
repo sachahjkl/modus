@@ -327,8 +327,8 @@ COMMANDS :: [?]foundation.Command {
 	//   each.
 	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [host_processes]`: every module and the boot program, one row each", run = build.run_repeat},
 	// Copies a file of `core:crypto` of the Odin compiler into the repository
-	// with the listed changes of its imports, and prints its line of the
-	// manifest of the origin.
+	// with the package name of the copy and the listed changes of its imports,
+	// and prints its line of the manifest of the origin.
 	//
 	// - `origin`: the file, under the root of Odin.
 	// - `file`: its path in the repository.
@@ -401,6 +401,10 @@ COMMANDS :: [?]foundation.Command {
 	// copied the record. It changes no file that exists
 	// (docs/TOOLS.md, "The release").
 	{name = "measure-history", about = "the copy of the measure record of each release tag that holds one, in `" + checks.MEASURE_HISTORY_FOLDER + "`, for the charts of each measure over the releases", run = checks.run_measure_history},
+	// Compares two measure records, as the record of a build before a
+	// change and the record after it (docs/TOOLS.md, "The comparison of two
+	// measure records"). It asserts nothing.
+	{name = "measure-compare", about = "<record before> <record after>: the line of each measure in two measure records, and the number of each series with its ratio", run = checks.run_measure_compare},
 	// Works on the news entries of `news/`, the dated reports of what a
 	// reader can now see or use.
 	//

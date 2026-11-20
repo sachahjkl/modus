@@ -24,6 +24,7 @@ package interface
 // memory whatever the size of the cut.
 
 import "modus:contract/draw_record"
+import "modus:contract/scale_factor"
 import "modus:support/graphics"
 
 // The rows and the columns of one band of the accumulation. Each segment of
@@ -91,12 +92,24 @@ path_draw :: #force_no_inline proc "contextless" (table: ^Draw_Table, view: grap
 	if problem != .None {
 		return
 	}
+	stroke_width := i64(path.stroke_width)
+	// At a scale, each point and the width go to the screen after the
+	// border read them, each to the nearest unit: a point keeps its part of
+	// a pixel, so a curve stays smooth. A point inside COORDINATE_LIMIT
+	// stays inside 2^30 units at the scale 2, an i32.
+	if scale, scaled := table.scale.?; scaled {
+		for &point in points[:point_count] {
+			point.x = i32(scale_factor.screen_place(point.x, scale))
+			point.y = i32(scale_factor.screen_place(point.y, scale))
+		}
+		stroke_width = scale_factor.screen_place(i32(path.stroke_width), scale)
+	}
 	band: Path_Band = ---
 	if path.fill_color != 0 {
 		path_pass_draw(&band, view, area, points[:point_count], .Fill, 0, path.fill_color)
 	}
 	if path.stroke_color != 0 {
-		path_pass_draw(&band, view, area, points[:point_count], .Stroke, i64(path.stroke_width), path.stroke_color)
+		path_pass_draw(&band, view, area, points[:point_count], .Stroke, stroke_width, path.stroke_color)
 	}
 }
 

@@ -1,6 +1,7 @@
 package build
 
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "core:strings"
 import "core:testing"
@@ -94,8 +95,8 @@ element_test_line :: proc(t: ^testing.T, file: []u8, package_name, type_name, pr
 	if !made {
 		return {}
 	}
-	line := Fact_Line{key = key}
-	line.hash_prefix = element_test_prefix(package_name)
+	line := Fact_Line{key_tag = op.log_fact_key_tag(key)}
+	line.module_tag = element_test_module_tag(package_name)
 	copy(line.values[:], bytes)
 	// The serial line holds the values up to their last byte that is not
 	// zero.
@@ -110,8 +111,8 @@ element_test_line :: proc(t: ^testing.T, file: []u8, package_name, type_name, pr
 // The head of the hash of the module file of a package, in these tests: one
 // for each package, so the files are other modules.
 @(private = "file")
-element_test_prefix :: proc(package_name: string) -> [FACT_LINE_HASH_BYTES]u8 {
-	prefix: [FACT_LINE_HASH_BYTES]u8
+element_test_module_tag :: proc(package_name: string) -> [FACT_LINE_MODULE_TAG_BYTES]u8 {
+	prefix: [FACT_LINE_MODULE_TAG_BYTES]u8
 	switch package_name {
 	case "interface":
 		prefix[0] = 1
@@ -133,7 +134,7 @@ element_test_known :: proc(file: []u8, package_name: string) -> []Fact_Catalog_T
 			continue
 		}
 		type_name := module.string_at(file, description.name_offset, description.name_count)
-		append(&known, Fact_Catalog_Type{hash_prefix = element_test_prefix(package_name), file = file, key = row.key, description = description, name = strings.concatenate({package_name, ".", type_name}, context.temp_allocator)})
+		append(&known, Fact_Catalog_Type{module_tag = element_test_module_tag(package_name), file = file, key = row.key, description = description, name = strings.concatenate({package_name, ".", type_name}, context.temp_allocator)})
 	}
 	return known[:]
 }
@@ -183,7 +184,7 @@ the_tool_reads_an_element_line_from_the_fields_of_its_fact :: proc(t: ^testing.T
 	too_long := placed(t, interface_file, "debugger_window", "frame 1", 1, 2, 3, 4)
 	too_long.line.value_count = int(window_types.placed[0].description.size) + 1
 	other_module := placed(t, interface_file, "debugger_window", "frame 1", 1, 2, 3, 4)
-	other_module.line.hash_prefix = element_test_prefix("another")
+	other_module.line.module_tag = element_test_module_tag("another")
 	refused := [?]Fact_Line_Place{too_long, other_module}
 	_, refused_found := read(refused[:], window_types, "debugger_window", "frame 1")
 	testing.expect_value(t, refused_found, Element_Line.Absent)

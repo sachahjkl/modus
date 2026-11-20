@@ -542,6 +542,7 @@ assemble(source: Bytes, file: Handle) -> Integer
 | `mov` | register, memory or immediate to a register; register or immediate to memory. A 64-bit immediate to a register only |
 | `add`, `sub`, `cmp` | the forms of `mov`, with an immediate of 32 bits at most |
 | `lea` | memory to a 64-bit register |
+| `movsxd` | a 32-bit register or memory to a 64-bit register, with its sign; no suffix |
 | `push`, `pop` | a 64-bit register; `push` also an immediate |
 | `jmp`, `call`, `jo`, `jno`, `jb`, `jae`, `je`, `jne`, `jbe`, `ja`, `js`, `jns`, `jp`, `jnp`, `jl`, `jge`, `jle`, `jg` | a label of the code |
 | `ret` | none |
@@ -559,6 +560,46 @@ A memory object smaller than the file gives `Too_Small`, with the bytes of the f
 **A module from memory.** `isolate_memory(name, memory, size)` (`glossary/code.md`, "Module from memory") copies the bytes into a memory object of the console, checks the copy with `module.validate`, writes its BLAKE3 hash on the log, and starts a call host with the copy as its one file. A module from memory takes no import.
 
 The design: `src/md/features/assembler.md`.
+
+### The C compiler
+
+The module `c_compiler` of the boot image is the C compiler (`glossary/code.md`, "C compiler"): `chibicc`, ported. It writes a text that the assembler takes. Its export:
+
+```
+compile(source: Bytes, output: Handle) -> Integer
+```
+
+- `source` is the C source, 1 byte to 64 KiB. `output` is a memory object that the caller lends with Read and Write. The result is the bytes of the text, which starts at the first byte of `output`.
+- A call host compiles one source: a second call that reaches the compiler fails with `Refused`. To compile again, `unload("c_compiler")` and `isolate("c_compiler")`.
+
+```
+> isolate("c_compiler")
+> isolate("assemble")
+> t = buffer(1)
+> n = compile("int add(int a, int b) { return a + b; }", t)
+> f = buffer(4)
+> m = assemble(bytes(t, 0, n), f)
+> isolate_memory("adder", f, m)
+> add(2, 3)
+5
+```
+
+**The exports of the C source.** Each function that is not `static` becomes an export of the assembled module: an `export` directive with its parameters, each `int` or `long` an Integer, and an `int` or `long` result an Integer, a `void` result none. A function that is not `static` with another type is refused: make it `static`.
+
+**The C that passes.** The compiler takes C11, and the assembler takes the part of its output that its subset holds: functions of `int` and `long` with constants, `+`, `-`, locals with a separate assignment, `return`, and `if`, `while` and `for` on a value with no comparison. A floating constant is refused by the compiler; each other instruction is refused by the assembler, with its line and its column in the text of `compile`. The list of the instructions that the assembler lacks: `src/md/features/c_compiler.md`, "The gaps of the assembler".
+
+**The refusals.** An empty source gives `Empty`; a source past 64 KiB gives `Too_Long`. A source that the compiler refuses gives `Bad_Byte` for the argument `source`, with the offset of the byte that the diagnostic names; the log of the call host has the diagnostic of `chibicc`:
+
+```
+c_compiler: source.c:1: int add(int a, int b) { return a + ; }
+c_compiler:                                                ^ expected an expression
+```
+
+A diagnostic with no place in the source gives `Refused`. A budget that cannot pay the memory of the compile gives the record of the refused commit. A memory object smaller than the text gives `Too_Small`, with the bytes of the text as the limit.
+
+**No path and no clock.** The compiler reads no file: `#include` finds the include files of `chibicc` (`stddef.h`, `stdarg.h`, `stdbool.h` and the others) in a table that the module holds. `__DATE__` and `__TIME__` give the start of the epoch, so one source gives one text.
+
+The design: `src/md/features/c_compiler.md`; its build: `src/md/infrastructure/outside_source.md`.
 
 ## 2. Loading
 
@@ -1520,6 +1561,7 @@ The tool writes `build/<name>.module` and `build/<name>.debug` in the folder of 
 | 1. Compile | `odin build` with `-target:freestanding_amd64_sysv -build-mode:llvm-ir -reloc-mode:pic -no-entry-point -default-to-nil-allocator -o:speed -vet -debug-info:same-code -collection:modus=src/library -custom-attribute:log_fact`, and for the kernel `-collection:kernel=src/kernel` too | One LLVM IR file, `<name>.ll`, which holds the fact key of each fact type of the package of the module as an immediate, or the step fails, and the list `reached_facts.txt` of the fact keys that the IR holds: the calls that the code reaches (`TOOLS.md`, "The log facts of the build") |
 | 2. Make the object | `llc -O3 -misched-topdown --frame-pointer=all -relocation-model=pic --function-sections --data-sections` | One ELF object, `objects/<name>.o` |
 | 3. Assemble | `nasm -f elf64` | One object for `src/runtime/memory.asm`, one for each `.asm` file of the source folder, and for a module of the boot image one for each `.asm` file of `src/library/support/system` |
+| 3a. Compile C | `clang --target=x86_64-unknown-none-elf -ffreestanding -nostdinc -fPIC -fvisibility=hidden -fno-omit-frame-pointer`, and the flags of `src/md/infrastructure/outside_source.md`, for a module with an outside source only | One object `objects/c_<name>.o` for each `.c` file of the outside source (`TOOLS.md`, "The outside sources of a module") |
 | 4. Describe | The tool (`describe_package`) | The exports and their descriptions, and the stated budget (the constant `MODULE_BUDGET`), from the source; a version script that makes only the exports visible |
 | 5. Link | `ld.lld -shared -nostdlib -Bsymbolic --gc-sections --build-id=none -z now -z relro` | One ELF file, `linked.elf` |
 | 6. Convert | The tool (`import_declarations_check`, then `convert`, which gives the parts that it reads from the linked file to the module file writer) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module (section 1, "The module file writer"), `build/modules/<name>.module`, with the hashes of its imports in its import table, and the table `Budget` when the source states a budget: the stated budget and the counted parts, from the memory size of the module and the files of its imports; the table `Facts` of the log facts that the sources write and that the list of the compile step names, and the table `Own_Hash` with the place of the symbol `modus_own_hash` of the linked file (section "The log facts and the own-hash place"). A segment that is read-only after the load and that no loader writes becomes a constant segment (section 2, "Shared code"). A library module that still has a segment that is read-only after the load is refused (section "A library as a module") |

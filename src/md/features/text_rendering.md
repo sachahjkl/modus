@@ -199,6 +199,9 @@ The scale factor of [desktop_to_browser.md](desktop_to_browser.md), "The referen
 - A process lays out its text in logical pixels, at the size of its record. The drawing module multiplies each place by the scale at its one border.
 - **The layout is at the size of the record; the glyphs are at the size of the screen.** The drawing module shapes the text at the size of the record, multiplies the x of each glyph and the origin by the scale, and draws each glyph at the size of the record times the scale. So the places of the glyphs on the screen are the places of the measure of the process, scaled. The advances of the font at the size of the screen are not used: they round in another way, and with them a text is up to 1/128 pixel wider or narrower for each glyph than its measure.
 - A scale in eighths keeps each spacing token on whole pixels of the screen (8 logical pixels are 10 at 1.25, 14 at 1.75).
+- **Each place rounds on its own.** The x of a glyph on the screen is the place of the glyph, origin included, times the scale and rounded to the nearest 1/64 pixel, less the origin on the screen: the rounding of a glyph is the rounding of its own place, so no error adds up along a text (`interface/execute_scale.odin`). The glyph then goes to its third of a pixel, as at no scale.
+- **A text of the cells** at a scale draws cells of the size on the screen: a cell of 8 logical pixels is 10 at 1.25 and 11 at 1.375, whole pixels; the box on the screen cuts a cell that the rounding moves.
+- **Built:** the draw of a text record and of a text grid at a scale, in the execution of a draw table, host-tested in the font of the cells; no window draws at a scale yet ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen").
 
 ### Who uses it
 
@@ -284,7 +287,7 @@ The boot display in Spleen only, which this module needs first, is built ([boot_
 3. The draw record with sizes, in two parts, each a working system:
    - Built: version 18, `size` in place of `scale` in the text record and in the text grid, refused by the border and by the writer under 4 and over 256 pixels; every writer and reader moved (the contract, the interface package, the drawing module, the compositor, the palette, the tool's layout of the bytes and the fuzz target); `interface.Font` holds a text size, `FONT_LARGE` is the size 32 and `FONT_LARGEST` the size 48, the sizes of before, so no picture changes; `graphics.text_sized` draws the cells at any size, and the bold weight is drawn at each size.
    - Built: the elements at the text size tokens. `interface.FONT_CAPTION`, `FONT_CAPTION_CELLS` and `FONT_HEADING`; the caption of a card at 14 on the baseline of its title; `large_number` at 32, with its label as a caption under it (`draw_caption`) in `remote`, `settings`, `interface_elements` and `server`; the page heading of `manual` at 24 (`draw_heading`) over its rows; the help line of the palette and the hash prefix in the menu of the windows and in `monitor` at 14; the result of the palette at 48. `text_rendering.baseline_row` gives the baseline of a face at a size.
-4. The scale factor of the desktop ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen").
+4. The scale factor of the desktop ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen"). Built: the text and the grid drawn at a scale by the execution of a draw table. Left: the desktop at the scale, and the bound of a text size on the screen.
 5. The grid as spacing tokens ([spacing_tokens.md](spacing_tokens.md)). Built: it depended on no other step.
 
 The measures of the first step, and the commands of measures 2, 3 and 6: [`docs/FONTS.md`](../../../docs/FONTS.md), "14.6 Measures".

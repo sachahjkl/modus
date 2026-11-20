@@ -31,7 +31,7 @@ Fact_Step_Fault :: enum u8 {
 
 // One fact type of the build: a row of the table Facts of one module file.
 Fact_Catalog_Type :: struct {
-	hash_prefix: [FACT_LINE_HASH_BYTES]u8,
+	module_tag:  [FACT_LINE_MODULE_TAG_BYTES]u8,
 	file:        []u8,
 	key:         u64,
 	description: module.Record,
@@ -41,7 +41,7 @@ Fact_Catalog_Type :: struct {
 // One fact type that a step names, in one module, with the field of its
 // condition.
 Fact_Step_Type :: struct {
-	hash_prefix: [FACT_LINE_HASH_BYTES]u8,
+	module_tag:  [FACT_LINE_MODULE_TAG_BYTES]u8,
 	key:         u64,
 	file:        []u8,
 	description: module.Record,
@@ -65,7 +65,7 @@ Fact_Step :: struct {
 fact_catalog_types :: proc(catalog: ^Fact_Catalog) -> []Fact_Catalog_Type {
 	types := make([dynamic]Fact_Catalog_Type, context.temp_allocator)
 	for index in 0 ..< len(catalog.modules) {
-		prefix := hash_prefix_of(catalog.modules[index].hash)
+		prefix := module_tag_of(catalog.modules[index].hash)
 		file := fact_catalog_file(catalog, prefix)
 		if file == nil || module.count(file, .Facts) <= 1 {
 			continue
@@ -78,7 +78,7 @@ fact_catalog_types :: proc(catalog: ^Fact_Catalog) -> []Fact_Catalog_Type {
 			package_name := module.string_at(file, row.package_offset, row.package_count)
 			type_name := module.string_at(file, description.name_offset, description.name_count)
 			name := strings.concatenate({package_name, ".", type_name}, context.temp_allocator)
-			append(&types, Fact_Catalog_Type{hash_prefix = prefix, file = file, key = row.key, description = description, name = name})
+			append(&types, Fact_Catalog_Type{module_tag = prefix, file = file, key = row.key, description = description, name = name})
 		}
 	}
 	return types[:]
@@ -92,7 +92,7 @@ fact_types_of_name :: proc(known: []Fact_Catalog_Type, name: string) -> []Fact_S
 	types := make([dynamic]Fact_Step_Type, context.temp_allocator)
 	for item in known {
 		if item.name == name {
-			append(&types, Fact_Step_Type{hash_prefix = item.hash_prefix, key = item.key, file = item.file, description = item.description})
+			append(&types, Fact_Step_Type{module_tag = item.module_tag, key = item.key, file = item.file, description = item.description})
 		}
 	}
 	return types[:]
@@ -102,10 +102,12 @@ fact_types_of_name :: proc(known: []Fact_Catalog_Type, name: string) -> []Fact_S
 // the bytes of its record: the values of the line, whose bytes after
 // value_count are zero (op.log_fact_line). ok is false for a line of
 // another fact type, and for a line with more value bytes than its record.
-// values holds a copy, so a reader keeps a Text field after the line.
+// values holds a copy, so a reader keeps a Text field after the line. The
+// line names the key by its tag, which one fact type of a module has
+// (facts_merge).
 fact_line_of_types :: proc(types: []Fact_Step_Type, line: Fact_Line) -> (type: Fact_Step_Type, values: []u8, ok: bool) {
 	for entry in types {
-		if entry.hash_prefix != line.hash_prefix || entry.key != line.key {
+		if entry.module_tag != line.module_tag || op.log_fact_key_tag(entry.key) != line.key_tag {
 			continue
 		}
 		size := int(entry.description.size)
@@ -287,7 +289,7 @@ fact_name_unknown_sentence :: proc(known: []Fact_Catalog_Type, name, package_nam
 }
 
 // fact_step_matches says if the line of a fact matches a checked step: its
-// process, a module and a key of the fact type, no more value bytes than
+// process, a module and a key tag of the fact type, no more value bytes than
 // its record, and values that pass the condition. The bytes after the
 // values of the line are zero (op.log_fact_line).
 fact_step_matches :: proc(step: Fact_Step, place: Fact_Line_Place) -> bool {
@@ -295,7 +297,7 @@ fact_step_matches :: proc(step: Fact_Step, place: Fact_Line_Place) -> bool {
 		return false
 	}
 	for entry in step.types {
-		if entry.hash_prefix != place.line.hash_prefix || entry.key != place.line.key {
+		if entry.module_tag != place.line.module_tag || op.log_fact_key_tag(entry.key) != place.line.key_tag {
 			continue
 		}
 		size := int(entry.description.size)

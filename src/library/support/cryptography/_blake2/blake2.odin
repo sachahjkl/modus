@@ -1,5 +1,5 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_blake2/blake2.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
-package _blake2
+// Altered source: Odin dev-2026-11a, core/crypto/_blake2/blake2.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+package modus__blake2
 
 /*
     Copyright 2021 zhibog

@@ -51,6 +51,7 @@ Each kind of content has one place. The intent of a design is in `src/md`. A gui
 - One term for one concept. Define a term in `docs/glossary/`, in the file of its group, before its first use.
 - A term of the glossary is a heading of level 3 in its group: a short definition of one sentence that stands alone, then an explanation (what it is for, how it is used, what it is not, an example, a reference to its design), then "Do not use:" (`docs/SITE.md`, "The glossary").
 - Each step adds one capability to a system that works. Each step is a tested commit on `master`.
+- Before 1.0, nothing is kept for compatibility: a behaviour, a sentence, a format or an interface changes when a better one is designed. Do not copy an old behaviour only because it exists. A test that the change breaks is read to its cause; if the new behaviour is the right one, change the test, the guide and the changelog fragment, not the code.
 - Finished work is merged into `master` and pushed, and its branch is deleted. No branch stays after its work is done.
 - All automation is a command of `tools/modustool`. Run it with `nix develop -c modustool <command>`. The tool uses the Odin standard library only.
 - Keep the documentation up to date: a change of the code changes, in the same commit, each document that describes it: the intent file, the guide of its subject, the glossary, `README.md`, the changelog fragment and the news entry when a reader sees the change. A document that says what the code no longer does is a fault, as a failing test is.

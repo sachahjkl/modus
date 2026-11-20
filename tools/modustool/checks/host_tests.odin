@@ -274,6 +274,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_SUPPORT + "/terminal",
 	foundation.SOURCE_FOLDER_CONTRACT + "/cut_mark",
 	foundation.SOURCE_FOLDER_CONTRACT + "/reference_screen",
+	foundation.SOURCE_FOLDER_CONTRACT + "/scale_factor",
 	foundation.SOURCE_FOLDER_CONTRACT + "/text_encoding",
 	foundation.SOURCE_FOLDER_RUNTIME + "/without_vector_registers",
 	foundation.SOURCE_FOLDER_SUPPORT + "/instruction_sets",

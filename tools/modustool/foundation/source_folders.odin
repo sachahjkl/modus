@@ -18,6 +18,13 @@ SOURCE_FOLDER_CONTRACT :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_CONTRACT //
 SOURCE_FOLDER_SUPPORT :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_SUPPORT // The support packages.
 SOURCE_FOLDER_PRIVATE :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_PRIVATE // The private parts: one folder for each module that has one, named by the module.
 
+// The works of others in C that a module compiles in: one folder for each
+// work, with its license, the patches of the system, its entry and the thin
+// libc (src/md/infrastructure/outside_source.md). It is not in
+// SOURCE_FOLDERS: each reader of that list reads Odin sources, and this
+// folder has none; the C files reach the build through the flake.
+SOURCE_FOLDER_OUTSIDE :: "src/outside"
+
 // Each folder of the sources of the system. A list of the tool that reads
 // a part of them names its folders by their constants, in its own order:
 // the order of a list can be the order of an output.

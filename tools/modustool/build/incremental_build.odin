@@ -871,7 +871,7 @@ Build_Inputs :: struct {
 	// False: a source of the tool cannot be read. Then nothing is kept and
 	// no record is written.
 	usable:          bool,
-	module_programs: [4]string,
+	module_programs: [5]string,
 	volume_programs: [5]string,
 }
 
@@ -899,7 +899,8 @@ build_inputs_prepare :: proc() {
 	folders := INPUT_FOLDERS
 	build_inputs.table = input_file_table_make(root, folders[:])
 	build_inputs.tool_identity, build_inputs.usable = tool_identity_of(build_inputs.table, foundation.TOOL_SOURCE_FOLDER)
-	for name, index in ([4]string{"odin", "llc", "nasm", "ld.lld"}) {
+	// clang compiles the C files of an outside source.
+	for name, index in ([5]string{"odin", "llc", "nasm", "ld.lld", "clang"}) {
 		build_inputs.module_programs[index] = strings.clone(host_program_identity(name))
 	}
 	for name, index in ([5]string{"odin", "nasm", "lld-link", "sbsign", "virt-fw-vars"}) {
@@ -1087,6 +1088,16 @@ module_compile_key_inputs :: proc(build: foundation.Module_Build) -> (inputs: Bu
 	append(&settings, "the object")
 	append(&settings, ..module_object_command(build))
 	append(&settings, build.source, build.kernel ? "runs in kernel mode" : "runs in user mode", build.image ? "with the system library" : "with no system library")
+	// Each command names the folder of the store of the outside source,
+	// whose name holds the hash of its content: the source, the patches
+	// and the files of the system.
+	c_commands := module_c_commands(build) or_return
+	if len(c_commands) > 0 {
+		append(&settings, "the C objects")
+		for command in c_commands {
+			append(&settings, ..command)
+		}
+	}
 	assembly_files := module_assembly_files(build) or_return
 	inputs = {
 		subject       = foundation.join("the compile step of the module ", build.name),
