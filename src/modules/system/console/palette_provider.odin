@@ -272,10 +272,14 @@ palette_table_write :: proc "contextless" () {
 			}
 			// A value that the border of the setting refuses has no entry:
 			// the scales past the window bound.
-			if !settings.value_valid(setting, settings.word_of_value(setting, int(value))) {
+			word := settings.word_of_value(setting, int(value))
+			if !settings.value_valid(setting, word) {
 				continue
 			}
-			entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Setting), setting = u8(setting), setting_value = u8(value), result = u8(palette_table.Value_Kind.Integer)}
+			// The entry names the value by its word on the settings page:
+			// the unit that the border of the table checks, and that the
+			// compositor compares with the value in use.
+			entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Setting), setting = u8(setting), setting_value = u8(word), result = u8(palette_table.Value_Kind.Integer)}
 			name := system.Writer{buffer = entry.name[:]}
 			system.write_part(&name, "set ")
 			system.write_part(&name, description.title)
