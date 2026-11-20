@@ -3054,6 +3054,31 @@ scenario := [?]Step {
 	{kind = .Wait, text = "01234567890123456789the end of a long result"},
 	{kind = .Type, text = "stop(\"notes\")"},
 	{kind = .Wait, text = "root: notes stopped"},
+	// The editor: each group of changes is a commit, and undo walks the
+	// versions of the store. The space after "first", the line end and
+	// the space after "second" each end a group; Ctrl+Z commits the last
+	// word, then restores the version before it; Ctrl+Y restores that
+	// word again. Shift with Up then selects from the end of the text to
+	// the end of the first line, which is shorter: 12 bytes, with the line
+	// end, over 2 lines.
+	{kind = .Type, text = "start(\"edit\")"},
+	{kind = .Wait, text = "edit: a new store: an empty text", any_order = true},
+	{kind = .Wait, text = "compositor: surface edit"},
+	{kind = .Wait, text = "edit: ok, the first picture is presented"},
+	{kind = .Front, text = "edit"},
+	{kind = .Keys, text = "first line"},
+	{kind = .Key, text = "ret"},
+	{kind = .Keys, text = "second line"},
+	{kind = .Key, text = "ctrl-z"},
+	{kind = .Wait, text = "edit: undo: the text has 18 bytes, the caret at byte 18, the version of generation "},
+	{kind = .Key, text = "ctrl-y"},
+	{kind = .Wait, text = "edit: redo: the text has 22 bytes, the caret at byte 22, the version of generation "},
+	{kind = .Key, text = "shift-up"},
+	{kind = .Wait, text = "edit: the selection has 12 bytes, from byte 10 to byte 22, over 2 lines"},
+	{kind = .Shot, text = "edit"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "stop(\"edit\")"},
+	{kind = .Wait, text = "root: edit stopped"},
 	// Errors that diagnose: each case makes an error for real, and the
 	// window shows the sentence of its error record. The process fault
 	// stops three calls deep: the tool names the functions of its stack
