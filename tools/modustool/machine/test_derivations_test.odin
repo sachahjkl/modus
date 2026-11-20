@@ -286,7 +286,7 @@ build_file_kinds_kept_and_dropped :: proc(t: ^testing.T) {
 test_part_reads_problem_refuses_a_dropped_kind :: proc(t: ^testing.T) {
 	for kind in ([]Build_File_Kind{.Linked_File, .Dependency_List, .Build_Record}) {
 		reader := Test_Part{name = "reader"}
-		incl(&reader.reads, kind)
+		reader.reads += {kind}
 		problem := test_part_reads_problem(reader)
 		testing.expectf(t, strings.contains(problem, "the test part reader reads"), "a part that reads the %v is refused: %q", kind, problem)
 	}
