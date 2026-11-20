@@ -95,7 +95,7 @@ The tool reads each type with the attribute `log_fact` that a call of `system.lo
 | `template_offset`, `template_count` | The fact template, in the string table. |
 | `package_offset`, `package_count` | The name of the package that declares the record type, in the string table. |
 
-A type with the attribute that no call of the module names gets no row. A call that the code of the module does not reach gets no row either: a support package does not add the fact types that a module does not write. The tool knows the calls that the code reaches by the IR, which holds the key of a fact type only where a call is compiled: the module `drawing` compiles the package `interface` and never writes an element line, so its IR holds no key of `interface` and its table has no row of it. The compile step writes the keys that it found (`reached_facts.txt`, an output of the step), and the conversion keeps the fact types of that list, so the two steps name one set even when the compile step is kept.
+A type with the attribute that no call of the module names gets no row. A call that the code of the module does not reach gets no row either: a support package does not add the fact types that a module does not write. The tool knows the calls that the code reaches by the IR, which holds the key of a fact type only where a call is compiled: the module `drawing` compiles the package `interface` and never writes an element line, so its IR holds no key of `interface` and its table has no row of it. The compile step writes the keys that it found (`reached_facts.list`, an output of the step), and the conversion keeps the fact types of that list, so the two steps name one set even when the compile step is kept.
 
 The tool refuses at the build:
 

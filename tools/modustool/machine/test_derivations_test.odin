@@ -264,3 +264,226 @@ text_map_of_json_takes_an_object_of_texts :: proc(t: ^testing.T) {
 	testing.expect_value(t, texts["main"], "/nix/store/a")
 	testing.expect_value(t, texts["tcp"], "/nix/store/b")
 }
+
+// The kinds of files that the test inputs keep, and those that they drop:
+// the linked file and the list of the compiler name the compiler in the
+// store, and a build record holds the time of one build.
+@(test)
+build_file_kinds_kept_and_dropped :: proc(t: ^testing.T) {
+	dropped := Build_File_Kinds{.Linked_File, .Dependency_List, .Build_Record}
+	for kind in Build_File_Kind {
+		testing.expectf(t, build_file_kind_is_test_input(kind) == (kind not_in dropped), "the %v of a module is a test input: %v", kind, kind not_in dropped)
+		testing.expectf(t, build_file_of_module(kind, "kernel") != "", "the %v of a module is in the build folder", kind)
+	}
+	testing.expect_value(t, build_file_of_module(.Module_Source_List, "kernel"), "modules/kernel/sources.list")
+	testing.expect_value(t, build_file_of_module(.Reached_Fact_List, "kernel"), "modules/kernel/reached_facts.list")
+	testing.expect_value(t, build_file_of_module(.Dependency_List, "kernel"), "modules/kernel/dependencies.json")
+}
+
+// A part that declares a kind of file that the test inputs drop is refused
+// before any machine, with its name; each part of the table passes.
+@(test)
+test_part_reads_problem_refuses_a_dropped_kind :: proc(t: ^testing.T) {
+	for kind in ([]Build_File_Kind{.Linked_File, .Dependency_List, .Build_Record}) {
+		reader := Test_Part{name = "reader"}
+		incl(&reader.reads, kind)
+		problem := test_part_reads_problem(reader)
+		testing.expectf(t, strings.contains(problem, "the test part reader reads"), "a part that reads the %v is refused: %q", kind, problem)
+	}
+	both := Test_Part{name = "both", reads = {.Module_Source_List, .Linked_File}}
+	testing.expect(t, test_part_reads_problem(both) != "", "one dropped kind among kept ones is refused")
+	for part in test_parts {
+		testing.expect_value(t, test_part_reads_problem(part), "")
+	}
+}
+
+// The inputs must hold each file of each kind that a part reads, for each
+// module of the table: a missing file, no file, and a dropped kind whose
+// files the folder holds anyway are refused; the whole set passes.
+@(test)
+test_part_build_files_problem_refuses_a_missing_file :: proc(t: ^testing.T) {
+	part, found := test_part_find("host_modules")
+	testing.expect(t, found, "the table has the part host_modules")
+	if !found {
+		return
+	}
+	empty := make(map[string]bool, allocator = context.temp_allocator)
+	testing.expect(t, test_part_build_files_problem(part^, empty) != "", "no file is refused")
+	held := make(map[string]bool, allocator = context.temp_allocator)
+	for kind in Build_File_Kind {
+		for module_build in foundation.module_builds {
+			held[build_file_of_module(kind, module_build.name)] = true
+		}
+	}
+	missing := build_file_of_module(.Reached_Fact_List, foundation.module_builds[len(foundation.module_builds) - 1].name)
+	held[missing] = false
+	problem := test_part_build_files_problem(part^, held)
+	testing.expectf(t, strings.contains(problem, missing), "the missing %s is named: %q", missing, problem)
+	held[missing] = true
+	linked := Test_Part{name = "linked", reads = {.Linked_File}}
+	testing.expect(t, test_part_build_files_problem(linked, held) != "", "a dropped kind is refused even when the folder holds its files")
+	testing.expect_value(t, test_part_build_files_problem(part^, held), "")
+}
+
+@(private = "file")
+Named_Build_File :: struct {
+	procedure: string,
+	kind:      Build_File_Kind,
+}
+
+@(private = "file")
+byte_of_an_identifier :: proc(character: u8) -> bool {
+	return character == '_' || (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9')
+}
+
+// build_files_named_in_source adds each kind of file that a procedure of
+// the top level of a source names, by the markers of the kinds. A comment
+// and a table outside a procedure name nothing.
+@(private = "file")
+build_files_named_in_source :: proc(source: string, named: ^[dynamic]Named_Build_File) {
+	procedure := ""
+	rest := source
+	for whole_line in strings.split_lines_iterator(&rest) {
+		if whole_line == "}" {
+			procedure = ""
+			continue
+		}
+		line := whole_line
+		if comment := strings.index(line, "//"); comment >= 0 {
+			line = line[:comment]
+		}
+		if declaration := strings.index(line, " :: proc"); declaration > 0 && byte_of_an_identifier(line[0]) {
+			procedure = line[:declaration]
+			continue
+		}
+		if procedure == "" {
+			continue
+		}
+		for markers, kind in build_file_kind_markers {
+			for marker in markers {
+				if strings.contains(line, marker) {
+					append(named, Named_Build_File{procedure = procedure, kind = kind})
+					break
+				}
+			}
+		}
+	}
+}
+
+// The procedures that name a kind of file that the test inputs drop: each
+// is a step of the build, of the build of an outside module in its own
+// folder, or of `check`, which runs where the build is, and no test part
+// runs it. A new reader of such a file must come into this list, or into
+// none: then a part would read a file that its inputs lack.
+@(private = "file")
+dropped_file_readers := [?]string {
+	// The build of the modules, of the boot volumes and of the tool.
+	"boot_program_compile_command",
+	"boot_volume_dependency_file",
+	"boot_volume_record_path",
+	"boot_volume_record_write",
+	"boot_volumes_build",
+	"boot_volumes_kept",
+	"module_compile",
+	"module_compile_command",
+	"module_convert",
+	"module_dependency_file",
+	"module_linked_file",
+	"module_records_write",
+	"module_source_list_write",
+	"module_steps_of",
+	"tool_build",
+	"tool_build_current",
+	// The build of an outside module, by its own compiler, in its folder.
+	"outside_module_sources_hold",
+	// The path of each kind, which reads no file.
+	"build_file_of_module",
+	// A test of the build that `check` runs after its build.
+	"test_debug_objects",
+}
+
+// undeclared_reads_problems gives, for the rows of a table of parts and the
+// files that the sources name, each procedure of a row that reads a kind
+// that its row does not declare, each procedure of a row that reads a kind
+// that the test inputs drop, and each reader of a dropped kind that is not
+// in the list of such readers.
+@(private = "file")
+undeclared_reads_problems :: proc(rows: []Test_Part, named: []Named_Build_File, readers: []string) -> []string {
+	problems := make([dynamic]string, context.temp_allocator)
+	for item in named {
+		if !build_file_kind_is_test_input(item.kind) && !slice_holds(readers, item.procedure) {
+			append(&problems, fmt.tprintf("%s reads the %v, which the test inputs drop, and is not in the list of such readers", item.procedure, item.kind))
+		}
+		for row in rows {
+			if !slice_holds(row.procedures, item.procedure) {
+				continue
+			}
+			if !build_file_kind_is_test_input(item.kind) {
+				append(&problems, fmt.tprintf("the procedure %s of the part %s reads the %v, which the test inputs drop", item.procedure, row.name, item.kind))
+			} else if item.kind not_in test_part_reads(row) {
+				append(&problems, fmt.tprintf("the procedure %s of the part %s reads the %v, which its row does not declare in reads", item.procedure, row.name, item.kind))
+			}
+		}
+	}
+	return problems[:]
+}
+
+@(private = "file")
+slice_holds :: proc(texts: []string, text: string) -> bool {
+	for item in texts {
+		if item == text {
+			return true
+		}
+	}
+	return false
+}
+
+// The check of the sources refuses a procedure of a part that reads a file
+// that the test inputs drop, and one that reads a kind that its row does
+// not declare; a reader of a dropped file outside the list is refused too.
+@(test)
+undeclared_reads_are_refused :: proc(t: ^testing.T) {
+	source := "fake_reader :: proc() {\n\tlist := module_dependency_file(\"a\")\n}\n\nfake_lister :: proc() {\n\tlist := module_source_list_read(\"a\")\n}\n\n// fake_comment :: proc() names module_linked_file( in a comment only\n"
+	named := make([dynamic]Named_Build_File, context.temp_allocator)
+	build_files_named_in_source(source, &named)
+	testing.expect_value(t, len(named), 2)
+	dropped_reader := []Test_Part{{name = "fake", procedures = {"fake_reader"}}}
+	testing.expect(t, len(undeclared_reads_problems(dropped_reader, named[:], {"fake_reader"})) == 1, "a part that runs a reader of a dropped file is refused")
+	testing.expect(t, len(undeclared_reads_problems(nil, named[:], nil)) == 1, "a reader of a dropped file outside the list is refused")
+	undeclared := []Test_Part{{name = "fake", procedures = {"fake_lister"}}}
+	testing.expect(t, len(undeclared_reads_problems(undeclared, named[:], {"fake_reader"})) == 1, "a kind that the row does not declare is refused")
+	declared := []Test_Part{{name = "fake", procedures = {"fake_lister"}, reads = {.Module_Source_List}}}
+	testing.expect(t, len(undeclared_reads_problems(declared, named[:], {"fake_reader"})) == 0, "a declared kind of a test input passes")
+}
+
+// Each part declares the kinds of files that the procedures of its row
+// read, each of them a test input, and each reader of a dropped file is a
+// step of the build or of `check`. The test reads the sources of the tool,
+// from the root of the repository.
+@(test)
+each_part_declares_the_build_files_that_its_procedures_read :: proc(t: ^testing.T) {
+	listed_paths := make([dynamic]string, context.temp_allocator)
+	listed := foundation.source_files_of_a_folder(foundation.TOOL_SOURCE_FOLDER, &listed_paths)
+	testing.expect(t, listed, "the test runs from the root of the repository")
+	named := make([dynamic]Named_Build_File, context.temp_allocator)
+	for path in listed_paths {
+		if strings.has_suffix(path, "_test.odin") {
+			continue
+		}
+		source, error := os.read_entire_file(path, context.temp_allocator)
+		testing.expectf(t, error == nil, "%s can be read", path)
+		build_files_named_in_source(string(source), &named)
+	}
+	testing.expect(t, len(named) > 20, "the sources of the tool name the files of the modules")
+	for problem in undeclared_reads_problems(test_parts[:], named[:], dropped_file_readers[:]) {
+		testing.expectf(t, false, "%s", problem)
+	}
+	// No name of the list is stale: each one reads a dropped kind.
+	for reader in dropped_file_readers {
+		reads_a_dropped_kind := false
+		for item in named {
+			reads_a_dropped_kind = reads_a_dropped_kind || (item.procedure == reader && !build_file_kind_is_test_input(item.kind))
+		}
+		testing.expectf(t, reads_a_dropped_kind, "%s, in the list of the readers of dropped files, reads none", reader)
+	}
+}

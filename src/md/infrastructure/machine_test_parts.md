@@ -22,7 +22,7 @@ The machine test is a list of parts. A part is one or more machines that share a
 
 - The refusal of `test <word>` lists the names of the rows.
 - `boot_volumes_of_test` gives the volumes of a row; the whole test builds every volume.
-- The whole test is the list of the rows. Each part of the old chain has its row, also the ones that had none: `fails`, `self_tests`, `persist` and `host_modules` (the loader, the descriptions and the debug objects on the host).
+- The whole test is the list of the rows. Each part of the old chain has its row, also the ones that had none: `fails`, `self_tests`, `persist` and `host_modules` (the loader and the descriptions on the host). The test of the debug objects against the linked files left the parts: the linked files are no test inputs, so `check` runs it after its build.
 - The table of the guide, [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The parts of the machine test", is checked line by line against `test_part_guide_row`: the name, the sentence and the short names of the boot volumes. A host test prints the line that it expected, so the guide follows the table.
 
 **The run of a part, `Test_Part_Run`.** What the machines of one part share lives in one record, and each machine reaches it through its machine record (`Machine.part`): the data disk of the part, the values of the steps Remember, the texts of the steps Screen_Text, and the times of its machines and steps. A command that starts machines outside the test (`measure`, `film`) makes one run with its own name.

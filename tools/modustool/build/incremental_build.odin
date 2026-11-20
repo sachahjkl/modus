@@ -1132,6 +1132,9 @@ module_steps_of :: proc(build: foundation.Module_Build) -> (steps: Module_Steps,
 	// The conversion writes the table Facts from the fact types whose key
 	// the compile found in the code (facts.odin, facts_reached).
 	append(&compile_outputs, module_reached_facts_file(build.name))
+	// The conversion and the tests of the build read the sources of the
+	// compile from this list (facts.odin, module_source_list_write).
+	append(&compile_outputs, module_source_list_file(build.name))
 	// Each build prints the measure of the kernel stack, also for a kept
 	// kernel (kernel_stack.odin).
 	if build.kernel {

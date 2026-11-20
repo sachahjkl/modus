@@ -41,6 +41,109 @@ TEST_INPUT_REFUSED_SUFFIXES :: [?]string{".build_record", ".json", ".ll", ".bc",
 // a module that name the compiler, and the folders of the other commands.
 TEST_INPUT_REFUSED_FOLDERS :: [?]string{"llvm_ir", "objects", "tool", "screenshots", "host_tests", "fuzzing", "different_builds", "modules_without_debug_information", "flake_check", "site", "films", "similarity", "part_cache"}
 
+// The kinds of the files of a build, one of each module, that a test part
+// can read past its boot volumes. A kind is a test input when the test
+// inputs keep its files; the others name the compiler in the store or the
+// time of one build, so only a build or a check that runs where the build
+// is reads them.
+Build_File_Kind :: enum {
+	Module_File,
+	Debug_Object,
+	Module_Source_List, // The sources of the repository that the compiler read.
+	Reached_Fact_List, // The fact keys that the compile step found in the code.
+	Linked_File, // The output of the link, with the debug information that names the compiler in the store.
+	Dependency_List, // The list of the compiler, with the paths of its libraries in the store.
+	Build_Record,
+}
+
+Build_File_Kinds :: bit_set[Build_File_Kind]
+
+// What the engine of a machine reads in every part: the module files (the
+// catalog of the log facts, the measures of the log) and the debug objects
+// (the stack traces, the state of a processor at a fault).
+MACHINE_ENGINE_READS :: Build_File_Kinds{.Module_File, .Debug_Object}
+
+// The texts of a source of the tool that name a file of each kind: a
+// procedure that holds one reads that kind. A host test reads the sources
+// with them, and refuses a part whose procedures read a kind that it does
+// not declare, or that the test inputs do not keep.
+build_file_kind_markers := [Build_File_Kind][]string {
+	.Module_File        = {"module_path("},
+	.Debug_Object       = {"debug_object_path(", "module_debug_object_file("},
+	.Module_Source_List = {"module_source_list_file(", "module_source_list_read("},
+	.Reached_Fact_List  = {"module_reached_facts_file("},
+	.Linked_File        = {"module_linked_file(", "linked.elf"},
+	.Dependency_List    = {"module_dependency_file(", "dependency_list_read(", "boot_volume_dependency_file(", "DEPENDENCY_FILE_NAME"},
+	.Build_Record       = {"BUILD_RECORD_SUFFIX", "_record_path(", "TOOL_BUILD_RECORD"},
+}
+
+// build_file_of_module gives the file of one kind of a module, by its path
+// relative to the build folder.
+build_file_of_module :: proc(kind: Build_File_Kind, name: string) -> string {
+	path: string
+	switch kind {
+	case .Module_File:
+		path = foundation.module_path(name)
+	case .Debug_Object:
+		path = build.debug_object_path(name)
+	case .Module_Source_List:
+		path = build.module_source_list_file(name)
+	case .Reached_Fact_List:
+		path = build.module_reached_facts_file(name)
+	case .Linked_File:
+		path = build.module_linked_file(name)
+	case .Dependency_List:
+		path = build.module_dependency_file(name)
+	case .Build_Record:
+		path = foundation.join(foundation.module_build_folder, "/", name, build.COMPILE_RECORD_SUFFIX)
+	}
+	relative, _ := build_relative_path(path)
+	return relative
+}
+
+// build_file_kind_is_test_input says if the test inputs keep the files of
+// a kind: the rule of test_input_kept, on the file of the kernel.
+build_file_kind_is_test_input :: proc(kind: Build_File_Kind) -> bool {
+	return test_input_kept(build_file_of_module(kind, "kernel"))
+}
+
+// test_part_reads gives the kinds of the files of the build that a part
+// reads: those that it declares, and those of the engine of a machine.
+test_part_reads :: proc(part: Test_Part) -> Build_File_Kinds {
+	return part.reads + MACHINE_ENGINE_READS
+}
+
+// test_part_reads_problem refuses a part that reads a kind of file that the
+// test inputs do not keep: its part derivation would fail at the first
+// read, after machines ran.
+test_part_reads_problem :: proc(part: Test_Part) -> string {
+	for kind in test_part_reads(part) {
+		if !build_file_kind_is_test_input(kind) {
+			return fmt.tprintf("the test part %s reads the %v of each module (%s), which the test inputs do not keep: it names the compiler in the store or the time of one build", part.name, kind, build_file_of_module(kind, "kernel"))
+		}
+	}
+	return ""
+}
+
+// test_part_build_files_problem refuses a part that reads a kind of file
+// that the test inputs do not keep, or whose file of a module of the table
+// the inputs lack. held names the files of the inputs by their paths
+// relative to the folder of the inputs.
+test_part_build_files_problem :: proc(part: Test_Part, held: map[string]bool) -> string {
+	if problem := test_part_reads_problem(part); problem != "" {
+		return problem
+	}
+	for kind in test_part_reads(part) {
+		for module_build in foundation.module_builds {
+			path := build_file_of_module(kind, module_build.name)
+			if !held[path] {
+				return fmt.tprintf("the test part %s reads %s, which the test inputs lack", part.name, path)
+			}
+		}
+	}
+	return ""
+}
+
 // test_input_kept says if a file of the build folder, by its path relative
 // to that folder, is a test input. A path that leaves the folder, or that
 // names no file, is refused.
@@ -180,6 +283,8 @@ test_inputs_write :: proc(target: string) -> bool {
 		kept[path] = true
 		copied += 1
 	}
+	// Each part finds in the inputs what it reads: this refusal comes in the
+	// whole build, before any machine of any part starts.
 	for part in test_parts {
 		for volume in test_part_volumes_of(part) {
 			relative, inside := build_relative_path(volume)
@@ -187,6 +292,10 @@ test_inputs_write :: proc(target: string) -> bool {
 				fmt.eprintfln("modustool: the build folder has no boot volume %s of the test part %s: the test inputs come from a whole build (`modustool build whole`)", volume, part.name)
 				return false
 			}
+		}
+		if problem := test_part_build_files_problem(part, kept); problem != "" {
+			fmt.eprintfln("modustool: %s", problem)
+			return false
 		}
 	}
 	names_path := foundation.join(target, "/", TEST_PARTS_FILE_NAME)
@@ -233,11 +342,17 @@ test_inputs_take :: proc(folder: string, part: Test_Part) -> bool {
 	paths := make([dynamic]string, context.temp_allocator)
 	relative_files_collect(absolute_folder, "", &paths) or_return
 	volume_paths := test_parts_volume_paths()
+	held := make(map[string]bool, allocator = context.temp_allocator)
 	for path in paths {
 		if !test_input_kept(path) {
 			fmt.eprintfln("modustool: %s holds %s, which is no test input", folder, path)
 			return false
 		}
+		held[path] = true
+	}
+	if problem := test_part_build_files_problem(part, held); problem != "" {
+		fmt.eprintfln("modustool: %s", problem)
+		return false
 	}
 	for path in paths {
 		source := foundation.join(absolute_folder, "/", path)

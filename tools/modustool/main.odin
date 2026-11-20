@@ -523,7 +523,8 @@ COMMANDS :: [?]foundation.Command {
 	// of the tests, the rule on comments, the form of the glossary, the
 	// file index of the intent, the source paths in the documents, the
 	// changelog, the news and the roadmap. Then the whole machine test
-	// (`test`) and a second build that must give the same bytes.
+	// (`test`), the test of the debug objects against the linked files of
+	// the build, and a second build that must give the same bytes.
 	//
 	// - `without_machines` (optional): no machine test; a whole build of the
 	//   main volume before the second build. The check of the flake runs
@@ -1026,6 +1027,12 @@ run_check :: proc(args: []string) -> int {
 			return code
 		}
 	} else if run_test(nil) != 0 {
+		return foundation.EXIT_FAILURE
+	}
+	// The debug objects against the linked files: the linked files name the
+	// compiler in the store, so only a build holds them, and no test part
+	// of the flake reads them.
+	if !machine.test_debug_objects() {
 		return foundation.EXIT_FAILURE
 	}
 	if !build.outputs_same_after_second_build() {
