@@ -956,10 +956,8 @@ compositor_start :: proc "contextless" () -> system.Status {
 	compositor, status = system.process_start(system.image_find(image, "compositor"), "compositor", context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared, load_source(), &compositor_load_error)
 	if status != .Ok {
 		if compositor_load_error.stage != .None {
-			buffer: [512]u8
-			writer := system.Writer{buffer = buffer[:]}
-			system.load_error_text(&writer, &compositor_load_error)
-			system.log(.Error, "root: cannot load the compositor: ", system.written(&writer))
+			system.log_fact(.Error, Compositor_Load_Refused{})
+			load_error_log(.Error, &compositor_load_error)
 		}
 		system.log_fact(.Warning, Compositor_Start_Failed{status = status})
 		compositor = 0
@@ -1636,10 +1634,8 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	process, status := system.process_start(system.image_find(image, "terminal"), "terminal", context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
 		if load_error.stage != .None {
-			buffer: [512]u8
-			writer := system.Writer{buffer = buffer[:]}
-			system.load_error_text(&writer, &load_error)
-			system.log(.Warning, "root: cannot load the terminal: ", system.written(&writer))
+			system.log_fact(.Warning, Terminal_Load_Refused{})
+			load_error_log(.Warning, &load_error)
 		}
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return status

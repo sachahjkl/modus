@@ -513,10 +513,8 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	if status == .No_Budget && process_budget.pages != 0 {
 		budget_refusal_log(name, process_budget, 0, "this service")
 	} else if load_error.stage != .None {
-		buffer: [512]u8
-		writer := system.Writer{buffer = buffer[:]}
-		system.load_error_text(&writer, &load_error)
-		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": ", system.written(&writer))
+		system.log_fact(.Warning, Start_Refused_By_Loader{refused_process = module_name_field(name)})
+		load_error_log(.Warning, &load_error)
 	} else {
 		system.log_fact(.Warning, Start_Failed{status = status, refused_process = module_name_field(name)})
 	}

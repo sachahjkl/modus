@@ -5,10 +5,12 @@ import "modus:contract/font_outlines"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/replacement_list"
+import "modus:contract/settings"
 import "modus:contract/start_grant"
 import "modus:contract/system_description"
 import "modus:contract/value_kinds"
 import "modus:private/root/replacement_signature"
+import "modus:support/appearance"
 import "modus:support/sentence"
 import "core:strings"
 import "core:testing"
@@ -122,8 +124,20 @@ root_text_bytes_most :: proc() -> map[string]u32 {
 	most["strength"] = longest(SEED_STRENGTHS[:])
 	most["rdseed_presence"] = longest(PRESENCES[:])
 	most["rdrand_presence"] = longest(PRESENCES[:])
+	// The names of a load error: a name of a module, at most NAME_SIZE - 1
+	// bytes, in a field of module.LOAD_NAME_FIELD_BYTES.
+	for name in ([?]string{"module_name", "imported_name", "replacement_name", "subject_name", "export"}) {
+		most[name] = module.NAME_SIZE - 1
+	}
+	most["appearance_in_force"] = longest(APPEARANCE_WORDS[:])
+	most["appearance_setting"] = longest(APPEARANCE_WORDS[:])
 	return most
 }
+
+// The names of the appearance in force and of the values of the setting
+// appearance: auto, dark, light.
+@(private = "file")
+APPEARANCE_WORDS := [?]string{"auto", "dark", "light"}
 
 // The texts of the Text fields of the second part of the root service,
 // each the way the root service writes it. The tool does not compile the
@@ -557,7 +571,7 @@ the_statuses_of_the_root_service_are_the_names_of_their_members :: proc(t: ^test
 		// The words of the status: its name, or the number of a word that
 		// names no member.
 		status_text := line_of_before(word)
-		if name, named := op.contract_enum_member_name(.Status, word); named {
+		if name, named := module.contract_enum_member_name(.Status, word); named {
 			status_text = name
 		}
 		for item in lines {
@@ -869,4 +883,118 @@ the_seed_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing
 			}
 		}
 	}
+}
+
+// The facts of the appearance in force write the sentence of
+// appearance.sentence_write, which the line wrote, for each setting and for
+// moments at the edges: no date, the first second of 1970, a millisecond
+// before it (the whole seconds round toward the past), the local times
+// 00:00, 07:04 and 23:59, and the zones -3600, 0 and 50400.
+@(test)
+the_appearance_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	moments := [?]appearance.Moment {
+		{},
+		{known = true, milliseconds = 0},
+		{known = true, milliseconds = -1},
+		{known = true, milliseconds = (7 * 3_600 + 4 * 60) * 1000 + 999},
+		{known = true, milliseconds = 86_399 * 1000, zone_offset_seconds = 0},
+		{known = true, milliseconds = 1_794_791_040_500, zone_offset_seconds = -3_600},
+		{known = true, milliseconds = 1_794_791_040_500, zone_offset_seconds = 50_400},
+	}
+	for setting in settings.Appearance {
+		for moment in moments {
+			buffer: [256]u8
+			line := line_of_before("root: ", appearance.sentence_write(buffer[:], setting, moment))
+			in_force := settings.appearance_in_force_names[appearance.in_force_of(setting, moment)]
+			written: string
+			switch {
+			case setting != .Auto:
+				written = render(t, file, "Appearance_Set", {{"appearance_in_force", in_force}, {"appearance_setting", settings.descriptions[.Appearance].value_names[u32(setting)]}})
+			case !moment.known:
+				written = render(t, file, "Appearance_Auto_Without_Date", {{"appearance_in_force", in_force}})
+			case:
+				rest := moment.milliseconds % 1000
+				if rest < 0 {
+					rest += 1000
+				}
+				seconds := (moment.milliseconds - rest) / 1000
+				written = render(t, file, "Appearance_Auto", {{"light_from", u64(appearance.LIGHT_FROM_SECOND)}, {"dark_from", u64(appearance.DARK_FROM_SECOND)}, {"local_time", u64(appearance.local_second_of_day(moment))}, {"zone_offset", signed_bits(moment.zone_offset_seconds)}, {"seconds_since_1970", signed_bits(seconds)}, {"appearance_in_force", in_force}})
+			}
+			expect(t, written, line)
+		}
+	}
+}
+
+// The facts of a load that the loader refused: the line of the start, then
+// the fact of the stage of the load error, in the form of its fields. Each
+// stage, with names of 31 bytes, and with no import (an empty name and a
+// zero hash, whose head is eight zeros); each member of the enum of a stage
+// and a word that names no member.
+@(test)
+the_load_error_facts_of_the_root_service_write_the_fields_of_each_stage :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	process := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
+	expect(t, render(t, file, "Compositor_Load_Refused", {}), "root: cannot load the compositor: the loader refused it")
+	expect(t, render(t, file, "Terminal_Load_Refused", {}), "root: cannot load the terminal: the loader refused it")
+	expect(t, render(t, file, "Start_Refused_By_Loader", {{"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": the loader refused it"))
+	expect(t, render(t, file, "Disk_Load_Refused_By_Loader", {{"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: the loader refused its file"))
+
+	name := strings.repeat("m", module.NAME_SIZE - 1, context.temp_allocator)
+	imported := strings.repeat("i", module.NAME_SIZE - 1, context.temp_allocator)
+	export := strings.repeat("e", module.NAME_SIZE - 1, context.temp_allocator)
+	hash, zero: [module.HASH_SIZE]u8
+	for &value, index in hash {
+		value = u8(0x70 + index)
+	}
+	head := line_of_before(sentence.Hash{hash[:4]}, "…")
+	zero_head := line_of_before(sentence.Hash{zero[:4]}, "…")
+	imports := [2]string{imported, ""}
+	for import_name in imports {
+		import_hash := import_name == "" ? zero : hash
+		import_head := import_name == "" ? zero_head : head
+		expect(t, render(t, file, "Load_Find_Failed", {{"module_hash", hash}, {"imported_hash", import_hash}, {"module_name", name}, {"imported_name", import_name}}), line_of_before("root: the load source has no file of the import ", import_name, " (", import_head, ") of ", name, " (", head, ")"))
+		expect(t, render(t, file, "Load_Cycle_Failed", {{"module_name", name}, {"imported_name", import_name}, {"replacement_name", export}}), line_of_before("root: ", name, " imports itself through ", import_name, ", by the replacement ", export))
+	}
+	words_of :: proc(which: value_kinds.Contract_Enum, word: u64) -> string {
+		if name, named := module.contract_enum_member_name(which, word); named {
+			return name
+		}
+		return line_of_before(word)
+	}
+	for word in 0 ..= u64(max(module.Error)) + 1 {
+		expect(t, render(t, file, "Load_Read_Failed", {{"file_error", word}, {"subject_hash", hash}, {"subject_name", name}}), line_of_before("root: the file of ", name, " (", head, ") is not a valid module, or not the file of its hash: ", words_of(.Module_Error, word)))
+	}
+	for word in 0 ..= u64(max(module.Difference)) + 1 {
+		expect(t, render(t, file, "Load_Check_Failed", {{"difference", word}, {"parameter", u64(max(u32))}, {"module_name", name}, {"imported_name", imported}, {"export", export}}), line_of_before("root: the replacement of the import ", imported, " of ", name, " differs in its export ", export, ": ", words_of(.Load_Difference, word), ", parameter ", u64(max(u32))))
+	}
+	slots := [3]u64{0, 1, u64(max(u32))}
+	for slot in slots {
+		expect(t, render(t, file, "Load_Bind_Failed", {{"slot", slot}, {"module_name", name}, {"imported_name", imported}, {"export", export}}), line_of_before("root: the slot ", slot, " of ", name, " names no import or no export, or is not in writable data: the import ", imported, ", the export ", export))
+	}
+	statuses := [3]u64{u64(min(op.Status)), u64(max(op.Status)), u64(max(op.Status)) + 1}
+	for word in statuses {
+		expect(t, render(t, file, "Load_Map_Failed", {{"status", word}, {"module_hash", hash}, {"module_name", name}}), line_of_before("root: the map of the memory of ", name, " (", head, ") failed: status ", words_of(.Status, word)))
+		expect(t, render(t, file, "Load_Unmap_Failed", {{"status", word}, {"module_hash", hash}, {"module_name", name}}), line_of_before("root: the removal of ", name, " (", head, ") failed: status ", words_of(.Status, word)))
+	}
+	expect(t, render(t, file, "Load_Room_Failed", {{"module_hash", hash}, {"module_name", name}}), line_of_before("root: no room for ", name, " (", head, "): the module space, the imports of one module or the table of the loader is full"))
+
+	// The procedures of the contract fill each shape from a load error of
+	// its stage: the fact of the stage holds the names that the error names.
+	error: module.Load_Error
+	module.name_set(&error.module.name, name)
+	error.module.hash = hash
+	module.name_set(&error.imported.name, imported)
+	error.imported.hash = hash
+	module.name_set(&error.export, export)
+	find := module.load_find_fact_fields(&error)
+	testing.expect(t, string(find.module_name[:len(name)]) == name && find.module_name[len(name)] == 0 && string(find.imported_name[:len(imported)]) == imported)
+	bind := module.load_bind_fact_fields(&error)
+	testing.expect(t, string(bind.export[:len(export)]) == export && bind.export[len(export)] == 0)
 }

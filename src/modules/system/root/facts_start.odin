@@ -400,3 +400,30 @@ Entropy_Read_Refused :: distinct errors.Error_Record_Fact_Fields
 // of its error record.
 @(log_fact = "root: the network service refused a command of its control ring: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
 Network_Control_Command_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The appearance in force that a setting gives at a moment, in the three
+// forms of appearance.sentence_write: the setting itself, auto with no
+// date, and auto by the rule of the day. The appearance in force and the
+// setting are the names of their values (settings.appearance_in_force_names
+// and the value names of the setting), at most 5 bytes. The step
+// Appearance_Auto of the tool reads the sentence of the third form.
+@(log_fact = "root: the appearance in force is {appearance_in_force}: the setting {appearance_setting}")
+Appearance_Set :: struct {
+	appearance_in_force: [8]u8,
+	appearance_setting:  [8]u8,
+}
+
+@(log_fact = "root: the appearance in force is {appearance_in_force}: auto, and the system has no date")
+Appearance_Auto_Without_Date :: struct {
+	appearance_in_force: [8]u8,
+}
+
+@(log_fact = "root: the appearance in force is {appearance_in_force}: auto, light from {light_from} to {dark_from} of the local time; the local time is {local_time} with a zone of {zone_offset} s, at {seconds_since_1970} s since 1970")
+Appearance_Auto :: struct {
+	light_from:          value_kinds.Time_Of_Day,
+	dark_from:           value_kinds.Time_Of_Day,
+	local_time:          value_kinds.Time_Of_Day,
+	zone_offset:         i64,
+	seconds_since_1970:  i64,
+	appearance_in_force: [8]u8,
+}

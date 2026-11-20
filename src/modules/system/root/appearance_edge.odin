@@ -3,6 +3,7 @@ package root
 import "base:intrinsics"
 import "modus:contract/date"
 import "modus:contract/settings"
+import "modus:contract/value_kinds"
 import "modus:support/appearance"
 import "modus:support/system"
 
@@ -80,12 +81,33 @@ appearance_step :: proc "contextless" (wait: ^system.Wait) {
 		if in_force == choice.appearance_in_force {
 			return
 		}
-		buffer: [192]u8
-		system.log(.Info, "root: ", appearance.sentence_write(buffer[:], setting, moment))
+		appearance_in_force_log(setting, in_force, moment)
 		settings.appearance_in_force_write(settings_page, in_force)
 		system.word_wake(&settings_page.change_count, 64)
 		if intrinsics.atomic_load_explicit(&settings_page.change_count, .Acquire) == choice.change_count {
 			return
 		}
+	}
+}
+
+// appearance_in_force_log writes why the setting gives its appearance in
+// force at a moment: the sentence of appearance.sentence_write, as a fact of
+// each of its three forms.
+appearance_in_force_log :: proc "contextless" (setting: settings.Appearance, in_force: settings.Appearance_In_Force, moment: appearance.Moment) {
+	in_force_words := text_field(settings.appearance_in_force_names[in_force], 8)
+	switch {
+	case setting != .Auto:
+		system.log_fact(.Info, Appearance_Set{appearance_in_force = in_force_words, appearance_setting = text_field(settings.descriptions[.Appearance].value_names[u32(setting)], 8)})
+	case !moment.known:
+		system.log_fact(.Info, Appearance_Auto_Without_Date{appearance_in_force = in_force_words})
+	case:
+		// The whole seconds since 1970, rounded toward the past for a date
+		// before it too, as the sentence of appearance writes them.
+		rest := moment.milliseconds % 1000
+		if rest < 0 {
+			rest += 1000
+		}
+		seconds := (moment.milliseconds - rest) / 1000
+		system.log_fact(.Info, Appearance_Auto{light_from = appearance.LIGHT_FROM_SECOND, dark_from = appearance.DARK_FROM_SECOND, local_time = value_kinds.Time_Of_Day(appearance.local_second_of_day(moment)), zone_offset = moment.zone_offset_seconds, seconds_since_1970 = seconds, appearance_in_force = in_force_words})
 	}
 }

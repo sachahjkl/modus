@@ -221,11 +221,10 @@ disk_process_running :: proc "contextless" (nickname: string, principal: u64) ->
 }
 
 // disk_loader_refusal_log writes the line of a disk process whose file the
-// loader refused, with the sentence of the error of the loader. It stays a
-// text: the error of a load (module.Load_Error) passes the 144 bytes of a
-// fact, and its sentence has a form for each stage of the load.
-disk_loader_refusal_log :: proc "contextless" (name: string, loader_sentence: string) {
-	system.log(.Warning, "root: refused ", system.Module_Name{name}, " from the disk: the loader refused its file: ", loader_sentence)
+// loader refused, then the fact of the load error.
+disk_loader_refusal_log :: proc "contextless" (name: string, error: ^module.Load_Error) {
+	system.log_fact(.Warning, Disk_Load_Refused_By_Loader{refused_process = module_name_field(name)})
+	load_error_log(.Warning, error)
 }
 
 // disk_name_refusal says if a name cannot be the name of a disk process,
@@ -604,10 +603,7 @@ disk_load_start :: proc "contextless" () {
 		chosen_error: module.Load_Error
 		chosen_status := start_policy_chosen_run(name, load.bytes, found, disk_imports_files(), &chosen_error)
 		if chosen_status != .Ok && chosen_error.stage != .None {
-			buffer: [512]u8
-			writer := system.Writer{buffer = buffer[:]}
-			system.load_error_text(&writer, &chosen_error)
-			disk_loader_refusal_log(name, system.written(&writer))
+			disk_loader_refusal_log(name, &chosen_error)
 		} else if chosen_status != .Ok {
 			system.log_fact(.Warning, Disk_Load_Refused_Not_Started{status = chosen_status, refused_process = module_name_field(name)})
 		}
@@ -632,10 +628,7 @@ disk_load_start :: proc "contextless" () {
 	status := disk_process_run(name, load.bytes, found, principal, granted, disk_imports_files(), &load_error)
 	if status != .Ok {
 		if load_error.stage != .None {
-			buffer: [512]u8
-			writer := system.Writer{buffer = buffer[:]}
-			system.load_error_text(&writer, &load_error)
-			disk_loader_refusal_log(name, system.written(&writer))
+			disk_loader_refusal_log(name, &load_error)
 			disk_load_end(status, errors.ring_fail(kind, .Malformed, .None, 1, i64(load_error.file_error)))
 		} else {
 			system.log_fact(.Warning, Disk_Load_Refused_Not_Started{status = status, refused_process = module_name_field(name)})
