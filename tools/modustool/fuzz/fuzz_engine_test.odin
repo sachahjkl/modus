@@ -199,16 +199,20 @@ the_package_of_a_folder_is_the_name_that_its_sources_declare :: proc(t: ^testing
 	testing.expect_value(t, fuzz_package_name_of_folder(foundation.SOURCE_FOLDER_SUPPORT + "/no_such_folder"), "no_such_folder")
 	names := fuzz_package_names({foundation.SOURCE_FOLDER_SUPPORT + "/terminal", foundation.SOURCE_FOLDER_SUPPORT + "/quic"})
 	testing.expect(t, slice.equal(names, []string{"terminal_records", "quic"}))
-	// The name ends at a space or a "/": a comment after it is no part of
-	// it. A line with no name, or that is no package line, gives none.
-	for pair in ([][2]string{{"package foo // x", "foo"}, {"package foo/* x */", "foo"}, {"package  foo\r", "foo"}, {"package bar\tbaz", "bar"}}) {
-		name, found := fuzz_package_name_of_line(pair[0])
-		testing.expectf(t, found && name == pair[1], "%q gives %q, %v", pair[0], name, found)
-	}
-	for line in ([]string{"package ", "package  // x", "// package foo", "packages foo", ""}) {
+	// A line with no name, a name that is no identifier, a name with more
+	// words after it (a line of prose in a comment), or no package line at
+	// all gives none.
+	for line in ([]string{"package ", "package  // x", "// package foo", "packages foo", "", "package 9foo", "package foo-bar", "package bar\tbaz", "package argon2id implements the Argon2id password hashing algorithm."}) {
 		_, found := fuzz_package_name_of_line(line)
 		testing.expectf(t, !found, "%q names no package", line)
 	}
+	// The name is an identifier, then blanks or a comment.
+	for pair in ([][2]string{{"package foo // x", "foo"}, {"package foo/* x */", "foo"}, {"package  foo\r", "foo"}, {"package modus__subtle", "modus__subtle"}, {"package x25519", "x25519"}}) {
+		name, found := fuzz_package_name_of_line(pair[0])
+		testing.expectf(t, found && name == pair[1], "%q gives %q, %v", pair[0], name, found)
+	}
+	// The copy of argon2id has the prose line before its package line.
+	testing.expect_value(t, fuzz_package_name_of_folder(foundation.CRYPTOGRAPHY_FOLDER + "/argon2id"), "modus_argon2id")
 	// Each IR file names the index of its package.
 	file_index, file_found := fuzz_package_of_file(FUZZ_INSTRUMENTED_NAME + "-terminal_records-code_runs.ll", {"quic", "terminal_records"})
 	testing.expect(t, file_found && file_index == 1)

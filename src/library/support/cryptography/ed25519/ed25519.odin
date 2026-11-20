@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/ed25519/ed25519.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/ed25519/ed25519.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `Ed25519` EdDSA signature algorithm.
 
@@ -7,7 +7,7 @@ See:
 - [[ https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-5.pdf ]]
 - [[ https://eprint.iacr.org/2020/1244.pdf ]]
 */
-package ed25519
+package modus_ed25519
 
 import crypto "modus:support/cryptography/compatibility_crypto"
 import grp "modus:support/cryptography/_edwards25519"

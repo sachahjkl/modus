@@ -1,11 +1,11 @@
-// Altered source: Odin dev-2026-11a, core/crypto/x25519/x25519.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/x25519/x25519.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `X25519` (aka `curve25519`) Elliptic-Curve Diffie-Hellman key exchange protocol.
 
 See:
 - [[ https://www.rfc-editor.org/rfc/rfc7748 ]]
 */
-package x25519
+package modus_x25519
 
 import crypto "modus:support/cryptography/compatibility_crypto"
 import ed "modus:support/cryptography/_edwards25519"

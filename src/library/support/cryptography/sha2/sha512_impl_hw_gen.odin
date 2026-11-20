@@ -1,6 +1,6 @@
-// Altered source: Odin dev-2026-11a, core/crypto/sha2/sha512_impl_hw_gen.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/sha2/sha512_impl_hw_gen.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 #+build !arm64
-package sha2
+package modus_sha2
 
 // is_hardware_accelerated_512 returns true if and only if (⟺) hardware
 // accelerated SHA-384, SHA-512, and SHA-512/256 are supported.

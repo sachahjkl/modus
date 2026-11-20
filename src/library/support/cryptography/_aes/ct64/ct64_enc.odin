@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_aes/ct64/ct64_enc.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_aes/ct64/ct64_enc.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 // Copyright (c) 2016 Thomas Pornin <pornin@bolet.org>
 // All rights reserved.
 //
@@ -21,7 +21,7 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 // THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-package aes_ct64
+package modus_aes_ct64
 
 add_round_key :: proc "contextless" (q: ^[8]u64, sk: []u64) #no_bounds_check {
 	ensure_contextless(len(sk) >= 8, "aes/ct64: invalid round key size")

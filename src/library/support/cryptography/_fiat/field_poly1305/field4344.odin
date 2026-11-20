@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_fiat/field_poly1305/field4344.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_fiat/field_poly1305/field4344.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 // The BSD 1-Clause License (BSD-1-Clause)
 //
 // Copyright (c) 2015-2020 the fiat-crypto authors (see the AUTHORS file)
@@ -23,7 +23,7 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-package field_poly1305
+package modus_field_poly1305
 
 // This file provides arithmetic on the field Z/(2^130 - 5) using
 // unsaturated 64-bit integer arithmetic.  It is derived primarily

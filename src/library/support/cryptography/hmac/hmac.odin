@@ -1,11 +1,11 @@
-// Altered source: Odin dev-2026-11a, core/crypto/hmac/hmac.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/hmac/hmac.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `HMAC` message authentication code (`MAC`) algorithm.
 
 See:
 - [[ https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.198-1.pdf ]]
 */
-package hmac
+package modus_hmac
 
 import crypto "modus:support/cryptography/compatibility_crypto"
 import hash "modus:support/cryptography/compatibility_hash"

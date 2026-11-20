@@ -1,5 +1,5 @@
 #+build !freestanding
-package chacha20
+package modus_chacha20
 
 import "core:encoding/hex"
 import "core:testing"
