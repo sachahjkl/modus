@@ -440,20 +440,28 @@ probes_case :: proc "contextless" () {
 		refused("a lent memory handle", with_memory, status, answer, .Bad_Handle, fail(.Wire, .Handle_Kind, .Lent_Handles, 0, 1, i64(op.Object_Kind.Process), i64(op.Object_Kind.Memory)))
 	}
 	system.close(memory)
-	// A process that this process did not start, and a service for which
-	// it does not act for the principal.
+	// A Started end of a process that this process did not start has its
+	// host test (output.wiring_end_allowed): an asker receives a process
+	// handle that it can lend only from its own Start.
+	//
+	// A Connected end names the connection by the number of the process
+	// handle that Connect gave, and lends nothing: that handle has no Give.
+	// A service for which this process does not act for the principal is
+	// refused; a number that no Connect gave names no connection.
 	packed := system.name_pack("log")
 	connect_status, connected := root_call(.Connect, {packed[0], packed[1], packed[2], packed[3], 0, 0, 0})
 	if connect_status != .Ok {
 		wrong("the connection to the log service gave the status", u64(connect_status))
 	}
-	service := system.Handle(connected[0])
-	not_started := [2]u32{lend(service), lend(second_reader)}
-	status, answer = wire(row(.Started, 1, 1, .Started, 2, READER_PROBES), not_started[:])
-	refused("a process that this process did not start", before, status, answer, .No_Right, fail(.Wire, .No_Grant, .Wirings, 0, 0, 0, 1))
-	not_acting := [2]u32{lend(service), lend(second_reader)}
-	status, answer = wire(row(.Connected, 1, 1, .Started, 2, READER_PROBES), not_acting[:])
+	service_number := u32(connected[0])
+	not_acting := [1]u32{lend(second_reader)}
+	status, answer = wire(row(.Connected, service_number, 1, .Started, 1, READER_PROBES), not_acting[:])
 	refused("a service for which this process does not act for the principal", before, status, answer, .No_Right, fail(.Wire, .No_Grant, .Wirings, 0, 0, 0, 1))
+	// The handle of the writer is a handle of this process, but no Connect
+	// gave it.
+	no_connection := [1]u32{lend(second_reader)}
+	status, answer = wire(row(.Connected, u32(writer), 1, .Started, 1, READER_PROBES), no_connection[:])
+	refused("a number that no Connect gave", before, status, answer, .Bad_Handle, fail(.Wire, .Absent, .Connections, i64(output.Wiring_Field.Writer_Handle), i64(u32(writer)), 0, 1))
 	// One process at both ends, named by two handles.
 	same := [2]u32{lend(second_reader), lend(second_reader)}
 	status, answer = wire(row(.Started, 1, READER_ECHO, .Started, 2, READER_PROBES), same[:])

@@ -69,6 +69,35 @@ a_handle_place_out_of_the_lent_handles_is_refused :: proc(t: ^testing.T) {
 	row = good_row()
 	row.reader_handle = 1
 	expect_row_refused(t, row, .Start, .Reader_Handle, 1)
+	// A connection is named by a number that is not 0, at each end; one
+	// connection at both ends is one process at both ends.
+	row = good_row()
+	row.writer_end, row.writer_handle = u32(Wiring_End.Connected), 0
+	expect_row_refused(t, row, .Wire, .Writer_Handle, 0)
+	row = good_row()
+	row.reader_end, row.reader_handle = u32(Wiring_End.Connected), 0
+	expect_row_refused(t, row, .Wire, .Reader_Handle, 0)
+	row = good_row()
+	row.writer_end, row.writer_handle = u32(Wiring_End.Connected), max(u32)
+	row.reader_end, row.reader_handle = u32(Wiring_End.Connected), max(u32)
+	expect_row_refused(t, row, .Wire, .Reader_Handle, u64(max(u32)))
+}
+
+// The number of a connection is no place of the lent handles: one past
+// the lent handles and the largest word are taken, and a number equal to
+// the place of a Started end at the other end is no repeat, as the two
+// name different things.
+@(test)
+a_connection_number_is_not_a_place_of_the_lent_handles :: proc(t: ^testing.T) {
+	for number in ([?]u32{1, HANDLE_COUNT + 1, max(u32)}) {
+		row := good_row()
+		row.writer_end, row.writer_handle = u32(Wiring_End.Connected), number
+		row.reader_handle = 1
+		checked, refusal, ok := wiring_row_check(row, 1, .Wire, HANDLE_COUNT, TERMS_START, LIST_SIZE)
+		testing.expectf(t, ok, "the connection number %d is refused: %v", number, refusal)
+		testing.expect_value(t, checked.writer_handle, number)
+		testing.expect_value(t, checked.writer_end, Wiring_End.Connected)
+	}
 }
 
 // What the writer writes: 0 and words past the members; the log of a
@@ -197,7 +226,7 @@ the_border_takes_each_valid_row :: proc(t: ^testing.T) {
 	append(&cases, Case{edges, .Start, WIRING_CAPACITY_MOST})
 	least := good_row()
 	least.capacity = WIRING_CAPACITY_LEAST
-	least.writer_end, least.writer_handle = u32(Wiring_End.Connected), 1
+	least.writer_end, least.writer_handle = u32(Wiring_End.Connected), HANDLE_COUNT + 1
 	append(&cases, Case{least, .Wire, WIRING_CAPACITY_LEAST})
 	log := good_row()
 	log.writer_end, log.writer_handle, log.writer_stream, log.writer_index = u32(Wiring_End.Child), 0, u32(Writer_Stream.Log), 0

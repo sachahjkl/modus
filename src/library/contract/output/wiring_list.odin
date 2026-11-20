@@ -54,7 +54,9 @@ Wiring_End :: enum u32 {
 	None      = 0, // Refused.
 	Child     = 1, // The process that the Start of the list starts. Only a Start names it.
 	Started   = 2, // A process whose start the asker asked for: a lent process handle.
-	Connected = 3, // A service to which the asker holds a connection: a lent process handle.
+	// A service to which the asker holds a connection: the number of the process handle of the service that
+	// the completion of Connect gave the asker. That handle has no Give, so the asker names it and never lends it.
+	Connected = 3,
 	Asker     = 4, // The asker itself, as the reader. Never a writer.
 }
 
@@ -78,11 +80,11 @@ Wiring_List_Head :: struct {
 // is the word of its member or a number; all-zero bytes are refused.
 Wiring :: struct {
 	writer_end:    u32, // A Wiring_End: Child, Started or Connected.
-	writer_handle: u32, // Started or Connected: the place from 1 in the lent handles. Child: 0.
+	writer_handle: u32, // Started: the place from 1 in the lent handles. Connected: the number that Connect gave. Child: 0.
 	writer_stream: u32, // A Writer_Stream.
 	writer_index:  u32, // Record_Output: the index of the record output, from 1. Log: 0.
 	reader_end:    u32, // A Wiring_End: Child, Started, Connected or Asker.
-	reader_handle: u32, // Started or Connected: the place from 1 in the lent handles. Child or Asker: 0.
+	reader_handle: u32, // Started: the place from 1 in the lent handles. Connected: the number that Connect gave. Child or Asker: 0.
 	reader_index:  u32, // The index of the record input, from 1. Asker: 0.
 	pace:          u32, // A Wiring_Pace.
 	capacity:      u32, // The compartments of the ring: 0 for WIRING_CAPACITY_DEFAULT, or a power of two from WIRING_CAPACITY_LEAST to WIRING_CAPACITY_MOST.
@@ -113,7 +115,7 @@ Wiring_Field :: enum i64 {
 // One row after its border: each word is its member or a checked number.
 Checked_Wiring :: struct {
 	writer_end:    Wiring_End,
-	writer_handle: u32, // The place from 1, or 0.
+	writer_handle: u32, // The place from 1 for Started, the number of the connection for Connected, or 0.
 	writer_stream: Writer_Stream,
 	writer_index:  u32,
 	reader_end:    Wiring_End,
@@ -172,13 +174,17 @@ row_refusal :: proc "contextless" (row: u32, field: Wiring_Field, word: u64, lar
 	return errors.error_make(.Bad_Value, .Wiring_Rows, i64(field), i64(min(word, 1 << 62)), i64(min(largest, 1 << 62)), i64(row))
 }
 
-// end_handle_check checks the handle place of one end: a place from 1 to
-// handle_count for Started and Connected, 0 for Child and Asker.
+// end_handle_check checks the handle word of one end: a place from 1 to
+// handle_count for Started, a number that is not 0 for Connected (the root
+// service proves it against its own record of the connection), 0 for Child
+// and Asker.
 @(private = "file")
 end_handle_check :: proc "contextless" (end: Wiring_End, place: u32, handle_count: u32) -> (largest: u64, ok: bool) {
 	switch end {
-	case .Started, .Connected:
+	case .Started:
 		return u64(handle_count), place != 0 && place <= handle_count
+	case .Connected:
+		return u64(max(u32)), place != 0
 	case .Child, .Asker, .None:
 		return 0, place == 0
 	}
@@ -192,13 +198,14 @@ end_handle_check :: proc "contextless" (end: Wiring_End, place: u32, handle_coun
 //
 // - an end word that names no member, None, an Asker writer, a Child in a
 //   Wire;
-// - a handle place of 0 or past handle_count for Started and Connected,
-//   and one that is not 0 for Child and Asker;
+// - a handle place of 0 or past handle_count for Started, a number of 0
+//   for Connected, and a word that is not 0 for Child and Asker;
 // - a writer stream that names no member, and Log for a writer that is
 //   not the Child;
 // - an index of 0 or past module.RECORD_STREAM_INDEX_MOST where an index is
 //   needed, and one that is not 0 for Log and for an Asker reader;
-// - the two ends the Child, and the two ends one lent handle;
+// - the two ends the Child, and the two ends one lent handle or one
+//   connection;
 // - a pace that names no member;
 // - a capacity that is not 0 and not a power of two from
 //   WIRING_CAPACITY_LEAST to WIRING_CAPACITY_MOST;
@@ -237,8 +244,10 @@ wiring_row_check :: proc "contextless" (row: Wiring, number: u32, form: Wiring_L
 	if largest, place_ok := end_handle_check(reader_end, row.reader_handle, handle_count); !place_ok {
 		return {}, row_refusal(number, .Reader_Handle, u64(row.reader_handle), largest), false
 	}
-	// One lent handle at both ends is one process at both ends.
-	if row.reader_handle != 0 && row.reader_handle == row.writer_handle {
+	// One lent handle, or one connection, at both ends is one process at
+	// both ends. A place and a number of a connection name different
+	// things: the root service compares their processes.
+	if reader_end == writer_end && row.reader_handle != 0 && row.reader_handle == row.writer_handle {
 		return {}, row_refusal(number, .Reader_Handle, u64(row.reader_handle), u64(handle_count)), false
 	}
 	if reader_end == .Asker {
