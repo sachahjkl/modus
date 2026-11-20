@@ -6,7 +6,8 @@ The machine test is a list of parts. A part is one or more machines that share a
 
 - `modustool test <part>` runs one part alone, for the work on it, and builds only the boot volumes of that part.
 - `modustool test` runs every part, several at once, and ends when the last part ends.
-- A new part is one row. No other place of the tool or of the guide names the parts.
+- In the full check, each part is a derivation of the flake of its own, which Nix takes from the store when the bytes of the build and the tool did not change ([full_check.md](full_check.md), "The derivations of the check").
+- A new part is one row. No other place of the tool, of the flake or of the guide names the parts.
 
 ## Constraints
 
@@ -30,7 +31,9 @@ The machine test is a list of parts. A part is one or more machines that share a
 
 **The boot volume is shared, and read only.** Many parts boot the main volume, and two boot `secure_boot` and `other_system`, at the same time. QEMU takes a lock for writing on each image that it opens for writing, so the drive of the boot volume has `snapshot=on`: QEMU reads the volume with a shared lock, and keeps any write of the machine in a temporary file of its own. No process of the system writes its boot volume, and no part reads a write to it; `snapshot=on` and not `readonly=on`, because the firmware is not code of the system, and a write that it makes must not fail the start.
 
-**The names of the pictures.** The pictures of all the parts go to one folder. A part that saves a name that another part of the run saved fails its step, with the name of the other part (`picture_name_claim`): two parts would leave the picture of whichever part ended last. A static check of the table cannot hold this: several scenarios are built by code.
+**The names of the pictures.** The pictures of all the parts go to one folder. A part that saves a name that another part of the run saved fails its step, with the name of the other part (`picture_name_claim`): two parts would leave the picture of whichever part ended last. A static check of the table cannot hold this: several scenarios are built by code. In the flake each part runs in a process of its own, so `test_join` holds the same rule when it joins their pictures, and refuses a log name that two parts wrote.
+
+**A part on a given build.** `modustool test <part> from <folder>` runs one part on the test inputs of a folder and builds nothing: the command of a part derivation. It links each boot volume and boot image of the folder into `build/`, copies every other file, and notes the volumes of the part as ready, so a machine starts only from a volume that the folder holds. A volume of the part that the folder lacks is refused before the first machine. At its end it writes the count of its checks in `build/checks_passed.txt`, which `test_join` adds up.
 
 **The ports of the loopback.** What is guaranteed, and what is not:
 
@@ -38,7 +41,7 @@ The machine test is a list of parts. A part is one or more machines that share a
 - The software TPM alone of a part has Unix sockets in the folder of its output: no port.
 - The port of hostfwd is the one port that QEMU binds itself: hostfwd takes no socket. `free_port` keeps the list of the ports that it gave, so two machines never get one port from it. Any other socket that binds port 0 between the close of the tool and the bind of QEMU (a socket of the tool on another thread, or another program of the host) can still take the number. QEMU then ends at its start; `machine_test` starts it again with a new port, at most `MACHINE_START_TRIES` times in all, and a QEMU that ends at each try fails the machine.
 
-**The pool.** `test_parts_run` gives the rows to worker threads, one row at a time, in the order of the table. The table starts with the longest parts (the measured time of each part is in `build/test_times.txt`), so the last part to end starts early. After a failure no new part starts; the parts that run end, and the pool waits for them. The summary says "not started" for a part that no worker took, not "failed". At most one part runs for each `MACHINE_PROCESSOR_COUNT` processors: the processors of the host, or `NIX_BUILD_CORES` when the sandbox of Nix gives fewer.
+**The pool.** `test_parts_run` gives the rows to worker threads, one row at a time, in the order of the table. The table starts with the longest parts (the measured time of each part is in `build/test_times.txt`), so the last part to end starts early. After a failure no new part starts; the parts that run end, and the pool waits for them. The summary says "not started" for a part that no worker took, not "failed". At most one part runs for each `MACHINE_PROCESSOR_COUNT` processors: the processors of the host, or `NIX_BUILD_CORES` when the sandbox of Nix gives fewer. The pool is the path of `modustool test` on a host. The full check does not use it: Nix runs the part derivations at once, and `screenshots` gives Nix the same bound as its `max-jobs`.
 
 **The times.** Each part keeps its own times. The report joins them in the order of the table, writes `build/test_times.txt` with the part of each machine, and prints the time of each part, the longest first, as a measure.
 
@@ -46,7 +49,7 @@ The machine test is a list of parts. A part is one or more machines that share a
 
 - **The state in the machine record.** The values that a step Remember keeps are compared by the step Distinct of a later machine of the same part, and a later machine types the screen text that an earlier one read. The record of one machine cannot hold them; the record of the part can.
 - **A thread-local current part.** It hides the dependence of a scenario procedure on its part. A parameter states it, and the compiler checks each call.
-- **One process for each part.** The tool would start itself again for each part, and the times, the count of the checks and the pictures would cross a process border. Threads share the build that the process made, and the temporary memory of Odin is already of each thread.
+- **One process for each part in `modustool test`.** The tool would start itself again for each part, and the times, the count of the checks and the pictures would cross a process border. Threads share the build that the process made, and the temporary memory of Odin is already of each thread. The full check pays that border once, in `test_join`, because a derivation for each part is what lets Nix keep a part whose inputs did not change.
 - **The longest part split into sections.** The main machine holds about a quarter of the machine time and bounds the whole test. Its scenario in named sections, each a machine, is the next step; it changes the scenario, not the engine.
 - **A data disk shared by the parts.** The old whole test made one disk at its start, and each part wrote on the disk of the part before it. A part then saw data that it does not see when it runs alone.
 - **A bound on the memory of the host.** Each machine has 1 GiB; the bound by processors keeps the count of machines at a few. A host with many processors and little memory is not a host of the test.
@@ -58,12 +61,13 @@ The machine test is a list of parts. A part is one or more machines that share a
 - The list of the boot volumes that the build made is read by every part and changed by the part `trusted_boot` (the disk of the release image): a lock holds it. The cache of the interface font is read once under a lock.
 - The lines of two parts that run at once are mixed on the terminal. Each line is whole. The end of the log of a machine that failed is one write, with the name of its log. The line of the end of each part names the part.
 - The data disk of a part that failed stays in `build/`; the disks of the parts that passed are removed.
-- `nix flake check` gives the sandbox the processors of the host, so the parts run at once there too, bounded by `NIX_BUILD_CORES`.
+- `nix flake check` runs one part in each part derivation, and Nix runs the part derivations at once, bounded by its `max-jobs`.
+- The times of a part derivation are those of that part alone: `test_join` keeps the file of the times of each part as `test_times_<part>.txt`, and no file holds the whole test.
 - Parts at once load the host, so a compositor that starts takes its input later. Two faults of the tool that a part alone never showed then came out. The input service joined the moves of the pointer that found its ring full, so the push to the corner and the move to a button became one move, and the edge of the screen cut it to the corner: the place that the tool summed was wrong, and its press missed the menu. A step `Front` also opened the menu of the windows after the line of the surface and before the first picture, when the menu does not list the window yet. Both now wait for a fact of the compositor: the place of each press, and the line of the first picture of a window ([../../../docs/TOOLS.md](../../../docs/TOOLS.md), the rule of the pointer of a machine test).
 - A panic of the tool on one worker ends the process; the QEMU of the other parts that run then stay as orphans until a kill.
 
 ## State
 
-Built: the table, the derived refusal, volumes and guide check, the run of a part, the files beside the log, the shared boot volume, the names of the pictures, the ports, the pool, the times of each part.
+Built: the table, the derived refusal, volumes and guide check, the run of a part, the files beside the log, the shared boot volume, the names of the pictures, the ports, the pool, the times of each part, a part on a given build, and a derivation of the flake for each part.
 
-Left: the main scenario in named sections, so that its sections run as parts at once; the host test folders of `modustool check` through the process pool of the build.
+Left: the main scenario in named sections, so that its sections run as parts at once; the host test folders of `modustool check` through the process pool of the build; a binary of the tool for each part, so that a change of the scenario of one part runs that part only ([full_check.md](full_check.md), "State").

@@ -1,0 +1,3 @@
+type: Changed
+
+**Machine test parts as derivations.** The check of the flake runs each test part in a derivation of its own, on the test inputs of a whole build named by the hash of their bytes, so a change of a document or of a host test runs no machine again and Nix takes each part from the store. `modustool screenshots` prints how many parts Nix took from the store and how many ran, and runs at most one part for each four processors. `modustool part_cache` proves the cache: after a change of an intent file or of a host test, each test part has the same derivation. A change of the sources of the tool or of the system still runs every part.

@@ -167,21 +167,34 @@ test_part_names :: proc() -> string {
 	return strings.join(names, ", ", context.temp_allocator)
 }
 
+// The word of `test <part> from <folder>`: one part on the test inputs of a
+// folder, with no build (test_derivations.odin).
+TEST_FROM_WORD :: "from"
+
 // test_arguments_problem gives the refusal of the arguments of `test`, or
-// "" when they name the whole test or one part. A word that is not a part
-// is refused: the whole test in its place takes minutes and passes, and the
-// reader believes that the part passed.
+// "" when they name the whole test, one part, or one part on the test
+// inputs of a folder. A word that is not a part is refused: the whole test
+// in its place takes minutes and passes, and the reader believes that the
+// part passed.
 test_arguments_problem :: proc(args: []string) -> string {
 	if len(args) == 0 {
 		return ""
 	}
-	if len(args) == 1 {
-		if _, found := test_part_find(args[0]); found {
-			return ""
-		}
+	_, found := test_part_find(args[0])
+	if found && (len(args) == 1 || (len(args) == 3 && args[1] == TEST_FROM_WORD && args[2] != "")) {
+		return ""
 	}
 	given := strings.join(args, " ", context.temp_allocator)
-	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test", given, test_part_names())
+	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test; `test <part> %s <folder>`: one part on the test inputs of a folder, with no build", given, test_part_names(), TEST_FROM_WORD)
+}
+
+// test_arguments_give_inputs says if arguments that test_arguments_problem
+// accepted name a folder of test inputs, and gives it.
+test_arguments_give_inputs :: proc(args: []string) -> (folder: string, given: bool) {
+	if len(args) == 3 {
+		return args[2], true
+	}
+	return "", false
 }
 
 // test_part_volumes_of gives the paths of the boot volumes of one part, in
