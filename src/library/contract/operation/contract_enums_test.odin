@@ -2,6 +2,7 @@
 package operation
 
 import "core:testing"
+import "modus:contract/errors"
 import "modus:contract/value_kinds"
 
 // A word that names no member of its contract enum gives no name: one past
@@ -209,9 +210,84 @@ each_contract_enum_has_the_size_of_its_type :: proc(t: ^testing.T) {
 	testing.expect_value(t, CONTRACT_ENUM_SIZES[value_kinds.Contract_Enum.Log_Record_Form], u32(size_of(Log_Record_Form)))
 	testing.expect_value(t, CONTRACT_ENUM_SIZES[value_kinds.Contract_Enum.Stop_Cause], u32(size_of(Stop_Cause)))
 	testing.expect_value(t, CONTRACT_ENUM_SIZES[value_kinds.Contract_Enum.Stop_Outcome], u32(size_of(Stop_Outcome)))
+	testing.expect_value(t, CONTRACT_ENUM_SIZES[value_kinds.Contract_Enum.Error_Kind], u32(size_of(errors.Kind)))
+	testing.expect_value(t, CONTRACT_ENUM_SIZES[value_kinds.Contract_Enum.Error_Unit], u32(size_of(errors.Unit)))
+	// A word type exactly when the table names one, at least as large as
+	// its enum, and of a size that an Integer field has.
 	for which in value_kinds.Contract_Enum {
-		if which != .None {
-			testing.expectf(t, value_kinds.CONTRACT_ENUM_TYPES[which].package_name == "operation", "the enum %v is not of this package", which)
+		word_size := CONTRACT_ENUM_WORD_SIZES[which]
+		has_word := value_kinds.CONTRACT_ENUM_TYPES[which].word_name != ""
+		testing.expectf(t, has_word == (word_size != 0), "the enum %v has a word type %v and a word size %d", which, has_word, word_size)
+		if has_word {
+			testing.expectf(t, word_size >= CONTRACT_ENUM_SIZES[which] && (word_size == 1 || word_size == 2 || word_size == 4 || word_size == 8), "the word of %v has %d bytes", which, word_size)
 		}
 	}
+	testing.expect_value(t, CONTRACT_ENUM_WORD_SIZES[value_kinds.Contract_Enum.Status], u32(size_of(Status_Word)))
+	testing.expect_value(t, size_of(Status_Word), 8)
+	// This package names each enum: a contract enum of a package that it
+	// does not import would have no names here.
+	for which in value_kinds.Contract_Enum {
+		if which != .None {
+			package_name := value_kinds.CONTRACT_ENUM_TYPES[which].package_name
+			testing.expectf(t, package_name == "operation" || package_name == "errors", "the enum %v is of the package %s, which this package does not import", which, package_name)
+		}
+	}
+}
+
+// The enums of the error record: a word that names no member gives no name
+// and no words: one past the last member, the largest word of 32 bits, and
+// the largest word, which is the word -1 of the record. Each member gives
+// its name, as the contract writes it, two members never one name, and the
+// name gives back the word. A word of a unit names a unit, never a kind.
+@(test)
+the_words_of_an_error_record_have_their_names :: proc(t: ^testing.T) {
+	Refused_Word :: struct {
+		which: value_kinds.Contract_Enum,
+		word:  u64,
+	}
+	refused_words := [?]Refused_Word {
+		{.Error_Kind, u64(max(errors.Kind)) + 1},
+		{.Error_Kind, u64(max(u32))},
+		{.Error_Kind, max(u64)},
+		{.Error_Unit, u64(max(errors.Unit)) + 1},
+		{.Error_Unit, u64(max(u32))},
+		{.Error_Unit, max(u64)},
+	}
+	for item in refused_words {
+		name, ok := contract_enum_member_name(item.which, item.word)
+		testing.expectf(t, !ok && name == "", "the word %d of %v gives the name %q", item.word, item.which, name)
+		words, words_ok := contract_enum_member_words(item.which, item.word)
+		testing.expectf(t, !words_ok && words == "", "the word %d of %v gives the words %q", item.word, item.which, words)
+	}
+	testing.expect_value(t, contract_enum_member_count(.Error_Kind), u64(max(errors.Kind)) + 1)
+	testing.expect_value(t, contract_enum_member_count(.Error_Unit), u64(max(errors.Unit)) + 1)
+	for kind in errors.Kind {
+		name, ok := contract_enum_member_name(.Error_Kind, u64(kind))
+		testing.expect(t, ok)
+		testing.expect_value(t, name, errors.KIND_NAMES[kind])
+		words, words_ok := contract_enum_member_words(.Error_Kind, u64(kind))
+		testing.expect(t, words_ok && words == name)
+		word, word_ok := contract_enum_member_of_name(.Error_Kind, name)
+		testing.expect(t, word_ok && word == u64(kind))
+		for other in errors.Kind {
+			testing.expectf(t, other == kind || errors.KIND_NAMES[other] != name, "the kinds %v and %v have one name", kind, other)
+		}
+	}
+	for unit in errors.Unit {
+		name, ok := contract_enum_member_name(.Error_Unit, u64(unit))
+		testing.expect(t, ok)
+		testing.expect_value(t, name, errors.UNIT_MEMBER_NAMES[unit])
+		word, word_ok := contract_enum_member_of_name(.Error_Unit, name)
+		testing.expect(t, word_ok && word == u64(unit))
+		for other in errors.Unit {
+			testing.expectf(t, other == unit || errors.UNIT_MEMBER_NAMES[other] != name, "the units %v and %v have one name", unit, other)
+		}
+	}
+	too_long, too_long_ok := contract_enum_member_name(.Error_Kind, u64(errors.Kind.Too_Long))
+	testing.expect(t, too_long_ok && too_long == "Too_Long")
+	// A name of a kind is no unit, and the words of a sentence are no name.
+	_, bytes_as_kind := contract_enum_member_of_name(.Error_Kind, "Bytes")
+	testing.expect(t, !bytes_as_kind)
+	_, words_as_unit := contract_enum_member_of_name(.Error_Unit, "bytes")
+	testing.expect(t, !words_as_unit)
 }
