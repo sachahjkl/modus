@@ -116,6 +116,38 @@ Completion_Status_Refused :: struct {
 	status_word: u64,
 }
 
+// The ring of the root service does not open. The status is written by the
+// name of its member.
+@(log_fact = "start_policy: the root ring does not open: status {status}")
+Root_Ring_Refused :: struct {
+	status: op.Status,
+}
+
+// The context names no start list.
+@(log_fact = "start_policy: the context names no start list: no row starts")
+No_Start_List :: struct {}
+
+// The page of the parts of the machine is refused.
+@(log_fact = "start_policy: the machine parts page is refused: no row starts")
+Machine_Parts_Page_Refused :: struct {}
+
+// The root service refused Machine_Usable.
+@(log_fact = "start_policy: the root service refused Machine_Usable: status {status}")
+Machine_Usable_Refused :: struct {
+	status: op.Status,
+}
+
+// Each needed row runs: the machine is usable.
+@(log_fact = "start_policy: each needed row runs: the machine is usable")
+Machine_Usable :: struct {}
+
+// The root service refused the start of a row.
+@(log_fact = "start_policy: cannot start {row_process}: status {status}")
+Row_Start_Refused :: struct {
+	status:      op.Status,
+	row_process: value_kinds.Module_Name_Field,
+}
+
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
 #assert(size_of(Start_List_Refused) == 8 + LIST_PROBLEM_FIELD_BYTES)

@@ -924,10 +924,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	opened: bool
 	service, opened = system.service_open(ctx)
 	if !opened {
-		system.log(.Info, "debugger: no service ring")
+		system.log_fact(.Info, No_Service_Ring{})
 		system.stop(.Refused)
 	}
-	system.log(.Info, "debugger: serves its exports")
+	system.log_fact(.Info, Serving{})
 	own := system.thread_record()
 	for {
 		// The stops of the debugged process wake this thread as the calls

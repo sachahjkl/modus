@@ -63,6 +63,14 @@ Clock_Read_Again :: struct {
 	reads:       u64,
 }
 
+// The service has no date page or no ports of the clock.
+@(log_fact = "date: no date page or no ports of the clock: the system has no date")
+No_Date_Page_Or_Clock :: struct {}
+
+// The real-time clock gives no valid date.
+@(log_fact = "date: the real-time clock gives no valid date: the system has no date")
+Clock_Date_Not_Valid :: struct {}
+
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
 #assert(size_of(Time_Zone_Written) == ZONE_FIELD_BYTES)

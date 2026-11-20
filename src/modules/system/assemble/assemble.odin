@@ -94,7 +94,7 @@ assemble :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .
 
 	parts, refusal := assembler.assemble(text, &workspace)
 	if refusal.refusal != .None {
-		system.log(.Info, "assemble: line ", u64(refusal.place.line), ", column ", u64(refusal.place.column), ": ", assembler.refusal_sentence(refusal.refusal), " (refusal ", u64(refusal.refusal), ", value ", refusal.value, ")")
+		system.log_fact(.Info, Source_Refused{line = refusal.place.line, column = refusal.place.column, value = refusal.value, refusal = u32(refusal.refusal), refusal_sentence = value_kinds.text_field(assembler.refusal_sentence(refusal.refusal), REFUSAL_SENTENCE_FIELD_BYTES)})
 		found := i64(0)
 		if int(refusal.place.offset) < len(text) {
 			found = i64(text[refusal.place.offset])
@@ -105,7 +105,7 @@ assemble :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .
 	if needed.refusal != .None {
 		// The assembler gives parts that the writer takes: a refusal here is
 		// a fault of the assembler.
-		system.log(.Error, "assemble: the module file writer refused the parts: refusal ", u64(needed.refusal), ", index ", needed.index)
+		system.log_fact(.Error, Parts_Refused{index = needed.index, writer_refusal = writer_refusal_field(needed.refusal)})
 		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, i64(needed.refusal))
 	}
 
@@ -120,7 +120,7 @@ assemble :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .
 	written, written_refusal := writer.write(parts, memory)
 	system.memory_unmap(raw_data(memory))
 	if written_refusal.refusal != .None {
-		system.log(.Error, "assemble: the module file writer refused the file: refusal ", u64(written_refusal.refusal), ", index ", written_refusal.index)
+		system.log_fact(.Error, File_Refused{index = written_refusal.index, writer_refusal = writer_refusal_field(written_refusal.refusal)})
 		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, i64(written_refusal.refusal))
 	}
 	system.log_fact(.Info, Module_File_Written{size = value_kinds.Size_In_Bytes(written), exports = u64(len(parts.exports))})

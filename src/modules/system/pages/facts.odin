@@ -23,6 +23,22 @@ Kernel_Half_Read :: struct {
 	guards_expected:     u64,
 }
 
+// The page tables keep the rules.
+@(log_fact = "pages: ok, the page tables keep the rules")
+Rules_Kept :: struct {}
+
+// The page tables do not keep the rules.
+@(log_fact = "pages: failed, the page tables do not keep the rules")
+Rules_Not_Kept :: struct {}
+
+// The processor refuses the memory of processes to the kernel.
+@(log_fact = "pages: the processor refuses the memory of processes to the kernel")
+Kernel_Guard_Present :: struct {}
+
+// The processor has no guard for the memory of processes.
+@(log_fact = "pages: the processor has no guard for the memory of processes")
+Kernel_Guard_Absent :: struct {}
+
 // The mappings of the half of this process.
 @(log_fact = "pages: this process: {mapped} in {runs} runs, {write_execute_pages} write and execute")
 Process_Half_Read :: struct {

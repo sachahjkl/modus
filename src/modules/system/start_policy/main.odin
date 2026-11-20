@@ -59,19 +59,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_status: system.Status
 	requests, ring_status = system.ring_open(ctx.handles[system.GRANT_ROOT])
 	if ring_status != .Ok {
-		system.log(.Error, "start_policy: the root ring does not open: status ", ring_status)
+		system.log_fact(.Error, Root_Ring_Refused{status = ring_status})
 		system.stop(.Failed)
 	}
 	// The root service maps the page and the list together: with no list,
 	// it mapped neither, and a read of the page would fault.
 	list_size := ctx.values[start_list.VALUE_LIST_SIZE]
 	if list_size == 0 {
-		system.log(.Error, "start_policy: the context names no start list: no row starts")
+		system.log_fact(.Error, No_Start_List{})
 		system.stop(.Refused)
 	}
 	parts, _, _, page_read := start_list.parts_page_read(rawptr(uintptr(start_list.MACHINE_PARTS_PAGE_ADDRESS)))
 	if !page_read {
-		system.log(.Error, "start_policy: the machine parts page is refused: no row starts")
+		system.log_fact(.Error, Machine_Parts_Page_Refused{})
 		system.stop(.Failed)
 	}
 	rows: [start_list.ROW_CAPACITY]start_list.Start_Row
@@ -99,10 +99,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if status, _ := command_call(.Machine_Usable, ""); status != .Ok {
-		system.log(.Error, "start_policy: the root service refused Machine_Usable: status ", status)
+		system.log_fact(.Error, Machine_Usable_Refused{status = status})
 		system.stop(.Failed)
 	}
-	system.log(.Info, "start_policy: each needed row runs: the machine is usable")
+	system.log_fact(.Info, Machine_Usable{})
 	for {
 		wait := system.wait_begin()
 		for &state in states[:count] {
@@ -130,7 +130,7 @@ row_start :: proc "contextless" (state: ^Row_State) -> bool {
 	name := start_list.row_name(&state.row)
 	status, values := command_call(.Start, name)
 	if status != .Ok {
-		system.log(.Warning, "start_policy: cannot start ", system.Module_Name{name}, ": status ", status)
+		system.log_fact(.Warning, Row_Start_Refused{status = status, row_process = value_kinds.module_name_field(name)})
 		return false
 	}
 	state.process = system.Handle(values[0])

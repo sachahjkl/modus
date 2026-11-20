@@ -132,6 +132,38 @@ Service_Failed :: struct {
 	failure: [96]u8,
 }
 
+// The frame ring is full: the accounting of the places keeps room, so this
+// is a fault of the service.
+@(log_fact = "network: the frame ring is full")
+Frame_Ring_Full :: struct {}
+
+// A measure of an endpoint of TCP that ends: the passes of the service over
+// the data for each payload byte, in hundredths, on receive and on send.
+@(log_fact = "network: a measure: the endpoint of {owner}, TCP: the passes of this service over the data for each payload byte: {receive_passes} on receive ({received_bytes} bytes in {received_units} segments), {send_passes} on send ({sent_bytes} bytes in {sent_units} segments), the payload is the datagram or the segment with its header; the bytes of the data that this service read on send: {data_bytes_read}")
+Tcp_Passes_Measured :: struct {
+	receive_passes:  value_kinds.Hundredths,
+	received_bytes:  u64,
+	received_units:  u64,
+	send_passes:     value_kinds.Hundredths,
+	sent_bytes:      u64,
+	sent_units:      u64,
+	data_bytes_read: u64,
+	owner:           value_kinds.Module_Name_Field,
+}
+
+// A measure of an endpoint of UDP that ends, as for TCP.
+@(log_fact = "network: a measure: the endpoint of {owner}, UDP: the passes of this service over the data for each payload byte: {receive_passes} on receive ({received_bytes} bytes in {received_units} datagrams), {send_passes} on send ({sent_bytes} bytes in {sent_units} datagrams), the payload is the datagram or the segment with its header; the bytes of the data that this service read on send: {data_bytes_read}")
+Udp_Passes_Measured :: struct {
+	receive_passes:  value_kinds.Hundredths,
+	received_bytes:  u64,
+	received_units:  u64,
+	send_passes:     value_kinds.Hundredths,
+	sent_bytes:      u64,
+	sent_units:      u64,
+	data_bytes_read: u64,
+	owner:           value_kinds.Module_Name_Field,
+}
+
 // The service is ready, and the link of the device is up.
 @(log_fact = "network: ok, the address {interface_address}, the gateway 10.0.2.2, the link is up, {receive_places} places for frames that arrive")
 Ready_Link_Up :: struct {

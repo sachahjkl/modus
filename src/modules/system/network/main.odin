@@ -242,7 +242,7 @@ place_bytes :: proc "contextless" (place: int) -> []u8 {
 frame_command :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {}) {
 	if !ring.push(&frames.commands, ring.Record{kind = u32(command), tag = tag, values = values}) {
 		// The accounting of the places keeps room: this does not happen.
-		system.log(.Error, "network: the frame ring is full")
+		system.log_fact(.Error, Frame_Ring_Full{})
 	}
 	frames_changed = true
 }
@@ -1148,17 +1148,19 @@ controlled :: proc "contextless" (record: ring.Record) {
 // the first SEND_HEADER_COPIED bytes of each, for the check, and no byte of
 // the data, which the device read from the region; no pass for a checksum.
 data_passes_log :: proc "contextless" (endpoint: ^Endpoint) {
-	hundredths :: proc "contextless" (buffer: []u8, count: Data_Count) -> string {
-		value := count.bytes_passed * 100 / max(count.payload_bytes, 1)
-		fraction := value % 100
-		return system.format(buffer, value / 100, ".", fraction < 10 ? "0" : "", fraction)
+	hundredths :: proc "contextless" (count: Data_Count) -> value_kinds.Hundredths {
+		return value_kinds.Hundredths(count.bytes_passed * 100 / max(count.payload_bytes, 1))
 	}
 	name := system.name_of(endpoint.name[:])
 	protocol := endpoint.tcp ? "TCP" : "UDP"
-	unit := endpoint.tcp ? " segments), " : " datagrams), "
 	arrived, left := endpoint.arrived_data, endpoint.left_data
-	arrived_text, left_text: [24]u8
-	system.log(.Info, "network: a measure: the endpoint of ", name, ", ", protocol, ": the passes of this service over the data for each payload byte: ", hundredths(arrived_text[:], arrived), " on receive (", arrived.payload_bytes, " bytes in ", arrived.units, unit, hundredths(left_text[:], left), " on send (", left.payload_bytes, " bytes in ", left.units, unit, "the payload is the datagram or the segment with its header; the bytes of the data that this service read on send: ", left.data_bytes_read)
+	// The unit of the payload, a segment or a datagram, is a case of the
+	// sentence: each protocol is a fact type.
+	if endpoint.tcp {
+		system.log_fact(.Info, Tcp_Passes_Measured{receive_passes = hundredths(arrived), received_bytes = u64(arrived.payload_bytes), received_units = u64(arrived.units), send_passes = hundredths(left), sent_bytes = u64(left.payload_bytes), sent_units = u64(left.units), data_bytes_read = u64(left.data_bytes_read), owner = value_kinds.module_name_field(name)})
+	} else {
+		system.log_fact(.Info, Udp_Passes_Measured{receive_passes = hundredths(arrived), received_bytes = u64(arrived.payload_bytes), received_units = u64(arrived.units), send_passes = hundredths(left), sent_bytes = u64(left.payload_bytes), sent_units = u64(left.units), data_bytes_read = u64(left.data_bytes_read), owner = value_kinds.module_name_field(name)})
+	}
 	right := arrived.bytes_passed == arrived.payload_bytes && left.bytes_passed == left.units * SEND_HEADER_COPIED && left.data_bytes_read == 0
 	// The verdict is a case of the sentence: each one is a fact type.
 	if right {

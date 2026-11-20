@@ -116,6 +116,135 @@ Service_Failed :: struct {
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
+
+// The facts below have the response code of the TPM in the form that the
+// line wrote, 16 hexadecimal digits with no "0x", or no field: their
+// sentence is their template.
+
+// The TPM refused the TPM2_Shutdown that follows a use of an authorization
+// value.
+@(log_fact = "tpm: the TPM refused TPM2_Shutdown after a use of an authorization value (response code {response_code}); the next start of the TPM can count one failure")
+Shutdown_Refused :: struct {
+	response_code: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The TPM took the TPM2_Shutdown that follows a use of an authorization
+// value.
+@(log_fact = "tpm: TPM2_Shutdown after the use of an authorization value: a stop of the machine now makes the TPM count no failure")
+Shutdown_Done :: struct {}
+
+// The service refused an unseal: the creation data names no PCR digest.
+@(log_fact = "tpm: refused the unseal: the creation data does not name PCR 7 and PCR 11 with a digest")
+Unseal_Creation_Data_Refused :: struct {}
+
+// The service refused an unseal: the policy or the attributes of the
+// object are not those of a seal.
+@(log_fact = "tpm: refused the unseal: the policy of the object is not the policy of the PCR values of its creation, or its attributes are not the attributes of a sealed object")
+Unseal_Policy_Refused :: struct {}
+
+// The TPM refused the creation ticket of the object of an unseal.
+@(log_fact = "tpm: refused the unseal: the TPM refuses the creation ticket of the object (response code {response_code}): this TPM did not make it so")
+Unseal_Ticket_Refused :: struct {
+	response_code: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The TPM refused an unseal: the PCR values are not those of the seal.
+@(log_fact = "tpm: the TPM refuses the unseal: PCR 7 and PCR 11 do not hold the values of the seal (response code {response_code})")
+Unseal_Pcr_Values_Refused :: struct {
+	response_code: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The TPM refused an unseal: a wrong authorization value, which it
+// counted.
+@(log_fact = "tpm: the TPM refuses the unseal: the authorization value is wrong, and the TPM counted the failure (response code {response_code})")
+Unseal_Authorization_Wrong :: struct {
+	response_code: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The TPM refused an unseal: it counted too many wrong values.
+@(log_fact = "tpm: the TPM refuses the unseal: it counted too many wrong authorization values, and refuses each try for now (response code {response_code})")
+Unseal_Locked_Out :: struct {
+	response_code: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// An unseal done, with an authorization value.
+@(log_fact = "tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal, and the authorization value is right")
+Unsealed_With_Authorization :: struct {}
+
+// An unseal done.
+@(log_fact = "tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal")
+Unsealed :: struct {}
+
+// The TPM refused an extend of PCR 12.
+@(log_fact = "tpm: the TPM refused the extend of PCR 12 (response code {response_code})")
+Extend_Refused :: struct {
+	response_code: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The TPM took an extend of PCR 12, and refused its read back.
+@(log_fact = "tpm: extended PCR 12, and its read back gave no value of PCR 12 of SHA-256 (response code {response_code})")
+Extend_Read_Back_Refused :: struct {
+	response_code: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The TPM refused a TPM2_GetCapability.
+@(log_fact = "tpm: the TPM refused TPM2_GetCapability of {properties} (response code {response_code})")
+Capability_Refused :: struct {
+	response_code: value_kinds.Hexadecimal_Sixteen_Digits,
+	properties:    [32]u8,
+}
+
+// The TPM limits no rate of the wrong authorization values.
+@(log_fact = "tpm: the TPM limits no rate of the wrong authorization values: its lockout interval is 0")
+No_Rate_Limit :: struct {}
+
+// The state of the lockout hierarchy was not read.
+@(log_fact = "tpm: the lockout hierarchy is not checked: another system can reset the count of the TPM while its value is empty")
+Lockout_Not_Checked :: struct {}
+
+// The lockout hierarchy has an authorization value already.
+@(log_fact = "tpm: the lockout hierarchy has an authorization value: an earlier start of this system set it, or another system did; this service keeps no copy of it and leaves it")
+Lockout_Authorization_Found :: struct {}
+
+// The lockout hierarchy keeps its empty value: the process has no seed.
+@(log_fact = "tpm: the lockout hierarchy keeps its empty authorization value: this process has no seed, and another system can reset the count of the TPM")
+Lockout_Kept_Empty_Without_Seed :: struct {}
+
+// The lockout hierarchy keeps its empty value: the seed is too weak.
+@(log_fact = "tpm: the lockout hierarchy keeps its empty authorization value: the seed of this process is too weak for a key, and another system can reset the count of the TPM")
+Lockout_Kept_Empty_Weak_Seed :: struct {}
+
+// The TPM refused a lockout authorization value.
+@(log_fact = "tpm: the TPM refused a lockout authorization value (response code {response_code}): the lockout hierarchy keeps its empty one until the next start, and another system can reset the count of the TPM")
+Lockout_Authorization_Refused :: struct {
+	response_code: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The answer to the change of the lockout value has no valid form.
+@(log_fact = "tpm: the answer of the TPM to TPM2_HierarchyChangeAuth of the lockout hierarchy does not have its form: the next start reads the state of the hierarchy again")
+Lockout_Change_Answer_Malformed :: struct {}
+
+// The service set a random lockout value and kept no copy.
+@(log_fact = "tpm: the lockout hierarchy had an empty authorization value: this service set a random one and kept no copy, so no system resets the count of the TPM or changes its limits")
+Lockout_Authorization_Set :: struct {}
+
+// The service is ready: the address of its registers, as the line wrote
+// it, and the buffer of the interface.
+@(log_fact = "tpm: ok, the CRB interface at {registers_address}, a buffer of {buffer_size}; it seals to PCR 7 and PCR 11")
+Ready :: struct {
+	registers_address: value_kinds.Hexadecimal_Sixteen_Digits,
+	buffer_size:       value_kinds.Size_In_Bytes,
+}
+
+// The service has no measure ring.
+@(log_fact = "tpm: no measure ring: no start policy is measured into PCR 12")
+No_Measure_Ring :: struct {}
+
+// A completion did not fit in its full queue.
+@(log_fact = "tpm: the completion queue of a ring of the TPM service is full: a completion is lost")
+Completion_Lost :: struct {}
+
+#assert(size_of(Capability_Refused) == 8 + PROPERTIES_FIELD_BYTES)
 #assert(size_of(Shutdown_Interface_Failed) == STEP_FIELD_BYTES)
 #assert(size_of(Capability_Answer_Malformed) == PROPERTIES_FIELD_BYTES)
 

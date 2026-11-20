@@ -223,7 +223,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	address, status := system.memory_map(ctx.handles[date.GRANT_PAGE], {.Write})
 	if status != .Ok || ctx.handles[date.GRANT_PORTS] == 0 {
-		system.log(.Error, "date: no date page or no ports of the clock: the system has no date")
+		system.log_fact(.Error, No_Date_Page_Or_Clock{})
 		// The ports of the clock are a handle of the context: none is a
 		// refused context. A page that does not map is refused only when the
 		// context names none or a handle that cannot be mapped.
@@ -240,7 +240,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	started := system.nanoseconds()
 	at_zero, seconds, edge, valid := synchronize()
 	if !valid {
-		system.log(.Error, "date: the real-time clock gives no valid date: the system has no date")
+		system.log_fact(.Error, Clock_Date_Not_Valid{})
 	} else {
 		date.write(page, .Real_Time_Clock, at_zero)
 		// The first date changes the rule of the day: the root service waits

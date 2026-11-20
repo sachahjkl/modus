@@ -1,5 +1,6 @@
 package sound_device_service
 
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // The log facts of the sound service (src/md/features/log_facts.md, "The
@@ -107,6 +108,35 @@ Stream_Started :: struct {
 }
 
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
+
+// The queues do not map, or have no device address: each status by the
+// name of its member.
+@(log_fact = "sound: the map of the queues gave the status {map_status}, their device address the status {address_status}")
+Queues_Not_Mapped :: struct {
+	map_status:     op.Status,
+	address_status: op.Status,
+}
+
+// The kernel gave no memory for the periods.
+@(log_fact = "sound: the memory of the periods gave the status {status}")
+Periods_Memory_Refused :: struct {
+	status: op.Status,
+}
+
+// The periods do not map, or have no device address.
+@(log_fact = "sound: the map of the periods gave the status {map_status}, their device address the status {address_status}")
+Periods_Not_Mapped :: struct {
+	map_status:     op.Status,
+	address_status: op.Status,
+}
+
+// The first hold of the stream.
+@(log_fact = "sound: the first hold: the device took the periods faster than their time; the service gives the next one when the time comes, and counts each hold")
+First_Hold :: struct {}
+
+// The first underrun of the stream.
+@(log_fact = "sound: the first underrun: the device took each period before the next one came; the next frame plays now, and each completion counts the underruns")
+First_Underrun :: struct {}
 
 // bytes_field gives a count of bytes as a field with its unit.
 bytes_field :: proc "contextless" (count: u32) -> value_kinds.Size_In_Bytes {

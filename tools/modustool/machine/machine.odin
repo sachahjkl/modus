@@ -624,12 +624,12 @@ scenario_network := [?]Step {
 	// the client to its principal.
 	{kind = .Remote_Case, text = "malformed"},
 	{kind = .Wait, text = ": its calls act for principal 0", any_order = true},
-	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 104 bytes"},
-	{kind = .Wait, text = "remote: refused a request: remote: the argument kind has the value 9, which the call refuses; it takes at most 1"},
-	{kind = .Wait, text = "remote: refused a request: remote: the argument arguments has 400 bytes; it can have at most 16 bytes"},
-	{kind = .Wait, text = "remote: refused a request: remote: the argument result_count has 65536 bytes; it can have at most 65472 bytes"},
-	{kind = .Wait, text = "remote: refused a request: remote: the argument error_start has the value 28, which the call refuses; it takes at most 65480"},
-	{kind = .Wait, text = "remote: refused a request: remote: the caller has no grant for this: a connection to this service"},
+	{kind = .Wait, text = "remote: refused a request: kind Too_Small, unit Bytes, operation 0, argument 0, value 20, limit 104, found 0"},
+	{kind = .Wait, text = "remote: refused a request: kind Bad_Value, unit None, operation 0, argument 1, value 9, limit 1, found 0"},
+	{kind = .Wait, text = "remote: refused a request: kind Too_Long, unit Bytes, operation 0, argument 5, value 400, limit 16, found 0"},
+	{kind = .Wait, text = "remote: refused a request: kind Too_Long, unit Bytes, operation 0, argument 8, value 65536, limit 65472, found 0"},
+	{kind = .Wait, text = "remote: refused a request: kind Bad_Value, unit Bytes, operation 0, argument 10, value 28, limit 65480, found 0"},
+	{kind = .Wait, text = "remote: refused a request: kind No_Grant, unit Connection, operation 0, argument 3, value 0, limit 0, found 0"},
 	// The place of the pointer and the windows: each press from now on is
 	// confirmed.
 	{kind = .Call, text = "compositor.pointer()", expected = "1 rows of Pointer", pointer = true},
@@ -649,7 +649,7 @@ scenario_network := [?]Step {
 	// Another module than the one that runs: the remote service refuses it,
 	// and the tool names the two hashes.
 	{kind = .Call, text = "monitor.count(\"processors\")", outcome = .Refused, wrong_hash = true, expected = "the request named "},
-	{kind = .Wait, text = "remote: refused a request: remote: the argument hash has the value 0, which the call refuses"},
+	{kind = .Wait, text = "remote: refused a request: kind Bad_Value, unit None, operation 0, argument 4, value 0, limit 0, found 0"},
 	{kind = .Call, text = "monitor.counts()", expected = "15 rows of Count"},
 	// A Record: the counts of the monitor itself, which each caller sees.
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},

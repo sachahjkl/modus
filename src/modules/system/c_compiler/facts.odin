@@ -16,6 +16,24 @@ Entry_Word_Refused :: struct {
 	word: i64,
 }
 
+// The bytes of the Text field of a piece of a line of the diagnostic: the
+// whole values of a fact, 143 bytes and a zero byte.
+DIAGNOSTIC_PIECE_FIELD_BYTES :: 144
+
+// A line of the diagnostic of the compiler, one fact for each line. A line
+// longer than the field is one fact for each piece of 143 bytes: the text
+// is the output of the compiler, which this module does not bound.
+@(log_fact = "c_compiler: {diagnostic}")
+Diagnostic_Line :: struct {
+	diagnostic: [144]u8,
+}
+
+// A call host compiles one source only.
+@(log_fact = "c_compiler: a call host compiles one source: unload the module and isolate it again")
+Second_Source_Refused :: struct {}
+
+#assert(size_of(Diagnostic_Line) == DIAGNOSTIC_PIECE_FIELD_BYTES)
+
 // The compiler wrote its text.
 @(log_fact = "c_compiler: a text of {size}")
 Text_Written :: struct {

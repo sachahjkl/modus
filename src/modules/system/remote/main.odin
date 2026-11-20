@@ -694,7 +694,6 @@ calls_work :: proc "contextless" () {
 			}
 			continue
 		}
-		text: [40]u8
 		record_log := &record_logs[place]
 		if record_log.generation != record.generation {
 			record_log^ = {generation = record.generation}
@@ -733,7 +732,16 @@ calls_work :: proc "contextless" () {
 		if connection.state == .Closed && !record_log.end_logged {
 			record_log.end_logged = true
 			if log_allowed() {
-				system.log(.Info, "remote: ", address_text(text[:], record.remote), " ended (", end_reason(connection), ", the code ", system.Hex(connection.close_error_code), connection.close_is_application ? " of the application" : "", "): in ", connection.data_consumed_total, " bytes, out ", connection.data_sent_total, " bytes")
+				// A code of the application and a transport code are two
+				// sentences: each one is a fact type.
+				close_code := value_kinds.Hexadecimal_Sixteen_Digits(connection.close_error_code)
+				bytes_in, bytes_out := value_kinds.Size_In_Bytes(connection.data_consumed_total), value_kinds.Size_In_Bytes(connection.data_sent_total)
+				reason := value_kinds.text_field(end_reason(connection), END_REASON_FIELD_BYTES)
+				if connection.close_is_application {
+					system.log_fact(.Info, Connection_Ended_By_Application{close_code = close_code, bytes_in = bytes_in, bytes_out = bytes_out, peer = peer_field(record.remote), end_reason = reason})
+				} else {
+					system.log_fact(.Info, Connection_Ended{close_code = close_code, bytes_in = bytes_in, bytes_out = bytes_out, peer = peer_field(record.remote), end_reason = reason})
+				}
 				if connection.closed_by_idle_timeout {
 					idle_end_log(connection, record.remote)
 				}
@@ -932,9 +940,9 @@ refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service:
 	system.error_text(&writer, &error, "remote", field)
 	if counts.refused <= LOG_REFUSALS {
 		if counts.refused == LOG_REFUSALS {
-			system.log(.Info, "remote: refused a request: ", system.written(&writer), "; the next refusals are counted only")
+			system.log_fact(.Info, Request_Refused_Last_Logged(errors.error_record_fact_fields(error)))
 		} else {
-			system.log(.Info, "remote: refused a request: ", system.written(&writer))
+			system.log_fact(.Info, Request_Refused(errors.error_record_fact_fields(error)))
 		}
 	}
 	answer := remote.Answer{status = .Refused, error = error, hash = hash}
@@ -1216,7 +1224,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// A seed under the least strength is an error that the process
 		// shows: no key, and no endpoint.
 		weak_seed = true
-		system.log(.Info, "remote: the random seed of this process is weak: it makes no key, and listens on nothing")
+		system.log_fact(.Info, Seed_Weak{})
 		for {
 			if has_window {
 				draw(&window)

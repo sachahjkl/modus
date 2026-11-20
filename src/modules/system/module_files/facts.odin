@@ -1,5 +1,6 @@
 package module_files
 
+import "modus:contract/errors"
 import "modus:contract/value_kinds"
 
 // The log facts of the module file service (src/md/features/log_facts.md):
@@ -72,8 +73,57 @@ Serving :: struct {
 	remote_address: [16]u8,
 }
 
+// What the storage service refused, or what this service refused in an
+// answer of the storage service: each is its own sentence, so its own fact
+// types.
+Store_Subject :: enum u8 {
+	File               = 0, // A write, a size or a commit of the file of a nickname.
+	Listing            = 1, // The listing of the root tree.
+	Listing_Entry_Name = 2, // An entry of the listing has a name out of its page.
+	Listing_Entry_Kind = 3, // An entry of the listing has a kind that names no kind.
+}
+
+// The storage service refused a change of a file: the values of its error
+// record, after the name of the file.
+@(log_fact = "module_files: the store module_files refused the file {nickname}: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+File_Store_Refused :: struct {
+	kind:      errors.Kind_Word,
+	unit:      errors.Unit_Word,
+	operation: i64,
+	argument:  i64,
+	value:     i64,
+	limit:     i64,
+	found:     i64,
+	nickname: value_kinds.Module_Name_Field,
+}
+
+// The storage service gave an answer to a change of a file that its
+// export does not allow.
+@(log_fact = "module_files: the store module_files refused the file {nickname}: the storage service gave no answer that its export allows")
+File_Store_Answer_Refused :: struct {
+	nickname: value_kinds.Module_Name_Field,
+}
+
+// The storage service refused the listing: the values of its error record.
+@(log_fact = "module_files: the store module_files refused the listing of its root tree: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Listing_Store_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The storage service gave an answer to the listing that its export does
+// not allow.
+@(log_fact = "module_files: the store module_files refused the listing of its root tree: the storage service gave no answer that its export allows")
+Listing_Store_Answer_Refused :: struct {}
+
+// An entry of the listing has a name out of its page.
+@(log_fact = "module_files: the store module_files refused the listing of its root tree: an entry has a name out of its page: the storage service gave no answer that its export allows")
+Listing_Entry_Name_Refused :: struct {}
+
+// An entry of the listing has a kind that names no kind.
+@(log_fact = "module_files: the store module_files refused the listing of its root tree: an entry has a kind that names no kind: the storage service gave no answer that its export allows")
+Listing_Entry_Kind_Refused :: struct {}
+
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
+#assert(size_of(File_Store_Refused) == size_of(errors.Error_Record_Fact_Fields) + value_kinds.MODULE_NAME_FIELD_BYTES)
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
 #assert(size_of(File_Not_Hashed) == 8 + FILE_NAME_FIELD_BYTES)
 #assert(size_of(Serving) == 16 + ADDRESS_FIELD_BYTES)

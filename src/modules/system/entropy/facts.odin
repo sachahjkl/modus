@@ -1,5 +1,7 @@
 package entropy_device_service
 
+import op "modus:contract/operation"
+
 // The log facts of the entropy service (src/md/features/log_facts.md, "The
 // facts of the device services and of the network"): the device found and
 // ready, as a record of fields. The fact template is the sentence that the
@@ -26,3 +28,11 @@ Service_Failed :: struct {
 }
 
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
+
+// The queue does not map, or has no device address: each status by the
+// name of its member.
+@(log_fact = "entropy: the map of the queue gave the status {map_status}, its device address the status {address_status}")
+Queue_Not_Mapped :: struct {
+	map_status:     op.Status,
+	address_status: op.Status,
+}

@@ -989,7 +989,7 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 	address, map_status := system.memory_map(capture_memory, {})
 	given, give_status := system.give(window_memory, capture_memory, {.Read, .Write})
 	if map_status != .Ok || give_status != .Ok {
-		system.log(.Info, "remote_display: the memory of the capture face does not map, or the compositor does not take it")
+		system.log_fact(.Info, Capture_Memory_Not_Given{})
 		system.close(capture_memory)
 		capture_memory = 0
 		capture_state = .Closed

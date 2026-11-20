@@ -50,6 +50,7 @@ device_text_bytes_most :: proc() -> map[string]u32 {
 	most["public_key"] = len(KEY_WHOLE)
 	most["interface_address"] = len("255.255.255.255/24 ff:ff:ff:ff:ff:ff")
 	most["protocol"] = len("TCP")
+	most["end_reason"] = len("closed by this service")
 	return most
 }
 

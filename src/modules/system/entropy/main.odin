@@ -87,7 +87,7 @@ start :: proc "contextless" (queues: system.Handle) {
 	address, map_status := system.memory_map(queues, {.Write})
 	physical, physical_status := system.memory_physical(machine, queues)
 	if map_status != .Ok || physical_status != .Ok {
-		system.log(.Error, "entropy: the map of the queue gave the status ", map_status, ", its device address the status ", physical_status)
+		system.log_fact(.Error, Queue_Not_Mapped{map_status = map_status, address_status = physical_status})
 		fail("no physical address for the queue")
 	}
 	base := uintptr(address)

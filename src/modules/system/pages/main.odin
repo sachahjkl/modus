@@ -278,8 +278,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log_fact(.Info, Process_Half_Read{mapped = value_kinds.Size_In_Pages(process_half.pages), runs = u64(process_half.run_count), write_execute_pages = u64(process_half.write_execute_pages)})
 			kept := kernel_half.pages != 0 && process_half.pages != 0 && kernel_half.write_execute_pages == 0 && process_half.write_execute_pages == 0 && kernel_half.guard_pages == kernel_half.guards_expected && kernel_half.guards_expected != 0
 			guards := kernel_half.kernel_no_execute != 0 && kernel_half.kernel_guard != 0
-			system.log(.Info, kept ? "pages: ok, the page tables keep the rules" : "pages: failed, the page tables do not keep the rules")
-			system.log(.Info, guards ? "pages: the processor refuses the memory of processes to the kernel" : "pages: the processor has no guard for the memory of processes")
+			// Each verdict is two sentences: each one is a fact type.
+			if kept {
+				system.log_fact(.Info, Rules_Kept{})
+			} else {
+				system.log_fact(.Info, Rules_Not_Kept{})
+			}
+			if guards {
+				system.log_fact(.Info, Kernel_Guard_Present{})
+			} else {
+				system.log_fact(.Info, Kernel_Guard_Absent{})
+			}
 		}
 		for _ in display.next_event(&window) {}
 		system.sleep(system.time() + INTERVAL)

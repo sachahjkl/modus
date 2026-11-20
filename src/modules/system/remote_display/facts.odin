@@ -183,6 +183,11 @@ Capture_Memory_Refused :: struct {
 	pages: value_kinds.Size_In_Pages,
 }
 
+// The memory of the capture face does not map, or the compositor does not
+// take it.
+@(log_fact = "remote_display: the memory of the capture face does not map, or the compositor does not take it")
+Capture_Memory_Not_Given :: struct {}
+
 // The capture face is open: a copy of the screen.
 @(log_fact = "remote_display: the capture face is open: a copy of {width}x{height}")
 Capture_Face_Opened :: struct {

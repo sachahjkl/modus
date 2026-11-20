@@ -268,7 +268,7 @@ start :: proc "contextless" (queues: system.Handle) {
 	address, map_status := system.memory_map(queues, {.Write})
 	physical, physical_status := system.memory_physical(machine, queues)
 	if map_status != .Ok || physical_status != .Ok {
-		system.log(.Error, "sound: the map of the queues gave the status ", map_status, ", their device address the status ", physical_status)
+		system.log_fact(.Error, Queues_Not_Mapped{map_status = map_status, address_status = physical_status})
 		fail("no physical address for the queues")
 	}
 	base := uintptr(address)
@@ -292,13 +292,13 @@ start :: proc "contextless" (queues: system.Handle) {
 	// The periods: memory of this budget, which the device reads.
 	period_memory, period_status := system.memory_create(PERIOD_PAGES, 0, {.Contiguous})
 	if period_status != .Ok {
-		system.log(.Error, "sound: the memory of the periods gave the status ", period_status)
+		system.log_fact(.Error, Periods_Memory_Refused{status = period_status})
 		fail("no memory for the periods")
 	}
 	period_address, period_map_status := system.memory_map(period_memory, {.Write})
 	period_physical, period_physical_status := system.memory_physical(machine, period_memory)
 	if period_map_status != .Ok || period_physical_status != .Ok {
-		system.log(.Error, "sound: the map of the periods gave the status ", period_map_status, ", their device address the status ", period_physical_status)
+		system.log_fact(.Error, Periods_Not_Mapped{map_status = period_map_status, address_status = period_physical_status})
 		fail("no physical address for the periods")
 	}
 	periods_memory = ([^]u8)(period_address)
@@ -411,7 +411,7 @@ periods_give :: proc "contextless" () -> (wake_at: u64) {
 				holding = true
 				holds += 1
 				if holds == 1 {
-					system.log(.Warning, "sound: the first hold: the device took the periods faster than their time; the service gives the next one when the time comes, and counts each hold")
+					system.log_fact(.Warning, First_Hold{})
 				}
 			}
 			// The milliseconds of the system clock have the time 0 of its
@@ -623,7 +623,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if sound_device.underrun(&periods, anchor, now) {
 				underruns += 1
 				if underruns == 1 {
-					system.log(.Warning, "sound: the first underrun: the device took each period before the next one came; the next frame plays now, and each completion counts the underruns")
+					system.log_fact(.Warning, First_Underrun{})
 				}
 				anchor = {frame = periods.next_frame, time = now}
 			}

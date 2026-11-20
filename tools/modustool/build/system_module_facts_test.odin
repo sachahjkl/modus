@@ -1,9 +1,12 @@
 package build
 
+import debug_object "modus:contract/debug_object"
+import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:support/sentence"
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"
@@ -58,6 +61,11 @@ system_module_text_bytes_most :: proc() -> map[string]u32 {
 	most["remote_address"] = len("255.255.255.255")
 	most["time_zone"] = len("+08:00")
 	most["utc_date"] = 31
+	most["storage_status"] = len("Too_Small")
+	most["nickname"] = 23
+	most["refusal_sentence"] = 119
+	most["writer_refusal"] = len("Segment_Written_And_Executed")
+	most["diagnostic"] = 143
 	return most
 }
 
@@ -413,4 +421,337 @@ append_parts :: proc(parts: []sentence.Part, last: sentence.Part) -> []sentence.
 	copy(joined, parts)
 	joined[len(parts)] = last
 	return joined
+}
+
+// A fact type with no field of the modules of this file, and the line that
+// its writer wrote before.
+@(private = "file")
+Line_Without_Value :: struct {
+	folder, package_name, type_name, line: string,
+}
+
+// Each fact type with no field writes the line of before, byte for byte:
+// its sentence is its template, and a record of one byte is refused.
+@(test)
+the_facts_with_no_value_write_the_lines_of_before :: proc(t: ^testing.T) {
+	lines := [?]Line_Without_Value {
+		{"tpm", "tpm_device_service", "Shutdown_Done", "tpm: TPM2_Shutdown after the use of an authorization value: a stop of the machine now makes the TPM count no failure"},
+		{"tpm", "tpm_device_service", "Unseal_Creation_Data_Refused", "tpm: refused the unseal: the creation data does not name PCR 7 and PCR 11 with a digest"},
+		{"tpm", "tpm_device_service", "Unseal_Policy_Refused", "tpm: refused the unseal: the policy of the object is not the policy of the PCR values of its creation, or its attributes are not the attributes of a sealed object"},
+		{"tpm", "tpm_device_service", "Unsealed_With_Authorization", "tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal, and the authorization value is right"},
+		{"tpm", "tpm_device_service", "Unsealed", "tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal"},
+		{"tpm", "tpm_device_service", "No_Rate_Limit", "tpm: the TPM limits no rate of the wrong authorization values: its lockout interval is 0"},
+		{"tpm", "tpm_device_service", "Lockout_Not_Checked", "tpm: the lockout hierarchy is not checked: another system can reset the count of the TPM while its value is empty"},
+		{"tpm", "tpm_device_service", "Lockout_Authorization_Found", "tpm: the lockout hierarchy has an authorization value: an earlier start of this system set it, or another system did; this service keeps no copy of it and leaves it"},
+		{"tpm", "tpm_device_service", "Lockout_Kept_Empty_Without_Seed", "tpm: the lockout hierarchy keeps its empty authorization value: this process has no seed, and another system can reset the count of the TPM"},
+		{"tpm", "tpm_device_service", "Lockout_Kept_Empty_Weak_Seed", "tpm: the lockout hierarchy keeps its empty authorization value: the seed of this process is too weak for a key, and another system can reset the count of the TPM"},
+		{"tpm", "tpm_device_service", "Lockout_Change_Answer_Malformed", "tpm: the answer of the TPM to TPM2_HierarchyChangeAuth of the lockout hierarchy does not have its form: the next start reads the state of the hierarchy again"},
+		{"tpm", "tpm_device_service", "Lockout_Authorization_Set", "tpm: the lockout hierarchy had an empty authorization value: this service set a random one and kept no copy, so no system resets the count of the TPM or changes its limits"},
+		{"tpm", "tpm_device_service", "No_Measure_Ring", "tpm: no measure ring: no start policy is measured into PCR 12"},
+		{"tpm", "tpm_device_service", "Completion_Lost", "tpm: the completion queue of a ring of the TPM service is full: a completion is lost"},
+		{"debugger", "debugger", "No_Service_Ring", "debugger: no service ring"},
+		{"debugger", "debugger", "Serving", "debugger: serves its exports"},
+		{"storage", "storage_service", "No_Seed", "storage: no seed in the context of the process"},
+		{"storage", "storage_service", "No_Service_Ring", "storage: no service ring"},
+		{"storage", "storage_service", "No_Block_Ring", "storage: no block ring"},
+		{"storage", "storage_service", "No_Block_Service_Handle", "storage: no handle of the block service with the right Read: a wait for the disk would have no end"},
+		{"storage", "storage_service", "No_Data_Region", "storage: no data region"},
+		{"storage", "storage_service", "Data_Region_Refused", "storage: the block service refused the data region"},
+		{"storage", "storage_service", "No_Valid_Root", "storage: no valid root on the disk: the service keeps the disk as it is, and serves nothing"},
+		{"storage", "storage_service", "First_Root_Cut", "storage: the first root of the disk has a wrong check and no commit followed it: a format that a stop cut; the service formats again"},
+		{"storage", "storage_service", "Newest_Root_Refused", "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used"},
+		{"start_policy", "start_policy", "No_Start_List", "start_policy: the context names no start list: no row starts"},
+		{"start_policy", "start_policy", "Machine_Parts_Page_Refused", "start_policy: the machine parts page is refused: no row starts"},
+		{"start_policy", "start_policy", "Machine_Usable", "start_policy: each needed row runs: the machine is usable"},
+		{"remote_display", "remote_display_service", "Capture_Memory_Not_Given", "remote_display: the memory of the capture face does not map, or the compositor does not take it"},
+		{"remote", "remote_service", "Seed_Weak", "remote: the random seed of this process is weak: it makes no key, and listens on nothing"},
+		{"module_files", "module_files", "Listing_Store_Answer_Refused", "module_files: the store module_files refused the listing of its root tree: the storage service gave no answer that its export allows"},
+		{"module_files", "module_files", "Listing_Entry_Name_Refused", "module_files: the store module_files refused the listing of its root tree: an entry has a name out of its page: the storage service gave no answer that its export allows"},
+		{"module_files", "module_files", "Listing_Entry_Kind_Refused", "module_files: the store module_files refused the listing of its root tree: an entry has a kind that names no kind: the storage service gave no answer that its export allows"},
+		{"sound", "sound_device_service", "First_Hold", "sound: the first hold: the device took the periods faster than their time; the service gives the next one when the time comes, and counts each hold"},
+		{"sound", "sound_device_service", "First_Underrun", "sound: the first underrun: the device took each period before the next one came; the next frame plays now, and each completion counts the underruns"},
+		{"network", "network_service", "Frame_Ring_Full", "network: the frame ring is full"},
+		{"input", "input", "No_Ring", "input: no ring"},
+		{"input", "input", "No_Controller", "input: no PS/2 controller: no keyboard and no mouse"},
+		{"input", "input", "Ready_Mouse_Without_Wheel", "input: ok, the mouse has no wheel"},
+		{"input", "input", "Ready_Mouse_With_Wheel", "input: ok, the mouse has a wheel"},
+		{"input", "input", "Input_Ring_Full", "input: the input ring is full: the keyboard controller keeps its bytes"},
+		{"input", "input", "Input_Ring_Room_Again", "input: the input ring has room again"},
+		{"host", "host", "No_Call_Ring_Or_Region", "host: no call ring or no call region"},
+		{"host", "host", "Call_Region_Without_Size", "host: the call region has no size"},
+		{"date", "date_service", "No_Date_Page_Or_Clock", "date: no date page or no ports of the clock: the system has no date"},
+		{"date", "date_service", "Clock_Date_Not_Valid", "date: the real-time clock gives no valid date: the system has no date"},
+		{"pages", "pages", "Rules_Kept", "pages: ok, the page tables keep the rules"},
+		{"pages", "pages", "Rules_Not_Kept", "pages: failed, the page tables do not keep the rules"},
+		{"pages", "pages", "Kernel_Guard_Present", "pages: the processor refuses the memory of processes to the kernel"},
+		{"pages", "pages", "Kernel_Guard_Absent", "pages: the processor has no guard for the memory of processes"},
+		{"c_compiler", "c_compiler", "Second_Source_Refused", "c_compiler: a call host compiles one source: unload the module and isolate it again"},
+	}
+	for item in lines {
+		file, ok := facts_file_of_folder(t, strings.concatenate({foundation.SYSTEM_MODULE_SOURCES, item.folder}, context.temp_allocator))
+		if !ok {
+			continue
+		}
+		facts_expect_line(t, fact_test_render(t, file, item.package_name, item.type_name, {}), item.line)
+		// One value byte where the record has none: the reader refuses it.
+		key := fact_key(item.package_name, item.type_name)
+		one_byte := [1]u8{0}
+		buffer: [module.FACT_SENTENCE_BYTES_MOST]u8
+		count, _, refusal := module.fact_sentence_write(file, key, one_byte[:], buffer[:], nil)
+		testing.expectf(t, refusal == .Value_Count && count == 0, "%s.%s with one value byte: %v, %d bytes", item.package_name, item.type_name, refusal, count)
+	}
+}
+
+// status_words gives the words of a status of the kernel: each member, and
+// one word past the last member, which a reader writes as its number.
+@(private = "file")
+status_words :: proc() -> []u64 {
+	words := make([dynamic]u64, context.temp_allocator)
+	for status in op.Status {
+		append(&words, u64(status))
+	}
+	append(&words, u64(max(op.Status)) + 1)
+	return words[:]
+}
+
+// status_text gives the words of a status in a sentence: the name of its
+// member, or its number for a word that names no member.
+@(private = "file")
+status_text :: proc(word: u64) -> string {
+	if name, named := op.contract_enum_member_name(.Status, word); named {
+		return name
+	}
+	return fmt.tprintf("%d", word)
+}
+
+// Each fact type of a status of the kernel writes the status by the name
+// of its member, where the line wrote its number: each member, and a word
+// that names no member, which stays its number.
+@(test)
+the_facts_of_a_status_write_the_name_of_its_member :: proc(t: ^testing.T) {
+	folders := [?]string{"debugger", "start_policy", "sound", "entropy"}
+	files: [len(folders)][]u8
+	for folder, index in folders {
+		file, ok := facts_file_of_folder(t, strings.concatenate({foundation.SYSTEM_MODULE_SOURCES, folder}, context.temp_allocator))
+		if !ok {
+			return
+		}
+		files[index] = file
+	}
+	debugger, start_policy, sound, entropy := files[0], files[1], files[2], files[3]
+	name := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
+	edges := edges_make().sizes
+	words := status_words()
+	for word in words {
+		other := words[len(words) - 1 - int(word % u64(len(words)))]
+		status, other_status := status_text(word), status_text(other)
+		for size in edges {
+			facts_expect_line(t, fact_test_render(t, debugger, "debugger", "Debug_Object_Memory_Refused", {{"size", size}, {"status", word}, {"debugged_process", name}}), line_of_before("debugger: no debug object for ", sentence.Module_Name{name}, ": no memory for its ", size, " bytes: status ", status))
+		}
+		facts_expect_line(t, fact_test_render(t, debugger, "debugger", "Debug_Object_Map_Refused", {{"status", word}, {"debugged_process", name}}), line_of_before("debugger: no debug object for ", sentence.Module_Name{name}, ": its memory does not map: status ", status))
+		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Root_Ring_Refused", {{"status", word}}), line_of_before("start_policy: the root ring does not open: status ", status))
+		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Machine_Usable_Refused", {{"status", word}}), line_of_before("start_policy: the root service refused Machine_Usable: status ", status))
+		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Row_Start_Refused", {{"status", word}, {"row_process", name}}), line_of_before("start_policy: cannot start ", sentence.Module_Name{name}, ": status ", status))
+		facts_expect_line(t, fact_test_render(t, sound, "sound_device_service", "Queues_Not_Mapped", {{"map_status", word}, {"address_status", other}}), line_of_before("sound: the map of the queues gave the status ", status, ", their device address the status ", other_status))
+		facts_expect_line(t, fact_test_render(t, sound, "sound_device_service", "Periods_Memory_Refused", {{"status", word}}), line_of_before("sound: the memory of the periods gave the status ", status))
+		facts_expect_line(t, fact_test_render(t, sound, "sound_device_service", "Periods_Not_Mapped", {{"map_status", word}, {"address_status", other}}), line_of_before("sound: the map of the periods gave the status ", status, ", their device address the status ", other_status))
+		facts_expect_line(t, fact_test_render(t, entropy, "entropy_device_service", "Queue_Not_Mapped", {{"map_status", word}, {"address_status", other}}), line_of_before("entropy: the map of the queue gave the status ", status, ", its device address the status ", other_status))
+	}
+	// A word of 8 bytes past every member of u32 stays its number too.
+	far := u64(max(u32)) + 1
+	facts_expect_line(t, fact_test_render(t, debugger, "debugger", "Debug_Object_Map_Refused", {{"status", far}, {"debugged_process", name}}), line_of_before("debugger: no debug object for ", sentence.Module_Name{name}, ": its memory does not map: status ", far))
+}
+
+// error_record_text gives the words of the fields of an error record, as
+// the fact of an error record writes them after the words of its module.
+@(private = "file")
+error_record_text :: proc(record: errors.Error_Record) -> string {
+	kind := record.kind >= 0 && record.kind <= i64(max(errors.Kind)) ? errors.KIND_NAMES[errors.Kind(record.kind)] : fmt.tprintf("%d", u64(record.kind))
+	unit := record.unit >= 0 && record.unit <= i64(max(errors.Unit)) ? errors.UNIT_MEMBER_NAMES[errors.Unit(record.unit)] : fmt.tprintf("%d", u64(record.unit))
+	return fmt.tprintf("kind %s, unit %s, operation %d, argument %d, value %d, limit %d, found %d", kind, unit, record.operation, record.argument, record.value, record.limit, record.found)
+}
+
+// The values of an error record as the fields of a fact.
+@(private = "file")
+error_record_fields :: proc(record: errors.Error_Record) -> [7]Fact_Test_Field {
+	return {{"kind", u64(record.kind)}, {"unit", u64(record.unit)}, {"operation", u64(record.operation)}, {"argument", u64(record.argument)}, {"value", u64(record.value)}, {"limit", u64(record.limit)}, {"found", u64(record.found)}}
+}
+
+// Each fact of an error record writes the words of its module, then the
+// values of the record with the kind and the unit by the names of their
+// members: the records of the waits of the remote test, a record at the
+// edges of each value, and a kind and a unit that name no member, which
+// stay their numbers.
+@(test)
+the_facts_of_an_error_record_write_its_fields :: proc(t: ^testing.T) {
+	folders := [?]string{"storage", "remote", "module_files"}
+	files: [len(folders)][]u8
+	for folder, index in folders {
+		file, ok := facts_file_of_folder(t, strings.concatenate({foundation.SYSTEM_MODULE_SOURCES, folder}, context.temp_allocator))
+		if !ok {
+			return
+		}
+		files[index] = file
+	}
+	storage, remote, module_files := files[0], files[1], files[2]
+	records := [?]errors.Error_Record {
+		{kind = i64(errors.Kind.Too_Small), unit = i64(errors.Unit.Bytes), value = 20, limit = 104},
+		{kind = i64(errors.Kind.Bad_Value), argument = 1, value = 9, limit = 1},
+		{kind = i64(errors.Kind.No_Grant), unit = i64(errors.Unit.Connection), argument = 3},
+		{kind = i64(max(errors.Kind)), unit = i64(max(errors.Unit)), operation = max(i64), argument = min(i64), value = -1, limit = max(i64), found = min(i64)},
+		{kind = i64(max(errors.Kind)) + 1, unit = i64(max(errors.Unit)) + 1},
+		{kind = -1, unit = -1},
+	}
+	nicknames := [2]string{strings.repeat("n", 23, context.temp_allocator), "n"}
+	for record in records {
+		fields := error_record_fields(record)
+		words := error_record_text(record)
+		facts_expect_line(t, fact_test_render(t, storage, "storage_service", "Block_Request_Refused", fields[:]), strings.concatenate({"storage: the block service refused a request: ", words}, context.temp_allocator))
+		facts_expect_line(t, fact_test_render(t, remote, "remote_service", "Request_Refused", fields[:]), strings.concatenate({"remote: refused a request: ", words}, context.temp_allocator))
+		facts_expect_line(t, fact_test_render(t, remote, "remote_service", "Request_Refused_Last_Logged", fields[:]), strings.concatenate({"remote: refused a request, and counts the next refusals only: ", words}, context.temp_allocator))
+		facts_expect_line(t, fact_test_render(t, module_files, "module_files", "Listing_Store_Refused", fields[:]), strings.concatenate({"module_files: the store module_files refused the listing of its root tree: ", words}, context.temp_allocator))
+		for nickname in nicknames {
+			with_name := make([dynamic]Fact_Test_Field, context.temp_allocator)
+			append(&with_name, ..fields[:])
+			append(&with_name, Fact_Test_Field{"nickname", nickname})
+			facts_expect_line(t, fact_test_render(t, module_files, "module_files", "File_Store_Refused", with_name[:]), strings.concatenate({"module_files: the store module_files refused the file ", nickname, ": ", words}, context.temp_allocator))
+		}
+	}
+	// The words of the waits of the remote test, written out.
+	too_small, no_grant := error_record_fields(records[0]), error_record_fields(records[2])
+	facts_expect_line(t, fact_test_render(t, remote, "remote_service", "Request_Refused", too_small[:]), "remote: refused a request: kind Too_Small, unit Bytes, operation 0, argument 0, value 20, limit 104, found 0")
+	facts_expect_line(t, fact_test_render(t, remote, "remote_service", "Request_Refused", no_grant[:]), "remote: refused a request: kind No_Grant, unit Connection, operation 0, argument 3, value 0, limit 0, found 0")
+	for nickname in nicknames {
+		facts_expect_line(t, fact_test_render(t, module_files, "module_files", "File_Store_Answer_Refused", {{"nickname", nickname}}), line_of_before("module_files: the store module_files refused ", "the file ", sentence.Module_Name{nickname}, ": ", "the storage service gave no answer that its export allows"))
+	}
+}
+
+// Each fact type of a line with a response code of the TPM, an address, a
+// fault of a debug object, a code of a connection, a measure in
+// hundredths, a refusal of the assembler and a line of the C compiler
+// writes the line of before, byte for byte.
+@(test)
+the_late_facts_of_round_two_write_the_lines_of_before :: proc(t: ^testing.T) {
+	folders := [?]string{"tpm", "debugger", "storage", "remote", "network", "assemble", "c_compiler"}
+	files: [len(folders)][]u8
+	for folder, index in folders {
+		file, ok := facts_file_of_folder(t, strings.concatenate({foundation.SYSTEM_MODULE_SOURCES, folder}, context.temp_allocator))
+		if !ok {
+			return
+		}
+		files[index] = file
+	}
+	tpm, debugger, storage, remote, network, assemble, c_compiler := files[0], files[1], files[2], files[3], files[4], files[5], files[6]
+	counts, edges := edges_make().counts, edges_make().sizes
+	codes := [3]u64{0, 0x922, max(u64)}
+	all_properties := [2]string{"the state of the hierarchies", "p"}
+	peers := [2]string{"255.255.255.255 port 65535", "10.0.2.2 port 7100"}
+	reasons := [?]string{"the handshake deadline", "the idle timeout", "closed by the host", "closed by this service"}
+	render :: proc(t: ^testing.T, file: []u8, type_name: string, code: u64) -> string {
+		return fact_test_render(t, file, "tpm_device_service", type_name, {{"response_code", code}})
+	}
+	for code in codes {
+		hex := sentence.Hex(code)
+		facts_expect_line(t, render(t, tpm, "Shutdown_Refused", code), line_of_before("tpm: the TPM refused TPM2_Shutdown after a use of an authorization value (response code ", hex, "); the next start of the TPM can count one failure"))
+		facts_expect_line(t, render(t, tpm, "Unseal_Ticket_Refused", code), line_of_before("tpm: refused the unseal: the TPM refuses the creation ticket of the object (response code ", hex, "): this TPM did not make it so"))
+		facts_expect_line(t, render(t, tpm, "Unseal_Pcr_Values_Refused", code), line_of_before("tpm: the TPM refuses the unseal: PCR 7 and PCR 11 do not hold the values of the seal (response code ", hex, ")"))
+		facts_expect_line(t, render(t, tpm, "Unseal_Authorization_Wrong", code), line_of_before("tpm: the TPM refuses the unseal: the authorization value is wrong, and the TPM counted the failure (response code ", hex, ")"))
+		facts_expect_line(t, render(t, tpm, "Unseal_Locked_Out", code), line_of_before("tpm: the TPM refuses the unseal: it counted too many wrong authorization values, and refuses each try for now (response code ", hex, ")"))
+		facts_expect_line(t, render(t, tpm, "Extend_Refused", code), line_of_before("tpm: the TPM refused the extend of PCR 12 (response code ", hex, ")"))
+		facts_expect_line(t, render(t, tpm, "Extend_Read_Back_Refused", code), line_of_before("tpm: extended PCR 12, and its read back gave no value of PCR 12 of SHA-256 (response code ", hex, ")"))
+		facts_expect_line(t, render(t, tpm, "Lockout_Authorization_Refused", code), line_of_before("tpm: the TPM refused a lockout authorization value (response code ", hex, "): the lockout hierarchy keeps its empty one until the next start, and another system can reset the count of the TPM"))
+		for properties in all_properties {
+			facts_expect_line(t, fact_test_render(t, tpm, "tpm_device_service", "Capability_Refused", {{"response_code", code}, {"properties", properties}}), line_of_before("tpm: the TPM refused TPM2_GetCapability of ", properties, " (response code ", hex, ")"))
+		}
+		for size in edges {
+			facts_expect_line(t, fact_test_render(t, tpm, "tpm_device_service", "Ready", {{"registers_address", code}, {"buffer_size", size}}), line_of_before("tpm: ok, the CRB interface at ", hex, ", a buffer of ", size, " bytes; it seals to PCR 7 and PCR 11"))
+		}
+		// A code of a connection of remote, of each kind of its close.
+		for peer in peers {
+			for reason in reasons {
+				for size in edges {
+					values := []Fact_Test_Field{{"close_code", code}, {"bytes_in", size}, {"bytes_out", size}, {"peer", peer}, {"end_reason", reason}}
+					facts_expect_line(t, fact_test_render(t, remote, "remote_service", "Connection_Ended", values), line_of_before("remote: ", peer, " ended (", reason, ", the code ", hex, "", "): in ", size, " bytes, out ", size, " bytes"))
+					facts_expect_line(t, fact_test_render(t, remote, "remote_service", "Connection_Ended_By_Application", values), line_of_before("remote: ", peer, " ended (", reason, ", the code ", hex, " of the application", "): in ", size, " bytes, out ", size, " bytes"))
+				}
+			}
+		}
+	}
+
+	// A refused debug object: the sentence of each fault of its check.
+	name := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
+	hash: [module.HASH_SIZE]u8
+	for &value, index in hash {
+		value = u8(0xE0 + index)
+	}
+	for fault in debug_object.Fault {
+		if fault == .None {
+			continue
+		}
+		type_name := fmt.tprintf("Debug_Object_Refused_%v", fault)
+		facts_expect_line(t, fact_test_render(t, debugger, "debugger", type_name, {{"module_hash", hash}, {"debugged_process", name}}), line_of_before("debugger: refused the debug object ", sentence.Hash{hash[:]}, " of ", sentence.Module_Name{name}, ": ", debug_object.fault_sentences[fault]))
+	}
+	storage_statuses := [?]string{"Ok", "Gone", "Refused", "Damaged", "Failed", "Too_Small"}
+	for status in storage_statuses {
+		facts_expect_line(t, fact_test_render(t, debugger, "debugger", "Debug_Object_Size_Status_Refused", {{"module_hash", hash}, {"debugged_process", name}, {"storage_status", status}}), line_of_before("debugger: no debug object for ", sentence.Module_Name{name}, ": the storage service refused the size of ", sentence.Hash{hash[:]}, ", status ", status))
+	}
+
+	// The fault of the engine and the erase of versions of the storage
+	// service.
+	store := strings.repeat("s", 31, context.temp_allocator)
+	object := strings.repeat("o", 64, context.temp_allocator)
+	for count in counts {
+		other := max(u64) - count
+		facts_expect_line(t, fact_test_render(t, storage, "storage_service", "Engine_Fault_In_One_Store", {{"named_twice", count}, {"named_by_two_stores", other}, {"reference_overflow", count}, {"faulty_stores", u64(1)}}), line_of_before("storage: a fault of the engine: ", count, " blocks of one name named two times, ", other, " blocks named from two stores, ", count, " counts of names that pass their limit; the service makes no change in the ", u64(1), " store", " with such a block, and gives their objects"))
+		facts_expect_line(t, fact_test_render(t, storage, "storage_service", "Engine_Fault", {{"named_twice", count}, {"named_by_two_stores", other}, {"reference_overflow", count}, {"faulty_stores", other}}), line_of_before("storage: a fault of the engine: ", count, " blocks of one name named two times, ", other, " blocks named from two stores, ", count, " counts of names that pass their limit; the service makes no change in the ", other, " stores", " with such a block, and gives their objects"))
+		head := []sentence.Part{"storage: the versions of ", object, " in the store ", store, " are ended at the generation ", count}
+		facts_expect_line(t, fact_test_render(t, storage, "storage_service", "Versions_Ended_Second_Root_Dropped", {{"generation", count}, {"store", store}, {"object", object}}), line_of_before(..append_parts(head, ", and the read back of the second root found other bytes: the disk did not keep it; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")))
+		facts_expect_line(t, fact_test_render(t, storage, "storage_service", "Versions_Ended_Second_Root_Failed", {{"generation", count}, {"store", store}, {"object", object}}), line_of_before(..append_parts(head, ", and the write or the read back of the second root failed on the device: it is not taken, the open of the next start decides, and the service makes no change until then; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")))
+		facts_expect_line(t, fact_test_render(t, storage, "storage_service", "Versions_Ended_Zeros_Failed", {{"generation", count}, {"zeroed", other}, {"not_zeroed", count}, {"store", store}, {"object", object}}), line_of_before("storage: the versions of ", object, " in the store ", store, " are ended at the generation ", count, ", and a write, the Flush or the read back of the zeros failed: ", other, " blocks read back as zeros and ", count, " with other bytes; the others were not read back, and can keep their old bytes until a commit takes them"))
+		facts_expect_line(t, fact_test_render(t, storage, "storage_service", "Versions_Ended_Zeros_Dropped", {{"generation", count}, {"not_zeroed", other}, {"store", store}, {"object", object}}), line_of_before("storage: the versions of ", object, " in the store ", store, " are ended at the generation ", count, ", and the read back of the zeros found ", other, " blocks with other bytes: the disk did not keep those writes, and their old bytes stay in free blocks until a commit takes them"))
+	}
+
+	// The measure of the passes of the network service: the hundredths as
+	// the line wrote them, value / 100, a dot and two digits.
+	hundredths_values := [?]u64{0, 5, 100, 105, 12345, u64(max(i64))}
+	owners := [2]string{strings.repeat("o", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator), "o"}
+	for value in hundredths_values {
+		fraction := value % 100
+		text := fmt.tprintf("%d.%s%d", value / 100, fraction < 10 ? "0" : "", fraction)
+		for owner in owners {
+			for count in counts {
+				values := []Fact_Test_Field{{"receive_passes", value}, {"received_bytes", count}, {"received_units", count}, {"send_passes", value}, {"sent_bytes", count}, {"sent_units", count}, {"data_bytes_read", count}, {"owner", owner}}
+				tail :: "the payload is the datagram or the segment with its header; the bytes of the data that this service read on send: "
+				facts_expect_line(t, fact_test_render(t, network, "network_service", "Tcp_Passes_Measured", values), line_of_before("network: a measure: the endpoint of ", owner, ", ", "TCP", ": the passes of this service over the data for each payload byte: ", text, " on receive (", count, " bytes in ", count, " segments), ", text, " on send (", count, " bytes in ", count, " segments), ", tail, count))
+				facts_expect_line(t, fact_test_render(t, network, "network_service", "Udp_Passes_Measured", values), line_of_before("network: a measure: the endpoint of ", owner, ", ", "UDP", ": the passes of this service over the data for each payload byte: ", text, " on receive (", count, " bytes in ", count, " datagrams), ", text, " on send (", count, " bytes in ", count, " datagrams), ", tail, count))
+			}
+		}
+	}
+
+	// A refusal of the assembler keeps its number, as the line wrote it,
+	// beside the words of its sentence.
+	sentences := [2]string{strings.repeat("r", 119, context.temp_allocator), "no instruction of the subset and no directive has this name"}
+	places := [3]u64{0, 1, u64(max(u32))}
+	for place in places {
+		for refusal_sentence in sentences {
+			facts_expect_line(t, fact_test_render(t, assemble, "assemble", "Source_Refused", {{"line", place}, {"column", place}, {"value", max(u64)}, {"refusal", place}, {"refusal_sentence", refusal_sentence}}), line_of_before("assemble: line ", place, ", column ", place, ": ", refusal_sentence, " (refusal ", place, ", value ", max(u64), ")"))
+		}
+	}
+	// A refusal of the writer of module files is the name of its member: the
+	// longest name, and a short one, at the edges of the index.
+	writer_refusals := [2]string{"Segment_Written_And_Executed", "None"}
+	indexes := [3]u64{0, 1, max(u64)}
+	for writer_refusal in writer_refusals {
+		for index in indexes {
+			facts_expect_line(t, fact_test_render(t, assemble, "assemble", "Parts_Refused", {{"index", index}, {"writer_refusal", writer_refusal}}), line_of_before("assemble: the module file writer refused the parts: refusal ", writer_refusal, ", index ", index))
+			facts_expect_line(t, fact_test_render(t, assemble, "assemble", "File_Refused", {{"index", index}, {"writer_refusal", writer_refusal}}), line_of_before("assemble: the module file writer refused the file: refusal ", writer_refusal, ", index ", index))
+		}
+	}
+
+	// A line of the diagnostic of the compiler, of the most bytes that the
+	// field holds and of one byte.
+	diagnostics := [2]string{strings.repeat("d", 143, context.temp_allocator), "d"}
+	for diagnostic in diagnostics {
+		facts_expect_line(t, fact_test_render(t, c_compiler, "c_compiler", "Diagnostic_Line", {{"diagnostic", diagnostic}}), line_of_before("c_compiler: ", diagnostic))
+	}
 }

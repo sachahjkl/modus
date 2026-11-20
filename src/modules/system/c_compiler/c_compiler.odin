@@ -130,8 +130,10 @@ diagnostic_log :: proc "contextless" (size: u64) {
 	start := 0
 	for index in 0 ..= len(text) {
 		if index == len(text) || text[index] == '\n' {
-			if index > start {
-				system.log(.Info, "c_compiler: ", text[start:index])
+			// A line that passes the field is one fact for each piece.
+			for piece := start; piece < index; piece += DIAGNOSTIC_PIECE_FIELD_BYTES - 1 {
+				end := min(index, piece + DIAGNOSTIC_PIECE_FIELD_BYTES - 1)
+				system.log_fact(.Info, Diagnostic_Line{diagnostic = value_kinds.text_field(text[piece:end], DIAGNOSTIC_PIECE_FIELD_BYTES)})
 			}
 			start = index + 1
 		}
@@ -193,7 +195,7 @@ compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, 
 		}
 	}
 	if compiler_used {
-		system.log(.Info, "c_compiler: a call host compiles one source: unload the module and isolate it again")
+		system.log_fact(.Info, Second_Source_Refused{})
 		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, 0)
 	}
 

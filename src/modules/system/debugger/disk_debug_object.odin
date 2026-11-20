@@ -197,7 +197,6 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 	module_hash := into.module_hash
 	digits: [disk_process.HASH_DIGITS]u8
 	disk_process.debug_object_name_write(&digits, module_hash)
-	object_name := string(digits[:])
 	// The connection is closed in each case: the object is read whole in
 	// this export.
 	defer {
@@ -220,7 +219,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		return
 	}
 	if status != .Ok || answer_value < 0 {
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the storage service refused the size of ", object_name, ", status ", u64(status))
+		system.log_fact(.Info, Debug_Object_Size_Status_Refused{module_hash = value_kinds.Hash_Field(module_hash), debugged_process = value_kinds.module_name_field(name), storage_status = value_kinds.text_field(STORAGE_STATUS_NAMES[status], STORAGE_STATUS_FIELD_BYTES)})
 		return
 	}
 	// The size is copied here and checked one time: no later answer
@@ -232,7 +231,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 	}
 	object_memory, create_status := system.memory_create((object_read.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 	if create_status != .Ok {
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": no memory for its ", object_read.size, " bytes: status ", create_status)
+		system.log_fact(.Info, Debug_Object_Memory_Refused{size = value_kinds.Size_In_Bytes(object_read.size), status = op.Status_Word(create_status), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	into.memory = object_memory
@@ -240,7 +239,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 	if map_status != .Ok {
 		held_object_forget(into)
 		into.module_hash = module_hash
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": its memory does not map: status ", map_status)
+		system.log_fact(.Info, Debug_Object_Map_Refused{status = op.Status_Word(map_status), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	bytes := ([^]u8)(address)[:object_read.size]
@@ -289,11 +288,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		system.memory_unmap(address)
 		held_object_forget(into)
 		into.module_hash = module_hash
-		if fault != .None {
-			system.log(.Info, "debugger: refused the debug object ", object_name, " of ", system.Module_Name{name}, ": ", debug_object.fault_sentences[fault])
-		} else {
-			system.log_fact(.Info, Debug_Object_Of_Another_Module{module_hash = value_kinds.Hash_Field(module_hash), named_module = value_kinds.Hash_Field(named), debugged_process = value_kinds.module_name_field(name)})
-		}
+		debug_object_refused_log(fault, named, module_hash, name)
 		return
 	}
 	into.object = bytes
