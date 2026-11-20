@@ -318,10 +318,33 @@ project {
 
 The bytes and the trust are two separate things. The bytes of a declaration come from any source of the substitution policy, because a hash checks itself. The trust comes from the key of the publisher, which the principal names in `keys`, its table of the publisher keys that it trusts.
 
-**When the resolution happens.** An evaluation never reads the network to resolve a name, because it has no effect. It uses the pins: a typed record with the hash of each declaration input as it was resolved, kept in the store of the project or in the plan.
+**The source of an input.** An input that is no exact declaration names a reference that moves: a branch of git, a bookmark or a change of Jujutsu, a branch of Mercurial, a channel of Pijul, an archive at an address, a name that a publisher follows. Each one resolves to a state that does not move, and the system needs only one thing of that state: a modus tree by its hash. So each kind of source is a **source module** of the catalog declaration, with no word of Lex of its own, and fills one contract:
 
-- `update()` resolves each `follow` again, from the release pointers that the sources of the substitution policy give, and writes new pins. `update(inputs.gt)` resolves one.
-- The store keeps the pins before as a version (property 9), so the pins of each earlier state of a project stay readable.
+- **A resolver**, an export that only `update()` runs, with a network grant for the host of the address and nothing else. It turns the reference into the identity of the state in its format (a commit, a changeset, a state of Pijul, the number of a release pointer) and into the tree hash that the fetcher gives.
+- **A fetch recipe**, as `git_fetch` ([recipes.md](recipes.md), "The fetcher"): from the identity, it writes the modus tree and refuses a tree whose hash is not the hash of the pin.
+
+```
+inputs = {
+  a  = catalog.git.source(address = "https://…/a", branch = "main"),
+  b  = catalog.jj.source(address = "https://…/b", bookmark = "main"),
+  c  = catalog.jj.source(address = "https://…/c", change = "kxqzv…"),
+  d  = catalog.archive.source(address = "https://…/d-1.2.tar.gz"),
+  gt = follow(publisher = keys.gui_toolkit, name = "gui_toolkit"),
+}
+```
+
+- `follow` is the source of a release pointer: it fills the same contract, and its resolver also checks the signature of the publisher.
+- A new kind of source is one more module, which a principal can take from a publisher by `follow`: it changes neither Lex, nor the evaluator, nor `update()`.
+- Jujutsu keeps its states in a git store, so its fetch recipe is the one of git; its resolver reads bookmarks and change ids, which outlive a rebase.
+- A neighbour machine of modus needs no resolver: the tree is exchanged by its hash, with the protocol of the cache.
+- The identity in the format is provenance, kept in the pin. The tree hash is the one identity that the evaluation and the plan use.
+
+**When the resolution happens.** An evaluation never reads the network to resolve a name, because it has no effect. It uses the pins: a typed record with, for each declaration input, the identity of its state, its tree hash and its publisher when it has one, as it was resolved.
+
+**Where the pins live.** The pins of a project are an entry of its source tree, `pins`, beside its declaration: a typed record, not a text. The tree hash of a project then covers its declaration and its pins, so a project given by its hash is a project whose inputs do not move, on each machine. A project that an input brings comes with its own pins, so its inputs do not move either, down the whole graph. On an export to git, the record leaves as a file of bytes with its description, and an import reads it back by that description. A plan that has no project holds its pins itself.
+
+- `update()` runs the resolver of each input again and writes new pins: a new version of the source tree, whose difference names the pins that moved. `update(inputs.gt)` resolves one. With no `update`, the inputs never move.
+- The store keeps the tree before as a version (property 9), so the pins of each earlier state of a project stay readable.
 - An evaluation with an input that has no pin stops with an error record that names the input and the command `update(inputs.<name>)`.
 
 The pins are no text file to parse. They are a typed record, versioned by the store, and the plan records the same hashes.
@@ -409,6 +432,8 @@ From each root it follows the imports of each module, the debug object of each m
 | Resolve each followed input again | `update()` |
 | Resolve one input again | `update(inputs.gt)` |
 | See each pin, with its publisher and its hash | `inputs` |
+| Take a project from a git repository | `inputs = { tool = catalog.git.source(address = "https://…", branch = "main") }`, then `update(inputs.tool)` |
+| Take a project from Jujutsu by a change | `inputs = { tool = catalog.jj.source(address = "https://…", change = "kxqzv…") }` |
 | See the difference before a change of the system | `apply(system)`: the difference comes first |
 
 **The check for an incantation.** Each expression names its task: `apply`, `rollback`, `enter`, `build`, `update`. None names a store of the system, a number of a format, a hash to copy by hand, or an order of two commands.
@@ -433,6 +458,9 @@ From each root it follows the imports of each module, the debug object of each m
 - **A budget set by hand.** A guess has no measure; the measure over the declarations of the system gives the bound and its margin.
 - **The resolution of a name during an evaluation.** Such an evaluation reads the network, so two evaluations of one declaration can give two plans. The pins hold the resolution, and `update` changes them.
 - **A text lock file.** The resolution is recorded as typed pins, versioned by the store, never as a text to parse.
+- **The pins beside the tree, in a store of the machine.** The source then travels with no pins: a second machine resolves again and gets other states. The pins are an entry of the tree, which its hash covers.
+- **`git(...)` as a word of Lex, or a kind of source in `update()`.** Each new format (Jujutsu, Mercurial, Pijul, an archive) would change the language or the command. A source module fills one contract, and the catalog lists them.
+- **The commit of git as the identity of an input.** Two formats then give two identities for one tree. The tree hash is the identity; the commit is provenance in the pin.
 - **A central registry of names that the system trusts.** A server of authority for every name. A release pointer is trusted by the key of its publisher, and its bytes come from any source.
 - **The grants of a foreign plan applied with no view of their difference.** With it, a plan takes a grant in silence. `apply` shows the difference first.
 - **A signature on each object.** A hash checks itself. Only a realisation and a release pointer are signed ([recipes.md](recipes.md)).
@@ -456,7 +484,6 @@ From each root it follows the imports of each module, the debug object of each m
 ## Open questions
 
 - **The merge of two versions of a store.** Two machines that change one source give two trees; how a principal merges them, and in which process.
-- **Where the pins of a plan of a session live** when the plan has no project store: in the plan only, or in a store of the principal.
 - **The form of the acceptance of a difference** at a console that a remote client drives: the same key, or a second proof of the principal.
 - **The forced values of a declaration reference across lines.** The console evaluates a reference again on each line that needs it. An evaluation process that stays between the lines keeps the forced thunks, and holds their memory with no line that runs.
 - **Where the default of a field is written.** A field of a contract record has no mark of a default today, so a record literal must give each field. The mark goes in the record description, or in the function of the catalog declaration that takes the record. The frequent tasks need it: `{ mode = .Verify }` takes the sources and the signers of the plan of the principal.
