@@ -113,12 +113,17 @@ site_measure_read :: proc(measure: checks.Measure_Entry) -> (measured: Site_Meas
 			append(&reasons, fmt.tprintf("%s: no file", path))
 			continue
 		}
-		data, err := os.read_entire_file(path, context.temp_allocator)
-		if err != nil {
-			append(&reasons, fmt.tprintf("%s: cannot read: %v", path, err))
+		content, read_error := os.read_entire_file(path, context.temp_allocator)
+		if read_error != nil {
+			append(&reasons, fmt.tprintf("%s: cannot read: %v", path, read_error))
 			continue
 		}
-		text, line_number, matching_lines := site_line_choose(string(data), measure.pattern, measure.choice)
+		data, render_problem := checks.measure_log_rendered(string(content))
+		if render_problem != "" {
+			append(&reasons, fmt.tprintf("%s: the facts cannot be rendered: %s", path, render_problem))
+			continue
+		}
+		text, line_number, matching_lines := site_line_choose(data, measure.pattern, measure.choice)
 		if matching_lines == 0 {
 			append(&reasons, fmt.tprintf("%s: no line with \"%s\"", path, measure.pattern))
 			continue

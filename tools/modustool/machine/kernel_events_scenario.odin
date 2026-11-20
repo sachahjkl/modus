@@ -53,9 +53,9 @@ scenario_kernel_events := [?]Step {
 	{kind = .Wait, text = "kernel_events: the address of a fault: a rule for every process: "},
 	{kind = .Wait, text = "kernel_events: 1000 gives and ends under load: 1000 ends with "},
 	{kind = .Wait, text = "kernel_events: kernel entries in one second of the load child (its own count and time): no rule "},
-	{kind = .Wait, text = "; a rule that names another process "},
-	{kind = .Wait, text = " lost, of 0); a rule for every process that matches nothing "},
-	{kind = .Wait, text = " lost, of 0); a rule that accepts each of its operations "},
+	{kind = .Wait, text = "kernel_events: kernel entries in one second of the load child (its own count and time): a rule that names another process "},
+	{kind = .Wait, text = "kernel_events: kernel entries in one second of the load child (its own count and time): a rule for every process that matches nothing "},
+	{kind = .Wait, text = "kernel_events: kernel entries in one second of the load child (its own count and time): a rule that accepts each of its operations "},
 	{kind = .Wait, text = "kernel_events: in 200 ms while this process sleeps, every process: "},
 	// A later stop by a holder keeps the first stop cause.
 	{kind = .Wait, text = "kernel_events: the child that faults, stopped again by this process: its stop cause stays a fault: as it must"},

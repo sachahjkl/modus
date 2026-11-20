@@ -331,10 +331,10 @@ weigh :: proc "c" (first, second, third, fourth, fifth, sixth, seventh, eighth: 
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, ok := system.service_open(ctx)
 	if !ok {
-		system.log(.Info, "sample: no service ring")
+		system.log_fact(.Info, No_Service_Ring{})
 		system.stop(.Refused)
 	}
-	system.log(.Info, "sample: serves its exports")
+	system.log_fact(.Info, Serving{})
 	for {
 		wait: system.Wait
 		system.service_wait(&wait, &service)

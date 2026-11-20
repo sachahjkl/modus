@@ -166,7 +166,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	color := colors[0]
 	last_x, last_y := 0, 0
 	drawing := false
-	system.log(.Info, "paint: ok")
+	system.log_fact(.Info, Running{})
 	for {
 		frame := interface.window_frame_start(&window_memory, &window)
 		interface.action_bar_input_take(&frame, &bar)

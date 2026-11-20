@@ -100,7 +100,8 @@ measure_process_run :: proc(part: ^Test_Part_Run, process: Measure_Process) -> b
 		return false
 	}
 	// The measured lines of a process can be facts: the lines printed are
-	// their sentences, which the module files of the build render.
+	// their sentences, which log_file_rendered renders with the catalog that
+	// the run keeps.
 	log, rendered := log_file_rendered(output)
 	if !rendered {
 		return false

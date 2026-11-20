@@ -34,6 +34,7 @@ package interface_through_module
 
 import "modus:contract/draw_record"
 import "modus:contract/errors"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -428,8 +429,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		shown.records, shown.text_bytes = drawn.count, text.count
 		present(&window)
 	}
-	system.log(.Info, "interface_through_module: one frame of ", shown.records, " draw records and ", shown.text_bytes, " text bytes in ", shown.calls, " element calls: ", shown.module_time, " ns through the module, ", shown.package_time, " ns with the package compiled in, the least of ", u64(BUILDS))
-	system.log(.Info, "interface_through_module: the damage and the drawing through the module: ", shown.draw_time, " ns; interface_module has ", shown.module_code, " bytes of code")
+	system.log_fact(.Info, Frame_Built{records = shown.records, text_bytes = shown.text_bytes, calls = shown.calls, through_module = value_kinds.Time_In_Nanoseconds(shown.module_time), compiled_in = value_kinds.Time_In_Nanoseconds(shown.package_time), builds = u64(BUILDS)})
+	system.log_fact(.Info, Frame_Drawn{drawing = value_kinds.Time_In_Nanoseconds(shown.draw_time), module_code = value_kinds.Size_In_Bytes(shown.module_code)})
 	// A frame that does not fit: a draw table of 16 places. The module gives
 	// the count of the full frame; the process draws the 16 records that it
 	// holds, and says it.
@@ -440,14 +441,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The count is the count of the full answer, across the element calls
 	// (docs/MODULE_CONTRACT.md, "Did not fit, across calls"): the records of
 	// the whole frame.
-	system.log(.Info, "interface_through_module: a draw table of 16 places: the frame did not fit, ", asked, " records asked, ", min(asked, 16), " drawn, ", asked == shown.records ? "the count of the full frame" : "not the count of the full frame")
+	system.log_fact(.Info, Frame_Did_Not_Fit{asked = asked, drawn = min(asked, 16), full_count = full_count_field(asked == shown.records)})
 	record_capacity_of_build = RECORD_CAPACITY
 	build_through_module(&texts)
 	present(&window)
 	if shown.equal && drawn.count <= RECORD_CAPACITY && shown.records > 0 {
-		system.log(.Info, "interface_through_module: ok, the two draw tables are equal")
+		system.log_fact(.Info, Draw_Tables_Equal{})
 	} else {
-		system.log(.Info, "interface_through_module: wrong: the two draw tables differ")
+		system.log_fact(.Info, Draw_Tables_Differ{})
 	}
 	// The proof of the same pixels in the machine: the frame of the package,
 	// drawn by the package and by the drawing module.
@@ -459,11 +460,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	refused: errors.Error_Record
 	if different, compared := canvases_compare(&package_table, &refused); !compared {
-		system.log(.Info, "interface_through_module: the drawing module refused the frame, with the error kind ", u64(refused.kind), " of the argument ", u64(refused.argument), ": WRONG")
+		system.log_fact(.Info, Drawing_Module_Refused{error_kind = u64(refused.kind), argument = u64(refused.argument)})
 	} else if different == 0 && text_records > 0 {
-		system.log(.Info, "interface_through_module: one frame drawn by the package compiled in and by the drawing module: ", u64(PROOF_WIDTH * PROOF_HEIGHT), " pixels, ", text_records, " text records, the same bytes: as it must")
+		system.log_fact(.Info, Same_Pixels{pixels = u64(PROOF_WIDTH * PROOF_HEIGHT), text_records = text_records})
 	} else {
-		system.log(.Info, "interface_through_module: one frame drawn by the package compiled in and by the drawing module: ", different, " of ", u64(PROOF_WIDTH * PROOF_HEIGHT), " pixels differ, ", text_records, " text records: WRONG")
+		system.log_fact(.Info, Pixels_Differ{different = different, pixels = u64(PROOF_WIDTH * PROOF_HEIGHT), text_records = text_records})
 	}
 	for {
 		display.wait(&window)

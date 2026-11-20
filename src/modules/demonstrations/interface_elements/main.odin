@@ -32,6 +32,7 @@
 // **Its grants**: none. A window is all that it needs.
 package interface_elements
 
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -94,7 +95,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 	pressed := interface.button(frame, interface.column_take(&column, 24), interface.identity("press"), "press this button")
 	if pressed.activated {
 		presses += 1
-		system.log(.Info, "interface_elements: the button was pressed ", presses, " times")
+		system.log_fact(.Info, Button_Pressed{presses = presses})
 	}
 	interface.label_value_line(frame, interface.column_take(&column, 16), "presses", interface.number_text(&builder, presses))
 	interface.cell_text(frame, interface.column_take(&column, 16), "a list with a choice", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
@@ -104,12 +105,12 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 	interface.element_name(frame, list_area, "list")
 	listed := interface.list_with_choice(frame, list_area, interface.identity("list"), names[:], &choice, {chosen_hint = "enter: start"})
 	if listed.changed {
-		system.log(.Info, "interface_elements: the list chooses ", names[choice])
+		system.log_fact(.Info, List_Chose{chosen_name = value_kinds.text_field(names[choice], LIST_NAME_FIELD_BYTES)})
 	}
 	interface.cell_text(frame, interface.column_take(&column, 16), "a text input", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
 	typed_result := interface.text_input(frame, interface.column_take(&column, 24), interface.identity("text"), typed[:], &typed_count, "type a text")
 	if typed_result.changed {
-		system.log(.Info, "interface_elements: the text is \"", string(typed[:typed_count]), "\"")
+		system.log_fact(.Info, Text_Typed{typed_text = value_kinds.text_field(string(typed[:typed_count]), TYPED_TEXT_FIELD_BYTES)})
 	}
 	interface.cell_text(frame, interface.column_take(&column, 16), "bars: a value against a maximum, parts of one total", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
 	interface.bar(frame, interface.column_take(&column, 8), number % 100, 100, graphics.colors.process)
@@ -166,7 +167,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 	overlay := interface.button(frame, interface.column_take(&column, 24), interface.identity("damage"), show_damage ? "hide the damage" : "show the damage", show_damage)
 	if overlay.activated {
 		show_damage = !show_damage
-		system.log(.Info, "interface_elements: the damage is ", show_damage ? "shown" : "hidden")
+		system.log_fact(.Info, Damage_Overlay_Changed{overlay = value_kinds.text_field(show_damage ? "shown" : "hidden", OVERLAY_FIELD_BYTES)})
 	}
 	// The help line of the button: a caption.
 	help := "a frame draws only its damage"
@@ -229,7 +230,7 @@ measure :: proc "contextless" (name: string, number_before, number_now: u64, mov
 	moved = false
 	bounds := interface.damage_bounds(&damage)
 	area := u64(max(bounds.right - bounds.left, 0) * max(bounds.bottom - bounds.top, 0))
-	system.log(.Info, "interface_elements: ", name, ": ", u64(now.record_count), " records, ", rectangles, " damage rectangles, ", area * 100 / (WIDTH * HEIGHT), " % of the window, the difference in ", difference / ROUNDS / 100 / 10, ".", difference / ROUNDS / 100 % 10, " us")
+	system.log_fact(.Info, Damage_Measured{records = u64(now.record_count), rectangles = rectangles, window_percent = area * 100 / (WIDTH * HEIGHT), difference = value_kinds.Nanoseconds_As_Microseconds(difference / ROUNDS), measure = value_kinds.text_field(name, MEASURE_NAME_FIELD_BYTES)})
 }
 
 // measure_fonts gives the time of one whole frame of the window, built and
@@ -260,10 +261,10 @@ measure_fonts :: proc "contextless" (window: ^display.Window) {
 		}
 	}
 	if interface_font == nil {
-		system.log(.Info, "interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, " us; no interface font")
+		system.log_fact(.Info, Whole_Frame_Measured_Without_Interface_Font{cell_font = microseconds(least[0])})
 		return
 	}
-	system.log(.Info, "interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, " us, the interface font ", least[1] / 1000, " us")
+	system.log_fact(.Info, Whole_Frame_Measured{cell_font = microseconds(least[0]), interface_font = microseconds(least[1])})
 }
 
 // entry opens the window, runs the four measures of the damage by
@@ -288,7 +289,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	whole := window_memory.drawing.draw_time
 	frame_draw(&window)
 	frame_draw(&window)
-	system.log(.Info, "interface_elements: ok, the whole frame drawn in ", whole / 1000, " us; the next frame drawn in its ", u64(window_memory.drawing.damage.count), " damage rectangles in ", window_memory.drawing.draw_time / 1000, " us")
+	system.log_fact(.Info, Frames_Drawn{whole_frame = microseconds(whole), damage_rectangles = u64(window_memory.drawing.damage.count), damage_frame = microseconds(window_memory.drawing.draw_time)})
 	deadline := system.time()
 	for {
 		deadline += TICK

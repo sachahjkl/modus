@@ -166,7 +166,11 @@ processor_frame_lines_check :: proc(path: string) -> bool {
 		fmt.eprintfln("modustool: test failed: cannot read %s: %v", path, read_error)
 		return false
 	}
-	log := string(data)
+	log, render_problem := measure_log_rendered(string(data))
+	if render_problem != "" {
+		fmt.eprintfln("modustool: test failed: the facts of %s cannot be rendered: %s", path, render_problem)
+		return false
+	}
 	problems := processor_frame_lines_problems(log)
 	for problem in problems {
 		fmt.eprintfln("modustool: test failed: %s: %s", path, problem)

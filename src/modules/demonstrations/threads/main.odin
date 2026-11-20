@@ -162,7 +162,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if adder, status := system.thread_start(add_numbers, &sum); status == .Ok {
 		system.thread_wait(adder)
 	}
-	system.log(.Info, "threads: a thread added the numbers to 1000: ", sum.result)
+	system.log_fact(.Info, Sum_Added{result = sum.result})
 
 	for &worker, index in workers {
 		// A square shows the background until its thread draws it.
@@ -171,7 +171,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		worker.number = index
 		worker.canvas = square_pictures[index]
 		if !worker_start(index) {
-			system.log(.Info, "threads: cannot start a thread")
+			system.log_fact(.Info, Thread_Not_Started{})
 			system.stop(.Failed)
 		}
 	}
@@ -190,9 +190,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if worker.runs {
 				system.thread_end(worker.thread)
 				worker.runs = false
-				system.log(.Info, "threads: thread ", u64(index + 1), " stopped at frame ", worker.frames)
+				system.log_fact(.Info, Thread_Stopped{thread = u64(index + 1), frame = worker.frames})
 			} else if worker_start(index) {
-				system.log(.Info, "threads: thread ", u64(index + 1), " started")
+				system.log_fact(.Info, Thread_Started{thread = u64(index + 1)})
 			}
 		}
 		drawn := 0
@@ -224,7 +224,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if drawn == WORKER_COUNT && !ready {
 			ready = true
-			system.log(.Info, "threads: ok, ", u64(WORKER_COUNT), " threads draw in one surface")
+			system.log_fact(.Info, Threads_Drawing{threads = u64(WORKER_COUNT)})
 		}
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window, system.time() + FRAME_TIME)

@@ -8,6 +8,7 @@ import "core:time"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modustool:build"
+import "modustool:checks"
 import "modustool:foundation"
 
 // The steps Fact of a scenario (src/md/features/log_facts.md, "The machine
@@ -282,19 +283,21 @@ fact_broken_text :: proc(hash: [module.HASH_SIZE]u8, key: u64, part, part_count:
 // log_file_rendered gives the text of the log file of a machine that
 // stopped, with the line of each fact rendered by the module files of the
 // build, as a step reads it: QEMU writes the raw lines, and a check after
-// the run reads the sentences. The text is in the temporary memory.
+// the run reads the sentences. It renders with the one helper of the
+// readers of a log, checks.measure_log_rendered, so each module file is
+// read once in a run of the tool, by the catalog that the run keeps. The
+// text is in the temporary memory.
 log_file_rendered :: proc(log_path: string) -> (text: string, ok: bool) {
 	log, read_error := os.read_entire_file(log_path, context.temp_allocator)
 	if read_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot read %s: %v", log_path, read_error)
 		return "", false
 	}
-	catalog, problem := build.fact_catalog_of_build(context.temp_allocator)
+	rendered, problem := checks.measure_log_rendered(string(log))
 	if problem != "" {
 		fmt.eprintfln("modustool: test failed: the facts of %s cannot be rendered: %s", log_path, problem)
 		return "", false
 	}
-	rendered, _ := build.fact_lines_render(&catalog, string(log))
 	return rendered, true
 }
 

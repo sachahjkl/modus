@@ -17,6 +17,7 @@ package server
 
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/value_kinds"
 import "modus:support/storage"
 import "modus:support/system"
 import "modus:support/web"
@@ -108,13 +109,13 @@ pages_load :: proc "contextless" (ctx: ^system.Context) {
 	page_memory = ([^]u8)(address)[:PAGE_MEMORY_PAGES * system.PAGE_SIZE]
 	store_client, store_connected = storage.open(ctx)
 	if !store_connected {
-		system.log(.Info, "server: no private store: it serves no page of a store")
+		system.log_fact(.Info, No_Private_Store{})
 		return
 	}
 	index: [PAGE_CAPACITY * web.PAGE_INDEX_ENTRY_SIZE]u8
 	bytes, found, status := storage.read(&store_client, storage.ROOT, PAGE_INDEX_NAME, index[:])
 	if status != .Ok || !found || len(bytes) != size_of(index) {
-		system.log(.Info, "server: a new store: no page")
+		system.log_fact(.Info, New_Store{})
 		return
 	}
 	// The store is hostile input too: each name
@@ -141,7 +142,7 @@ pages_load :: proc "contextless" (ctx: ^system.Context) {
 		pages[place] = {name_length = copy(pages[place].name[:], name), length = len(text), used = true, generation = page_generation_new()}
 		loaded += 1
 	}
-	system.log(.Info, "server: ", u64(loaded), " pages read from the private store, ", u64(refused), " refused")
+	system.log_fact(.Info, Pages_Read{loaded = u64(loaded), refused = u64(refused)})
 }
 
 // index_write writes the names of the pages in the store.
@@ -229,7 +230,7 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 	// served changes only when the store took it.
 	length := copy(page_staging[:PAGE_SIZE_LIMIT], text^)
 	if _, status := storage.write(&store_client, storage.ROOT, key, page_staging[:length]); status != .Ok {
-		system.log(.Info, "server: the store refused the page /", key, ": the page that is served did not change")
+		system.log_fact(.Info, Page_Refused{page = page_field(key)})
 		return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
 	}
 	was_used := pages[place].used
@@ -244,10 +245,10 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 		pages[place] = {generation = page_generation_new()}
 		arguments := [2]isolated.Argument{{integer = u64(storage.ROOT)}, {text = name_copy[:name_length]}}
 		storage.call(&store_client, "remove", arguments[:])
-		system.log(.Info, "server: the store refused the index of the pages: /", key, " is not served")
+		system.log_fact(.Info, Index_Refused{page = page_field(key)})
 		return errors.fail(error, ERROR_STORE, .Refused, .Store)
 	}
-	system.log(.Info, "server: the page /", key, " is in the store: ", u64(length), " bytes")
+	system.log_fact(.Info, Page_Stored{page_size = value_kinds.Size_In_Bytes(length), page = page_field(key)})
 	return i64(length)
 }
 
@@ -282,16 +283,16 @@ remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	arguments := [2]isolated.Argument{{integer = u64(storage.ROOT)}, {text = name_copy[:name_length]}}
 	_, _, status := storage.call(&store_client, "remove", arguments[:])
 	if status != .Ok {
-		system.log(.Info, "server: the store refused the removal of /", string(name_copy[:name_length]), ": the page is still served")
+		system.log_fact(.Info, Removal_Refused{page = page_field(string(name_copy[:name_length]))})
 		return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
 	}
 	pages[place] = {generation = page_generation_new()}
 	if !index_write() {
 		// The object is out of the store; the index still names it, and the
 		// next start skips a name with no object.
-		system.log(.Info, "server: the store refused the index of the pages after the removal of /", string(name_copy[:name_length]))
+		system.log_fact(.Info, Index_Refused_After_Removal{page = page_field(string(name_copy[:name_length]))})
 	}
-	system.log(.Info, "server: the page /", string(name_copy[:name_length]), " is out of the store")
+	system.log_fact(.Info, Page_Removed{page = page_field(string(name_copy[:name_length]))})
 	return 0
 }
 

@@ -47,6 +47,7 @@ package return_fault
 import "modus:contract/enum_word"
 import "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import sets "modus:support/instruction_sets"
@@ -123,12 +124,12 @@ window_memory: interface.Window_Memory(256, 4096)
 child_instruction_address :: proc "contextless" (holds_ymm: bool) -> ! {
 	memory, created := system.memory_create(1)
 	if created != .Ok {
-		system.log(.Info, "return_fault: the child of the instruction address could not make its page: ", op.STATUS_NAMES[created])
+		system.log_fact(.Info, Instruction_Page_Not_Made{status = created})
 		system.stop(.Failed)
 	}
 	address, mapped := system.memory_map(memory, {.Write})
 	if mapped != .Ok {
-		system.log(.Info, "return_fault: the child of the instruction address could not map its page to write it: ", op.STATUS_NAMES[mapped])
+		system.log_fact(.Info, Instruction_Page_Not_Mapped_To_Write{status = mapped})
 		system.stop(.Failed)
 	}
 	page := ([^]u8)(address)
@@ -136,7 +137,7 @@ child_instruction_address :: proc "contextless" (holds_ymm: bool) -> ! {
 	page[system.PAGE_SIZE - 1] = 0x05
 	system.memory_unmap(address)
 	if _, at_the_end := system.memory_map(memory, {.Execute}, 0, LAST_PAGE); at_the_end != .Ok {
-		system.log(.Info, "return_fault: the child of the instruction address could not map its page at the last page: ", op.STATUS_NAMES[at_the_end])
+		system.log_fact(.Info, Instruction_Page_Not_Mapped_At_End{status = at_the_end})
 		system.stop(.Failed)
 	}
 	jump_to_the_last_instruction(rawptr(uintptr(LAST_INSTRUCTION)), holds_ymm)
@@ -151,10 +152,10 @@ child_nested_task :: proc "contextless" () -> ! {
 	after := syscall_with_nested_task(&before)
 	switch {
 	case before & NESTED_TASK == 0:
-		system.log(.Info, "return_fault: the child of the nested task: popfq did not set the flag, so the case did not run")
+		system.log_fact(.Info, Nested_Task_Not_Set{})
 		system.stop(.Failed)
 	case after & NESTED_TASK != 0:
-		system.log(.Info, "return_fault: the child of the nested task: the flag came back after the entry")
+		system.log_fact(.Info, Nested_Task_Came_Back{})
 		system.stop(.Failed)
 	}
 	system.stop(.Done)
@@ -170,7 +171,7 @@ case_run :: proc "contextless" (item: ^Case) {
 	error: module.Load_Error
 	process, status := system.process_start(system.image_find(image, "return_fault"), "return_fault child", grants, random.values_with_seed(&process_generator, values), {pages = 256, processes = 1, threads = 1, processor = 200_000, log_records = 10}, nil, nil, {image = image}, &error)
 	if status != .Ok {
-		system.log(.Info, "return_fault: ", item.name, ": the child did not start")
+		system.log_fact(.Info, Child_Not_Started{case_name = case_field(item.name)})
 		return
 	}
 	defer system.close(process)
@@ -196,14 +197,15 @@ case_run :: proc "contextless" (item: ^Case) {
 		item.right = cause == .Cannot_Return && report.address == 0x8000_0000_0000_0000
 	case .Parent:
 	}
-	verdict := item.right ? string(": as it must") : string(": WRONG")
+	verdict := item.right ? "as it must" : "WRONG"
+	address := value_kinds.Hexadecimal_Sixteen_Digits(item.address)
 	switch cause {
 	case .Itself:
-		system.log(.Info, "return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", ", op.STOP_OUTCOME_TEXTS[outcome], ", the address ", system.Hex(item.address), verdict)
+		system.log_fact(.Info, Child_Stopped_Itself{address = address, cause = cause, outcome = outcome, case_name = case_field(item.name), verdict = value_kinds.text_field(verdict, 16)})
 	case .Fault:
-		system.log(.Info, "return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", vector ", u64(report.vector), ", the address ", system.Hex(item.address), verdict)
+		system.log_fact(.Info, Child_Stopped_On_Fault{address = address, vector = u64(report.vector), cause = cause, case_name = case_field(item.name), verdict = value_kinds.text_field(verdict, 20)})
 	case .None, .Holder, .Last_Thread_Ended, .Handles_Closed, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
-		system.log(.Info, "return_fault: ", item.name, ": the child stopped: ", op.STOP_CAUSE_TEXTS[cause], ", the address ", system.Hex(item.address), verdict)
+		system.log_fact(.Info, Child_Stopped{address = address, cause = cause, case_name = case_field(item.name), verdict = value_kinds.text_field(verdict, 20)})
 	}
 }
 
@@ -251,7 +253,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	role, role_ok := enum_word.member_of_word(Role, ctx.values[VALUE_ROLE])
 	if !role_ok {
-		system.log(.Info, "return_fault: the context names the role ", ctx.values[VALUE_ROLE], ", which names no role")
+		system.log_fact(.Info, Role_Word_Unknown{role = ctx.values[VALUE_ROLE]})
 		system.stop(.Refused)
 	}
 	switch role {
@@ -263,14 +265,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		child_nested_task()
 	case .Trap_Flag:
 		syscall_with_the_trap_flag()
-		system.log(.Info, "return_fault: the child of the trap flag: no trap came")
+		system.log_fact(.Info, No_Trap{})
 		system.stop(.Failed)
 	case .Stack_At_A_Syscall:
 		syscall_with_a_stack_that_is_not_canonical()
 	case .Parent:
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "return_fault: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "return_fault")
@@ -279,7 +281,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		system.log(.Info, "return_fault: no boot image")
+		system.log_fact(.Info, No_Boot_Image{})
 		system.stop(.Failed)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -294,9 +296,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		draw(&window)
 	}
 	if right == len(cases) {
-		system.log(.Info, "return_fault: ok, ", u64(len(cases)), " cases: each child stopped as its own fault or returned with the flags of a process, and the machine goes on")
+		system.log_fact(.Info, Cases_Passed{cases = u64(len(cases))})
 	} else {
-		system.log(.Info, "return_fault: failed: ", u64(len(cases) - right), " cases of ", u64(len(cases)))
+		system.log_fact(.Info, Cases_Failed{failed = u64(len(cases) - right), cases = u64(len(cases))})
 	}
 	for {
 		draw(&window)

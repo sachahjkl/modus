@@ -5,6 +5,7 @@ package server
 // the colors of the concepts. Each value is a field of a record of the
 // connection table (tcp.Table, tcp.Connection) or a count of this process.
 
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -192,13 +193,13 @@ status_color :: proc "contextless" (status: int) -> graphics.Color {
 }
 
 // access_target gives the target of a request as the record keeps it.
-access_target :: proc "contextless" (record: ^Access_Record) -> string {
+access_target :: proc "contextless" (record: ^Access_Row) -> string {
 	return string(record.target[:clamp(record.target_length, 0, len(record.target))])
 }
 
 // access_row_height gives the height of the row of a request: a line of the
 // table, and one line of text more for each more line of its target.
-access_row_height :: proc "contextless" (record: ^Access_Record) -> int {
+access_row_height :: proc "contextless" (record: ^Access_Row) -> int {
 	lines := max(interface.text_wrapped_line_count(nil, {}, access_target(record), ACCESS_TARGET_ROOM), 1)
 	return LINE + (lines - 1) * graphics.LINE_HEIGHT
 }
@@ -206,7 +207,7 @@ access_row_height :: proc "contextless" (record: ^Access_Record) -> int {
 // access_row_draw draws the row of a request. The target is whole, on the
 // lines that it needs in its column (the rule of interface.text_wrap_line;
 // the window draws with src/library/support/graphics).
-access_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, record: ^Access_Record, band: bool) {
+access_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, record: ^Access_Row, band: bool) {
 	if band {
 		graphics.fill(canvas, -8, y - 4, canvas.width + 16, access_row_height(record), graphics.colors.track)
 	}
@@ -359,7 +360,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	display.present(window)
 	microseconds_taken := (system.nanoseconds() - started) / 1000
 	if draw_time == 0 {
-		system.log(.Info, "server: one draw of the window: ", microseconds_taken, " us")
+		system.log_fact(.Info, Window_Drawn{drawing = value_kinds.Time_In_Microseconds(microseconds_taken)})
 	}
 	draw_time = microseconds_taken
 }

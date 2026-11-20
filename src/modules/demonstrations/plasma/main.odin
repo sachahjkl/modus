@@ -80,7 +80,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		interface.show_picture(&drawing, &window, picture, u32(frame) + 1)
 		if frame == 0 {
-			system.log(.Info, "plasma: ok")
+			system.log_fact(.Info, Running{})
 		}
 		frame += 1
 		for _ in display.next_event(&window) {}
