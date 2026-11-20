@@ -2,6 +2,7 @@ package root
 
 import "modus:contract/blake3"
 import "modus:contract/pointer_pictures"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The resources of the boot image (docs/ARCHITECTURE.md, U2b): files that
@@ -21,11 +22,11 @@ resource_mapping :: proc "contextless" (name: string, address: u64, receiver: st
 	}
 	start := system.nanoseconds()
 	if blake3.hash(image[entry.offset:][:entry.size]) != entry.hash {
-		system.log(.Warning, "root: the resource ", name, " does not have the hash of its entry: not given")
+		system.log_fact(.Warning, Resource_Hash_Wrong{resource = text_field(name, 32)})
 		return {}, 0, false
 	}
 	spent := system.nanoseconds() - start
-	system.log(.Info, "root: the resource ", name, " (", system.Size{entry.size, .Bytes}, ", its hash checked in ", system.Duration{spent / 1000, .Microseconds}, ") is given to ", system.Module_Name{receiver}, ", read-only")
+	system.log_fact(.Info, Resource_Given{resource_size = value_kinds.Size_In_Bytes(entry.size), check_time = value_kinds.Time_In_Microseconds(spent / 1000), resource = text_field(name, 32), receiver = module_name_field(receiver)})
 	// No flag: the mapping has the right Read only.
 	return {memory = image_memory, address = address, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}, entry.size, true
 }

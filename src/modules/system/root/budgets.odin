@@ -2,6 +2,7 @@ package root
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/disk_process"
 import "modus:support/system"
 
@@ -115,7 +116,7 @@ budget_decided :: proc "contextless" (file: []u8, name: string, largest: system.
 	}
 	granted, limited := system.budget_decide(request, LEAST_BUDGET, largest)
 	for part in limited {
-		system.log(.Warning, "root: ", system.Module_Name{name}, " asks for ", system.budget_part(request, part), " ", system.budget_part_names[part], ", and ", who, " gets at most ", system.budget_part(largest, part), ": it starts with ", system.budget_part(granted, part))
+		system.log_fact(.Warning, Budget_Part_Limited{asked = system.budget_part(request, part), largest = system.budget_part(largest, part), granted = system.budget_part(granted, part), started_process = module_name_field(name), budget_part = text_field(system.budget_part_names[part], 16), largest_of = text_field(who, 16)})
 	}
 	return granted
 }
@@ -158,11 +159,11 @@ disk_processes_budget_get :: proc "contextless" () -> (budget: system.Handle, st
 	shared := disk_process.PROCESSES_BUDGET
 	budget, status = system.budget_create({pages = shared.pages, processes = shared.processes, threads = shared.threads, processor = min(disk_process.SHARED_PROCESSOR_TIME, own.processor), log_records = shared.processes * LOG_RECORDS_OF_A_PROCESS})
 	if status != .Ok {
-		system.log(.Warning, "root: cannot make the budget of the disk processes: status ", status)
+		system.log_fact(.Warning, Disk_Processes_Budget_Refused{status = status})
 		return 0, status
 	}
 	disk_processes_budget = budget
-	system.log(.Info, "root: the disk processes share one budget of ", system.Size{shared.pages, .Pages}, ", ", shared.processes, " processes and ", shared.threads, " threads")
+	system.log_fact(.Info, Disk_Processes_Budget_Made{pages = value_kinds.Size_In_Pages(shared.pages), processes = shared.processes, threads = shared.threads})
 	return budget, .Ok
 }
 
@@ -191,18 +192,18 @@ budget_refusal_log :: proc "contextless" (name: string, amounts: system.Budget_A
 	holder_amounts, _ := system.budget_read(holder_budget)
 	holds := system.Budget_Request{pages = holder_amounts.pages, processes = holder_amounts.processes, threads = holder_amounts.threads}
 	if part, short := system.budget_first_short_part(needed, holds); short {
-		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": it gets ", system.budget_part(needed, part), " ", system.budget_part_names[part], ", and the budget of ", holder, " holds ", system.budget_part(holds, part))
+		system.log_fact(.Warning, Start_Refused_Budget_Part{needed = system.budget_part(needed, part), held = system.budget_part(holds, part), refused_process = module_name_field(name), budget_part = text_field(system.budget_part_names[part], 16), paying_budget = text_field(holder, 24)})
 		return
 	}
 	// The log records of each second move as the pages; the processor time
 	// of the process is at most the limit of the holder.
 	if holder_amounts.log_records < amounts.log_records {
-		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": it gets ", amounts.log_records, " log records of each second, and the budget of ", holder, " holds ", holder_amounts.log_records)
+		system.log_fact(.Warning, Start_Refused_Log_Records{log_records = amounts.log_records, held_log_records = holder_amounts.log_records, refused_process = module_name_field(name), paying_budget = text_field(holder, 24)})
 		return
 	}
 	if holder_amounts.processor < amounts.processor {
-		system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": it gets ", amounts.processor, " microseconds of processor time in each second, and the limit of the budget of ", holder, " is ", holder_amounts.processor)
+		system.log_fact(.Warning, Start_Refused_Processor_Time{processor = amounts.processor, processor_limit = holder_amounts.processor, refused_process = module_name_field(name), paying_budget = text_field(holder, 24)})
 		return
 	}
-	system.log(.Warning, "root: cannot start ", system.Module_Name{name}, ": its budget of ", system.Size{amounts.pages, .Pages}, ", ", amounts.processes, " processes and ", amounts.threads, " threads is too small for its load: the module asks for too little")
+	system.log_fact(.Warning, Start_Refused_Budget_Too_Small{pages = value_kinds.Size_In_Pages(amounts.pages), processes = amounts.processes, threads = amounts.threads, refused_process = module_name_field(name)})
 }

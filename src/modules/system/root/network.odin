@@ -70,7 +70,7 @@ network_refuse :: proc "contextless" (cause: string) {
 		return
 	}
 	network_refused = true
-	system.log(.Warning, "root: ", cause, ": no process with an endpoint of the network starts until the machine starts again; the other processes start")
+	system.log_fact(.Warning, Network_Refused{network_cause = text_field(cause, 40)})
 }
 
 // network_service gives the network service that runs, or starts it.
@@ -174,10 +174,7 @@ network_answers :: proc "contextless" (wait: ^system.Wait) {
 		for record in system.receive(&item.network.completions) {
 			if datagram.Status(record.kind) != .Ok {
 				error := errors.completion_record(record.values)
-				text: [240]u8
-				writer := system.Writer{buffer = text[:]}
-				system.ring_error_text(&writer, &error, "datagram", datagram.control_name(error.operation), datagram.control_argument_name(error.operation, error.argument))
-				system.log(.Warning, "root: the network service refused a command of its control ring: ", system.written(&writer))
+				system.log_fact(.Warning, Network_Control_Command_Refused(errors.error_record_fact_fields(error)))
 			}
 		}
 		if wait != nil {
