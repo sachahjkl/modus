@@ -423,8 +423,7 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 		return true
 	}
 	if log_allowed() {
-		text: [64]u8
-		system.log(.Info, "remote_display: refused the viewer key ", hex_text(text[:], proven[:]), ": no principal allowed it for the view, or the session of its principal is locked; the handshake ends before any viewer frame")
+		system.log_fact(.Info, Viewer_Key_Refused{viewer_key = key_field(proven)})
 	}
 	return false
 }
@@ -437,8 +436,7 @@ viewer_close :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewe
 	viewer.bound = false
 	quic.connection_close(connection, u64(code), now_microseconds())
 	if dropped := compositor_held_drop(viewer.place, viewer.generation); dropped > 0 && log_allowed() {
-		head: [16]u8
-		system.log(.Info, "remote_display: the end of the viewer key ", hex_text(head[:], viewer.key[:8]), " dropped ", u64(dropped), " of its input records that waited for the compositor")
+		system.log_fact(.Info, Viewer_Input_Records_Dropped{dropped = u64(dropped), viewer_key = key_head_field(viewer.key)})
 	}
 }
 
@@ -446,12 +444,10 @@ viewer_close :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewe
 viewer_bind :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer, peer: quic.Remote) {
 	key := connection.tls.client_public_key
 	row := remote.client_find(&client_rows, key)
-	text: [40]u8
-	head: [16]u8
 	if row < 0 || !remote.client_grant_holds(&client_rows, row, client_rows[row].serial, .View) {
 		viewer_close(connection, viewer, .Revoked)
 		if log_allowed() {
-			system.log(.Info, "remote_display: ", address_text(text[:], peer), ": the grant of the viewer key ", hex_text(head[:], key[:8]), " ended during the handshake: the connection ends with the code Revoked")
+			system.log_fact(.Info, Viewer_Key_Grant_Ended_In_Handshake{viewer_key = key_head_field(key), peer = peer_field(peer)})
 		}
 		return
 	}
@@ -460,7 +456,11 @@ viewer_bind :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer
 	// The first viewer frame is the whole screen.
 	viewer.damage = {}
 	interface.damage_add(&viewer.damage, {0, 0, int(protocol.SCREEN_WIDTH_LIMIT), int(protocol.SCREEN_HEIGHT_LIMIT)})
-	system.log(.Info, "remote_display: ", address_text(text[:], peer), " proved the viewer key ", hex_text(head[:], key[:8]), ": it sees the screen for principal ", viewer.principal, viewer.input ? ", and its keys and its pointer go to the desktop" : ", with no input")
+	if viewer.input {
+		system.log_fact(.Info, Viewer_Key_Proved_With_Input{principal = viewer.principal, viewer_key = key_head_field(key), peer = peer_field(peer)})
+	} else {
+		system.log_fact(.Info, Viewer_Key_Proved_Without_Input{principal = viewer.principal, viewer_key = key_head_field(key), peer = peer_field(peer)})
+	}
 	viewers_tell()
 }
 
@@ -490,12 +490,10 @@ viewers_tell :: proc "contextless" () {
 // viewer_grant_check ends the connection of a viewer whose grant ended, in
 // the middle of a viewer frame too, and follows a change of its input.
 viewer_grant_check :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer, peer: quic.Remote) {
-	head: [16]u8
-	text: [40]u8
 	if !remote.client_grant_holds(&client_rows, viewer.row, viewer.serial, .View) {
 		viewer_close(connection, viewer, .Revoked)
 		if log_allowed() {
-			system.log(.Info, "remote_display: the grant of the viewer key ", hex_text(head[:], viewer.key[:8]), " of principal ", viewer.principal, " ended (a revocation, a lock of its session, or another session in front): the connection from ", address_text(text[:], peer), " ends with the code Revoked")
+			system.log_fact(.Info, Viewer_Key_Grant_Ended{principal = viewer.principal, viewer_key = key_head_field(viewer.key), peer = peer_field(peer)})
 		}
 		viewers_tell()
 		return
@@ -510,10 +508,9 @@ viewer_grant_check :: proc "contextless" (connection: ^quic.Connection, viewer: 
 // viewer_refuse ends the connection of a viewer that sent a record that its
 // border refused, with one line.
 viewer_refuse :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer, code: protocol.Display_Error, why: string) {
-	head: [16]u8
 	viewer_close(connection, viewer, code)
 	if log_allowed() {
-		system.log(.Info, "remote_display: refused a record of the viewer key ", hex_text(head[:], viewer.key[:8]), ": ", why, ": the connection ends with the code ", protocol.DISPLAY_ERROR_NAMES[code])
+		system.log_fact(.Info, Viewer_Record_Refused{viewer_key = key_head_field(viewer.key), cause = value_kinds.text_field(why, RECORD_CAUSE_FIELD_BYTES), code = value_kinds.text_field(protocol.DISPLAY_ERROR_NAMES[code], ERROR_CODE_FIELD_BYTES)})
 	}
 	viewers_tell()
 }
@@ -578,7 +575,6 @@ viewer_read :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer
 // viewer_record_take does what a record of a viewer that its border took
 // asks.
 viewer_record_take :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer, record: protocol.Viewer_Record) {
-	head: [16]u8
 	if (record.kind == .Session_Start) == viewer.session_started {
 		viewer_refuse(connection, viewer, .Bad_Record, viewer.session_started ? "a second Session_Start" : "a record before Session_Start")
 		return
@@ -602,7 +598,7 @@ viewer_record_take :: proc "contextless" (connection: ^quic.Connection, viewer: 
 		if !remote.client_grant_holds(&client_rows, viewer.row, viewer.serial, .Input) {
 			viewer_close(connection, viewer, .Input_Not_Allowed)
 			if log_allowed() {
-				system.log(.Info, "remote_display: the viewer key ", hex_text(head[:], viewer.key[:8]), " sent input, and principal ", viewer.principal, " allowed it for the view only: nothing reaches the desktop, and the connection ends with the code Input_Not_Allowed")
+				system.log_fact(.Info, Viewer_Input_Not_Allowed{principal = viewer.principal, viewer_key = key_head_field(viewer.key)})
 			}
 			viewers_tell()
 			return
@@ -705,8 +701,7 @@ viewer_next_record :: proc "contextless" (viewer: ^Viewer) -> bool {
 		}
 		viewer.damage = {}
 		if viewer.merges > 0 && log_allowed() {
-			head: [16]u8
-			system.log(.Info, "remote_display: the damage of the viewer key ", hex_text(head[:], viewer.key[:8]), " was full: ", viewer.merges, " rectangles joined another, and the viewer receives more pixels")
+			system.log_fact(.Info, Viewer_Damage_Full{merges = viewer.merges, viewer_key = key_head_field(viewer.key)})
 			viewer.merges = 0
 		}
 		if viewer.viewer_frame.count == 0 {
@@ -855,8 +850,7 @@ viewers_work :: proc "contextless" () {
 		}
 		viewer_close(connection, viewer, .Timeout)
 		if log_allowed() {
-			head: [16]u8
-			system.log(.Info, "remote_display: the viewer key ", hex_text(head[:], viewer.key[:8]), " ", VIEWER_BOUND_SENTENCES[bound], " in its bound of ", limit, " ms: the connection ends with the code Timeout")
+			system.log_fact(.Info, Viewer_Bound_Passed{limit = value_kinds.Time_In_Milliseconds(limit), viewer_key = key_head_field(viewer.key), missed_step = value_kinds.text_field(VIEWER_BOUND_SENTENCES[bound], MISSED_STEP_FIELD_BYTES)})
 		}
 		viewers_tell()
 	}
@@ -952,7 +946,7 @@ capture_events :: proc "contextless" () {
 		kind, known := enum_word.member_of_word(display.Event_Kind, u64(record.kind))
 		if !known {
 			if words_refused == 0 {
-				system.log(.Info, "remote_display: the compositor sent the word ", u64(record.kind), ", which names no event; the next ones are counted")
+				system.log_fact(.Info, Compositor_Word_Refused{word = u64(record.kind)})
 			}
 			words_refused += 1
 			continue
@@ -964,7 +958,7 @@ capture_events :: proc "contextless" () {
 			capture_size_take(record.values[0], record.values[1])
 		case .Capture_Frame:
 			if capture_state != .Open || record.values[0] >= display.PICTURE_COUNT || held_picture >= 0 {
-				system.log(.Info, "remote_display: the compositor named the picture ", record.values[0], " of no capture face, or a second one while this process holds one: the record is refused")
+				system.log_fact(.Info, Capture_Picture_Refused{picture = record.values[0]})
 				continue
 			}
 			held_picture = int(record.values[0])

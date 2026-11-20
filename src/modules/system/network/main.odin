@@ -1053,25 +1053,23 @@ controlled :: proc "contextless" (record: ring.Record) {
 			name := system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
 			grant := asked
 			endpoint^ = {ring_memory = handle, datagram_ring = opened, region_memory = region_handle, region = ([^]u8)(region_address)[:datagram.REGION_PAGES * system.PAGE_SIZE], grant = grant, tcp = grant.tcp, listen = grant.listen, local_port = u16(PORT_FIRST + free), port_count = 1, name = name}
-			text: [32]u8
-			writer := system.Writer{buffer = text[:]}
-			network.address_write(&writer, grant.address)
+			owner := owner_field(name)
 			switch {
 			case grant.tcp && grant.listen:
 				endpoint.local_port = grant.port
-				system.log(.Info, "network: an endpoint for ", system.name_of(name[:]), ": TCP, the listen port ", u64(grant.port), ", the remotes that send to it")
+				system.log_fact(.Info, Endpoint_Listens_Tcp{port = u64(grant.port), owner = owner})
 			case grant.listen && grant.address != 0:
 				endpoint.local_port = grant.port
-				system.log(.Info, "network: an endpoint for ", system.name_of(name[:]), ": UDP, the listen port ", u64(grant.port), ", the remotes of the address ", system.written(&writer), " only that send 1200 bytes to it")
+				system.log_fact(.Info, Endpoint_Listens_Udp_From_Address{port = u64(grant.port), owner = owner, address = address_field(grant.address)})
 			case grant.listen:
 				endpoint.local_port = grant.port
-				system.log(.Info, "network: an endpoint for ", system.name_of(name[:]), ": UDP, the listen port ", u64(grant.port), ", the remotes that send 1200 bytes to it")
+				system.log_fact(.Info, Endpoint_Listens_Udp{port = u64(grant.port), owner = owner})
 			case grant.tcp:
 				endpoint.local_port = u16(TCP_PORT_FIRST + free * datagram.PORT_BLOCK)
 				endpoint.port_count = datagram.PORT_BLOCK
-				system.log(.Info, "network: an endpoint for ", system.name_of(name[:]), ": TCP, the local ports ", u64(endpoint.local_port), " to ", u64(endpoint.local_port) + datagram.PORT_BLOCK - 1, ", the grant ", system.written(&writer), " port ", u64(grant.port))
+				system.log_fact(.Info, Endpoint_Connects_Tcp{first_port = u64(endpoint.local_port), last_port = u64(endpoint.local_port) + datagram.PORT_BLOCK - 1, port = u64(grant.port), owner = owner, address = address_field(grant.address)})
 			case:
-				system.log(.Info, "network: an endpoint for ", system.name_of(name[:]), ": the local port ", u64(endpoint.local_port), ", the grant ", system.written(&writer), " port ", u64(grant.port))
+				system.log_fact(.Info, Endpoint_Connects_Udp{local_port = u64(endpoint.local_port), port = u64(grant.port), owner = owner, address = address_field(grant.address)})
 			}
 			values[0] = u64(endpoint.local_port)
 		}
@@ -1090,7 +1088,11 @@ controlled :: proc "contextless" (record: ring.Record) {
 				}
 				item.admitted = {}
 				sends_waiting_refuse(&item, index)
-				system.log(.Info, "network: the grant of the endpoint of ", system.name_of(item.name[:]), " changed: ", datagram.granted(item.grant) ? "a new remote" : "none")
+				if datagram.granted(item.grant) {
+					system.log_fact(.Info, Endpoint_Grant_Changed_To_Remote{owner = owner_field(item.name)})
+				} else {
+					system.log_fact(.Info, Endpoint_Grant_Changed_To_None{owner = owner_field(item.name)})
+				}
 				result = .Ok
 				values = {}
 			}
@@ -1128,7 +1130,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 				system.memory_unmap(raw_data(item.region))
 				system.close(item.region_memory)
 			}
-			system.log(.Info, "network: the endpoint of ", system.name_of(item.name[:]), " ended: ", item.sent, " datagrams sent, ", item.received, " received")
+			system.log_fact(.Info, Endpoint_Ended{sent = item.sent, received = item.received, owner = owner_field(item.name)})
 			data_passes_log(&item)
 			item = {}
 			result = .Ok
@@ -1186,7 +1188,7 @@ call :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {
 		case .Stopped:
 			frame_service_stopped_fail()
 		case .Silent:
-			system.log(.Error, "network: the frame service did not answer the command ", frame.command_name(i64(command)), " in ", u64(system.ANSWER_BOUND_MILLISECONDS), " ms: this service stops")
+			system.log_fact(.Error, Frame_Service_Silent{bound = answer_bound_field(), command = command_field(frame.command_name(i64(command)))})
 			system.stop(.Failed)
 		}
 		system.wait_records(&wait, &frames.completions)
@@ -1349,7 +1351,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// No_Region.
 				if frame.Status(record.kind) != .Ok {
 					endpoint := &endpoints[tag - TAG_READ_REGION_ADD]
-					system.log(.Error, "network: the frame service refused the datagram region of ", system.name_of(endpoint.name[:]), " as a read region: status ", u64(record.kind))
+					system.log_fact(.Error, Read_Region_Refused{status_word = u64(record.kind), owner = owner_field(endpoint.name)})
 				}
 			case tag >= TAG_READ_REGION_REMOVE && tag < TAG_READ_REGION_REMOVE + ENDPOINT_CAPACITY:
 			case tag == TAG_STATISTICS:

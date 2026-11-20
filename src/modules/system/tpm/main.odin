@@ -333,7 +333,7 @@ orderly_state_restore :: proc "contextless" () {
 	count := tpm2.shutdown_command(command_bytes[:])
 	answer, step := transact(count)
 	if step != .None {
-		system.log(.Info, "tpm: the interface failed at TPM2_Shutdown after a use of an authorization value: ", tpm_service.device_step_words[step], "; the next start of the TPM can count one failure")
+		system.log_fact(.Info, Shutdown_Interface_Failed{step = step_field(step)})
 		return
 	}
 	code, problem := tpm2.status_answer(answer)
@@ -394,9 +394,9 @@ seal :: proc "contextless" (authorization_kind: tpm_service.Authorization) -> Ou
 	copy(region[tpm_service.REGION_CREATION_DATA:][:len(created.creation_data)], created.creation_data)
 	copy(region[tpm_service.REGION_CREATION_TICKET:][:len(created.creation_ticket)], created.creation_ticket)
 	if authorized {
-		system.log(.Info, "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", u64(len(created.public_area)), " bytes and a private area of ", u64(len(created.private_area)), " bytes, with its creation data and its ticket")
+		system.log_fact(.Info, Sealed_With_Authorization{public_area = bytes_field(len(created.public_area)), private_area = bytes_field(len(created.private_area))})
 	} else {
-		system.log(.Info, "tpm: sealed 32 bytes to PCR 7 and PCR 11: a public area of ", u64(len(created.public_area)), " bytes and a private area of ", u64(len(created.private_area)), " bytes, with its creation data and its ticket")
+		system.log_fact(.Info, Sealed{public_area = bytes_field(len(created.public_area)), private_area = bytes_field(len(created.private_area))})
 	}
 	return {status = .Ok, values = {0 = u64(len(created.public_area)), 1 = u64(len(created.private_area)), 2 = u64(tpm2.PCR_SET), 3 = u64(len(created.creation_data)), 4 = u64(len(created.creation_ticket))}}
 }
@@ -544,7 +544,7 @@ measure_count: int
 // sends no command to the TPM.
 measure_start_policy :: proc "contextless" (values: [7]u64) -> Outcome {
 	if refusal := tpm_service.measure_refusal(measure_count); refusal != .Ok {
-		system.log(.Warning, "tpm: refused an extend of PCR 12: ", u64(measure_count), " extends ran in this start, the most that it takes")
+		system.log_fact(.Warning, Extend_Refused_At_Limit{extends = u64(measure_count)})
 		return {status = refusal, values = {0 = u64(measure_count)}}
 	}
 	digest := transmute([tpm2.DIGEST_SIZE]u8)[4]u64{values[0], values[1], values[2], values[3]}
@@ -564,7 +564,7 @@ measure_start_policy :: proc "contextless" (values: [7]u64) -> Outcome {
 	count = tpm2.pcr_read_command(command_bytes[:])
 	answer, step = transact(count)
 	if step != .None {
-		system.log(.Warning, "tpm: extended PCR 12, and the interface failed at its read back: ", tpm_service.device_step_words[step])
+		system.log_fact(.Warning, Extend_Read_Back_Interface_Failed{step = step_field(step)})
 		return {status = .Device_Error, values = {0 = u64(step)}}
 	}
 	value: [tpm2.DIGEST_SIZE]u8
@@ -573,7 +573,7 @@ measure_start_policy :: proc "contextless" (values: [7]u64) -> Outcome {
 		system.log(.Warning, "tpm: extended PCR 12, and its read back gave no value of PCR 12 of SHA-256 (response code ", system.Hex(u64(code)), ")")
 		return outcome_of_problem(problem, code, tpm2.COMMAND_PCR_READ)
 	}
-	system.log(.Info, "tpm: extended PCR 12 with the digest of a start policy: extend ", u64(measure_count), " of ", u64(tpm_service.MEASURE_LIMIT), " in this start")
+	system.log_fact(.Info, Start_Policy_Measured{extend = u64(measure_count), limit = tpm_service.MEASURE_LIMIT})
 	words := transmute([4]u64)value
 	return {status = .Ok, values = {0 = words[0], 1 = words[1], 2 = words[2], 3 = words[3], 4 = u64(measure_count)}}
 }
@@ -588,7 +588,7 @@ properties_read :: proc "contextless" (first: u32, values: []u32, what: string) 
 	count := tpm2.properties_command(command_bytes[:], first, u32(len(values)))
 	answer, step := transact(count)
 	if step != .None {
-		system.log(.Warning, "tpm: the interface failed at TPM2_GetCapability of ", what, ": ", tpm_service.device_step_words[step])
+		system.log_fact(.Warning, Capability_Interface_Failed{properties = properties_field(what), step = step_field(step)})
 		return false
 	}
 	code, problem := tpm2.properties_answer(answer, first, values)
@@ -597,7 +597,7 @@ properties_read :: proc "contextless" (first: u32, values: []u32, what: string) 
 		return false
 	}
 	if problem != .None {
-		system.log(.Warning, "tpm: the answer of the TPM to TPM2_GetCapability of ", what, " does not hold the properties asked, each in its place")
+		system.log_fact(.Warning, Capability_Answer_Malformed{properties = properties_field(what)})
 		return false
 	}
 	return true
@@ -663,7 +663,7 @@ lockout_authorization_check :: proc "contextless" (seeded: bool) {
 	count := tpm2.lockout_authorization_change_command(command_bytes[:], value[:])
 	answer, step := transact(count)
 	if step != .None {
-		system.log(.Warning, "tpm: the interface failed at TPM2_HierarchyChangeAuth of the lockout hierarchy: ", tpm_service.device_step_words[step], "; it can keep its empty authorization value until the next start")
+		system.log_fact(.Warning, Lockout_Change_Interface_Failed{step = step_field(step)})
 		return
 	}
 	code, problem := tpm2.status_answer(answer)
