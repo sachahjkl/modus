@@ -662,9 +662,9 @@ Do not use: catalog (for this), package set, registry, channel.
 
 ### Declaration input
 
-A declaration input is a declaration that a project or a plan names in its record `inputs`: a catalog declaration, one exact declaration by hash, or the newest release pointer of a publisher.
+A declaration input is a declaration that a project or a plan names in its record `inputs`: a catalog declaration, one exact declaration by hash, or a reference that a source module resolves.
 
-`declaration(hash)` names one exact declaration; `follow(publisher, name)` names a release pointer. The evaluation takes the hash of each from its pin, never from the network. It is not the input of the keys and the pointer, and not an input of a recipe, which is a tree that a builder reads.
+`declaration(hash)` names one exact declaration; `follow(publisher, name)` names a release pointer; `catalog.git.source(…)` names a branch of a repository. The evaluation takes the hash of each from its pin, never from the network. It is not the input of the keys and the pointer, and not an input of a recipe, which is a tree that a builder reads.
 
 The design: `src/md/features/declarations.md`.
 
@@ -672,13 +672,23 @@ Do not use: input (for this), dependency, flake input.
 
 ### Pin
 
-A pin is the hash that a declaration input resolved to, kept in a typed record of the store of a project or in a plan.
+A pin is the tree hash that a declaration input resolved to, with the identity of its state in its format, kept in the entry `pins` of the source tree of a project or in a plan.
 
-An evaluation reads the pins and never the network, so one declaration gives one plan. `update()` resolves each `follow` again and writes new pins; the store keeps the pins before as a version. `inputs` shows each pin with its publisher and its hash. No process parses a pin. It is not a pinned key of TLS.
+An evaluation reads the pins and never the network, so one declaration gives one plan. The tree hash of a project covers its pins, so its inputs do not move on another machine. `update()` runs the resolver of each input again and writes new pins; the store keeps the tree before as a version. `inputs` shows each pin with its publisher and its hash. No process parses a pin. It is not a pinned key of TLS.
 
 The design: `src/md/features/declarations.md`.
 
 Do not use: lock file, lock entry, pinned key (for this).
+
+### Source module
+
+A source module is a module of the catalog declaration that turns a reference of one format of versions into a modus tree: a resolver that `update()` runs, and a fetch recipe.
+
+Git, Jujutsu, Mercurial, Pijul and an archive at an address are each one source module: `catalog.git.source(address, branch)`, `catalog.jj.source(address, change)`. The resolver has a network grant for the host of the address only; the fetch recipe refuses a tree whose hash is not the hash of the pin. A new format is one more module, with no change of Lex or of `update()`. It is not a substituter, which gives the output of a recipe.
+
+The design: `src/md/features/declarations.md`.
+
+Do not use: fetcher plugin, VCS backend, remote.
 
 ### Release pointer
 
