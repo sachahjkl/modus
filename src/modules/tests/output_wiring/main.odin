@@ -279,12 +279,22 @@ stopped_wait :: proc "contextless" (processes: []system.Handle) {
 }
 
 // grant_wirings_revoke revokes the grant wirings of this process, which
-// ends each of its wirings, and checks their count.
+// ends each of its wirings, and checks the status, then their count. With
+// no wiring held, this process holds no grant wirings: the revocation is
+// refused as the revocation of any grant not held, and checked whole.
 @(private = "file")
 grant_wirings_revoke :: proc "contextless" (wanted: int) {
 	packed := system.name_pack("output_wiring")
+	before := budget_pages()
 	status, revoked := root_call(.Revoke, {packed[0], packed[1], packed[2], packed[3], u64(system.Root_Grant.Wirings), 0, 0})
-	if status != .Ok || revoked[0] != u64(wanted) {
+	if wanted == 0 {
+		refused("the revocation of the grant wirings with no wiring held", before, status, revoked, .Bad_State, fail(.Revoke, .Absent, .Grants, 2))
+		return
+	}
+	if status != .Ok {
+		wrong_refused("the revocation of the grant wirings gave the status", status, revoked)
+	}
+	if revoked[0] != u64(wanted) {
 		wrong("the revocation of the grant wirings ended this count of wirings:", revoked[0])
 	}
 }
@@ -587,7 +597,7 @@ limit_case :: proc "contextless" () {
 		handles := [1]u32{lend(writer)}
 		status, answer := wire(row(.Started, 1, WRITER_LARGE, .Asker, 0, 0), handles[:])
 		if status != .Ok || answer[0] == 0 {
-			wrong("a wiring up to the limit gave the status", u64(status))
+			wrong_refused("a wiring up to the limit gave the status", status, answer)
 		}
 		number = u32(answer[0])
 	}
@@ -643,7 +653,7 @@ side_case :: proc "contextless" () {
 	// Taken again, one probe and Closed; it takes no other command.
 	status, answer = wire_side(side)
 	if status != .Ok || answer[0] == 0 {
-		wrong("the Wire of output_side gave the status", u64(status))
+		wrong_refused("the Wire of output_side gave the status", status, answer)
 	}
 	closed_number := u32(answer[0])
 	// The Closed of the writer keeps the wiring for this reader: the
@@ -660,8 +670,14 @@ side_case :: proc "contextless" () {
 	// This reader said Closed in turn, and the wiring ends with it. The
 	// root service reads the answers of this process after its command in
 	// one pass: after this call, the wiring no longer counts for its asker.
+	// The answer of this call is written before that pass reads the
+	// answers, so it can still show the grant wirings: only its status is
+	// checked.
 	asker_name := system.name_pack("output_wiring")
-	root_call(.Grants, {asker_name[0], asker_name[1], asker_name[2], asker_name[3], 0, 0, 0})
+	grants_status, grants := root_call(.Grants, {asker_name[0], asker_name[1], asker_name[2], asker_name[3], 0, 0, 0})
+	if grants_status != .Ok {
+		wrong_refused("the Grants of this process gave the status", grants_status, grants)
+	}
 	for _ in 0 ..< SIDE_RING_CAPACITY {
 		if held == len(numbers) {
 			grant_wirings_revoke(held)
@@ -670,7 +686,7 @@ side_case :: proc "contextless" () {
 		}
 		status, answer = wire_side(side)
 		if status != .Ok || answer[0] == 0 {
-			wrong("a Wire of output_side before its wiring ring is full gave the status", u64(status))
+			wrong_refused("a Wire of output_side before its wiring ring is full gave the status", status, answer)
 		}
 		numbers[held] = u32(answer[0])
 		held += 1
@@ -683,6 +699,9 @@ side_case :: proc "contextless" () {
 	before := budget_pages()
 	status, answer = wire_side(side)
 	refused("an end for a wiring ring that is full", before, status, answer, .No_Slot, fail(.Wire, .Busy, .Wirings, 0, 1, SIDE_RING_CAPACITY, 1))
+	// The ring holds a multiple of the limit of an asker, so the loop
+	// revoked each wiring and held is 0 here: the refused Wire gave no
+	// grant, and the revocation is refused whole.
 	grant_wirings_revoke(held)
 	asker_ends_close(numbers[:held], Probe)
 	packed := system.name_pack("output_side")
