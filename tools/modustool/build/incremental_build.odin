@@ -871,7 +871,7 @@ Build_Inputs :: struct {
 	// False: a source of the tool cannot be read. Then nothing is kept and
 	// no record is written.
 	usable:          bool,
-	module_programs: [5]string,
+	module_programs: [6]string,
 	volume_programs: [5]string,
 }
 
@@ -899,8 +899,9 @@ build_inputs_prepare :: proc() {
 	folders := INPUT_FOLDERS
 	build_inputs.table = input_file_table_make(root, folders[:])
 	build_inputs.tool_identity, build_inputs.usable = tool_identity_of(build_inputs.table, foundation.TOOL_SOURCE_FOLDER)
-	// clang compiles the C files of an outside source.
-	for name, index in ([5]string{"odin", "llc", "nasm", "ld.lld", "clang"}) {
+	// clang compiles the C files of an outside source; opt adds the edge
+	// counters of the counted kernel.
+	for name, index in ([6]string{"odin", "llc", "nasm", "ld.lld", "clang", "opt"}) {
 		build_inputs.module_programs[index] = strings.clone(host_program_identity(name))
 	}
 	for name, index in ([5]string{"odin", "nasm", "lld-link", "sbsign", "virt-fw-vars"}) {
@@ -1085,6 +1086,10 @@ module_compile_key_inputs :: proc(build: foundation.Module_Build) -> (inputs: Bu
 	append(&settings, ..build_inputs.module_programs[:])
 	append(&settings, "the compiler")
 	append(&settings, ..module_compile_command(build))
+	if pass := module_edge_counter_command(build); pass != nil {
+		append(&settings, "the edge counters")
+		append(&settings, ..pass)
+	}
 	append(&settings, "the object")
 	append(&settings, ..module_object_command(build))
 	append(&settings, build.source, build.kernel ? "runs in kernel mode" : "runs in user mode", build.image ? "with the system library" : "with no system library")

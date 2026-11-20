@@ -10,7 +10,7 @@ import "modus:support/graphics"
 @(test)
 cells_of_spleen_are_read_back :: proc(t: ^testing.T) {
 	WIDTH :: 200
-	HEIGHT :: 40
+	HEIGHT :: 64
 	pixels := make([]u8, WIDTH * HEIGHT * 3, context.temp_allocator)
 	background := [3]u8{10, 20, 30}
 	ink := [3]u8{230, 230, 220}
@@ -42,6 +42,32 @@ cells_of_spleen_are_read_back :: proc(t: ^testing.T) {
 	testing.expect(t, !ok)
 	_, ok = cells_text(pixels, WIDTH, HEIGHT, 0, origin_y, 1)
 	testing.expect(t, !ok)
+	// A step under the width of a glyph is refused; the text drawn at a
+	// step of 8 read at a step of 10 is no text.
+	_, ok = cells_text(pixels, WIDTH, HEIGHT, origin_x, origin_y, len(text), graphics.CELL_WIDTH - 1)
+	testing.expect(t, !ok)
+	_, ok = cells_text(pixels, WIDTH, HEIGHT, origin_x, origin_y, len(text), graphics.CELL_WIDTH + 2)
+	testing.expect(t, !ok)
+	// The cells of the body at the scale of the machine: each glyph in
+	// the middle of a wider cell, read at the step of the cell.
+	cells := spleen_cells_of(MACHINE_SCALE)
+	wide_text := "Q7"
+	wide_y := origin_y + 20
+	for character, cell in transmute([]u8)wide_text {
+		index, _ := font_characters.character_index(rune(character))
+		glyph := graphics.font[index]
+		for row in 0 ..< graphics.CELL_HEIGHT {
+			for column in 0 ..< graphics.CELL_WIDTH {
+				if glyph[row] & (u8(0x80) >> uint(column)) != 0 {
+					place := ((wide_y + row) * WIDTH + origin_x + cell * cells.step + column) * 3
+					pixels[place], pixels[place + 1], pixels[place + 2] = ink[0], ink[1], ink[2]
+				}
+			}
+		}
+	}
+	wide_read, wide_ok := cells_text(pixels, WIDTH, HEIGHT, origin_x, wide_y, len(wide_text), cells.step)
+	testing.expect(t, wide_ok)
+	testing.expect_value(t, wide_read, wide_text)
 	// The mark of a step takes the text that was read.
 	testing.expect_value(t, screen_text_expand("type {screen text} now", "ABCD", "WXYZ"), "type ABCD now")
 	// The mark of the text before takes the text of the read before.

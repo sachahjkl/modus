@@ -14,7 +14,7 @@
 //
 // **What a reader sees.** Start it from the start menu, or with
 // `start("boot")` in the console. The window is the boot display at its
-// base size (`bootscreen.WIDTH` by `bootscreen.HEIGHT`), at scale 1, with the message
+// base size (`bootscreen.WIDTH` by `bootscreen.HEIGHT` logical pixels), as a picture at the scale of the desktop, with the message
 // "the desktop runs". It draws again each 500 ms, with the records of the
 // kernel of that time. At its first draw it writes `boot: ok, <count>
 // stages, <count> memory ranges, <count> processes` on the log.
@@ -33,11 +33,32 @@ package boot
 import "modus:support/bootscreen"
 import "modus:support/bootscreen/collect"
 import "modus:support/display"
+import "modus:support/interface"
 import "modus:support/system"
 
 INTERVAL :: 500
 
+// The size of the panel, as literals of this package, so the tool reads
+// the window of the budget; the assertions keep them the panel.
+WIDTH :: 976
+#assert(WIDTH == bootscreen.WIDTH)
+HEIGHT :: 708
+#assert(HEIGHT == bootscreen.HEIGHT)
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (1350 pages): its module, its
+// stack, its records of the kernel and its glyph memory. And the picture
+// of the logical size in which it draws by hand (interface.Hand_Picture):
+// 976 x 708 pixels of 4 bytes, 675 pages. 698 + 675 = 1373. The tool
+// counts the window at the window bound (docs/MODULE_CONTRACT.md, "The
+// budget that a module asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1373, window_width = WIDTH, window_height = HEIGHT}
+
 data: bootscreen.Data
+
+// The picture of the window: the boot display at its base size, in
+// logical pixels, which the drawing module puts on the screen at the scale
+// of the desktop (interface.Hand_Picture).
+hand_picture: interface.Hand_Picture
 
 // entry opens the window of the boot display and draws it again each
 // 500 ms, until the process is stopped.
@@ -49,8 +70,8 @@ data: bootscreen.Data
 // With no window, the process stops with `Failed`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	window, ok := display.open(ctx, bootscreen.WIDTH, bootscreen.HEIGHT, "boot")
-	if !ok {
+	window, ok := display.open(ctx, WIDTH, HEIGHT, "boot")
+	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Ok {
 		system.stop(.Failed)
 	}
 	machine := ctx.handles[system.GRANT_MACHINE]
@@ -67,8 +88,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if display.canvas_wait(&window) {
 			// The procedure of the screen: a canvas of the base size
 			// takes scale 1, as the other drawers find for that size.
-			bootscreen.draw_screen(window.canvas, &data)
-			display.present(&window)
+			bootscreen.draw_screen(hand_picture.canvas, &data)
+			interface.hand_picture_show(&hand_picture, &window)
 		}
 		if !logged {
 			logged = true

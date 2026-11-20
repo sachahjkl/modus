@@ -35,7 +35,7 @@ scenario_monitor_film := [?]Step {
 	// Scene 1: monitor, on a quiet machine.
 	{kind = .Launch, text = "monitor"},
 	{kind = .Wait, text = "compositor: surface monitor"},
-	{kind = .Move, text = "monitor", to_x = 1360, to_y = 48},
+	{kind = .Move, text = "monitor", to_x = LOGICAL_SCREEN_WIDTH - 560, to_y = 48},
 	{kind = .Film_Start, text = "monitor"},
 	{kind = .Film_Hold, milliseconds = MONITOR_FILM_SAMPLES_HOLD},
 

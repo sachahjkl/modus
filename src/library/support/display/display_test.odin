@@ -3,6 +3,7 @@ package display
 
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/scale_factor"
 import "modus:contract/text_encoding"
 import "modus:support/key_path"
 import "core:testing"
@@ -508,10 +509,31 @@ event_of_record_reads_each_event :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 	testing.expect_value(t, event, Event{kind = .Pointer, x = -3, y = 7, buttons = BUTTON_LEFT, wheel = WHEEL_TOWARD_THE_END})
 
+	// Settings_Changed names the scale of the compositor: a word that names
+	// no scale refuses the record, 0 and 8 too, and so does a scale one past
+	// the window bound.
 	settings_changed := ring.Record{kind = u32(Event_Kind.Settings_Changed)}
+	for word in ([?]u64{0, scale_factor.EIGHTHS_OF_ONE, u64(scale_factor.Scale.Ten_Eighths) - 1, u64(scale_factor.WINDOW_BOUND) + 1, u64(scale_factor.Scale.Sixteen_Eighths) + 1, max(u64)}) {
+		settings_changed.values[1] = word
+		_, scale_ok := event_of_record(settings_changed)
+		testing.expectf(t, !scale_ok, "a Settings_Changed with the scale word %d is taken", word)
+	}
+	settings_changed.values[1] = u64(scale_factor.Scale.Eleven_Eighths)
 	event, ok = event_of_record(settings_changed)
 	testing.expect(t, ok)
-	testing.expect_value(t, event, Event{kind = .Settings_Changed})
+	testing.expect_value(t, event, Event{kind = .Settings_Changed, scale = .Eleven_Eighths})
+
+	// Surface_Answer: a word of no answer and the serial 0 are refused.
+	answer := ring.Record{kind = u32(Event_Kind.Surface_Answer)}
+	for words in ([?][2]u64{{0, 1}, {u64(max(Surface_Answer_Kind)) + 1, 1}, {max(u64), 1}, {u64(Surface_Answer_Kind.Released), 0}}) {
+		answer.values[0], answer.values[1] = words[0], words[1]
+		_, answer_ok := event_of_record(answer)
+		testing.expectf(t, !answer_ok, "the answer %v is taken", words)
+	}
+	answer.values[0], answer.values[1] = u64(Surface_Answer_Kind.Rescale_Taken), 3
+	event, ok = event_of_record(answer)
+	testing.expect(t, ok)
+	testing.expect_value(t, event, Event{kind = .Surface_Answer, surface_answer = .Rescale_Taken, surface_serial = 3})
 
 	go_to := ring.Record{kind = u32(Event_Kind.Go_To)}
 	go_to.values[0] = act_name_hash("settings.set:font")

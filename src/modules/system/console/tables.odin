@@ -310,6 +310,8 @@ tables_start :: proc "contextless" () {
 	//   written    12
 	//   discarded  0
 	//   refused    0
+	//   held       0
+	//   rings_past_gap  0
 	// ```
 	command("stream_counts", {.Stream}, .Record, "the counts of the writer of a record output: stream_counts(server.requests)", stream_counts)
 	// Gives the Table of one row of a wiring list: the record output

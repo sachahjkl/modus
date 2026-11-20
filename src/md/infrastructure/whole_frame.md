@@ -121,7 +121,7 @@ A window of 1024 by 720 pixels is 720 pages for a picture: the second picture ad
 - **A `Present` with a picture number that names no picture is refused and counted** (`presents_refused` in the export `windows`). It changes no picture and no damage, and it is not a first `Present`: a window shows only a picture that its process named.
 - A frame that is equal to the last table draws nothing and presents nothing, also when its picture has a debt: the screen shows the other picture, which has none.
 - The time of a wait for the canvas is not in the measure of a picture: `display.canvas_wait` moves the start of the measure by the time that it waited.
-- A process that draws over the frame of the window layer by hand (`interface_font`, `vector_glyphs`) ends its frame with `window_frame_end_without_present`: the window layer draws the frame whole and presents nothing, the process draws over it in the same canvas, then presents. With `window_frame_end` the canvas is the other picture after the call.
+- A process that draws over the frame of the window layer by hand (`interface_font`, `vector_glyphs`) ends its frame with `window_frame_end_into_picture`: the window layer draws the frame whole into the hand picture of the window and presents nothing, the process draws over it, then shows the picture with `hand_picture_show`, which ends a frame of its own with `window_frame_end`.
 - `interface.window_events` says that an event came when a frame was left out and the canvas is free again: a process that draws only after an event then draws the frame.
 
 ## The state
@@ -135,7 +135,7 @@ Left:
 - The page tables of the two screen pages are paid by the budget of the compositor: its stated working memory is larger by 4 pages. Large pages for device memory would remove them.
 - No host test of the copy of the debt of a screen page in the compositor: the procedures of the debt have their tests in the window layer, and the copy writes the device memory.
 
-- No host test of the wait itself (`canvas_wait` while the canvas is not free, the wake of the compositor): it enters the kernel. No host test of `window_frame_end_without_present`, which reads the clock, nor of a difference or a draw that the drawing module refuses.
+- No host test of the wait itself (`canvas_wait` while the canvas is not free, the wake of the compositor): it enters the kernel. No host test of `window_frame_end_into_picture`, which reads the clock, nor of a difference or a draw that the drawing module refuses.
 - The measure of the root service is written at the end of the start. The lowest count of a whole test, with the processes that the console starts later, is not written: the log of the main test has little room for more lines.
 
 - A process that draws only after a change of its own, and reads its events with `display.next_event`, does not draw a frame that was left out when the compositor reads again. It draws it at its next change. This needs a compositor that did not read for the whole bound.

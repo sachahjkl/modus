@@ -52,8 +52,13 @@ import "modus:support/system"
 
 // The pointer themes that it checks: 1616 pages. And the glyph memory of
 // its own copy of the text rendering, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 1616 + 354 = 1970.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1970, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// (display.TEXT_MEMORY_PAGES). And the picture of its window, which it
+// draws by hand at its logical size: 976 x 704 pixels of 4 bytes, 671
+// pages (interface.hand_picture_pages). 1616 + 354 + 671 = 2641.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2641, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+
+// The picture of the window, in its logical pixels (interface.Hand_Picture).
+hand_picture: interface.Hand_Picture
 
 WIDTH :: 976
 HEIGHT :: 704
@@ -315,11 +320,14 @@ frame_draw :: proc "contextless" (window: ^display.Window) -> u64 {
 	// The canvas is the picture that the compositor does not read, after
 	// it took the picture before. It holds an older frame: the whole
 	// canvas is drawn.
+	// The pictures of the pointers are drawn by hand, in a picture of the
+	// logical size of the window, which the drawing module puts on the
+	// screen at the scale (interface.Hand_Picture).
 	if display.canvas_wait(window) {
-		graphics.clear(window.canvas, graphics.colors.background)
-		interface.execute(&table, window.canvas)
-		pictures_draw(window.canvas)
-		display.present(window)
+		graphics.clear(hand_picture.canvas, graphics.colors.background)
+		interface.execute(&table, hand_picture.canvas)
+		pictures_draw(hand_picture.canvas)
+		interface.hand_picture_show(&hand_picture, window)
 	}
 	// Over a tile, the pointer takes the shape of the tile.
 	shape := pointer_pictures.Pointer_Shape.Arrow
@@ -393,7 +401,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "pointers")
-	if !ok {
+	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Ok {
 		system.stop(.Failed)
 	}
 	table = {records = table_records[:], text = table_text[:]}

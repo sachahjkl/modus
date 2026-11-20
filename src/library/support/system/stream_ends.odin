@@ -165,6 +165,109 @@ input_has_writer :: proc "contextless" (stream: ^Record_Input($Record_Type, $wir
 	return false
 }
 
+// Why a reader that waits for its full ring to hold its writer stops.
+Full_Wait_End :: enum u8 {
+	Held    = 0, // The ring is full and its writer waits for room in it.
+	No_End  = 1, // The record input has no end, or its ring is no ring of the size of its record.
+	Ended   = 2, // The end ended by its end word: the reader reads it.
+	Broken  = 3, // The counters are no counters of an honest writer: the end is closed, as a read closes it.
+	Past_Deadline = 4, // The deadline passed first.
+}
+
+// input_full_and_writer_waits waits, with no read, until the ring of a
+// record input of the count One is full and its writer waits for room in
+// it, or until deadline. A slow reader then knows by a state, not by a
+// time, that its ring holds the writer, which only the pace
+// Always_Holds_Writer, or a writer that chose to wait, does. A record input
+// of the counts Many and Many_Types has several rings, which no single
+// state names: the procedure takes only the count One. It gives why it
+// ended, and the compartments that the ring holds with its capacity.
+input_full_and_writer_waits :: proc "contextless" (stream: ^Record_Input($Record_Type, $wirings), deadline: u64) -> (ended: Full_Wait_End, held, capacity: u32) where wirings == module.Wiring_Count.One {
+	for {
+		stream_ends_take()
+		index := stream_index_read(&stream.index)
+		end: ^Stream_End
+		for &item in stream_ends {
+			if item.command == .Reader_End && item.index == index && index != 0 {
+				end = &item
+				break
+			}
+		}
+		// With no end that opens, no counter can be read: the rule gives
+		// No_End whatever they hold (output.full_wait_step_of).
+		if end == nil {
+			return .No_End, 0, 0
+		}
+		// As stream_read does: the record of the variable has the size of
+		// the description that the root service compared, so an end of
+		// another size is no end of this variable, and it is closed. A
+		// memory that is no ring of that size closes in stream_end_open.
+		if end.description.size != u32(size_of(Record_Type)) {
+			stream_end_finish(end)
+			return .No_End, 0, 0
+		}
+		if !stream_end_open(end, end.description.size) {
+			return .No_End, 0, 0
+		}
+		word, _, _ := stream_end_ended(end)
+		commands := end.queue.commands.counters
+		completions := end.queue.completions.counters
+		write := intrinsics.atomic_load_explicit(&commands.write, .Acquire)
+		read := intrinsics.atomic_load_explicit(&commands.read, .Relaxed)
+		completions_write := intrinsics.atomic_load_explicit(&completions.write, .Relaxed)
+		completions_read := intrinsics.atomic_load_explicit(&completions.read, .Acquire)
+		writer_waits := intrinsics.atomic_load_explicit(&commands.writer_waits, .Acquire) != 0
+		capacity = ring.compartment_capacity(&end.queue.commands)
+		step, _ := output.full_wait_step_of(true, word, write, read, capacity, completions_write, completions_read, ring.capacity(&end.queue.completions), writer_waits, time(), deadline)
+		switch step {
+		case .No_End:
+			return .No_End, 0, 0
+		case .Ended:
+			return .Ended, 0, 0
+		case .Held:
+			return .Held, write - read, capacity
+		case .Broken:
+			// As a read does: a ring that no honest writer writes is never
+			// read again, and never waited on.
+			stream_end_finish(end)
+			return .Broken, 0, capacity
+		case .Past_Deadline:
+			return .Past_Deadline, write - read, capacity
+		case .Wait:
+		}
+		// Two words, so no wake is lost between the load and the wait: a
+		// write changes write, and a writer that starts to wait changes
+		// writer_waits when the ring is full. The writer, in wait_end,
+		// stores writer_waits, then takes reader_waits and wakes write:
+		// the flag reader_waits brings that wake here. No other flag is
+		// set: this reader asks the writer for nothing, and a flag of the
+		// writer set here would wake it for no room, which would wake this
+		// reader again, with no end. writer_waits is waited on at the value
+		// that this look loaded, not at 0: a writer that waits on a ring
+		// that is not full yet holds it at 1, and a wait while it is 0
+		// would end at once, a spin.
+		waiting := wait_begin()
+		wait_word(&waiting, &end.end_words.end, u32(output.End_Word.None))
+		wait_word(&waiting, &commands.write, write, &commands.reader_waits)
+		wait_word(&waiting, &commands.writer_waits, u32(writer_waits ? 1 : 0))
+		wait_end(&waiting, deadline)
+	}
+}
+
+// input_writer_counts gives the counts that the writer of a record input
+// of the count One published in the head page of its ring: its claim as of
+// the last compartment that this process took. ok is false while the
+// record input has no open end.
+input_writer_counts :: proc "contextless" (stream: ^Record_Input($Record_Type, $wirings)) -> (counts: output.Writer_Counts, ok: bool) where wirings == module.Wiring_Count.One {
+	index := stream_index_read(&stream.index)
+	for &end in stream_ends {
+		if end.command == .Reader_End && end.index == index && index != 0 && end.opened {
+			return output.writer_counts_read(end.ring_address), true
+		}
+	}
+	return {}, false
+}
+
 // handle_through says if a handle came through the wiring ring, with the
 // kind of a memory object and the rights asked for at least.
 @(private = "file")
@@ -571,6 +674,9 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		return .Bad_Record
 	}
 	index := stream_index_read(&state.index)
+	// An earlier look of this write waited: a wake before the room counts
+	// no second hold.
+	waited := false
 	room_loop: for {
 		if output_ends_of(state, u32(len(bytes))) == 0 {
 			state.discarded += 1
@@ -620,15 +726,23 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 			continue room_loop
 		}
 		closed_words_wait(&waiting)
-		switch output.write_step_of(held_by_choice, held_always, wait) {
+		// The counts of this look come from one pure rule
+		// (output.write_counts_after): a write counts once in held, and a
+		// write that waited and reached its deadline counts in held and in
+		// refused.
+		step := output.write_step_of(held_by_choice, held_always, wait)
+		looked := output.write_counts_after({refused = state.refused, held = state.held}, step, waited, false)
+		state.refused, state.held = looked.refused, looked.held
+		switch step {
 		case .Write:
 			break room_loop
 		case .Full:
-			state.refused += 1
 			return .Full
 		case .Wait:
+			waited = true
 			if wait_end(&waiting, deadline) >= deadline {
-				state.refused += 1
+				timed_out := output.write_counts_after({refused = state.refused, held = state.held}, .Wait, true, true)
+				state.refused, state.held = timed_out.refused, timed_out.held
 				return .Full
 			}
 		}
@@ -638,7 +752,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 	// reader reads the counts of the last write before its read, at least
 	// as new as the compartment that it took
 	// (src/md/features/module_outputs.md, "The counts of a record output").
-	counts := output.Writer_Counts{written = state.written, discarded = state.discarded, refused = state.refused}
+	counts := output.Writer_Counts{written = state.written, discarded = state.discarded, refused = state.refused, held = state.held, rings_past_gap = state.rings_past_gap}
 	taken := false
 	for &end in stream_ends {
 		if end.command != .Writer_End || end.index != index || !end.opened {
@@ -658,23 +772,36 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 			}
 			continue
 		}
-		taken = true
 		if !end.joined {
 			// The first compartment of each ring: the serial of the next
 			// record, the count of the records before this reader joined.
 			end.joined = compartment_push_to(&end, .Joined, serial)
 		}
 		room := ring_room(&end)
+		// The record is taken only by a ring with room for it: a ring that
+		// refuses it, or a ring that broke, takes nothing
+		// (output.ring_takes_record).
+		if output.ring_takes_record(false, room) {
+			taken = true
+		}
 		if room == .Broken {
 			state.rings_broken += 1
 			stream_end_finish(&end)
 			continue
 		}
 		if room == .Refuses {
-			if end.gap_count == 0 {
-				end.gap_first = serial
+			gap, step := output.gap_after_refused_record({count = end.gap_count, first = end.gap_first}, serial, end.condition_given)
+			switch step {
+			case .Counted:
+				end.gap_count, end.gap_first = gap.count, gap.first
+			case .Past_The_Count:
+				// One more would give a gap that its reader refuses: the
+				// stream of this reader ends, and it reads Side_Closed
+				// after the records that its ring holds. The other rings
+				// of this write go on.
+				state.rings_past_gap += 1
+				stream_end_finish(&end)
 			}
-			end.gap_count += 1
 			continue
 		}
 		if end.gap_count != 0 && compartment_push_to(&end, .Gap, end.gap_first, gap = end.gap_count) {
@@ -684,8 +811,10 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		counters_wake_reader(end.queue.commands.counters)
 	}
 	state.next_serial += 1
-	// A record that the condition of each ring left out is taken by no
-	// ring: it counts as discarded, as a record with no reader.
+	// A record that the condition of each ring left out, or that each ring
+	// refused for its reader, is taken by no ring: it counts as discarded,
+	// as a record with no reader. Each ring that refused it counts it in
+	// its gap.
 	after := output.counts_after_write(counts, taken)
 	state.written, state.discarded = after.written, after.discarded
 	return .Ok

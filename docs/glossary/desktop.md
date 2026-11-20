@@ -20,6 +20,16 @@ The design: `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: back buffer, front buffer, swap chain.
 
+### Surface serial
+
+A surface serial is the number of a surface of a window: 1 for the surface of `Surface_Create`, one more for each surface after it.
+
+It lets the window and the compositor agree on which surface the compositor holds. `Surface_Resize`, `Surface_Rescale` and `Surface_Release` name a serial, and each `Present` names the serial of its picture: the compositor refuses a `Present` of a surface that it does not hold, and answers a release or a rescale with the serial of the request, so an answer of an older request changes nothing. It is not a key serial, which numbers the keys that a window gets.
+
+The design: `src/md/features/window_resize.md`, "The rescale: one state machine on each side".
+
+Do not use: surface generation, surface version, surface id.
+
 ### Whole frame
 
 A whole frame is a picture of a window that reaches the screen complete: the screen never shows a picture that a process is drawing.
@@ -364,7 +374,7 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each process that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_18` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_18` once to draw the records in them, into the pixels of its surface. Each argument is memory of the process, passed by address. The 17 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the process that calls it.
+It is the first library module. A window calls `damage_of_draw_table_19` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_19` once to draw the records in them, into the pixels of its surface. Each argument is memory of the process, passed by address. The 17 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the process that calls it.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each process, the drawing in a module".
 
@@ -906,7 +916,7 @@ Do not use: performance mode, power profile, quality setting.
 
 The reference screen is the screen for which the desktop is laid out and on which the test machines take their pictures: 1920 × 1080.
 
-The contract package `reference_screen` holds its size: the boot program asks the firmware for that mode, and the tool checks the screenshots and the video memory of its machines against it. The desktop draws on it at scale 1: a logical pixel is a pixel of the screen. A firmware with no mode of this size gets the largest mode inside it, and the boot program names the mode on one line.
+The contract package `reference_screen` holds its size: the boot program asks the firmware for that mode, and the tool checks the screenshots and the video memory of its machines against it. The desktop draws on it at its scale factor, 1.25 by default: 1536 × 864 logical pixels. A firmware with no mode of this size gets the largest mode inside it, and the boot program names the mode on one line.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
 
@@ -916,7 +926,7 @@ Do not use: default resolution, target screen.
 
 A logical pixel is the unit in which a process places and sizes what it draws; the scale factor turns it into pixels of the screen.
 
-The spacing token `gap` is 8 logical pixels, and a window states its size in logical pixels. At scale 1 a logical pixel is one pixel of the screen. At a scale of 1.25 the gap is 10 pixels of the screen. A logical pixel is not a point of a font, and not a pixel of a picture, which keeps its own pixels.
+The spacing token `gap` is 8 logical pixels, and a window states its size in logical pixels; the places of the pointer, of a window and of an element are logical pixels too. At a scale of 1.25 the gap is 10 pixels of the screen. A logical pixel is not a point of a font, and not a pixel of a surface, which is in pixels of the screen.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
 
@@ -926,11 +936,21 @@ Do not use: device-independent pixel, virtual pixel.
 
 The scale factor is the count of pixels of the screen for one logical pixel, in eighths: from 1.25 to 2 on the reference screen.
 
-For the desktop it is one setting of the system, so every window has the same scale. A count of eighths keeps each multiple of 8 logical pixels, as each spacing token, on whole pixels of the screen; 1.3 has no value. The contract package `scale_factor` holds the range and the rounding of each edge; the execution of a draw table draws at a scale. The desktop still draws at scale 1. The boot display takes its own scale from the size of the screen, among the sizes of Spleen.
+For the desktop it is the setting `scale`, 1.25 by default or 1.375, so every window has the same scale; the scales up to 2 wait until each window fits their logical screen. A count of eighths keeps each spacing token on whole pixels of the screen; 1.3 has no value. The drawing module turns places into screen pixels and rounds each edge; no process computes a screen pixel. The boot display takes its own scale among the sizes of Spleen.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen", and `src/md/features/boot_display_scale.md`.
 
 Do not use: interface zoom, DPI setting, scaling percentage.
+
+### Hand picture
+
+A hand picture is the picture of the logical size of a window into which its process draws pixels by hand, and which the drawing module shows at the scale factor.
+
+A process that draws with `graphics` at places in pixels, as `log` and `tables` do, draws into it (`interface.Hand_Picture`) and shows it as one Picture record, so it computes no pixel of the screen. Each of its pixels covers the pixels of the screen of its logical pixel, so its text is pixels of a picture and not glyphs at the size of the screen. Its pages are in the working memory of the process. It is not a surface, which is in pixels of the screen.
+
+The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
+
+Do not use: back buffer, offscreen canvas.
 
 ### Spacing token
 

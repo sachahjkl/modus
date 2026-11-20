@@ -99,8 +99,18 @@ TILE_COUNT :: TILE_COLUMNS * TILE_ROWS
 // The band under the stage: the animation that plays, then the keys.
 BAND_HEIGHT :: 104 // The name line, three lines of keys, the line of the controls.
 BAND_MARGIN :: 16
-WIDTH :: STAGE_WIDTH
-HEIGHT :: STAGE_HEIGHT + BAND_HEIGHT
+// Literals, so the tool reads the window of the budget; the assertions
+// keep them the sizes of the layout.
+WIDTH :: 640
+#assert(WIDTH == STAGE_WIDTH)
+HEIGHT :: 488
+#assert(HEIGHT == STAGE_HEIGHT + BAND_HEIGHT)
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (610 pages): its module, its
+// stack, its tables and its glyph memory. The tool counts the window at
+// the window bound (docs/MODULE_CONTRACT.md, "The budget that a module
+// asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1438, window_width = WIDTH, window_height = HEIGHT}
 
 // The sizes of a cell that the key z gives, the largest first.
 @(rodata)
@@ -893,7 +903,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Settings_Changed:
 				// A new font: each text of the band is drawn again.
 				interface.draw_whole_window_next(&window_memory.drawing)
-			case .None, .Pointer, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
+			case .None, .Pointer, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Surface_Answer:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

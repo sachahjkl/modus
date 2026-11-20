@@ -398,6 +398,21 @@ process_roles := [?]Process_Role_Row {
 	// A writer that writes its ring past the library and ignores the
 	// condition of its wiring: the console must refuse its record.
 	{name = "output_liar"},
+	// The asker of the test of fan-out and the pace: it starts its slow
+	// reader and `server` with a wiring list, and reads `server.requests`
+	// itself. Start and Wire are commands of the root ring.
+	{name = "requests_pace", grants = {.Root_Ring}},
+	// Its slow reader: its two ends come in its wiring ring before the
+	// first instruction of `server`, and it needs no grant.
+	{name = "requests_reader"},
+	// The asker of the measures of the record outputs: it starts its
+	// readers and its writer with a wiring list, and reads its own grants
+	// between two runs. Start, Wire and Grants are commands of the root ring.
+	{name = "output_measure", grants = {.Root_Ring}},
+	// Its writer and its readers: their ends come in their wiring rings
+	// before their first instruction, and they need no grant.
+	{name = "output_measure_writer"},
+	{name = "output_measure_reader"},
 	// The two rows of the test of the restarts of a start policy, which only
 	// the image of the test of the rescue holds: each stops itself at once,
 	// and needs no grant.

@@ -55,6 +55,7 @@ import "modus:contract/font_outlines"
 import op "modus:contract/operation"
 import "modus:support/text_rendering"
 import "modus:contract/pointer_pictures"
+import "modus:contract/scale_factor"
 import "modus:contract/settings"
 import "modus:contract/text_encoding"
 import "modus:support/system"
@@ -62,11 +63,13 @@ import "modus:support/system"
 // A command of a process to the compositor, on the ring of its window.
 Command :: enum u32 {
 	None           = 0, // Not a command.
-	Surface_Create = 1, // values: memory handle (in the compositor), width, height, title (4 values)
+	Surface_Create = 1, // values: memory handle (in the compositor) with the word of the scale of the surface above its 32 bits (SURFACE_CREATE_SCALE_SHIFT), the logical width, the logical height, title (4 values). Its surface serial is 1.
 	// The pixels of the surface changed. values: the picture to show (0 or
 	// 1), then the rectangle that changed: x, y, width, height (width 0: the
 	// whole surface), then at PRESENT_KEY_SERIAL the serial of the newest
-	// key that the picture shows, or 0 (key_shown).
+	// key that the picture shows, or 0 (key_shown), then at
+	// PRESENT_SURFACE_SERIAL the surface serial of the picture: the
+	// compositor refuses a Present of a surface that it does not hold.
 	Present        = 2,
 	Pointer_Shape  = 3, // The pointer shape over this surface (docs/POINTERS.md). values: a number of pointer_pictures.Pointer_Shape
 	// The act names of the window: what its elements act on, so that the
@@ -93,7 +96,10 @@ Command :: enum u32 {
 	// compositor shows it from the next Present, and the old surface until
 	// then. Its size is the size of the event; the compositor takes one
 	// answer for each event, and refuses any other. values: memory handle
-	// (in the compositor), width, height (surface_resize).
+	// (in the compositor), width, height in pixels of the screen at the
+	// scale of the surface shown, the next surface serial (surface_resize).
+	// The compositor answers with Surface_Answer, Resize_Taken or
+	// Resize_Refused; the window keeps the surface before it until then.
 	Surface_Resize = 7,
 	// The other answer to the event Resized: the window keeps its size,
 	// after a refused budget, or because the process does not take the
@@ -138,6 +144,20 @@ Command :: enum u32 {
 	// The pointer of a viewer at a place of the screen: x, y, buttons,
 	// wheel notches (signed).
 	Remote_Pointer   = 18,
+	// The surface of the window at a new scale, after the compositor
+	// released the old one (src/md/features/window_resize.md, "The
+	// rescale: one state machine on each side"): the same logical size,
+	// its pixels of the screen at the scale. The compositor answers with
+	// Surface_Answer, Rescale_Taken or Rescale_Refused, and shows a taken
+	// surface from the first Present of its serial. values: memory handle
+	// (in the compositor), the width and the height in pixels of the
+	// screen, the word of the scale, the surface serial.
+	Surface_Rescale  = 19,
+	// The window lets its surface of a serial go: the compositor unmaps
+	// it, shown or pending, ends a request of the principal, draws the
+	// frame of the window with the background, and answers with
+	// Surface_Answer, Released. values: the surface serial.
+	Surface_Release  = 20,
 }
 
 // The place of the capture flag in the values of Client_Add.
@@ -303,7 +323,8 @@ Event_Kind :: enum u32 {
 	Pointer          = 2, // values: x, y in the surface (signed), buttons, wheel notches (signed: WHEEL_TOWARD_THE_END for each notch toward the end of the content)
 	// The settings of the owner changed (modus:contract/settings): next_event
 	// already gave the new font to src/library/support/graphics; the process draws its
-	// window again. values: the change count of the settings page.
+	// window again. values: the change count of the settings page, the word
+	// of the scale of the compositor, to which the window rescales.
 	Settings_Changed = 3,
 	// The palette goes to an element of this window: the compositor raised
 	// it. values[0]: the act_name_hash of the act name. The window layer
@@ -332,6 +353,11 @@ Event_Kind :: enum u32 {
 	// values: the picture, the count of its rectangles, the serial of the
 	// record. A window refuses it (event_of_record).
 	Capture_Frame    = 9,
+	// The answer of the compositor to Surface_Release, Surface_Rescale or
+	// Surface_Resize
+	// (Surface_Answer_Kind). next_event takes it into the rescale of the
+	// window first. values: the word of the answer, the surface serial.
+	Surface_Answer   = 10,
 }
 
 // The ring between the root service and the compositor.
@@ -472,16 +498,19 @@ Event :: struct {
 	character: rune, // A key: its character as a code point, or 0. A process that keeps it writes its UTF-8.
 	pressed:   bool, // A key: true when it went down, false when it went up.
 	modifiers: u32, // A key: the `MODIFIER_` bits.
-	x, y:      int, // The pointer: its place in the surface, in pixels; it can be outside the surface.
+	x, y:      int, // The pointer: its place in the surface, in logical pixels; it can be outside the surface.
 	buttons:   u32, // The pointer: the `BUTTON_` bits.
 	wheel:     int, // The pointer: the notches that the wheel turned since the event before, signed (WHEEL_TOWARD_THE_END).
 	act:       u64, // Go_To: the act_name_hash of the act name.
-	width, height: int, // Resized: the size that the principal asks for the surface, 1 to SURFACE_LIMIT.
+	width, height: int, // Resized: the size that the principal asks for the window, in logical pixels, 1 to SURFACE_LIMIT.
 	paste_handle:   system.Handle, // Pasted: the lent handle of the content.
 	clipboard_kind: Clipboard_Kind, // Pasted: the kind of the content, never None.
 	byte_count:     int, // Pasted: the bytes of the content, 1 to CLIPBOARD_TEXT_LIMIT.
 	clipboard_serial: u64, // Copy_Asked and Pasted: the serial of the key, never 0; the answer names it.
 	key_serial: u64, // A key: the serial that the compositor gave it, or 0. A process that shows the key names it (key_shown).
+	scale: scale_factor.Scale, // Settings_Changed: the scale of the compositor.
+	surface_answer: Surface_Answer_Kind, // Surface_Answer: the answer.
+	surface_serial: u64, // Surface_Answer: the serial that it names.
 }
 
 // One window of a process: its ring to the compositor and its surface.
@@ -489,9 +518,14 @@ Event :: struct {
 Window :: struct {
 	ring_memory: system.Handle, // The memory of the ring to the compositor.
 	ring:        ring.Ring, // The ring, mapped.
-	surface:     system.Handle, // The memory of the pixels of the surface.
-	canvas:      graphics.Canvas, // Where the process draws now.
-	pictures:    [2]graphics.Canvas, // The two pictures of the surface.
+	surface:     system.Handle, // The memory of the pixels of the surface; 0 while the rescale let it go.
+	width, height: int, // The size of the window, in logical pixels: its layout.
+	rescale:     Rescale_Machine, // The scale and the serial of the surface, and the phase of a change of the scale (scale.odin).
+	rescale_due: Rescale_Action, // A record of the rescale that the full command ring did not take yet.
+	before_resize: Kept_Surface, // The surface before a resize, kept until the answer of the compositor (scale.odin).
+	presented_serial: u64, // The surface serial of the last Present: 0 before the first one (picture_owed).
+	canvas:      graphics.Canvas, // Where the drawing module draws now, in pixels of the screen. A process that draws by hand draws in a logical picture of its own (interface.Hand_Picture).
+	pictures:    [2]graphics.Canvas, // The two pictures of the surface, in pixels of the screen.
 	picture:     int, // The index of canvas in pictures.
 	presented:   u32, // The count of commands after the last Present.
 	wake_when_free: bool, // canvas_free said no: wait_events also ends when the compositor has read the ring.
@@ -542,9 +576,11 @@ picture_end :: proc "contextless" (window: ^Window) {
 	window.picture_started = 0
 }
 
-// open creates a surface of two pictures and shows it. The process draws in
-// window.canvas, then calls present, which changes window.canvas to the
-// other picture. The compositor shows the surface after the first present.
+// open creates a surface of two pictures and shows it. width and height are
+// logical pixels, from 1 to SURFACE_LIMIT: the surface has their pixels of
+// the screen at the scale in force (scale.odin). The drawing module draws
+// in window.canvas, then present changes window.canvas to the other
+// picture. The compositor shows the surface after the first present.
 //
 // error: the record of a failure, if the caller gives one. The record of a
 // kernel operation that failed has its operation; a record of open itself
@@ -571,8 +607,14 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	if window.ring, status = system.ring_open(window.ring_memory, error); status != .Ok {
 		return {}, false
 	}
+	// The size is logical; the surface is in pixels of the screen, at the
+	// scale in force (scale.odin).
+	window.width, window.height = width, height
+	scale := scale_in_force()
+	window.rescale = {phase = .Steady, scale = scale, wanted = scale, serial = 1}
+	screen_width, screen_height := surface_size_of(width, height, scale)
 	address: rawptr
-	pages := (u64(width * height * size_of(graphics.Color) * PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	pages := (u64(screen_width * screen_height * size_of(graphics.Color) * PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	window.surface, status = system.memory_create(pages, error = error)
 	if status != .Ok {
 		return {}, false
@@ -583,7 +625,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	}
 	window.title_count = copy(window.title[:], title)
 	for &picture, index in window.pictures {
-		picture = {pixels = ([^]graphics.Color)(address)[index * width * height:], width = width, height = height, stride = width}
+		picture = {pixels = ([^]graphics.Color)(address)[index * screen_width * screen_height:], width = screen_width, height = screen_height, stride = screen_width}
 	}
 	window.canvas = window.pictures[0]
 
@@ -601,9 +643,12 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 		return {}, false
 	}
 	name := system.name_pack(title)
+	// The logical size and the scale: the compositor computes the pixels of
+	// the screen with the rule of each edge, and names its own scale to a
+	// window whose scale is another.
 	command := ring.Record {
 		kind = u32(Command.Surface_Create),
-		values = {u64(granted), u64(width), u64(height), name[0], name[1], name[2], name[3]},
+		values = {u64(granted) | u64(scale) << SURFACE_CREATE_SCALE_SHIFT, u64(width), u64(height), name[0], name[1], name[2], name[3]},
 	}
 	system.send(&window.ring.commands, command)
 	return window, true
@@ -640,6 +685,11 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 	if window.resize_asked && !resize_decline(window) {
 		return false
 	}
+	// While the rescale let the surface go, the compositor holds no
+	// surface that a Present could name (scale.odin).
+	if !rescale_draws(&window.rescale) {
+		return false
+	}
 	picture_end(window)
 	// A picture ends a frame of the text of the process: a process that
 	// draws its text by hand with src/library/support/graphics calls no
@@ -647,11 +697,14 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 	// gets its glyph memory here, after its first glyph. Without it, each
 	// glyph of each frame would be drawn band by band.
 	text_frame_begin()
-	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0)), PRESENT_KEY_SERIAL = window.key_shown_serial}}
+	// The serial names the surface of the pictures: the compositor shows
+	// no picture of a surface that it does not hold.
+	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0)), PRESENT_KEY_SERIAL = window.key_shown_serial, PRESENT_SURFACE_SERIAL = window.rescale.serial}}
 	if !system.send(&window.ring.commands, record) {
 		return false
 	}
 	window.presented = window.ring.commands.counters.write
+	window.presented_serial = window.rescale.serial
 	window.picture = 1 - window.picture
 	window.canvas = window.pictures[window.picture]
 	// The compositor ends the due picture at the Present.
@@ -660,7 +713,7 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 	// test waits for this line before a picture of the new size.
 	if window.resized_picture_due {
 		window.resized_picture_due = false
-		system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.canvas.width), "x", u64(window.canvas.height), " after a resize")
+		system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.width), "x", u64(window.height), " after a resize")
 	}
 	return true
 }
@@ -686,10 +739,12 @@ key_shown :: proc "contextless" (window: ^Window, serial: u64) {
 // the window stays as it was, and the caller tries again later.
 resizable_set :: proc "contextless" (window: ^Window, limits: Size_Limits) -> (problem: Size_Limits_Problem, sent: bool) {
 	words := [4]u64{u64(max(limits.least_width, 0)), u64(max(limits.least_height, 0)), u64(max(limits.largest_width, 0)), u64(max(limits.largest_height, 0))}
-	checked, refused := size_limits_of_words(words, window.pictures[0].width, window.pictures[0].height)
+	checked, refused := size_limits_of_words(words, window.width, window.height)
 	if refused != .None {
 		return refused, false
 	}
+	// Logical pixels, which mean the same at each scale: the unit of the
+	// drag of the compositor.
 	record := ring.Record{kind = u32(Command.Resizable), values = {0 = words[0], 1 = words[1], 2 = words[2], 3 = words[3]}}
 	if !system.send(&window.ring.commands, record) {
 		return .None, false
@@ -726,6 +781,12 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 	case !window.resizable:
 		errors.fail(error, 0, .State, .None, 1)
 		return .Bad_Operation
+	case window.rescale.phase != .Steady:
+		// A change of the scale goes on: the compositor holds no surface of
+		// this window, or a pending one; the request waits for no answer.
+		errors.fail(error, 0, .State, .None, 1)
+		_ = resize_decline(window)
+		return .Bad_Operation
 	case !window.resize_asked || width != window.resize_asked_width || height != window.resize_asked_height:
 		errors.fail(error, 0, .State, .None, 2, i64(width), i64(window.resize_asked_width), i64(height))
 		return .Bad_Operation
@@ -739,39 +800,27 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 		errors.fail(error, 0, .Full, .None, 0)
 		return .No_Slot
 	}
-	pages := (u64(width * height * size_of(graphics.Color) * PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-	memory, status := system.memory_create(pages, error = error)
-	address: rawptr
-	if status == .Ok {
-		address, status = system.memory_map(memory, error = error)
-		if status != .Ok {
-			system.close(memory)
-		}
-	}
-	granted: system.Handle
-	if status == .Ok {
-		granted, status = system.give(window.ring_memory, memory, {.Read}, error)
-		if status != .Ok {
-			system.memory_unmap(address)
-			system.close(memory)
-		}
-	}
+	// The new surface keeps the scale of the window, which is the scale of
+	// the compositor in the phase Steady; it has the next serial.
+	screen_width, screen_height := surface_size_of(width, height, window.rescale.scale)
+	memory, address, granted, status := surface_make(window, screen_width, screen_height)
 	if status != .Ok {
-		system.log(.Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height))
+		errors.fail(error, 0, status == .No_Budget ? errors.Kind.Budget : errors.Kind.Refused, .None, 2, i64(screen_width), i64(screen_height))
+		system.log(.Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.width), "x", u64(window.height))
 		// A full ring keeps the request: the next present declines it.
-		resize_decline(window)
+		_ = resize_decline(window)
 		return status
 	}
-	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Resize), values = {0 = u64(granted), 1 = u64(width), 2 = u64(height)}})
+	// The machine takes the next serial and waits for the answer. The
+	// surface before it stays mapped until then: a refusal draws it again,
+	// as the compositor still shows it.
+	_, _ = rescale_step(&window.rescale, {kind = .Resize_Offered})
+	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Resize), values = {0 = u64(granted), 1 = u64(screen_width), 2 = u64(screen_height), 3 = window.rescale.serial}})
 	window.resize_asked = false
-	system.memory_unmap(rawptr(window.pictures[0].pixels))
-	system.close(window.surface)
-	window.surface = memory
-	for &picture, index in window.pictures {
-		picture = {pixels = ([^]graphics.Color)(address)[index * width * height:], width = width, height = height, stride = width}
-	}
-	window.picture = 0
-	window.canvas = window.pictures[0]
+	window.before_resize = {memory = window.surface, pictures = window.pictures, width = window.width, height = window.height}
+	window.surface = 0 // surface_take lets go of no surface: the kept one stays mapped.
+	surface_take(window, memory, address, screen_width, screen_height)
+	window.width, window.height = width, height
 	window.resized_picture_due = true
 	return .Ok
 }
@@ -785,7 +834,7 @@ resize_decline :: proc "contextless" (window: ^Window) -> bool {
 		return false
 	}
 	window.resize_asked = false
-	system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.pictures[0].width), "x", u64(window.pictures[0].height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
+	system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.width), "x", u64(window.height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
 	return true
 }
 
@@ -822,6 +871,11 @@ pointer_shape_set :: proc "contextless" (window: ^Window, shape: pointer_picture
 // before it builds a frame. After a no, wait_events also ends when the
 // compositor has read the ring of the window: the process asks again.
 canvas_free :: proc "contextless" (window: ^Window) -> bool {
+	// While the rescale let the surface go, nothing is drawn: the answer of
+	// the compositor is an event, which ends the wait of the process.
+	if !rescale_draws(&window.rescale) {
+		return false
+	}
 	free := compositor_took_the_last_present(window)
 	window.wake_when_free = !free
 	if free {
@@ -857,6 +911,9 @@ CANVAS_WAIT_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
 // cleared after the wait, so a second thread that waits on the same window
 // would lose its wake.
 canvas_wait :: proc "contextless" (window: ^Window) -> bool {
+	if !rescale_draws(&window.rescale) {
+		return false
+	}
 	if canvas_free(window) {
 		return true
 	}
@@ -944,6 +1001,8 @@ key_character_of :: proc "contextless" (value: u64) -> rune {
 // record that event_of_record refuses is not an event: it costs one line of
 // the log, and the next record is read.
 next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
+	// A record of the rescale that a full ring did not take goes first.
+	rescale_due_run(window)
 	for {
 		record := system.receive(&window.ring.completions) or_return
 		read, read_ok := event_of_record(record)
@@ -951,8 +1010,28 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 			system.log(.Warning, "display: ", string(window.title[:window.title_count]), ": the compositor sent a record of the kind ", u64(record.kind), ", which names no event or has a size out of its range: it is refused")
 			continue
 		}
+		// The rescale takes the scale that the compositor names, and its
+		// answers (scale.odin): the window never reads the scale of the
+		// page for it.
 		if read.kind == .Settings_Changed {
 			_ = text_settings_apply()
+			rescale_take(window, {kind = .Scale_Named, scale = read.scale})
+		}
+		if read.kind == .Surface_Answer {
+			kind: Rescale_Input_Kind
+			switch read.surface_answer {
+			case .Released:
+				kind = .Released
+			case .Rescale_Taken:
+				kind = .Taken
+			case .Rescale_Refused:
+				kind = .Refused
+			case .Resize_Taken:
+				kind = .Resize_Taken
+			case .Resize_Refused:
+				kind = .Resize_Refused
+			}
+			rescale_take(window, {kind = kind, serial = read.surface_serial})
 		}
 		if read.kind == .Resized {
 			window.resize_asked = true
@@ -1013,6 +1092,19 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 		// so that a sum of them stays far inside an int.
 		event.wheel = int(clamp(i64(record.values[key_path.POINTER_RECORD_WHEEL]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
 	case .Settings_Changed:
+		// The scale of the compositor: a scale up to the window bound,
+		// never a word that a window would rescale to.
+		scale, problem := scale_factor.scale_of_word(record.values[1])
+		if problem != .None {
+			return {}, false
+		}
+		event.scale = scale
+	case .Surface_Answer:
+		answer, answer_ok := surface_answer_of_word(record.values[0])
+		if !answer_ok || record.values[1] == 0 {
+			return {}, false
+		}
+		event.surface_answer, event.surface_serial = answer, record.values[1]
 	case .Go_To:
 		event.act = record.values[0]
 	case .Resized:

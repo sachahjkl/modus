@@ -62,8 +62,11 @@ import "modus:support/tcp"
 
 // Its table of connections with their buffers (CAPACITY): 3490 pages. And
 // the glyph memory of its own copy of the text rendering, which draws its
-// text by hand: 354 pages (display.TEXT_MEMORY_PAGES). 3490 + 354 = 3844.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3844, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// text by hand: 354 pages (display.TEXT_MEMORY_PAGES). And the picture of
+// its window, which it draws by hand at its logical size: 976 x 680 pixels
+// of 4 bytes, 649 pages (interface.hand_picture_pages). 3490 + 354 + 649 =
+// 4493.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4493, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 CAPACITY :: 48 // Connections at one time, with the ones in TIME-WAIT.
 REMOTE_LIMIT :: 24 // The open connections of one remote address: half the table (tcp.Table.remote_limit).
@@ -471,7 +474,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	date_page = date.page_of(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "server")
-	if !ok {
+	if !ok || !picture_open(&window) {
 		system.stop(.Failed)
 	}
 	start_time = system.time()

@@ -11,8 +11,8 @@
 // [interface package](term:interface-package) keeps, in the process, what a
 // process calls many times for each frame: the elements, the layout, the
 // input. The [drawing module](term:drawing-module) takes what a process
-// calls a few times for each frame: `damage_of_draw_table_18` one time, then
-// `execute_draw_table_in_rectangles_18` one time for all the damage
+// calls a few times for each frame: `damage_of_draw_table_19` one time, then
+// `execute_draw_table_in_rectangles_19` one time for all the damage
 // rectangles of the frame.
 //
 // **No copy.** Each parameter is memory of the caller, and a direct call
@@ -41,7 +41,7 @@
 // the text that each export already takes. The terminal draws its grid
 // through the module (src/md/api/text_grid.md).
 //
-// **The version in the names.** The 18 in the name of each export is the
+// **The version in the names.** The 19 in the name of each export is the
 // version of the [draw record](term:draw-record). A draw record of another
 // version has exports with other names, so a module that reads the records
 // in another way cannot take the place of this one.
@@ -49,14 +49,16 @@ package drawing
 
 import "base:intrinsics"
 import "modus:contract/draw_record"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
+import "modus:contract/scale_factor"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
 
 // The names of the exports say which draw record they read.
-#assert(interface.DRAW_RECORD_VERSION == 18)
+#assert(interface.DRAW_RECORD_VERSION == 19)
 
 // A rectangle of the surface, in pixels: right and bottom are not in it.
 Damage_Rectangle :: struct {
@@ -75,6 +77,29 @@ Canvas_Shape :: struct {
 	stride:          i64, // Pixels from one line to the next: at least `width`.
 	fill_background: i64, // Not 0: each rectangle is painted with `background` first, so a record that the frame no longer has leaves no pixel.
 	background:      i64, // The color of that fill, 0x00RRGGBB.
+	// The scale of the records: a count of eighths of scale_factor.Scale
+	// (10 to 16), at which each place of a record goes to the pixels of the
+	// canvas; or 0, for records in pixels of the canvas. The canvas and the
+	// rectangles are always pixels of the canvas.
+	scale:           i64,
+}
+
+// canvas_scale_of_word is the one border of the scale word of a canvas: no
+// scale for 0, the member for a count from 10 to 16, and ok false for each
+// other word. The window bound of the setting is no rule of the drawing:
+// the module draws at each scale of the range.
+canvas_scale_of_word :: proc "contextless" (word: i64) -> (scale: Maybe(scale_factor.Scale), ok: bool) {
+	if word == 0 {
+		return nil, true
+	}
+	if word < 0 {
+		return nil, false
+	}
+	member, member_ok := enum_word.member_of_word(scale_factor.Scale, u64(word))
+	if !member_ok {
+		return nil, false
+	}
+	return member, true
 }
 
 // The most rectangles of one draw: the most that the damage of a frame
@@ -115,7 +140,7 @@ ARGUMENT_RECTANGLES :: 6
 // the loader gives each process its own copy.
 //
 // The rule of the callers: one thread of a process at a time calls
-// execute_draw_table_in_rectangles_18. It is the rule of the text state of
+// execute_draw_table_in_rectangles_19. It is the rule of the text state of
 // the graphics package, which changes "between two frames" (src/library/support/graphics,
 // text.odin), and each window of the system has one loop that draws. The
 // module takes no lock for it and waits for no other thread: the load
@@ -129,7 +154,7 @@ ARGUMENT_RECTANGLES :: 6
 // draws into the private glyph cache at once can break its lists and
 // fault. All of it is inside the process that broke the rule: the module
 // runs in its address space, with its own copy of this data.
-// damage_of_draw_table_18 reads no text state: any thread can call it.
+// damage_of_draw_table_19 reads no text state: any thread can call it.
 @(private)
 Process_Text :: struct {
 	loaded:               bool, // The text settings and the interface font were looked for.
@@ -202,9 +227,9 @@ draw_table_of :: proc "contextless" (records: ^system.Table_To_Read(draw_record.
 	return {records = records.records[:record_count], record_count = int(record_count), text = text.bytes[:text_count], text_count = int(text_count)}, true
 }
 
-// damage_of_draw_table_18 gives the rectangles of the surface that differ between the draw table before and the draw table now. The result is a Table of at most 8 rectangles, which no two of them touch. A record that the border of the draw record refuses differs from each record of other bytes, and a text record or a Path record that names bytes past its text table differs from each record: the box of each is damaged. A Path record compares the bytes of its points, wherever they are in its text table, as a text compares its bytes. A Picture record differs when its generation, its format, its picture memory, its first pixel or its stride differs: the module reads no pixel of a picture. A Text_Grid record of the same place and size in the two tables damages, in each row, the span from the first changed cell to the last one; its cells are in its text table, and a grid whose cells its text table does not hold is damaged whole. Nothing is copied in a direct call: the two tables are read where the caller has them, and the rectangles are written into the buffer of the caller. It fails with -1 and the error record Too_Long, with the argument, for a table over 2^40 records or bytes.
-@(export, link_name = "damage_of_draw_table_18")
-damage_of_draw_table_18 :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 {
+// damage_of_draw_table_19 gives the rectangles of the surface that differ between the draw table before and the draw table now. The result is a Table of at most 8 rectangles, which no two of them touch. A record that the border of the draw record refuses differs from each record of other bytes, and a text record or a Path record that names bytes past its text table differs from each record: the box of each is damaged. A Path record compares the bytes of its points, wherever they are in its text table, as a text compares its bytes. A Picture record differs when its generation, its format, its picture memory, its first pixel or its stride differs: the module reads no pixel of a picture. A Text_Grid record of the same place and size in the two tables damages, in each row, the span from the first changed cell to the last one; its cells are in its text table, and a grid whose cells its text table does not hold is damaged whole. Nothing is copied in a direct call: the two tables are read where the caller has them, and the rectangles are written into the buffer of the caller. It fails with -1 and the error record Too_Long, with the argument, for a table over 2^40 records or bytes.
+@(export, link_name = "damage_of_draw_table_19")
+damage_of_draw_table_19 :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 {
 	before_table, before_ok := draw_table_of(before, before_text, ARGUMENT_BEFORE, ARGUMENT_BEFORE_TEXT, error)
 	if !before_ok {
 		return -1
@@ -224,9 +249,9 @@ damage_of_draw_table_18 :: proc "c" (before: ^system.Table_To_Read(draw_record.D
 	return i64(damage.count)
 }
 
-// execute_draw_table_in_rectangles_18 draws the records of a draw table into the pixels of a canvas, in each rectangle of `rectangles`, in their order, each cut to its rectangle: the pixels are those of one draw for each rectangle, also where two rectangles overlap. With `fill_background` of the canvas not 0, each rectangle is painted with the color `background` before its records. A table of no rectangle draws nothing. The pixels are memory of the caller, written in place: no copy in a direct call. The text is drawn in the font that the settings of the process choose: each glyph from the fallback chain of its font, drawn from the font outlines that the starter of the process mapped into the private glyph cache of the process, or the replacement glyph when no font of the chain has it; with no outlines the text is Spleen 8x16. Each color of a record is 0xAARRGGBB with straight alpha, and blends over the pixels by one rule in linear light; an opaque color writes its pixels. The alpha of a text scales the cover of each pixel of its ink. A text is drawn at the text size of its record, from 4 to 256 pixels: the line of the size, and in the font of the cells a cell of half the size, a half up. A Rectangle with no pattern and a Gradient can have a box inside the pixels: the part of an edge pixel inside the box scales its alpha. A Gradient mixes its two colors at the level of the center of each pixel on the line of its two points, in steps of 1/255. A Picture record of picture memory 0 takes its pixels from `picture_memory`, from its first pixel, a line each stride pixels: the format Opaque copies each pixel, and the format Straight_Alpha blends each pixel, 0xAARRGGBB, by the rule of the colors. A Text_Grid record draws its cells from `now_text`, from its first byte, a row each `columns` cells, each cell half its text size wide, a half up, and two widths high. A Path record reads its points from `now_text`, 12 bytes each, from its first byte: it fills its subpaths by the nonzero rule, then strokes them with butt ends and bevel joins, each pixel by the exact part of it that the shape covers, and cuts each quadratic curve into at most 16 segments. A record that the border of the draw record refuses (a word that names no kind, a reserved byte that is not 0, a box that is inverted, past the coordinate limit or not on whole pixels in a kind that draws on whole pixels, a color of alpha 0 that is not 0, two ends of a gradient of alpha 0 that are not both 0, two points of a gradient that are equal or too far apart, a path of fewer than 2 or more than 1024 points, a stroke of no width, wider than 64 pixels or with no color, a format of a picture that names no member, a text size under 4 or over 256 pixels, a field past its bound, a Clip_Pop whose box is not 0) draws nothing. A Clip_Push cuts the records after it to its box and to each clip open before it, until its Clip_Pop; a refused Clip_Push is an empty clip, and at most 16 clips are open. A text record that names bytes past its text table, a Picture record of another picture memory or with a pixel past `picture_memory`, a Text_Grid record with no column, with bytes that are not a whole count of rows, past its text table or at an address that is not a multiple of 4, and a Path record whose points are past its text table, at an address that is not a multiple of 4, or that the border of the points refuses (a command that names none, a first point that is not a Move, a subpath with no segment, a curve with no end, a Close out of its place, a point past the coordinate limit), draw nothing. The result is 0. It fails with -1 and an error record, and draws nothing: Bad_Value of `canvas` for a width or a height below 1 or a stride below the width, Too_Small of `pixels` for bytes that do not hold `stride` times `height` pixels, Bad_Address of `pixels` or of `picture_memory` for an address that is not a multiple of 4, Too_Long of `rectangles` for more than 8 rectangles, Too_Long for a table over 2^40 records or bytes, Bad_Value of `now` with the unit Records for clips out of order: the value is the problem (1 a Clip_Pop with no Clip_Push open, 2 a Clip_Push past 16 open, 3 a Clip_Push that no Clip_Pop ends), and found the number from 1 of the record.
-@(export, link_name = "execute_draw_table_in_rectangles_18")
-execute_draw_table_in_rectangles_18 :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Canvas_Shape, rectangles: ^system.Table_To_Read(Damage_Rectangle), error: ^errors.Error_Record) -> i64 {
+// execute_draw_table_in_rectangles_19 draws the records of a draw table into the pixels of a canvas, in each rectangle of `rectangles`, in their order, each cut to its rectangle: the pixels are those of one draw for each rectangle, also where two rectangles overlap. With `fill_background` of the canvas not 0, each rectangle is painted with the color `background` before its records. A table of no rectangle draws nothing. With `scale` of the canvas a count of eighths from 10 to 16, the records are in logical pixels and the canvas and the rectangles in pixels of the screen: each edge of a box goes to the nearest pixel, a half up, each point and each origin to the nearest 1/64 pixel, each text is drawn at its size times the scale, and each pixel of a picture covers the pixels of the screen of its logical pixel; with 0 the records are in pixels of the canvas. The pixels are memory of the caller, written in place: no copy in a direct call. The text is drawn in the font that the settings of the process choose: each glyph from the fallback chain of its font, drawn from the font outlines that the starter of the process mapped into the private glyph cache of the process, or the replacement glyph when no font of the chain has it; with no outlines the text is Spleen 8x16. Each color of a record is 0xAARRGGBB with straight alpha, and blends over the pixels by one rule in linear light; an opaque color writes its pixels. The alpha of a text scales the cover of each pixel of its ink. A text is drawn at the text size of its record, from 4 to 128 logical pixels, times the scale: the line of the size, and in the font of the cells a cell of half the size, a half up. A Rectangle with no pattern and a Gradient can have a box inside the pixels: the part of an edge pixel inside the box scales its alpha. A Gradient mixes its two colors at the level of the center of each pixel on the line of its two points, in steps of 1/255. A Picture record of picture memory 0 takes its pixels from `picture_memory`, from its first pixel, a line each stride pixels: the format Opaque copies each pixel, and the format Straight_Alpha blends each pixel, 0xAARRGGBB, by the rule of the colors. A Text_Grid record draws its cells from `now_text`, from its first byte, a row each `columns` cells, each cell half its text size wide, a half up, and two widths high. A Path record reads its points from `now_text`, 12 bytes each, from its first byte: it fills its subpaths by the nonzero rule, then strokes them with butt ends and bevel joins, each pixel by the exact part of it that the shape covers, and cuts each quadratic curve into at most 16 segments. A record that the border of the draw record refuses (a word that names no kind, a reserved byte that is not 0, a box that is inverted, past the coordinate limit or not on whole pixels in a kind that draws on whole pixels, a color of alpha 0 that is not 0, two ends of a gradient of alpha 0 that are not both 0, two points of a gradient that are equal or too far apart, a path of fewer than 2 or more than 1024 points, a stroke of no width, wider than 64 pixels or with no color, a format of a picture that names no member, a text size under 4 or over 128 logical pixels, a field past its bound, a Clip_Pop whose box is not 0) draws nothing. A Clip_Push cuts the records after it to its box and to each clip open before it, until its Clip_Pop; a refused Clip_Push is an empty clip, and at most 16 clips are open. A text record that names bytes past its text table, a Picture record of another picture memory or with a pixel past `picture_memory`, a Text_Grid record with no column, with bytes that are not a whole count of rows, past its text table or at an address that is not a multiple of 4, and a Path record whose points are past its text table, at an address that is not a multiple of 4, or that the border of the points refuses (a command that names none, a first point that is not a Move, a subpath with no segment, a curve with no end, a Close out of its place, a point past the coordinate limit), draw nothing. The result is 0. It fails with -1 and an error record, and draws nothing: Bad_Value of `canvas` for a width or a height below 1 or a stride below the width, Too_Small of `pixels` for bytes that do not hold `stride` times `height` pixels, Bad_Address of `pixels` or of `picture_memory` for an address that is not a multiple of 4, Too_Long of `rectangles` for more than 8 rectangles, Too_Long for a table over 2^40 records or bytes, Bad_Value of `now` with the unit Records for clips out of order: the value is the problem (1 a Clip_Pop with no Clip_Push open, 2 a Clip_Push past 16 open, 3 a Clip_Push that no Clip_Pop ends), and found the number from 1 of the record.
+@(export, link_name = "execute_draw_table_in_rectangles_19")
+execute_draw_table_in_rectangles_19 :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Canvas_Shape, rectangles: ^system.Table_To_Read(Damage_Rectangle), error: ^errors.Error_Record) -> i64 {
 	// One copy of the shape, of each count and of the rectangles: the
 	// caller can change them during the call, and a value that is checked
 	// is the value that is used.
@@ -239,6 +264,10 @@ execute_draw_table_in_rectangles_18 :: proc "c" (now: ^system.Table_To_Read(draw
 	rectangle_address := intrinsics.volatile_load(&rectangles.records)
 	if canvas_shape.width <= 0 || canvas_shape.height <= 0 || canvas_shape.stride < canvas_shape.width {
 		return errors.fail(error, -1, .Bad_Value, .None, ARGUMENT_CANVAS, canvas_shape.width <= 0 ? canvas_shape.width : canvas_shape.height <= 0 ? canvas_shape.height : canvas_shape.stride)
+	}
+	scale, scale_ok := canvas_scale_of_word(canvas_shape.scale)
+	if !scale_ok {
+		return errors.fail(error, -1, .Bad_Value, .None, ARGUMENT_CANVAS, canvas_shape.scale)
 	}
 	// No product wraps, also for a stride near 2^62 that a hostile caller
 	// gives: the stride is compared with the pixels of one line that the
@@ -280,6 +309,7 @@ execute_draw_table_in_rectangles_18 :: proc "c" (now: ^system.Table_To_Read(draw
 	// record, so one place holds the rule.
 	picture_memories := [1][]graphics.Color{([^]graphics.Color)(picture_address)[:picture_bytes / size_of(graphics.Color)]}
 	table.picture_memories = picture_memories[:]
+	table.scale = scale
 	process_text_load()
 	// One frame of the order of use of the private glyph cache for each
 	// glyph of this draw.

@@ -2,6 +2,7 @@ package interface
 
 import "modus:contract/draw_record"
 import "modus:contract/errors"
+import "modus:contract/scale_factor"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/system"
@@ -163,6 +164,7 @@ Module_Canvas_Shape :: struct {
 	stride:          i64, // Pixels from one line to the next.
 	fill_background: i64, // Not 0: each rectangle is painted with `background` first.
 	background:      i64, // The color of that fill.
+	scale:           i64, // The word of the scale of the records: a count of eighths of scale_factor.Scale, or 0 for records in pixels of the canvas.
 }
 
 when DRAWING_THROUGH_MODULE {
@@ -170,14 +172,14 @@ when DRAWING_THROUGH_MODULE {
 	// module with another version has other names, so the loader refuses
 	// it in place of a draw of records that it reads wrong. A new version
 	// stops the build here, until the names follow.
-	#assert(DRAW_RECORD_VERSION == 18)
+	#assert(DRAW_RECORD_VERSION == 19)
 
 	// The declarations name the record of the contract: the check of the
 	// declarations of an import reads the layout of a struct by its name.
 	foreign _ {
-		@(link_name = "damage_of_draw_table_18")
+		@(link_name = "damage_of_draw_table_19")
 		module_damage_of_draw_table :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Module_Rectangle, error: ^errors.Error_Record) -> i64 ---
-		@(link_name = "execute_draw_table_in_rectangles_18")
+		@(link_name = "execute_draw_table_in_rectangles_19")
 		module_execute_draw_table_in_rectangles :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Module_Canvas_Shape, rectangles: ^system.Table_To_Read(Module_Rectangle), error: ^errors.Error_Record) -> i64 ---
 	}
 
@@ -236,7 +238,11 @@ when DRAWING_THROUGH_MODULE {
 		if fill_background {
 			fill = 1
 		}
-		shape := Module_Canvas_Shape{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = fill, background = i64(background)}
+		scale_word := i64(0)
+		if scale, scaled := table.scale.?; scaled {
+			scale_word = i64(scale)
+		}
+		shape := Module_Canvas_Shape{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = fill, background = i64(background), scale = scale_word}
 		// A Rectangle and a Module_Rectangle have one layout: the module
 		// reads the rectangles of the caller where they are.
 		places := system.Table_To_Read(Module_Rectangle){records = ([^]Module_Rectangle)(raw_data(rectangles)), count = u64(len(rectangles)), capacity = u64(len(rectangles))}
@@ -251,7 +257,7 @@ when DRAWING_THROUGH_MODULE {
 	frame_difference :: proc "contextless" (drawing: ^Window_Drawing, before, now: ^Draw_Table, damage: ^Damage) -> bool {
 		drawing.module_calls += 1
 		if !difference_through_module(before, now, damage, &drawing.module_error) {
-			module_refusal_log(drawing, "damage_of_draw_table_18")
+			module_refusal_log(drawing, "damage_of_draw_table_19")
 			return false
 		}
 		return true
@@ -268,7 +274,7 @@ when DRAWING_THROUGH_MODULE {
 	frame_draw :: proc "contextless" (drawing: ^Window_Drawing, now: ^Draw_Table, canvas: graphics.Canvas, rectangles: []Rectangle) -> bool {
 		if len(now.picture_memories) > 1 {
 			drawing.module_error = errors.error_make(.Unsupported, .None, 1, i64(len(now.picture_memories)))
-			module_refusal_log(drawing, "execute_draw_table_in_rectangles_18")
+			module_refusal_log(drawing, "execute_draw_table_in_rectangles_19")
 			return false
 		}
 		picture_memory: []graphics.Color
@@ -277,7 +283,7 @@ when DRAWING_THROUGH_MODULE {
 		}
 		drawing.module_calls += 1
 		if !draw_part_through_module(now, 0, now.record_count, picture_memory, canvas, rectangles, true, graphics.colors.background, &drawing.module_error) {
-			module_refusal_log(drawing, "execute_draw_table_in_rectangles_18")
+			module_refusal_log(drawing, "execute_draw_table_in_rectangles_19")
 			return false
 		}
 		return true
@@ -309,7 +315,7 @@ when DRAWING_THROUGH_MODULE {
 		case .Too_Long:
 			cause = "a table has more records or bytes than the module takes"
 		case .Bad_Value:
-			cause = "the shape of the canvas has a width, a height or a stride that the module refuses"
+			cause = "the shape of the canvas has a width, a height, a stride or a scale that the module refuses"
 			// The one other Bad_Value of the module: the order of the clips.
 			// Its words end with the bound of the clips open, written from
 			// the contract below.
@@ -401,6 +407,11 @@ window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.
 		if event.kind == .Settings_Changed {
 			draw_whole_window_next(drawing)
 		}
+		// An answer of the rescale: the window may draw a new surface, of
+		// which no picture is known (display, scale.odin).
+		if event.kind == .Surface_Answer {
+			draw_whole_window_next(drawing)
+		}
 		if event.kind == .Go_To {
 			act_go_to(drawing, window, event.act)
 		}
@@ -484,6 +495,13 @@ window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^dis
 	// The elements of a window draw their names and titles in the
 	// interface font of the process, when its starter gave it one.
 	drawing.now.interface_font = display.interface_font_of()
+	// The records are in logical pixels; the drawing module draws them at
+	// the scale of the surface of the window. A drawing with no window
+	// (a host test) draws in the pixels of its canvas.
+	drawing.now.scale = nil
+	if window != nil {
+		drawing.now.scale = window.rescale.scale
+	}
 	return frame_begin(&drawing.now, &drawing.state, &drawing.input, system.time())
 }
 
@@ -560,7 +578,9 @@ Frame_Changes :: struct {
 // (drawing.damage) and what it presents. Call it after a yes of
 // window_frame_gate.
 window_frame_changes :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) -> (changes: Frame_Changes) {
-	surface := Rectangle{0, 0, window.canvas.width, window.canvas.height}
+	// The damage and the debts of the pictures are in logical pixels, as
+	// the records; they go to the screen once, where the frame is drawn.
+	surface := Rectangle{0, 0, window.width, window.height}
 	changes.picture = window.picture
 	// The difference from the last table to this frame. With no last
 	// table, with a table that was full, or with a difference that the
@@ -585,17 +605,21 @@ window_frame_changes :: proc "contextless" (drawing: ^Window_Drawing, window: ^d
 // found, then keeps the frame as the last table. It gives the count of the
 // rectangles that it drew.
 window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, changes: ^Frame_Changes) -> int {
-	surface := Rectangle{0, 0, window.canvas.width, window.canvas.height}
+	surface := Rectangle{0, 0, window.width, window.height}
 	// sent: the compositor has the present. When the command ring is full,
 	// the present is lost, and the picture that was drawn is not the last
 	// table: its next frame is whole. A draw that the drawing module
 	// refused presents nothing, and does the same.
 	sent := true
 	if changes.present.count > 0 {
-		sent = drawing.damage.count == 0 || frame_draw(drawing, &drawing.now, window.canvas, drawing.damage.rectangles[:drawing.damage.count])
+		// The rectangles of the screen that hold the logical damage.
+		screen_damage := drawing.damage
+		damage_at_scale(&screen_damage, window.rescale.scale)
+		sent = screen_damage.count == 0 || frame_draw(drawing, &drawing.now, window.canvas, screen_damage.rectangles[:screen_damage.count])
 		if sent {
 			bounds := intersection(damage_bounds(&changes.present), surface)
-			sent = display.present_rectangle(window, bounds.left, bounds.top, max(bounds.right - bounds.left, 0), max(bounds.bottom - bounds.top, 0))
+			screen := scale_factor.screen_rectangle_of_logical_rectangle(i32(bounds.left), i32(bounds.top), i32(max(bounds.right, bounds.left)), i32(max(bounds.bottom, bounds.top)), window.rescale.scale)
+			sent = display.present_rectangle(window, int(screen.left), int(screen.top), int(screen.right - screen.left), int(screen.bottom - screen.top))
 		} else {
 			display.picture_end(window)
 			display.picture_due_set(window, false)
@@ -619,17 +643,16 @@ window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^disp
 	return drawing.damage.count
 }
 
-// window_frame_end_without_present ends the frame of a process that draws
-// over it by hand: it draws the frame whole in window.canvas and presents
-// nothing. The process then draws over the frame in window.canvas and
-// calls display.present. With window_frame_end, window.canvas is the other
-// picture after the call. The pixels that the process adds are in no
-// table, so each frame of such a window is whole.
+// window_frame_end_into_picture ends the frame of a process that draws over
+// it by hand: it draws the frame whole into the hand picture of the window,
+// in logical pixels, and presents nothing. The process then draws over the
+// frame in picture.canvas and calls hand_picture_show, which puts the
+// picture on the screen at the scale. The pixels that the process adds are
+// in no table, so each frame of such a window is whole.
 //
 // false: the compositor did not take the picture before (the frame is
-// left out), or the drawing module refused the draw. The process draws
-// nothing and does not present.
-window_frame_end_without_present :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> bool {
+// left out). The process draws nothing and shows nothing.
+window_frame_end_into_picture :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window, picture: ^Hand_Picture) -> bool {
 	frame_end(frame)
 	clipboard_answer(drawing, frame, window)
 	input_clear(&drawing.input)
@@ -642,11 +665,14 @@ window_frame_end_without_present :: proc "contextless" (drawing: ^Window_Drawing
 	if drawing.late {
 		return false
 	}
-	whole_surface := [1]Rectangle{{0, 0, window.canvas.width, window.canvas.height}}
-	if !frame_draw(drawing, &drawing.now, window.canvas, whole_surface[:]) {
-		return false
-	}
-	drawing.damage.rectangles[0] = whole_surface[0]
+	// The picture is in logical pixels: the records draw at no scale into
+	// it, and the drawing of the picture scales it once.
+	whole := [1]Rectangle{{0, 0, picture.canvas.width, picture.canvas.height}}
+	scale := drawing.now.scale
+	drawing.now.scale = nil
+	draw_damage_on_surface(&drawing.now, picture.canvas, whole[:])
+	drawing.now.scale = scale
+	drawing.damage.rectangles[0] = whole[0]
 	drawing.damage.count = 1
 	element_places_write(drawing, frame, window)
 	return true

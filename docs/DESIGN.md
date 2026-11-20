@@ -230,7 +230,7 @@ The desktop lists four kinds of things that are not values (`kind_icons.Desktop_
 | `text_large` | 32 | The one number of a card |
 | `text_largest` | 48 | The one number that a whole window or panel is about: the result of the palette |
 
-- A process can draw a text at any size from 4 to 256 pixels (`src/md/features/text_rendering.md`). The desktop and the elements of the interface package use the tokens only, so the texts of two windows line up.
+- A process can draw a text at any size from 4 to 128 logical pixels (`src/md/features/text_rendering.md`). The desktop and the elements of the interface package use the tokens only, so the texts of two windows line up.
 - 14 is the smallest size at which both fonts keep an x-height of 6 whole rows; 24 is a whole count of pixels at each scale factor.
 - **Each element is sized from the measure of its text at its size.** Its height is the line of its size times its lines, never a line of 16.
 - **Two sizes on one line share one baseline**: the caption of a card is on the baseline of its title, the hash prefix on the baseline of the nickname.

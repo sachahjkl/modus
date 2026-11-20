@@ -90,7 +90,7 @@ Boot_Pass_Source :: enum {
 }
 
 // The boot pass found no record in the store: the defaults.
-@(log_fact = "settings: the boot pass: no settings kept: the defaults: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}; in {elapsed}")
+@(log_fact = "settings: the boot pass: no settings kept: the defaults: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; in {elapsed}")
 Boot_Pass_Nothing_Kept :: struct {
 	elapsed:         value_kinds.Time_In_Microseconds,
 	font:            [8]u8,
@@ -99,10 +99,11 @@ Boot_Pass_Nothing_Kept :: struct {
 	grid_fit:        [8]u8,
 	keyboard_layout: [8]u8,
 	appearance:      [8]u8,
+	scale:           [8]u8,
 }
 
 // The store gave no record: the defaults, and the pass fails.
-@(log_fact = "settings: the boot pass: the store gives no record (status not Ok): the defaults: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}; in {elapsed}")
+@(log_fact = "settings: the boot pass: the store gives no record (status not Ok): the defaults: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; in {elapsed}")
 Boot_Pass_Read_Refused :: struct {
 	elapsed:         value_kinds.Time_In_Microseconds,
 	font:            [8]u8,
@@ -111,10 +112,11 @@ Boot_Pass_Read_Refused :: struct {
 	grid_fit:        [8]u8,
 	keyboard_layout: [8]u8,
 	appearance:      [8]u8,
+	scale:           [8]u8,
 }
 
 // The boot pass read the settings that the store kept.
-@(log_fact = "settings: the boot pass: the settings kept in the store: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}; in {elapsed}")
+@(log_fact = "settings: the boot pass: the settings kept in the store: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; in {elapsed}")
 Boot_Pass_Kept :: struct {
 	elapsed:         value_kinds.Time_In_Microseconds,
 	font:            [8]u8,
@@ -123,11 +125,12 @@ Boot_Pass_Kept :: struct {
 	grid_fit:        [8]u8,
 	keyboard_layout: [8]u8,
 	appearance:      [8]u8,
+	scale:           [8]u8,
 }
 
 // The record of the store is refused; the defaults took its place in the
 // store.
-@(log_fact = "settings: the boot pass: the record of the store is refused (another version, or a value that its setting does not have): the defaults, kept in its place: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}; in {elapsed}")
+@(log_fact = "settings: the boot pass: the record of the store is refused (another version, or a value that its setting does not have): the defaults, kept in its place: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; in {elapsed}")
 Boot_Pass_Record_Refused_Defaults_Kept :: struct {
 	elapsed:         value_kinds.Time_In_Microseconds,
 	font:            [8]u8,
@@ -136,11 +139,12 @@ Boot_Pass_Record_Refused_Defaults_Kept :: struct {
 	grid_fit:        [8]u8,
 	keyboard_layout: [8]u8,
 	appearance:      [8]u8,
+	scale:           [8]u8,
 }
 
 // The record of the store is refused, and the store refused the defaults:
 // the pass fails.
-@(log_fact = "settings: the boot pass: the record of the store is refused (another version, or a value that its setting does not have): the defaults, NOT kept: the store refused: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}; in {elapsed}")
+@(log_fact = "settings: the boot pass: the record of the store is refused (another version, or a value that its setting does not have): the defaults, NOT kept: the store refused: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; in {elapsed}")
 Boot_Pass_Record_Refused_Defaults_Not_Kept :: struct {
 	elapsed:         value_kinds.Time_In_Microseconds,
 	font:            [8]u8,
@@ -149,10 +153,11 @@ Boot_Pass_Record_Refused_Defaults_Not_Kept :: struct {
 	grid_fit:        [8]u8,
 	keyboard_layout: [8]u8,
 	appearance:      [8]u8,
+	scale:           [8]u8,
 }
 
 // The process has no private store: the defaults.
-@(log_fact = "settings: the boot pass: no private store: the defaults: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}; in {elapsed}")
+@(log_fact = "settings: the boot pass: no private store: the defaults: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; in {elapsed}")
 Boot_Pass_No_Store :: struct {
 	elapsed:         value_kinds.Time_In_Microseconds,
 	font:            [8]u8,
@@ -161,15 +166,16 @@ Boot_Pass_No_Store :: struct {
 	grid_fit:        [8]u8,
 	keyboard_layout: [8]u8,
 	appearance:      [8]u8,
+	scale:           [8]u8,
 }
 
 // The lines of the values of the settings. A line of the values of a choice names each setting by its title, as
 // the window shows it, and holds the name of its value in a Text field of
 // its own: a reader filters on one setting, as where(font = "spleen"). The
-// templates name the six settings in the order of settings.Setting: a new
+// templates name the seven settings in the order of settings.Setting: a new
 // setting fails the assert below until each template names it.
 
-#assert(len(settings.Setting) == 6, "each template of a line of the values names the six settings")
+#assert(len(settings.Setting) == 7, "each template of a line of the values names the seven settings")
 
 // The bytes of the Text field of the name of a value: the longest name,
 // "french" or "system", and a zero byte.
@@ -188,7 +194,7 @@ STORE_REFUSED_WORDS :: "NOT kept: the store refused"
 #assert(len(STORE_REFUSED_WORDS) < STORE_WORDS_FIELD_BYTES && len(STORE_KEPT_WORDS) < STORE_WORDS_FIELD_BYTES)
 
 // A change of the values of a setting, and what the store did with it.
-@(log_fact = "settings: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}; {store}")
+@(log_fact = "settings: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; {store}")
 Values_Changed :: struct {
 	font:            [8]u8,
 	subpixel_order:  [8]u8,
@@ -196,6 +202,7 @@ Values_Changed :: struct {
 	grid_fit:        [8]u8,
 	keyboard_layout: [8]u8,
 	appearance:      [8]u8,
+	scale:           [8]u8,
 	store:           [32]u8,
 }
 
@@ -213,7 +220,7 @@ Records_Repeated :: struct {
 }
 
 // The window drew a new choice: its values.
-@(log_fact = "settings: drawn with font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}")
+@(log_fact = "settings: drawn with font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}")
 Values_Drawn :: struct {
 	font:            [8]u8,
 	subpixel_order:  [8]u8,
@@ -221,6 +228,7 @@ Values_Drawn :: struct {
 	grid_fit:        [8]u8,
 	keyboard_layout: [8]u8,
 	appearance:      [8]u8,
+	scale:           [8]u8,
 }
 
 // The context names no settings page that this process can map: the
@@ -231,7 +239,7 @@ No_Settings_Page :: struct {
 }
 
 // The window is open: the values of the page.
-@(log_fact = "settings: ok, font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}")
+@(log_fact = "settings: ok, font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}")
 Window_Ready :: struct {
 	font:            [8]u8,
 	subpixel_order:  [8]u8,
@@ -239,13 +247,14 @@ Window_Ready :: struct {
 	grid_fit:        [8]u8,
 	keyboard_layout: [8]u8,
 	appearance:      [8]u8,
+	scale:           [8]u8,
 }
 
 // value_field gives the Text field of the name of the value of one setting
 // of a choice.
 value_field :: proc "contextless" (choice: settings.Choice, setting: settings.Setting) -> [VALUE_NAME_FIELD_BYTES]u8 {
 	values := settings.values_of(choice)
-	return value_kinds.text_field(settings.descriptions[setting].value_names[values[setting]], VALUE_NAME_FIELD_BYTES)
+	return value_kinds.text_field(settings.value_name_of(setting, values[setting]), VALUE_NAME_FIELD_BYTES)
 }
 
 // store_field gives the Text field of what the store did with a change.

@@ -35,7 +35,7 @@ The disk GUID and the partition GUID come from the BLAKE3 hash of the volume, wi
 
 ### The release volume is built by the release command only
 
-The release volume is not in the list of the volumes of the build (`boot_volumes`): no test boots it, and a test build does not pay for a volume that only a release needs. `modustool release image` makes a whole build of the modules and the boot images, then builds the release volume in its own process, with no build record. A kept module could come from another state of the work tree; a whole build cannot.
+The release volume is not in the list of the volumes of the build (`boot_volumes`): no test boots it, and a test build does not pay for a volume that only a release needs. `boot_volume_release_problem` refuses each volume of that list that a test changed, and each whose kernel is not the module `kernel`. `modustool release image` makes a whole build of the modules and the boot images, then builds the release volume in its own process, with no build record. A kept module could come from another state of the work tree; a whole build cannot.
 
 ### The pointer theme of a release: the theme of the system only
 
@@ -96,6 +96,7 @@ After the build, the packaging checks the files that the build of the volume wro
 - the file `<volume>.signed_by` must be the text of the key of the publisher; the text of the test signing key is refused, and so is a missing file;
 - the boot image of the volume must hold each module and each resource of the boot image of the build (`build/boot.image`), with the same name and the same BLAKE3 hash of its bytes, in the same order, then only the three resources that the build of a volume adds: the replacement list, the system description and its signature. A boot image that holds another build of a module under the same name passes a check of the names; its bytes differ. The boot image of a measure run has one resource more. A module that a test changed has other bytes;
 - the system description of the volume must name the BLAKE3 hash of the kernel module of the build for the kernel. The boot program refuses a kernel with another hash at each start, so the kernel of the volume is the kernel of the build;
+- the kernel module of the build must hold no text `kernel: TEST BUILD:`, the start of the boot line of each test kernel: the counted kernel and the kernel with the check of the return skipped ([kernel_fuzzing.md](kernel_fuzzing.md), "The test kernel"). A test kernel built under the name `kernel` has the hash that the description names; its bytes still say what it is. The kernel that ships holds no such text: each such line is under a setting that is false there;
 - with `Publisher_Keys_Only`, the boot image must hold no resource `pointers_posy`, and each pointer theme file in it must be valid and under the license of the repository. The machine test packages a volume with `Test_Keys_Allowed`: a developer runs it in a build that may hold the Posy theme.
 
 The check reads the signed boot image beside the volume, not the volume itself: inside the volume the boot image is in the boot program, and the tool has no reader of a boot program. The release command builds the volume and the files beside it in one call, so they cannot come from two builds there.

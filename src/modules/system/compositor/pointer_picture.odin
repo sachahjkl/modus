@@ -27,10 +27,24 @@ VALUE_POINTER_THEME_SIZE :: 7
 // The places of the address and the size of each theme: the second one is
 // at the values that modus:contract/operation names for it.
 POINTER_THEME_VALUES := [2][2]int{{VALUE_POINTER_THEME_ADDRESS, VALUE_POINTER_THEME_SIZE}, {op.CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS, op.CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE}}
-// The nominal size that the compositor asks: the smallest size of the theme
-// that is at least this one. 24 for the theme of the system, 32 for the
-// theme of the owner (the smallest size that it has).
+// The nominal size of the pointer in logical pixels. The compositor asks
+// for it in pixels of the screen at the scale: the smallest size of the
+// theme that is at least that one. The theme of the system has a size for
+// each scale that the setting takes: 30 at 1.25, 33 at 1.375
+// (resources/pointers/system.manifest).
 POINTER_NOMINAL_SIZE :: 24
+
+// pointer_size_asked gives the nominal size in pixels of the screen at the
+// scale of the desktop.
+pointer_size_asked :: proc "contextless" () -> u32 {
+	return u32(screen_pixel_of(POINTER_NOMINAL_SIZE))
+}
+
+// pointer_screen_place gives the pixel of the screen of the place of the
+// pointer: the hot spot of its picture is drawn there.
+pointer_screen_place :: proc "contextless" () -> (x, y: int) {
+	return screen_pixel_of(pointer_x), screen_pixel_of(pointer_y)
+}
 // The frames of a pointer that the measure of its cost counts, before it
 // writes the log line.
 POINTER_MEASURE_FRAMES :: 256
@@ -192,8 +206,8 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 	}
 	for position := order_count - 1; position >= 0; position -= 1 {
 		client := &clients[order[position]]
-		outer_width := client.surface.width + 2 * BORDER
-		if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, client.surface.height + TITLE_HEIGHT + BORDER) {
+		outer_width := client.width + 2 * BORDER
+		if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, client.height + TITLE_HEIGHT + BORDER) {
 			continue
 		}
 		switch {
@@ -201,7 +215,7 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 			return .Pointing_Hand
 		case pointer_y < client.y + TITLE_HEIGHT:
 			return .Move
-		case inside(pointer_x, pointer_y, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height):
+		case inside(pointer_x, pointer_y, client.x + BORDER, client.y + TITLE_HEIGHT, client.width, client.height):
 			// The surface of the window in front at this place: the shape that
 			// its process asked for, over its own surface only: a process must not
 // change the pointer over the window of another process.
@@ -219,30 +233,32 @@ pointer_update :: proc "contextless" (now: u64) {
 	shape := pointer_shape_under()
 	chosen := pointer_chosen
 	if pointer_theme != nil && (shape != pointer_shape || !pointer_drawn_valid || (chosen.next_frame != 0 && now >= chosen.next_frame)) {
-		chosen = pointer_pictures.choose(pointer_theme, pointer_form, shape, POINTER_NOMINAL_SIZE, now)
+		chosen = pointer_pictures.choose(pointer_theme, pointer_form, shape, pointer_size_asked(), now)
 	}
 	place := pointer_rectangle(chosen)
 	if pointer_drawn_valid && place == pointer_drawn && shape == pointer_shape && chosen.picture == pointer_chosen.picture {
 		return
 	}
+	// The picture is in pixels of the screen.
 	if pointer_drawn_valid {
-		damage_add(pointer_drawn.left, pointer_drawn.top, pointer_drawn.right - pointer_drawn.left, pointer_drawn.bottom - pointer_drawn.top)
+		damage_screen_add(pointer_drawn.left, pointer_drawn.top, pointer_drawn.right - pointer_drawn.left, pointer_drawn.bottom - pointer_drawn.top)
 	}
-	damage_add(place.left, place.top, place.right - place.left, place.bottom - place.top)
+	damage_screen_add(place.left, place.top, place.right - place.left, place.bottom - place.top)
 	pointer_shape = shape
 	pointer_chosen = chosen
 	pointer_drawn = place
 	pointer_drawn_valid = true
 }
 
-// pointer_rectangle gives the rectangle of a picture on the screen: its
-// hot spot at the place of the pointer.
+// pointer_rectangle gives the rectangle of a picture on the screen, in
+// pixels of the screen: its hot spot at the screen place of the pointer.
 pointer_rectangle :: proc "contextless" (chosen: pointer_pictures.Chosen) -> Rectangle {
+	x, y := pointer_screen_place()
 	if pointer_theme == nil {
-		return {pointer_x, pointer_y, pointer_x + 8 * POINTER_ARROW_SQUARE, pointer_y + len(pointer_arrow_without_theme) * POINTER_ARROW_SQUARE}
+		return {x, y, x + 8 * POINTER_ARROW_SQUARE, y + len(pointer_arrow_without_theme) * POINTER_ARROW_SQUARE}
 	}
-	left := pointer_x - int(chosen.picture.hot_spot_x)
-	top := pointer_y - int(chosen.picture.hot_spot_y)
+	left := x - int(chosen.picture.hot_spot_x)
+	top := y - int(chosen.picture.hot_spot_y)
 	return {left, top, left + int(chosen.picture.width), top + int(chosen.picture.height)}
 }
 
@@ -269,6 +285,7 @@ pointer_shape_request :: proc "contextless" (client: ^Client, record: ring.Recor
 // part of the frame in it.
 pointer_draw :: proc "contextless" (canvas: graphics.Canvas, origin_x, origin_y: int) {
 	if pointer_theme == nil {
+		screen_x, screen_y := pointer_screen_place()
 		for row, y in pointer_arrow_without_theme {
 			for column in 0 ..< len(row) {
 				color: graphics.Color
@@ -280,7 +297,7 @@ pointer_draw :: proc "contextless" (canvas: graphics.Canvas, origin_x, origin_y:
 				case:
 					continue
 				}
-				graphics.fill(canvas, pointer_x + column * POINTER_ARROW_SQUARE + origin_x, pointer_y + y * POINTER_ARROW_SQUARE + origin_y, POINTER_ARROW_SQUARE, POINTER_ARROW_SQUARE, color)
+				graphics.fill(canvas, screen_x + column * POINTER_ARROW_SQUARE + origin_x, screen_y + y * POINTER_ARROW_SQUARE + origin_y, POINTER_ARROW_SQUARE, POINTER_ARROW_SQUARE, color)
 			}
 		}
 		return
@@ -316,7 +333,7 @@ pointer_frame_end :: proc "contextless" () {
 // nanoseconds for one picture, and a copy of the same size with no alpha.
 pointer_blend_measure :: proc "contextless" () {
 	ROUNDS :: 2000
-	chosen := pointer_pictures.choose(pointer_theme, pointer_form, .Arrow, POINTER_NOMINAL_SIZE, 0)
+	chosen := pointer_pictures.choose(pointer_theme, pointer_form, .Arrow, pointer_size_asked(), 0)
 	picture := graphics.Canvas{pixels = raw_data(chosen.pixels), width = int(chosen.picture.width), height = int(chosen.picture.height), stride = int(chosen.picture.width)}
 	start := system.nanoseconds()
 	for round in 0 ..< ROUNDS {

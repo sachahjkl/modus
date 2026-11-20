@@ -144,7 +144,7 @@ Entry :: struct {
 	about_length:     u8, // The bytes of `about` in use.
 	setting:          u8, // A Setting entry: the number of the setting (settings.Setting). Else 0.
 	parameters:       [PARAMETER_CAPACITY]u8, // The kind of each parameter: the word of a Value_Kind, read through parameter_kind_of.
-	setting_value:    u8, // A Setting entry: the number of the value. Else 0.
+	setting_value:    u8, // A Setting entry: the word of the value on the settings page (settings.word_of_value): 10 and 11 for the scale. Else 0.
 	reserved:         u8, // 0.
 	parameter_name_lengths: [PARAMETER_CAPACITY]u8, // The bytes of each parameter name in use. 0: the parameter has no name.
 	reserved_more:    [2]u8, // 0.

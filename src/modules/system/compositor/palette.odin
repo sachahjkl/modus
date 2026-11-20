@@ -203,7 +203,7 @@ palette_is_open :: proc "contextless" () -> bool {
 }
 
 palette_place :: proc "contextless" () -> (x, y: int) {
-	return palette.panel_place(screen.width)
+	return palette.panel_place(desktop_width)
 }
 
 damage_palette :: proc "contextless" () {
@@ -1012,7 +1012,7 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 		// place in the client table: the name of the row is "close" and
 		// the title.
 		close_start := palette.CLOSE_NAME_START
-		if number < CLIENT_CAPACITY && clients[number].surface.pixels != nil && len(name_text) > len(close_start) && system.name_of(clients[number].title[:]) == name_text[len(close_start):] {
+		if number < CLIENT_CAPACITY && clients[number].created && len(name_text) > len(close_start) && system.name_of(clients[number].title[:]) == name_text[len(close_start):] {
 			system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(clients[number].ring_memory)}})
 			system.log_fact(.Info, Palette_Closes_Window{window = window_field(clients[number].title[:])})
 		}
@@ -1183,8 +1183,12 @@ palette_refresh :: proc "contextless" () {
 	if display.settings_page != nil {
 		in_use, _ := settings.read(display.settings_page)
 		values := settings.values_of(in_use)
+		// The entries name a value by its word on the page, which the
+		// border of the table of a provider checks. The array has one place
+		// for each setting, so no setting writes past it. The read gives
+		// members only, whose words are at most 16.
 		for setting in settings.Setting {
-			palette_panel.settings_in_use[int(setting)] = u8(values[setting])
+			palette_panel.settings_in_use[setting] = u8(values[setting])
 		}
 	}
 	// The band offers go to when a window in front of the others names
@@ -1236,7 +1240,7 @@ palette_refresh :: proc "contextless" () {
 	changed: interface.Damage
 	refused: errors.Error_Record
 	if !interface.difference_through_module(&palette_before, &palette_now, &changed, &refused) {
-		damage_add(0, 0, screen.width, screen.height)
+		damage_whole_screen()
 	}
 	for rectangle in changed.rectangles[:changed.count] {
 		damage_add(rectangle.left, rectangle.top, rectangle.right - rectangle.left, rectangle.bottom - rectangle.top)

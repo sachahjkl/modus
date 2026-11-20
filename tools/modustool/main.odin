@@ -714,12 +714,13 @@ run_test :: proc(args: []string) -> int {
 			}
 		}
 	}
-	processors := foundation.test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
-	at_once := machine.test_parts_at_once(len(parts), processors)
-	machine.picture_names_forget(&machine.picture_names)
+	// One part runs alone: the bound and its line are for the whole test.
+	at_once := 1
 	if len(parts) > 1 {
-		fmt.printfln("modustool: %d parts of the machine test, at most %d at once: %d processors, %d for each machine", len(parts), at_once, processors, machine.MACHINE_PROCESSOR_COUNT)
+		processors := foundation.test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
+		at_once = machine.test_parts_at_once_on_this_host(parts, processors)
 	}
+	machine.picture_names_forget(&machine.picture_names)
 	runs, passed := machine.test_parts_run(parts, at_once)
 	defer {
 		for &part_run in runs {
@@ -807,11 +808,12 @@ run_screenshots :: proc(args: []string) -> int {
 	} else {
 		fmt.println("modustool: measure: the test parts of the check of the flake: no count, the evaluation failed")
 	}
-	// Each machine has its processors, and a part runs its machines one
-	// after the other: Nix runs at most as many part derivations at once as
-	// the pool of `modustool test` would run parts.
+	// Each machine has its processors and its memory, and a part runs its
+	// machines one after the other: Nix runs at most as many part
+	// derivations at once as the pool of `modustool test` would run parts,
+	// by the processors and by the available memory of the host.
 	processors := foundation.test_processors_of(os.get_processor_core_count(), "")
-	most_jobs := machine.test_parts_at_once(len(machine.test_parts), processors)
+	most_jobs := machine.test_parts_at_once_on_this_host(machine.test_parts[:], processors)
 	// The check of the flake runs the host checks, each test part and the
 	// second build in the sandbox; it fails when one of them fails.
 	if !foundation.run({"nix", "build", FLAKE_CHECK_ATTRIBUTE, "--out-link", FLAKE_CHECK_LINK, "--print-build-logs", "--max-jobs", fmt.tprintf("%d", most_jobs)}) {
@@ -1085,7 +1087,7 @@ run_fuzz :: proc(args: []string) -> int {
 	targets := fuzz.fuzz_targets()
 	switch args[0] {
 	case "operations":
-		// The kernel operations on machines of the kernel that ships
+		// The kernel operations on machines of the counted kernel
 		// (operation_fuzzing.odin).
 		code := machine.operation_fuzzing_run(args[1:])
 		if code == foundation.EXIT_USAGE {
@@ -1108,7 +1110,7 @@ run_fuzz :: proc(args: []string) -> int {
 		}
 		operation_regressions := fuzz.fuzz_inputs_read(machine.OPERATION_REGRESSION_FOLDER, context.temp_allocator)
 		operation_reach := fuzz.fuzz_inputs_read(machine.OPERATION_REACH_FOLDER, context.temp_allocator)
-		fmt.printfln("  %-26s %-9s %3d regression, %3d reach  %s", fuzz.OPERATION_CORPUS_NAME, "machine", len(operation_regressions), len(operation_reach), "The kernel operations on a machine of the kernel that ships: `fuzz operations`, `fuzz regression operations`")
+		fmt.printfln("  %-26s %-9s %3d regression, %3d reach  %s", fuzz.OPERATION_CORPUS_NAME, "machine", len(operation_regressions), len(operation_reach), "The kernel operations on a machine: `fuzz operations` on the counted kernel, `fuzz regression operations` on the kernel that ships")
 		return 0
 	case "show", "minimize", "regression":
 		if len(args) != 3 {

@@ -177,6 +177,9 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		{"memmove", 0},
 		{"fill_bytes_with_value", 0},
 		{"memset", 0},
+		// src/kernel/edge_counters.asm, in the counted kernel only: the
+		// callback of each edge pushes nothing.
+		{"__sanitizer_cov_trace_pc_guard", 0},
 	},
 	recursions = {
 		// The default branch runs the operation of a command with a table of

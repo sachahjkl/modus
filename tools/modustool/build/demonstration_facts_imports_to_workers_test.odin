@@ -557,9 +557,9 @@ the_facts_of_scheduler_write_the_lines_of_before :: proc(t: ^testing.T) {
 	}
 }
 
-// Each fact type of server writes the line of before: each method, the
-// longest target with its cut mark, the longest page name and each end of
-// a connection.
+// Each fact type of server writes the line of before: the longest page
+// name and each end of a connection. The access record is no fact: the
+// record output requests holds it.
 @(test)
 the_facts_of_server_write_the_lines_of_before :: proc(t: ^testing.T) {
 	file, ok := facts_file_of_demonstration(t, "server")
@@ -573,22 +573,11 @@ the_facts_of_server_write_the_lines_of_before :: proc(t: ^testing.T) {
 	for cause in causes {
 		facts_expect_line(t, render(t, file, "Run_Failed", {{"cause", cause}}), line_of_before("server: ", cause))
 	}
-	methods := [3]string{"OPTIONS", "GET", "-"}
-	targets := [2]string{strings.repeat("/", 48, context.temp_allocator), "/large"}
 	hows := [3]string{"aborted: an answer under 4096 bytes in one second", "timed out", "closed, this server first"}
 	pages := [2]string{strings.repeat("p", 39, context.temp_allocator), "hello.txt"}
-	statuses := [3]u64{0, 200, max(u64)}
 	for peer in DEMONSTRATION_PEERS {
 		facts_expect_line(t, render(t, file, "Request_Timeout", {{"peer", peer}}), line_of_before("server: ", peer, ": no request in 10 s, closed"))
 		for time in DEMONSTRATION_EDGE_TIMES {
-			other := u64(max(i64)) - time
-			for method in methods {
-				for target in targets {
-					for status in statuses {
-						facts_expect_line(t, render(t, file, "Access_Record", {{"status", status}, {"answer_size", time}, {"answer_time", other}, {"method", method}, {"target", target}, {"peer", peer}}), line_of_before("server: ", method, " ", target, " ", status, ", ", time, " bytes, ", other, " us, ", peer))
-					}
-				}
-			}
 			facts_expect_line(t, render(t, file, "Connection_Requests_Measured", {{"requests", max(u64)}, {"elapsed", time}, {"rate", u64(0)}, {"peer", peer}}), line_of_before("server: ", max(u64), " requests on one connection of ", peer, " in ", time, " ms: ", u64(0), " requests in one second"))
 			for how in hows {
 				facts_expect_line(t, render(t, file, "Connection_Ended", {{"requests", u64(0)}, {"bytes_received", max(u64)}, {"bytes_sent", u64(1)}, {"round_trip", time}, {"retransmissions", max(u64)}, {"probes", u64(0)}, {"challenges", u64(1)}, {"peer", peer}, {"how", how}}), line_of_before("server: ", peer, " ", how, ": ", u64(0), " requests, in ", max(u64), ", out ", u64(1), ", srtt ", time, " us, ", max(u64), " retransmissions, ", u64(0), " probes, ", u64(1), " challenges"))

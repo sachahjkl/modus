@@ -225,9 +225,18 @@ access_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, record: 
 	right(canvas, ACCESS_TIME, y, time_text(buffer[:], max(record.time, 1)), graphics.colors.machine)
 }
 
+// The picture of the window, in its logical pixels: the window draws by
+// hand, and the drawing module puts the picture on the screen at the scale
+// (interface.Hand_Picture). picture_open makes it after the window.
+hand_picture: interface.Hand_Picture
+
+picture_open :: proc "contextless" (window: ^display.Window) -> bool {
+	return interface.hand_picture_open(&hand_picture, window) == .Ok
+}
+
 draw :: proc "contextless" (window: ^display.Window) {
 	started := system.nanoseconds()
-	canvas := window.canvas
+	canvas := hand_picture.canvas
 	graphics.clear(canvas, graphics.colors.background)
 	for y := 12; y < HEIGHT; y += graphics.POINT_STEP {
 		for x := 12; x < WIDTH; x += graphics.POINT_STEP {
@@ -357,7 +366,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	if shown == 0 {
 		graphics.text(inside, 0, y, "no request yet", graphics.colors.dim)
 	}
-	display.present(window)
+	interface.hand_picture_show(&hand_picture, window)
 	microseconds_taken := (system.nanoseconds() - started) / 1000
 	if draw_time == 0 {
 		system.log_fact(.Info, Window_Drawn{drawing = value_kinds.Time_In_Microseconds(microseconds_taken)})

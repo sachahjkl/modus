@@ -426,6 +426,11 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 			// starts, since the next one would take the same index.
 			if !apic_send(id, 0x4500) {
 				log("kernel: the interrupt controller did not send the reset of the processor ", u64(id), ": its record, its stacks and the page table of the start stay taken, and no other processor starts")
+				when KERNEL_EDGE_COUNTERS {
+					// That processor can still run compiled code, which
+					// the counted kernel would count (edge_counters_start).
+					edge_counters_processor_not_reset = true
+				}
 				return
 			}
 			cycles_wait(10_000)

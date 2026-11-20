@@ -2,18 +2,20 @@
 package settings
 
 import "core:testing"
+import "modus:contract/scale_factor"
 
 // A writer that stops in a change (an odd count) does not stop a reader:
 // after READ_TRIES reads it gives the defaults, and refuses the page.
 @(test)
 a_page_left_in_a_change :: proc(t: ^testing.T) {
 	page: Page
-	written := Choice{font = .Spleen, subpixel_order = .None, pointer_theme = .Of_The_System, grid_fit = .Off, keyboard_layout = .French, appearance = .Light}
+	written := Choice{font = .Spleen, subpixel_order = .None, pointer_theme = .Of_The_System, grid_fit = .Off, keyboard_layout = .French, appearance = .Light, scale = .Eleven_Eighths}
 	write(&page, written, 330, .Light)
 	choice, ok := read(&page)
 	testing.expect(t, ok)
 	testing.expect_value(t, choice.font, Font.Spleen)
 	testing.expect_value(t, choice.appearance, Appearance.Light)
+	testing.expect_value(t, choice.scale, scale_factor.Scale.Eleven_Eighths)
 	testing.expect_value(t, choice.appearance_in_force, Appearance_In_Force.Light)
 	testing.expect_value(t, choice.zone_offset_minutes, 330)
 	testing.expect_value(t, choice.change_count, 2)
@@ -21,7 +23,7 @@ a_page_left_in_a_change :: proc(t: ^testing.T) {
 	page.change_count = 3
 	stopped, stopped_ok := read(&page)
 	testing.expect(t, !stopped_ok)
-	testing.expect_value(t, values_of(stopped), [Setting]u32{})
+	testing.expect_value(t, values_of(stopped), values_of(choice_default()))
 	testing.expect_value(t, stopped.zone_offset_minutes, 0)
 	testing.expect_value(t, stopped.change_count, 3)
 }
@@ -69,6 +71,7 @@ a_text_that_is_not_a_zone :: proc(t: ^testing.T) {
 @(test)
 the_zone_on_the_page :: proc(t: ^testing.T) {
 	page: Page
+	page_defaults_write(&page)
 	page.zone_offset_minutes = ZONE_OFFSET_MINUTES_MOST + 60
 	choice, _ := read(&page)
 	testing.expect_value(t, choice.zone_offset_minutes, 0)
@@ -87,22 +90,34 @@ the_zone_on_the_page :: proc(t: ^testing.T) {
 // The kept record: a word that names no value of its setting refuses the
 // whole record, at each edge, and nothing of it is read; a record of the
 // version before and a short record are refused; a zone that is not valid
-// reads as UTC. The record of a choice reads back as that choice.
+// reads as UTC. A scale word past the window bound refuses the record as a
+// word that names no scale. A record of the six settings before the scale
+// keeps them and reads the scale 1.25. The record of a choice reads back
+// as that choice.
 @(test)
 the_kept_record :: proc(t: ^testing.T) {
-	written := Choice{font = .Spleen, appearance = .Light}
+	written := Choice{font = .Spleen, appearance = .Light, scale = .Eleven_Eighths}
 	kept := kept_of(written, -210)
 	testing.expect_value(t, kept.zero, 0)
+	testing.expect_value(t, kept.count, u32(len(Setting)))
 	bytes := ([^]u8)(&kept)[:size_of(kept)]
 	refused_words := [?]u32{len(Font), len(Font) + 1, 0x100, max(u32)}
 	for word in refused_words {
 		kept.values[Setting.Font] = word
 		read_choice, zone, ok := kept_read(bytes)
 		testing.expectf(t, !ok, "the font word %d names no font, and the record is taken", word)
-		testing.expect_value(t, values_of(read_choice), [Setting]u32{})
+		testing.expect_value(t, values_of(read_choice), values_of(choice_default()))
 		testing.expect_value(t, zone, 0)
 	}
 	kept.values[Setting.Font] = u32(Font.Spleen)
+	refused_scales := [?]u32{0, scale_factor.EIGHTHS_OF_ONE, u32(scale_factor.Scale.Ten_Eighths) - 1, u32(scale_factor.WINDOW_BOUND) + 1, u32(scale_factor.Scale.Sixteen_Eighths), u32(scale_factor.Scale.Sixteen_Eighths) + 1, max(u32)}
+	for word in refused_scales {
+		kept.values[Setting.Scale] = word
+		read_choice, _, ok := kept_read(bytes)
+		testing.expectf(t, !ok, "the scale word %d is taken in a record", word)
+		testing.expect_value(t, read_choice.scale, scale_factor.DEFAULT)
+	}
+	kept.values[Setting.Scale] = u32(scale_factor.Scale.Eleven_Eighths)
 	kept.values[Setting.Appearance] = len(Appearance)
 	_, _, ok := kept_read(bytes)
 	testing.expect(t, !ok)
@@ -118,83 +133,140 @@ the_kept_record :: proc(t: ^testing.T) {
 	testing.expect(t, zone_ok)
 	testing.expect_value(t, zone, 0)
 	kept.zone_offset_minutes = -210
-	// A record written before the last settings existed: a word past its
-	// count is no value of the record, so it is not read, and the setting
-	// has its default. Here the word past the count names nothing.
+	// A record written before the scale existed: the word past its count
+	// is no value of the record, so it is not read, and the scale has its
+	// default, not the word 0. Here the word past the count names nothing.
+	kept.count = u32(Setting.Scale)
+	kept.values[Setting.Scale] = max(u32)
+	before_scale, _, before_scale_ok := kept_read(bytes)
+	testing.expect(t, before_scale_ok)
+	testing.expect_value(t, before_scale.scale, scale_factor.DEFAULT)
+	testing.expect_value(t, before_scale.font, Font.Spleen)
+	testing.expect_value(t, before_scale.appearance, Appearance.Light)
+	// A record of fewer settings still: each past its count has its default.
 	kept.count = u32(Setting.Appearance)
-	kept.values[Setting.Appearance] = max(u32)
 	older, _, older_ok := kept_read(bytes)
 	testing.expect(t, older_ok)
 	testing.expect_value(t, older.appearance, Appearance.Auto)
 	testing.expect_value(t, older.font, Font.Spleen)
 	kept.count = len(Setting)
-	kept.values[Setting.Appearance] = u32(Appearance.Light)
+	kept.values[Setting.Scale] = u32(scale_factor.Scale.Eleven_Eighths)
 	read_choice, read_zone, read_ok := kept_read(bytes)
 	testing.expect(t, read_ok)
 	testing.expect_value(t, values_of(read_choice), values_of(written))
 	testing.expect_value(t, read_zone, -210)
 }
 
+// refused_words_of gives the words that the border of a setting must
+// refuse: one past its last value, the next one, a word past 255 and the
+// largest word; for the scale also 0, 1, the scale 1, one under its first
+// word and each count past the window bound.
+@(private = "file")
+refused_words_of :: proc(setting: Setting, words: ^[16]u32) -> int {
+	count := 0
+	add :: proc(words: ^[16]u32, count: ^int, word: u32) {
+		words[count^] = word
+		count^ += 1
+	}
+	if setting == .Scale {
+		for word in ([?]u32{0, 1, scale_factor.EIGHTHS_OF_ONE, u32(scale_factor.Scale.Ten_Eighths) - 1}) {
+			add(words, &count, word)
+		}
+		for word in u32(scale_factor.WINDOW_BOUND) + 1 ..= u32(scale_factor.Scale.Sixteen_Eighths) + 1 {
+			add(words, &count, word)
+		}
+	} else {
+		last := word_of_value(setting, int(descriptions[setting].value_count))
+		add(words, &count, last)
+		add(words, &count, last + 1)
+	}
+	add(words, &count, 0x100)
+	add(words, &count, max(u32))
+	return count
+}
+
 // A word that a setting does not have refuses the page: one past the last
-// value of each setting, a word past 255, and the largest word. The choice
-// is the defaults, so no reader acts on the word. The appearance in force
-// past its last member refuses the page too. Each value of each setting
-// then reads back as its member.
+// value of each setting, a word past 255, the largest word, and for the
+// scale each count outside 10 to the window bound. The choice is the
+// defaults, so no reader acts on the word. The appearance in force past its
+// last member refuses the page too. Each value of each setting then reads
+// back as its member.
 @(test)
 a_value_out_of_its_setting :: proc(t: ^testing.T) {
-	counts := [Setting]u32 {
-		.Font            = len(Font),
-		.Subpixel_Order  = len(Subpixel_Order),
-		.Pointer_Theme   = len(Pointer_Theme),
-		.Grid_Fit        = len(Grid_Fit),
-		.Keyboard_Layout = len(Keyboard_Layout),
-		.Appearance      = len(Appearance),
-	}
 	for setting in Setting {
-		refused_words := [?]u32{counts[setting], counts[setting] + 1, 0x100, max(u32)}
-		for word in refused_words {
+		words: [16]u32
+		count := refused_words_of(setting, &words)
+		for word in words[:count] {
 			testing.expectf(t, !value_valid(setting, word), "the word %d names no value of %v, and it is taken", word, setting)
-			values: [Setting]u32
+			values := values_of(choice_default())
 			values[setting] = word
 			_, refused, ok := choice_of_values(values)
 			testing.expectf(t, !ok && refused == setting, "the word %d of %v: refused %v, ok %v", word, setting, refused, ok)
 			page: Page
+			page_defaults_write(&page)
 			page.values[setting] = word
-			page.values[Setting.Font] = setting == .Font ? word : u32(Font.Spleen)
 			choice, page_ok := read(&page)
 			testing.expectf(t, !page_ok, "a page with the word %d for %v is taken", word, setting)
-			testing.expect_value(t, values_of(choice), [Setting]u32{})
+			testing.expect_value(t, values_of(choice), values_of(choice_default()))
 		}
 	}
 	page: Page
+	page_defaults_write(&page)
 	page.appearance_in_force = u32(max(Appearance_In_Force)) + 1
 	_, in_force_ok := read(&page)
 	testing.expect(t, !in_force_ok)
 	page.appearance_in_force = max(u32)
 	_, in_force_ok = read(&page)
 	testing.expect(t, !in_force_ok)
+	// The success case last: each value that the border takes.
 	for setting in Setting {
-		for word in 0 ..< counts[setting] {
-			testing.expect(t, value_valid(setting, word))
-			values: [Setting]u32
+		for place in 0 ..< int(descriptions[setting].value_count) {
+			word := word_of_value(setting, place)
+			if setting == .Scale && word > u32(scale_factor.WINDOW_BOUND) {
+				continue
+			}
+			testing.expectf(t, value_valid(setting, word), "the word %d of %v is refused", word, setting)
+			values := values_of(choice_default())
 			values[setting] = word
 			choice, _, ok := choice_of_values(values)
 			testing.expect(t, ok)
 			testing.expect_value(t, values_of(choice), values)
+			testing.expect_value(t, value_name_of(setting, word), descriptions[setting].value_names[place])
 		}
 	}
+}
+
+// The place of a word and its name: a word under the first word of a
+// setting and a word past its values name no value, and give no name.
+@(test)
+the_place_of_a_word :: proc(t: ^testing.T) {
+	_, under_ok := value_place_of_word(.Scale, u32(scale_factor.Scale.Ten_Eighths) - 1)
+	testing.expect(t, !under_ok)
+	_, zero_ok := value_place_of_word(.Scale, 0)
+	testing.expect(t, !zero_ok)
+	_, past_ok := value_place_of_word(.Font, len(Font))
+	testing.expect(t, !past_ok)
+	_, largest_ok := value_place_of_word(.Scale, max(u32))
+	testing.expect(t, !largest_ok)
+	testing.expect_value(t, value_name_of(.Scale, max(u32)), "")
+	testing.expect_value(t, value_name_of(.Font, len(Font)), "")
+	place, ok := value_place_of_word(.Scale, u32(scale_factor.Scale.Eleven_Eighths))
+	testing.expect(t, ok)
+	testing.expect_value(t, place, 1)
+	testing.expect_value(t, value_name_of(.Scale, u32(scale_factor.Scale.Eleven_Eighths)), "1.375")
+	testing.expect_value(t, value_name_of(.Font, u32(Font.Spleen)), "spleen")
 }
 
 // Two choices with the same values and other counts do not differ; one
 // value changed makes them differ, for each setting.
 @(test)
 values_differ_compares_the_values_only :: proc(t: ^testing.T) {
-	first := Choice{font = .Spleen, subpixel_order = .None, grid_fit = .Off, keyboard_layout = .French, appearance = .Auto, change_count = 2}
+	first := Choice{font = .Spleen, subpixel_order = .None, grid_fit = .Off, keyboard_layout = .French, appearance = .Auto, scale = .Ten_Eighths, change_count = 2}
 	second := first
 	second.change_count = 1_000_002
 	testing.expect(t, !values_differ(first, second))
 	testing.expect(t, !values_differ(first, first))
-	other := Choice{font = .Vector, subpixel_order = .Red_Green_Blue, pointer_theme = .Of_The_System, grid_fit = .On, keyboard_layout = .United_States, appearance = .Dark}
+	other := Choice{font = .Vector, subpixel_order = .Red_Green_Blue, pointer_theme = .Of_The_System, grid_fit = .On, keyboard_layout = .United_States, appearance = .Dark, scale = .Eleven_Eighths}
 	other_values := values_of(other)
 	for setting in Setting {
 		values := values_of(first)
@@ -217,7 +289,7 @@ values_differ_compares_the_values_only :: proc(t: ^testing.T) {
 @(test)
 the_appearance_in_force_alone :: proc(t: ^testing.T) {
 	page: Page
-	write(&page, Choice{appearance = .Auto}, 0, .Dark)
+	write(&page, choice_default(), 0, .Dark)
 	before, before_ok := read(&page)
 	appearance_in_force_write(&page, .Light)
 	after, after_ok := read(&page)
@@ -225,10 +297,24 @@ the_appearance_in_force_alone :: proc(t: ^testing.T) {
 	testing.expect_value(t, after.appearance_in_force, Appearance_In_Force.Light)
 	testing.expect_value(t, after.change_count, before.change_count)
 	testing.expect_value(t, values_of(after), values_of(before))
-	// An all-zero page: the setting auto, dark in force.
+}
+
+// An all-zero page holds the word 0 for the scale, which names no scale:
+// it is refused, and its choice is the defaults with the scale 1.25. The
+// page that the root service creates is written with the defaults first:
+// the setting auto, dark in force, the scale 1.25.
+@(test)
+an_all_zero_page_is_refused :: proc(t: ^testing.T) {
 	empty: Page
 	empty_choice, empty_ok := read(&empty)
-	testing.expect(t, empty_ok)
-	testing.expect_value(t, empty_choice.appearance, Appearance.Auto)
-	testing.expect_value(t, empty_choice.appearance_in_force, Appearance_In_Force.Dark)
+	testing.expect(t, !empty_ok)
+	testing.expect_value(t, empty_choice.scale, scale_factor.DEFAULT)
+	created: Page
+	page_defaults_write(&created)
+	choice, ok := read(&created)
+	testing.expect(t, ok)
+	testing.expect_value(t, choice.appearance, Appearance.Auto)
+	testing.expect_value(t, choice.appearance_in_force, Appearance_In_Force.Dark)
+	testing.expect_value(t, choice.scale, scale_factor.DEFAULT)
+	testing.expect_value(t, created.values[Setting.Scale], u32(scale_factor.DEFAULT))
 }

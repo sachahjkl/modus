@@ -64,9 +64,9 @@ scenario_desktop_film := [?]Step {
 
 	// Scene 4: a drag of the title bar moves a window. The step reads the
 	// place of the window in the log, before and after.
-	{kind = .Move, text = "monitor", to_x = 1360, to_y = 48},
+	{kind = .Move, text = "monitor", to_x = LOGICAL_SCREEN_WIDTH - 560, to_y = 48},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE, text = "desktop.move"},
-	{kind = .Move, text = "clock", to_x = 720, to_y = 640},
+	{kind = .Move, text = "clock", to_x = LOGICAL_SCREEN_WIDTH - 1200, to_y = LOGICAL_SCREEN_HEIGHT - 440},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
 
 	// Scene 5: a drag of the lower left corner resizes the window. The

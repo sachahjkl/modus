@@ -121,16 +121,16 @@ the_facts_of_settings_write_the_lines_of_before :: proc(t: ^testing.T) {
 	}
 	// Two choices: the first value of each setting, and the longest one.
 	Choice :: struct {
-		font, subpixel_order, pointer_theme, grid_fit, keyboard_layout, appearance: string,
+		font, subpixel_order, pointer_theme, grid_fit, keyboard_layout, appearance, scale: string,
 	}
-	choices := [2]Choice{{"vector", "rgb", "owner", "on", "us", "auto"}, {"spleen", "none", "system", "off", "french", "light"}}
+	choices := [2]Choice{{"vector", "rgb", "owner", "on", "us", "auto", "1.25"}, {"spleen", "none", "system", "off", "french", "light", "1.375"}}
 	stores := [2]string{"kept in the store", "NOT kept: the store refused"}
 	for choice in choices {
 		values := choice
-		fields := [6]Fact_Test_Field{{"font", values.font}, {"subpixel_order", values.subpixel_order}, {"pointer_theme", values.pointer_theme}, {"grid_fit", values.grid_fit}, {"keyboard_layout", values.keyboard_layout}, {"appearance", values.appearance}}
-		values_line := line_of_before("font ", values.font, ", subpixel order ", values.subpixel_order, ", pointer theme ", values.pointer_theme, ", grid fit ", values.grid_fit, ", keyboard layout ", values.keyboard_layout, ", appearance ", values.appearance)
+		fields := [7]Fact_Test_Field{{"font", values.font}, {"subpixel_order", values.subpixel_order}, {"pointer_theme", values.pointer_theme}, {"grid_fit", values.grid_fit}, {"keyboard_layout", values.keyboard_layout}, {"appearance", values.appearance}, {"scale", values.scale}}
+		values_line := line_of_before("font ", values.font, ", subpixel order ", values.subpixel_order, ", pointer theme ", values.pointer_theme, ", grid fit ", values.grid_fit, ", keyboard layout ", values.keyboard_layout, ", appearance ", values.appearance, ", scale ", values.scale)
 		for store in stores {
-			with_store := [7]Fact_Test_Field{fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], {"store", store}}
+			with_store := [8]Fact_Test_Field{fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6], {"store", store}}
 			facts_expect_line(t, render(t, file, "Values_Changed", with_store[:]), line_of_before("settings: ", values_line, "; ", store))
 		}
 		facts_expect_line(t, render(t, file, "Values_Drawn", fields[:]), line_of_before("settings: drawn with ", values_line))
@@ -145,7 +145,9 @@ the_facts_of_settings_write_the_lines_of_before :: proc(t: ^testing.T) {
 	for count in COUNTS {
 		facts_expect_line(t, render(t, file, "Records_Repeated", {{"records", count}}), line_of_before("settings: kept ", count, " records, one commit each"))
 	}
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"font", 6}, {"subpixel_order", 6}, {"pointer_theme", 6}, {"grid_fit", 6}, {"keyboard_layout", 6}, {"appearance", 6}, {"store", u32(len(stores[1]))}, {"zone", 6}, {"in_force", 5}, {"setting_value", 5}, {"local_time", 5}))
+	// The scale is written by the name of its value: "1.375", "1.625" and
+	// "1.875" are the longest, 5 bytes.
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"font", 6}, {"subpixel_order", 6}, {"pointer_theme", 6}, {"grid_fit", 6}, {"keyboard_layout", 6}, {"appearance", 6}, {"scale", u32(len("1.375"))}, {"store", u32(len(stores[1]))}, {"zone", 6}, {"in_force", 5}, {"setting_value", 5}, {"local_time", 5}))
 }
 
 // The facts of inspect: the counts at their edges, the longest process
@@ -476,7 +478,7 @@ the_other_facts_of_the_compositor_write_the_lines_of_before :: proc(t: ^testing.
 		facts_expect_line(t, render(t, file, "Compositor_Ready", {{"width", count}, {"height", other}}), line_of_before("compositor: ok ", count, "x", other))
 		facts_expect_line(t, render(t, file, "Left_Button_Pressed", {{"x", count}, {"y", other}}), line_of_before("compositor: a press of the left button at ", count, ",", other))
 		facts_expect_line(t, render(t, file, "Page_Flip_Refused", {{"screen_page", count}}), line_of_before("compositor: the display refused the page flip to the screen page ", count, ": each later frame is written into the screen page 0, which the display shows"))
-		facts_expect_line(t, render(t, file, "Screen_Draw_Refused", {{"error_kind", count}, {"error_argument", other}}), line_of_before("compositor: the drawing module refused execute_draw_table_in_rectangles_18 (the error kind ", count, ", the argument ", other, "): the part of the screen is not drawn. The compositor writes this line one time"))
+		facts_expect_line(t, render(t, file, "Screen_Draw_Refused", {{"error_kind", count}, {"error_argument", other}}), line_of_before("compositor: the drawing module refused execute_draw_table_in_rectangles_19 (the error kind ", count, ", the argument ", other, "): the part of the screen is not drawn. The compositor writes this line one time"))
 		facts_expect_line(t, render(t, file, "Provider_Table_Refused", {{"entry_index", count}, {"table_problem", "a text that is not UTF-8 or has a control character, or a name that is not ASCII"}}), line_of_before("compositor: the table of the palette provider is refused: ", "a text that is not UTF-8 or has a control character, or a name that is not ASCII", ", entry ", count, "; the palette lists the processes and the windows only"))
 		facts_expect_line(t, render(t, file, "Palette_Candidates_Ready", {{"candidates", count}, {"field", other}, {"buttons_words", ", as a row of buttons"}}), line_of_before("compositor: the palette has ", count, " candidates for the field ", other, ", as a row of buttons"))
 		facts_expect_line(t, render(t, file, "Palette_Candidates_Ready", {{"candidates", count}, {"field", other}, {"buttons_words", ""}}), line_of_before("compositor: the palette has ", count, " candidates for the field ", other))
@@ -580,6 +582,9 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	for setting_field in ([7]string{"font", "subpixel_order", "pointer_theme", "grid_fit", "keyboard_layout", "appearance", "in_force"}) {
 		most[setting_field] = 6
 	}
+	// The name of the value of the scale: "1.375", "1.625" and "1.875" are
+	// the longest, 5 bytes.
+	most["scale"] = u32(len("1.375"))
 	most["candidate"] = 31
 	most["theme_file"] = u32(len(pointer_pictures.RESOURCE_OF_THE_SYSTEM))
 	most["typed"] = 64
@@ -841,10 +846,10 @@ the_other_lines_of_the_windows_write_the_lines_of_before :: proc(t: ^testing.T) 
 		}
 		for boot in boot_cases {
 			for elapsed in UNIT_VALUES {
-				facts_expect_line(t, render(t, settings_file, boot.type_name, {{"elapsed", elapsed}, {"font", "spleen"}, {"subpixel_order", "none"}, {"pointer_theme", "system"}, {"grid_fit", "off"}, {"keyboard_layout", "french"}, {"appearance", "light"}}), line_of_before("settings: the boot pass: ", boot.what, ": font spleen, subpixel order none, pointer theme system, grid fit off, keyboard layout french, appearance light; in ", elapsed, " us"))
+				facts_expect_line(t, render(t, settings_file, boot.type_name, {{"elapsed", elapsed}, {"font", "spleen"}, {"subpixel_order", "none"}, {"pointer_theme", "system"}, {"grid_fit", "off"}, {"keyboard_layout", "french"}, {"appearance", "light"}, {"scale", "1.375"}}), line_of_before("settings: the boot pass: ", boot.what, ": font spleen, subpixel order none, pointer theme system, grid fit off, keyboard layout french, appearance light, scale 1.375; in ", elapsed, " us"))
 			}
 		}
-		facts_expect_line(t, render(t, settings_file, "Boot_Pass_Nothing_Kept", {{"elapsed", u64(12)}, {"font", "vector"}, {"subpixel_order", "rgb"}, {"pointer_theme", "owner"}, {"grid_fit", "on"}, {"keyboard_layout", "us"}, {"appearance", "auto"}}), "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; in 12 us")
+		facts_expect_line(t, render(t, settings_file, "Boot_Pass_Nothing_Kept", {{"elapsed", u64(12)}, {"font", "vector"}, {"subpixel_order", "rgb"}, {"pointer_theme", "owner"}, {"grid_fit", "on"}, {"keyboard_layout", "us"}, {"appearance", "auto"}, {"scale", "1.25"}}), "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; in 12 us")
 	}
 
 	inspect_file, inspect_ok := window_facts_file(t, "inspect")
@@ -923,7 +928,7 @@ the_other_lines_of_the_windows_write_the_lines_of_before :: proc(t: ^testing.T) 
 			for elapsed in UNIT_VALUES {
 				facts_expect_line(t, render(t, compositor_file, "Full_Frame_Measured", {{"width", count}, {"height", other}, {"windows", count}, {"elapsed", elapsed}}), line_of_before("compositor: a full frame of ", count, "x", other, " with ", count, " windows in ", elapsed, " us"))
 			}
-			facts_expect_line(t, render(t, compositor_file, "Settings_Changed", {{"windows", count}, {"font", "spleen"}, {"subpixel_order", "rgb"}, {"pointer_theme", "system"}, {"grid_fit", "off"}, {"keyboard_layout", "french"}, {"appearance", "auto"}, {"in_force", "light"}, {"zone", "+05:45"}}), line_of_before("compositor: the settings changed: font spleen, subpixel order rgb, pointer theme system, grid fit off, keyboard layout french, appearance auto; the appearance in force light; the time zone +05:45; ", count, " windows draw again"))
+			facts_expect_line(t, render(t, compositor_file, "Settings_Changed", {{"windows", count}, {"font", "spleen"}, {"subpixel_order", "rgb"}, {"pointer_theme", "system"}, {"grid_fit", "off"}, {"keyboard_layout", "french"}, {"appearance", "auto"}, {"scale", "1.375"}, {"in_force", "light"}, {"zone", "+05:45"}}), line_of_before("compositor: the settings changed: font spleen, subpixel order rgb, pointer theme system, grid fit off, keyboard layout french, appearance auto, scale 1.375; the appearance in force light; the time zone +05:45; ", count, " windows draw again"))
 			candidates := [2]string{strings.repeat("c", 31, context.temp_allocator), "round_robin"}
 			for candidate in candidates {
 				facts_expect_line(t, render(t, compositor_file, "Palette_Takes_Candidate", {{"candidate", candidate}}), line_of_before("compositor: the palette takes the candidate ", candidate))

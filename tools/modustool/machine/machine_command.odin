@@ -51,8 +51,8 @@ SERIAL_INPUT_SUFFIX :: "_serial_input.fifo"
 ENTROPY_SOURCE_SOCKET_SUFFIX :: "_entropy_source.socket"
 
 // The processors of each machine (`-smp`). The whole test starts at most
-// one part for each of these counts of processors of the host
-// (test_parts_at_once).
+// one part for each of these counts of processors of the host, and fewer
+// when the memory of the host holds fewer (test_parts_at_once).
 MACHINE_PROCESSOR_COUNT :: 4
 
 // The data disk of the three machines of the test of persistence: new
@@ -120,8 +120,16 @@ firmware_files :: proc(firmware: Machine_Firmware) -> (code_variable, variables_
 }
 
 // The memory of a test machine, in MiB. Below the hole of PCI of q35, so an
-// offset in the memory file of a machine is a physical address.
+// offset in the memory file of a machine is a physical address: the mailbox
+// of the operation sequences and the counters of the counted kernel are read
+// at their physical address as an offset. q35 keeps all the memory below
+// 4 GiB while it is at most Q35_LOW_MEMORY_MIB (QEMU, hw/i386/pc_q35.c, the
+// limit 0xB0000000 of the memory below 4 GiB); past it, the memory above
+// 2 GiB moves above 4 GiB, and an offset is no longer an address. The bound
+// by memory of the parts at once reads it (test_part_memory_mib).
 MACHINE_MEMORY_MIB :: 1024
+Q35_LOW_MEMORY_MIB :: 0xB000_0000 >> 20
+#assert(MACHINE_MEMORY_MIB <= Q35_LOW_MEMORY_MIB)
 
 // The video memory of the standard VGA of a test machine, in MiB: the
 // amount of QEMU with no option, stated so that the check below reads it.

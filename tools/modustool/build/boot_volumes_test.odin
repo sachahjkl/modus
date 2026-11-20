@@ -1,19 +1,20 @@
 package build
 
 import "modus:contract/blake3"
+import "modus:contract/system_description"
 import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"
 
-// The table of the boot volumes: 18 fixed volumes and one for each test of
+// The table of the boot volumes: 19 fixed volumes and one for each test of
 // the kernel on itself, each with its own name and its own files.
 @(test)
 boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 	volumes := boot_volumes()
-	testing.expect_value(t, len(volumes), 18 + len(self_tests))
-	testing.expect_value(t, len(volumes), 25)
+	testing.expect_value(t, len(volumes), 19 + len(self_tests))
+	testing.expect_value(t, len(volumes), 26)
 	// The volumes of the TPM floors are signed for Secure Boot: only a start
 	// with the PCR 7 of Secure Boot raises a floor. The newer key differs
 	// from the newer system by its key number alone.
@@ -93,17 +94,32 @@ boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 	testing.expect_value(t, stores, 1)
 }
 
-// A release ships no volume of a test: no raised key number, no raised
-// security version, no other change, no test of the kernel on itself. The
-// boot program has no setting for a test, so the release volume holds the
-// key file of the build.
+// A release ships no volume of a test: no kernel of a test, no raised key
+// number, no raised security version, no other change, no test of the
+// kernel on itself. The boot program has no setting for a test, so the
+// release volume holds the key file of the build.
 @(test)
 a_release_ships_no_volume_of_a_test :: proc(t: ^testing.T) {
 	release := release_boot_volume()
 	testing.expect_value(t, boot_volume_release_problem(release), "")
 	testing.expect_value(t, boot_volume_system_key_path(release), SYSTEM_KEY_FILE)
+	// The counted kernel and the kernel with a check skipped, each as the
+	// kernel of the release volume, with nothing else changed.
+	for test_kernel in ([]string{foundation.KERNEL_EDGE_COUNTERS_MODULE, "kernel_without_return_check", "", "kernel "}) {
+		with_test_kernel := release
+		with_test_kernel.kernel = test_kernel
+		testing.expectf(t, boot_volume_release_problem(with_test_kernel) != "", "the release volume with the kernel %s is refused", test_kernel)
+	}
+	counted_found := false
 	for volume in boot_volumes() {
-		tested := volume.key_number_raised != 0 || volume.change != (Image_Change{}) || volume.self_test != 0
+		if volume.path == BOOT_VOLUME_OPERATION_FUZZING {
+			counted_found = true
+			testing.expect_value(t, volume.kernel, foundation.KERNEL_EDGE_COUNTERS_MODULE)
+			testing.expect(t, boot_volume_counts_kernel_edges(volume.path), "the volume of the fuzzing has a counted kernel")
+		} else {
+			testing.expectf(t, !boot_volume_counts_kernel_edges(volume.path), "only the volume of the fuzzing has a counted kernel, not %s", volume.path)
+		}
+		tested := volume.kernel != system_description.KERNEL_ENTRY_NAME || volume.key_number_raised != 0 || volume.change != (Image_Change{}) || volume.self_test != 0
 		testing.expectf(t, (boot_volume_release_problem(volume) != "") == tested, "the release check of %s", volume.path)
 		if volume.path == BOOT_VOLUME_NEWER_KEY || volume.path == BOOT_VOLUME_NEWER_SYSTEM {
 			testing.expect(t, boot_volume_release_problem(volume) != "")
@@ -112,6 +128,7 @@ a_release_ships_no_volume_of_a_test :: proc(t: ^testing.T) {
 			testing.expectf(t, !strings.contains(flag, "KEY_NUMBER"), "the boot program of %s has a setting of its key number: %s", volume.path, flag)
 		}
 	}
+	testing.expect(t, counted_found, "the volume of the fuzzing is in the table")
 }
 
 // A small tree with the sources of a boot program, its assembly files and

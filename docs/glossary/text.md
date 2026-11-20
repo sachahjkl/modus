@@ -492,9 +492,9 @@ Do not use: label box, text area, text field (a text input is the element that t
 
 ### Text size
 
-A text size is the height of the line of a face, in 1/64 pixel, which a process gives to measure and draw a text.
+A text size is the height of the line of a face, in 1/64 logical pixel, which a process gives to measure and draw a text.
 
-A line of 16 pixels is the size 1 024. A text record and a text grid carry it, and the text rendering module and the border of the record take any size from 256 to 16 384, a line of 4 to 256 pixels, and refuse another, 0 too. The frame of a face turns it into units of the font. A label and its value at one text size share one line. It is not an em, not a size in points and not a scale factor.
+A line of 16 logical pixels is the size 1 024. A text record and a text grid carry it; the border of the record takes a line of 4 to 128 logical pixels and refuses another. The text rendering module draws it at the scale. A label and its value at one text size share one line. It is not an em, not a size in points and not a scale factor.
 
 The design: `src/md/features/text_rendering.md`, "The text size".
 

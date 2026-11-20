@@ -92,6 +92,7 @@ import "modus:support/bochs_display"
 import "modus:support/display"
 import "modus:contract/errors"
 import "modus:contract/settings"
+import "modus:contract/scale_factor"
 import "modus:contract/date"
 import "modus:support/calendar"
 import "modus:support/graphics"
@@ -123,23 +124,28 @@ import "base:intrinsics"
 //   second page directory: 3 pages;
 // - the page of the display registers: a page table and a page directory,
 //   2 pages;
-// - its surfaces, its tables and the other mappings: 2255 pages;
+// - its tables and the other mappings: 1647 pages;
+// - the mapping of the surface of each window: the largest surface,
+//   display.SURFACE_SCREEN_LIMIT, 2816 x 2816 pixels of the screen (2048
+//   logical pixels at the window bound) of 8 bytes for two pictures, is
+//   60.5 MiB, whose mapping takes at most 32 page tables of 2 MiB (its
+//   start need not be on a 2 MiB edge) and 2 page directories (it can
+//   cross a 1 GiB edge): 34 pages. 32 clients: 32 x 34 = 1088 pages. These
+//   two parts were the 2255 pages counted at the scale 1, with surfaces of
+//   2048 x 2048 and 19 pages each: 2255 - 32 x 19 = 1647;
 // - a resize maps the new surface of a window beside its old one until
-//   its Present (src/md/features/window_resize.md): the largest surface,
-//   2048 x 2048 pixels of 8 bytes for two pictures, is 32 MiB, whose
-//   mapping takes at most 17 page tables of 2 MiB (its start need not be
-//   on a 2 MiB edge) and 2 page directories (it can cross a 1 GiB edge):
-//   19 pages. Each of the 32 clients can hold one such second mapping:
-//   32 x 19 = 608 pages;
+//   its Present (src/md/features/window_resize.md): one more such mapping
+//   for each client, 1088 pages. A rescale holds one surface at a time:
+//   the window releases the old one first;
 // - the glyph memory of its two copies of the text rendering, its own
 //   (its bar, its menus, its titles) and the one of the drawing module:
 //   each draws every glyph of its text into its own private glyph cache,
 //   and reserves its memory at its first glyph: 2 x 354 pages
 //   (display.TEXT_MEMORY_PAGES) = 708 pages.
-// 4050 + 10 + 9 + 3 + 2 + 2255 + 608 + 708 = 7645. A screen whose frame
-// and background the budget cannot pay is named on one line, and the
+// 4050 + 10 + 9 + 3 + 2 + 1647 + 1088 + 1088 + 708 = 8605. A screen whose
+// frame and background the budget cannot pay is named on one line, and the
 // compositor stops (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7645, processes = 1, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8605, processes = 1, threads = 2}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -178,8 +184,16 @@ PALETTE_HINT_KEY :: "super"
 Client :: struct {
 	ring_memory: system.Handle, // 0: the slot is free.
 	ring:        ring.Ring,
-	surface:     graphics.Canvas, // pixels is nil until the process creates its surface.
-	pictures:    [^]graphics.Color, // The memory of the surface: two pictures. surface is one of them.
+	// The window exists: the process created its surface. It keeps its
+	// frame, its place and its line in the menu while a rescale released
+	// its surface (src/md/features/window_resize.md, "The rescale").
+	created:     bool,
+	surface:     graphics.Canvas, // pixels is nil before Surface_Create, and while the surface is released.
+	pictures:    [^]graphics.Color, // The memory of the surface: two pictures. surface is one of them. nil with surface.pixels.
+	surface_serial: u64, // The surface serial of the surface shown, or of the one released.
+	surface_scale: scale_factor.Scale, // The scale at which the process made the surface shown.
+	released:    bool, // The process let its surface go: the compositor draws the frame with the background.
+	answer_due:  bar.Answer_Slot, // A Surface_Answer that the full ring of the window did not take (window_events.odin).
 	shown:       int, // The picture that surface is: the one that the last Present named.
 	// The proof that the window shows whole frames: the frames that read a
 	// picture of the window, and the Present records that named the
@@ -189,7 +203,8 @@ Client :: struct {
 	pictures_drawn_again: u64,
 	presents_refused: u64, // The Present records whose picture number names no picture of the surface.
 	commands_refused: u64, // The records whose kind names no command, or None: the first one writes a line.
-	x, y:        int,
+	x, y:        int, // The corner of the frame of the window, in logical pixels of the desktop.
+	width, height: int, // The size of the window in logical pixels of the desktop: its surface is these pixels at the scale (scale.odin).
 	title:       system.Name,
 	// A disk process: the root service gave its nickname and the first
 	// bytes of the hash of its file in Client_Add. The window has the
@@ -214,11 +229,16 @@ Client :: struct {
 	resizable:   bool,
 	size_limits: display.Size_Limits,
 	resizable_refusal_logged: bool, // The line of a refused Resizable is on the log: a window writes it one time.
-	// The surface of a new size that the process gave with Surface_Resize:
-	// nil until then, and again from the first Present after it, when it
-	// becomes the surface of the window.
+	// The pending surface: the surface of a new size that the process gave
+	// with Surface_Resize, or of a new scale with Surface_Rescale. nil until
+	// then, and again from the first Present of its serial, when it becomes
+	// the surface of the window. It keeps the logical size and the scale
+	// that the compositor checked, so that Present computes nothing again.
 	resize_pictures: [^]graphics.Color,
-	resize_width, resize_height: int,
+	resize_width, resize_height: int, // Pixels of the screen.
+	resize_logical_width, resize_logical_height: int,
+	resize_scale: scale_factor.Scale,
+	resize_serial: u64,
 	resize_pending_edges: bar.Resize_Edges, // The edges that the drag of resize_pictures held: the opposite ones stay in place when the window takes it.
 	// The request of the last drag: the compositor sent Resized with this
 	// size, and no answer came yet. The one Surface_Resize that it takes
@@ -311,11 +331,25 @@ move_frames, move_time, move_longest: u64 // Nanoseconds.
 title_row, title_light: [display.SURFACE_LIMIT + 2 * BORDER]graphics.Color
 
 // damage_add records that the desktop itself changed a rectangle of the
-// screen: each change but the Present of a process.
+// layout, in logical pixels: each change but the Present of a process. The
+// damage is kept in pixels of the screen (scale.odin).
 damage_add :: proc "contextless" (x, y, width, height: int) {
+	area := screen_rectangle_of(x, y, width, height)
+	damage_screen_add(area.left, area.top, area.right - area.left, area.bottom - area.top)
+}
+
+// damage_screen_add records a change of the desktop in pixels of the
+// screen: the pointer picture, and the whole screen.
+damage_screen_add :: proc "contextless" (x, y, width, height: int) {
 	if damage_rectangle_add(x, y, width, height) {
 		desktop_change_waits = true
 	}
+}
+
+// damage_whole_screen records the whole screen: also the pixels past the
+// last logical pixel, which no record covers and the background does.
+damage_whole_screen :: proc "contextless" () {
+	damage_screen_add(0, 0, screen.width, screen.height)
 }
 
 // damage_rectangle_add records that a rectangle of the screen changed.
@@ -347,8 +381,8 @@ damage_rectangle_add :: proc "contextless" (x, y, width, height: int) -> bool {
 
 // damage_window records the rectangle of a window.
 damage_window :: proc "contextless" (client: ^Client) {
-	if client.surface.pixels != nil {
-		damage_add(client.x, client.y, client.surface.width + 2 * BORDER, client.surface.height + TITLE_HEIGHT + BORDER)
+	if client.created {
+		damage_add(client.x, client.y, client.width + 2 * BORDER, client.height + TITLE_HEIGHT + BORDER)
 	}
 }
 
@@ -410,7 +444,7 @@ bar_measure :: proc "contextless" () {
 		}
 		bar_layout = bar.layout_of(measured_font != nil ? text_rendering.Face.Interface : text_rendering.Face.None)
 		_, menu_top, _, menu_height := bar.menu(bar_layout)
-		areas := [1]Rectangle{{0, 0, frame.width, max(BAR_HEIGHT, menu_top + menu_height)}}
+		areas := [1]Rectangle{{0, 0, frame.width, screen_pixel_of(max(BAR_HEIGHT, menu_top + menu_height))}}
 		for _ in 0 ..< ROUNDS {
 			start := system.nanoseconds()
 			screen_build(0, measured_font)
@@ -442,7 +476,7 @@ bar_layout_update :: proc "contextless" () {
 		damage_menu_of(bar_layout)
 	}
 	bar_layout, bar_layout_known, bar_in_interface_font = layout, true, in_interface_font
-	damage_add(0, 0, screen.width, BAR_HEIGHT)
+	damage_add(0, 0, desktop_width, BAR_HEIGHT)
 	damage_menu_of(bar_layout)
 	if in_interface_font {
 		system.log_fact(.Info, Bar_In_Interface_Font{start_width = u64(layout.label_width), windows_width = u64(layout.windows_label_width), name_width = u64(layout.longest_name_width)})
@@ -455,7 +489,7 @@ bar_layout_update :: proc "contextless" () {
 window_of_line :: proc "contextless" (line: int) -> int {
 	count := 0
 	for &client, index in clients {
-		if client.surface.pixels == nil {
+		if !client.created {
 			continue
 		}
 		if count == line {
@@ -472,13 +506,13 @@ window_of_line :: proc "contextless" (line: int) -> int {
 windows_log :: proc "contextless" () {
 	windows: u64 = 0
 	for &client in clients {
-		if client.surface.pixels != nil {
+		if client.created {
 			windows += 1
 		}
 	}
 	place: u64 = 0
 	for &client in clients {
-		if client.surface.pixels == nil {
+		if !client.created {
 			continue
 		}
 		place += 1
@@ -487,7 +521,7 @@ windows_log :: proc "contextless" () {
 	// The line of a disk process shows the hash prefix that the root
 	// service gave, faded beside its nickname.
 	for &client in clients {
-		if client.surface.pixels != nil && client.from_disk {
+		if client.created && client.from_disk {
 			system.log_fact(.Info, Disk_Process_In_Menu{hash_prefix = value_kinds.text_field(string(client.hash_prefix[:]), HASH_PREFIX_FIELD_BYTES), window = window_field(client.title[:])})
 		}
 	}
@@ -525,7 +559,7 @@ next_second_of_bar :: proc "contextless" (now: u64) -> u64 {
 }
 
 damage_clock :: proc "contextless" () {
-	damage_add(screen.width - CLOCK_WIDTH - 16, 8, CLOCK_WIDTH, graphics.CELL_HEIGHT)
+	damage_add(desktop_width - CLOCK_WIDTH - 16, 8, CLOCK_WIDTH, graphics.CELL_HEIGHT)
 }
 
 canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
@@ -647,16 +681,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	frame = canvas_create(width, height)
 	background = canvas_create(width, height)
+	// The layout at the default scale until the settings page is read
+	// below: a page that the root service created holds it.
+	desktop_scale_take(settings.choice_default(), true)
 	// The background, the mark of the bar and the measures draw in the dark
 	// appearance: the settings are read below, and a change of the
 	// appearance draws the background and the mark again.
 	background_build()
-	pointer_x, pointer_y = width / 2, height / 2
+	pointer_x, pointer_y = desktop_width / 2, desktop_height / 2
 	bar_mark_build()
 	memory_measure()
 	title_measure()
 	pointer_theme_open(ctx) // pointer_picture.odin
-	damage_add(0, 0, width, height)
+	damage_whole_screen()
 	full_measure = true
 	system.log_fact(.Info, Compositor_Ready{width = u64(width), height = u64(height)})
 	quality_profile_log() // quality_measures.odin
@@ -685,7 +722,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if display.settings_page != nil {
 		// A refused page gives the defaults: the compositor draws with
 		// them, as with a page that never stays stable.
-		first_choice, _ := settings.read(display.settings_page)
+		first_choice, first_ok := settings.read(display.settings_page)
+		if desktop_scale_take(first_choice, first_ok) {
+			background_build()
+			bar_layout_update()
+			damage_whole_screen()
+			pointer_drawn_valid = false
+			pointer_update(0)
+		}
 		pointer_theme_choose(first_choice.pointer_theme)
 		pointer_form_choose(pointer_form_in_force(first_choice)) // pointer_picture.odin
 	}
@@ -721,8 +765,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// no new change count, and wakes this loop.
 			// A refused page gives the defaults with its count: the windows
 			// draw with them, as with a page that never stays stable.
-			if choice, _ := settings.read(display.settings_page); choice.change_count != settings_seen || choice.appearance_in_force != settings_told.appearance_in_force {
+			// The scale is the one setting that a refused page does not
+			// set to its default: each window holds a surface of the scale
+			// in force, and the desktop keeps it (desktop_scale_take).
+			if choice, read_ok := settings.read(display.settings_page); choice.change_count != settings_seen || choice.appearance_in_force != settings_told.appearance_in_force {
 				settings_seen = choice.change_count
+				choice.scale = bar.scale_after_read(scale, choice.scale, read_ok)
 				if !settings_told_once || settings.values_differ(choice, settings_told) {
 					settings_told = choice
 					settings_told_once = true
@@ -819,22 +867,26 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case .Present:
 					// The picture that was due comes with this Present.
 					client.picture_due = false
-					if client.surface.pixels != nil {
-						// The process names the picture that is complete.
-						// From here on the compositor reads only that one,
-						// and the process draws the other. A number that
-						// names no picture is refused and counted: the
+					if client.created {
+						// The process names the picture that is complete,
+						// and the serial of its surface. From here on the
+						// compositor reads only that picture, and the
+						// process draws the other. A number that names no
+						// picture, and a serial of no surface that the
+						// compositor holds, are refused and counted: the
 						// window keeps the last picture that was named,
 						// and shows none before a first one.
 						picture := record.values[0]
-						if picture >= display.PICTURE_COUNT {
+						serial := record.values[display.PRESENT_SURFACE_SERIAL]
+						// The first Present of the serial of the pending
+						// surface names a picture of it: the window takes
+						// it now, and the old surface ends.
+						resized := client.resize_pictures != nil && serial == client.resize_serial
+						shown := client.surface.pixels != nil && serial == client.surface_serial
+						if picture >= display.PICTURE_COUNT || !(resized || shown) {
 							client.presents_refused += 1
 							continue
 						}
-						// The first Present after a Surface_Resize names a
-						// picture of the new surface: the window takes it
-						// now, and the old surface ends.
-						resized := client.resize_pictures != nil
 						if resized {
 							resize_surface_take(&client)
 						} else if client.presents > 0 && int(picture) == client.shown {
@@ -869,7 +921,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						quality_present(index, &client, client.presents == 0, record.values[display.PRESENT_KEY_SERIAL])
 						client.presents += 1
 						presents += 1
-						if damage_rectangle_add(client.x + BORDER + left, client.y + TITLE_HEIGHT + top, changed_width, changed_height) {
+						// The rectangle is in pixels of the surface: the
+						// pixels of the screen from the corner of the
+						// surface, inside the part that the surface covers.
+						box := surface_screen_box(&client)
+						changed := bar.Screen_Box{max(box.left + left, box.left), max(box.top + top, box.top), min(box.left + left + changed_width, box.right), min(box.top + top + changed_height, box.bottom)}
+						if changed.left < changed.right && changed.top < changed.bottom && damage_rectangle_add(changed.left, changed.top, changed.right - changed.left, changed.bottom - changed.top) {
 							client.present_waits = true
 						}
 					}
@@ -883,6 +940,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					resizable_take(&client, record)
 				case .Surface_Resize:
 					surface_resize_take(&client, record)
+				case .Surface_Rescale:
+					surface_rescale_take(&client, record) // window_resize.odin
+				case .Surface_Release:
+					surface_release_take(index, record) // window_resize.odin
 				case .Resize_Declined:
 					resize_declined_take(&client)
 				case .Copy:
@@ -903,6 +964,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.wake_writer(&client.ring.commands)
 			}
 		}
+		windows_at_scale_check() // After the records of the windows: the line of a change of the scale.
 		palette_turn() // A list of the ranking thread, an answer of the palette provider.
 		// The calls read the place of the pointer after the input records,
 		// and the state of the screen after each Present that a process
@@ -930,12 +992,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // (src/library/support/display gives it the new font before the event).
 settings_changed :: proc "contextless" (choice: settings.Choice) {
 	_ = display.text_settings_apply()
+	// A new scale: the desktop has another logical size, and its grid of
+	// points another place on the screen. The windows keep their logical
+	// places; each rescales to the scale that the event below names
+	// (src/md/features/window_resize.md, "The rescale"). The loop gives the
+	// scale in force in the choice of a refused page.
+	rescaled := desktop_scale_take(choice, true)
+	settings_count_told = u64(choice.change_count)
 	// A new appearance: the background and the mark of the bar are pixels
 	// that the compositor keeps, so it draws them again; each record of the
 	// screen reads the tokens at its next frame.
-	if graphics.appearance != background_appearance {
+	if rescaled || graphics.appearance != background_appearance {
 		background_build()
 		bar_mark_build()
+	}
+	if rescaled {
+		windows_at_scale_due = true // scale.odin
+		// The pointer picture of the size of the new scale.
+		pointer_drawn_valid = false
+		pointer_update(0)
 	}
 	bar_layout_update()
 	pointer_theme_choose(choice.pointer_theme) // pointer_picture.odin
@@ -943,17 +1018,21 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	told := 0
 	for &client in clients {
 		if client.ring.head != nil {
-			send(&client, .Settings_Changed, {0 = u64(choice.change_count)})
+			send(&client, .Settings_Changed, {0 = settings_count_told, 1 = u64(scale)})
 			told += 1
 		}
 	}
-	damage_add(0, 0, screen.width, screen.height)
+	damage_whole_screen()
 	palette_refresh() // An open panel is measured again in the new font.
-	// The template names the six settings in the order of settings.Setting.
-	#assert(len(settings.Setting) == 6, "the template of Settings_Changed names the six settings")
+	// The template names the seven settings in the order of settings.Setting.
+	#assert(len(settings.Setting) == 7, "the template of Settings_Changed names the seven settings")
 	zone_buffer: [settings.ZONE_TEXT_SIZE]u8
-	system.log_fact(.Info, Settings_Changed{windows = u64(told), font = setting_value_field(choice, .Font), subpixel_order = setting_value_field(choice, .Subpixel_Order), pointer_theme = setting_value_field(choice, .Pointer_Theme), grid_fit = setting_value_field(choice, .Grid_Fit), keyboard_layout = setting_value_field(choice, .Keyboard_Layout), appearance = setting_value_field(choice, .Appearance), in_force = value_kinds.text_field(settings.appearance_in_force_names[choice.appearance_in_force], SETTING_VALUE_FIELD_BYTES), zone = value_kinds.text_field(settings.zone_text(zone_buffer[:], choice.zone_offset_minutes), ZONE_FIELD_BYTES)})
+	system.log_fact(.Info, Settings_Changed{windows = u64(told), font = setting_value_field(choice, .Font), subpixel_order = setting_value_field(choice, .Subpixel_Order), pointer_theme = setting_value_field(choice, .Pointer_Theme), grid_fit = setting_value_field(choice, .Grid_Fit), keyboard_layout = setting_value_field(choice, .Keyboard_Layout), appearance = setting_value_field(choice, .Appearance), scale = setting_value_field(choice, .Scale), in_force = value_kinds.text_field(settings.appearance_in_force_names[choice.appearance_in_force], SETTING_VALUE_FIELD_BYTES), zone = value_kinds.text_field(settings.zone_text(zone_buffer[:], choice.zone_offset_minutes), ZONE_FIELD_BYTES)})
 }
+
+// The change count of the last choice that the windows were told: the
+// first word of each Settings_Changed.
+settings_count_told: u64
 
 // send gives an event to a window. A full ring loses no key: the event
 // waits for the window in the compositor (window_events.odin). The kind is
@@ -1011,7 +1090,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		}
 		damage_window(&client)
 		damage_focus()
-		if client.surface.pixels != nil {
+		if client.pictures != nil {
 			system.memory_unmap(client.pictures)
 		}
 		if client.resize_pictures != nil {
@@ -1041,7 +1120,9 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// The kernel proves that this process gave the handle through its own
 	// ring (src/library/support/system, handle_state). A number with no proof is not a
 	// gift of this process: the compositor neither uses it nor closes it.
-	memory := system.Handle(record.values[0])
+	// The handle is in the low 32 bits of the first word; the word of the
+	// scale of the surface is above them (display.SURFACE_CREATE_SCALE_SHIFT).
+	memory := system.Handle(record.values[0] & 0xFFFF_FFFF)
 	kind, rights, through := system.handle_state(memory, client.ring_memory)
 	// No log line: a process could send this command without end.
 	if !through {
@@ -1049,24 +1130,45 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	}
 	// The handle is a gift of this process: each return below closes it.
 	defer system.close(memory)
-	width, height := record.values[1], record.values[2]
-	// The process chose these numbers: check them against the memory itself.
-	if kind != .Memory || .Read not_in rights || client.surface.pixels != nil || width == 0 || height == 0 || width > display.SURFACE_LIMIT || height > display.SURFACE_LIMIT {
+	if client.created {
 		return
 	}
-	// A surface has two pictures: the process draws one while this service
-	// reads the other. Memory for less is refused.
-	pages, size_status := system.memory_size(memory)
-	size := pages * system.PAGE_SIZE
-	if size_status != .Ok || size < display.PICTURE_COUNT * width * height * size_of(graphics.Color) {
+	// The process chose these numbers: check them against the memory
+	// itself. The record names the logical size and the scale: the pixels of
+	// the screen follow from the rule of each edge, so a logical size past
+	// the limit, a scale past the window bound, and a surface of pixels that
+	// no logical size gives, are each refused (bar.surface_create_refusal).
+	facts := bar.Surface_Create_Facts {
+		is_memory  = kind == .Memory,
+		readable   = .Read in rights,
+		scale_word = record.values[0] >> display.SURFACE_CREATE_SCALE_SHIFT,
+		width      = record.values[1],
+		height     = record.values[2],
+	}
+	if facts.is_memory {
+		if pages, size_status := system.memory_size(memory); size_status == .Ok {
+			facts.memory_bytes = pages * system.PAGE_SIZE
+		}
+	}
+	refusal, surface_scale, screen_width, screen_height := bar.surface_create_refusal(facts)
+	if refusal != .None {
 		return
 	}
 	address, status := system.memory_map(memory, {}) // Read only.
 	if status != .Ok {
 		return
 	}
+	client.created = true
 	client.pictures = ([^]graphics.Color)(address)
-	client.surface = {pixels = client.pictures, width = int(width), height = int(height), stride = int(width)}
+	client.surface = {pixels = client.pictures, width = int(screen_width), height = int(screen_height), stride = int(screen_width)}
+	client.surface_serial, client.surface_scale = 1, surface_scale
+	client.width, client.height = int(facts.width), int(facts.height)
+	// The process read another scale than the scale in force: the
+	// compositor names its own, and the window rescales to it. Until then
+	// its surface is cut to its interior.
+	if surface_scale != scale {
+		send(client, .Settings_Changed, {0 = settings_count_told, 1 = u64(scale)})
+	}
 	// A disk process could title its window as a process of the system: its
 	// window has the nickname that the root service gave.
 	client.title = client.from_disk ? client.nickname : system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
@@ -1074,14 +1176,14 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client.y = PLACE_Y + placed % 8 * PLACE_STEP_Y
 	// A large window moves up and left until the screen shows all of it; a
 	// window wider than the screen keeps its close button on the screen.
-	client.x, client.y = bar.new_window_place(client.x, client.y, window_frame_of(client), int(height), screen.width, screen.height)
+	client.x, client.y = bar.new_window_place(client.x, client.y, window_frame_of(client), client.height, desktop_width, desktop_height)
 	placed += 1
 	pointer_leaves_front()
 	damage_focus()
 	order[order_count] = index
 	order_count += 1
 	damage_window(client)
-	system.log_fact(.Info, Surface_Made{window = window_field(client.title[:]), width = width, height = height, x = u64(client.x), y = u64(client.y)})
+	system.log_fact(.Info, Surface_Made{window = window_field(client.title[:]), width = u64(client.width), height = u64(client.height), x = u64(client.x), y = u64(client.y)})
 	palette_entries_refresh() // A window appeared.
 }
 
@@ -1110,14 +1212,17 @@ inside :: proc "contextless" (x, y, left, top, width, height: int) -> bool {
 // process reads input that the principal gave to another one.
 pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, wheel: int) {
 	close_before := close_button_under_pointer()
-	pointer_x = clamp(pointer_x + motion_x, 0, screen.width - 1)
-	pointer_y = clamp(pointer_y + motion_y, 0, screen.height - 1)
+	// The pointer moves in logical pixels of the desktop: one unit of a move
+	// of the mouse is one logical pixel, so a press acts at a place of the
+	// layout and the pointer reaches each logical pixel.
+	pointer_x = clamp(pointer_x + motion_x, 0, desktop_width - 1)
+	pointer_y = clamp(pointer_y + motion_y, 0, desktop_height - 1)
 	// The close button under the pointer is brighter: draw again the
 	// button that the pointer leaves and the one that it reaches.
 	if close_after := close_button_under_pointer(); close_after != close_before {
 		for client in ([2]^Client{close_before, close_after}) {
 			if client != nil {
-				damage_add(client.x + client.surface.width + BORDER - CLOSE_SIZE, client.y, CLOSE_SIZE, TITLE_HEIGHT)
+				damage_add(client.x + client.width + BORDER - CLOSE_SIZE, client.y, CLOSE_SIZE, TITLE_HEIGHT)
 			}
 		}
 	}
@@ -1144,7 +1249,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			damage_window(&clients[dragging])
 			// The window follows the pointer to the pixel, and a part
 			// of its title stays on the screen at each edge.
-			clients[dragging].x, clients[dragging].y = bar.dragged_window_place(pointer_x, pointer_y, drag_x, drag_y, window_frame_of(&clients[dragging]), screen.width, screen.height)
+			clients[dragging].x, clients[dragging].y = bar.dragged_window_place(pointer_x, pointer_y, drag_x, drag_y, window_frame_of(&clients[dragging]), desktop_width, desktop_height)
 			damage_window(&clients[dragging])
 		} else {
 			// The input put the window down: the log has its new place.
@@ -1153,7 +1258,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			system.log_fact(.Info, Window_Move_Measured{frames = move_frames, time_per_frame = value_kinds.Time_In_Microseconds(move_time / max(move_frames, 1) / 1000), longest_frame = value_kinds.Time_In_Microseconds(move_longest / 1000), window = window_field(client.title[:])})
 			move_frames, move_time, move_longest = 0, 0, 0
 			dragging = -1
-			damage_add(0, 0, screen.width, screen.height)
+			damage_whole_screen()
 			full_measure = true
 		}
 		return
@@ -1215,8 +1320,8 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		}
 		for position := order_count - 1; position >= 0; position -= 1 {
 			client := &clients[order[position]]
-			outer_width := client.surface.width + 2 * BORDER
-			if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, client.surface.height + TITLE_HEIGHT + BORDER) {
+			outer_width := client.width + 2 * BORDER
+			if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, client.height + TITLE_HEIGHT + BORDER) {
 				continue
 			}
 			raise(position)
@@ -1240,7 +1345,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		y := pointer_y - client.y - TITLE_HEIGHT
 		// One event more when the pointer leaves the surface: the process
 		// then draws at rest what the pointer was over (a scroll bar).
-		on_surface := inside(x, y, 0, 0, client.surface.width, client.surface.height)
+		on_surface := inside(x, y, 0, 0, client.width, client.height)
 		over := held || on_surface
 		if over || client.pointer_over {
 			// The notches go only with a pointer over the surface: not
@@ -1282,9 +1387,9 @@ draw :: proc "contextless" (now: u64) {
 		if client.surface.pixels == nil || client.presents == 0 {
 			continue
 		}
-		left, top := client.x + BORDER, client.y + TITLE_HEIGHT
+		box := surface_screen_box(&client)
 		for area in damage[:damage_count] {
-			if area.left < left + client.surface.width && left < area.right && area.top < top + client.surface.height && top < area.bottom {
+			if area.left < box.right && box.left < area.right && area.top < box.bottom && box.top < area.bottom {
 				client.frames += 1
 				break
 			}
@@ -1337,6 +1442,8 @@ draw_areas :: proc "contextless" (areas: []Rectangle) {
 	if palette_is_open() {
 		rectangles: [DAMAGE_CAPACITY]interface.Rectangle
 		count := rectangles_of_areas(areas, rectangles[:])
+		// The panel is laid out in logical pixels of the desktop.
+		palette_now.scale = scale
 		screen_draw_part(&palette_now, 0, palette_now.record_count, nil, frame, rectangles[:count])
 	}
 
@@ -1426,15 +1533,21 @@ rectangles_of_areas :: proc "contextless" (areas: []Rectangle, rectangles: []int
 // 9). By hand the same frame of 800 x 600 took 8.5 us, as 9 records 8.9 us
 // (one measure run, docs/INTERFACE.md, section 12).
 frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Client, x, y: int, focus, pointer_over: bool) {
-	outer_width := client.surface.width + 2 * BORDER
-	outer_height := client.surface.height + TITLE_HEIGHT + BORDER
+	outer_width := client.width + 2 * BORDER
 	start := graphics.Color(focus ? graphics.colors.title : graphics.colors.title_quiet)
 	end := graphics.Color(focus ? graphics.colors.title_end : graphics.colors.title_quiet_end)
-	interface.draw_horizontal_gradient(table, x, y, outer_width, 1, graphics.shade(start, 125), graphics.shade(end, 125))
-	interface.draw_horizontal_gradient(table, x, y + 1, outer_width, TITLE_HEIGHT - 1, start, end)
-	interface.draw_horizontal_gradient(table, x, y + outer_height - BORDER, outer_width, BORDER, start, end)
-	interface.draw_rectangle(table, x, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, start)
-	interface.draw_rectangle(table, x + outer_width - BORDER, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, end)
+	// The title and the borders reach one logical pixel under the surface
+	// (bar.frame_parts, whose host test checks the seam at each scale): the
+	// surface is copied at the pixel of the screen of its own corner, which
+	// rounds on its own, and is drawn over them, so no pixel of the
+	// background shows between the frame and the surface.
+	parts := bar.frame_parts(x, y, client.width, client.height, BORDER, TITLE_HEIGHT)
+	title_part, bottom_part, left_part, right_part := parts[0], parts[1], parts[2], parts[3]
+	interface.draw_horizontal_gradient(table, title_part.left, title_part.top, title_part.right - title_part.left, 1, graphics.shade(start, 125), graphics.shade(end, 125))
+	interface.draw_horizontal_gradient(table, title_part.left, title_part.top + 1, title_part.right - title_part.left, title_part.bottom - title_part.top - 1, start, end)
+	interface.draw_horizontal_gradient(table, bottom_part.left, bottom_part.top, bottom_part.right - bottom_part.left, bottom_part.bottom - bottom_part.top, start, end)
+	interface.draw_rectangle(table, left_part.left, left_part.top, left_part.right - left_part.left, left_part.bottom - left_part.top, start)
+	interface.draw_rectangle(table, right_part.left, right_part.top, right_part.right - right_part.left, right_part.bottom - right_part.top, end)
 	// The title: a name, cut in its font to the room before the close button.
 	title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(client.title[:]), outer_width - CLOSE_SIZE - 16)
 	interface.draw_text(table, x + 8, y + 4, title, focus ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_INTERFACE)
@@ -1485,8 +1598,8 @@ title_measure :: proc "contextless" () {
 close_button_under_pointer :: proc "contextless" () -> ^Client {
 	for position := order_count - 1; position >= 0; position -= 1 {
 		client := &clients[order[position]]
-		outer_width := client.surface.width + 2 * BORDER
-		if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, client.surface.height + TITLE_HEIGHT + BORDER) {
+		outer_width := client.width + 2 * BORDER
+		if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, client.height + TITLE_HEIGHT + BORDER) {
 			continue
 		}
 		if inside(pointer_x, pointer_y, client.x + outer_width - BORDER - CLOSE_SIZE, client.y, CLOSE_SIZE, TITLE_HEIGHT) {
@@ -1599,16 +1712,22 @@ screen_table := interface.Draw_Table{}
 Screen_Part :: struct {
 	first, count:   int, // The records of the part in screen_table.
 	picture_memory: []graphics.Color, // The surface of the window, the heron of the bar, or none.
-	// The rectangle of the screen that holds each pixel of the part: the
-	// outer rectangle of a window. A damage rectangle that it does not meet
-	// needs no call. The part of the bar holds the menus, and has no bound.
+	// The rectangle of the screen that holds each pixel of the part, in
+	// pixels of the screen: the outer rectangle of a window. A damage
+	// rectangle that it does not meet needs no call. The part of the bar
+	// holds the menus, and has no bound.
 	bounds:         Rectangle,
 	bounded:        bool,
+	// The records are logical pixels of the desktop, drawn at the scale:
+	// the frames, the bar, the menus. The part of a surface is not: its one
+	// Picture record is the pixels of the surface at their place on the
+	// screen, copied as they are.
+	scaled:         bool,
 }
 
-// The parts of the screen: one for each window, one for the outline of a
-// resize, then one for the bar.
-screen_parts: [CLIENT_CAPACITY + 2]Screen_Part
+// The parts of the screen: two for each window (its frame, then its
+// surface), one for the outline of a resize, then one for the bar.
+screen_parts: [2 * CLIENT_CAPACITY + 2]Screen_Part
 screen_part_count: int
 // The list of one picture memory that the table has while it appends the
 // Picture record of one part: the record then names memory 0.
@@ -1657,9 +1776,12 @@ bar_mark_build :: proc "contextless" () {
 background_build :: proc "contextless" () {
 	background_appearance = graphics.appearance
 	graphics.clear(background, graphics.colors.background)
-	for y := graphics.POINT_STEP / 2; y < background.height; y += graphics.POINT_STEP {
-		for x := graphics.POINT_STEP / 2; x < background.width; x += graphics.POINT_STEP {
-			graphics.fill(background, x, y, graphics.POINT_SIZE, graphics.POINT_SIZE, graphics.colors.point)
+	// The grid of points is in logical pixels of the desktop: each point
+	// goes to the screen by the rule of each edge.
+	for y := graphics.POINT_STEP / 2; y < desktop_height; y += graphics.POINT_STEP {
+		for x := graphics.POINT_STEP / 2; x < desktop_width; x += graphics.POINT_STEP {
+			point := screen_rectangle_of(x, y, graphics.POINT_SIZE, graphics.POINT_SIZE)
+			graphics.fill(background, point.left, point.top, point.right - point.left, point.bottom - point.top, graphics.colors.point)
 		}
 	}
 }
@@ -1698,6 +1820,10 @@ screen_draw :: proc "contextless" (areas: []Rectangle) {
 			count += 1
 		}
 		if count > 0 {
+			screen_table.scale = nil
+			if part.scaled {
+				screen_table.scale = scale
+			}
 			screen_draw_part(&screen_table, part.first, part.count, part.picture_memory, frame, rectangles[:count])
 		}
 	}
@@ -1705,8 +1831,8 @@ screen_draw :: proc "contextless" (areas: []Rectangle) {
 
 // screen_part_end ends the part that started at the record first.
 @(private = "file")
-screen_part_end :: proc "contextless" (first: int, picture_memory: []graphics.Color, bounds: Rectangle, bounded: bool) {
-	screen_parts[screen_part_count] = {first = first, count = screen_table.record_count - first, picture_memory = picture_memory, bounds = bounds, bounded = bounded}
+screen_part_end :: proc "contextless" (first: int, picture_memory: []graphics.Color, bounds: Rectangle, bounded: bool, scaled: bool) {
+	screen_parts[screen_part_count] = {first = first, count = screen_table.record_count - first, picture_memory = picture_memory, bounds = bounds, bounded = bounded, scaled = scaled}
 	screen_part_count += 1
 }
 
@@ -1736,19 +1862,40 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		client := &clients[order[position]]
 		focus := position == order_count - 1
 		first := table.record_count
-		frame_records(table, client, client.x, client.y, focus, client == pointer_close)
 		// A window shows a picture that its process presented, or none:
-		// before the first Present, the process draws in the memory of
-		// the surface, and the window has the background color.
-		memory: []graphics.Color
-		if client.presents > 0 {
-			memory = client.surface.pixels[:client.surface.stride * client.surface.height]
-			screen_picture_append(client.x + BORDER, client.y + TITLE_HEIGHT, client.surface, memory, 0)
-		} else {
-			interface.draw_rectangle(table, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height, graphics.colors.background)
+		// before the first Present, and while a rescale released its
+		// surface, the window has the background color, under the frame,
+		// whose borders reach one logical pixel into the interior.
+		outer := screen_rectangle_of(client.x, client.y, client.width + 2 * BORDER, client.height + TITLE_HEIGHT + BORDER)
+		box := surface_screen_box(client)
+		shows_surface := client.presents > 0 && client.surface.pixels != nil
+		if !shows_surface {
+			interface.draw_rectangle(table, client.x + BORDER, client.y + TITLE_HEIGHT, client.width, client.height, graphics.colors.background)
 		}
-		outer := Rectangle{client.x, client.y, client.x + client.surface.width + 2 * BORDER, client.y + client.surface.height + TITLE_HEIGHT + BORDER}
-		screen_part_end(first, memory, outer, true)
+		frame_records(table, client, client.x, client.y, focus, client == pointer_close)
+		screen_part_end(first, nil, outer, true, true)
+		if !shows_surface {
+			continue
+		}
+		// The surface: its pixels of the screen, from the corner of the
+		// interior on the screen, with no scale. The picture is the view of
+		// the part inside the interior: its stride stays the stride of the
+		// surface. A surface of an older scale is cut to the interior; one
+		// that is smaller leaves strips, which the background fills, only
+		// where the frame does not cover them, so no pixel is written twice
+		// (bar.background_strips).
+		surface_first := table.record_count
+		memory := client.surface.pixels[:client.surface.stride * client.surface.height]
+		strips := bar.background_strips(box, window_frame_inner(client))
+		for strip in strips {
+			if strip.right > strip.left {
+				interface.draw_rectangle(table, strip.left, strip.top, strip.right - strip.left, strip.bottom - strip.top, graphics.colors.background)
+			}
+		}
+		view := client.surface
+		view.width, view.height = box.right - box.left, box.bottom - box.top
+		screen_picture_append(box.left, box.top, view, memory, 0)
+		screen_part_end(surface_first, memory, {box.left, box.top, box.right, box.bottom}, true, false)
 	}
 	// The outline of the frame that a drag of the edges gives, over the
 	// windows: the window keeps its picture until its process draws the
@@ -1757,13 +1904,13 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		first := table.record_count
 		outline := resize_outline
 		interface.draw_outline(table, outline.left, outline.top, outline.right - outline.left, outline.bottom - outline.top, RESIZE_OUTLINE_THICKNESS, graphics.colors.title)
-		screen_part_end(first, nil, outline, true)
+		screen_part_end(first, nil, screen_rectangle_of(outline.left, outline.top, outline.right - outline.left, outline.bottom - outline.top), true, true)
 	}
 
 	// The bar: the mark of the system, the two buttons, the date and the time
 	// of day (the time since boot when the system has no date).
 	bar_first := table.record_count
-	width := frame.width
+	width := desktop_width
 	bar_background_records(table, 0, 0, width)
 	screen_picture_append(bar.MARK_X, bar.MARK_Y, bar_mark_picture, bar_mark_pixels[:], BAR_MARK_GENERATION)
 	bar_button_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, label: string, open: bool) {
@@ -1860,7 +2007,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			interface.draw_text(table, line_x + bar.PADDING, line_y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 		}
 	}
-	screen_part_end(bar_first, bar_mark_pixels[:], {}, false)
+	screen_part_end(bar_first, bar_mark_pixels[:], {}, false, true)
 	if table.full {
 		system.log_fact(.Warning, Screen_Draw_Table_Full{})
 	}
@@ -1869,5 +2016,5 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 // window_frame_of gives the frame that the compositor draws around the
 // surface of a client, for the places of src/library/private/compositor/bar.
 window_frame_of :: proc "contextless" (client: ^Client) -> bar.Window_Frame {
-	return {outer_width = client.surface.width + 2 * BORDER, border = BORDER, close_size = CLOSE_SIZE, title_height = TITLE_HEIGHT}
+	return {outer_width = client.width + 2 * BORDER, border = BORDER, close_size = CLOSE_SIZE, title_height = TITLE_HEIGHT}
 }
