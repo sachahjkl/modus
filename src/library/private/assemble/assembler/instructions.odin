@@ -18,6 +18,9 @@ Operation :: enum u8 {
 	Jump_If      = 8, // the 16 conditional jumps
 	Call         = 9, // call
 	Return       = 10, // ret
+	// movsxd: a 32-bit value with its sign, into a 64-bit register. The C
+	// compiler loads each `int` with it.
+	Move_Sign_Extended = 11,
 }
 
 // The condition of a conditional jump: its value is the low 4 bits of the
@@ -94,6 +97,8 @@ MNEMONICS := [?]Mnemonic {
 	{name = "jmp", operation = .Jump},
 	{name = "call", operation = .Call},
 	{name = "ret", operation = .Return},
+	// No suffix: the name says both sizes.
+	{name = "movsxd", operation = .Move_Sign_Extended},
 	{name = "jo", operation = .Jump_If, condition = .Overflow},
 	{name = "jno", operation = .Jump_If, condition = .Not_Overflow},
 	{name = "jb", operation = .Jump_If, condition = .Below},
@@ -407,7 +412,7 @@ two_operand_opcodes :: proc "contextless" (operation: Operation) -> (opcodes: Tw
 		return {store = 0x29, load = 0x2B, extension = 5}, true
 	case .Compare:
 		return {store = 0x39, load = 0x3B, extension = 7}, true
-	case .Load_Address, .Push, .Pop, .Jump, .Jump_If, .Call, .Return:
+	case .Load_Address, .Push, .Pop, .Jump, .Jump_If, .Call, .Return, .Move_Sign_Extended:
 	}
 	return {}, false
 }
@@ -506,7 +511,7 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 		wanted = 0
 	case .Jump, .Call, .Jump_If, .Push, .Pop:
 		wanted = 1
-	case .Move, .Add, .Subtract, .Compare, .Load_Address:
+	case .Move, .Add, .Subtract, .Compare, .Load_Address, .Move_Sign_Extended:
 	}
 	if len(operands) != wanted {
 		return refuse(.Operand_Count_Wrong, word_place, u64(len(operands)))
@@ -588,10 +593,41 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 		put_prefix(encoding, true, destination.register.number, base_number(source))
 		put_byte(encoding, 0x8D)
 		return put_memory(encoding, destination.register.number, source)
+	case .Move_Sign_Extended:
+		return sign_extended_move_encode(encoding, operands[0], operands[1])
 	case .Move, .Add, .Subtract, .Compare:
 		return two_operand_encode(encoding, mnemonic.operation, suffix_size, operands[0], operands[1], word_place)
 	}
 	return {}
+}
+
+// sign_extended_move_encode writes movsxd: MOVSXD r64, r/m32 is REX.W 63 /r.
+// The source is a 32-bit register or memory, the destination a 64-bit
+// register: the two sizes differ by design, so the name takes no suffix.
+@(private)
+sign_extended_move_encode :: proc "contextless" (encoding: ^Encoding, source: Operand, destination: Operand) -> Refusal_Record {
+	if destination.kind != .Register {
+		return refuse(.Operand_Form_Not_Valid, destination.place)
+	}
+	if destination.register.size != .Bits_64 {
+		return refuse(.Operand_Size_Wrong, destination.place)
+	}
+	switch source.kind {
+	case .Register:
+		if source.register.size != .Bits_32 {
+			return refuse(.Operand_Size_Wrong, source.place)
+		}
+		put_prefix(encoding, true, destination.register.number, source.register.number)
+		put_byte(encoding, 0x63)
+		put_byte(encoding, modrm(3, destination.register.number, source.register.number))
+		return {}
+	case .Memory:
+		put_prefix(encoding, true, destination.register.number, base_number(source))
+		put_byte(encoding, 0x63)
+		return put_memory(encoding, destination.register.number, source)
+	case .Immediate, .Label:
+	}
+	return refuse(.Operand_Form_Not_Valid, source.place)
 }
 
 // two_operand_encode writes mov, add, sub and cmp: the source first, as

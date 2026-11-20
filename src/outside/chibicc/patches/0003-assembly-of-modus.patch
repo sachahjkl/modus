@@ -1,0 +1,180 @@
+--- a/codegen.c
++++ b/codegen.c
+@@ -690,7 +690,6 @@
+ 
+ // Generate code for a given node.
+ static void gen_expr(Node *node) {
+-  println("  .loc %d %d", node->tok->file->file_no, node->tok->line_no);
+ 
+   switch (node->kind) {
+   case ND_NULL_EXPR:
+@@ -1186,7 +1185,6 @@
+ }
+ 
+ static void gen_stmt(Node *node) {
+-  println("  .loc %d %d", node->tok->file->file_no, node->tok->line_no);
+ 
+   switch (node->kind) {
+   case ND_IF: {
+@@ -1375,63 +1373,80 @@
+   }
+ }
+ 
++// modus: the data is one section, `section data`, of `byte` and `zero`
++// lines. The assembler of modus has no alignment directive: the section
++// starts on a page, so this count of its bytes gives the padding of each
++// variable. A variable with no initializer is zero bytes, which the module
++// file does not store at the end of the section.
++static long data_offset;
++
++// modus: an object has no token of its own; the name of its type is the
++// place of its declaration, and an object with no name (a string, a
++// compound literal) is named by its label.
++static noreturn void refuse_object(Obj *var, Token *name, char *message) {
++  if (name)
++    error_tok(name, "%s", message);
++  error("%s: %s", var->name, message);
++}
++
+ static void emit_data(Obj *prog) {
+   for (Obj *var = prog; var; var = var->next) {
+     if (var->is_function || !var->is_definition)
+       continue;
+ 
+-    if (var->is_static)
+-      println("  .local %s", var->name);
+-    else
+-      println("  .globl %s", var->name);
++    if (var->is_tls)
++      refuse_object(var, var->ty->name, "a module has no thread-local data");
+ 
+     int align = (var->ty->kind == TY_ARRAY && var->ty->size >= 16)
+       ? MAX(16, var->align) : var->align;
+ 
+-    // Common symbol
+-    if (opt_fcommon && var->is_tentative) {
+-      println("  .comm %s, %d, %d", var->name, var->ty->size, align);
+-      continue;
+-    }
++    println("section data");
++    long padding = (data_offset + align - 1) / align * align - data_offset;
++    if (padding)
++      println("  zero %ld", padding);
++    data_offset += padding;
++    println("%s:", var->name);
++    data_offset += var->ty->size;
+ 
+-    // .data or .tdata
+     if (var->init_data) {
+-      if (var->is_tls)
+-        println("  .section .tdata,\"awT\",@progbits");
+-      else
+-        println("  .data");
+-
+-      println("  .type %s, @object", var->name);
+-      println("  .size %s, %d", var->name, var->ty->size);
+-      println("  .align %d", align);
+-      println("%s:", var->name);
+-
+-      Relocation *rel = var->rel;
+-      int pos = 0;
+-      while (pos < var->ty->size) {
+-        if (rel && rel->offset == pos) {
+-          println("  .quad %s%+ld", *rel->label, rel->addend);
+-          rel = rel->next;
+-          pos += 8;
+-        } else {
+-          println("  .byte %d", var->init_data[pos++]);
+-        }
+-      }
++      if (var->rel)
++        refuse_object(var, var->ty->name, "an address in an initializer needs a rebase, which the assembler does not write");
++      for (int pos = 0; pos < var->ty->size; pos++)
++        println("  byte %d", var->init_data[pos]);
+       continue;
+     }
+ 
+-    // .bss or .tbss
+-    if (var->is_tls)
+-      println("  .section .tbss,\"awT\",@nobits");
+-    else
+-      println("  .bss");
+-
+-    println("  .align %d", align);
+-    println("%s:", var->name);
+-    println("  .zero %d", var->ty->size);
++    println("  zero %d", var->ty->size);
+   }
+ }
+ 
++// modus: an int or a long is an Integer of an export, in one register of
++// 64 bits.
++static bool is_export_integer(Type *ty) {
++  return (ty->kind == TY_INT || ty->kind == TY_LONG) && !ty->is_unsigned;
++}
++
++// modus: a function that is not static has external linkage, so other
++// code calls it: it is an export of the module, with its types.
++static void export_directive(Obj *fn) {
++  Type *result = fn->ty->return_ty;
++  if (result->kind != TY_VOID && !is_export_integer(result))
++    refuse_object(fn, fn->ty->name, "a function that is not static is an export, and gives an int, a long or nothing: make it static, or give it one of those");
++  if (fn->ty->is_variadic)
++    refuse_object(fn, fn->ty->name, "a function that is not static is an export, and takes a fixed count of parameters: make it static");
++  for (Obj *var = fn->params; var; var = var->next)
++    if (!is_export_integer(var->ty))
++      refuse_object(var, var->ty->name, "a parameter of a function that is not static is an int or a long: make the function static, or give the parameter one of those");
++
++  fprintf(output_file, "export %s(", fn->name);
++  for (Obj *var = fn->params; var; var = var->next)
++    fprintf(output_file, "%s%s: Integer", var == fn->params ? "" : ", ", var->name);
++  fprintf(output_file, ")");
++  if (result->kind != TY_VOID)
++    fprintf(output_file, " -> Integer");
++  fprintf(output_file, "\n");
++}
++
+ static void store_fp(int r, int offset, int sz) {
+   switch (sz) {
+   case 4:
+@@ -1477,13 +1492,9 @@
+     if (!fn->is_live)
+       continue;
+ 
+-    if (fn->is_static)
+-      println("  .local %s", fn->name);
+-    else
+-      println("  .globl %s", fn->name);
+-
+-    println("  .text");
+-    println("  .type %s, @function", fn->name);
++    println("section code");
++    if (!fn->is_static)
++      export_directive(fn);
+     println("%s:", fn->name);
+     current_fn = fn;
+ 
+@@ -1576,6 +1587,10 @@
+ 
+     // Epilogue
+     println(".L.return.%s:", fn->name);
++    // modus: an Integer is 64 bits, and a 32-bit operation writes zero in
++    // the high half of %rax: an export that gives an int extends its sign.
++    if (!fn->is_static && fn->ty->return_ty->kind == TY_INT)
++      println("  movsxd %%eax, %%rax");
+     println("  mov %%rbp, %%rsp");
+     println("  pop %%rbp");
+     println("  ret");
+@@ -1585,10 +1600,8 @@
+ void codegen(Obj *prog, FILE *out) {
+   output_file = out;
+ 
+-  File **files = get_input_files();
+-  for (int i = 0; files[i]; i++)
+-    println("  .file %d \"%s\"", files[i]->file_no, files[i]->name);
+-
++  // modus: the assembler of modus has no line table, so no .file and no
++  // .loc line.
+   assign_lvar_offsets(prog);
+   emit_data(prog);
+   emit_text(prog);

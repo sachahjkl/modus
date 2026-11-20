@@ -828,6 +828,7 @@ The section "Reuse list" of `PROPERTIES.md` names each work of others that the s
 | The cryptography of Odin | `src/library/support/cryptography/origin.manifest`: one line or more gives the work of `LICENSE.odin.txt`; a line under `_fiat/` gives the work of `LICENSE.fiat-crypto.txt` |
 | The libraries of the compiler | `base:runtime`, always: the compiler puts it in each module. Each package of `core:` that a source of the system imports, in a file that is not a test and whose first line is not a build tag with `!freestanding`. Their license file is `LICENSE.odin.txt` |
 | The portraits | Each row of `resources/hall_of_fame/CREDITS.md` |
+| The works in C | Each outside source of the module table (`foundation.outside_sources`): its folder of the repository is the place, the first line of its `LICENSE` gives the license, and that file is the license file |
 
 The words of a record become an identifier through the table `spdx_names` of the page of the licenses (`SITE.md`, "The licenses"). The words "All rights reserved" give `NONE`. Words with no translation give no identifier, and the check then does not compare the license of that row.
 
@@ -1031,6 +1032,31 @@ outsider_fault  visitor::fault_three  outsider/main.odin   169
 **What is not built.**
 
 - An import names a module of the system. An outside module does not import another outside module.
+
+## The outside sources of a module
+
+A module of the system can compile in a work of others written in C (`glossary/communication.md`, "Outside source"). The repository holds no source file of the work: the flake fetches it at one commit, applies the patches of the system, and puts it with the files of the system in one folder of the store. The design: `src/md/infrastructure/outside_source.md`.
+
+| Place | What it holds |
+|---|---|
+| `src/outside/<work>/LICENSE` | The license of the work, copied: the reuse list reads its first line |
+| `src/outside/<work>/patches/` | The changes of the work, applied by Nix in the order of their names |
+| `src/outside/<work>/system/` | The C files of the system for the work: its entry and its tables |
+| `src/outside/<work>/libc/` | The thin libc and its headers in `libc/include` |
+| `flake.nix` | The commit and the hash of the source, and the variable that names the folder of the store in each shell and in the check |
+| The module table | The row of the module, with `c_source` |
+
+The work of today is `chibicc` (the variable `CHIBICC_SOURCE`), in the module `c_compiler`.
+
+**The build.** The compile step of the module compiles each `.c` file at the top of the folder of the store with `clang`, in the order of the names, into the folder of the objects of the module, after its Odin package and its `.asm` files. The link and the conversion are those of each module. The headers are those of the thin libc only (`-nostdinc`). The build key of the module holds each command of `clang`, and each command names the folder of the store, whose name holds the hash of its content: a change of a patch or of a file of `outside/` builds the module again.
+
+A new file of `src/outside/` is read by Nix only when git tracks it. A shell with no variable stops the build of the module:
+
+```
+modustool: the module c_compiler compiles in the C files of chibicc, and the variable CHIBICC_SOURCE is not set: run the tool in a shell of the flake (src/md/infrastructure/outside_source.md)
+```
+
+**A new patch.** Make the change in a checkout of the work at the pinned commit, write it with `git diff` as a file of `src/outside/<work>/patches/` with a name after the last one, add the file to git, and build: Nix applies it, and a patch that does not apply stops the shell with the line of the patch.
 
 ## The commands of the tool
 
@@ -1416,7 +1442,8 @@ A source names an export of an import in a `foreign` block: a name, the paramete
 | Every other file of the folder of each of these packages | The tool lists each folder. A file that the compiler did not read becomes a source with no change of a listed file in one way only: it is in such a folder (a new file, or a file whose build tag now admits the target) |
 | The assembly files that the module links: `src/runtime/memory.asm`, the `.asm` files of its folder, and those of `src/library/support/system` for a module with an entry | The tool lists them as the build does |
 | The command of the compiler and the command of `llc`, with each flag: the checks of the kernel, the kind of debug information (`-debug-info:same-code`), the direction of the instruction scheduler of `llc` (`-misched-topdown`), the settings of the module, the features of the target | The text of the two commands (`module_compile_command`, `module_object_command`) |
-| The host programs `odin`, `llc`, `nasm` and `ld.lld` | The path of each file after each link, its size and its time. In the store of Nix the path holds the hash of the package |
+| The C files of an outside source | The command of `clang` for each one (`module_c_commands`): it names the folder of the store, whose path holds the hash of the source, of the patches and of the files of `src/outside/<work>` |
+| The host programs `odin`, `llc`, `nasm`, `ld.lld` and `clang` | The path of each file after each link, its size and its time. In the store of Nix the path holds the hash of the package |
 | The tool | One hash over every file of `tools/modustool` and of each package of the repository that it imports, to any depth: an import of the source library (`modus:`), of the kernel parts (`kernel:`), of a package of the tool (`modustool:`), or by a relative path. A change of a file of a package of the tool thus builds each module again. The code that builds a module is in the tool. The executable of the tool is not the identity: two builds of the tool do not give the same file |
 
 **The inputs of the conversion.**

@@ -1,0 +1,31 @@
+--- a/chibicc.h
++++ b/chibicc.h
+@@ -100,6 +100,10 @@
+ Token *tokenize(File *file);
+ Token *tokenize_file(char *filename);
+ 
++// modus: the entry of the system records the place of an error before
++// its diagnostic, so the error record of the export names the byte.
++void error_place_record(char *filename, char *input, char *loc);
++
+ #define unreachable() \
+   error("internal error at %s:%d", __FILE__, __LINE__)
+ 
+--- a/tokenize.c
++++ b/tokenize.c
+@@ -57,6 +57,7 @@
+ 
+   va_list ap;
+   va_start(ap, fmt);
++  error_place_record(current_file->name, current_file->contents, loc);
+   verror_at(current_file->name, current_file->contents, line_no, loc, fmt, ap);
+   exit(1);
+ }
+@@ -64,6 +65,7 @@
+ void error_tok(Token *tok, char *fmt, ...) {
+   va_list ap;
+   va_start(ap, fmt);
++  error_place_record(tok->file->name, tok->file->contents, tok->loc);
+   verror_at(tok->file->name, tok->file->contents, tok->line_no, tok->loc, fmt, ap);
+   exit(1);
+ }

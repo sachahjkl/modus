@@ -41,6 +41,48 @@ Module_Build :: struct {
 	// each boot image of the build. A release refuses an image that holds
 	// such a module (release_test_module_problem).
 	only_in_image: string,
+	// The C files of a work of others that the module compiles in, at a
+	// pinned commit with the patches of the system. The zero record: the
+	// module has no C part (src/md/infrastructure/outside_source.md).
+	c_source:      Outside_Source,
+}
+
+// A work of others in C whose source is not in the repository. The flake
+// fetches its source at one commit, applies the patches of `folder`, copies
+// the files of the system of `folder` beside it, and sets `variable` to that
+// folder of the store in each shell and in the check. The tool reads the
+// folder of the store only through the variable.
+Outside_Source :: struct {
+	work:     string, // The name of the work: the folder of its C files in a message and in `__FILE__`.
+	folder:   string, // The folder of the repository: LICENSE, patches, system, libc.
+	variable: string, // The environment variable that names the folder of the store.
+}
+
+// chibicc, the C compiler of the module c_compiler
+// (src/md/features/c_compiler.md).
+CHIBICC :: Outside_Source {
+	work     = "chibicc",
+	folder   = SOURCE_FOLDER_OUTSIDE + "/chibicc",
+	variable = "CHIBICC_SOURCE",
+}
+
+// outside_sources lists each outside source of the module table once: the
+// reuse list names each one.
+outside_sources :: proc(allocator := context.temp_allocator) -> []Outside_Source {
+	sources := make([dynamic]Outside_Source, allocator)
+	for build in module_builds {
+		if build.c_source.folder == "" {
+			continue
+		}
+		known := false
+		for earlier in sources {
+			known ||= earlier.folder == build.c_source.folder
+		}
+		if !known {
+			append(&sources, build.c_source)
+		}
+	}
+	return sources[:]
 }
 
 // The source of a row starts with the constant of its group
@@ -142,6 +184,9 @@ module_builds := [?]Module_Build {
 	// The assembler: the console calls it in a call host
 	// (src/md/features/assembler.md).
 	{name = "assemble", source = SYSTEM_MODULE_SOURCES + "assemble", image = true},
+	// The C compiler: chibicc, ported. The console calls it in a call
+	// host, and gives its text to assemble (src/md/features/c_compiler.md).
+	{name = "c_compiler", source = SYSTEM_MODULE_SOURCES + "c_compiler", image = true, c_source = CHIBICC},
 	{name = "probe", source = TEST_MODULE_SOURCES + "probe", image = true},
 	{name = "math", source = LIBRARY_MODULE_SOURCES + "math", image = true},
 	{name = "cryptography", source = LIBRARY_MODULE_SOURCES + "cryptography", image = true},
