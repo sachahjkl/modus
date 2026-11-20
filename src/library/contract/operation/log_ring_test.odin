@@ -192,29 +192,55 @@ the_form_of_a_record_is_read_through_its_border :: proc(t: ^testing.T) {
 	testing.expect(t, LOG_SERIAL_LINE_BYTES_MOST >= LOG_LINE_HEAD_CAPACITY + LOG_FACT_LINE_BYTES_MOST + 2)
 }
 
-// The line of a fact on the serial port: "#", the first 8 bytes of the
-// module hash, ":", the fact key, then the value bytes up to their last
-// byte that is not zero. The edges: no value byte and only zero values (no
-// space), a count past the capacity and the largest count (the capacity),
-// bytes past the count (not written), and every value byte not zero (the
-// longest line).
+// The line of a fact on the serial port: "#", the module tag, ":", the key
+// tag, then the value bytes up to their last byte that is not zero, each
+// run of zero bytes as letters. The edges: no value byte and only zero
+// values (no space), the bytes of the hash and of the key past their tags
+// (not written), a run of 1, of the longest letter, of one past it and of
+// twice it, a run at the start, a count past the capacity and the largest
+// count (the capacity), bytes past the count (not written), every value
+// byte not zero (the longest line), and each byte value alone.
 @(test)
 the_line_of_a_fact :: proc(t: ^testing.T) {
 	line: [LOG_FACT_LINE_BYTES_MOST]u8
 	fact := Log_Fact{key = 0xfa0a_df38_a559_f4d1}
-	hash_start := [8]u8{0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81}
+	hash_start := [LOG_FACT_LINE_MODULE_HASH_BYTES]u8{0x1a, 0x2b, 0x3c, 0x4d}
 	copy(fact.module_hash[:], hash_start[:])
-	fact.module_hash[8] = 0xFF // Past the 8 bytes: not in the line.
+	fact.module_hash[LOG_FACT_LINE_MODULE_HASH_BYTES] = 0xFF // Past the module tag: not in the line.
+	HEAD :: "#1a2b3c4d:fa0adf"
 	count := log_fact_line(&fact, &line)
-	testing.expect_value(t, string(line[:count]), "#1a2b3c4d5e6f7081:fa0adf38a559f4d1")
+	testing.expect_value(t, string(line[:count]), HEAD)
+	testing.expect_value(t, log_fact_key_tag(fact.key), u32(0xfa0adf))
+	testing.expect_value(t, log_fact_key_tag(max(u64)), u32(1) << (8 * LOG_FACT_LINE_KEY_BYTES) - 1)
+	testing.expect_value(t, log_fact_key_tag(1 << (64 - 8 * LOG_FACT_LINE_KEY_BYTES) - 1), u32(0))
 	fact.value_count = 4
 	count = log_fact_line(&fact, &line)
-	testing.expect_value(t, string(line[:count]), "#1a2b3c4d5e6f7081:fa0adf38a559f4d1")
+	testing.expect_value(t, string(line[:count]), HEAD)
 
-	fact.values[0], fact.values[2] = 0x0c, 0x23
+	fact.values[0], fact.values[3] = 0x0c, 0x23
 	fact.values[5] = 0x99 // Past the count: not in the line.
 	count = log_fact_line(&fact, &line)
-	testing.expect_value(t, string(line[:count]), "#1a2b3c4d5e6f7081:fa0adf38a559f4d1 0c0023")
+	testing.expect_value(t, string(line[:count]), HEAD + " 0ch23")
+
+	// The runs: one zero byte is the first letter, the longest letter is
+	// "z", and a run one past it is "z" then the first letter.
+	Run_Case :: struct {
+		zeros: int,
+		text:  string,
+	}
+	ZERO_HEAD :: "#00000000:000000"
+	for item in ([?]Run_Case{{1, " 01g02"}, {2, " 01h02"}, {LOG_FACT_LINE_ZERO_RUN_MOST, " 01z02"}, {LOG_FACT_LINE_ZERO_RUN_MOST + 1, " 01zg02"}, {2 * LOG_FACT_LINE_ZERO_RUN_MOST, " 01zz02"}}) {
+		runs := Log_Fact{value_count = LOG_FACT_VALUE_CAPACITY}
+		runs.values[0], runs.values[item.zeros + 1] = 0x01, 0x02
+		count = log_fact_line(&runs, &line)
+		testing.expectf(t, count == len(ZERO_HEAD) + len(item.text) && string(line[:len(ZERO_HEAD)]) == ZERO_HEAD && string(line[len(ZERO_HEAD):count]) == item.text, "a run of %d zero bytes gives %q", item.zeros, string(line[:count]))
+	}
+	// A run at the start, before the last byte of the record.
+	starts := Log_Fact{value_count = LOG_FACT_VALUE_CAPACITY}
+	starts.values[LOG_FACT_VALUE_CAPACITY - 1] = 0x7F
+	count = log_fact_line(&starts, &line)
+	// 143 zero bytes: 7 letters of 20 and one of 3.
+	testing.expect_value(t, string(line[:count]), "#00000000:000000 zzzzzzzi7f")
 
 	for &value in fact.values {
 		value = 0xAB
@@ -227,5 +253,15 @@ the_line_of_a_fact :: proc(t: ^testing.T) {
 	testing.expect_value(t, line[LOG_FACT_LINE_BYTES_MOST - 1], u8('b'))
 	zero := Log_Fact{value_count = LOG_FACT_VALUE_CAPACITY}
 	count = log_fact_line(&zero, &line)
-	testing.expect_value(t, string(line[:count]), "#0000000000000000:0000000000000000")
+	testing.expect_value(t, string(line[:count]), "#00000000:000000")
+
+	// Each byte value alone: two digits, and no letter of a run among them.
+	for byte_value in 1 ..= 255 {
+		alone := Log_Fact{value_count = 1}
+		alone.values[0] = u8(byte_value)
+		count = log_fact_line(&alone, &line)
+		digits := "0123456789abcdef"
+		expected := [2]u8{digits[byte_value >> 4], digits[byte_value & 0xF]}
+		testing.expectf(t, count == len("#00000000:000000 ") + 2 && line[count - 2] == expected[0] && line[count - 1] == expected[1], "the byte %d gives %q", byte_value, string(line[:count]))
+	}
 }

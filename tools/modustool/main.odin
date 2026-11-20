@@ -401,6 +401,10 @@ COMMANDS :: [?]foundation.Command {
 	// copied the record. It changes no file that exists
 	// (docs/TOOLS.md, "The release").
 	{name = "measure-history", about = "the copy of the measure record of each release tag that holds one, in `" + checks.MEASURE_HISTORY_FOLDER + "`, for the charts of each measure over the releases", run = checks.run_measure_history},
+	// Compares two measure records, as the record of a build before a
+	// change and the record after it (docs/TOOLS.md, "The comparison of two
+	// measure records"). It asserts nothing.
+	{name = "measure-compare", about = "<record before> <record after>: the line of each measure in two measure records, and the number of each series with its ratio", run = checks.run_measure_compare},
 	// Works on the news entries of `news/`, the dated reports of what a
 	// reader can now see or use.
 	//

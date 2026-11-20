@@ -37,8 +37,9 @@
 //   [log fact](term:log-fact) is the sentence of its fact template with
 //   its values, which the window writes from the module file of the boot
 //   image that the fact names; a fact whose module the image does not hold
-//   is its raw form: `#`, the head of the module hash, `:`, the fact key
-//   and the value bytes in hexadecimal.
+//   is its raw form, the line of the serial port: `#`, the module tag,
+//   `:`, the key tag and the value bytes in hexadecimal, with each run of
+//   zero bytes as a letter.
 //
 // At its start it writes two records: `log: the memory of the log: <count>
 // records in <size>` and `log: ok, <count> records, <count> gone before its

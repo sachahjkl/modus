@@ -131,10 +131,10 @@ the_line_of_a_fact_matches_its_step :: proc(t: ^testing.T) {
 	testing.expect(t, !matches(t, &catalog, "log_reader", "value != 42", places[0]))
 	testing.expect(t, !matches(t, &catalog, "log_reader", "mark < 0x4c4f4746", places[0]))
 	other_key := places[0]
-	other_key.line.key += 1
+	other_key.line.key_tag += 1
 	testing.expect(t, !matches(t, &catalog, "log_reader", "", other_key))
 	other_module := places[0]
-	other_module.line.hash_prefix[0] = 0xFF
+	other_module.line.module_tag[0] = 0xFF
 	testing.expect(t, !matches(t, &catalog, "log_reader", "", other_module))
 	too_long := places[0]
 	too_long.line.value_count = 17

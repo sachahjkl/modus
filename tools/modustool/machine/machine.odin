@@ -2692,7 +2692,9 @@ scenario := [?]Step {
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe.value)"},
 	{kind = .Wait, text = "[console] error: facts: no fact type has the name log_reader.Fact_Probe.value; the fact types are "},
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probes)"},
-	{kind = .Wait, text = "[console] error: facts: no fact type has the name log_reader.Fact_Probes; the fact types of log_reader are log_reader.Fact_Probe"},
+	// The console names the fact types of a module in the order of their
+	// keys: the measures of log_reader add two fact types around Fact_Probe.
+	{kind = .Wait, text = "[console] error: facts: no fact type has the name log_reader.Fact_Probes; the fact types of log_reader are log_reader.Measured_Bad_Block, log_reader.Fact_Probe, log_reader.Measured_Connected"},
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe) |> where(level >= Warning)"},
 	{kind = .Wait, text = "[console] error: where: the field level is Status(Log_Level): it takes = and != only, because the order of the members is no order of weight"},
 	{kind = .Type, text = "processes() |> facts(log_reader.Fact_Probe) |> where(level = \"Warning\")"},
@@ -4598,7 +4600,13 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		// writes the sentence of the text line that the fact replaced, so
 		// the rendered line is the line of the text form, byte for byte
 		// (src/md/features/log_facts.md, "The measures that decide it").
-		fmt.printfln("modustool: measure: the serial lines of %d log facts of %s took %d bytes as values in hexadecimal; the same lines as text take %d bytes", len(machine.fact_lines), output, machine.fact_raw_bytes, machine.fact_sentence_bytes)
+		fmt.printfln("modustool: measure: the serial lines of %d log facts of %s took %d bytes as facts; the same lines as text take %d bytes", len(machine.fact_lines), output, machine.fact_raw_bytes, machine.fact_sentence_bytes)
+		// The records of the start, the module files of the first writers
+		// of facts and the lines by the bytes of their body, from the log
+		// of the main machine only: the measure record keeps its lines.
+		if output == checks.TEST_OUTPUT && !build.log_measures_write(output) {
+			passed = false
+		}
 		delete(machine.fact_rendered)
 		fact_lines_forget(&machine)
 		delete(machine.fact_lines)

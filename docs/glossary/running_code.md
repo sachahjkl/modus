@@ -416,11 +416,31 @@ Do not use: format string, pattern, message template.
 
 A fact key is the number of 64 bits that names one fact type inside one module: SipHash-2-4, with a fixed key, of `<package name>::<type name>`.
 
-In Odin it is the typeid of the record type, `typeid_of(T)`, an immediate in the code; the tool computes the same number from the source and checks it in the IR of the module. A log fact carries the module hash and the fact key, and a reader finds its row in the fact table of that module. The tool refuses two fact types of one module with one key, and a key of 0. A key is no border: any writer can write any key.
+In Odin it is the typeid of the record type, `typeid_of(T)`, an immediate in the code; the tool computes the same number from the source and checks it in the IR of the module. A log fact carries the module hash and the fact key, and a reader finds its row in the fact table of that module. The tool refuses two fact types of one module with one key or one key tag, and a key of 0. A key is no border: any writer can write any key.
 
 The design: `src/md/features/log_facts.md`.
 
 Do not use: event index, event identifier, message number.
+
+### Module tag
+
+A module tag is the first 4 bytes of the hash of a module file, which the serial line of a log fact writes in place of the whole hash.
+
+The tool finds the module of a line by its tag among the module files of its build, and refuses a build where two files share one tag. A tag names; it does not identify: a reader of the system finds the module of a record by its whole hash. It is not the hash prefix, the 8 bytes that a menu shows. Example: `#1a2b3c4d:fa0adf`, where `1a2b3c4d` is the module tag.
+
+The design: `src/md/features/log_facts.md`, "The serial port".
+
+Do not use: short hash, module head.
+
+### Key tag
+
+A key tag is the first 3 bytes of a fact key, from its high byte, which the serial line of a log fact writes in place of the whole key.
+
+The tool finds the fact type of a line by its tag among the fact types of the module of the line, and refuses a module where two fact types share one tag. Example: `#1a2b3c4d:fa0adf`, where `fa0adf` is the key tag of the key `0xfa0adf38a559f4d1`. In code, `op.log_fact_key_tag` gives it.
+
+The design: `src/md/features/log_facts.md`, "The serial port".
+
+Do not use: key prefix, short key.
 
 ### Fact table
 

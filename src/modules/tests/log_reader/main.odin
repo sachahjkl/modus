@@ -90,6 +90,14 @@
 //   `log.fact_records`;
 // - `log_reader: Log wrote a fact of 48 bytes and a fact of 192 bytes, and
 //   system.log_fact the fact Fact_Probe, each in one record: as it must`;
+// - in a measure run only, three measures of the log facts, printed and not
+//   checked (measures.odin): `log_reader: measure: the write of one line,
+//   ...`, the time of `system.log` and of `system.log_fact` for the line of
+//   a bad block and of a connection; `log_reader: measure: the operation
+//   Log, ...`, the time of `Log` for a text, for a fact, and for a call
+//   that the kernel refuses at the border of the form; and `log_reader:
+//   measure: the render of a log fact by module.fact_sentence_write, ...`,
+//   over the records of a whole log;
 // - `log_reader: ok`, then it stops with `Done`.
 //
 // Each child writes `log_reader child: the record that the starter reads
@@ -166,6 +174,9 @@ LENT_PROCESS_ARGUMENT :: 1
 
 process_generator: random.Generator
 children: [CHILD_COUNT]system.Handle
+// The boot image that check mapped: the measures read the module file of
+// this process from it.
+mapped_image: []u8
 // The log records of each second of the budget of this process before any
 // child, and while the storm child runs: the line of the storm says them
 // after the checks of the own records, which must find one line only.
@@ -267,6 +278,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 		return "the boot image does not map"
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	mapped_image = image
 	file := system.image_find(image, "log")
 	if file == nil {
 		return "the boot image has no module log"
@@ -1091,6 +1103,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if problem := check(ctx); problem != "" {
 		system.log(.Info, "log_reader: WRONG: ", problem)
 		system.stop(.Failed)
+	}
+	// The measures time calls: a measure run only, where no other process
+	// of the test runs (measures.odin).
+	if system.measure_run() {
+		if problem := log_measures(ctx); problem != "" {
+			system.log(.Info, "log_reader: WRONG: ", problem)
+			system.stop(.Failed)
+		}
 	}
 	system.log(.Info, "log_reader: ok")
 	system.stop(.Done)

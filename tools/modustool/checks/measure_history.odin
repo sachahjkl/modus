@@ -78,6 +78,8 @@ measure_history_series := [?]Measure_History_Series {
 	{sentence = "The time of a frame of the compositor, from the first record that it reads to the flip", title = "The time of a frame, from its first record to the flip, the least", before = QUALITY_LEAST, after = QUALITY_MEDIAN, unit = "microseconds", faster = .Lower},
 	{sentence = "The time of a key to the screen, through the console", title = "A key to the screen through the console, the least", before = QUALITY_LEAST, after = QUALITY_MEDIAN, unit = "microseconds", faster = .Lower},
 	{sentence = "The start of a window, from Process_Start to its first frame", title = "The start of the window of locks", before = QUALITY_WINDOW_START_TAIL, after = QUALITY_MICROSECONDS, unit = "microseconds", faster = .Lower},
+	{sentence = LOG_RECORDS_OF_THE_START_SENTENCE, title = "The log records up to a usable machine", before = "up to \"kernel: ok\", ", after = " up to \"the machine is usable\"", unit = "log records", faster = .Lower},
+	{sentence = LOG_MODULE_FILES_SENTENCE, title = "The module file of the root service", before = "module files: root ", after = " bytes, ", unit = "bytes", faster = .Lower},
 }
 
 // What the release command or the history command does with a record.

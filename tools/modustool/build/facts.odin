@@ -439,6 +439,12 @@ facts_merge :: proc(description: ^Module_Description, facts: []Fact_Description)
 			if other.key == fact.key {
 				return fact_fail(fact.file, fact.line, "the fact types %s.%s and %s.%s have one fact key, %d: rename one of them", fact.package_name, fact.type_name, other.package_name, other.type_name, fact.key)
 			}
+			// The serial line of a fact names its key by the key tag
+			// alone, so two fact types of one module with one tag would
+			// be one fact type for the tool.
+			if op.log_fact_key_tag(other.key) == op.log_fact_key_tag(fact.key) {
+				return fact_fail(fact.file, fact.line, "the fact types %s.%s and %s.%s have one key tag, %06x, the first %d bytes of their fact keys that the serial line of a fact writes: rename one of them", fact.package_name, fact.type_name, other.package_name, other.type_name, op.log_fact_key_tag(fact.key), op.LOG_FACT_LINE_KEY_BYTES)
+			}
 		}
 		item := fact
 		for known, index in records {

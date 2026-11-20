@@ -17,8 +17,8 @@ import terminal "modus:support/terminal"
 // the fact with module.fact_sentence_write, each value in the color of its
 // kind. A fact whose module the image does not hold, a disk process among
 // them, shows its raw form, the line of the serial port
-// (op.log_fact_line): "#" and the first 8 bytes of the hash, ":" and the
-// fact key, then the value bytes in hexadecimal.
+// (op.log_fact_line): "#" and the module tag, ":" and the key tag, then
+// the value bytes in hexadecimal with each run of zero bytes as a letter.
 //
 // The command `facts(table, storage.Bad_Block)` gives the fields of one
 // fact type as the columns of a table. The fact name is a name that the
