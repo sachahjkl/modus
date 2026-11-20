@@ -1689,6 +1689,25 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 120"},
 	{kind = .Type, text = "grow(r, 5)"},
 	{kind = .Wait, text = "[console]   height  14"},
+	// The forms of Lex for records (docs/CONSOLE.md, "Records"): a record
+	// literal typed by the parameter that receives it, a named argument,
+	// `with`, `let`, and the placeholder `_` of "|>". A field that the
+	// record does not have, and one that the literal does not give, are
+	// refused before the call runs.
+	{kind = .Type, text = "area({x = 0, y = 0, width = 11, height = 3})"},
+	{kind = .Wait, text = "[console] 33"},
+	{kind = .Type, text = "area(r with {width = 10})"},
+	{kind = .Wait, text = "[console] 40"},
+	{kind = .Type, text = "grow(r, by = 2)"},
+	{kind = .Wait, text = "[console]   height  8"},
+	{kind = .Type, text = "3 |> grow(r, _)"},
+	{kind = .Wait, text = "[console]   height  10"},
+	{kind = .Type, text = "let s = {x = 0, y = 0, width = 6, height = 7} in area(s) + area(s)"},
+	{kind = .Wait, text = "[console] 84"},
+	{kind = .Type, text = "area({x = 1, y = 2, widht = 3, height = 4})"},
+	{kind = .Wait, text = "[console] error: Rectangle has no field widht; its fields are x, y, width, height"},
+	{kind = .Type, text = "area({x = 1, y = 2, width = 3})"},
+	{kind = .Wait, text = "[console] error: Rectangle needs the field height, which has no default"},
 	{kind = .Type, text = "b = buffer(1)"},
 	{kind = .Type, text = "fill(b, 3)"},
 	{kind = .Wait, text = "[console] 4096"},

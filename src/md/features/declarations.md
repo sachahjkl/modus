@@ -1,12 +1,12 @@
 # Declarations
 
-A principal describes a system, a session, a project or an environment as one lazy value of Lex, the language of the console, in the manner of Nix. The evaluation of that value has no effect: it gives a typed record, the plan. An explicit command applies the plan, and the root service writes it as one applied plan, which a rollback can select again. The root service and the services never read the text of a declaration.
+A principal describes a system, a session or a project, with the console of that project, as one lazy value of Lex, the language of the console, in the manner of Nix. The evaluation of that value has no effect: it gives a typed record, the plan. An explicit command applies the plan, and the root service writes it as one applied plan, which a rollback can select again. The root service and the services never read the text of a declaration.
 
-The terms Plan, Applied plan, Declaration, Catalog declaration, Declaration input, Pin, Release pointer, Project and Declaration reference are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Lex, Environment, Evaluation budget, Evaluation mode, Thunk, Record literal, Named argument and Anonymous function are in [`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md). The recipes that a plan names, the cache and the substitution policy are in [recipes.md](recipes.md).
+The terms Plan, Applied plan, Declaration, Catalog declaration, Declaration input, Pin, Release pointer, Project and Declaration reference are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Lex, Console of a project, Evaluation budget, Evaluation mode, Thunk, Record literal, Named argument and Anonymous function are in [`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md). The recipes that a plan names, the cache and the substitution policy are in [recipes.md](recipes.md).
 
 ## Purpose
 
-A principal does each day the same few tasks: start the system that it chose, go back to the system before, work in a project with its tools, build an output of a project. Today each one is a sequence of console commands that the principal keeps in memory. A declaration states the result once, with the hashes that it resolves to, and one command applies it. A second machine with the same declaration and the same pins gets the same hashes.
+A principal does each day the same few tasks: start the system that it chose, go back to the system before, work in a project with the commands of its modules, build an output of a project. Today each one is a sequence of console commands that the principal keeps in memory. A declaration states the result once, with the hashes that it resolves to, and one command applies it. A second machine with the same declaration and the same pins gets the same hashes.
 
 ## Constraints
 
@@ -39,7 +39,7 @@ Text exists only between the principal and Lex. Lex has two readers, with one pa
 - **The console** reads the line that the principal types, as today, and evaluates it in mode `console`.
 - **The evaluation process** evaluates in mode `declaration`. It reads the text of a declaration object. The console starts it as a sandboxed child for each evaluation of a declaration: it holds a connection that reads only the trees of the declarations that the evaluation names, and nothing else. No network, no store that it can write, no root ring.
 
-The console sends the evaluation process typed values only: a declaration reference, which is the hash of a declaration, the list of the field names to force, and the typed records that a `with` composed with it. The evaluation process sends back typed values only: a plan, a table of recipes, a record of an environment, or an error record with its place. No line of the principal crosses to it, and no text comes back. The text of a declaration is a document that a principal wrote, as the source of a module is: a reader of its language reads it, as a compiler reads a source. No process sends text to another process for it to parse.
+The console sends the evaluation process typed values only: a declaration reference, which is the hash of a declaration, the list of the field names to force, and the typed records that a `with` composed with it. The evaluation process sends back typed values only: a plan, a table of recipes, the console of a project, or an error record with its place. No line of the principal crosses to it, and no text comes back. The text of a declaration is a document that a principal wrote, as the source of a module is: a reader of its language reads it, as a compiler reads a source. No process sends text to another process for it to parse.
 
 The root service and every service read the plan, a typed record, through one border of a contract package. None of them reads the text of a declaration.
 
@@ -79,7 +79,7 @@ What changes when:
 
 - The plan changes no process that runs. A grant of a disk process takes effect at its next start, as `allow` does today.
 - The start list and the start policy of the plan of principal 0 take effect at the next start of the machine, as the choice of a start policy does today.
-- An environment of the plan takes effect at the next `enter`.
+- The console of a project of the plan takes effect at the next `enter`.
 
 So the authority is in `apply`, not in the evaluation. A foreign plan cannot take a grant in silence: its grants are in the difference that the principal accepts.
 
@@ -102,14 +102,14 @@ The language of a declaration is Lex, the language of the console ([`docs/CONSOL
 4. **The literals that a use types.** A list `[a, b]`, a member of an enum `.Verify`, and a hash `blake3:…`. A list and a member take their type from their receiver, as a record literal does.
 5. **The anonymous function.** `(name) => odin.module(name)`. A function is a value: it can be a field, an argument and a result.
 6. **`with`.** `a with b` composes two records: the result is `a`, with each field of `b` in place of the field of the same name ("Composition").
-7. **The call on a record literal.** `plan { … }` is `plan({ … })`. `plan`, `project` and `env` are functions of the catalog declaration that take one record literal.
+7. **The call on a record literal.** `plan { … }` is `plan({ … })`. `plan` and `project` are functions of the catalog declaration that take one record literal.
 8. **The placeholder `_` of `|>`.** `compile(src, t) |> bytes(t, 0, _) |> assemble(f)`: the value on the left takes the place of `_`, one whole argument of the call on the right ([pipe_operator.md](pipe_operator.md), "The placeholder `_`").
 
 The other forms of the declarations are names of functions and values, with no form of grammar of their own. Both modes know them; in mode `console`, a name that gives a value of a declaration gives a declaration reference:
 
 - **A reference by hash.** `module(blake3:…)` is one exact module. `declaration(blake3:…)` is one exact declaration. A name of a catalog declaration, `catalog.odin`, is a field of its record; the plan records the hash that it gave.
 - **`recipe(builder, arguments)`.** A lazy value whose identity is its recipe hash. Forcing it does not build it: a build is a command ([recipes.md](recipes.md)).
-- **`plan { … }`, `project { … }`, `env { … }`.** The record of a plan, which `apply` takes; of a project; of an environment.
+- **`plan { … }`, `project { … }`.** The record of a plan, which `apply` takes; of a project, with its console ("The console of a project").
 - **The values of the declaration inputs.** `catalog`, `inputs`, `keys` (the table of the publisher keys that the principal trusts), `follow(publisher, name)` and `here()` ("Declaration inputs, pins and release pointers", "Sources and the identity of a source").
 - **`map(list, function)`.** It gives a list with the function applied to each item.
 
@@ -122,11 +122,11 @@ The evaluator runs in one of two evaluation modes, a closed set:
 - **Mode `declaration`** runs in the evaluation process, in its sandbox. An export with an effect is refused at its border: the evaluator does not call it, and gives an error record that names the export, the declaration, its line and column, and the chain of fields that it forced. The evaluator forces nothing beyond the fields that the console asked for, so `kernel.tools` forces the recipe of the tools and nothing of the image.
 - **Mode `console`** runs in the console. Exports with an effect are allowed. Each line is forced whole, each binding of its `let` too, so no effect is skipped because its value went unused.
 
-The exports with an effect are the commands `apply`, `rollback`, `build`, `enter`, `exit` and `update`, and each export of a module or a service: the evaluator cannot know that an export of a module has no effect. The names of the evaluation (`module`, `declaration`, `recipe`, `catalog`, `inputs`, `keys`, `follow`, `here`, `map`, `plan`, `project`, `env`) have none. A Stream is a wiring, an effect: mode `declaration` refuses it, and mode `console` holds it while its line runs, as today.
+The exports with an effect are the commands `apply`, `rollback`, `build`, `enter`, `exit` and `update`, and each export of a module or a service: the evaluator cannot know that an export of a module has no effect. The names of the evaluation (`module`, `declaration`, `recipe`, `catalog`, `inputs`, `keys`, `follow`, `here`, `map`, `plan`, `project`) have none. A Stream is a wiring, an effect: mode `declaration` refuses it, and mode `console` holds it while its line runs, as today.
 
 **Why one meaning everywhere.** An export forces its arguments from the left to the right before it is called. So the effects run in the order of the data: `assemble(bytes(t, 0, compile(src, t)), f)` compiles, then reads, then assembles, as the eager console of today does. The one difference that laziness can make is a value that nothing uses, whose effect then never runs. That cannot happen in mode `console`, because the line is forced whole. So a line means the same thing in both modes; mode `declaration` only refuses the effects.
 
-**What is shared.** The parser, the type rules, the literals, `with`, the functions, `where` and the evaluation budget are one code for both modes. A field that names another field of its record, and a `let` that names itself or a later binding, are accepted in both: a cycle with no end stops at the budget.
+**What is shared.** The parser, the type rules, the literals, `with`, the functions, `where` and the evaluation budget are one code for both modes. A field that names another field of its record, and a `let` that names itself or a later binding, are accepted in both. A thunk that its own computation forces again is a cycle: the evaluation stops at once with the record `Cycle` at the name that closes it. A work that has no cycle and no end, which functions can make, stops at the budget.
 
 **The tests.** One evaluator has no second semantics to compare with. The tests check two claims:
 
@@ -228,6 +228,55 @@ In mode `console`, the console knows the receiver from its command table before 
 
 **Why typed by its use.** A literal with a type name, `Substitution { mode = .Verify }`, repeats a type that the parameter already states. A literal of no type, checked by the receiver only when it reads a field, accepts a field with a wrong name in silence.
 
+### The forms of layer 3 as built
+
+Layer 3 adds the record literal, the named argument, `let`, `with` and the placeholder `_`. The parser reads them ("The parser package"), the evaluator types and forces them ("The evaluator package"), and the console draws, completes and colors them. The grammar ([`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "The form of a line"):
+
+```
+line       = name "=" expression | expression
+expression = sum { "with" sum }
+sum        = term { ("+" | "-") term }
+factor     = ... | "{" [ name "=" expression { "," name "=" expression } ] "}"
+           | "let" name "=" expression { "," name "=" expression } "in" expression
+argument   = [ name "=" ] expression | condition | fact name | field names
+```
+
+**The words of Lex.** `let`, `in`, `with` and `_` are no names: a variable, a field, a binding or a named argument with one of these names is refused with `Word_As_Name` at its place. `_` stays a name in each longer name, as `sum_values`.
+
+**The record literal.** The parser gives a node `Record_Literal` whose children are its fields, each a node `Literal_Field` with its value. A field given twice is refused by the parser. The evaluator forces the values from the left and gives an untyped value, of the kind `Record_Literal`, which points to its node. The receiver types it:
+
+- The parameter of a call of the kind Record, whose description the host gives from the module file. The names of the fields are checked when the call starts, before any of its arguments runs: an unknown field (`Literal_Field_Unknown`) and a missing field (`Literal_Field_Missing`). The kind and the range of each value are checked when the values are known, before the call runs (`Literal_Field_Kind`, `Literal_Field_Range`). The record is written in the memory of the host.
+- The right side of `with`, typed by the record on its left.
+- A value that nothing types is refused with `Literal_No_Type`: the value of a line, a variable, and a parameter that is no Record. A field of a record holds no record, so a literal inside a literal is refused as a value of the wrong kind.
+
+**No default: each field is given.** A field of a contract record has no mark of a default, and the forms of this layer need none: a literal gives each field, and `with` changes some fields of a whole record. The question of where a default is written stays open ("Open questions"); a missing field is refused.
+
+**Named arguments.** An argument `name = value`, of a parameter whose form is an expression, is a node `Named_Argument`. Its name is a parameter of the description of the command: an export and a command that makes a record have names, a command of the console has none. The checks when the call starts: an unknown name (`Argument_Unknown`), a parameter given twice by place and by name (`Argument_Twice`), and a parameter that the call does not give (`Argument_Missing`, but the last parameter that a call may leave out). The parser refuses a name given twice and an argument with no name after a named one. Inside `where`, `=` stays the operator of a condition.
+
+**`let`.** A node `Let` holds its bindings, each a node `Let_Binding` with its value, then its body. The parser binds each name of a binding to the names that its values and its body read, after it read the whole `let`, so a binding can name a later one and an inner `let` hides an outer one. In mode `console` the evaluator forces each binding from the left, then the body: the line is forced whole. In mode `declaration` it forces the body only. A thunk that its own computation forces again stops the evaluation with `Cycle` at the name that closes the cycle. `a.field` reads a field of a binding: of a record, or of a literal.
+
+**`with`.** The lowest priority but `|>`. The left value is a record; the right one is a literal of fields of that record, typed with the left record as its base, or a record of an equal description, which replaces each field. Another kind is refused with `With_Kinds`, two records of two descriptions with `With_Records_Differ`.
+
+**The placeholder `_`.** The nested form of `|>` puts the text of the value on the left in the place of `_` ([pipe_operator.md](pipe_operator.md), "The placeholder `_`"). A pass over the tokens of the line, before the nested form, finds each `_` and the group that holds it, and refuses before any call: a `_` that is not a whole argument, two `_` in one call, a `_` in a call nested in the call on the right, a `_` with no `|>` before its call. So the parser and the evaluator never see a `_` that the nested form keeps; the parser refuses one as a word of Lex used as a name.
+
+**The nested form reads the new forms.** The pieces of a call and of a literal are split at the commas outside parentheses and braces; a piece `name = value` keeps its name and nests its value only; a segment that starts with `let` nests each value and the body. So `f(n = x |> g)` is `f(n = g(x))`, and `let a = x |> g in a` is `let a = g(x) in a`.
+
+**What the console shows.** A typed literal is a Record, drawn as any record. The completion offers the fields of the record of the parameter inside `{ }`, and the names of the parameters at the start of an argument of a call whose parameters have names. The words `let`, `in`, `with` and `_` have the color of an operator, the names of the bindings of a `let` the color of a variable, and a field or a parameter before its `=` the color of a parameter.
+
+Refused forms:
+
+- **A check of the whole line before its first call.** It would refuse an unknown field of a literal deep in the line before any call; the check when the call of the literal starts gives the same refusal before the arguments of that call run, with no second walk of the tree. The text of a fault still ends the line where it is.
+- **A default of a field from its zero value.** A literal that forgets a field then writes 0 in silence.
+- **Named arguments of the commands of the console.** Their parameters have no names in a description; a name that the console gives in its code alone is a second table of names.
+- **A cycle stopped by the budget only.** A cycle in a `let` of the console recurses on the stack of the evaluator: a thunk in its computation refuses a second force at once, with the place of the cycle.
+- **`with` on any two values.** `with` composes two records only; a second meaning is refused ("The refused forms").
+
+Subtle points:
+
+- **The names are checked before the arguments run, the kinds after.** In `area(g(), {widht = 3})`, `g()` does not run: the name `widht` is refused when the call of `area` starts. In `area({width = g()})`, `g()` runs, then its kind is checked.
+- **A literal bound by a `let` is typed at each receiver.** `let s = {…} in area(s) + area(s)` forces the values of `s` once and types them twice, each in the memory of the line.
+- **The words of Lex change the meaning of three names.** A command, a variable or a field named `let`, `in` or `with` can no longer be written. No command and no field of the system has such a name.
+
 ### `where` keeps the form of a condition
 
 `where(t, status >= 500)` takes a condition: a field, an operator and a value ([`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "Conditions"). It does not take an anonymous function.
@@ -292,28 +341,36 @@ An option of a command is a named argument, never a `with` after the call: `buil
 
 ### Sources and the identity of a source
 
-The identity of a source is the hash of a tree in a store. `here()` gives the tree of the current version of the store of the current environment, as a hash, so the source of a project is an object with a hash. The versions of property 9 give the history of a source.
+The identity of a source is the hash of a tree in a store. `here()` gives the tree of the current version of the store of the source of the current project, as a hash, so the source of a project is an object with a hash. The versions of property 9 give the history of a source.
 
 Git is an import format and an export format, never a dependency:
 
 - A git repository enters through the fetcher, as a hash given in advance: the commit gives a tree, and the recipe of the fetch holds the hash of its modus tree ([recipes.md](recipes.md), "The fetcher").
 - Two machines exchange sources as they exchange modules: a sync of stores by hash, with the protocol of the cache. A tree is an object, as a module is.
 
-### Environments
+### The console of a project
 
-An environment is a record of names and grants that a child console starts with: `env { tools = {…}, stores = [store("kernel", .Read, .Write)] }`.
+The field `console` of a project names what a child console of the project has: the modules that it connects, so that their commands are available, and the stores that it grants.
 
-- `enter(e)` asks the root service to start a child console of the principal. Its command table holds the exports of the modules of `tools`, each by its hash, and its context holds a connection to each store of `stores`, with the rights of the record. Each such store is a store of the principal, and each right is a right that the console that asks already holds.
+```
+console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Write)] }
+```
+
+- `modules` is a list of module values: `catalog.odin`, `module(blake3:…)`, an output of a declaration input, or a name that a `let` binds to one of them. The name of a module is the name of its commands, as with `connect`: the commands of `odin` are `odin.…`.
+- `stores` is a list of stores of the principal, each with its rights.
+- `enter(p)` asks the root service to start a child console of the principal. At its start, the child console connects each module of `modules`, by its hash: it is what `connect("odin")` does, declared in advance. Its context holds a connection to each store of `stores`, with the rights of the record. Each such store is a store of the principal, and each right is a right that the console that asks already holds.
 - `exit()` stops the child console and gives the line back to the console before.
-- Nothing is installed. The modules of `tools` are objects of `module_files`, which a build or the cache gave. Another console sees none of these names.
+- Nothing is installed. The modules are objects of `module_files`, which a build or the cache gave. Another console sees none of these names.
+
+**Why `console`.** The interface where a principal types is the console, one term for one concept: the field says which console the project gives. The field describes the commands that are available, and nothing more.
 
 ### Projects
 
-A project is a record with a source, its declaration inputs and its outputs: `project { source = here(), inputs = {…}, outputs = {…} }`. `project` is the function `modus.project` of the catalog declaration, under a short name (property 22): it adds no mechanism.
+A project is a record with a source, its declaration inputs, its outputs and its console: `project { source = here(), inputs = {…}, outputs = {…}, console = {…} }`. `project` is the function `modus.project` of the catalog declaration, under a short name (property 22): it adds no mechanism.
 
 - `outputs.default` is the output that `build(p)` realises.
 - Each other output is a field: `build(kernel.tools)`.
-- `enter(kernel)` enters the field `environment` of the project. With no such field, the environment holds the builders of its outputs as tools, and the store of its source with Read and Write.
+- `enter(kernel)` starts a child console with the field `console` of the project. With no such field, the console connects the builders of the outputs of the project, and grants the store of its source with Read and Write.
 
 An output names an entry of the source tree by the names of its entries from the root of the tree, separated by `/`: `odin.module("src/modules/server")`. The evaluation process takes each name in turn; a name is never `.` or `..`, so the text never reaches above the source tree.
 
@@ -330,7 +387,7 @@ The garbage collector of `module_files` keeps an object only when a root reaches
 - each applied plan that the store `plans` of a principal keeps;
 - the signed system description;
 - the hash of each row of each disk grant table;
-- the modules of each environment that runs, and the recipe of each build that runs.
+- the modules of each child console of a project that runs, and the recipe of each build that runs.
 
 From each root it follows the imports of each module, the debug object of each module, the entries of each tree, and the output of each realisation. It deletes the rest. An object that two principals reach is kept while one of them reaches it.
 
@@ -341,15 +398,14 @@ From each root it follows the imports of each module, the debug object of each m
 | Apply a system | `apply(system)` |
 | Go back to the system before | `rollback()` |
 | Go back to one applied plan | `rollback(4)` |
-| Declare an environment | `kernel_dev = env { tools = { odin = catalog.odin }, stores = [store("kernel", .Read, .Write)] }` |
-| Work in an environment, then leave it | `enter(kernel_dev)`, then `exit()` |
+| Declare the console of a project | `console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Write)] }`, a field of `project { … }` |
+| Work in the console of a project, then leave it | `enter(kernel)`, then `exit()` |
 | Change one recipe of the catalog declaration | `catalog with { odin = recipe(…) }` |
 | Change a catalog declaration with the function of an input | `gt.overlay(catalog)` |
 | Build with an option | `build(kernel, substitution = { mode = .Verify })` |
 | Declare a project | `kernel = project { source = here(), outputs = { default = odin.module("src/modules/server"), tools = …, image = modus.image([…]) } }` |
 | Read a project from its source tree | `kernel = declaration(here())` |
 | Build a project, or one output | `build(kernel)`, `build(kernel.tools)` |
-| Work in a project | `enter(kernel)` |
 | Resolve each followed input again | `update()` |
 | Resolve one input again | `update(inputs.gt)` |
 | See each pin, with its publisher and its hash | `inputs` |
@@ -359,7 +415,11 @@ From each root it follows the imports of each module, the debug object of each m
 
 ## The refused forms
 
-- **Environment variables, `PATH` and shared configuration files.** They are ambient state that each process reads (property 8, property 19). An environment here is a record that one child console starts with.
+- **Environment variables, `PATH` and shared configuration files.** They are ambient state that each process reads (property 8, property 19). The console of a project is a record that one child console starts with.
+- **`env` and an environment record, with `tools` as a record of names.** The field says what the principal gets: a console, with modules. A second word for that console, and a record of names beside the names that the modules already have, are two terms for one concept.
+- **`shell`.** modus has no shell: the interface where a principal types is the console.
+- **`packages`.** A loan from Nix. What a console makes available is modules and their commands.
+- **`workspace` and `bench`.** The field describes the commands that are available, not a place of work.
 - **A text file that a service reads at its start.** A parser of text in a service, against property 19 and [start_policy.md](start_policy.md). The root service reads the plan, a typed record.
 - **A second language beside the console.** Two languages for one principal, against property 22. Lex grows by eight forms of grammar, with one parser and one evaluator.
 - **A second parser for the declarations.** Two grammars drift, and a line that the console accepts then means another thing in a declaration. One parser library reads both.
@@ -389,7 +449,7 @@ From each root it follows the imports of each module, the debug object of each m
 - **An `Apply` against an old difference is refused.** The command holds the hash of the current applied plan that the principal saw.
 - **A plan never names a module that the store lacks.** `Apply` checks the closure: each hash, each import, each debug object.
 - **`here()` needs the hash of a tree.** Today a tree that changes has no hash ([`docs/glossary/storage.md`](../../../docs/glossary/storage.md), "Tree"). The design needs it ([recipes.md](recipes.md), "Trees").
-- **A lazy record can refer to itself.** `outputs.image` can name `outputs.default`. A cycle with no end stops at the evaluation budget, with its chain of fields.
+- **A lazy record can refer to itself.** `outputs.image` can name `outputs.default`. A cycle stops at the thunk that its own computation forces again, with its place; a work with no end and no cycle stops at the evaluation budget.
 - **The plan of principal 0 is measured as the list of its start policy.** A plan with no start policy of its own changes no measure. Its disk processes are measured at their start, as today.
 - **The store `module_files` of the machine is shared.** Two principals with one module store it once. A question `Has` from one principal tells it whether another holds an object: the cache protocol answers only for the objects that the principal of the connection reaches.
 
@@ -400,7 +460,7 @@ From each root it follows the imports of each module, the debug object of each m
 - **The form of the acceptance of a difference** at a console that a remote client drives: the same key, or a second proof of the principal.
 - **The forced values of a declaration reference across lines.** The console evaluates a reference again on each line that needs it. An evaluation process that stays between the lines keeps the forced thunks, and holds their memory with no line that runs.
 - **Where the default of a field is written.** A field of a contract record has no mark of a default today, so a record literal must give each field. The mark goes in the record description, or in the function of the catalog declaration that takes the record. The frequent tasks need it: `{ mode = .Verify }` takes the sources and the signers of the plan of the principal.
-- **The bounds of a record literal and of a list at the console.** A call takes 12 arguments at most; a literal and a list have no bound of their own yet.
+- **The bounds of a list at the console.** A call takes 12 arguments at most. A record literal is bounded by its record, 64 fields at most, and by the text of a line; a list has no bound of its own yet.
 
 ## The build order
 
@@ -408,7 +468,7 @@ Each layer adds one capability to a system that works, and each is a tested comm
 
 1. **The parser in one library package.** The parser leaves the console for one library package, with no change of behaviour: the same trees and the same refusals. The package is a private part of the console until the evaluation process is its second owner ("The parser package").
 2. **The shared lazy evaluator in mode `console`.** It replaces the eager evaluator of the console: each line is forced whole, and the effects run in the order of their data. The mode is a parameter, and mode `declaration` already refuses an effect at its border ("The evaluator package").
-3. **The record literal, named arguments, `let`, `with`, and the placeholder `_` of `|>`.**
+3. **The record literal, named arguments, `let`, `with`, and the placeholder `_` of `|>`** ("The forms of layer 3 as built").
 4. **Functions `(x) => …`**, used by `map`.
 5. **Mode `declaration` and the evaluation process.**
 6. **`module(...)`, `recipe` and `plan`**, and the evaluation budget measured.
@@ -416,6 +476,6 @@ Each layer adds one capability to a system that works, and each is a tested comm
 
 ## State
 
-Built: layers 1 and 2 of the build order. The parser of Lex is the private part `lex_parser` of the console, with host tests of each form of the console and each refusal with its place. The evaluator is the private part `lex_evaluator`: thunks forced at most once, the order of the effects, the budget, and the refusal of an effect in mode `declaration`, with host tests over a fake host. The console is its host in mode `console`.
+Built: layers 1 to 3 of the build order. The parser of Lex is the private part `lex_parser` of the console, with host tests of each form of the console and each refusal with its place. The evaluator is the private part `lex_evaluator`: thunks forced at most once, the order of the effects, the budget, the refusal of an effect in mode `declaration`, the record literal typed by its receiver, named arguments, `let`, `with` and the cycle, with host tests over a fake host. The console is its host in mode `console`. The placeholder `_` is a part of the nested form of `|>`.
 
-Left: layers 3 to 7, the budget measured, and the move of the parser and the evaluator to `src/library/support` with the evaluation process.
+Left: layers 4 to 7, the budget measured, the default of a field, and the move of the parser and the evaluator to `src/library/support` with the evaluation process.

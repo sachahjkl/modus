@@ -982,15 +982,15 @@ The design: `src/md/features/gpu_access.md`.
 
 Do not use: WebGPU implementation, software WebGPU.
 
-### Environment
+### Console of a project
 
-An environment is a record of names and grants that a child console starts with: the modules of its tools, by hash, and stores of the principal with their rights.
+The console of a project is the field `console` of a project: the modules that a child console of the project connects, and the stores of the principal that it grants, with their rights.
 
-`enter(e)` starts the child console with the exports of `e.tools` in its command table and a connection to each store of `e.stores`; `exit()` stops it. Nothing is installed, and no other console sees these names. It is not a set of environment variables, which the system does not have, and not the context of a process.
+Example: `console = { modules = [odin, nasm, qemu], stores = [store("kernel", .Read, .Write)] }`. `modules` is a list of module values, and the name of a module is the name of its commands, as with `connect`. `enter(p)` starts a child console that connects each module, by its hash, as `connect` does, and holds a connection to each store; `exit()` stops it. Nothing is installed, and no other console sees these commands. It is not a set of environment variables, and not the context of a process.
 
-The design: `src/md/features/declarations.md`, "Environments".
+The design: `src/md/features/declarations.md`, "The console of a project".
 
-Do not use: shell environment, virtualenv, dev shell.
+Do not use: environment record, env, environment (for this), shell, packages, workspace, bench, dev shell, virtualenv.
 
 ### Evaluation budget
 
@@ -1026,7 +1026,7 @@ Do not use: runtime, environment (for this), call layer.
 
 A thunk is a value of the evaluator of Lex that is not computed yet: the expression of a field or of a `let` binding, with the names that it can read.
 
-The evaluator forces a thunk when a value needs it, and at most once: the result replaces the thunk. In mode `declaration`, `kernel.tools` forces the recipe of the tools and nothing of the image. In mode `console`, each thunk of a line is forced before the line ends, so a variable never keeps one. A field can name another field of its record; a cycle with no end stops at the evaluation budget.
+The evaluator forces a thunk when a value needs it, and at most once: the result replaces the thunk. In mode `declaration`, `kernel.tools` forces the recipe of the tools and nothing of the image. In mode `console`, each thunk of a line is forced before the line ends, so a variable never keeps one. A field can name another field of its record; a thunk that its own computation forces again is a cycle, refused at once.
 
 The design: `src/md/features/declarations.md`, "One parser, one lazy evaluator, two modes".
 
@@ -1041,6 +1041,16 @@ A field that the type does not have is refused, and so is a missing field with n
 The design: `src/md/features/declarations.md`, "A record literal is typed by its use".
 
 Do not use: object literal, struct literal, attribute set.
+
+### Word of Lex
+
+A word of Lex is a word of its grammar that is never a name: `let`, `in`, `with`, and the placeholder `_`.
+
+A variable, a field, a binding of a `let` or a named argument with one of these names is refused, with the word. A longer name that holds one, as `within` or `sum_values`, is a name. The console draws a word of Lex in the color of an operator.
+
+The design: `src/md/features/declarations.md`, "The forms of layer 3 as built".
+
+Do not use: keyword (for this), reserved name.
 
 ### Named argument
 

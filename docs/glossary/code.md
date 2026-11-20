@@ -614,7 +614,7 @@ Do not use: C runtime, standard library (for this).
 
 A declaration is a tree of a store whose root holds one text entry in Lex, with the extension `.lex`, whose value is one record.
 
-A declaration describes a system, a session, a project or an environment, in the manner of Nix, and has a hash, as a module has. A sandboxed evaluation process reads its text in the evaluation mode `declaration` and gives typed values only: a plan, a table of recipes, an environment. Its evaluation has no effect. Example: `kernel = declaration(here())`. No service reads it.
+A declaration describes a system, a session or a project, in the manner of Nix, and has a hash, as a module has. A sandboxed evaluation process reads its text in the evaluation mode `declaration` and gives typed values only: a plan, a table of recipes, the console of a project. Its evaluation has no effect. Example: `kernel = declaration(here())`. No service reads it.
 
 The design: `src/md/features/declarations.md`.
 
@@ -692,9 +692,9 @@ Do not use: channel, tag, latest version.
 
 ### Project
 
-A project is a declaration of a source tree, its declaration inputs and its outputs: `project { source = here(), inputs = {…}, outputs = {…} }`.
+A project is a declaration of a source tree, its declaration inputs, its outputs and its console: `project { source = here(), inputs = {…}, outputs = {…}, console = {…} }`.
 
-`project` is the function `modus.project` of the catalog declaration under a short name: it adds no mechanism. `build(p)` realises `outputs.default`, `build(p.tools)` one output, and `enter(p)` enters its environment. It is not the work of the repository of modus, which the group Project of this glossary names.
+`project` is the function `modus.project` of the catalog declaration under a short name: it adds no mechanism. `build(p)` realises `outputs.default`, `build(p.tools)` one output, and `enter(p)` starts a child console with the field `console` (`docs/glossary/desktop.md`, "Console of a project"). It is not the work of the repository of modus, which the group Project of this glossary names.
 
 The design: `src/md/features/declarations.md`.
 

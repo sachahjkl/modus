@@ -993,7 +993,7 @@ palette_line_ended :: proc "contextless" () {
 			}
 		case .Record:
 			console_results.draw_record(&sink, value.file, value.detail, value.record)
-		case .Handle, .Table, .Bytes, .Stream, .Record_Input:
+		case .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal:
 			// The panel has no drawer for these: the console window shows them.
 			writer.fits = false
 		}

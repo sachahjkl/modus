@@ -4,13 +4,20 @@
 // text and evaluates nothing.
 //
 //   line       = name "=" expression | expression
-//   expression = term { ("+" | "-") term }
+//   expression = sum { "with" sum }
+//   sum        = term { ("+" | "-") term }
 //   term       = factor { ("*" | "/" | "%") factor }
 //   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" expression ")"
+//              | "{" [ name "=" expression { "," name "=" expression } ] "}"
+//              | "let" name "=" expression { "," name "=" expression } "in" expression
 //   arguments  = argument { "," argument }
-//   argument   = expression | condition | fact name | field names
+//   argument   = [ name "=" ] expression | condition | fact name | field names
 //   condition  = name ("=" | "!=" | "<" | "<=" | ">" | ">=") expression
 //   field names = name { "," name }       (the last argument of its call)
+//
+// `_`, `let`, `in` and `with` are words of Lex, never names. After a whole
+// `let`, each name that its values and its body read is bound to its
+// binding: a Name node keeps the Let_Binding in `binding`.
 //
 // The parser reads no "|>": the console gives it the nested form of the
 // line, with calls in calls (console_language, pipe.odin). The form of
@@ -90,6 +97,11 @@ Node_Kind :: enum u8 {
 	Fact_Name   = 7, // The name of a fact type; with the refusal Fact_Name_Missing, no name.
 	Refused     = 8, // The fault where the parse stopped: the child is the part that was read before it, or none.
 	Field_Names = 9, // The names of fields, with their commas and the spaces after the last; with the refusal Field_Name_Missing, a name is missing.
+	Record_Literal = 10, // "{ … }": the bytes are "{", the children its fields.
+	Literal_Field  = 11, // A field of a record literal: the bytes are its name, the child its value.
+	Named_Argument = 12, // An argument `name = value`: the bytes are the name, the child the value.
+	Let            = 13, // "let … in …": the bytes are "let", the children its bindings, then its body.
+	Let_Binding    = 14, // A binding of a let: the bytes are its name, the child its value.
 }
 
 // The operators of a Binary node.
@@ -100,6 +112,7 @@ Operator :: enum u8 {
 	Multiply  = 3, // "*"
 	Divide    = 4, // "/"
 	Remainder = 5, // "%"
+	With      = 6, // `with`: a record, with the fields of the record on its right.
 }
 
 @(rodata)
@@ -110,7 +123,24 @@ OPERATOR_TEXTS := [Operator]string {
 	.Multiply  = "*",
 	.Divide    = "/",
 	.Remainder = "%",
+	.With      = "with",
 }
+
+// The words of Lex: no name has one of them.
+@(rodata)
+WORDS_OF_LEX := [?]string{"_", "let", "in", "with"}
+
+// word_of_lex says if a name is a word of Lex: `_` is the placeholder of
+// `|>`, and `let`, `in` and `with` are words of its forms.
+word_of_lex :: proc "contextless" (name: string) -> bool {
+	for word in WORDS_OF_LEX {
+		if name == word {
+			return true
+		}
+	}
+	return false
+}
+
 
 // Why a text has no whole tree. The values are fixed: a test names the
 // member, and a record keeps it.
@@ -128,6 +158,17 @@ Refusal :: enum u8 {
 	Fact_Name_Missing         = 10, // The argument of a fact name holds no name.
 	Condition_Head_Refused    = 11, // The field or the operator of a condition. value: the console_condition.Refusal.
 	Field_Name_Missing        = 12, // An argument of field names with no name at the start or after a ",": the place is where the name is missing.
+	Literal_Close_Missing     = 13, // A field of a record literal, then neither "," nor "}".
+	Literal_Name_Missing      = 14, // In "{ }", no name of a field where one starts: "{= 1}", "{1}", "{a = 1,}".
+	Literal_Equal_Missing     = 15, // A name of a field with no single "=" after it: "{a 1}", "{a == 1}".
+	Literal_Field_Twice       = 16, // A field given twice in one literal: the place is the second.
+	Named_Argument_Twice      = 17, // A name given twice in one call: the place is the second.
+	Positional_After_Named    = 18, // An argument with no name after a named one.
+	Let_Name_Missing          = 19, // "let" or a "," of its bindings, then no name.
+	Let_Equal_Missing         = 20, // A name of a binding with no single "=" after it.
+	Let_In_Missing            = 21, // A binding, then neither "," nor "in".
+	Let_Name_Twice            = 22, // A name bound twice in one let: the place is the second.
+	Word_As_Name              = 23, // "_", "let", "in" or "with" where a name is read: the bytes are the word.
 }
 
 // Where a node is in its text: its first byte.
@@ -157,6 +198,7 @@ Node :: struct {
 	condition_head:    console_condition.Head, // Condition: the field, the operator and the place of the value, as head_read gives them.
 	condition_refusal: console_condition.Refusal, // Condition: the refusal of head_read; the parse stops at it.
 	member_alone:      bool, // Condition: the first token of the value is followed by "," or ")": a name of a member of a status is the whole value.
+	binding:           Node_Index, // Name: the Let_Binding whose name it reads, before its first '.'; or NO_NODE: a name of the host.
 }
 
 // The tree of one text, in the memory of the caller. Each string is a part
@@ -196,9 +238,15 @@ parse :: proc "contextless" (text: string, lookup: Form_Lookup, tree: ^Syntax_Tr
 		tree.root = refuse(&parser, .Text_Too_Long, TEXT_BYTES_MOST, len(text), NO_NODE, u64(len(text)))
 		return
 	}
-	// An assignment starts with a name and "=".
+	// An assignment starts with a name and a single "=". A word of Lex is
+	// no name of a variable.
 	name := read_name(&parser)
-	if len(name) > 0 && accept(&parser, '=') {
+	name_start := parser.position - len(name)
+	if len(name) > 0 && equal_accept(&parser) {
+		if word_of_lex(name) {
+			tree.root = refuse(&parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE)
+			return
+		}
 		tree.assigned_name = name
 	} else {
 		parser.position = 0
@@ -310,6 +358,7 @@ node_add :: proc "contextless" (parser: ^Parser, kind: Node_Kind, start, end: in
 		end          = u32(end),
 		first_child  = NO_NODE,
 		next_sibling = NO_NODE,
+		binding      = NO_NODE,
 	}
 	tree.node_count += 1
 	return index
@@ -380,10 +429,70 @@ read_name :: proc "contextless" (parser: ^Parser) -> string {
 	return parser.tree.text[start:parser.position]
 }
 
+// equal_accept takes a single "=": the "=" of an assignment, a named
+// argument, a field or a binding, never the first byte of "==".
+@(private)
+equal_accept :: proc "contextless" (parser: ^Parser) -> bool {
+	text := parser.tree.text
+	if peek(parser) != '=' || parser.position + 1 < len(text) && text[parser.position + 1] == '=' {
+		return false
+	}
+	parser.position += 1
+	return true
+}
+
+// word_ahead says if the next token is a word of Lex, and gives the byte
+// after it.
+@(private)
+word_ahead :: proc "contextless" (parser: ^Parser, word: string) -> (end: int, found: bool) {
+	token := console_language.token_next(parser.tree.text, parser.position)
+	if console_language.word_is(parser.tree.text, token, word) {
+		return token.end, true
+	}
+	return parser.position, false
+}
+
+// named_ahead says if the next tokens are a name and a single "=": a named
+// argument, a field of a literal, a binding.
+@(private)
+named_ahead :: proc "contextless" (parser: ^Parser) -> bool {
+	text := parser.tree.text
+	name := console_language.token_next(text, parser.position)
+	if name.kind != .Name {
+		return false
+	}
+	equal := console_language.token_next(text, name.end)
+	return equal.kind == .Operator && text[equal.start] == '=' && !(equal.end < len(text) && text[equal.end] == '=')
+}
+
 // ---- The grammar.
 
+// expression_read reads `with`, whose priority is the lowest: below "+" and
+// "-".
 @(private)
 expression_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
+	left := sum_read(parser)
+	for !refused(parser) {
+		end, found := word_ahead(parser, "with")
+		if !found {
+			return left
+		}
+		skip_spaces(parser)
+		binary := node_add(parser, .Binary, parser.position, end)
+		parser.position = end
+		if binary == NO_NODE {
+			return left
+		}
+		node_at(parser.tree, binary).operator = .With
+		child_append(parser.tree, binary, left)
+		child_append(parser.tree, binary, sum_read(parser))
+		left = binary
+	}
+	return left
+}
+
+@(private)
+sum_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	left := term_read(parser)
 	for !refused(parser) {
 		operator: Operator
@@ -478,8 +587,17 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 			return refuse(parser, .Text_Without_End_Quote, start, end, NO_NODE)
 		}
 		return node_add(parser, .Text, start, end)
+	case character == '{':
+		parser.position += 1
+		return literal_read(parser, start)
 	case console_language.name_first(character):
 		name := read_name(parser)
+		if name == "let" {
+			return let_read(parser, start)
+		}
+		if word_of_lex(name) {
+			return refuse(parser, .Word_As_Name, start, start + len(name), NO_NODE)
+		}
 		if accept(parser, '(') {
 			return call_read(parser, name, start)
 		}
@@ -499,6 +617,7 @@ call_read :: proc "contextless" (parser: ^Parser, name: string, start: int) -> N
 		return call
 	}
 	count := 0
+	named_seen := false
 	for {
 		if count == ARGUMENT_CAPACITY {
 			child_append(parser.tree, call, refuse(parser, .Too_Many_Arguments, parser.position, parser.position, NO_NODE))
@@ -507,7 +626,17 @@ call_read :: proc "contextless" (parser: ^Parser, name: string, start: int) -> N
 		argument: Node_Index
 		switch form_of(parser.lookup, name, count) {
 		case .Expression:
-			argument = expression_read(parser)
+			// `name = value` names its parameter; after one, each argument
+			// is named.
+			if named_ahead(parser) {
+				named_seen = true
+				argument = named_argument_read(parser, call)
+			} else if named_seen {
+				skip_spaces(parser)
+				argument = refuse(parser, .Positional_After_Named, parser.position, parser.position, NO_NODE)
+			} else {
+				argument = expression_read(parser)
+			}
 		case .Fact_Name:
 			argument = fact_name_read(parser)
 		case .Condition:
@@ -527,6 +656,167 @@ call_read :: proc "contextless" (parser: ^Parser, name: string, start: int) -> N
 			child_append(parser.tree, call, refuse(parser, .Comma_Or_Close_Missing, parser.position, parser.position, NO_NODE))
 			return call
 		}
+	}
+}
+
+// child_named gives the child of a parent of a kind whose bytes are a name,
+// or NO_NODE: a field of a literal, a binding, a named argument given before.
+@(private)
+child_named :: proc "contextless" (tree: ^Syntax_Tree, parent: Node_Index, kind: Node_Kind, name: string) -> Node_Index {
+	parent_node := node_at(tree, parent)
+	if parent_node == nil {
+		return NO_NODE
+	}
+	for child := parent_node.first_child; child != NO_NODE; child = next_of(tree, child) {
+		if node_at(tree, child).kind == kind && node_text(tree, child) == name {
+			return child
+		}
+	}
+	return NO_NODE
+}
+
+// named_argument_read reads `name = value`, an argument of call, after
+// named_ahead saw its name and its "=".
+@(private)
+named_argument_read :: proc "contextless" (parser: ^Parser, call: Node_Index) -> Node_Index {
+	skip_spaces(parser)
+	start := parser.position
+	name := read_name(parser)
+	if word_of_lex(name) {
+		return refuse(parser, .Word_As_Name, start, start + len(name), NO_NODE)
+	}
+	if child_named(parser.tree, call, .Named_Argument, name) != NO_NODE {
+		return refuse(parser, .Named_Argument_Twice, start, start + len(name), NO_NODE)
+	}
+	equal_accept(parser)
+	named := node_add(parser, .Named_Argument, start, start + len(name))
+	if named == NO_NODE {
+		return NO_NODE
+	}
+	child_append(parser.tree, named, expression_read(parser))
+	return named
+}
+
+// literal_read reads a record literal, after its "{": `name = value`, each
+// name once, separated by ",", then "}". A fault is a child in its place,
+// after the fields before it.
+@(private)
+literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
+	text := parser.tree.text
+	literal := node_add(parser, .Record_Literal, start, start + 1)
+	if literal == NO_NODE || accept(parser, '}') {
+		return literal
+	}
+	for {
+		skip_spaces(parser)
+		field_start := parser.position
+		if console_language.token_next(text, field_start).kind != .Name {
+			child_append(parser.tree, literal, refuse(parser, .Literal_Name_Missing, field_start, field_start, NO_NODE))
+			return literal
+		}
+		name := read_name(parser)
+		if word_of_lex(name) {
+			child_append(parser.tree, literal, refuse(parser, .Word_As_Name, field_start, field_start + len(name), NO_NODE))
+			return literal
+		}
+		if child_named(parser.tree, literal, .Literal_Field, name) != NO_NODE {
+			child_append(parser.tree, literal, refuse(parser, .Literal_Field_Twice, field_start, field_start + len(name), NO_NODE))
+			return literal
+		}
+		if !equal_accept(parser) {
+			child_append(parser.tree, literal, refuse(parser, .Literal_Equal_Missing, parser.position, parser.position, NO_NODE))
+			return literal
+		}
+		field := node_add(parser, .Literal_Field, field_start, field_start + len(name))
+		child_append(parser.tree, literal, field)
+		child_append(parser.tree, field, expression_read(parser))
+		if refused(parser) || accept(parser, '}') {
+			return literal
+		}
+		if !accept(parser, ',') {
+			child_append(parser.tree, literal, refuse(parser, .Literal_Close_Missing, parser.position, parser.position, NO_NODE))
+			return literal
+		}
+	}
+}
+
+// let_read reads a let, after its word: its bindings `name = value`, each
+// name once, separated by ",", then `in` and the body. Then it binds the
+// names that its values and its body read.
+@(private)
+let_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
+	text := parser.tree.text
+	let := node_add(parser, .Let, start, start + len("let"))
+	if let == NO_NODE {
+		return NO_NODE
+	}
+	for {
+		skip_spaces(parser)
+		name_start := parser.position
+		if console_language.token_next(text, name_start).kind != .Name {
+			child_append(parser.tree, let, refuse(parser, .Let_Name_Missing, name_start, name_start, NO_NODE))
+			return let
+		}
+		name := read_name(parser)
+		if word_of_lex(name) {
+			child_append(parser.tree, let, refuse(parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE))
+			return let
+		}
+		if child_named(parser.tree, let, .Let_Binding, name) != NO_NODE {
+			child_append(parser.tree, let, refuse(parser, .Let_Name_Twice, name_start, name_start + len(name), NO_NODE))
+			return let
+		}
+		if !equal_accept(parser) {
+			child_append(parser.tree, let, refuse(parser, .Let_Equal_Missing, parser.position, parser.position, NO_NODE))
+			return let
+		}
+		binding := node_add(parser, .Let_Binding, name_start, name_start + len(name))
+		child_append(parser.tree, let, binding)
+		child_append(parser.tree, binding, expression_read(parser))
+		if refused(parser) {
+			return let
+		}
+		if accept(parser, ',') {
+			continue
+		}
+		end, found := word_ahead(parser, "in")
+		if !found {
+			child_append(parser.tree, let, refuse(parser, .Let_In_Missing, parser.position, parser.position, NO_NODE))
+			return let
+		}
+		parser.position = end
+		child_append(parser.tree, let, expression_read(parser))
+		// After the whole let: a value can name a later binding, and an
+		// inner let has bound its own names already.
+		for child := node_at(parser.tree, let).first_child; child != NO_NODE; child = next_of(parser.tree, child) {
+			child_node := node_at(parser.tree, child)
+			names_bind(parser.tree, let, child_node.kind == .Let_Binding ? child_node.first_child : child)
+		}
+		return let
+	}
+}
+
+// names_bind gives each Name of a subtree that no inner let bound the
+// binding of let with its name, before its first '.'.
+@(private)
+names_bind :: proc "contextless" (tree: ^Syntax_Tree, let: Node_Index, index: Node_Index) {
+	node := node_at(tree, index)
+	if node == nil {
+		return
+	}
+	if node.kind == .Name && node.binding == NO_NODE {
+		name := node_text(tree, index)
+		head := name
+		for character, place in name {
+			if character == '.' {
+				head = name[:place]
+				break
+			}
+		}
+		node.binding = child_named(tree, let, .Let_Binding, head)
+	}
+	for child := node.first_child; child != NO_NODE; child = next_of(tree, child) {
+		names_bind(tree, let, child)
 	}
 }
 

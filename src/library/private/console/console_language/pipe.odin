@@ -6,9 +6,16 @@ package console_language
 // reads that form as any other line, so a line with '|>' checks and runs as
 // the same line with calls in calls (docs/CONSOLE.md, "The pipe operator").
 //
-// The operator has the lowest priority, below '+' and '-', and it chains
-// from the left: `x |> h |> g(1)` is `g(h(x), 1)`. It stops at a ',' and at
-// the parentheses that hold it: `f(x |> g, 2)` is `f(g(x), 2)`.
+// The operator has the lowest priority, below '+', '-' and `with`, and it
+// chains from the left: `x |> h |> g(1)` is `g(h(x), 1)`. It stops at a ','
+// and at the parentheses and the braces that hold it: `f(x |> g, 2)` is
+// `f(g(x), 2)`. In a piece `name = value` of a call or of a record literal,
+// it stops at the '=': `f(n = x |> g)` is `f(n = g(x))`. A segment that
+// starts with `let` nests each value of a binding and the body.
+//
+// The placeholder `_` puts the value on the left in another place of the
+// call on the right: `a |> f(b, _)` is `f(b, a)`
+// (src/md/features/pipe_operator.md, "The placeholder `_`").
 //
 // This file finds each fault of the form of the operator, before any call,
 // so that a line with such a fault runs nothing. It gives the console each
@@ -19,16 +26,25 @@ package console_language
 // each "|>" with its name takes 3 bytes at least: 66 at most.
 PIPE_STAGE_CAPACITY :: 128
 
+// The groups that the pass over the placeholders keeps open at once: a
+// group takes one byte at least, and a line of the history has 256 bytes at
+// most.
+PLACEHOLDER_GROUP_CAPACITY :: 256
+
 // A fault of the form of the pipe operator.
 Pipe_Refusal :: enum u8 {
-	None            = 0,
-	No_Left_Value   = 1, // "|>" at the start of the line, or after "(", ",", "=" or an operator: no value on its left.
-	Line_End        = 2, // The line ends after "|>": no call on its right.
-	Not_A_Call      = 3, // After "|>": no name, or a name and more after its call: a number, a text, "(", another "|>".
-	Lone_Bar        = 4, // A '|' with no '>' after it: no operator of the language.
-	Unmatched_Close = 5, // A ')' that no '(' opened, in a line with "|>": the parts of the operator have no border.
-	Too_Many_Stages = 6, // More "|>" than the memory of the stages holds.
-	Too_Long        = 7, // The nested form does not fit the memory that the caller gave.
+	None                     = 0,
+	No_Left_Value            = 1, // "|>" at the start of the line, or after "(", ",", "=" or an operator: no value on its left.
+	Line_End                 = 2, // The line ends after "|>": no call on its right.
+	Not_A_Call               = 3, // After "|>": no name, or a name and more after its call: a number, a text, "(", another "|>".
+	Lone_Bar                 = 4, // A '|' with no '>' after it: no operator of the language.
+	Unmatched_Close          = 5, // A ')' or a '}' that nothing opened, in a line with "|>": the parts of the operator have no border.
+	Too_Many_Stages          = 6, // More "|>" than the memory of the stages holds.
+	Too_Long                 = 7, // The nested form does not fit the memory that the caller gave.
+	Placeholder_Not_Whole    = 8, // A '_' that is no whole argument of the call on the right: "f(_ + 1)", "f((_))", "f({a = _})". The call is at call_start.
+	Placeholder_Twice        = 9, // Two '_' in one call on the right. The call is at call_start.
+	Placeholder_Nested       = 10, // A '_' in a call inside the call on the right: the call on the right at call_start, the inner call at inner_start.
+	Placeholder_Without_Pipe = 11, // A '_' with no "|>" before its call: on the left of "|>", or in a line with no "|>".
 }
 
 // What the console can know, before the run, of the value on the left of
@@ -45,17 +61,20 @@ Pipe_Left_Form :: enum u8 {
 // One "|>" of a line, and the call on its right. Each place is a byte of
 // the line, not of its nested form.
 Pipe_Stage :: struct {
-	operator_start:  int, // The byte of '|' of "|>".
-	name_start:      int, // The name of the command on the right ...
-	name_end:        int, // ... and its end.
-	argument_count:  int, // The arguments written in its parentheses: the value on the left comes before them.
-	arguments_start: int, // The bytes inside its parentheses: from the byte after '(' ...
-	arguments_end:   int, // ... to its ')'. A name with no parentheses has none.
-	closed:          bool, // The call has its ')', or it is a name with no parentheses.
-	left:            Pipe_Left_Form, // What is known of the value on the left.
-	left_start:      int, // Name and Call: the name ...
-	left_end:        int, // ... and its end.
-	stage_before:    int, // Stage: the index of the stage whose result is the value on the left.
+	operator_start:       int, // The byte of '|' of "|>".
+	name_start:           int, // The name of the command on the right ...
+	name_end:             int, // ... and its end.
+	argument_count:       int, // The arguments written in its parentheses, a '_' among them.
+	arguments_start:      int, // The bytes inside its parentheses: from the byte after '(' ...
+	arguments_end:        int, // ... to its ')'. A name with no parentheses has none.
+	closed:               bool, // The call has its ')', or it is a name with no parentheses.
+	left:                 Pipe_Left_Form, // What is known of the value on the left.
+	left_start:           int, // Name and Call: the name ...
+	left_end:             int, // ... and its end.
+	stage_before:         int, // Stage: the index of the stage whose result is the value on the left.
+	placeholder_start:    int, // The byte of its '_', or -1: with no '_', the value on the left is the first argument.
+	placeholder_argument: int, // The argument of the '_', from 0, or -1.
+	placeholder_named:    bool, // The '_' is the value of a named argument: its parameter is known when the call runs.
 }
 
 // The nested form of a line, or the fault of its form.
@@ -65,18 +84,33 @@ Pipe_Form :: struct {
 	refusal:     Pipe_Refusal,
 	found_start: int, // The bytes of the line that the refusal names ...
 	found_end:   int, // ... and their end.
+	call_start:  int, // A refusal of a '_': the name of the call on the right ...
+	call_end:    int, // ... and its end.
+	inner_start: int, // Placeholder_Nested: the name of the call that holds the '_' ...
+	inner_end:   int, // ... and its end.
+}
+
+// One '_' that the pass accepted: a whole argument of a call on the right
+// of "|>".
+Placeholder :: struct {
+	call_name_start: int, // The name of the call on the right.
+	start:           int, // The byte of the '_'.
+	argument:        int, // Its argument, from 0.
+	named:           bool, // It is the value of a named argument.
 }
 
 // The state of one writing of a nested form.
 Pipe_Writer :: struct {
-	text:        string,
-	memory:      []u8,
-	count:       int,
-	stages:      []Pipe_Stage,
-	stage_count: int,
-	refusal:     Pipe_Refusal,
-	found_start: int,
-	found_end:   int,
+	text:              string,
+	memory:            []u8,
+	count:             int,
+	stages:            []Pipe_Stage,
+	stage_count:       int,
+	refusal:           Pipe_Refusal,
+	found_start:       int,
+	found_end:         int,
+	placeholders:      []Placeholder,
+	placeholder_count: int,
 }
 
 // expression_start gives the first byte of the expression of a line: the
@@ -87,7 +121,7 @@ expression_start :: proc "contextless" (text: string) -> int {
 		return 0
 	}
 	equal := token_next(text, name.end)
-	if equal.kind == .Operator && text[equal.start] == '=' {
+	if equal.kind == .Operator && text[equal.start] == '=' && !(equal.end < len(text) && text[equal.end] == '=') {
 		return equal.end
 	}
 	return 0
@@ -102,6 +136,30 @@ pipe_before :: proc "contextless" (text: string, place: int) -> bool {
 		last = token
 	}
 	return last.kind == .Pipe
+}
+
+// word_is says if a token is a name with exactly the bytes of a word.
+word_is :: proc "contextless" (text: string, token: Token, word: string) -> bool {
+	return token.kind == .Name && text[token.start:token.end] == word
+}
+
+// opens and closes say if a token opens or closes a group: parentheses and
+// the braces of a record literal.
+@(private)
+opens :: proc "contextless" (text: string, token: Token) -> bool {
+	return token.kind == .Operator && (text[token.start] == '(' || text[token.start] == '{')
+}
+
+@(private)
+closes :: proc "contextless" (text: string, token: Token) -> bool {
+	return token.kind == .Operator && (text[token.start] == ')' || text[token.start] == '}')
+}
+
+// single_equal says if a token is "=" with no "=" after it: the "=" of a
+// named argument, of a field, of a binding.
+@(private)
+single_equal :: proc "contextless" (text: string, token: Token) -> bool {
+	return token.kind == .Operator && text[token.start] == '=' && !(token.end < len(text) && text[token.end] == '=')
 }
 
 // pipe_nested_form writes the line text in its nested form into memory,
@@ -129,10 +187,9 @@ pipe_nested_form :: proc "contextless" (text: string, first: int, memory: []u8, 
 				return form
 			}
 		case .Operator:
-			switch text[token.start] {
-			case '(':
+			if opens(text, token) {
 				depth += 1
-			case ')':
+			} else if closes(text, token) {
 				depth -= 1
 				if depth < 0 && unmatched_close < 0 {
 					unmatched_close = token.start
@@ -140,6 +197,14 @@ pipe_nested_form :: proc "contextless" (text: string, first: int, memory: []u8, 
 			}
 		case .None, .Name, .Number, .Text, .Text_Unfinished, .Arrow:
 		}
+	}
+	// The placeholders, before any form is written: a '_' out of its place
+	// fails the line before any call, also with no "|>".
+	placeholders: [PIPE_STAGE_CAPACITY]Placeholder
+	placeholder_count, placeholder_refusal := placeholders_find(text, start, placeholders[:])
+	if placeholder_refusal.refusal != .None {
+		placeholder_refusal.nested = ""
+		return placeholder_refusal
 	}
 	if !has_pipe {
 		return form
@@ -150,9 +215,11 @@ pipe_nested_form :: proc "contextless" (text: string, first: int, memory: []u8, 
 		return form
 	}
 	pipe_writer := Pipe_Writer {
-		text   = text,
-		memory = memory,
-		stages = stages,
+		text              = text,
+		memory            = memory,
+		stages            = stages,
+		placeholders      = placeholders[:],
+		placeholder_count = placeholder_count,
 	}
 	pipe_write(&pipe_writer, text[:start])
 	pipe_segment_write(&pipe_writer, start, len(text))
@@ -165,6 +232,183 @@ pipe_nested_form :: proc "contextless" (text: string, first: int, memory: []u8, 
 	form.nested = string(pipe_writer.memory[:pipe_writer.count])
 	return form
 }
+
+// ---- The placeholders.
+
+// The kinds of a group of the pass over the placeholders.
+@(private)
+Group_Kind :: enum u8 {
+	Parentheses = 0, // "(" after no name: an expression in parentheses.
+	Call        = 1, // A name and "(".
+	Stage_Call  = 2, // A name after "|>", and "(": the call on the right of "|>".
+	Braces      = 3, // "{": a record literal.
+}
+
+// One group that the pass keeps open, and the piece of its current
+// argument: its tokens at the level of the group, and its '_'.
+@(private)
+Group :: struct {
+	kind:              Group_Kind,
+	name_start:        int,
+	name_end:          int,
+	argument:          int, // The argument of the piece, from 0.
+	lets:              int, // The `let` of the piece whose `in` has not come: a ',' inside them is no border of a piece.
+	piece_tokens:      int, // The tokens of the piece at the level of the group.
+	first_is_name:     bool, // The first token of the piece is a name, not a '_'.
+	named_prefix:      bool, // The second token of the piece is a single "=".
+	placeholder:       int, // The byte of the first '_' of the piece at this level, or -1.
+	placeholder_token: int, // The place of that '_' among the tokens of the piece, from 1.
+	placeholders:      int, // The '_' accepted in this call.
+}
+
+// placeholders_find walks the tokens of the expression from start, keeps
+// each group that is open, and gives each '_' to the innermost group that
+// holds it. It gives the '_' accepted, or the first refusal.
+@(private)
+placeholders_find :: proc "contextless" (text: string, start: int, into: []Placeholder) -> (count: int, form: Pipe_Form) {
+	groups: [PLACEHOLDER_GROUP_CAPACITY]Group
+	depth := 0
+	before, two_before: Token // The two tokens before this one.
+	for token := token_next(text, start); token.kind != .None; token = token_next(text, token.end) {
+		defer {
+			two_before, before = before, token
+		}
+		top: ^Group = depth > 0 ? &groups[depth - 1] : nil
+		switch {
+		case opens(text, token):
+			if top != nil {
+				group_token_add(text, top, token)
+			}
+			if depth == len(groups) {
+				form.refusal, form.found_start, form.found_end = .Too_Long, 0, len(text)
+				return count, form
+			}
+			group := Group {
+				kind        = .Braces,
+				placeholder = -1,
+			}
+			if text[token.start] == '(' {
+				group.kind = .Parentheses
+				if before.kind == .Name && before.end <= token.start {
+					group.kind = two_before.kind == .Pipe ? .Stage_Call : .Call
+					group.name_start, group.name_end = before.start, before.end
+				}
+			}
+			groups[depth] = group
+			depth += 1
+		case closes(text, token):
+			if top == nil {
+				continue
+			}
+			if !piece_end(text, groups[:depth], into, &count, &form) {
+				return count, form
+			}
+			depth -= 1
+		case token.kind == .Operator && text[token.start] == ',' && top != nil && top.lets == 0:
+			if !piece_end(text, groups[:depth], into, &count, &form) {
+				return count, form
+			}
+			top.argument += 1
+			top.piece_tokens, top.first_is_name, top.named_prefix, top.placeholder, top.placeholder_token = 0, false, false, -1, 0
+		case word_is(text, token, "_") && before.kind != .Pipe:
+			if top == nil {
+				form.refusal, form.found_start, form.found_end = .Placeholder_Without_Pipe, token.start, token.end
+				return count, form
+			}
+			// A second '_' of the piece makes it no whole argument: the
+			// count of its tokens says so.
+			if top.placeholder < 0 {
+				top.placeholder, top.placeholder_token = token.start, top.piece_tokens + 1
+			}
+			group_token_add(text, top, token)
+		case:
+			if top != nil {
+				group_token_add(text, top, token)
+			}
+		}
+	}
+	// A group that the line does not close ends with the line.
+	for depth > 0 {
+		if !piece_end(text, groups[:depth], into, &count, &form) {
+			return count, form
+		}
+		depth -= 1
+	}
+	return count, form
+}
+
+// group_token_add counts a token of the piece of a group at its level, and
+// the `let` and `in` that hide the commas of their bindings.
+@(private)
+group_token_add :: proc "contextless" (text: string, group: ^Group, token: Token) {
+	group.piece_tokens += 1
+	switch group.piece_tokens {
+	case 1:
+		group.first_is_name = token.kind == .Name && !word_is(text, token, "_")
+	case 2:
+		group.named_prefix = single_equal(text, token)
+	}
+	if word_is(text, token, "let") {
+		group.lets += 1
+	} else if word_is(text, token, "in") && group.lets > 0 {
+		group.lets -= 1
+	}
+}
+
+// piece_end decides the '_' of the piece of the innermost group, when its
+// piece ends: at a ',', at its close, at the end of the line.
+@(private)
+piece_end :: proc "contextless" (text: string, groups: []Group, into: []Placeholder, count: ^int, form: ^Pipe_Form) -> bool {
+	group := &groups[len(groups) - 1]
+	if group.placeholder < 0 {
+		return true
+	}
+	place := group.placeholder
+	group.placeholder = -1
+	// Whole: the '_' alone, or the value of `name = _`.
+	alone := group.piece_tokens == 1
+	named := group.piece_tokens == 3 && group.placeholder_token == 3 && group.first_is_name && group.named_prefix
+	whole := alone || named
+	if group.kind == .Stage_Call {
+		if !whole {
+			form.refusal, form.found_start, form.found_end = .Placeholder_Not_Whole, place, place + 1
+			form.call_start, form.call_end = group.name_start, group.name_end
+			return false
+		}
+		group.placeholders += 1
+		if group.placeholders > 1 {
+			form.refusal, form.found_start, form.found_end = .Placeholder_Twice, place, place + 1
+			form.call_start, form.call_end = group.name_start, group.name_end
+			return false
+		}
+		if count^ < len(into) {
+			into[count^] = {call_name_start = group.name_start, start = place, argument = group.argument, named = named}
+			count^ += 1
+		}
+		return true
+	}
+	// Not the call on the right: a call on the right that holds the group
+	// owns the place of the value, and this '_' is no whole argument of it.
+	for index := len(groups) - 2; index >= 0; index -= 1 {
+		holder := groups[index]
+		if holder.kind != .Stage_Call {
+			continue
+		}
+		form.found_start, form.found_end = place, place + 1
+		form.call_start, form.call_end = holder.name_start, holder.name_end
+		if group.kind == .Call {
+			form.refusal = .Placeholder_Nested
+			form.inner_start, form.inner_end = group.name_start, group.name_end
+		} else {
+			form.refusal = .Placeholder_Not_Whole
+		}
+		return false
+	}
+	form.refusal, form.found_start, form.found_end = .Placeholder_Without_Pipe, place, place + 1
+	return false
+}
+
+// ---- The writing.
 
 // pipe_refuse keeps the first fault: a later one changes nothing.
 pipe_refuse :: proc "contextless" (pipe_writer: ^Pipe_Writer, refusal: Pipe_Refusal, start, end: int) {
@@ -196,19 +440,15 @@ pipe_trim :: proc "contextless" (text: string, start, end: int) -> (first, last:
 	return first, last
 }
 
-// pipe_group_close gives the ')' of the '(' that ends at from, before
-// limit. closed is false when the parentheses do not close before limit:
-// the group then runs to limit.
+// pipe_group_close gives the ')' or the '}' of the group that opens just
+// before from, before limit. closed is false when the group does not close
+// before limit: it then runs to limit.
 pipe_group_close :: proc "contextless" (text: string, from, limit: int) -> (close: int, closed: bool) {
 	depth := 1
 	for token := token_next(text, from); token.kind != .None && token.start < limit; token = token_next(text, token.end) {
-		if token.kind != .Operator {
-			continue
-		}
-		switch text[token.start] {
-		case '(':
+		if opens(text, token) {
 			depth += 1
-		case ')':
+		} else if closes(text, token) {
 			depth -= 1
 			if depth == 0 {
 				return token.start, true
@@ -218,49 +458,52 @@ pipe_group_close :: proc "contextless" (text: string, from, limit: int) -> (clos
 	return limit, false
 }
 
-// pipe_next_operator gives the first "|>" outside parentheses in
+// pipe_next_operator gives the first "|>" outside parentheses and braces in
 // text[from:end], or end.
 pipe_next_operator :: proc "contextless" (text: string, from, end: int) -> int {
 	depth := 0
 	for token := token_next(text, from); token.kind != .None && token.start < end; token = token_next(text, token.end) {
-		switch token.kind {
-		case .Pipe:
+		switch {
+		case token.kind == .Pipe:
 			if depth == 0 {
 				return token.start
 			}
-		case .Operator:
-			switch text[token.start] {
-			case '(':
-				depth += 1
-			case ')':
-				depth -= 1
-			}
-		case .None, .Name, .Number, .Text, .Text_Unfinished, .Arrow, .Unknown:
+		case opens(text, token):
+			depth += 1
+		case closes(text, token):
+			depth -= 1
 		}
 	}
 	return end
 }
 
+// piece_comma says if a token is a ',' that ends a piece: outside
+// parentheses and braces, and outside the bindings of a `let`.
+@(private)
+piece_comma :: proc "contextless" (text: string, token: Token, depth, lets: int) -> bool {
+	return depth == 0 && lets == 0 && token.kind == .Operator && text[token.start] == ','
+}
+
 // pipe_argument_count gives the count of the arguments in text[start:end]:
-// the ',' outside parentheses, and one more; 0 when the bytes are spaces.
+// the ',' that end a piece, and one more; 0 when the bytes are spaces.
 pipe_argument_count :: proc "contextless" (text: string, start, end: int) -> int {
 	commas := 0
 	depth := 0
+	lets := 0
 	written := false
 	for token := token_next(text, start); token.kind != .None && token.start < end; token = token_next(text, token.end) {
 		written = true
-		if token.kind != .Operator {
-			continue
-		}
-		switch text[token.start] {
-		case '(':
+		switch {
+		case opens(text, token):
 			depth += 1
-		case ')':
+		case closes(text, token):
 			depth -= 1
-		case ',':
-			if depth == 0 {
-				commas += 1
-			}
+		case depth == 0 && word_is(text, token, "let"):
+			lets += 1
+		case depth == 0 && word_is(text, token, "in") && lets > 0:
+			lets -= 1
+		case piece_comma(text, token, depth, lets):
+			commas += 1
 		}
 	}
 	return written ? commas + 1 : 0
@@ -273,6 +516,12 @@ pipe_segment_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end:
 		return
 	}
 	text := pipe_writer.text
+	// A `let` holds its own segments: the value of each binding, and the
+	// body, which runs to the end of the segment.
+	if first := token_next(text, start); first.start < end && word_is(text, first, "let") {
+		pipe_let_write(pipe_writer, start, end)
+		return
+	}
 	first_operator := pipe_next_operator(text, start, end)
 	if first_operator == end {
 		pipe_group_copy(pipe_writer, start, end)
@@ -295,7 +544,9 @@ pipe_segment_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end:
 			return
 		}
 		stage := Pipe_Stage {
-			operator_start = operator,
+			operator_start       = operator,
+			placeholder_start    = -1,
+			placeholder_argument = -1,
 		}
 		if !pipe_stage_read(pipe_writer, &stage, part_start, part_end) {
 			return
@@ -312,16 +563,23 @@ pipe_segment_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end:
 	last_stage := pipe_writer.stage_count
 	// The spaces before the segment stay: after "name =" and after a ','.
 	pipe_write(pipe_writer, text[start:left_start])
+	// The groups of the arguments add stages after last_stage: a copy of
+	// each stage of this segment keeps its places.
 	for index := last_stage - 1; index >= first_stage; index -= 1 {
-		pipe_write(pipe_writer, text[pipe_writer.stages[index].name_start:pipe_writer.stages[index].name_end])
+		stage := pipe_writer.stages[index]
+		pipe_write(pipe_writer, text[stage.name_start:stage.name_end])
 		pipe_write(pipe_writer, "(")
+		// The arguments before the '_', then the value on the left.
+		if stage.placeholder_start >= 0 {
+			pipe_pieces_write(pipe_writer, stage.arguments_start, stage.placeholder_start)
+		}
 	}
 	pipe_group_copy(pipe_writer, left_start, left_end)
 	for index in first_stage ..< last_stage {
-		// The groups of the arguments add stages after last_stage: a copy
-		// of each stage of this segment keeps its places.
 		stage := pipe_writer.stages[index]
-		if stage.argument_count > 0 {
+		if stage.placeholder_start >= 0 {
+			pipe_pieces_write(pipe_writer, stage.placeholder_start + 1, stage.arguments_end)
+		} else if stage.argument_count > 0 {
 			pipe_write(pipe_writer, ", ")
 			pipe_pieces_write(pipe_writer, stage.arguments_start, stage.arguments_end)
 		}
@@ -331,6 +589,45 @@ pipe_segment_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end:
 			pipe_write(pipe_writer, ")")
 		}
 	}
+}
+
+// pipe_let_write writes a segment that starts with `let`: each binding
+// `name = value` with its value nested, then `in` and the body nested. With
+// no `in`, the rest is copied: the parser says that it is missing.
+@(private)
+pipe_let_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
+	text := pipe_writer.text
+	let_word := token_next(text, start)
+	pipe_write(pipe_writer, text[start:let_word.end])
+	piece_start := let_word.end
+	depth := 0
+	lets := 0
+	for token := token_next(text, let_word.end); token.kind != .None && token.start < end && pipe_writer.refusal == .None; token = token_next(text, token.end) {
+		switch {
+		case opens(text, token):
+			depth += 1
+		case closes(text, token):
+			depth -= 1
+		case depth == 0 && word_is(text, token, "let"):
+			lets += 1
+		case depth == 0 && word_is(text, token, "in"):
+			if lets > 0 {
+				lets -= 1
+				continue
+			}
+			// The spaces before `in` stay: a nested value ends with its ')'.
+			_, value_end := pipe_trim(text, piece_start, token.start)
+			pipe_named_piece_write(pipe_writer, piece_start, value_end)
+			pipe_write(pipe_writer, text[value_end:token.end])
+			pipe_segment_write(pipe_writer, token.end, end)
+			return
+		case piece_comma(text, token, depth, lets):
+			pipe_named_piece_write(pipe_writer, piece_start, token.start)
+			pipe_write(pipe_writer, ",")
+			piece_start = token.end
+		}
+	}
+	pipe_group_copy(pipe_writer, piece_start, end)
 }
 
 // pipe_stage_read reads the call on the right of one "|>": the bytes
@@ -357,6 +654,11 @@ pipe_stage_read :: proc "contextless" (pipe_writer: ^Pipe_Writer, stage: ^Pipe_S
 	stage.name_start, stage.name_end = name.start, name.end
 	stage.arguments_start, stage.arguments_end = name.end, name.end
 	stage.closed = true
+	for placeholder in pipe_writer.placeholders[:pipe_writer.placeholder_count] {
+		if placeholder.call_name_start == name.start {
+			stage.placeholder_start, stage.placeholder_argument, stage.placeholder_named = placeholder.start, placeholder.argument, placeholder.named
+		}
+	}
 	after := token_next(text, name.end)
 	if after.kind == .Operator && text[after.start] == '(' && after.start < part_end {
 		close, closed := pipe_group_close(text, after.end, part_end)
@@ -409,12 +711,12 @@ pipe_left_read :: proc "contextless" (text: string, stage: ^Pipe_Stage, start, e
 }
 
 // pipe_group_copy copies text[start:end] as it is, but the inside of each
-// pair of parentheses, whose pieces can hold "|>".
+// group of parentheses or braces, whose pieces can hold "|>".
 pipe_group_copy :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
 	text := pipe_writer.text
 	copied := start
 	for token := token_next(text, start); token.kind != .None && token.start < end && pipe_writer.refusal == .None; token = token_next(text, token.end) {
-		if token.kind != .Operator || text[token.start] != '(' {
+		if !opens(text, token) {
 			continue
 		}
 		pipe_write(pipe_writer, text[copied:token.end])
@@ -423,35 +725,51 @@ pipe_group_copy :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: in
 		if !closed {
 			return
 		}
-		pipe_write(pipe_writer, ")")
+		pipe_write(pipe_writer, text[close:close + 1])
 		copied = close + 1
 		token.end = close + 1
 	}
 	pipe_write(pipe_writer, text[copied:end])
 }
 
-// pipe_pieces_write writes the inside of a pair of parentheses: each piece
-// between two ',' outside inner parentheses is a segment.
+// pipe_pieces_write writes the inside of a group: each piece between two
+// ',' that end a piece is a segment, after its name and its "=" when it is
+// a named argument, a field of a literal or a binding.
 pipe_pieces_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
 	text := pipe_writer.text
 	piece_start := start
 	depth := 0
+	lets := 0
 	for token := token_next(text, start); token.kind != .None && token.start < end && pipe_writer.refusal == .None; token = token_next(text, token.end) {
-		if token.kind != .Operator {
-			continue
-		}
-		switch text[token.start] {
-		case '(':
+		switch {
+		case opens(text, token):
 			depth += 1
-		case ')':
+		case closes(text, token):
 			depth -= 1
-		case ',':
-			if depth == 0 {
-				pipe_segment_write(pipe_writer, piece_start, token.start)
-				pipe_write(pipe_writer, ",")
-				piece_start = token.end
-			}
+		case depth == 0 && word_is(text, token, "let"):
+			lets += 1
+		case depth == 0 && word_is(text, token, "in") && lets > 0:
+			lets -= 1
+		case piece_comma(text, token, depth, lets):
+			pipe_named_piece_write(pipe_writer, piece_start, token.start)
+			pipe_write(pipe_writer, ",")
+			piece_start = token.end
 		}
 	}
-	pipe_segment_write(pipe_writer, piece_start, end)
+	pipe_named_piece_write(pipe_writer, piece_start, end)
+}
+
+// pipe_named_piece_write writes one piece: `name =` as it is and its value
+// as a segment, or the whole piece as a segment.
+@(private)
+pipe_named_piece_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
+	text := pipe_writer.text
+	name := token_next(text, start)
+	equal := token_next(text, name.end)
+	if name.kind == .Name && name.end <= end && equal.start < end && single_equal(text, equal) {
+		pipe_write(pipe_writer, text[start:equal.end])
+		pipe_segment_write(pipe_writer, equal.end, end)
+		return
+	}
+	pipe_segment_write(pipe_writer, start, end)
 }
