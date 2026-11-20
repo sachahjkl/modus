@@ -43,6 +43,13 @@ UNIT_FIELD :: Field{offset = 32, type = u8(Type.Integer), unsigned = true, kind 
 STATUS_FIELD :: Field{offset = 40, type = u8(Type.Integer), unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Status)}
 @(private = "file")
 POLICY_FIELD :: Field{offset = 48, type = u8(Type.Bytes), detail = value_kinds.HASH_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Hash_Head)}
+// The fields of the second round of kinds, alone at offset 0.
+@(private = "file")
+TENTHS_FIELD :: Field{offset = 0, type = u8(Type.Integer), kind = u8(value_kinds.Field_Kind.Tenths)}
+@(private = "file")
+ADDRESS_SHORT_FIELD :: Field{offset = 0, type = u8(Type.Integer), unsigned = true, kind = u8(value_kinds.Field_Kind.Hexadecimal_No_Leading_Zero)}
+@(private = "file")
+TIME_OF_DAY_FIELD :: Field{offset = 0, type = u8(Type.Integer), unsigned = true, kind = u8(value_kinds.Field_Kind.Time_Of_Day)}
 
 // kinds_file gives a module file with the record "Kinds" of a field of
 // each new kind, the record "Nothing" with no field, and a fact of each.
@@ -158,6 +165,28 @@ the_edges_of_each_new_kind_are_written :: proc(t: ^testing.T) {
 		{SPENT_FIELD, 812_499, "812.4 us", .Time},
 		{SPENT_FIELD, 812_500, "812.5 us", .Time},
 		{SPENT_FIELD, max(u64), "18446744073709551.6 us", .Time},
+		// n / 10 with one decimal, the sign before the whole.
+		{TENTHS_FIELD, 0, "0.0", .Number},
+		{TENTHS_FIELD, 1, "0.1", .Number},
+		{TENTHS_FIELD, 123, "12.3", .Number},
+		{TENTHS_FIELD, bits_of(-5), "-0.5", .Number},
+		{TENTHS_FIELD, bits_of(-1), "-0.1", .Number},
+		{TENTHS_FIELD, bits_of(max(i64)), "922337203685477580.7", .Number},
+		{TENTHS_FIELD, bits_of(min(i64)), "-922337203685477580.8", .Number},
+		// As write_number of the support package sentence: no zero before
+		// the first digit.
+		{ADDRESS_SHORT_FIELD, 0, "0x0", .Number},
+		{ADDRESS_SHORT_FIELD, 1, "0x1", .Number},
+		{ADDRESS_SHORT_FIELD, 0x1a2b, "0x1a2b", .Number},
+		{ADDRESS_SHORT_FIELD, 0x10, "0x10", .Number},
+		{ADDRESS_SHORT_FIELD, max(u64), "0xffffffffffffffff", .Number},
+		// The hours and the minutes, two digits each at least.
+		{TIME_OF_DAY_FIELD, 0, "00:00", .Time},
+		{TIME_OF_DAY_FIELD, 1, "00:00", .Time},
+		{TIME_OF_DAY_FIELD, 25_440, "07:04", .Time},
+		{TIME_OF_DAY_FIELD, 86_399, "23:59", .Time},
+		{TIME_OF_DAY_FIELD, 86_400, "24:00", .Time},
+		{TIME_OF_DAY_FIELD, 360_000, "100:00", .Time},
 	}
 	for item in cases {
 		buffer: [64]u8

@@ -482,11 +482,15 @@ field_integer_unit_valid :: proc "contextless" (item: Field) -> bool {
 // - Hash_Head: Bytes of value_kinds.HASH_FIELD_BYTES, with no enum: the
 //   field holds a whole hash.
 // - Hundredths: an Integer with no unit and no enum.
-// - Nanoseconds_As_Microseconds: an unsigned Integer with no unit and no
-//   enum: the field states its own unit.
+// - Nanoseconds_As_Microseconds and Time_Of_Day: an unsigned Integer with
+//   no unit and no enum: the field states its own unit.
+// - Tenths: an Integer with no unit and no enum.
+// - Hexadecimal_No_Leading_Zero: an unsigned Integer of 8 bytes with no
+//   unit and no enum.
+// - Text_View: Bytes of value_kinds.TEXT_VIEW_BYTES, with no enum.
 //
-// A Bytes field is a hash, its head or the values of a fact, and nothing
-// else: a reader has no form for other bytes.
+// A Bytes field is a hash, its head, the values of a fact or a text view,
+// and nothing else: a reader has no form for other bytes.
 field_kind_valid :: proc "contextless" (item: Field) -> bool {
 	kind, kind_ok := field_kind(item)
 	which, which_ok := field_contract_enum(item)
@@ -518,8 +522,26 @@ field_kind_valid :: proc "contextless" (item: Field) -> bool {
 		return type == .Bytes && item.detail == value_kinds.HASH_FIELD_BYTES
 	case .Hundredths:
 		return type == .Integer && item.integer_unit == {}
-	case .Nanoseconds_As_Microseconds:
+	case .Nanoseconds_As_Microseconds, .Time_Of_Day:
 		return type == .Integer && item.unsigned && item.integer_unit == {}
+	case .Tenths:
+		return type == .Integer && item.integer_unit == {}
+	case .Hexadecimal_No_Leading_Zero:
+		return type == .Integer && item.unsigned && field_size(item) == 8 && item.integer_unit == {}
+	case .Text_View:
+		return type == .Bytes && item.detail == value_kinds.TEXT_VIEW_BYTES
+	}
+	return false
+}
+
+// record_has_text_view says if a record has a field of the kind Text_View:
+// the values of its fact then go on past the record, in its out-of-line
+// area (src/md/features/log_facts.md, "Text views").
+record_has_text_view :: proc "contextless" (file: []u8, of: Record) -> bool {
+	for number in 0 ..< of.field_count {
+		if item, ok := field(file, of, number); ok && item.kind == u8(value_kinds.Field_Kind.Text_View) {
+			return true
+		}
 	}
 	return false
 }
