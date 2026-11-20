@@ -6,7 +6,9 @@ import "modus:contract/errors"
 import "modus:contract/module"
 import "modus:contract/value_kinds"
 
-// The record of these tests, "Probe", of 124 bytes:
+// The record of these tests, "Probe", of 128 bytes: a multiple of 8, the
+// alignment of its Integer of 8 bytes, as module.record_type requires; the
+// last 4 bytes are in no field.
 //   1 serial  an unsigned Integer of 8 bytes at 0
 //   2 delta   a signed Integer of 4 bytes at 8
 //   3 level   a status of Log_Level, an unsigned Integer of 1 byte at 12
@@ -15,7 +17,7 @@ import "modus:contract/value_kinds"
 //   6 head    a hash, Bytes of 8 bytes at 36
 //   7 label   a Text of 80 bytes at 44: longer than the text of a condition
 @(private = "file")
-PROBE_SIZE :: 124
+PROBE_SIZE :: 128
 @(private = "file")
 PROBE_FIELDS :: 7
 
