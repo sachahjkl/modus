@@ -31,7 +31,6 @@ package merge
 
 import "modus:contract/errors"
 import "modus:contract/module"
-import "modus:contract/output"
 import "modus:support/system"
 
 // The streams to join, each of the record that the first one fixed.

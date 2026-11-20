@@ -372,7 +372,7 @@ condition_terms_fail :: proc "contextless" (condition: Condition, refusal: outpu
 		return fail("where: the field ", condition.field, " cannot hold the value of the condition")
 	case .Text_Count, .Text:
 		return fail("where: a record stream compares a Text of at most ", u64(output.CONDITION_TEXT_BYTES_MOST), " bytes and the bytes of its field, with no zero byte and no control character")
-	case .Whole, .Reserved:
+	case .Whole, .Reserved_First, .Reserved_Second:
 	}
 	return fail("where: the terms of the condition on ", condition.field, " are refused")
 }
