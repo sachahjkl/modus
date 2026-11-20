@@ -1,6 +1,7 @@
 package debugged
 
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 
 // The log facts of the demonstration debugged (src/md/features/log_facts.md,
 // "The facts of the demonstrations"): its cases, their details and its
@@ -14,9 +15,9 @@ import op "modus:contract/operation"
 // Text field beside the verdict can hold, so the case is the type, and
 // `facts(debugged.Breakpoints_Removed)` gives that case.
 //
-// The lines of detail with an address or a status of the processor stay
-// text: system.Hex writes 16 digits with no "0x", which no field kind
-// writes. A line with no value stays text: a fact type needs a field.
+// An address or a status of the processor in a line of detail is a field
+// of the kind Hexadecimal_Sixteen_Digits, which writes it as system.Hex
+// did. A line with no value is a fact type with no field.
 
 // The verdict field holds "as it must" and a zero byte: 16 bytes.
 @(log_fact = "debugged: attach: the debugger is the debug handler of the child: {verdict}")
@@ -187,16 +188,16 @@ Role_Unknown :: struct {
 // The status of the attach, when it is not Ok.
 @(log_fact = "debugged: detail: the attach gave the status {status_word}")
 Attach_Status :: struct {
-	status_word: u64,
+	status_word: op.Status_Word,
 }
 
 // The first breakpoint was not set: the words of the status of the stop,
 // of the write and of the resume.
 @(log_fact = "debugged: the first breakpoint was not set: the statuses {stop_status_word} {write_status_word} {resume_status_word}")
 First_Breakpoint_Not_Set :: struct {
-	stop_status_word:   u64,
-	write_status_word:  u64,
-	resume_status_word: u64,
+	stop_status_word:   op.Status_Word,
+	write_status_word:  op.Status_Word,
+	resume_status_word: op.Status_Word,
 }
 
 // The rounds of the child after the breakpoints were removed.
@@ -216,7 +217,7 @@ Revocation_Ended :: struct {
 @(log_fact = "debugged: detail: the stop of the debugger gave the count {stop_count}; the Resume of the child gave the status {resume_status_word} and the count {resume_count}")
 Own_Stop_Counts :: struct {
 	stop_count:         u64,
-	resume_status_word: u64,
+	resume_status_word: op.Status_Word,
 	resume_count:       u64,
 }
 
@@ -224,10 +225,10 @@ Own_Stop_Counts :: struct {
 // status of the attach, of the stop, of the write and of the resume.
 @(log_fact = "debugged: the data breakpoints were not set: the statuses {attach_status_word} {stop_status_word} {write_status_word} {resume_status_word}")
 Data_Breakpoints_Not_Set :: struct {
-	attach_status_word: u64,
-	stop_status_word:   u64,
-	write_status_word:  u64,
-	resume_status_word: u64,
+	attach_status_word: op.Status_Word,
+	stop_status_word:   op.Status_Word,
+	write_status_word:  op.Status_Word,
+	resume_status_word: op.Status_Word,
 }
 
 // Where the trap of the load of the stack selector went.
@@ -254,3 +255,65 @@ Debugged_Failed :: struct {
 	wrong_cases: u64,
 	cases:       u64,
 }
+
+// The record of the execute breakpoint: its kind, the status of the
+// processor, the instruction and the procedure, each address as
+// system.Hex writes it.
+@(log_fact = "debugged: detail: the record of the execute breakpoint: kind {record_kind}, status {error_code}, instruction {instruction}, the procedure {procedure}")
+Execute_Breakpoint_Record :: struct {
+	record_kind: u64,
+	error_code:  value_kinds.Hexadecimal_Sixteen_Digits,
+	instruction: value_kinds.Hexadecimal_Sixteen_Digits,
+	procedure:   value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The value that Read_Memory read in the child, and the copy of the
+// debugger.
+@(log_fact = "debugged: detail: the value of the child {child_value}, the copy of the debugger {debugger_copy}")
+Child_Value_Read :: struct {
+	child_value:   value_kinds.Hexadecimal_Sixteen_Digits,
+	debugger_copy: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The single step: the status of the processor, the instruction address
+// before and after, and the first byte of the instruction.
+@(log_fact = "debugged: detail: the step: status {error_code}, the instruction address from {address_before} to {address_after}, the first byte {first_byte}")
+Step_Detail :: struct {
+	error_code:     value_kinds.Hexadecimal_Sixteen_Digits,
+	address_before: value_kinds.Hexadecimal_Sixteen_Digits,
+	address_after:  value_kinds.Hexadecimal_Sixteen_Digits,
+	first_byte:     value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The record of the data breakpoint, and the word that the child wrote.
+@(log_fact = "debugged: detail: the record of the data breakpoint: kind {record_kind}, status {error_code}, the word of the child {child_word}")
+Data_Breakpoint_Record :: struct {
+	record_kind: u64,
+	error_code:  value_kinds.Hexadecimal_Sixteen_Digits,
+	child_word:  u64,
+}
+
+// The status of the Log of the child on a watched buffer, by the name of
+// its member, and the status of the processor in the record of the read.
+@(log_fact = "debugged: detail: Log gave the status {log_status}; the record of the read of the child: status {error_code}")
+Kernel_Copy_Detail :: struct {
+	log_status: op.Status_Word,
+	error_code: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// The lines with no value: each sentence is its fact type.
+
+@(log_fact = "debugged: no shared page")
+No_Shared_Page :: struct {}
+
+@(log_fact = "debugged: a child did not start")
+Child_Not_Started :: struct {}
+
+@(log_fact = "debugged: an execute breakpoint at a procedure of the child: no record came: WRONG")
+Execute_Breakpoint_Without_Record :: struct {}
+
+@(log_fact = "debugged: no random seed in the context")
+No_Random_Seed :: struct {}
+
+@(log_fact = "debugged: no boot image")
+No_Boot_Image :: struct {}

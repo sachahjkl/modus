@@ -1,6 +1,7 @@
 package fault_ring
 
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 
 // The log facts of the demonstration fault_ring
 // (src/md/features/log_facts.md, "The facts of the demonstrations"): its
@@ -11,11 +12,10 @@ import op "modus:contract/operation"
 // byte. A verdict is "as it must" or "WRONG"; a case name is the name of a
 // row of the window.
 //
-// Some lines stay text: an address, a value or the result bits that
-// system.Hex writes in 16 digits with no "0x", which no field kind writes;
-// the load of a child that did not start, a free sentence; the outcome of
-// the lost debug frame, a sentence longer than a fact holds beside its
-// verdict; and the lines with no value.
+// An address, a value or the result bits are fields of the kind
+// Hexadecimal_Sixteen_Digits, which writes them as system.Hex did. The
+// stop of a child is one fact type for each form of its words: a stop of
+// itself with its outcome, a fault with its vector, and each other cause.
 
 // A child stops at a step that is not the check of its case.
 @(log_fact = "fault_ring: a child: {step} failed")
@@ -325,3 +325,146 @@ Fault_Ring_Failed :: struct {
 	wrong_cases: u64,
 	cases:       u64,
 }
+
+// A read of a page that is not committed, which the handler committed:
+// the value that it wrote and the value that the thread read.
+@(log_fact = "fault_ring: a read of a page that is not committed: the handler committed it and wrote {written_value}; the thread read {read_value}: {verdict}")
+Lazy_Page_Repaired :: struct {
+	written_value: value_kinds.Hexadecimal_Sixteen_Digits,
+	read_value:    value_kinds.Hexadecimal_Sixteen_Digits,
+	verdict:       [16]u8,
+}
+
+// A word wait, a fault and a decommit of the word: the threads that the
+// waker woke, what the thread did before the answer, the answer and the
+// value that the thread read.
+@(log_fact = "fault_ring: a word wait, a fault, a decommit of the word: the waker woke {woken} thread; {before_answer}; the answer: {answer_status}, the thread read {read_value}: {verdict}")
+Leftover_Word_Answered :: struct {
+	woken:         u64,
+	read_value:    value_kinds.Hexadecimal_Sixteen_Digits,
+	answer_status: op.Status_Word,
+	before_answer: [56]u8,
+	verdict:       [16]u8,
+}
+
+// A write of a register: the value that the thread published from r12.
+@(log_fact = "fault_ring: a write of a register: the thread published {published_value} from r12 after its Resume: {verdict}")
+Register_Written :: struct {
+	published_value: value_kinds.Hexadecimal_Sixteen_Digits,
+	verdict:         [16]u8,
+}
+
+// The rights of a thread handle: what each holder got.
+@(log_fact = "fault_ring: the rights of a thread handle: with Read and Control, Stop got {control_stop}, Read_Registers {control_read}, Write_Registers {control_write}; with Inspect only, Stop, Read_Registers and Resume got {inspect_answer}, Write_Registers {inspect_write}; with Write only, Write_Registers got {write_only}; the thread kept running: {verdict}")
+Thread_Handle_Rights :: struct {
+	control_stop:   op.Status,
+	control_read:   op.Status,
+	control_write:  op.Status,
+	inspect_write:  op.Status,
+	write_only:     op.Status,
+	inspect_answer: [12]u8,
+	verdict:        [16]u8,
+}
+
+// A child did not start: the status of Process_Start, the words of its
+// load error, the amounts that this process can give and those that the
+// child asks. The stage and the error of the file are words of enums of
+// the module contract, which a field writes as numbers.
+@(log_fact = "fault_ring: {case_name}: process_start failed: {start_status}; the load: stage {load_stage}, status {load_status}, the error of the file {file_error}; this process can give pages {pages}, processes {processes}, threads {threads}, and the child asks {child_pages}, 1, {child_threads}")
+Child_Start_Failed :: struct {
+	start_status:  op.Status_Word,
+	load_stage:    u64,
+	load_status:   op.Status_Word,
+	file_error:    u64,
+	pages:         u64,
+	processes:     u64,
+	threads:       u64,
+	child_pages:   u64,
+	child_threads: u64,
+	case_name:     [56]u8,
+}
+
+// A child of a case stopped itself: its outcome, and the address of the
+// stop report.
+@(log_fact = "fault_ring: {case_name}: the child stopped: {cause}, {outcome}, the address {address}: {verdict}")
+Child_Stopped_Itself :: struct {
+	cause:     op.Stop_Cause,
+	outcome:   op.Stop_Outcome,
+	address:   value_kinds.Hexadecimal_Sixteen_Digits,
+	case_name: [56]u8,
+	verdict:   [16]u8,
+}
+
+// A child of a case stopped on a fault: its vector, and the address of the
+// stop report.
+@(log_fact = "fault_ring: {case_name}: the child stopped: {cause}, vector {vector}, the address {address}: {verdict}")
+Child_Stopped_On_Fault :: struct {
+	vector:    u64,
+	address:   value_kinds.Hexadecimal_Sixteen_Digits,
+	cause:     op.Stop_Cause,
+	case_name: [56]u8,
+	verdict:   [20]u8,
+}
+
+// A child of a case stopped for another cause.
+@(log_fact = "fault_ring: {case_name}: the child stopped: {cause}, the address {address}: {verdict}")
+Child_Stopped :: struct {
+	address:   value_kinds.Hexadecimal_Sixteen_Digits,
+	cause:     op.Stop_Cause,
+	case_name: [56]u8,
+	verdict:   [20]u8,
+}
+
+// A child of several cases stopped itself: its result bits.
+@(log_fact = "fault_ring: {case_name}: the child stopped: {cause}, {outcome}, the result bits {result_bits}: {verdict}")
+Cases_Child_Stopped_Itself :: struct {
+	cause:       op.Stop_Cause,
+	outcome:     op.Stop_Outcome,
+	result_bits: value_kinds.Hexadecimal_Sixteen_Digits,
+	case_name:   [56]u8,
+	verdict:     [16]u8,
+}
+
+// A child of several cases stopped on a fault.
+@(log_fact = "fault_ring: {case_name}: the child stopped: {cause}, vector {vector}, the result bits {result_bits}: {verdict}")
+Cases_Child_Stopped_On_Fault :: struct {
+	vector:      u64,
+	result_bits: value_kinds.Hexadecimal_Sixteen_Digits,
+	cause:       op.Stop_Cause,
+	case_name:   [56]u8,
+	verdict:     [20]u8,
+}
+
+// A child of several cases stopped for another cause.
+@(log_fact = "fault_ring: {case_name}: the child stopped: {cause}, the result bits {result_bits}: {verdict}")
+Cases_Child_Stopped :: struct {
+	result_bits: value_kinds.Hexadecimal_Sixteen_Digits,
+	cause:       op.Stop_Cause,
+	case_name:   [56]u8,
+	verdict:     [20]u8,
+}
+
+// The lost debug frame: mov ss, then int1, with the trap flag. Each outcome
+// of the processor is a fact type, because its words are longer than a
+// Text field beside the verdict holds.
+
+@(log_fact = "fault_ring: mov ss, then int1, with the trap flag: the machine went on and the child gave back every page and every thread; on this processor the int1 and the trap came to the process as debug records in its code: {verdict}")
+Lost_Frame_Records_In_Code :: struct {
+	verdict: [16]u8,
+}
+
+@(log_fact = "fault_ring: mov ss, then int1, with the trap flag: the machine went on and the child gave back every page and every thread; on this processor the trap came at the stub of int1, and the kernel stopped the child as a fault of a debug exception with the instruction address 0: {verdict}")
+Lost_Frame_Stopped_By_Kernel :: struct {
+	verdict: [16]u8,
+}
+
+@(log_fact = "fault_ring: mov ss, then int1, with the trap flag: the machine went on and the child gave back every page and every thread; on this processor neither outcome: {verdict}")
+Lost_Frame_Neither :: struct {
+	verdict: [16]u8,
+}
+
+@(log_fact = "fault_ring: no random seed in the context")
+No_Random_Seed :: struct {}
+
+@(log_fact = "fault_ring: no boot image")
+No_Boot_Image :: struct {}

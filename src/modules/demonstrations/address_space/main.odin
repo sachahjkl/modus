@@ -871,7 +871,7 @@ child_stop_by_own_handle :: proc "contextless" (ctx: ^system.Context) -> ! {
 		system.word_wait(&board.given, 0, system.time() + 100)
 	}
 	if intrinsics.atomic_load(&board.given) == 0 {
-		system.log(.Info, "address_space: the child of its own handle got no handle")
+		system.log_fact(.Info, Own_Handle_Child_Without_Handle{})
 		system.stop(.Failed)
 	}
 	status := system.process_stop(system.Handle(intrinsics.volatile_load(&board.handle)))
@@ -959,21 +959,19 @@ stop_word_refusals :: proc "contextless" (child: system.Handle) -> bool {
 		commands := [1]ring.Record{{kind = u32(op.Operation.Process_Stop), values = {0 = item.target, 1 = item.word}}}
 		completions: [1]ring.Record
 		if _, status := system.commands_call(commands[:], completions[:]); status != .Ok {
-			// A word of 8 bytes and a status of 4 leave 4 bytes that no
-			// field covers, which a fact type refuses: the line stays text.
-			system.log(.Info, "address_space: WRONG: the library refused the command of Process_Stop with the word ", item.word, ": ", op.STATUS_NAMES[status])
+			system.log_fact(.Info, Stop_Command_Refused_By_Library{stop_word = item.word, call_status = op.Status_Word(status)})
 			wrong += 1
 			continue
 		}
 		record := transmute(errors.Error_Record)completions[0].values
 		if completions[0].kind != u32(system.Status.Bad_Operation) || record.kind != i64(errors.Kind.Bad_Value) || record.argument != 2 || record.value != i64(item.word) || record.limit != item.limit {
-			system.log_fact(.Info, Stop_Word_Not_Refused{stop_word = item.word, status_word = u64(completions[0].kind), error_kind = record.kind, argument = record.argument, limit = record.limit, target = value_kinds.text_field(item.target == 0 ? "this process" : "a child", 16)})
+			system.log_fact(.Info, Stop_Word_Not_Refused{stop_word = item.word, status_word = op.Status_Word(completions[0].kind), error_kind = errors.Kind_Word(record.kind), argument = record.argument, limit = record.limit, target = value_kinds.text_field(item.target == 0 ? "this process" : "a child", 16)})
 			wrong += 1
 		}
 	}
 	state, _, _ := system.process_state(child)
 	if state == .Stopped {
-		system.log(.Info, "address_space: WRONG: a refused Process_Stop stopped the child")
+		system.log_fact(.Info, Refused_Stop_Stopped_Child{})
 		wrong += 1
 	}
 	return wrong == 0
@@ -1105,12 +1103,16 @@ delegation_note :: proc "contextless" (step: int, right: bool, result: ^Delegati
 		system.kernel_error_text(&writer, &result.record)
 	}
 	delegation_line_counts[step] = len(system.written(&writer))
-	// The note of a case holds the sentence of an error record, up to 200
-	// bytes, more than the values of one fact hold: the line stays text.
-	system.log(.Info, "address_space: delegation: ", delegation_names[step], ": ", right ? "as expected: " : "WRONG: ", string(delegation_lines[step][:delegation_line_counts[step]]))
+	// The caller writes the fact of the step: each step is a fact type of
+	// its own, with the record of the call of B.
 	if !right {
 		fail("a case of the delegation")
 	}
+}
+
+// delegation_verdict gives the verdict field of the fact of a step.
+delegation_verdict :: proc "contextless" (right: bool) -> [16]u8 {
+	return value_kinds.text_field(right ? "as expected" : "WRONG", 16)
 }
 
 delegation :: proc "contextless" (ctx: ^system.Context) {
@@ -1140,18 +1142,40 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	}
 	defer system.close(process)
 
+	// A record of 0 when the call of B succeeded: its kind is None.
+	record_of :: proc "contextless" (result: ^Delegation_Result) -> errors.Error_Record_Fact_Fields {
+		return errors.error_record_fact_fields(result.status != .Ok ? result.record : errors.Error_Record{})
+	}
 	result := delegation_run(board, 1)
-	delegation_note(1, result.status == .No_Budget && result.record.kind == i64(errors.Kind.Budget_Hidden), result, "32 pages committed; the 33rd: ")
+	step_right := result.status == .No_Budget && result.record.kind == i64(errors.Kind.Budget_Hidden)
+	delegation_note(1, step_right, result, "32 pages committed; the 33rd: ")
+	fields := record_of(result)
+	system.log_fact(.Info, Delegation_Commit_Past_Budget{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 2)
-	delegation_note(2, result.status == .Bad_Handle && result.value == 55, result, "B wrote and read 55 in a committed page; a commit: ")
+	step_right = result.status == .Bad_Handle && result.value == 55
+	delegation_note(2, step_right, result, "B wrote and read 55 in a committed page; a commit: ")
+	fields = record_of(result)
+	system.log_fact(.Info, Delegation_Commit_Without_Budget{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 3)
-	delegation_note(3, result.status == .No_Right, result, "")
+	step_right = result.status == .No_Right
+	delegation_note(3, step_right, result, "")
+	fields = record_of(result)
+	system.log_fact(.Info, Delegation_Object_With_Commit_Only{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 4)
-	delegation_note(4, result.status == .Bad_Handle && result.record.kind == i64(errors.Kind.Not_Payer), result, "")
+	step_right = result.status == .Bad_Handle && result.record.kind == i64(errors.Kind.Not_Payer)
+	delegation_note(4, step_right, result, "")
+	fields = record_of(result)
+	system.log_fact(.Info, Delegation_Commit_With_Other_Payer{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 7)
-	delegation_note(7, result.status == .Bad_State && result.record.kind == i64(errors.Kind.Object_Shared), result, "")
+	step_right = result.status == .Bad_State && result.record.kind == i64(errors.Kind.Object_Shared)
+	delegation_note(7, step_right, result, "")
+	fields = record_of(result)
+	system.log_fact(.Info, Delegation_Decommit_Of_Shared_Object{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 9)
-	delegation_note(9, result.status == .No_Right, result, "")
+	step_right = result.status == .No_Right
+	delegation_note(9, step_right, result, "")
+	fields = record_of(result)
+	system.log_fact(.Info, Delegation_Give_Without_Right{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 10)
 	made := result.status == .Ok
 	// 5: A revokes the two budget handles of B.
@@ -1159,18 +1183,33 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	system.handle_revoke(spend_budget, process)
 	held, _ := system.budget_read(child_budget)
 	result = delegation_run(board, 5)
-	delegation_note(5, result.status == .Bad_Handle && result.record.kind == i64(errors.Kind.Handle_Ended) && held.pages == 0, result, "the 32 pages stay committed and paid (the child budget holds 0); a commit: ")
+	step_right = result.status == .Bad_Handle && result.record.kind == i64(errors.Kind.Handle_Ended) && held.pages == 0
+	delegation_note(5, step_right, result, "the 32 pages stay committed and paid (the child budget holds 0); a commit: ")
+	fields = record_of(result)
+	system.log_fact(.Info, Delegation_Commit_After_Revocation{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	// 10: the object that B made with the Spend handle stays: a revocation
 	// ends the holdings that came from the handle (handles and mappings),
 	// not the objects that were made with it.
-	delegation_note(10, made && result.value == 1, nil, made && result.value == 1 ? "the object of 1 page that B made with it lives on after the revocation, paid by the child budget, and A cannot end it: the narrow right Commit makes no object" : "the object did not stay")
+	lives_on := made && result.value == 1
+	delegation_note(10, lives_on, nil, lives_on ? "the object of 1 page that B made with it lives on after the revocation, paid by the child budget, and A cannot end it: the narrow right Commit makes no object" : "the object did not stay")
+	if lives_on {
+		system.log_fact(.Info, Delegation_Object_Lives_On{verdict = delegation_verdict(lives_on)})
+	} else {
+		system.log_fact(.Info, Delegation_Object_Gone{verdict = delegation_verdict(lives_on)})
+	}
 	// 6: A revokes the object of B (B is unmapped), then decommits.
 	system.handle_revoke(object, process)
 	before, _ := system.budget_read(child_budget)
 	everything := [1]op.Page_Range{{first = 0, page_count = DELEGATION_OBJECT_PAGES}}
 	returned, decommit := system.memory_decommit(object, everything[:])
 	after, _ := system.budget_read(child_budget)
-	delegation_note(6, decommit == .Ok && returned == 32 && after.pages - before.pages == 32, nil, decommit == .Ok ? "32 pages back in the child budget; A held the object with no mapping" : "the decommit was refused")
+	step_right = decommit == .Ok && returned == 32 && after.pages - before.pages == 32
+	delegation_note(6, step_right, nil, decommit == .Ok ? "32 pages back in the child budget; A held the object with no mapping" : "the decommit was refused")
+	if decommit == .Ok {
+		system.log_fact(.Info, Delegation_Pages_Taken_Back{verdict = delegation_verdict(step_right)})
+	} else {
+		system.log_fact(.Info, Delegation_Pages_Not_Taken_Back{verdict = delegation_verdict(step_right)})
+	}
 	// 8: A closes the child budget: the object moves to the budget of A,
 	// and a commit needs the budget of A now; the old handle names nothing.
 	system.close(child_budget)
@@ -1178,7 +1217,13 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	one := [1]op.Page_Range{{first = 0, page_count = 1}}
 	_, old := system.memory_commit(object, one[:], child_budget, &record)
 	committed, now := system.memory_commit(object, one[:])
-	delegation_note(8, old == .Bad_Handle && now == .Ok && committed == 1, nil, now == .Ok ? "a commit with the budget of A: 1 page; with the old handle: refused" : "the commit with the budget of A was refused")
+	step_right = old == .Bad_Handle && now == .Ok && committed == 1
+	delegation_note(8, step_right, nil, now == .Ok ? "a commit with the budget of A: 1 page; with the old handle: refused" : "the commit with the budget of A was refused")
+	if now == .Ok {
+		system.log_fact(.Info, Delegation_Object_Moved{verdict = delegation_verdict(step_right)})
+	} else {
+		system.log_fact(.Info, Delegation_Object_Not_Moved{verdict = delegation_verdict(step_right)})
+	}
 	system.close(object)
 	system.close(spend_budget)
 	system.process_stop(process)
@@ -1355,8 +1400,7 @@ page_tables_return :: proc "contextless" () {
 			system.close(near)
 			system.close(far)
 			system.close(watched)
-			// A line with no value stays text: a fact type needs a field.
-			system.log(.Info, "address_space: page tables: the page of the other thread: no mapping: WRONG")
+			system.log_fact(.Info, Neighbour_Page_Not_Mapped{})
 			page_tables_case_end(false)
 			return
 		}
@@ -1548,31 +1592,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	start_budget, _ := system.budget_read()
 
 	arena()
-	// The sentences of the arena and of the protection are longer than the
-	// 256 bytes of a fact template: the two lines stay text.
-	system.log(.Info, "address_space: arena: 1 GiB of addresses in one mapping, ", arena_list_pages, " pages paid for its frame list, mapped in ", arena_map_microseconds, " us; pages committed and used in one second with 1, 16, 256 ranges for each kernel entry: ", arena_pages_per_second[0], ", ", arena_pages_per_second[1], ", ", arena_pages_per_second[2], "; kernel entries for 1000 pages: ", arena_entries_per_thousand_pages[0], ", ", arena_entries_per_thousand_pages[1], ", ", arena_entries_per_thousand_pages[2])
+	system.log_fact(.Info, Arena_Measured{frame_list_pages = arena_list_pages, map_time = arena_map_microseconds, pages_one_range = arena_pages_per_second[0], pages_16_ranges = arena_pages_per_second[1], pages_256_ranges = arena_pages_per_second[2], entries_one_range = arena_entries_per_thousand_pages[0], entries_16_ranges = arena_entries_per_thousand_pages[1], entries_256_ranges = arena_entries_per_thousand_pages[2]})
 	sparse()
 	system.log_fact(.Info, Sparse_Table_Measured{pages_committed = sparse_committed, object_pages = u64(GIGABYTE_PAGES), pages_present = sparse_present, pages_returned = u64(decommit_returned), decommit_time = value_kinds.Time_In_Microseconds(decommit_microseconds), committed_again_zero = u64(recommit_zero)})
 	protection()
-	system.log(.Info, "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls, least and most of 5 batches: ", shootdown_least[0], " to ", shootdown_most[0], " ns with 1 processor running the process, ", shootdown_least[1], " to ", shootdown_most[1], " ns with 2, ", shootdown_least[2], " to ", shootdown_most[2], " ns with 4")
+	system.log_fact(.Info, Protection_Measured{least_one_processor = shootdown_least[0], most_one_processor = shootdown_most[0], least_two_processors = shootdown_least[1], most_two_processors = shootdown_most[1], least_four_processors = shootdown_least[2], most_four_processors = shootdown_most[2]})
 	guard_page(ctx)
-	// system.Hex writes 16 digits with no "0x", which no field kind writes:
-	// the line stays text until a field kind writes it.
-	system.log(.Info, "address_space: guard page: the child stopped with vector ", guard_vector, " at ", system.Hex(guard_address), ", in its guard page: ", u64(guard_right))
+	system.log_fact(.Info, Guard_Page_Stop{vector = guard_vector, fault_address = value_kinds.Hexadecimal_Sixteen_Digits(guard_address), in_guard_page = u64(guard_right)})
 	large_pages()
-	// A time with one decimal, which no field kind writes: the line stays
-	// text until a field kind writes it.
-	system.log(.Info, "address_space: large pages: one random read over 64 MiB: ", large_nanoseconds / 10, ".", large_nanoseconds % 10, " ns through large pages of 2 MiB, ", small_nanoseconds / 10, ".", small_nanoseconds % 10, " ns through pages of 4 KiB of the same object; the report says Large: ", u64(large_flags_right))
+	// The measure keeps tenths of a nanosecond; the fact writes hundredths.
+	system.log_fact(.Info, Large_Pages_Measured{large_page_read = value_kinds.Hundredths(large_nanoseconds * 10), small_page_read = value_kinds.Hundredths(small_nanoseconds * 10), large_in_report = u64(large_flags_right)})
 	refuse()
 	edge_cases(ctx)
 	delegation(ctx)
 	addresses_reused()
 	system.log_fact(.Info, Addresses_Reused{pages_after_last = reuse_pages_last, pages_after_first = reuse_pages_first})
 	page_tables_return()
-	// The sentence of an error record is a free text of up to 160 bytes,
-	// more than the values of one fact hold: the line stays text.
 	for &item in refusals {
-		system.log(.Info, "address_space: refused: ", item.name, ": ", string(item.sentence[:item.count]))
+		fields := errors.error_record_fact_fields(item.record)
+		system.log_fact(.Info, Refusal_Recorded{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, refusal_name = value_kinds.text_field(item.name, 32)})
 	}
 	// Each page returned, except what this process still maps: the boot
 	// image, which each case that starts a child maps, and its page tables.
@@ -1583,7 +1621,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	done = true
 	if right {
-		system.log(.Info, "address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record")
+		system.log_fact(.Info, Address_Space_Held{})
 	} else {
 		system.log_fact(.Info, Demonstration_Wrong{problem = value_kinds.text_field(problem, 96)})
 	}

@@ -1,5 +1,7 @@
 package clock
 
+import "modus:contract/value_kinds"
+
 // The log facts of the demonstration clock (src/md/features/log_facts.md,
 // "The facts of the demonstrations"): its checks of the time page and its
 // measures, as records of fields. Each fact template is the sentence that
@@ -49,6 +51,38 @@ Kernel_Entry_Checked :: struct {
 Page_And_Kernel_Entry :: struct {
 	outside:    u64,
 	apart_most: u64,
+}
+
+// Each check of the time held.
+@(log_fact = "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page")
+Clock_Held :: struct {}
+
+// A check of the time did not hold.
+@(log_fact = "clock: wrong: the time went back {went_back} times, a kernel entry was outside two reads of the page {outside} times, the page changed {page_changes} times and is at least {least_behind} ms behind and {most_ahead} ms ahead of the cycle counter, the kernel {removal} to remove the time page")
+Time_Wrong :: struct {
+	went_back:    u64,
+	outside:      u64,
+	page_changes: u64,
+	least_behind: u64,
+	most_ahead:   u64,
+	removal:      [24]u8,
+}
+
+// The mean time of one picture of the window, over 10 pictures.
+@(log_fact = "clock: the window drew one picture in {picture_time}, the mean of 10")
+Picture_Measured :: struct {
+	picture_time: value_kinds.Nanoseconds_As_Microseconds,
+}
+
+// One frame of the interface where one number changed: its records, its
+// damage, and the time of each part.
+@(log_fact = "clock: the interface: {records} records, {damage_rectangles} damage rectangles; build {build_time}, difference {difference_time}, draw {draw_time}")
+Interface_Measured :: struct {
+	records:           u64,
+	damage_rectangles: u64,
+	build_time:        value_kinds.Nanoseconds_As_Microseconds,
+	difference_time:   value_kinds.Nanoseconds_As_Microseconds,
+	draw_time:         value_kinds.Nanoseconds_As_Microseconds,
 }
 
 // The time page against the cycle counter.

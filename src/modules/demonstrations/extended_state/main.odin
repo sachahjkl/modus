@@ -327,7 +327,7 @@ wrong_note :: proc "contextless" (worker: ^Worker, kind: Register_Kind, index: i
 	}
 	if intrinsics.atomic_add(&wrong_lines, 1) < LOG_WRONG_LIMIT {
 		name: interface.Text_Builder
-		system.log(.Info, "extended_state: WRONG: thread ", u64(worker.number), ", ", register_name(&name, kind, index), ", ", what, " ", pass, ": expected ", system.Hex(expected), ", found ", system.Hex(found))
+		system.log_fact(.Info, Register_Wrong{thread_number = u64(worker.number), pass = pass, expected = value_kinds.Hexadecimal_Sixteen_Digits(expected), found = value_kinds.Hexadecimal_Sixteen_Digits(found), register = value_kinds.text_field(register_name(&name, kind, index), 24), moment = value_kinds.text_field(what, 24)})
 	}
 }
 
@@ -469,37 +469,30 @@ parts_measure :: proc "contextless" () {
 	}
 }
 
-// tenths_put writes a number of tenths as "12.3".
-tenths_put :: proc "contextless" (builder: ^interface.Text_Builder, tenths: u64) {
-	interface.text_put_number(builder, tenths / 10)
-	interface.text_put(builder, ".")
-	interface.text_put_number(builder, tenths % 10)
-}
-
-// part_text writes the parts from first to last as "name cycles (ns)".
-part_text :: proc "contextless" (builder: ^interface.Text_Builder, first, last: Part) -> string {
-	builder.count = 0
+// parts_log writes one fact for each part: the parts of a save and a
+// restore, then the instructions alone. A time is in hundredths, from the
+// tenths that the measure keeps.
+parts_log :: proc "contextless" () {
 	frequency := max(system.cycle_frequency(), 1)
 	for part in Part {
-		if part < first || part > last {
-			continue
+		name := value_kinds.text_field(part_names[part], 40)
+		cycles := value_kinds.Hundredths(part_tenths[part] * 10)
+		part_time := value_kinds.Hundredths(part_tenths[part] * 1_000_000_000 / frequency * 10)
+		instruction := part >= .Fxsave
+		switch {
+		case part_tenths[part] == 0 && instruction:
+			system.log_fact(.Info, Instruction_Not_Measured{part_name = name})
+		case part_tenths[part] == 0:
+			system.log_fact(.Info, Save_Part_Not_Measured{part_name = name})
+		case instruction:
+			system.log_fact(.Info, Instruction_Measured{cycles = cycles, part_time = part_time, part_name = name})
+		case:
+			system.log_fact(.Info, Save_Part_Measured{cycles = cycles, part_time = part_time, part_name = name})
 		}
-		if builder.count > 0 {
-			interface.text_put(builder, "; ")
-		}
-		interface.text_put(builder, part_names[part])
-		interface.text_put(builder, " ")
-		if part_tenths[part] == 0 {
-			interface.text_put(builder, "none")
-			continue
-		}
-		tenths_put(builder, part_tenths[part])
-		interface.text_put(builder, " (")
-		tenths_put(builder, part_tenths[part] * 1_000_000_000 / frequency)
-		interface.text_put(builder, " ns)")
 	}
-	return interface.text_of(builder)
 }
+
+
 
 // The hand-over between two threads: the main thread takes the even turns,
 // the second thread the odd ones. Each hand-over is a wake and a wait: the
@@ -769,9 +762,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		saved_names = "x87, SSE, AVX-512"
 	}
 	system.log_fact(.Info, Saved_Components{saved_area_bytes = u64(facts.saved_area_size), components = value_kinds.text_field(saved_names, 24)})
-	system.log(.Info, "extended_state: the usable instruction sets: ", sets_text(&builder, usable, .Sse, .Pclmulqdq), "; ", sets_text(&second_builder, usable, .Avx, .Avx512_Vl), "; ", sets_text(&third_builder, usable, .Popcnt, .Bmi2))
+	system.log_fact(.Info, Usable_Sets{xmm_sets = value_kinds.text_field(sets_text(&builder, usable, .Sse, .Pclmulqdq), 56)})
+	system.log_fact(.Info, Usable_Sets_Of_Avx{avx_sets = value_kinds.text_field(sets_text(&second_builder, usable, .Avx, .Avx512_Vl), 80)})
+	system.log_fact(.Info, Usable_Sets_Of_General_Registers{general_register_sets = value_kinds.text_field(sets_text(&third_builder, usable, .Popcnt, .Bmi2), 24)})
 	if held_level == .Sse {
-		system.log(.Info, "extended_state: AVX is not usable: the processor does not have it or the kernel does not save it; the test holds xmm0 to xmm15")
+		system.log_fact(.Info, Avx_Not_Usable{})
 	}
 
 	processor_count = max(system.thread_record().processors, 1)
@@ -819,12 +814,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if .Avx in usable {
 			hand_over_counts[1], hand_over_nanoseconds[1] = hand_over_measure(true)
 		}
-		first_part, second_part, third_part: interface.Text_Builder
-		system.log(.Info, "extended_state: the parts of a save and a restore, each alone in this process, cycles of the cycle counter for one loop (ns): ", part_text(&first_part, .Loop_Alone, .Fxsave_And_Fxrstor), "; ", part_text(&second_part, .Xsaveopt_And_Xrstor, .Xsaveopt_Vzeroupper_And_Xrstor), "; ", part_text(&third_part, .Xsaveopt_Vzeroupper_And_Xrstor_With_Avx, .Xsave_And_Xrstor))
-		system.log(.Info, "extended_state: each instruction alone, cycles of the cycle counter for one loop (ns), the loop included: ", part_text(&first_part, .Fxsave, .Fxrstor), "; ", part_text(&second_part, .Xsaveopt, .Xrstor), "; ", part_text(&third_part, .Vzeroupper, .Vzeroupper))
-		// The sentence of the hand-over is longer than the 256 bytes of a
-		// fact template: the line stays text.
-		system.log(.Info, "extended_state: a hand-over between two threads by the word wait (a wake, a wait, and the save and restore of the thread that waits and of the thread that runs): ", hand_over_nanoseconds[0], " ns with x87 and SSE in use, ", hand_over_nanoseconds[1], " ns with the ymm high halves in use (0: not usable); ", hand_over_counts[0], " and ", hand_over_counts[1], " hand-overs in ", u64(HAND_OVER_MILLISECONDS), " ms each")
+		parts_log()
+		system.log_fact(.Info, Hand_Over_Measured{x87_and_sse_time = u64(hand_over_nanoseconds[0]), ymm_time = u64(hand_over_nanoseconds[1]), x87_and_sse_hand_overs = u64(hand_over_counts[0]), ymm_hand_overs = u64(hand_over_counts[1]), period = u64(HAND_OVER_MILLISECONDS)})
 		system.log_fact(.Info, Kernel_Entry_Measured{kernel_entries = u64(MEASURE_ENTRIES), xmm_time = entry_nanoseconds[.Sse], ymm_time = entry_nanoseconds[.Avx], zmm_time = entry_nanoseconds[.Avx_512]})
 		passed = wrong == 0 && start_wrong == 0
 		finished = true

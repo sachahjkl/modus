@@ -1,5 +1,7 @@
 package heron
 
+import "modus:contract/value_kinds"
+
 // The log facts of the demonstration heron (src/md/features/log_facts.md,
 // "The facts of the demonstrations"): the animations played and what the
 // window shows, as records of fields. Each fact template is the sentence
@@ -9,9 +11,36 @@ package heron
 //
 // A part of a sentence that is there or not (", held", the motion of the
 // heron, the ways) is a Text field that holds it with its comma, or
-// nothing. The time of a picture has one decimal, which no field kind
-// writes, and the lines of the pause and of the speed have no value: those
-// lines stay text.
+// nothing. A line with no value is a fact type with no field.
+
+// The means of the pictures of the first animation that a key asked for:
+// the time of a picture to draw and the pixels that it damaged.
+@(log_fact = "heron: a picture of {animation} took {picture_time} to draw and damaged {damaged_pixels} pixels of the {window_pixels} of the window, the means of {pictures} pictures (a measure)")
+Picture_Measured :: struct {
+	picture_time:   value_kinds.Nanoseconds_As_Microseconds,
+	damaged_pixels: u64,
+	window_pixels:  u64,
+	pictures:       u64,
+	animation:      [16]u8,
+}
+
+@(log_fact = "heron: no random seed in the context")
+No_Random_Seed :: struct {}
+
+@(log_fact = "heron: ok, the first picture is presented")
+First_Picture_Presented :: struct {}
+
+@(log_fact = "heron: paused")
+Paused :: struct {}
+
+@(log_fact = "heron: plays again")
+Plays_Again :: struct {}
+
+@(log_fact = "heron: slow")
+Slow :: struct {}
+
+@(log_fact = "heron: full speed")
+Full_Speed :: struct {}
 
 // An animation that the heron played in its own order.
 @(log_fact = "heron: {animation} played in its own order: {frames} frames")

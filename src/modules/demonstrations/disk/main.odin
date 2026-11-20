@@ -256,15 +256,6 @@ check :: proc "contextless" () {
 	}
 }
 
-// refusal_text gives the sentence of the error record of a completion
-// that failed.
-refusal_text :: proc "contextless" (buffer: []u8, completion: ring.Record) -> string {
-	error := errors.completion_record(completion.values)
-	writer := system.Writer{buffer = buffer}
-	system.ring_error_text(&writer, &error, "block", block.command_name(error.operation), block.argument_name(error.operation, error.argument))
-	return system.written(&writer)
-}
-
 // The words of the kind of a command record that name no command: None,
 // the word one past the last command, and the largest word of the field.
 // The block service decides each one at its border, which a host test
@@ -291,7 +282,7 @@ block_words_check :: proc "contextless" () {
 		if right {
 			system.log_fact(.Info, Command_Word_Refused{command_word = u64(word)})
 		} else {
-			system.log_fact(.Info, Command_Word_Not_Refused{command_word = u64(word), status_word = u64(refused.kind), error_kind = u64(max(error.kind, 0)), operation_word = u64(max(error.operation, 0)), next_status_word = u64(after.kind)})
+			system.log_fact(.Info, Command_Word_Not_Refused{command_word = u64(word), status_word = u64(refused.kind), error_kind = errors.Kind_Word(max(error.kind, 0)), operation_word = u64(max(error.operation, 0)), next_status_word = u64(after.kind)})
 		}
 	}
 }
@@ -429,13 +420,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_memory := ctx.handles[block.GRANT_RING]
 	status: system.Status
 	if blocks, status = system.ring_open(ring_memory); status != .Ok {
-		system.log(.Info, "disk: no block ring")
+		system.log_fact(.Info, No_Block_Ring{})
 		system.stop(.Failed)
 	}
 	memory, memory_status := system.memory_create(REGION_PAGES, 0, {.Contiguous}) // The device reads and writes it.
 	address, map_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || map_status != .Ok {
-		system.log(.Info, "disk: no data region")
+		system.log_fact(.Info, No_Data_Region{})
 		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)
@@ -451,12 +442,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if give_status != .Ok {
-		system.log(.Info, "disk: the block service does not map the block ring")
+		system.log_fact(.Info, Block_Ring_Not_Mapped{})
 		system.stop(.Failed)
 	}
 	if attached := call(.Attach, {0 = u64(given)}); block.Status(attached.kind) != .Ok {
-		text: [240]u8
-		system.log(.Info, "disk: the block service refused the data region: ", refusal_text(text[:], attached))
+		system.log_fact(.Warning, Data_Region_Refused(errors.error_record_fact_fields(errors.completion_record(attached.values))))
 		system.stop(.Failed)
 	}
 	info := call(.Info)
@@ -475,11 +465,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// record.
 	past := call(.Read, {0 = disk_blocks - 1, 1 = 2, 2 = 0})
 	past_error := errors.completion_record(past.values)
-	text: [240]u8
 	past_right := block.Status(past.kind) == .Out_Of_Range && errors.Kind(past_error.kind) == .Out_Of_Range && past_error.argument == 1 && u64(past_error.value) == disk_blocks + 1 && u64(past_error.limit) == disk_blocks
-	// The sentence of an error record is a free text of up to 240 bytes,
-	// more than the values of one fact hold: the line stays text.
-	system.log(.Info, "disk: a read of 2 blocks from the last block: ", past_right ? "" : "WRONG: ", refusal_text(text[:], past))
+	if past_right {
+		system.log_fact(.Info, Read_Past_End_Refused(errors.error_record_fact_fields(past_error)))
+	} else {
+		system.log_fact(.Info, Read_Past_End_Not_Refused(errors.error_record_fact_fields(past_error)))
+	}
 	// Each of these writes its own line with "as it must" or "WRONG": the
 	// scenario of the tool waits for each line.
 	block_words_check()

@@ -70,19 +70,10 @@ DEBUG_EXCEPTION_EXIT_CODE :: 0x88 // The exit of the instruction int1 (icebp).
 // at most one run, and the guest runs seven instructions.
 INTERRUPTED_RUNS_LIMIT :: 1000
 
-// fail writes the line of a failure, which starts with "guest_demo:
-// failed: ", and stops the process with `Failed`.
-// It keeps the lines with an address or an exit code as text: system.Hex
-// writes them, which no field kind writes.
-fail :: proc "contextless" (parts: ..system.Part) -> ! {
-	system.log(.Info, ..parts)
-	system.stop(.Failed)
-}
-
 // step_failed writes the fact of a step that gave a status that stops the
 // demonstration, and stops the process with `Failed`.
 step_failed :: proc "contextless" (step: string, status: system.Status) -> ! {
-	system.log_fact(.Info, Step_Failed{status_word = u64(status), step = value_kinds.text_field(step, 40)})
+	system.log_fact(.Info, Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field(step, 40)})
 	system.stop(.Failed)
 }
 
@@ -123,8 +114,8 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 		error: errors.Error_Record
 		exit, run_status := system.guest_run(guest, &registers, &error)
 		if run_status == .Bad_Operation && error.kind == i64(errors.Kind.Unsupported) {
-			system.log(.Info, "guest_demo: Guest_Run gave Bad_Operation with the error kind Unsupported: the processors of this machine have no virtualization support that the kernel uses, and no guest runs: as it must")
-			system.log(.Info, "guest_demo: ok")
+			system.log_fact(.Info, Guests_Unsupported{})
+			system.log_fact(.Info, Guest_Demo_Held{})
 			system.stop(.Done)
 		}
 		if run_status != .Ok {
@@ -141,7 +132,8 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 			registers.rip = exit.next
 		case .Halt:
 			if registers.rip != HALT_ADDRESS {
-				fail("guest_demo: failed: the guest halted at ", system.Hex(registers.rip), ", not at ", system.Hex(HALT_ADDRESS))
+				system.log_fact(.Info, Halted_Elsewhere{halt_address = value_kinds.Hexadecimal_Sixteen_Digits(registers.rip), expected_address = value_kinds.Hexadecimal_Sixteen_Digits(HALT_ADDRESS)})
+				system.stop(.Failed)
 			}
 			halted = true
 		case .Interrupted:
@@ -151,14 +143,15 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 				system.stop(.Failed)
 			}
 		case .None, .Port_Read, .Cpuid, .Memory, .Shutdown, .Refused_State, .Other:
-			fail("guest_demo: failed: an exit of kind ", u64(exit.kind), ", exit code ", system.Hex(exit.code), ", information ", system.Hex(exit.information), ", at ", system.Hex(registers.rip))
+			system.log_fact(.Info, Exit_Unexpected{exit_kind = u64(exit.kind), exit_code = value_kinds.Hexadecimal_Sixteen_Digits(exit.code), information = value_kinds.Hexadecimal_Sixteen_Digits(exit.information), instruction_address = value_kinds.Hexadecimal_Sixteen_Digits(registers.rip)})
+			system.stop(.Failed)
 		}
 	}
 	if writes != 1 || written_port != PORT || written_value != VALUE {
 		system.log_fact(.Info, Port_Writes_Wrong{writes = writes, written_value = written_value, written_port = written_port})
 		system.stop(.Failed)
 	}
-	system.log(.Info, "guest_demo: the guest wrote 42 to the port 0x80, then halted after it: as it must")
+	system.log_fact(.Info, Port_Written_Then_Halted{})
 
 	// A debug exception of the guest exits: a guest whose delivery of it
 	// raised it again would hold the processor for ever.
@@ -178,18 +171,19 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 			continue
 		}
 		if exit.kind != .Other || exit.code != DEBUG_EXCEPTION_EXIT_CODE {
-			fail("guest_demo: failed: int1 gave an exit of kind ", u64(exit.kind), ", exit code ", system.Hex(exit.code), ", not Other with ", system.Hex(DEBUG_EXCEPTION_EXIT_CODE))
+			system.log_fact(.Info, Debug_Exit_Wrong{exit_kind = u64(exit.kind), exit_code = value_kinds.Hexadecimal_Sixteen_Digits(exit.code), expected_code = value_kinds.Hexadecimal_Sixteen_Digits(DEBUG_EXCEPTION_EXIT_CODE)})
+			system.stop(.Failed)
 		}
 		break
 	}
-	system.log(.Info, "guest_demo: the int1 of the guest arrived as an exit Other with the exit code 0x88: as it must")
+	system.log_fact(.Info, Debug_Exit_Arrived{})
 
 	// A guest has no kernel half in its page table: no thread runs on it.
 	if _, start_status := system.call(.Process_Start, u64(guest), CODE_ADDRESS, op.STACK_TOP, op.CONTEXT_ADDRESS); start_status != .Bad_State {
-		system.log_fact(.Info, Step_Not_Refused{status_word = u64(start_status), expected = .Bad_State, step = value_kinds.text_field("Process_Start of the guest", 36)})
+		system.log_fact(.Info, Step_Not_Refused{status_word = op.Status_Word(start_status), expected = .Bad_State, step = value_kinds.text_field("Process_Start of the guest", 36)})
 		system.stop(.Failed)
 	}
-	system.log(.Info, "guest_demo: Process_Start of the guest gave Bad_State: as it must")
-	system.log(.Info, "guest_demo: ok")
+	system.log_fact(.Info, Guest_Start_Refused{})
+	system.log_fact(.Info, Guest_Demo_Held{})
 	system.stop(.Done)
 }

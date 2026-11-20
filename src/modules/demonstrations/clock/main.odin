@@ -326,11 +326,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	refused = system.memory_unmap(rawptr(uintptr(op.TIME_ADDRESS))) != .Ok && system.time() != 0
 	checked = true
 	if slot != 0 && went_back == 0 && outside == 0 && page_changes >= PAGE_CHANGES_COMPARED && least <= LEAST_LIMIT && ahead <= AHEAD_LIMIT && refused && measures[0].entries == 0 {
-		system.log(.Info, "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page")
+		system.log_fact(.Info, Clock_Held{})
 	} else {
-		// The sentence is longer than the 256 bytes of a fact template: the
-		// line stays text.
-		system.log(.Info, "clock: wrong: the time went back ", went_back, " times, a kernel entry was outside two reads of the page ", outside, " times, the page changed ", page_changes, " times and is at least ", least, " ms behind and ", ahead, " ms ahead of the cycle counter, the kernel ", refused ? "refuses" : "does not refuse", " to remove the time page")
+		system.log_fact(.Info, Time_Wrong{went_back = went_back, outside = outside, page_changes = page_changes, least_behind = least, most_ahead = ahead, removal = value_kinds.text_field(refused ? "refuses" : "does not refuse", 24)})
 	}
 	deadline := system.time()
 	// The time of one picture: the mean of ten pictures after the checks
@@ -343,11 +341,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			drawn_time += system.nanoseconds() - start
 			drawn += 1
 			if drawn == 10 {
-				// Times with one decimal, which no field kind writes: the
-				// two lines stay text until a field kind writes them.
-				system.log(.Info, "clock: the window drew one picture in ", drawn_time / 10 / 1000, ".", drawn_time / 10 / 100 % 10, " us, the mean of 10")
+				system.log_fact(.Info, Picture_Measured{picture_time = value_kinds.Nanoseconds_As_Microseconds(drawn_time / 10)})
 				// One frame where one number changed: the time since boot.
-				system.log(.Info, "clock: the interface: ", u64(window_memory.drawing.now.record_count), " records, ", u64(window_memory.drawing.damage.count), " damage rectangles; build ", window_memory.drawing.build_time / 1000, ".", window_memory.drawing.build_time / 100 % 10, " us, difference ", window_memory.drawing.difference_time / 1000, ".", window_memory.drawing.difference_time / 100 % 10, " us, draw ", window_memory.drawing.draw_time / 1000, ".", window_memory.drawing.draw_time / 100 % 10, " us")
+				system.log_fact(.Info, Interface_Measured{records = u64(window_memory.drawing.now.record_count), damage_rectangles = u64(window_memory.drawing.damage.count), build_time = value_kinds.Nanoseconds_As_Microseconds(window_memory.drawing.build_time), difference_time = value_kinds.Nanoseconds_As_Microseconds(window_memory.drawing.difference_time), draw_time = value_kinds.Nanoseconds_As_Microseconds(window_memory.drawing.draw_time)})
 			}
 		}
 		deadline += 100

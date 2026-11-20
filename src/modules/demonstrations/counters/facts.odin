@@ -16,7 +16,7 @@ import op "modus:contract/operation"
 // A step gave a status that stops the demonstration.
 @(log_fact = "counters: failed: {step} gave {status_word}")
 Step_Failed :: struct {
-	status_word: u64,
+	status_word: op.Status_Word,
 	step:        [56]u8,
 }
 
@@ -24,7 +24,7 @@ Step_Failed :: struct {
 // refusal.
 @(log_fact = "counters: failed: {refused_step} gave {status_word}, not {expected}")
 Step_Not_Refused :: struct {
-	status_word:  u64,
+	status_word:  op.Status_Word,
 	expected:     op.Status,
 	refused_step: [68]u8,
 }
@@ -72,3 +72,28 @@ Counts_Measured :: struct {
 	branch_misses: u64,
 	measure:       [24]u8,
 }
+
+// The cases with no value: each sentence is its fact type.
+
+@(log_fact = "counters: Start_Counters with a copy of the machine handle with no right gave No_Right: as it must")
+Start_Without_Right_Refused :: struct {}
+
+@(log_fact = "counters: Read_Counters and Start_Counters gave Bad_Operation with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must")
+Counters_Unsupported :: struct {}
+
+@(log_fact = "counters: Read_Counters before Start_Counters gave Bad_State: as it must")
+Read_Before_Start_Refused :: struct {}
+
+@(log_fact = "counters: failed: a second read gave a count below the first")
+Second_Read_Below_First :: struct {}
+
+@(log_fact = "counters: a second read gave no count below the first: as it must")
+Second_Read_Not_Below :: struct {}
+
+@(log_fact = "counters: Stop_Counters with no handle gave Ok, and Read_Counters after it gave Bad_State: as it must")
+Stop_Without_Handle_Checked :: struct {}
+
+// Each case held, or the machine has no counters and the demonstration
+// ends there.
+@(log_fact = "counters: ok")
+Counters_Held :: struct {}

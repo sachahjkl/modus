@@ -820,9 +820,7 @@ played_line_write :: proc "contextless" () {
 	}
 	measure_line_written = true
 	mean := asked_draw_time / asked_pictures
-	// A time with one decimal, which no field kind writes: the line stays
-	// text until a field kind writes it.
-	system.log(.Info, "heron: a picture of ", name, " took ", mean / 1000, ".", mean / 100 % 10, " us to draw and damaged ", asked_damage / asked_pictures, " pixels of the ", u64(WIDTH * HEIGHT), " of the window, the means of ", asked_pictures, " pictures (a measure)")
+	system.log_fact(.Info, Picture_Measured{picture_time = value_kinds.Nanoseconds_As_Microseconds(mean), damaged_pixels = u64(asked_damage / asked_pictures), window_pixels = u64(WIDTH * HEIGHT), pictures = u64(asked_pictures), animation = value_kinds.text_field(name, 16)})
 }
 
 // shows_line_write writes the line of what the window shows, after a
@@ -862,7 +860,7 @@ shows_line_write :: proc "contextless" () {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "heron: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	service, _ := system.service_open(ctx)
@@ -933,7 +931,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		if !logged {
-			system.log(.Info, "heron: ok, the first picture is presented")
+			system.log_fact(.Info, First_Picture_Presented{})
 			logged = true
 		}
 		if played_line_waits {
@@ -942,13 +940,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if pause_line_waits {
 			pause_line_waits = false
-			pause_line := paused ? "heron: paused" : "heron: plays again"
-			system.log(.Info, pause_line)
+			if paused {
+				system.log_fact(.Info, Paused{})
+			} else {
+				system.log_fact(.Info, Plays_Again{})
+			}
 		}
 		if speed_line_waits {
 			speed_line_waits = false
-			speed_line := slow ? "heron: slow" : "heron: full speed"
-			system.log(.Info, speed_line)
+			if slow {
+				system.log_fact(.Info, Slow{})
+			} else {
+				system.log_fact(.Info, Full_Speed{})
+			}
 		}
 		if cell_line_waits {
 			cell_line_waits = false

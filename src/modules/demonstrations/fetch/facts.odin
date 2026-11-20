@@ -1,5 +1,8 @@
 package fetch
 
+import "modus:contract/errors"
+import "modus:contract/value_kinds"
+
 // The log facts of the demonstration fetch (src/md/features/log_facts.md,
 // "The facts of the demonstrations"): its cases and the counts of its
 // connection, as records of fields. Each fact template is the sentence that
@@ -8,10 +11,84 @@ package fetch
 // longest text and a zero byte.
 //
 // A case that did not hold ends with " (WRONG)": the field `wrong_mark`
-// holds it, or nothing. The cases of a refusal, of GET /large and of
-// POST /sink stay text: the sentence of an error record is longer than a
-// fact holds, a hash is written as system.Hex writes it, and a rate has one
-// decimal, which no field kind writes.
+// holds it, or nothing. A refusal of the network service is its error
+// record as fields; a rate is in hundredths of a megabyte in one second.
+
+// The cases with no value: each sentence is its fact type.
+
+@(log_fact = "fetch: the handshake with 10.0.2.100 port 80: no answer (WRONG)")
+Handshake_Not_Answered :: struct {}
+
+@(log_fact = "fetch: the held commands passed their proven bound")
+Held_Commands_Past_Bound :: struct {}
+
+@(log_fact = "fetch: no random seed in the context")
+No_Random_Seed :: struct {}
+
+@(log_fact = "fetch: no endpoint: the process has no grant of the network")
+No_Endpoint :: struct {}
+
+@(log_fact = "fetch: no datagram region")
+No_Datagram_Region :: struct {}
+
+@(log_fact = "fetch: no memory for the buffers of the connections")
+No_Connection_Memory :: struct {}
+
+@(log_fact = "fetch: the secret of the initial sequence numbers from the generator of the process")
+Sequence_Secret_Taken :: struct {}
+
+@(log_fact = "fetch: the connection ended, its record is free")
+Connection_Ended :: struct {}
+
+// A SYN to a remote that the grant does not name: the error record of the
+// refusal of the network service.
+@(log_fact = "fetch: a SYN to 10.0.2.2 port 80: refused by the network service: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}{wrong_mark}")
+Syn_To_Other_Remote_Refused :: struct {
+	kind:       errors.Kind_Word,
+	unit:       errors.Unit_Word,
+	operation:  i64,
+	argument:   i64,
+	value:      i64,
+	limit:      i64,
+	found:      i64,
+	wrong_mark: [16]u8,
+}
+
+// A SYN from a local port that is not in the block of the endpoint: the
+// error record of the refusal, and the block.
+@(log_fact = "fetch: a SYN from the local port 1234: refused: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found} (its ports are {first_local_port} to {last_local_port}){wrong_mark}")
+Syn_From_Other_Port_Refused :: struct {
+	kind:             errors.Kind_Word,
+	unit:             errors.Unit_Word,
+	operation:        i64,
+	argument:         i64,
+	value:            i64,
+	limit:            i64,
+	found:            i64,
+	first_local_port: u64,
+	last_local_port:  u64,
+	wrong_mark:       [16]u8,
+}
+
+// The large page of 1 MiB: its bytes, its hash as system.Hex writes it,
+// whether it is the hash of the pattern, and the rate.
+@(log_fact = "fetch: GET /large: {received_bytes} bytes, fnv1a64 {received_hash} {hash_check}, {rate} MB/s{wrong_mark}")
+Large_Page_Received :: struct {
+	received_bytes: u64,
+	received_hash:  value_kinds.Hexadecimal_Sixteen_Digits,
+	rate:           value_kinds.Hundredths,
+	wrong_mark:     [16]u8,
+	hash_check:     [24]u8,
+}
+
+// A body of 1 MiB to the remote: whether the remote got the same hash, and
+// the rate.
+@(log_fact = "fetch: POST /sink, 1 MiB: {hash_answer}, {rate} MB/s{wrong_mark}")
+Body_Sent :: struct {
+	rate:        value_kinds.Hundredths,
+	wrong_mark:  [16]u8,
+	hash_answer: [40]u8,
+}
 
 // The grant of the endpoint: one remote, and a block of local ports.
 @(log_fact = "fetch: the grant: TCP to {remote_address} port {remote_port} only, from the local ports {first_local_port} to {last_local_port}{wrong_mark}")

@@ -1,5 +1,6 @@
 package address_space
 
+import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
@@ -66,8 +67,8 @@ Own_Handle_Child_Stopped_Without_Outcome :: struct {
 @(log_fact = "address_space: WRONG: Process_Stop of {target} with the word {stop_word} gave the status word {status_word}, the error kind {error_kind}, the argument {argument} and the limit {limit}")
 Stop_Word_Not_Refused :: struct {
 	stop_word:   u64,
-	status_word: u64,
-	error_kind:  i64,
+	status_word: op.Status_Word,
+	error_kind:  errors.Kind_Word,
 	argument:    i64,
 	limit:       i64,
 	target:      [16]u8,
@@ -142,4 +143,207 @@ Addresses_Reused :: struct {
 @(log_fact = "address_space: wrong: {problem}")
 Demonstration_Wrong :: struct {
 	problem: [96]u8,
+}
+
+// Each case held.
+@(log_fact = "address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record")
+Address_Space_Held :: struct {}
+
+// The child that holds its own process handle got no handle in the hang
+// bound.
+@(log_fact = "address_space: the child of its own handle got no handle")
+Own_Handle_Child_Without_Handle :: struct {}
+
+// A Process_Stop that the kernel must refuse stopped the child.
+@(log_fact = "address_space: WRONG: a refused Process_Stop stopped the child")
+Refused_Stop_Stopped_Child :: struct {}
+
+// The page of the other thread of the case of the neighbour page has no
+// mapping.
+@(log_fact = "address_space: page tables: the page of the other thread: no mapping: WRONG")
+Neighbour_Page_Not_Mapped :: struct {}
+
+// The library refused the command of a Process_Stop that the kernel must
+// refuse: the status of the library, a word of 8 bytes after the word of
+// the stop.
+@(log_fact = "address_space: WRONG: the library refused the command of Process_Stop with the word {stop_word}: {call_status}")
+Stop_Command_Refused_By_Library :: struct {
+	stop_word:   u64,
+	call_status: op.Status_Word,
+}
+
+// The measure of the arena: 1 GiB of addresses in one mapping.
+@(log_fact = "address_space: arena: 1 GiB of addresses in one mapping, {frame_list_pages} pages paid for its frame list, mapped in {map_time} us; pages committed and used in one second with 1, 16, 256 ranges for each kernel entry: {pages_one_range}, {pages_16_ranges}, {pages_256_ranges}; kernel entries for 1000 pages: {entries_one_range}, {entries_16_ranges}, {entries_256_ranges}")
+Arena_Measured :: struct {
+	frame_list_pages:   u64,
+	map_time:           u64,
+	pages_one_range:    u64,
+	pages_16_ranges:    u64,
+	pages_256_ranges:   u64,
+	entries_one_range:  u64,
+	entries_16_ranges:  u64,
+	entries_256_ranges: u64,
+}
+
+// The measure of a change of protection with its shoot-down.
+@(log_fact = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls, least and most of 5 batches: {least_one_processor} to {most_one_processor} ns with 1 processor running the process, {least_two_processors} to {most_two_processors} ns with 2, {least_four_processors} to {most_four_processors} ns with 4")
+Protection_Measured :: struct {
+	least_one_processor:   u64,
+	most_one_processor:    u64,
+	least_two_processors:  u64,
+	most_two_processors:   u64,
+	least_four_processors: u64,
+	most_four_processors:  u64,
+}
+
+// The child of the guard page stopped: its vector and the address of the
+// fault, as system.Hex writes an address.
+@(log_fact = "address_space: guard page: the child stopped with vector {vector} at {fault_address}, in its guard page: {in_guard_page}")
+Guard_Page_Stop :: struct {
+	vector:        u64,
+	fault_address: value_kinds.Hexadecimal_Sixteen_Digits,
+	in_guard_page: u64,
+}
+
+// The measure of one random read through large pages and through pages of
+// 4 KiB of the same object, in hundredths of a nanosecond, and whether the
+// report names the large pages.
+@(log_fact = "address_space: large pages: one random read over 64 MiB: {large_page_read} ns through large pages of 2 MiB, {small_page_read} ns through pages of 4 KiB of the same object; the report says Large: {large_in_report}")
+Large_Pages_Measured :: struct {
+	large_page_read: value_kinds.Hundredths,
+	small_page_read: value_kinds.Hundredths,
+	large_in_report: u64,
+}
+
+// A call that the kernel must refuse, with its error record.
+@(log_fact = "address_space: refused: {refusal_name}: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Refusal_Recorded :: struct {
+	kind:         errors.Kind_Word,
+	unit:         errors.Unit_Word,
+	operation:    i64,
+	argument:     i64,
+	value:        i64,
+	limit:        i64,
+	found:        i64,
+	refusal_name: [32]u8,
+}
+
+// The steps of the delegation of a child budget, each a fact type of its
+// own: the words of a step are longer than a Text field holds beside the
+// record. A step whose call of B the kernel refused holds the error record
+// of that call; a step whose call succeeded holds a zero record, kind None.
+// The verdict is "as expected" or "WRONG".
+
+@(log_fact = "address_space: delegation: 1 B commits 32 pages, then one more: {verdict}: 32 pages committed; the 33rd: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Delegation_Commit_Past_Budget :: struct {
+	kind:      errors.Kind_Word,
+	unit:      errors.Unit_Word,
+	operation: i64,
+	argument:  i64,
+	value:     i64,
+	limit:     i64,
+	found:     i64,
+	verdict:   [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 2 B commits with no budget handle; it reads and writes the committed pages: {verdict}: B wrote and read 55 in a committed page; a commit: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Delegation_Commit_Without_Budget :: struct {
+	kind:      errors.Kind_Word,
+	unit:      errors.Unit_Word,
+	operation: i64,
+	argument:  i64,
+	value:     i64,
+	limit:     i64,
+	found:     i64,
+	verdict:   [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 3 B makes an object with the handle that has Commit only: {verdict}: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Delegation_Object_With_Commit_Only :: struct {
+	kind:      errors.Kind_Word,
+	unit:      errors.Unit_Word,
+	operation: i64,
+	argument:  i64,
+	value:     i64,
+	limit:     i64,
+	found:     i64,
+	verdict:   [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 4 B commits with a budget that does not pay for the object: {verdict}: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Delegation_Commit_With_Other_Payer :: struct {
+	kind:      errors.Kind_Word,
+	unit:      errors.Unit_Word,
+	operation: i64,
+	argument:  i64,
+	value:     i64,
+	limit:     i64,
+	found:     i64,
+	verdict:   [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 5 A revokes the budget handle of B: B commits no more: {verdict}: the 32 pages stay committed and paid (the child budget holds 0); a commit: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Delegation_Commit_After_Revocation :: struct {
+	kind:      errors.Kind_Word,
+	unit:      errors.Unit_Word,
+	operation: i64,
+	argument:  i64,
+	value:     i64,
+	limit:     i64,
+	found:     i64,
+	verdict:   [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 7 B decommits pages of an object that A holds too: {verdict}: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Delegation_Decommit_Of_Shared_Object :: struct {
+	kind:      errors.Kind_Word,
+	unit:      errors.Unit_Word,
+	operation: i64,
+	argument:  i64,
+	value:     i64,
+	limit:     i64,
+	found:     i64,
+	verdict:   [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 9 B gives its Commit handle on: it has no right Give: {verdict}: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Delegation_Give_Without_Right :: struct {
+	kind:      errors.Kind_Word,
+	unit:      errors.Unit_Word,
+	operation: i64,
+	argument:  i64,
+	value:     i64,
+	limit:     i64,
+	found:     i64,
+	verdict:   [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 6 A takes the pages back: it revokes the object of B, then decommits: {verdict}: 32 pages back in the child budget; A held the object with no mapping")
+Delegation_Pages_Taken_Back :: struct {
+	verdict: [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 6 A takes the pages back: it revokes the object of B, then decommits: {verdict}: the decommit was refused")
+Delegation_Pages_Not_Taken_Back :: struct {
+	verdict: [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 8 the child budget ends: the object moves to the budget of A: {verdict}: a commit with the budget of A: 1 page; with the old handle: refused")
+Delegation_Object_Moved :: struct {
+	verdict: [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 8 the child budget ends: the object moves to the budget of A: {verdict}: the commit with the budget of A was refused")
+Delegation_Object_Not_Moved :: struct {
+	verdict: [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 10 an object that B made with a Spend handle, after the revocation: {verdict}: the object of 1 page that B made with it lives on after the revocation, paid by the child budget, and A cannot end it: the narrow right Commit makes no object")
+Delegation_Object_Lives_On :: struct {
+	verdict: [16]u8,
+}
+
+@(log_fact = "address_space: delegation: 10 an object that B made with a Spend handle, after the revocation: {verdict}: the object did not stay")
+Delegation_Object_Gone :: struct {
+	verdict: [16]u8,
 }

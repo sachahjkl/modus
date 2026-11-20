@@ -1,5 +1,7 @@
 package cryptography_vectors
 
+import "modus:contract/value_kinds"
+
 // The log facts of the demonstration cryptography_vectors
 // (src/md/features/log_facts.md, "The facts of the demonstrations"): each
 // vector and each speed, as records of fields. Each fact template is the
@@ -26,6 +28,15 @@ Speed_Measured :: struct {
 	call_bytes:              u64,
 	megabytes_in_one_second: u64,
 	primitive:               [32]u8,
+}
+
+// The vectors that passed through the module cryptography, named by the
+// head of 16 bytes of its hash; the template writes "..." after the head.
+@(log_fact = "cryptography_vectors: the module cryptography, BLAKE3 {module_hash_head}...: {passed} of {vectors} vectors passed")
+Vectors_Of_Module :: struct {
+	passed:           u64,
+	vectors:          u64,
+	module_hash_head: value_kinds.Hash_Sixteen_Bytes_Field,
 }
 
 // The time of one call of an export of the module with no work.

@@ -1,5 +1,7 @@
 package disk
 
+import "modus:contract/errors"
+
 // The log facts of the demonstration disk (src/md/features/log_facts.md,
 // "The facts of the demonstrations"): its runs, its measures and its
 // cases, as records of fields. Each fact template is the sentence that the
@@ -51,7 +53,7 @@ Command_Word_Refused :: struct {
 Command_Word_Not_Refused :: struct {
 	command_word:     u64,
 	status_word:      u64,
-	error_kind:       u64,
+	error_kind:       errors.Kind_Word,
 	operation_word:   u64,
 	next_status_word: u64,
 }
@@ -94,3 +96,28 @@ Disk_Wrong :: struct {
 	request_errors: u64,
 	wrong_bytes:    u64,
 }
+
+// The lines with no value at the start: each sentence is its fact type.
+
+@(log_fact = "disk: no block ring")
+No_Block_Ring :: struct {}
+
+@(log_fact = "disk: no data region")
+No_Data_Region :: struct {}
+
+@(log_fact = "disk: the block service does not map the block ring")
+Block_Ring_Not_Mapped :: struct {}
+
+// The block service refused the data region: its error record.
+@(log_fact = "disk: the block service refused the data region: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Data_Region_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// A read of 2 blocks from the last block, which the block service refuses
+// with Out_Of_Range: its error record.
+@(log_fact = "disk: a read of 2 blocks from the last block: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Read_Past_End_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The read past the end got another answer than its refusal: the record
+// that came.
+@(log_fact = "disk: a read of 2 blocks from the last block: WRONG: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Read_Past_End_Not_Refused :: distinct errors.Error_Record_Fact_Fields

@@ -503,7 +503,7 @@ child_repairs :: proc "contextless" () -> ! {
 	if value == MAGIC + LAZY_PAGE {
 		bits |= 1
 	}
-	system.log(.Info, "fault_ring: a read of a page that is not committed: the handler committed it and wrote ", system.Hex(MAGIC + LAZY_PAGE), "; the thread read ", system.Hex(value), value == MAGIC + LAZY_PAGE ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Lazy_Page_Repaired{written_value = value_kinds.Hexadecimal_Sixteen_Digits(MAGIC + LAZY_PAGE), read_value = value_kinds.Hexadecimal_Sixteen_Digits(value), verdict = verdict(value == MAGIC + LAZY_PAGE)})
 
 	// 2. A write to a read-only page.
 	intrinsics.volatile_store((^u64)(uintptr(read_only_base)), 42)
@@ -679,7 +679,7 @@ child_word_leftover :: proc "contextless" () -> ! {
 	if leftover_answer == .Ok && value == MAGIC {
 		bits |= 4
 	}
-	system.log(.Info, "fault_ring: a word wait, a fault, a decommit of the word: the waker woke ", u64(waker_woke), " thread; ", leftover_quiet ? string("no second record and no run before the answer") : string("the thread ran or faulted again with no answer: WRONG"), "; the answer: ", op.STATUS_NAMES[leftover_answer], ", the thread read ", system.Hex(value), bits == LEFTOVER_ALL ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Leftover_Word_Answered{woken = u64(waker_woke), read_value = value_kinds.Hexadecimal_Sixteen_Digits(value), answer_status = op.Status_Word(leftover_answer), before_answer = value_kinds.text_field(leftover_quiet ? "no second record and no run before the answer" : "the thread ran or faulted again with no answer: WRONG", 56), verdict = verdict(bits == LEFTOVER_ALL)})
 	results_and_stop(bits)
 }
 
@@ -1026,7 +1026,7 @@ child_controls :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x02
 	}
-	system.log(.Info, "fault_ring: a write of a register: the thread published ", system.Hex(intrinsics.atomic_load(&control_cells.value)), " from r12 after its Resume", right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Register_Written{published_value = value_kinds.Hexadecimal_Sixteen_Digits(intrinsics.atomic_load(&control_cells.value)), verdict = verdict(right)})
 
 	// 22. Frames that a process cannot hold: each refused, nothing changed.
 	control(spinner.handle, 0, .Stop)
@@ -1153,9 +1153,7 @@ child_controls :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x40
 	}
-	// The sentence of the rights is longer than the 256 bytes of a fact
-	// template with its seven fields: the line stays text.
-	system.log(.Info, "fault_ring: the rights of a thread handle: with Read and Control, Stop got ", op.STATUS_NAMES[ender_stop], ", Read_Registers ", op.STATUS_NAMES[ender_read], ", Write_Registers ", op.STATUS_NAMES[ender_write], "; with Inspect only, Stop, Read_Registers and Resume got ", inspector_stop == .Ok && inspector_read == .Ok && inspector_resume == .Ok ? string("Ok") : string("an error"), ", Write_Registers ", op.STATUS_NAMES[inspector_write], "; with Write only, Write_Registers got ", op.STATUS_NAMES[writer_write], "; the thread kept running", right ? string(": as it must") : string(": WRONG"))
+	system.log_fact(.Info, Thread_Handle_Rights{control_stop = ender_stop, control_read = ender_read, control_write = ender_write, inspect_write = inspector_write, write_only = writer_write, inspect_answer = value_kinds.text_field(inspector_stop == .Ok && inspector_read == .Ok && inspector_resume == .Ok ? "Ok" : "an error", 12), verdict = verdict(right)})
 
 	// 27. A divide error skipped by its handler.
 	handler_start(divide_handler)
@@ -1494,10 +1492,7 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 	error: module.Load_Error
 	process, status := system.process_start(system.image_find(image, "fault_ring"), "fault_ring child", grants, random.values_with_seed(&process_generator, values), {pages = CHILD_PAGES, processes = 1, threads = CHILD_THREADS, processor = 500_000, log_records = 20}, mappings[:], nil, {image = image}, &error)
 	if status != .Ok {
-		buffer: [512]u8
-		lines := system.Writer{buffer = buffer[:]}
-		system.load_error_text(&lines, &error)
-		system.log(.Info, "fault_ring: ", name, ": process_start failed: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this process can give pages ", before.pages, ", processes ", before.processes, ", threads ", before.threads, ", and the child asks ", u64(CHILD_PAGES), ", 1, ", u64(CHILD_THREADS))
+		system.log_fact(.Info, Child_Start_Failed{start_status = op.Status_Word(status), load_stage = u64(error.stage), load_status = op.Status_Word(error.status), file_error = u64(error.file_error), pages = u64(before.pages), processes = u64(before.processes), threads = u64(before.threads), child_pages = u64(CHILD_PAGES), child_threads = u64(CHILD_THREADS), case_name = value_kinds.text_field(name, 56)})
 		return
 	}
 	intrinsics.volatile_store(&in_parent.parent_thread_handle, u64(parent_thread_handle))
@@ -1625,33 +1620,34 @@ with_all :: proc "contextless" (cause: op.Stop_Cause, stop_outcome: op.Stop_Outc
 	return clean_end(cause, stop_outcome) && page.result_bits == all
 }
 
-// stop_text writes the stop of a child: the text of its stop cause, the
-// vector of a fault, and the outcome of a stop of itself.
-stop_text :: proc "contextless" (writer: ^system.Writer, cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome, report: ^op.Stop_Report) {
-	system.stop_write(writer, cause, stop_outcome)
+// case_log writes the stop of the child of a case with the address of its
+// stop report: one fact type for each form of the words of the stop, as
+// stop_text writes them.
+case_log :: proc "contextless" (item: ^Case, cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome, report: ^op.Stop_Report) {
+	address := value_kinds.Hexadecimal_Sixteen_Digits(report.address)
 	switch cause {
+	case .Itself:
+		system.log_fact(.Info, Child_Stopped_Itself{cause = cause, outcome = stop_outcome, address = address, case_name = value_kinds.text_field(item.name, 56), verdict = verdict(item.right)})
 	case .Fault:
-		system.write_part(writer, ", vector ")
-		system.write_part(writer, u64(report.vector))
-	case .None, .Itself, .Holder, .Last_Thread_Ended, .Handles_Closed, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
+		system.log_fact(.Info, Child_Stopped_On_Fault{vector = u64(report.vector), address = address, cause = cause, case_name = value_kinds.text_field(item.name, 56), verdict = value_kinds.text_field(item.right ? "as it must" : "WRONG", 20)})
+	case .None, .Holder, .Last_Thread_Ended, .Handles_Closed, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
+		system.log_fact(.Info, Child_Stopped{address = address, cause = cause, case_name = value_kinds.text_field(item.name, 56), verdict = value_kinds.text_field(item.right ? "as it must" : "WRONG", 20)})
 	}
 }
 
-case_log :: proc "contextless" (item: ^Case, cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome, report: ^op.Stop_Report) {
-	buffer: [96]u8
-	writer := system.Writer{buffer = buffer[:]}
-	stop_text(&writer, cause, stop_outcome, report)
-	system.log(.Info, "fault_ring: ", item.name, ": the child stopped: ", system.written(&writer), ", the address ", system.Hex(report.address), item.right ? string(": as it must") : string(": WRONG"))
-}
-
 // bits_log writes the stop of a child of several cases, and its result
-// bits from the shared page.
+// bits from the shared page. Its stop report is not read: a fault names
+// the vector 0.
 bits_log :: proc "contextless" (what: string, cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome, bits: u32, right: bool) {
-	report: op.Stop_Report
-	buffer: [96]u8
-	writer := system.Writer{buffer = buffer[:]}
-	stop_text(&writer, cause, stop_outcome, &report)
-	system.log(.Info, "fault_ring: ", what, ": the child stopped: ", system.written(&writer), ", the result bits ", system.Hex(u64(bits)), right ? string(": as it must") : string(": WRONG"))
+	result_bits := value_kinds.Hexadecimal_Sixteen_Digits(bits)
+	switch cause {
+	case .Itself:
+		system.log_fact(.Info, Cases_Child_Stopped_Itself{cause = cause, outcome = stop_outcome, result_bits = result_bits, case_name = value_kinds.text_field(what, 56), verdict = verdict(right)})
+	case .Fault:
+		system.log_fact(.Info, Cases_Child_Stopped_On_Fault{vector = 0, result_bits = result_bits, cause = cause, case_name = value_kinds.text_field(what, 56), verdict = value_kinds.text_field(right ? "as it must" : "WRONG", 20)})
+	case .None, .Holder, .Last_Thread_Ended, .Handles_Closed, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
+		system.log_fact(.Info, Cases_Child_Stopped{result_bits = result_bits, cause = cause, case_name = value_kinds.text_field(what, 56), verdict = value_kinds.text_field(right ? "as it must" : "WRONG", 20)})
+	}
 }
 
 // entry is the entry of the parent and of each child: the value
@@ -1693,7 +1689,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		child(role)
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "fault_ring: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	log_handle = ctx.handles[op.CONTEXT_LOG]
@@ -1703,7 +1699,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		system.log(.Info, "fault_ring: no boot image")
+		system.log_fact(.Info, No_Boot_Image{})
 		system.stop(.Failed)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -1813,13 +1809,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	stopped_by_the_kernel := cause == .Fault && lost_report.vector == u32(op.Fault_Kind.Debug) && lost_report.instruction == 0
 	lost_case.ran = true
 	lost_case.right = ran && (records_in_code || stopped_by_the_kernel) && !left
-	outcome := "neither outcome"
-	if records_in_code {
-		outcome = "the int1 and the trap came to the process as debug records in its code"
-	} else if stopped_by_the_kernel {
-		outcome = "the trap came at the stub of int1, and the kernel stopped the child as a fault of a debug exception with the instruction address 0"
+	switch {
+	case records_in_code:
+		system.log_fact(.Info, Lost_Frame_Records_In_Code{verdict = verdict(lost_case.right)})
+	case stopped_by_the_kernel:
+		system.log_fact(.Info, Lost_Frame_Stopped_By_Kernel{verdict = verdict(lost_case.right)})
+	case:
+		system.log_fact(.Info, Lost_Frame_Neither{verdict = verdict(lost_case.right)})
 	}
-	system.log(.Info, "fault_ring: mov ss, then int1, with the trap flag: the machine went on and the child gave back every page and every thread; on this processor ", outcome, lost_case.right ? string(": as it must") : string(": WRONG"))
 	draw(&window)
 
 	right := 0

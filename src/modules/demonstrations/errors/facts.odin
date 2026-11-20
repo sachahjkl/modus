@@ -1,6 +1,8 @@
 package errors_process
 
+import "modus:contract/errors"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 
 // The log facts of the demonstration errors (src/md/features/log_facts.md,
 // "The facts of the demonstrations"): its measures, its counts and the
@@ -9,24 +11,24 @@ import op "modus:contract/operation"
 // test on that sentence reads it as before. A Text field comes last, and
 // holds its longest text and a zero byte.
 //
-// The lines that hold the sentence of an error record stay text: that
-// sentence is the subject of this process, and it is longer than a fact
-// holds. So does the line longer than one log record, whose join the main
-// test checks, and the stack of a fault, which the tool reads as text. A
-// status of the kernel that a line writes as a number is a plain Integer,
-// `status_word`.
+// The lines that hold the sentence of an error record, of a load error or
+// of a stack stay text: those sentences are the subject of this process,
+// and the main test checks each writer of them by its words. So does the
+// line longer than one log record, whose join the main test checks. A
+// status of the kernel is `status_word`, the word type of the status: the
+// sentence writes the name of its member.
 
 // A name of a process with an escape byte was not refused.
 @(log_fact = "errors: WRONG: a name of a process with an escape byte gave {status_word}")
 Escaped_Name_Not_Refused :: struct {
-	status_word: u64,
+	status_word: op.Status_Word,
 }
 
 // A case of the table of error details gave another status or another
 // count than its rule.
 @(log_fact = "errors: WRONG: {details_case} gave the status {status_word} and {details} error details")
 Details_Wrong :: struct {
-	status_word:  u64,
+	status_word:  op.Status_Word,
 	details:      u64,
 	details_case: [48]u8,
 }
@@ -34,15 +36,15 @@ Details_Wrong :: struct {
 // A table of one place gave another status or another count than its rule.
 @(log_fact = "errors: WRONG: a table of 1 place gave the status {status_word} and the count {details}")
 Small_Table_Wrong :: struct {
-	status_word: u64,
+	status_word: op.Status_Word,
 	details:     u64,
 }
 
 // The case of a full completion queue could not make its memory.
 @(log_fact = "errors: WRONG: the case of a full completion queue has no memory: {held_status_word} {refused_status_word}")
 Full_Queue_Without_Memory :: struct {
-	held_status_word:    u64,
-	refused_status_word: u64,
+	held_status_word:    op.Status_Word,
+	refused_status_word: op.Status_Word,
 }
 
 // A command past a full completion queue: whether the queue filled, and
@@ -57,8 +59,8 @@ Full_Queue_Command_Wrong :: struct {
 // Busy.
 @(log_fact = "errors: WRONG: a kernel call on a kernel ring that holds records gave {status_word} and the kind {error_kind}")
 Busy_Ring_Call_Not_Refused :: struct {
-	status_word: u64,
-	error_kind:  i64,
+	status_word: op.Status_Word,
+	error_kind:  errors.Kind_Word,
 }
 
 // The answers of a full completion queue: whether each came once in order,
@@ -110,9 +112,9 @@ Busy_Ring_Stop_Wrong :: struct {
 // load, the status of the kernel and the error of the file.
 @(log_fact = "errors: WRONG: the child of the refusals did not start: {status_word}, the stage {stage_word}, the status of the kernel {kernel_status_word}, the error of the file {file_error_word}")
 Refusals_Child_Not_Started :: struct {
-	status_word:        u64,
+	status_word:        op.Status_Word,
 	stage_word:         u64,
-	kernel_status_word: u64,
+	kernel_status_word: op.Status_Word,
 	file_error_word:    u64,
 }
 
@@ -153,4 +155,82 @@ Calls_Measured :: struct {
 @(log_fact = "errors: the window shows the page {page} of the cases")
 Page_Shown :: struct {
 	page: u64,
+}
+
+// The lines with no value: each sentence is its fact type.
+
+@(log_fact = "errors: a name of a process with an escape byte is refused: as it must")
+Escaped_Name_Refused :: struct {}
+
+@(log_fact = "errors: a kernel command with two wrong arguments gives the two in its table of error details: as it must")
+Two_Details_Given :: struct {}
+
+@(log_fact = "errors: a table smaller than its error details holds the first and counts each one: as it must")
+Small_Table_Counts_Each :: struct {}
+
+@(log_fact = "errors: an accepted kernel command leaves its table of error details empty: as it must")
+Accepted_Command_Table_Empty :: struct {}
+
+@(log_fact = "errors: Log with a level that names no member and one run past the bound gives the two in its table of error details: as it must")
+Log_Details_Given :: struct {}
+
+@(log_fact = "errors: an accepted Log with a table of error details leaves the table empty: as it must")
+Accepted_Log_Table_Empty :: struct {}
+
+@(log_fact = "errors: WRONG: the kernel ring refused a push of the case of a full completion queue")
+Full_Queue_Push_Refused :: struct {}
+
+@(log_fact = "errors: a command past a full completion queue stays unrun in the kernel ring, and the entry does not wait: as it must")
+Command_Past_Full_Queue_Held :: struct {}
+
+@(log_fact = "errors: a kernel call on a kernel ring that holds records is refused with Busy, and its command does not run: as it must")
+Busy_Ring_Call_Refused :: struct {}
+
+@(log_fact = "errors: a wait of the library on a kernel ring that holds records ends at once and pushes nothing: as it must")
+Busy_Ring_Wait_Ended :: struct {}
+
+@(log_fact = "errors: WRONG: a wait of the library on a kernel ring that holds records waited or pushed its command")
+Busy_Ring_Wait_Wrong :: struct {}
+
+@(log_fact = "errors: each answer of a full completion queue arrives once and in order, and the held command runs once after them: as it must")
+Full_Queue_Answers_In_Order :: struct {}
+
+@(log_fact = "errors: the sum of the calls is 0")
+Sum_Of_Calls_Zero :: struct {}
+
+@(log_fact = "errors: the report of the slot of the child after its last handle closed gives its state None and its serial, and no fact of the child: as it must")
+Free_Slot_Report_Empty :: struct {}
+
+@(log_fact = "errors: a stop on a kernel ring that holds records ends the process as a stop of itself, not a fault: as it must")
+Busy_Ring_Stop_Is_Itself :: struct {}
+
+@(log_fact = "errors: no random seed in the context")
+No_Random_Seed :: struct {}
+
+@(log_fact = "errors: WRONG: the case under contention failed")
+Contention_Case_Failed :: struct {}
+
+// The measure of a failed call of each family that is not a kernel
+// operation: a wrapper of support, a command of the root ring, an export.
+// The times of the wrapper and of the export are in hundredths of a
+// nanosecond.
+@(log_fact = "errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): {wrapper_time} ns; a command of the root ring (Connect refused): {root_time} ns; an export (tally.add with a note of 40 bytes, direct): {export_time} ns; {failures} failures")
+Families_Measured :: struct {
+	wrapper_time: value_kinds.Hundredths,
+	root_time:    u64,
+	export_time:  value_kinds.Hundredths,
+	failures:     u64,
+}
+
+// The measure of refused calls: their time and the locks that they took.
+@(log_fact = "errors: {log_refusals} refused Log: {log_time} ns each, the control lock taken {log_control_locks} times and the frame lock {log_frame_locks} times; {create_refusals} refused Memory_Create: {create_time} ns each, the control lock taken {create_control_locks} times and the frame lock {create_frame_locks} times")
+Refusals_Measured :: struct {
+	log_refusals:         u64,
+	log_time:             u64,
+	log_control_locks:    u64,
+	log_frame_locks:      u64,
+	create_refusals:      u64,
+	create_time:          u64,
+	create_control_locks: u64,
+	create_frame_locks:   u64,
 }

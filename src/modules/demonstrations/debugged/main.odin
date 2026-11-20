@@ -459,13 +459,13 @@ child_with_page :: proc "contextless" (role: Role, mode: u64, wait_ready: bool, 
 	made: bool
 	child.memory, child.shared, made = shared_page_create()
 	if !made {
-		system.log(.Info, "debugged: no shared page")
+		system.log_fact(.Info, No_Shared_Page{})
 		return {}, false
 	}
 	started: bool
 	child.process, started = child_start(role, mode, child.memory, target, address)
 	if !started || wait_ready && !wait_until_at_least(&child.shared.ready, 1) {
-		system.log(.Info, "debugged: a child did not start")
+		system.log_fact(.Info, Child_Not_Started{})
 		system.close(child.memory)
 		return {}, false
 	}
@@ -496,7 +496,7 @@ cases_of_one_child :: proc "contextless" () {
 	attached := system.debug_attach(child)
 	system.log_fact(.Info, Attach_Checked{verdict = verdict(attached == .Ok)})
 	if attached != .Ok {
-		system.log_fact(.Info, Attach_Status{status_word = u64(attached)})
+		system.log_fact(.Info, Attach_Status{status_word = op.Status_Word(attached)})
 		return
 	}
 
@@ -518,7 +518,7 @@ cases_of_one_child :: proc "contextless" () {
 	written := system.thread_breakpoints_write(child, 0, breakpoints)
 	_, resumed := system.thread_control_resume(child, 0)
 	if held != .Ok || written != .Ok || resumed != .Ok {
-		system.log_fact(.Info, First_Breakpoint_Not_Set{stop_status_word = u64(held), write_status_word = u64(written), resume_status_word = u64(resumed)})
+		system.log_fact(.Info, First_Breakpoint_Not_Set{stop_status_word = op.Status_Word(held), write_status_word = op.Status_Word(written), resume_status_word = op.Status_Word(resumed)})
 		return
 	}
 	intrinsics.atomic_store(&shared.go, 1)
@@ -526,9 +526,9 @@ cases_of_one_child :: proc "contextless" () {
 	// 5. The thread reaches the procedure.
 	record, came := system.fault_record_next(hang_bound())
 	reached := came && record.kind == u64(op.Fault_Kind.Debug) && record.error_code == 1 && record.instruction == target && record.thread == 0
-	system.log(.Info, "debugged: detail: the record of the execute breakpoint: kind ", u64(record.kind), ", status ", system.Hex(record.error_code), ", instruction ", system.Hex(record.instruction), ", the procedure ", system.Hex(target))
+	system.log_fact(.Info, Execute_Breakpoint_Record{record_kind = u64(record.kind), error_code = value_kinds.Hexadecimal_Sixteen_Digits(record.error_code), instruction = value_kinds.Hexadecimal_Sixteen_Digits(record.instruction), procedure = value_kinds.Hexadecimal_Sixteen_Digits(target)})
 	if !came {
-		system.log(.Info, "debugged: an execute breakpoint at a procedure of the child: no record came: WRONG")
+		system.log_fact(.Info, Execute_Breakpoint_Without_Record{})
 		return
 	}
 
@@ -550,7 +550,7 @@ cases_of_one_child :: proc "contextless" () {
 	value: u64
 	bytes := ([^]u8)(&value)[:8]
 	count, memory_read := system.thread_memory_read(child, 0, known, bytes)
-	system.log(.Info, "debugged: detail: the value of the child ", system.Hex(value), ", the copy of the debugger ", system.Hex(intrinsics.volatile_load(&child_known_value)))
+	system.log_fact(.Info, Child_Value_Read{child_value = value_kinds.Hexadecimal_Sixteen_Digits(value), debugger_copy = value_kinds.Hexadecimal_Sixteen_Digits(intrinsics.volatile_load(&child_known_value))})
 	system.log_fact(.Info, Child_Memory_Read{verdict = verdict(memory_read == .Ok && count == 8 && value == KNOWN_VALUE && intrinsics.volatile_load(&child_known_value) == 0)})
 	_, kernel_read := system.thread_memory_read(child, 0, KERNEL_ADDRESS, bytes)
 	system.log_fact(.Info, Kernel_Memory_Read_Refused{verdict = verdict(kernel_read == .Bad_Address)})
@@ -587,7 +587,7 @@ cases_of_one_child :: proc "contextless" () {
 		// The instruction is one byte, and it moves the stack by 8.
 		moved = after.rip == registers.rip + 1 && after.rsp == registers.rsp - 8
 	}
-	system.log(.Info, "debugged: detail: the step: status ", system.Hex(step.error_code), ", the instruction address from ", system.Hex(registers.rip), " to ", system.Hex(after.rip), ", the first byte ", system.Hex(u64(first[0])))
+	system.log_fact(.Info, Step_Detail{error_code = value_kinds.Hexadecimal_Sixteen_Digits(step.error_code), address_before = value_kinds.Hexadecimal_Sixteen_Digits(registers.rip), address_after = value_kinds.Hexadecimal_Sixteen_Digits(after.rip), first_byte = value_kinds.Hexadecimal_Sixteen_Digits(first[0])})
 	system.log_fact(.Info, Single_Step_Checked{verdict = verdict(step_written == .Ok && step_answered == .Ok && step_came && step.kind == u64(op.Fault_Kind.Debug) && step.error_code & op.DEBUG_STATUS_STEP != 0 && moved)})
 	if !step_came {
 		return
@@ -603,7 +603,7 @@ cases_of_one_child :: proc "contextless" () {
 	system.debug_fault_answer(child, step)
 	write, write_came := system.fault_record_next(hang_bound())
 	system.thread_memory_read(child, 0, watched, bytes)
-	system.log(.Info, "debugged: detail: the record of the data breakpoint: kind ", u64(write.kind), ", status ", system.Hex(write.error_code), ", the word of the child ", value)
+	system.log_fact(.Info, Data_Breakpoint_Record{record_kind = u64(write.kind), error_code = value_kinds.Hexadecimal_Sixteen_Digits(write.error_code), child_word = u64(value)})
 	system.log_fact(.Info, Data_Breakpoint_Reached{verdict = verdict(data_written == .Ok && write_came && write.kind == u64(op.Fault_Kind.Debug) && write.error_code == 2 && value == 1)})
 	if !write_came {
 		return
@@ -738,7 +738,7 @@ cases_of_two_threads :: proc "contextless" () {
 	own_resume := wait_until_at_least(&shared.answered, 2)
 	resume_status := intrinsics.atomic_load(&shared.status) // The word that the child wrote: it is compared, never read as a status.
 	resume_count := intrinsics.atomic_load(&shared.count)
-	system.log_fact(.Info, Own_Stop_Counts{stop_count = u64(count), resume_status_word = u64(resume_status), resume_count = u64(resume_count)})
+	system.log_fact(.Info, Own_Stop_Counts{stop_count = u64(count), resume_status_word = op.Status_Word(resume_status), resume_count = u64(resume_count)})
 	system.log_fact(.Info, Own_Stop_Kept_After_Detach{verdict = verdict(own_stop && debugger_stop == .Ok && count == 2 && detached == .Ok && own_resume && resume_status == u32(system.Status.Ok) && resume_count == 0)})
 }
 
@@ -760,7 +760,7 @@ cases_of_the_kernel_copy :: proc "contextless" () {
 	written := system.thread_breakpoints_write(child, 0, breakpoints)
 	_, resumed := system.thread_control_resume(child, 0)
 	if attached != .Ok || held != .Ok || written != .Ok || resumed != .Ok {
-		system.log_fact(.Info, Data_Breakpoints_Not_Set{attach_status_word = u64(attached), stop_status_word = u64(held), write_status_word = u64(written), resume_status_word = u64(resumed)})
+		system.log_fact(.Info, Data_Breakpoints_Not_Set{attach_status_word = op.Status_Word(attached), stop_status_word = op.Status_Word(held), write_status_word = op.Status_Word(written), resume_status_word = op.Status_Word(resumed)})
 		return
 	}
 
@@ -799,7 +799,7 @@ cases_of_the_kernel_copy :: proc "contextless" () {
 		system.debug_fault_answer(child, read)
 	}
 	clean := wait_for_stop(child, "the child")
-	system.log(.Info, "debugged: detail: Log gave the status ", u64(logged), "; the record of the read of the child: status ", system.Hex(read.error_code))
+	system.log_fact(.Info, Kernel_Copy_Detail{log_status = op.Status_Word(logged), error_code = value_kinds.Hexadecimal_Sixteen_Digits(read.error_code)})
 	system.log_fact(.Info, Kernel_Copy_Breakpoint{verdict = verdict(copied && logged == u32(system.Status.Ok) && no_record && read_came && read.kind == u64(op.Fault_Kind.Debug) && read.error_code & 1 != 0 && clean)})
 	system.log_fact(.Info, Stack_Selector_Trap{trap_path = value_kinds.text_field(came_to_the_debugger ? "came to the debugger before the syscall" : "was held until the kernel entry, and the kernel dropped it", 64)})
 	system.log_fact(.Info, Stack_Selector_Breakpoint{verdict = verdict(entered && clean)})
@@ -873,12 +873,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case .Parent:
 	}
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "debugged: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
-		system.log(.Info, "debugged: no boot image")
+		system.log_fact(.Info, No_Boot_Image{})
 		system.stop(.Failed)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]

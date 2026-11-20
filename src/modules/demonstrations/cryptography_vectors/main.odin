@@ -405,11 +405,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			failed += 1
 		}
 	}
-	// The head of 16 bytes of a module hash, which no type of a field of the
-	// kind Hash holds: the line stays text until a type of that size
-	// exists.
-	hash: interface.Text_Builder
-	system.log(.Info, "cryptography_vectors: the module cryptography, BLAKE3 ", hash_text(&hash, module_hash[:16]), "...: ", u64(vector_count - failed), " of ", u64(vector_count), " vectors passed")
+	hash_head: value_kinds.Hash_Sixteen_Bytes_Field
+	copy(hash_head[:], module_hash[:])
+	system.log_fact(.Info, Vectors_Of_Module{module_hash_head = hash_head, passed = u64(vector_count - failed), vectors = u64(vector_count)})
 	done = true
 	for {
 		draw(&window)

@@ -147,7 +147,7 @@ twins_start :: proc "contextless" (processes: ^[TWIN_COUNT]system.Handle, table:
 	for &process, index in processes {
 		status: system.Status
 		if process, status = twin_start(TWIN_NAMES[index], .Wait, table); status != .Ok {
-			system.log_fact(.Info, Twin_Not_Started{status_word = u64(status)})
+			system.log_fact(.Info, Twin_Not_Started{status_word = op.Status_Word(status)})
 			return 0, 0, false
 		}
 	}
@@ -286,7 +286,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "frames: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "frames")

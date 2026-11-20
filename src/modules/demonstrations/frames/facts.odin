@@ -1,5 +1,7 @@
 package frames
 
+import op "modus:contract/operation"
+
 // The log facts of the demonstration frames (src/md/features/log_facts.md,
 // "The facts of the demonstrations"): its measures and its cases, as
 // records of fields. Each fact template is the sentence that the line wrote
@@ -10,7 +12,7 @@ package frames
 // A twin did not start: the word of the status.
 @(log_fact = "frames: cannot start a twin: status {status_word}")
 Twin_Not_Started :: struct {
-	status_word: u64,
+	status_word: op.Status_Word,
 }
 
 // The pages of 4 twins with a copy of the module each, and with the shared
@@ -56,3 +58,8 @@ Wrong_Answer :: struct {
 Frames_Held :: struct {
 	cases: u64,
 }
+
+// The context has no random seed: the process gives the seed of each twin,
+// and stops with Refused.
+@(log_fact = "frames: no random seed in the context")
+No_Random_Seed :: struct {}

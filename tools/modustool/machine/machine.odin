@@ -3014,7 +3014,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "disk: write, 1 block in each request, 32 in flight: "},
 	{kind = .Wait, text = "disk: read, 16 blocks in each request, 8 in flight: "},
 	{kind = .Record, process = "disk", level = "Info", text = "disk: ok, 5 runs, 0 errors, write then read back: 0 wrong"},
-	{kind = .Wait, text = "disk: a read of 2 blocks from the last block: block.Read: the argument first reaches 8193 blocks, past the end: there are 8192 blocks"},
+	{kind = .Wait, text = "disk: a read of 2 blocks from the last block: kind Out_Of_Range, unit Blocks, operation 3, argument 1, value 8193, limit 8192, found 0"},
 	// The words of a command record that name no command: None, one past
 	// the last command, the largest word. The block service answers what
 	// its border decided, and serves the next command.
@@ -3766,8 +3766,8 @@ scenario_measure := [?]Step {
 	// save of the extended state (docs/ARCHITECTURE.md, "The extended state
 	// of the processor", section 4).
 	{kind = .Launch, text = "extended_state"},
-	{kind = .Wait, text = "extended_state: the parts of a save and a restore, each alone in this process, cycles of the cycle counter for one loop (ns): "},
-	{kind = .Wait, text = "extended_state: each instruction alone, cycles of the cycle counter for one loop (ns), the loop included: "},
+	{kind = .Wait, text = "extended_state: a part of a save and a restore, alone in this process: the loop "},
+	{kind = .Wait, text = "extended_state: an instruction alone, the loop included: vzeroupper "},
 	{kind = .Wait, text = "extended_state: a hand-over between two threads by the word wait (a wake, a wait, and the save and restore of the thread that waits and of the thread that runs): "},
 	{kind = .Wait, text = "extended_state: an empty kernel entry, 100000 times: "},
 	{kind = .Wait, text = "extended_state: ok, "},

@@ -146,8 +146,10 @@ scenario_tcp_real := [?]Step {
 	{kind = .Type, text = "start(\"fetch\")"},
 	{kind = .Wait, text = "network: an endpoint for fetch: TCP, the local ports "},
 	{kind = .Wait, text = "fetch: the grant: TCP to 10.0.2.100 port 80 only, from the local ports "},
-	{kind = .Wait, text = "fetch: a SYN to 10.0.2.2 port 80: refused by the network service: datagram.Send: the argument address, 10.0.2.2 port 80, is refused: the grant names 10.0.2.100 port 80 only"},
-	{kind = .Wait, text = "fetch: a SYN from the local port 1234: refused: datagram.Send: the local port 1234 of the segment is not a port of this endpoint (its ports are "},
+	// The value and the limit are remotes: endpoint_pack of 10.0.2.2 port
+	// 80, and of 10.0.2.100 port 80.
+	{kind = .Wait, text = "fetch: a SYN to 10.0.2.2 port 80: refused by the network service: kind No_Grant, unit Endpoint, operation 2, argument 3, value 10995149963344, limit 10995156385872, found 0"},
+	{kind = .Wait, text = "fetch: a SYN from the local port 1234: refused: kind No_Grant, unit Endpoint, operation 2, argument 3, value 10995156385872, limit 10995156385872, found 1234 (its ports are "},
 	{kind = .Wait, text = "fetch: the handshake with 10.0.2.100 port 80: established in "},
 	{kind = .Wait, text = "fetch: GET /hello: status 200, \"hello from the host\" in "},
 	{kind = .Wait, text = "fetch: GET /large: 1048576 bytes, fnv1a64 e7867887f2822325 as expected, "},

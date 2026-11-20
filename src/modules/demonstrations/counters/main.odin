@@ -70,7 +70,7 @@ loop_sink: u64
 // demonstration, and stops the process with `Failed`. Its sentence starts
 // with "counters: failed: ".
 step_failed :: proc "contextless" (step: string, status: system.Status) -> ! {
-	system.log_fact(.Info, Step_Failed{status_word = u64(status), step = value_kinds.text_field(step, 56)})
+	system.log_fact(.Info, Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field(step, 56)})
 	system.stop(.Failed)
 }
 
@@ -78,7 +78,7 @@ step_failed :: proc "contextless" (step: string, status: system.Status) -> ! {
 // with `expected` and that gave another status, and stops the process with
 // `Failed`.
 step_not_refused :: proc "contextless" (step: string, status, expected: system.Status) -> ! {
-	system.log_fact(.Info, Step_Not_Refused{status_word = u64(status), expected = expected, refused_step = value_kinds.text_field(step, 68)})
+	system.log_fact(.Info, Step_Not_Refused{status_word = op.Status_Word(status), expected = expected, refused_step = value_kinds.text_field(step, 68)})
 	system.stop(.Failed)
 }
 
@@ -149,8 +149,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if refused != .No_Right {
 		step_not_refused("Start_Counters with a copy of the machine handle with no right", refused, .No_Right)
 	}
-	// A line with no value stays text: a fact type needs a field.
-	system.log(.Info, "counters: Start_Counters with a copy of the machine handle with no right gave No_Right: as it must")
+	system.log_fact(.Info, Start_Without_Right_Refused{})
 
 	// 2. No count before a start, or no counters on this machine.
 	error: errors.Error_Record
@@ -161,14 +160,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if start_status != .Bad_Operation || start_error.kind != i64(errors.Kind.Unsupported) {
 			step_failed("Read_Counters gave Unsupported and Start_Counters", start_status)
 		}
-		system.log(.Info, "counters: Read_Counters and Start_Counters gave Bad_Operation with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must")
-		system.log(.Info, "counters: ok")
+		system.log_fact(.Info, Counters_Unsupported{})
+		system.log_fact(.Info, Counters_Held{})
 		system.stop(.Done)
 	}
 	if before_start != .Bad_State {
 		step_not_refused("Read_Counters before Start_Counters", before_start, .Bad_State)
 	}
-	system.log(.Info, "counters: Read_Counters before Start_Counters gave Bad_State: as it must")
+	system.log_fact(.Info, Read_Before_Start_Refused{})
 
 	// 3. A loop of known length.
 	if status := system.thread_counters_start(machine); status != .Ok {
@@ -190,11 +189,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// 4. The thread goes on counting.
 	later := read_or_fail(machine, "a second time")
 	if later.instructions_retired < loop.instructions_retired || later.cycles < loop.cycles || later.cache_misses < loop.cache_misses || later.branch_misses < loop.branch_misses {
-		// A line with no value stays text: a fact type needs a field.
-		system.log(.Info, "counters: failed: a second read gave a count below the first")
+		system.log_fact(.Info, Second_Read_Below_First{})
 		system.stop(.Failed)
 	}
-	system.log(.Info, "counters: a second read gave no count below the first: as it must")
+	system.log_fact(.Info, Second_Read_Not_Below{})
 
 	// 5. One data layout read in two orders.
 	region, created := system.memory_create(REGION_PAGES)
@@ -233,7 +231,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if _, after_stop := system.thread_counters_read(machine); after_stop != .Bad_State {
 		step_not_refused("Read_Counters after Stop_Counters", after_stop, .Bad_State)
 	}
-	system.log(.Info, "counters: Stop_Counters with no handle gave Ok, and Read_Counters after it gave Bad_State: as it must")
-	system.log(.Info, "counters: ok")
+	system.log_fact(.Info, Stop_Without_Handle_Checked{})
+	system.log_fact(.Info, Counters_Held{})
 	system.stop(.Done)
 }

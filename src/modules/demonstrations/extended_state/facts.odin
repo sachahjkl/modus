@@ -1,5 +1,7 @@
 package extended_state
 
+import "modus:contract/value_kinds"
+
 // The log facts of the demonstration extended_state
 // (src/md/features/log_facts.md, "The facts of the demonstrations"): what
 // the kernel saves, the measures and the end, as records of fields. Each
@@ -7,10 +9,8 @@ package extended_state
 // so a wait of a machine test on that sentence reads it as before. A Text
 // field comes last, and holds its longest text and a zero byte.
 //
-// Some lines stay text: a register that a pass found wrong, which
-// system.Hex writes in 16 digits with no "0x"; the times of the parts of a
-// save with one decimal, which no field kind writes; and the instruction
-// sets, three lists whose names are longer together than a fact holds.
+// A line that a loop wrote, the parts of a save, is one fact for each
+// part. The times of a part are in hundredths: the line wrote tenths.
 
 // The state components that the kernel saves, and the most bytes of one
 // save.
@@ -58,4 +58,76 @@ Registers_Kept :: struct {
 Registers_Wrong :: struct {
 	wrong_registers:   u64,
 	wrong_start_parts: u64,
+}
+
+// The usable instruction sets of the xmm registers. The sets of AVX and of
+// the general registers are facts of their own: the three lists are longer
+// together than the values of one fact hold.
+@(log_fact = "extended_state: the usable instruction sets: {xmm_sets}")
+Usable_Sets :: struct {
+	xmm_sets: [56]u8,
+}
+
+@(log_fact = "extended_state: the usable instruction sets of AVX: {avx_sets}")
+Usable_Sets_Of_Avx :: struct {
+	avx_sets: [80]u8,
+}
+
+@(log_fact = "extended_state: the usable instruction sets of the general registers: {general_register_sets}")
+Usable_Sets_Of_General_Registers :: struct {
+	general_register_sets: [24]u8,
+}
+
+@(log_fact = "extended_state: AVX is not usable: the processor does not have it or the kernel does not save it; the test holds xmm0 to xmm15")
+Avx_Not_Usable :: struct {}
+
+// A register that a pass found wrong: the value expected and the value
+// found, as system.Hex writes them.
+@(log_fact = "extended_state: WRONG: thread {thread_number}, {register}, {moment} {pass}: expected {expected}, found {found}")
+Register_Wrong :: struct {
+	thread_number: u64,
+	pass:          u64,
+	expected:      value_kinds.Hexadecimal_Sixteen_Digits,
+	found:         value_kinds.Hexadecimal_Sixteen_Digits,
+	register:      [24]u8,
+	moment:        [24]u8,
+}
+
+// The measure of one part of a save and a restore, alone in this process:
+// the cycles of one loop and their time, in hundredths.
+@(log_fact = "extended_state: a part of a save and a restore, alone in this process: {part_name} {cycles} cycles of the cycle counter for one loop ({part_time} ns)")
+Save_Part_Measured :: struct {
+	cycles:    value_kinds.Hundredths,
+	part_time: value_kinds.Hundredths,
+	part_name: [40]u8,
+}
+
+// A part of a save and a restore that this processor cannot run.
+@(log_fact = "extended_state: a part of a save and a restore, alone in this process: {part_name} none")
+Save_Part_Not_Measured :: struct {
+	part_name: [40]u8,
+}
+
+// The measure of one instruction alone, the loop included.
+@(log_fact = "extended_state: an instruction alone, the loop included: {part_name} {cycles} cycles of the cycle counter for one loop ({part_time} ns)")
+Instruction_Measured :: struct {
+	cycles:    value_kinds.Hundredths,
+	part_time: value_kinds.Hundredths,
+	part_name: [40]u8,
+}
+
+// An instruction that this processor cannot run.
+@(log_fact = "extended_state: an instruction alone, the loop included: {part_name} none")
+Instruction_Not_Measured :: struct {
+	part_name: [40]u8,
+}
+
+// The measure of a hand-over between two threads by the word wait.
+@(log_fact = "extended_state: a hand-over between two threads by the word wait (a wake, a wait, and the save and restore of the thread that waits and of the thread that runs): {x87_and_sse_time} ns with x87 and SSE in use, {ymm_time} ns with the ymm high halves in use (0: not usable); {x87_and_sse_hand_overs} and {ymm_hand_overs} hand-overs in {period} ms each")
+Hand_Over_Measured :: struct {
+	x87_and_sse_time:       u64,
+	ymm_time:               u64,
+	x87_and_sse_hand_overs: u64,
+	ymm_hand_overs:         u64,
+	period:                 u64,
 }
