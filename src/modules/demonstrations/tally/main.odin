@@ -40,6 +40,12 @@ window_memory: interface.Window_Memory(512, 8192)
 
 WIDTH :: 400
 HEIGHT :: 214
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (168 pages): its module, its
+// stack, its tables and its glyph memory. The tool counts the window at
+// the window bound (docs/MODULE_CONTRACT.md, "The budget that a module
+// asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1880, window_width = WIDTH, window_height = HEIGHT}
 NOTE_CAPACITY :: 8
 NOTE_SIZE :: 36
 
@@ -256,7 +262,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if !outcome.taken {
 					key_run(press)
 				}
-			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
+			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Surface_Answer:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

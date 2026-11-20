@@ -3,6 +3,7 @@ package interface
 
 import "modus:contract/draw_record"
 import "modus:contract/ring"
+import "modus:contract/scale_factor"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/kind_icons"
@@ -1872,10 +1873,16 @@ grid_numbers_that_wrap_are_refused :: proc(t: ^testing.T) {
 // changes, or each one. Some frames find a compositor that did not take
 // the picture before and are left out; some lose their Present to a full
 // ring; some have more records than their table holds.
+//
+// The window is at the scale 1.375, whose edges round: its records and its
+// damage are logical, its pictures and each Present are pixels of the
+// screen, and a damage that missed a pixel of the screen shows.
 @(test)
 window_frame_end_shows_each_frame_whole :: proc(t: ^testing.T) {
-	WIDTH :: 96
-	HEIGHT :: 96
+	LOGICAL_SIZE :: 96
+	SCALE :: scale_factor.Scale.Eleven_Eighths
+	WIDTH :: (LOGICAL_SIZE * int(SCALE) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE
+	HEIGHT :: WIDTH
 	SQUARES :: 12
 	Pixels :: [WIDTH * HEIGHT]graphics.Color
 	pictures: [2]Pixels
@@ -1896,9 +1903,15 @@ window_frame_end_shows_each_frame_whole :: proc(t: ^testing.T) {
 	window.ring.commands = {counters = &counters, records = raw_data(ring_records[:]), mask = 7}
 	window.pictures = {canvas_of(&pictures[0]), canvas_of(&pictures[1])}
 	window.canvas = window.pictures[0]
+	window.width, window.height = LOGICAL_SIZE, LOGICAL_SIZE
+	window.rescale = {phase = .Steady, scale = SCALE, wanted = SCALE, serial = 1}
+	testing.expect_value(t, WIDTH, int(scale_factor.screen_pixel_of_logical_pixel(LOGICAL_SIZE, SCALE)))
 	records_now, records_before: [32]Draw_Record
 	text_now, text_before: [64]u8
 	drawing := window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	// The table is drawn at the scale of the window, as window_frame_begin
+	// sets it; the reference below draws it whole at the same scale.
+	drawing.now.scale = SCALE
 	colors: [SQUARES]graphics.Color
 	palette := [3]graphics.Color{0x30A050, 0x5080C0, 0xE0E0E0}
 	seed: u32 = 11

@@ -25,7 +25,10 @@ theme System
 license MIT
 attribution The pointer theme of the system, drawn as outlines in resources/pointers/system.manifest.
 
-sizes 24 48
+# 24 at scale 1; 30 and 33 are the pointer at the scales 1.25 and 1.375 of
+# the desktop, which the compositor asks for (24 logical pixels at the
+# scale); 48 is the scale 2.
+sizes 24 30 33 48
 
 # The arrow: a large head and a short tail. The point on the corner 1,1;
 # the left side upright, 16 pixels; the right side at 45 degrees to the

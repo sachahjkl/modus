@@ -1,0 +1,303 @@
+#+build !freestanding
+package bar
+
+import "core:testing"
+import "modus:contract/scale_factor"
+import "modus:contract/settings"
+
+// A page that the read refuses keeps the scale in force: the all-zero page,
+// a page whose writer is in its change (an odd count), and a page whose
+// scale word is past the window bound. Each gives its defaults, 1.25 for
+// the scale among them, and the desktop at 1.375 stays at 1.375. The page
+// that the read takes comes last.
+@(test)
+a_refused_page_keeps_the_scale :: proc(t: ^testing.T) {
+	in_force := scale_factor.Scale.Eleven_Eighths
+	page: settings.Page
+	choice, read_ok := settings.read(&page)
+	testing.expect(t, !read_ok)
+	testing.expect_value(t, scale_after_read(in_force, choice.scale, read_ok), in_force)
+
+	written := settings.choice_default()
+	settings.write(&page, written, 0, .Dark)
+	page.change_count += 1 // A writer left in its change.
+	choice, read_ok = settings.read(&page)
+	testing.expect(t, !read_ok)
+	testing.expect_value(t, scale_after_read(in_force, choice.scale, read_ok), in_force)
+
+	page = {}
+	settings.write(&page, written, 0, .Dark)
+	page.values[settings.Setting.Scale] = u32(scale_factor.WINDOW_BOUND) + 1
+	choice, read_ok = settings.read(&page)
+	testing.expect(t, !read_ok)
+	testing.expect_value(t, scale_after_read(in_force, choice.scale, read_ok), in_force)
+
+	page = {}
+	settings.write(&page, written, 0, .Dark)
+	choice, read_ok = settings.read(&page)
+	testing.expect(t, read_ok)
+	testing.expect_value(t, scale_after_read(in_force, choice.scale, read_ok), scale_factor.DEFAULT)
+}
+
+@(private = "file")
+BORDER_OF_TEST :: 2
+@(private = "file")
+TITLE_OF_TEST :: 24
+@(private = "file")
+PAGE_OF_TEST :: 4096
+
+// A Surface_Create that the compositor takes: a window of 560 x 592
+// logical pixels at 1.25, 700 x 740 pixels of the screen.
+@(private = "file")
+create_of_test :: proc() -> Surface_Create_Facts {
+	return {is_memory = true, readable = true, memory_bytes = 700 * 740 * SURFACE_BYTES_FOR_EACH_PIXEL, scale_word = u64(scale_factor.Scale.Ten_Eighths), width = 560, height = 592}
+}
+
+// The sizes of Surface_Create. Each refusal first: no memory, no Read, a
+// logical side of 0, one past the limit, 4096 and the largest word; a scale
+// word of no member, and one past the window bound; memory one byte short
+// of the pixels at the scale of the record. Then the edges that hold: 1 x 1,
+// and the limit at each scale up to the bound, whose pixels of the screen
+// are 2560 at 1.25 and 2816 at 1.375.
+@(test)
+surface_create_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
+	Case :: struct {
+		facts:   Surface_Create_Facts,
+		refusal: Surface_Create_Refusal,
+	}
+	cases: [12]Case
+	for &each in cases {
+		each.facts = create_of_test()
+	}
+	cases[0].facts.is_memory, cases[0].refusal = false, .Not_Memory
+	cases[1].facts.readable, cases[1].refusal = false, .No_Read
+	cases[2].facts.width, cases[2].refusal = 0, .Size_Out_Of_Range
+	cases[3].facts.height, cases[3].refusal = 0, .Size_Out_Of_Range
+	cases[4].facts.width, cases[4].refusal = WINDOW_LOGICAL_LIMIT + 1, .Size_Out_Of_Range
+	cases[5].facts.height, cases[5].refusal = 4096, .Size_Out_Of_Range
+	cases[6].facts.width, cases[6].refusal = max(u64), .Size_Out_Of_Range
+	cases[7].facts.scale_word, cases[7].refusal = 0, .No_Scale
+	cases[8].facts.scale_word, cases[8].refusal = scale_factor.EIGHTHS_OF_ONE, .No_Scale
+	cases[9].facts.scale_word, cases[9].refusal = u64(scale_factor.WINDOW_BOUND) + 1, .No_Scale
+	cases[10].facts.scale_word, cases[10].refusal = max(u64), .No_Scale
+	cases[11].facts.memory_bytes, cases[11].refusal = 700 * 740 * SURFACE_BYTES_FOR_EACH_PIXEL - 1, .Too_Small
+	for each, index in cases {
+		refusal, _, screen_width, screen_height := surface_create_refusal(each.facts)
+		testing.expectf(t, refusal == each.refusal, "case %d gives %v, not %v", index, refusal, each.refusal)
+		testing.expectf(t, screen_width == 0 && screen_height == 0, "case %d gives a size", index)
+	}
+	// The memory of the pixels at 1.25 does not hold the pixels at 1.375.
+	facts := create_of_test()
+	facts.scale_word = u64(scale_factor.Scale.Eleven_Eighths)
+	refusal, _, _, _ := surface_create_refusal(facts)
+	testing.expect_value(t, refusal, Surface_Create_Refusal.Too_Small)
+
+	facts = create_of_test()
+	scale: scale_factor.Scale
+	screen_width, screen_height: u64
+	refusal, scale, screen_width, screen_height = surface_create_refusal(facts)
+	testing.expect(t, refusal == .None && scale == .Ten_Eighths && screen_width == 700 && screen_height == 740)
+	facts.width, facts.height, facts.memory_bytes = 1, 1, SURFACE_BYTES_FOR_EACH_PIXEL
+	refusal, _, screen_width, screen_height = surface_create_refusal(facts)
+	testing.expect(t, refusal == .None && screen_width == 1 && screen_height == 1)
+	for limit in ([?][2]u64{{u64(scale_factor.Scale.Ten_Eighths), 2560}, {u64(scale_factor.Scale.Eleven_Eighths), 2816}}) {
+		facts = {is_memory = true, readable = true, memory_bytes = limit[1] * limit[1] * SURFACE_BYTES_FOR_EACH_PIXEL, scale_word = limit[0], width = WINDOW_LOGICAL_LIMIT, height = WINDOW_LOGICAL_LIMIT}
+		refusal, _, screen_width, screen_height = surface_create_refusal(facts)
+		testing.expectf(t, refusal == .None && screen_width == limit[1] && screen_height == limit[1], "the limit at %d eighths gives %v, %d", limit[0], refusal, screen_width)
+	}
+}
+
+// Each logical size up to the limit, at each scale up to the bound, gives
+// pixels of the screen that give it back: the compositor keeps the logical
+// size of the record and the pixels of the rule, so a surface never has
+// pixels that no logical size gives (1252 at 1.25 is one: 1001 gives 1251,
+// 1002 gives 1253).
+@(test)
+each_logical_size_gives_its_pixels_back :: proc(t: ^testing.T) {
+	for scale in ([?]scale_factor.Scale{.Ten_Eighths, .Eleven_Eighths}) {
+		for logical in i32(1) ..= WINDOW_LOGICAL_LIMIT {
+			pixels := scale_factor.screen_pixel_of_logical_pixel(logical, scale)
+			back := scale_factor.logical_pixel_of_screen_pixel(i32(pixels), scale)
+			if back != i64(logical) {
+				testing.expectf(t, false, "%d at %v gives %d pixels, which give %d", logical, scale, pixels, back)
+				return
+			}
+		}
+	}
+	testing.expect_value(t, scale_factor.screen_pixel_of_logical_pixel(1001, .Ten_Eighths), 1251)
+	testing.expect_value(t, scale_factor.screen_pixel_of_logical_pixel(1002, .Ten_Eighths), 1253)
+}
+
+// A Surface_Rescale that the compositor takes: a window of 1000 x 704
+// logical pixels, released at the serial 4, offers the serial 5 at 1.375,
+// 1375 x 968 pixels of the screen.
+@(private = "file")
+rescale_of_test :: proc() -> Surface_Rescale_Facts {
+	return {
+		gift            = true,
+		is_memory       = true,
+		readable        = true,
+		memory_bytes    = 1375 * 968 * SURFACE_BYTES_FOR_EACH_PIXEL,
+		width           = 1375,
+		height          = 968,
+		scale_word      = u64(scale_factor.Scale.Eleven_Eighths),
+		serial          = 5,
+		created         = true,
+		released        = true,
+		released_serial = 4,
+		scale           = .Eleven_Eighths,
+		window_width    = 1000,
+		window_height   = 704,
+	}
+}
+
+// The refusals of Surface_Rescale. Each refusal first: a size one pixel
+// off on each axis, each way; memory one page short and one byte short;
+// no Read; a handle that is no gift; no memory; a request of the principal
+// that waits; a surface that waits for its Present; a window that still
+// shows its surface; a window before Surface_Create; a serial that is not
+// the next one; a scale word of no member, past the bound, or not the scale
+// of the compositor. The procedure is pure: a refusal changes nothing, and
+// the compositor answers Rescale_Refused. The case that holds comes last.
+@(test)
+surface_rescale_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
+	Case :: struct {
+		facts:   Surface_Rescale_Facts,
+		refusal: Surface_Rescale_Refusal,
+	}
+	cases: [22]Case
+	for &each in cases {
+		each.facts = rescale_of_test()
+	}
+	cases[0].facts.width, cases[0].refusal = 1374, .Other_Size
+	cases[1].facts.width, cases[1].refusal = 1376, .Other_Size
+	cases[2].facts.height, cases[2].refusal = 967, .Other_Size
+	cases[3].facts.height, cases[3].refusal = 969, .Other_Size
+	cases[4].facts.width, cases[4].refusal = 0, .Other_Size
+	cases[5].facts.memory_bytes, cases[5].refusal = 1375 * 968 * SURFACE_BYTES_FOR_EACH_PIXEL - PAGE_OF_TEST, .Too_Small
+	cases[6].facts.memory_bytes, cases[6].refusal = 1375 * 968 * SURFACE_BYTES_FOR_EACH_PIXEL - 1, .Too_Small
+	cases[7].facts.readable, cases[7].refusal = false, .No_Read
+	cases[8].facts.gift, cases[8].refusal = false, .Not_A_Gift
+	cases[9].facts.is_memory, cases[9].refusal = false, .Not_Memory
+	cases[10].facts.asked, cases[10].refusal = true, .Asked
+	cases[11].facts.pending, cases[11].refusal = true, .Pending
+	cases[12].facts.released, cases[12].refusal = false, .Not_Released
+	cases[13].facts.created, cases[13].refusal = false, .No_Window
+	cases[14].facts.serial, cases[14].refusal = 4, .Other_Serial
+	cases[15].facts.serial, cases[15].refusal = 6, .Other_Serial
+	cases[16].facts.serial, cases[16].refusal = 0, .Other_Serial
+	cases[17].facts.scale_word, cases[17].refusal = 0, .Other_Scale
+	cases[18].facts.scale_word, cases[18].refusal = u64(scale_factor.WINDOW_BOUND) + 1, .Other_Scale
+	cases[19].facts.scale_word, cases[19].refusal = u64(scale_factor.Scale.Ten_Eighths), .Other_Scale
+	cases[20].facts.window_width, cases[20].refusal = WINDOW_LOGICAL_LIMIT + 1, .Other_Size
+	cases[21].facts.window_height, cases[21].refusal = 0, .Other_Size
+	for each, index in cases {
+		refusal := surface_rescale_refusal(each.facts)
+		testing.expectf(t, refusal == each.refusal, "case %d gives %v, not %v", index, refusal, each.refusal)
+	}
+	// The surface of the right size at 1.25 for a compositor at 1.375 is
+	// the scale that the window read before the change: refused.
+	facts := rescale_of_test()
+	facts.width, facts.height, facts.scale_word = 1250, 880, u64(scale_factor.Scale.Ten_Eighths)
+	testing.expect_value(t, surface_rescale_refusal(facts), Surface_Rescale_Refusal.Other_Scale)
+	// The case that holds, and memory larger than needed.
+	facts = rescale_of_test()
+	testing.expect_value(t, surface_rescale_refusal(facts), Surface_Rescale_Refusal.None)
+	facts.memory_bytes += PAGE_OF_TEST
+	testing.expect_value(t, surface_rescale_refusal(facts), Surface_Rescale_Refusal.None)
+}
+
+// The largest grid that the seam test paints: a window of up to 64 logical
+// pixels at a corner up to 16, at 1.375.
+@(private = "file")
+GRID_SIDE :: 160
+
+@(private = "file")
+grid_paint :: proc(grid: ^[GRID_SIDE][GRID_SIDE]bool, box: Screen_Box) {
+	for y in max(box.top, 0) ..< min(box.bottom, GRID_SIDE) {
+		for x in max(box.left, 0) ..< min(box.right, GRID_SIDE) {
+			grid[y][x] = true
+		}
+	}
+}
+
+@(private = "file")
+box_inside :: proc(inner, outer: Screen_Box) -> bool {
+	return inner.left >= outer.left && inner.top >= outer.top && inner.right <= outer.right && inner.bottom <= outer.bottom
+}
+
+// The seam between the frame and the surface, at each corner of 0 to 15
+// logical pixels and odd sizes, at 1.25 and at 1.375: the frame parts and
+// the surface, cut to the interior, cover each pixel of the screen box of
+// the frame, and nothing outside it. A surface of the size of the rule can
+// be one pixel smaller than the interior on the screen, whose edges round
+// on their own: the border that reaches one logical pixel under the
+// interior covers that pixel.
+@(test)
+the_frame_and_the_surface_meet_with_no_gap :: proc(t: ^testing.T) {
+	for scale in ([?]scale_factor.Scale{.Ten_Eighths, .Eleven_Eighths}) {
+		for corner_x in 0 ..< 16 {
+			for corner_y in 0 ..< 16 {
+				for size in ([?][2]int{{1, 1}, {7, 3}, {13, 29}, {64, 63}}) {
+					width, height := size[0], size[1]
+					outer := screen_box_of({corner_x, corner_y, corner_x + width + 2 * BORDER_OF_TEST, corner_y + height + TITLE_OF_TEST + BORDER_OF_TEST}, scale)
+					interior := screen_box_of({corner_x + BORDER_OF_TEST, corner_y + TITLE_OF_TEST, corner_x + BORDER_OF_TEST + width, corner_y + TITLE_OF_TEST + height}, scale)
+					surface := surface_clip(interior.left, interior.top, int(scale_factor.screen_pixel_of_logical_pixel(i32(width), scale)), int(scale_factor.screen_pixel_of_logical_pixel(i32(height), scale)), interior)
+					grid: [GRID_SIDE][GRID_SIDE]bool
+					grid_paint(&grid, surface)
+					testing.expect(t, box_inside(surface, interior))
+					parts := frame_parts(corner_x, corner_y, width, height, BORDER_OF_TEST, TITLE_OF_TEST)
+					for part in parts {
+						on_screen := screen_box_of(part, scale)
+						testing.expectf(t, box_inside(on_screen, outer), "a frame part %v is outside %v", on_screen, outer)
+						grid_paint(&grid, on_screen)
+					}
+					for y in 0 ..< GRID_SIDE {
+						for x in 0 ..< GRID_SIDE {
+							inside := x >= outer.left && x < outer.right && y >= outer.top && y < outer.bottom
+							if grid[y][x] != inside {
+								testing.expectf(t, false, "at %v, the window %v at %d,%d: the pixel %d,%d is %v", scale, size, corner_x, corner_y, x, y, grid[y][x] ? "covered outside the frame" : "a gap")
+								return
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// The overflow of a change 1.375 to 1.25: the surface of 1.375, larger than
+// the interior at 1.25, is cut to the interior, so no pixel of it lands
+// outside the frame, over the background or another window; the other way,
+// the surface of 1.25 in an interior at 1.375 leaves a part that the
+// compositor fills with the background.
+@(test)
+a_surface_of_another_scale_stays_inside_its_window :: proc(t: ^testing.T) {
+	for size in ([?][2]int{{1, 1}, {560, 592}, {1000, 704}, {WINDOW_LOGICAL_LIMIT, WINDOW_LOGICAL_LIMIT}}) {
+		for corner in ([?][2]int{{0, 0}, {3, 7}, {-5, 33}, {1535, 863}}) {
+			larger_width := int(scale_factor.screen_pixel_of_logical_pixel(i32(size[0]), .Eleven_Eighths))
+			larger_height := int(scale_factor.screen_pixel_of_logical_pixel(i32(size[1]), .Eleven_Eighths))
+			interior := screen_box_of({corner[0] + BORDER_OF_TEST, corner[1] + TITLE_OF_TEST, corner[0] + BORDER_OF_TEST + size[0], corner[1] + TITLE_OF_TEST + size[1]}, .Ten_Eighths)
+			box := surface_clip(interior.left, interior.top, larger_width, larger_height, interior)
+			testing.expect(t, box_inside(box, interior))
+			// From 8 logical pixels, the surface of 1.375 is at least one
+			// pixel larger than the interior at 1.25, whose edges round on
+			// their own: it fills it, and its overflow is cut.
+			if size[0] >= 8 {
+				testing.expectf(t, box == interior, "the surface of 1.375 of %v at %v covers %v, not the interior %v", size, corner, box, interior)
+			}
+			smaller_width := int(scale_factor.screen_pixel_of_logical_pixel(i32(size[0]), .Ten_Eighths))
+			smaller_height := int(scale_factor.screen_pixel_of_logical_pixel(i32(size[1]), .Ten_Eighths))
+			wider := screen_box_of({corner[0] + BORDER_OF_TEST, corner[1] + TITLE_OF_TEST, corner[0] + BORDER_OF_TEST + size[0], corner[1] + TITLE_OF_TEST + size[1]}, .Eleven_Eighths)
+			box = surface_clip(wider.left, wider.top, smaller_width, smaller_height, wider)
+			testing.expect(t, box_inside(box, wider))
+			if size[0] > 8 {
+				testing.expectf(t, box != wider, "the surface of 1.25 of %v fills the interior at 1.375", size)
+			}
+		}
+	}
+	// A surface of 0 pixels covers nothing.
+	empty := surface_clip(10, 10, 0, 0, {10, 10, 20, 20})
+	testing.expect(t, empty.right <= empty.left && empty.bottom <= empty.top)
+}

@@ -34,6 +34,27 @@ Surface_Made :: struct {
 	window: value_kinds.Module_Name_Field,
 }
 
+// The first Present of a new surface serial: the surface of a resize or of
+// a rescale is the surface of the window from here on. width and height
+// are its pixels of the screen.
+@(log_fact = "compositor: window {window} shows a surface of {width}x{height} at {scale} eighths, serial {serial}")
+Surface_Shown :: struct {
+	serial: u64,
+	width:  u64,
+	height: u64,
+	scale:  u64,
+	window: value_kinds.Module_Name_Field,
+}
+
+// After a change of the scale, each window shows a surface of the scale in
+// force: none is released, none waits for its Present, none is at the old
+// scale. One line for each change.
+@(log_fact = "compositor: each of the {windows} windows shows a surface at {scale} eighths")
+Windows_At_Scale :: struct {
+	windows: u64,
+	scale:   u64,
+}
+
 // The first picture of a window reached the screen: from here on the
 // window is in the menu of the windows.
 @(log_fact = "compositor: window {window} is shown")
@@ -369,7 +390,7 @@ Processor_Copy_Features :: struct {
 
 // The drawing module refused a draw of the screen: the part is not drawn,
 // and the line comes one time.
-@(log_fact = "compositor: the drawing module refused execute_draw_table_in_rectangles_18 (the error kind {error_kind}, the argument {error_argument}): the part of the screen is not drawn. The compositor writes this line one time")
+@(log_fact = "compositor: the drawing module refused execute_draw_table_in_rectangles_19 (the error kind {error_kind}, the argument {error_argument}): the part of the screen is not drawn. The compositor writes this line one time")
 Screen_Draw_Refused :: struct {
 	error_kind:     u64,
 	error_argument: u64,
@@ -858,7 +879,7 @@ Window_Listed :: struct {
 
 // The settings changed: the values, the appearance in force, the time zone,
 // and the windows that draw again.
-@(log_fact = "compositor: the settings changed: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}; the appearance in force {in_force}; the time zone {zone}; {windows} windows draw again")
+@(log_fact = "compositor: the settings changed: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; the appearance in force {in_force}; the time zone {zone}; {windows} windows draw again")
 Settings_Changed :: struct {
 	windows:         u64,
 	font:            [8]u8,
@@ -867,6 +888,7 @@ Settings_Changed :: struct {
 	grid_fit:        [8]u8,
 	keyboard_layout: [8]u8,
 	appearance:      [8]u8,
+	scale:           [8]u8,
 	in_force:        [8]u8,
 	zone:            [8]u8,
 }
@@ -1084,7 +1106,7 @@ THEME_FILE_FIELD_BYTES :: 16
 // setting of a choice.
 setting_value_field :: proc "contextless" (choice: settings.Choice, setting: settings.Setting) -> [SETTING_VALUE_FIELD_BYTES]u8 {
 	values := settings.values_of(choice)
-	return value_kinds.text_field(settings.descriptions[setting].value_names[values[setting]], SETTING_VALUE_FIELD_BYTES)
+	return value_kinds.text_field(settings.value_name_of(setting, values[setting]), SETTING_VALUE_FIELD_BYTES)
 }
 
 // entry_field gives the Text field of a palette entry name.

@@ -93,9 +93,26 @@ COLUMN_TEXT :: COLUMN_PROCESS + 13 * 8
 // The top line of the counts sets the width of the window; the text takes
 // the rest of it.
 TEXT_CHARACTERS :: 91
-WIDTH :: 2 * MARGIN + COLUMN_TEXT + TEXT_CHARACTERS * 8
+// Literals, so the tool reads the window of the budget; the assertions
+// keep them the sizes of the layout.
+WIDTH :: 944
+#assert(WIDTH == 2 * MARGIN + COLUMN_TEXT + TEXT_CHARACTERS * 8)
 TOP_LINES :: 4
-HEIGHT :: 2 * MARGIN + (TOP_LINES + ROWS) * LINE
+HEIGHT :: 568
+#assert(HEIGHT == 2 * MARGIN + (TOP_LINES + ROWS) * LINE)
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (1048 pages): its module, its
+// stack, its tables and its glyph memory. And the picture of the logical
+// size in which it draws by hand (interface.Hand_Picture): 944 x 568
+// pixels of 4 bytes, 524 pages. 1000 + 524 = 1524. The tool counts the
+// window at the window bound (docs/MODULE_CONTRACT.md, "The budget that a
+// module asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1524, window_width = WIDTH, window_height = HEIGHT}
+
+// The picture of the window, in its logical pixels: the window draws its
+// rows by hand, and the drawing module puts the picture on the screen at
+// the scale (interface.Hand_Picture).
+hand_picture: interface.Hand_Picture
 
 // level_color gives the color of a level in the appearance in force: a
 // record of a process that runs as it must, in the color of a process; a
@@ -657,6 +674,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(.Failed)
 	}
+	if interface.hand_picture_open(&hand_picture, &window) != .Ok {
+		system.stop(.Failed)
+	}
 	reader, status := system.log_open(ctx.handles[system.GRANT_LOG_RECORDS])
 	if status != .Ok {
 		system.log_fact(.Error, Records_Not_Readable{status = op.Status_Word(status)})
@@ -713,8 +733,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The whole canvas is drawn: it is the other picture of the
 		// surface.
 		if picture_owed && display.canvas_free(&window) {
-			draw(window.canvas)
-			display.present(&window)
+			draw(hand_picture.canvas)
+			interface.hand_picture_show(&hand_picture, &window)
 			picture_owed = false
 		}
 		if !logged {

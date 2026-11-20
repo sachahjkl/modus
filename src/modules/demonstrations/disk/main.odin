@@ -80,8 +80,18 @@ LINE :: 24
 BAR_WIDTH :: 200
 RATE_X :: 300
 ENTRIES_X :: RATE_X + BAR_WIDTH + 90
-WIDTH :: ENTRIES_X + BAR_WIDTH + 70
-HEIGHT :: 12 + 4 * LINE + len(measures) * LINE + 3 * LINE + 12
+// Literals, so the tool reads the window of the budget; the assertions
+// keep them the sizes of the layout.
+WIDTH :: 860
+#assert(WIDTH == ENTRIES_X + BAR_WIDTH + 70)
+HEIGHT :: 312
+#assert(HEIGHT == 12 + 4 * LINE + len(measures) * LINE + 3 * LINE + 12)
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (525 pages): its module, its
+// stack, its tables, its blocks and its glyph memory. The tool counts the
+// window at the window bound (docs/MODULE_CONTRACT.md, "The budget that a
+// module asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1523, window_width = WIDTH, window_height = HEIGHT}
 
 Measure :: struct {
 	write:   bool,

@@ -1,6 +1,7 @@
 package interface
 
 import "modus:contract/draw_record"
+import "modus:contract/scale_factor"
 import "modus:contract/text_encoding"
 import "modus:support/graphics"
 import "modus:support/text_rendering"
@@ -71,14 +72,19 @@ font_text_size :: proc "contextless" (font: Font) -> int {
 	return int(font.size)
 }
 
-// The border of the record and the measure refuse the same sizes, so a
-// text that the writer measures is a text that the border reads.
-#assert(text_rendering.TEXT_SIZE_MINIMUM == draw_record.TEXT_SIZE_MINIMUM && text_rendering.TEXT_SIZE_LIMIT == draw_record.TEXT_SIZE_LIMIT)
+// The border of the record takes the logical sizes whose size on the screen
+// the rasterizer draws at each scale: its largest size is the largest of
+// the rasterizer at the largest scale, 2. The least size is the same.
+#assert(text_rendering.TEXT_SIZE_MINIMUM == draw_record.TEXT_SIZE_MINIMUM)
+#assert(draw_record.TEXT_SIZE_LIMIT * int(scale_factor.Scale.Sixteen_Eighths) / scale_factor.EIGHTHS_OF_ONE == text_rendering.TEXT_SIZE_LIMIT)
 
 // font_size_valid says if the text size of a font is one that a record
 // holds: from draw_record.TEXT_SIZE_MINIMUM to draw_record.TEXT_SIZE_LIMIT.
+// The writer refuses what the border refuses, also a size that the measure
+// would take.
 font_size_valid :: proc "contextless" (font: Font) -> bool {
-	return text_rendering.size_check(font_text_size(font)) == .None
+	size := font_text_size(font)
+	return size <= draw_record.TEXT_SIZE_LIMIT && text_rendering.size_check(size) == .None
 }
 
 // text_size_of_scale gives the text size of a whole scale of the body: 2 is

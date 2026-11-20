@@ -75,8 +75,18 @@ STATUS_Y :: TEXT_TOP + TEXT_HEIGHT + MARGIN
 STATUS_LINES :: 2
 STATUS_WIDTH :: WIDTH - 2 * MARGIN
 KEYS_Y :: STATUS_Y + STATUS_LINES * graphics.CELL_HEIGHT + MARGIN // The action bar, at the bottom.
-WIDTH :: TEXT_LEFT + TEXT_WIDTH + MARGIN
-HEIGHT :: KEYS_Y + interface.ACTION_BAR_ROW_HEIGHT
+// Literals, so the tool reads the window of the budget; the assertions
+// keep them the sizes of the layout.
+WIDTH :: 712
+#assert(WIDTH == TEXT_LEFT + TEXT_WIDTH + MARGIN)
+HEIGHT :: 528
+#assert(HEIGHT == KEYS_Y + interface.ACTION_BAR_ROW_HEIGHT)
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (735 pages): its module, its
+// stack, its text, its tables and its glyph memory. The tool counts the
+// window at the window bound (docs/MODULE_CONTRACT.md, "The budget that a
+// module asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1313, window_width = WIDTH, window_height = HEIGHT}
 CARET_WIDTH :: 2
 WHEEL_ROWS :: 3 // The rows that one notch of the wheel scrolls.
 // The bytes of one display row as the frame draws it: each cell is one
@@ -662,7 +672,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				display.copy_decline(&window)
 			case .Pasted:
 				display.paste_refuse(&window, event)
-			case .None, .Settings_Changed, .Go_To, .Resized, .Capture_Size, .Capture_Frame:
+			case .None, .Settings_Changed, .Go_To, .Resized, .Capture_Size, .Capture_Frame, .Surface_Answer:
 			// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

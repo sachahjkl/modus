@@ -41,7 +41,7 @@ The contours of one layer are a union: the tool adds each contour in one directi
 
 **Hinting by design.** Each level and upright side is on an integer coordinate, so it is sharp at 24 and at 48. A stroke is 3 units wide: 1 pixel of fill between two pixels of edge at 24, 4 pixels of fill in 1 pixel of edge at 48. A symmetric shape has its centre on the pixel 11.
 
-**The sizes stay 24 and 48.** The compositor asks for 24. A size of 32 helps only a compositor that asks for 32, and no scale of the system does; the details are drawn for 24. A size is one number of the statement `sizes` when a scale needs it.
+**The sizes are 24, 30, 33 and 48.** The compositor asks for 24 logical pixels at the scale of the desktop: 30 at 1.25 and 33 at 1.375, the two scales that the setting takes ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen"). A size between them would help only a compositor that asks for it; the details are drawn for 24, and the edge stays 1 pixel at each size. A size is one number of the statement `sizes` when a scale needs it.
 
 ## Refused forms
 

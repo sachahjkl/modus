@@ -48,7 +48,7 @@ import "modus:contract/enum_word"
 // of a bound that changes what a record draws, or of a rule of the
 // execution is a new version, and the names of the exports of the drawing
 // module carry it.
-VERSION :: 18
+VERSION :: 19
 
 RECORD_SIZE :: 48 // The bytes of one record.
 HEADER_SIZE :: 24 // The bytes of the header: the kind, the reserved bytes, the element and the box.
@@ -100,8 +100,12 @@ GRADIENT_SPAN_LIMIT :: 1 << 15
 // of this range, and never clamps it. Under 4 pixels a glyph has no form
 // that a reader can read; the largest size is a bound of cost: the worst
 // record is 256 glyphs of that size over one place. A larger text is a path.
+// The size is in logical pixels: at the largest scale, 2, a text of 128
+// logical pixels is drawn at 256 pixels of the screen, the largest size
+// that the rasterizer draws (text_rendering.TEXT_SIZE_LIMIT). So each text
+// that the border takes has its glyphs at each scale.
 TEXT_SIZE_MINIMUM :: 4 * UNITS_PER_PIXEL
-TEXT_SIZE_LIMIT :: 256 * UNITS_PER_PIXEL
+TEXT_SIZE_LIMIT :: 128 * UNITS_PER_PIXEL
 #assert(TEXT_SIZE_LIMIT <= int(max(u16)))
 
 // The most bytes of one text in the interface font: the execution places

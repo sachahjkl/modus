@@ -223,8 +223,8 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 		result[row] = {
 			x        = i64(client.x),
 			y        = i64(client.y),
-			width    = i64(client.surface.width + 2 * BORDER),
-			height   = i64(client.surface.height + TITLE_HEIGHT + BORDER),
+			width    = i64(client.width + 2 * BORDER),
+			height   = i64(client.height + TITLE_HEIGHT + BORDER),
 			order    = i64(row),
 			focus    = row == 0 ? 1 : 0,
 			keyboard = row == 0 && !palette_is_open() ? 1 : 0,

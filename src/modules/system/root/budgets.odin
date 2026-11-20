@@ -18,7 +18,10 @@ import "modus:support/system"
 // the process stops.
 
 // The budget of a module that asks for nothing, and of each part of a
-// request that is 0.
+// request that is 0. A module with a window states its size, and the tool
+// counts its pictures at the largest scale that the setting takes
+// (docs/MODULE_CONTRACT.md, "The budget that a module asks for"), so the
+// least budget does not grow with the scale.
 LEAST_BUDGET :: system.Budget_Request{pages = 2048, processes = 1, threads = 1}
 
 // The most that a process of the boot image with no exception gets. A

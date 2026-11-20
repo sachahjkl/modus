@@ -82,8 +82,18 @@ ROWS :: 33 // The rows of the text column: the heading of the page takes the fir
 SCROLL_WIDTH :: interface.SCROLL_BAR_THICKNESS
 EXAMPLE_BAND_OVERHANG :: 4 // The band of an example passes the text by 4 pixels.
 SCROLL_GAP :: EXAMPLE_BAND_OVERHANG + graphics.GAP // From the text to the scroll bar: a gap after the band of an example.
-WIDTH :: LIST_WIDTH + MARGIN + COLUMNS * CELL_WIDTH + SCROLL_GAP + SCROLL_WIDTH
-HEIGHT :: ROWS * CELL_HEIGHT + 2 * MARGIN + CELL_HEIGHT + 8
+// Literals, so the tool reads the window of the budget; the assertions
+// keep them the sizes of the layout.
+WIDTH :: 889
+#assert(WIDTH == LIST_WIDTH + MARGIN + COLUMNS * CELL_WIDTH + SCROLL_GAP + SCROLL_WIDTH)
+HEIGHT :: 576
+#assert(HEIGHT == ROWS * CELL_HEIGHT + 2 * MARGIN + CELL_HEIGHT + 8)
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (1001 pages): its module, its
+// stack, its pages of text, its tables and its glyph memory. The tool
+// counts the window at the window bound (docs/MODULE_CONTRACT.md, "The
+// budget that a module asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1047, window_width = WIDTH, window_height = HEIGHT}
 
 // scroll_area gives the place of the scroll bar of the text: at the right
 // edge of the window, from its top to the line over the keys.
@@ -927,7 +937,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				}
 				pressed = down
-			case .None, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
+			case .None, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Surface_Answer:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

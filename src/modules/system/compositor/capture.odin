@@ -93,7 +93,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		return
 	}
 	switch command {
-	case .None, .Surface_Create, .Present, .Pointer_Shape, .Act_Names, .Picture_Due, .Resizable, .Surface_Resize, .Resize_Declined, .Copy, .Copy_Declined, .Paste_Taken:
+	case .None, .Surface_Create, .Present, .Pointer_Shape, .Act_Names, .Picture_Due, .Resizable, .Surface_Resize, .Surface_Rescale, .Surface_Release, .Resize_Declined, .Copy, .Copy_Declined, .Paste_Taken:
 		// The loop gives this procedure the commands of the two faces only.
 	case .Capture_Size_Ask:
 		send(client, .Capture_Size, {0 = u64(screen.width), 1 = u64(screen.height)})
@@ -122,7 +122,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		for &key, place in capture.viewer_keys {
 			key = place < capture.viewer_count ? record.values[2 + place] : 0
 		}
-		damage_add(0, 0, screen.width, BAR_HEIGHT)
+		damage_add(0, 0, desktop_width, BAR_HEIGHT)
 	case .Remote_Key:
 		code, character_word, pressed, modifiers := record.values[0], record.values[1], record.values[2], record.values[3]
 		if capture.client != index || code == 0 || code > REMOTE_KEY_CODE_LIMIT || pressed > 1 || modifiers > u64(display.MODIFIER_SHIFT | display.MODIFIER_CONTROL) {
@@ -151,7 +151,9 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		}
 		capture.remote_pointers += 1
 		wheel := int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
-		pointer_moved(int(x) - pointer_x, int(y) - pointer_y, u32(buttons), wheel)
+		// A viewer sees the pixels of the screen: its place goes to the
+		// logical pixel of the desktop that holds it.
+		pointer_moved(logical_pixel_of(int(x)) - pointer_x, logical_pixel_of(int(y)) - pointer_y, u32(buttons), wheel)
 	}
 }
 
@@ -198,7 +200,7 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 		}
 		interface.damage_add(&capture.changed, whole)
 		// The mark of the bar, and a frame that writes the first picture.
-		damage_add(0, 0, screen.width, BAR_HEIGHT)
+		damage_add(0, 0, desktop_width, BAR_HEIGHT)
 		// The client of a capture face has no window, so it has no title:
 		// the root service allows one process, and the line names none.
 		system.log_fact(.Info, Capture_Face_Opened{width = u64(screen.width), height = u64(screen.height)})
@@ -221,7 +223,7 @@ capture_end :: proc "contextless" (why: string) {
 	}
 	system.log_fact(.Info, Capture_Face_Ended{pictures = capture.records, viewer_keys = capture.remote_keys, viewer_pointer_records = capture.remote_pointers, refused = capture.refused, capture_end = value_kinds.text_field(why, CAPTURE_END_FIELD_BYTES)})
 	capture = {client = -1, held = -1, last_written = 1}
-	damage_add(0, 0, screen.width, BAR_HEIGHT)
+	damage_add(0, 0, desktop_width, BAR_HEIGHT)
 }
 
 // capture_frame_due makes the next frame come, so that it writes the
@@ -291,7 +293,8 @@ capture_after_draw :: proc "contextless" (areas: []Rectangle) {
 	for rectangle, place in capture.changed.rectangles[:capture.changed.count] {
 		header.rectangles[place] = {u32(max(rectangle.left, 0)), u32(max(rectangle.top, 0)), u32(clamp(rectangle.right, 0, screen.width)), u32(clamp(rectangle.bottom, 0, screen.height))}
 	}
-	header.pointer_x, header.pointer_y = u32(clamp(pointer_x, 0, screen.width - 1)), u32(clamp(pointer_y, 0, screen.height - 1))
+	pointer_screen_x, pointer_screen_y := pointer_screen_place()
+	header.pointer_x, header.pointer_y = u32(clamp(pointer_screen_x, 0, screen.width - 1)), u32(clamp(pointer_screen_y, 0, screen.height - 1))
 	header.pointer_left, header.pointer_top, header.pointer_right, header.pointer_bottom = 0, 0, 0, 0
 	if pointer_drawn_valid {
 		left, top := clamp(pointer_drawn.left, 0, screen.width), clamp(pointer_drawn.top, 0, screen.height)

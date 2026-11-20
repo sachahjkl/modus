@@ -54,8 +54,14 @@ import "modus:support/system"
 // A table of 65536 readings in a memory object (640 pages), and two call
 // hosts (sample, hostile_exports) with their threads: 2561 pages. And the
 // glyph memory of its own copy of the text rendering, which draws its text
-// by hand: 354 pages (display.TEXT_MEMORY_PAGES). 2561 + 354 = 2915.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2915, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
+// by hand: 354 pages (display.TEXT_MEMORY_PAGES). And the picture of its
+// window, which it draws by hand at its logical size: 1000 x 704 pixels of
+// 4 bytes, 688 pages (interface.hand_picture_pages). 2561 + 354 + 688 =
+// 3603.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3603, processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
+
+// The picture of the window, in its logical pixels (interface.Hand_Picture).
+hand_picture: interface.Hand_Picture
 
 // The records of sample, as this process declares them: the layout is the
 // description (a process in C declares the same struct).
@@ -680,7 +686,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Refused)
 	}
 	window, opened := display.open(ctx, WIDTH, HEIGHT, "tables")
-	if !opened {
+	if !opened || interface.hand_picture_open(&hand_picture, &window) != .Ok {
 		system.stop(.Failed)
 	}
 	image_memory = ctx.handles[system.GRANT_IMAGE]
@@ -768,8 +774,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The canvas is the picture that the compositor does not read,
 		// after it took the picture before: the whole canvas is drawn.
 		if display.canvas_wait(&window) {
-			draw(window.canvas)
-			display.present(&window)
+			draw(hand_picture.canvas)
+			interface.hand_picture_show(&hand_picture, &window)
 		}
 		display.wait(&window)
 		for _ in display.next_event(&window) {

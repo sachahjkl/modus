@@ -171,7 +171,7 @@ sentence :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, p
 // the surface, whose size the principal can change: the share column of
 // the table takes the width that the window gains.
 draw :: proc "contextless" (window: ^display.Window) {
-	width, height := window.canvas.width, window.canvas.height
+	width, height := window.width, window.height
 	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, width, height})
 	content := interface.card(&frame, {8, 8, width - 16, height - 16}, "THE TIME PAGE", "Time_Record: one page that each process reads", graphics.colors.kernel)

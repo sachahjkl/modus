@@ -53,11 +53,21 @@ VERSION_LABEL :: "version  "
 // interface.draw_text_wrapped: a line that the window cannot hold goes on
 // two lines, it is never cut at the edge.
 TEXT_ROOM :: (len(VERSION_LABEL) + NOTE_CAPACITY) * graphics.CELL_WIDTH
-WIDTH :: 2 * MARGIN + TEXT_ROOM
+// Literals, so the tool reads the window of the budget; the assertions
+// keep them the sizes of the layout.
+WIDTH :: 576
+#assert(WIDTH == 2 * MARGIN + TEXT_ROOM)
 KEYS_Y :: 276 // The action bar, at the bottom.
 // The action bar wraps: the window is narrow, and its reader learns the
 // keys there, so each one shows at once on two rows.
-HEIGHT :: KEYS_Y + interface.ACTION_BAR_WRAP_ROWS * interface.ACTION_BAR_ROW_HEIGHT
+HEIGHT :: 324
+#assert(HEIGHT == KEYS_Y + interface.ACTION_BAR_WRAP_ROWS * interface.ACTION_BAR_ROW_HEIGHT)
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (365 pages): its module, its
+// stack, its tables and its glyph memory. The tool counts the window at
+// the window bound (docs/MODULE_CONTRACT.md, "The budget that a module
+// asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1683, window_width = WIDTH, window_height = HEIGHT}
 
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"). A printable character writes the note: the caret after
@@ -341,7 +351,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if !outcome.taken {
 					key_run(&window, press)
 				}
-			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame:
+			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Surface_Answer:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

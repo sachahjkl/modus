@@ -61,6 +61,7 @@ import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
+import "modus:contract/scale_factor"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
 import "modus:support/appearance"
@@ -71,8 +72,15 @@ import "modus:support/storage"
 import "modus:support/system"
 import "modus:support/text_rendering"
 
+// One row of 32 more than six settings: the row of the scale.
 WIDTH :: 560
-HEIGHT :: 560
+HEIGHT :: 592
+// The least budget of 2048 pages, in which it ran before it stated its
+// window, less that window at the scale 1 (648 pages): its module, its
+// stack, its tables and its glyph memory. The tool counts the window at
+// the window bound (docs/MODULE_CONTRACT.md, "The budget that a module
+// asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1400, window_width = WIDTH, window_height = HEIGHT}
 
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"): the keys of the focus of the interface package.
@@ -102,19 +110,23 @@ ERROR_VALUE :: -3
 ERROR_STORE :: -4
 
 // with_value gives a choice with one setting at the value of a button or of
-// a name: its index in the names of the values of the setting. ok false: the
-// setting has no value of that index.
-with_value :: proc "contextless" (choice: settings.Choice, setting: settings.Setting, index: int) -> (changed: settings.Choice, ok: bool) {
+// a name: its place in the names of the values of the setting, whose word
+// the description gives. ok false: the border refuses that word, and
+// scale_problem says why for the scale (a count past the window bound).
+with_value :: proc "contextless" (choice: settings.Choice, setting: settings.Setting, place: int) -> (changed: settings.Choice, ok: bool, scale_problem: scale_factor.Scale_Problem) {
 	values := settings.values_of(choice)
-	values[setting] = u32(index)
+	values[setting] = settings.word_of_value(setting, place)
+	if setting == .Scale {
+		_, scale_problem = scale_factor.scale_of_word(u64(values[setting]))
+	}
 	changed, _, ok = settings.choice_of_values(values)
 	if !ok {
-		return choice, false
+		return choice, false, scale_problem
 	}
 	changed.appearance_in_force = choice.appearance_in_force
 	changed.zone_offset_minutes = choice.zone_offset_minutes
 	changed.change_count = choice.change_count
-	return changed, true
+	return changed, true, .None
 }
 
 // keep writes the record of the values and the zone to the private store:
@@ -183,7 +195,7 @@ change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32)
 	}
 	kept := keep(choice, zone)
 	if !values_same {
-		system.log_fact(.Info, Values_Changed{font = value_field(choice, .Font), subpixel_order = value_field(choice, .Subpixel_Order), pointer_theme = value_field(choice, .Pointer_Theme), grid_fit = value_field(choice, .Grid_Fit), keyboard_layout = value_field(choice, .Keyboard_Layout), appearance = value_field(choice, .Appearance), store = store_field(kept)})
+		system.log_fact(.Info, Values_Changed{font = value_field(choice, .Font), subpixel_order = value_field(choice, .Subpixel_Order), pointer_theme = value_field(choice, .Pointer_Theme), grid_fit = value_field(choice, .Grid_Fit), keyboard_layout = value_field(choice, .Keyboard_Layout), appearance = value_field(choice, .Appearance), scale = value_field(choice, .Scale), store = store_field(kept)})
 	}
 	if current.zone_offset_minutes != zone {
 		zone_buffer: [settings.ZONE_TEXT_SIZE]u8
@@ -221,7 +233,7 @@ setting_of :: proc "contextless" (name: string) -> (setting: settings.Setting, f
 	return {}, false
 }
 
-// set changes a setting of the system, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off"); set("keyboard_layout", "us" or "french"); set("appearance", "auto", "dark" or "light"); set("time_zone", "+08:00").
+// set changes a setting of the system, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off"); set("keyboard_layout", "us" or "french"); set("appearance", "auto", "dark" or "light"); set("scale", "1.25" or "1.375"); set("time_zone", "+08:00").
 //
 // Every window draws again: the settings page wakes the compositor, which gives the new font, pointer theme and
 // appearance to each window. The order is the store first, then the page, so a stop of the machine between the two
@@ -229,12 +241,16 @@ setting_of :: proc "contextless" (name: string) -> (setting: settings.Setting, f
 // `appearance` `auto` gives the light appearance from 07:00 to 19:00 of the local time and the dark one at night:
 // the page holds the appearance in force, which the log says with the time that the rule read.
 //
+// The scale factor of the desktop is a count of eighths: 1.25 is the default. Each window lets its surface go,
+// makes a surface of its size at the scale that the compositor names from its own budget, and draws again. The
+// scales from 1.5 to 2 have names, and are refused until each window fits their logical screen.
+//
 // The time zone is a fixed offset from UTC, with no summer time: a sign, the hours and the minutes, from "-12:00"
 // to "+14:00", by quarters of an hour; "+00:00", UTC, is the default. The bar then shows the local time, and the
 // rule of `auto` counts its hours in it.
 //
 // - **name**: the name of a setting: `font`, `subpixel_order`, `pointer_theme`, `grid_fit`, `keyboard_layout`,
-//   `appearance` or `time_zone`; 32 bytes at most.
+//   `appearance`, `scale` or `time_zone`; 32 bytes at most.
 // - **value**: one of the values of that setting, as above; 32 bytes at most.
 //
 // The caller must act for the principal (**Acts_For_Principal**): the console and the host have it. The result is
@@ -244,6 +260,8 @@ setting_of :: proc "contextless" (name: string) -> (setting: settings.Setting, f
 // - `Absent` (-2): no setting has this name.
 // - `Too_Long` (-3): the name or the value has more than 32 bytes; the record names the argument.
 // - `Bad_Value` (-3): the setting has no such value.
+// - `Out_Of_Range` (-3): a scale from "1.5" to "2", past the largest scale whose logical screen each window fits;
+//   the record holds the count of eighths and the largest count, 11. The scale in force stays.
 // - `Refused` (-4): the store did not keep the value. The page changed all the same, so the windows show the new
 //   value until the next start of the machine.
 //
@@ -275,10 +293,13 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 		return errors.fail(error, ERROR_NAME, .Absent, .None, 1)
 	}
 	description := &settings.descriptions[setting]
-	for value_name, index in description.value_names[:description.value_count] {
+	for value_name, place in description.value_names[:description.value_count] {
 		if value_name == given {
 			current, _ := settings.read(page)
-			changed, changed_ok := with_value(current, setting, index)
+			changed, changed_ok, scale_problem := with_value(current, setting, place)
+			if scale_problem == .Past_Window_Bound {
+				return errors.fail(error, ERROR_VALUE, .Out_Of_Range, .None, 2, i64(settings.word_of_value(setting, place)), i64(scale_factor.WINDOW_BOUND))
+			}
 			if !changed_ok {
 				return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
 			}
@@ -291,7 +312,7 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 	return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
 }
 
-// get gives the value of a setting of the system as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit"), get("keyboard_layout"), get("appearance"), get("time_zone").
+// get gives the value of a setting of the system as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit"), get("keyboard_layout"), get("appearance"), get("scale"), get("time_zone").
 //
 // It reads the settings page, which each process can read too: so it needs no grant, and each caller gets the
 // value.
@@ -327,7 +348,7 @@ get :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i
 	values := settings.values_of(current)
 	// The count of the whole text: a caller with a smaller buffer sees that
 	// it does not fit.
-	value_name := settings.descriptions[setting].value_names[values[setting]]
+	value_name := settings.value_name_of(setting, values[setting])
 	copy(result^, value_name)
 	return i64(len(value_name))
 }
@@ -375,7 +396,7 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 boot_pass :: proc "contextless" () -> ! {
 	start := system.nanoseconds()
 	buffer: [64]u8
-	choice: settings.Choice
+	choice := settings.choice_default()
 	zone_offset_minutes: i32
 	source := Boot_Pass_Source.Nothing_Kept
 	// A store that fails a read or refuses the write of the defaults: the
@@ -415,19 +436,20 @@ boot_pass :: proc "contextless" () -> ! {
 	elapsed := value_kinds.Time_In_Microseconds((system.nanoseconds() - start) / 1000)
 	font, subpixel_order, pointer_theme := value_field(choice, .Font), value_field(choice, .Subpixel_Order), value_field(choice, .Pointer_Theme)
 	grid_fit, keyboard_layout, appearance_value := value_field(choice, .Grid_Fit), value_field(choice, .Keyboard_Layout), value_field(choice, .Appearance)
+	scale_value := value_field(choice, .Scale)
 	switch source {
 	case .Nothing_Kept:
-		system.log_fact(.Info, Boot_Pass_Nothing_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+		system.log_fact(.Info, Boot_Pass_Nothing_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
 	case .Read_Refused:
-		system.log_fact(.Info, Boot_Pass_Read_Refused{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+		system.log_fact(.Info, Boot_Pass_Read_Refused{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
 	case .Kept:
-		system.log_fact(.Info, Boot_Pass_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+		system.log_fact(.Info, Boot_Pass_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
 	case .Record_Refused_Defaults_Kept:
-		system.log_fact(.Info, Boot_Pass_Record_Refused_Defaults_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+		system.log_fact(.Info, Boot_Pass_Record_Refused_Defaults_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
 	case .Record_Refused_Defaults_Not_Kept:
-		system.log_fact(.Info, Boot_Pass_Record_Refused_Defaults_Not_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+		system.log_fact(.Info, Boot_Pass_Record_Refused_Defaults_Not_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
 	case .No_Store:
-		system.log_fact(.Info, Boot_Pass_No_Store{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+		system.log_fact(.Info, Boot_Pass_No_Store{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
 	}
 	if store_refused {
 		system.stop(.Failed)
@@ -485,7 +507,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	interface.text_put_number(&count, u64(choice.change_count / 2))
 	// A row: a button of 24 pixels and a gap of 8. The card of the text
 	// under the rows needs 150 pixels of content, so that its line of facts
-	// is under the caption of its large number: 7 rows of 32, the settings
+	// is under the caption of its large number: 8 rows of 32, the settings
 	// and the time zone, leave it 168 in the window.
 	ROW :: 32
 	rows_height := (len(settings.Setting) + 1) * ROW
@@ -493,15 +515,21 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	for &description, setting in settings.descriptions {
 		y := content.y + int(setting) * ROW
 		interface.draw_text(frame.table, content.x, y + 4, description.title, graphics.colors.dim)
-		for value_name, index in description.value_names[:description.value_count] {
-			area := interface.Area{content.x + 144 + index * 104, y, 96, 24}
+		for value_name, place in description.value_names[:description.value_count] {
+			// A value that the border refuses has no button: the scales past
+			// the window bound, which no window fits yet.
+			word := settings.word_of_value(setting, place)
+			if !settings.value_valid(setting, word) {
+				continue
+			}
+			area := interface.Area{content.x + 144 + place * 104, y, 96, 24}
 			builder: interface.Text_Builder
 			interface.text_put(&builder, description.name)
 			interface.text_put(&builder, value_name)
 			element := interface.identity(interface.text_of(&builder))
-			in_use := values[setting] == u32(index)
+			in_use := values[setting] == word
 			if interface.button(&frame, area, element, value_name, in_use).activated {
-				if changed, changed_ok := with_value(choice, setting, index); changed_ok {
+				if changed, changed_ok, _ := with_value(choice, setting, place); changed_ok {
 					change(changed, choice.zone_offset_minutes)
 				}
 			}
@@ -557,7 +585,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	bar_result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar)
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	if choice.change_count != drawn_change && drawn_change != 1 {
-		system.log_fact(.Info, Values_Drawn{font = value_field(choice, .Font), subpixel_order = value_field(choice, .Subpixel_Order), pointer_theme = value_field(choice, .Pointer_Theme), grid_fit = value_field(choice, .Grid_Fit), keyboard_layout = value_field(choice, .Keyboard_Layout), appearance = value_field(choice, .Appearance)})
+		system.log_fact(.Info, Values_Drawn{font = value_field(choice, .Font), subpixel_order = value_field(choice, .Subpixel_Order), pointer_theme = value_field(choice, .Pointer_Theme), grid_fit = value_field(choice, .Grid_Fit), keyboard_layout = value_field(choice, .Keyboard_Layout), appearance = value_field(choice, .Appearance), scale = value_field(choice, .Scale)})
 	}
 	drawn_change = choice.change_count
 	return bar_result
@@ -612,7 +640,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ = system.service_open(ctx)
 	draw_with_bar(&window)
 	started, _ := settings.read(page)
-	system.log_fact(.Info, Window_Ready{font = value_field(started, .Font), subpixel_order = value_field(started, .Subpixel_Order), pointer_theme = value_field(started, .Pointer_Theme), grid_fit = value_field(started, .Grid_Fit), keyboard_layout = value_field(started, .Keyboard_Layout), appearance = value_field(started, .Appearance)})
+	system.log_fact(.Info, Window_Ready{font = value_field(started, .Font), subpixel_order = value_field(started, .Subpixel_Order), pointer_theme = value_field(started, .Pointer_Theme), grid_fit = value_field(started, .Grid_Fit), keyboard_layout = value_field(started, .Keyboard_Layout), appearance = value_field(started, .Appearance), scale = value_field(started, .Scale)})
 	for {
 		wait := system.wait_begin()
 		display.wait_events(&wait, &window)

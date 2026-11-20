@@ -77,8 +77,12 @@ window_resize_step :: proc(machine: ^Machine, step: Step, index: int) -> bool {
 	corner_x, corner_y := frame.left, frame.bottom - 1
 	target_x, target_y := corner_x - (step.to_x - width), corner_y + step.to_y - height
 	// A target past the screen gives a smaller size than the step names:
-	// the scenario is wrong, and the line says so before any press.
-	screen_width, screen_height, known := screen_size_of_log(log)
+	// the scenario is wrong, and the line says so before any press. The
+	// line of the compositor names the screen in pixels of the screen; the
+	// places of a step are logical pixels at the scale of the machine.
+	screen_pixels_width, screen_pixels_height, known := screen_size_of_log(log)
+	screen_width, _ := logical_place_of_screen(screen_pixels_width, MACHINE_SCALE)
+	screen_height, _ := logical_place_of_screen(screen_pixels_height, MACHINE_SCALE)
 	if !known || target_x < 0 || target_y < 0 || target_x >= screen_width || target_y >= screen_height {
 		fmt.eprintfln("modustool: test failed: step %d: the corner of the window %s at %d,%d would go to %d,%d, which is not on the screen of %dx%d", index + 1, step.text, corner_x, corner_y, target_x, target_y, screen_width, screen_height)
 		return false

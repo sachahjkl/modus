@@ -35,7 +35,8 @@ fuzz_kept_settings_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	// The model: what the rule says of these bytes.
 	model_ok := len(input) == size_of(settings.Kept_Settings)
 	record: settings.Kept_Settings
-	model_values: [settings.Setting]u32
+	defaults := settings.values_of(settings.choice_default())
+	model_values := defaults
 	if model_ok {
 		copy(mem.ptr_to_bytes(&record), input)
 		model_ok = record.magic == settings.KEPT_MAGIC && record.version == settings.KEPT_VERSION && record.count <= settings.SETTING_CAPACITY
@@ -55,7 +56,7 @@ fuzz_kept_settings_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		return fuzz_broken(.Model, "kept_read gives ok %v, and the record has ok %v: a value of no member must refuse the whole record", ok, model_ok)
 	}
 	if !ok {
-		if settings.values_of(choice) != ([settings.Setting]u32{}) || zone != 0 {
+		if settings.values_of(choice) != defaults || zone != 0 {
 			return fuzz_broken(.Contract, "kept_read refuses the record and gives values")
 		}
 	} else {
@@ -101,7 +102,8 @@ fuzz_settings_page_check :: proc(input: []u8) -> Fuzz_Verdict {
 	page: settings.Page
 	copy(mem.ptr_to_bytes(&page), input)
 	choice, ok := settings.read(&page)
-	refused := settings.Choice{change_count = page.change_count}
+	refused := settings.choice_default()
+	refused.change_count = page.change_count
 	if page.change_count & 1 != 0 {
 		// A writer that stays in its change: the defaults, with the count.
 		if ok || choice != refused {
@@ -147,15 +149,20 @@ fuzz_settings_page_check :: proc(input: []u8) -> Fuzz_Verdict {
 fuzz_kept_settings_seeds :: proc(seeds: ^[dynamic][]u8) {
 	// The record of the defaults and of each last value, then the same
 	// with the count of the values at its bound and one past it.
+	// The last value that the border of each setting takes: for the scale,
+	// the window bound.
 	values: [settings.Setting]u32
 	for setting in settings.Setting {
-		values[setting] = settings.descriptions[setting].value_count - 1
+		values[setting] = settings.word_of_value(setting, int(settings.descriptions[setting].value_count) - 1)
+		for values[setting] > 0 && !settings.value_valid(setting, values[setting]) {
+			values[setting] -= 1
+		}
 	}
 	last, _, last_ok := settings.choice_of_values(values)
 	if !last_ok {
 		panic("modustool: the last value of a setting names no value of it")
 	}
-	for record_choice, index in ([2]settings.Choice{{}, last}) {
+	for record_choice, index in ([2]settings.Choice{settings.choice_default(), last}) {
 		kept := settings.kept_of(record_choice, index == 0 ? 0 : settings.ZONE_OFFSET_MINUTES_MOST)
 		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
 		kept.count = settings.SETTING_CAPACITY
@@ -168,7 +175,7 @@ fuzz_kept_settings_seeds :: proc(seeds: ^[dynamic][]u8) {
 	// which the record does not hold.
 	for setting in settings.Setting {
 		kept := settings.kept_of(last, 0)
-		kept.values[setting] = settings.descriptions[setting].value_count
+		kept.values[setting] = values[setting] + 1
 		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
 		kept.count = u32(setting)
 		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))

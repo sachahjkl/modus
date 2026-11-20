@@ -53,8 +53,14 @@ HEIGHT :: 720
 // The glyph memory of its two copies of the text rendering: its own, which
 // draws the lines of B612 and the Greek letters by hand, and the one of
 // the drawing module, which draws its labels. Each reserves its memory at
-// its first glyph. 2 x 354 pages (display.TEXT_MEMORY_PAGES).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 708, window_width = WIDTH, window_height = HEIGHT}
+// its first glyph. 2 x 354 pages (display.TEXT_MEMORY_PAGES). And the
+// picture of its window, which it draws by hand at its logical size: 800 x
+// 720 pixels of 4 bytes, 563 pages (interface.hand_picture_pages). 708 +
+// 563 = 1271.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1271, window_width = WIDTH, window_height = HEIGHT}
+
+// The picture of the window, in its logical pixels (interface.Hand_Picture).
+hand_picture: interface.Hand_Picture
 
 // The faces of the interface font that this process opened.
 interface_faces: display.Interface_Font
@@ -250,13 +256,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// has room for three under TIME_TOP.
 	timing: [192]u8
 	interface.draw_text_wrapped(frame.table, content.x, content.y + TIME_TOP, content.width, system.format(timing[:], "one line of ", u64(len(PARAGRAPH[1])), " characters: shaping ", shaping_time, " ns, drawing ", drawing_time, " ns, its glyphs in the private glyph cache of this process"), graphics.colors.dim)
-	// The lines below are drawn by hand over the frame, in the same
-	// picture of the surface, before the present.
-	if !interface.window_frame_end_without_present(&window_memory.drawing, &frame, window) {
+	// The lines below are drawn by hand over the frame, in the picture of
+	// the window in its logical pixels, before it is shown.
+	if !interface.window_frame_end_into_picture(&window_memory.drawing, &frame, window, &hand_picture) {
 		return
 	}
 
-	canvas := window.canvas
+	canvas := hand_picture.canvas
 	x := i64(content.x) * 64
 	// The paragraph and the bold line.
 	for line, index in PARAGRAPH {
@@ -291,7 +297,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	for line, index in GREEK {
 		line_draw(canvas, x, content.y + GREEK_TOP + index * 20, line, &regular_spacing, 1, graphics.colors.text)
 	}
-	display.present(window)
+	interface.hand_picture_show(&hand_picture, window)
 	fallback_lines_tell()
 }
 
@@ -333,7 +339,7 @@ first_drawing_time: u64
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_font")
-	if !ok {
+	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Ok {
 		system.stop(.Failed)
 	}
 	font_ok: bool
