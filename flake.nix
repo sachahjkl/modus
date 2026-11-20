@@ -301,11 +301,105 @@
       '';
     };
 
-    # modustool check: the host code passes -vet and its tests, the system builds,
-    # and the machine test passes under QEMU (console, desktop, tools). This is
-    # the one run of the machine test of the full check: its output holds the
-    # pictures and the logs, which `modustool screenshots` takes from the store
-    # (src/md/infrastructure/full_check.md).
+    # The check `boot-test` is the join of several derivations, so that Nix
+    # runs again only what a change reaches: a whole build that gives the
+    # test inputs, the test inputs named by the hash of their bytes, one
+    # derivation for each test part, and the host checks. It is the one run
+    # of the machine test of the full check: its output holds the pictures
+    # and the logs, which `modustool screenshots` takes from the store
+    # (src/md/infrastructure/full_check.md, "The derivations of the check").
+    lib = inputs.nixpkgs.lib;
+
+    # The files that a build or a check can read: the host tests of
+    # `modustool site` read README.md, flake.lock and the Markdown documents;
+    # the check of the source paths in the documents reads AGENTS.md too;
+    # `modustool news check` reads news/, and the film that a news entry names
+    # (docs/films: absent in a tree where no entry names a film); the check of
+    # the font of the name of the mark reads LICENSE, whose text the font
+    # carries; the build reads the guides for the pages of the manual.
+    checkFiles = lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./ROADMAP.md ./changelog.d ./news ./README.md ./AGENTS.md ./LICENSE (lib.fileset.fileFilter (file: file.hasExt "md") ./docs) (lib.fileset.maybeMissing ./docs/films) ./resources ./src ./tools ./.project];
+
+    # A whole build of the tree, then the test inputs and the hash of their
+    # folder, as Nix hashes a path, and the names of the test parts, in the
+    # order of the table of the tool. Its output changes with any change of
+    # the tree; the derivations of the parts depend on the hash of its test
+    # inputs only, through testInputs.
+    systemBuild = pkgs.stdenvNoCC.mkDerivation ({
+        name = "modus-system-build";
+        src = lib.fileset.toSource {
+          root = ./.;
+          fileset = checkFiles;
+        };
+        nativeBuildInputs = buildTools ++ [modustoolBinary pkgs.nix];
+        buildPhase = ''
+          export HOME=$TMPDIR
+          mkdir -p build
+          modustool build whole
+        '';
+        installPhase = ''
+          modustool test_inputs $out
+          nix-hash --type sha256 --base32 $out/test_inputs | tr -d '\n' > $out/test_inputs.sha256
+        '';
+      }
+      // firmware
+      // outsideSources);
+
+    # The test inputs as a fixed-output derivation: Nix names it by the hash
+    # of its bytes, which the evaluation reads from systemBuild (an import
+    # from a derivation). A derivation that depends on it depends on that
+    # hash alone: two trees whose builds give the same bytes give one
+    # testInputs, and Nix runs no part again.
+    testInputs = pkgs.stdenvNoCC.mkDerivation {
+      name = "modus-test-inputs";
+      outputHashMode = "recursive";
+      outputHashAlgo = "sha256";
+      outputHash = builtins.readFile "${systemBuild}/test_inputs.sha256";
+      buildCommand = "cp -r ${systemBuild}/test_inputs $out";
+    };
+
+    # The names of the test parts: the table of the tool is the one list.
+    testPartNames = builtins.fromJSON (builtins.readFile "${systemBuild}/test_parts.json");
+
+    # What a test part reads of the sources at its run: the sources of the
+    # system and the resources, with no host test and no intent file, so a
+    # change of a test or of a design runs no machine again.
+    isTestFile = file: builtins.match ".*_test(_[a-z0-9]+)*\\.odin" file.name != null;
+    partSources = lib.fileset.toSource {
+      root = ./.;
+      fileset = lib.fileset.difference (lib.fileset.unions [./src ./resources]) (lib.fileset.unions [./src/md (lib.fileset.fileFilter isTestFile ./src)]);
+    };
+
+    # One derivation for each test part: the part alone, on the test inputs,
+    # with no build. The tool needs the mark of the root of the repository,
+    # flake.nix, which the part does not read: an empty file stands for it,
+    # so a change of the flake file runs no part again.
+    machineTestPart = part:
+      pkgs.stdenvNoCC.mkDerivation ({
+          name = "machine-test-${part}";
+          src = partSources;
+          nativeBuildInputs = buildTools ++ [modustoolBinary];
+          # /dev/kvm in the sandbox. Without it QEMU falls back to TCG, which
+          # takes every register write: the self test of a refused register
+          # then fails, and the thread counters have nothing to try
+          # (src/md/features/processor_counters.md).
+          requiredSystemFeatures = ["kvm"];
+          buildPhase = ''
+            export HOME=$TMPDIR
+            touch flake.nix
+            modustool test ${part} from ${testInputs}
+          '';
+          # The logs of the machines, the times of the part, the count of
+          # its checks, and its pictures.
+          installPhase = ''
+            mkdir -p $out/logs $out/screenshots
+            cp build/*.txt $out/logs/
+            find build/screenshots -maxdepth 1 -name '*.png' -exec cp {} $out/screenshots/ \;
+          '';
+        }
+        // firmware
+        // outsideSources);
+    testParts = lib.genAttrs testPartNames machineTestPart;
+
     # The names of the pictures of docs/screenshots, not their bytes: the
     # checks read which pictures exist and that each is a PNG with a size
     # (the README, the news, the pages of the site), so the build writes one
@@ -316,41 +410,58 @@
     # a new source.
     screenshotNames = builtins.filter (name: inputs.nixpkgs.lib.hasSuffix ".png" name) (builtins.attrNames (builtins.readDir ./docs/screenshots));
 
-    bootTest = pkgs.stdenvNoCC.mkDerivation ({
-        name = "kernel-boot-test";
-        src = inputs.nixpkgs.lib.fileset.toSource {
+    # modustool check with no machine: the host code passes -vet and its
+    # tests, the fuzz targets, the checks of the sources, and a second build
+    # that gives the same bytes. The check of the README needs the names of
+    # its pictures (screenshotNames).
+    hostChecks = pkgs.stdenvNoCC.mkDerivation ({
+        name = "modus-host-checks";
+        src = lib.fileset.toSource {
           root = ./.;
-          # The host tests of `modustool site` read README.md, flake.lock and the Markdown documents; the check of the source paths in the documents reads AGENTS.md too; the check of the README needs the names of its pictures (screenshotNames); `modustool news check` reads news/, and the film that a news entry names (docs/films: absent in a tree where no entry names a film); the check of the font of the name of the mark reads LICENSE, whose text the font carries.
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./ROADMAP.md ./changelog.d ./news ./README.md ./AGENTS.md ./LICENSE (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "md") ./docs) (inputs.nixpkgs.lib.fileset.maybeMissing ./docs/films) ./resources ./src ./tools ./.project];
+          fileset = checkFiles;
         };
         inherit screenshotNames;
         nativeBuildInputs = buildTools ++ [modustoolBinary];
-        # /dev/kvm in the sandbox. Without it QEMU falls back to TCG, which
-        # takes every register write: the self test of a refused register
-        # then fails, and the thread counters have nothing to try
-        # (src/md/features/processor_counters.md).
-        requiredSystemFeatures = ["kvm"];
         buildPhase = ''
           export HOME=$TMPDIR
           mkdir -p build docs/screenshots
           for name in $screenshotNames; do
             echo iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg== | base64 -d > "docs/screenshots/$name"
           done
-          modustool check
+          modustool check without_machines
         '';
-        # The logs and the records of build/ (the logs of the machines, the
-        # times of the test, the record of the second build, the count of
-        # the checks) and the pictures of the test.
+        # The record of the second build and the count of the checks.
         installPhase = ''
-          mkdir -p $out/logs $out/screenshots
+          mkdir -p $out/logs
           cp build/*.txt $out/logs/
-          cp build/screenshots/*.png $out/screenshots/
         '';
       }
       // firmware
       # The source fonts: a test of the tool reads the feature "zero" of Paper Mono in them.
       // vectorFontSources
       // outsideSources);
+
+    # The join of the host checks and of every test part, in the layout that
+    # `modustool screenshots` reads: logs/ and screenshots/. The tool refuses
+    # a join that lacks a part, or where two parts wrote one file.
+    # partOutputs and partDerivations are read by `modustool screenshots` (the
+    # parts that Nix takes from the store) and `modustool part_cache` (the
+    # proof that a change of a document runs no part again).
+    bootTest = pkgs.stdenvNoCC.mkDerivation {
+      name = "kernel-boot-test";
+      dontUnpack = true;
+      nativeBuildInputs = [modustoolBinary];
+      buildPhase = ''
+        touch flake.nix
+        modustool test_join $out ${hostChecks} ${lib.concatMapStringsSep " " (part: "${part}=${testParts.${part}}") testPartNames}
+      '';
+      dontInstall = true;
+      passthru = {
+        partOutputs = lib.mapAttrs (_: partCheck: partCheck.outPath) testParts;
+        partDerivations = lib.mapAttrs (_: partCheck: partCheck.drvPath) testParts;
+        systemBuildDerivation = systemBuild.drvPath;
+      };
+    };
   in {
     formatter.${system} = pkgs.alejandra;
 

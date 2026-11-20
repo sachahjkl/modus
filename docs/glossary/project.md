@@ -890,7 +890,7 @@ Do not use: release pipeline, deploy script.
 
 The check workflow is the workflow of GitHub Actions `.github/workflows/ci.yml`, which runs `nix flake check` at each push.
 
-It holds no logic: one step calls Nix. `nix flake check` runs the hooks and `modustool check` in an empty folder, with the machine tests. A newer push of the same branch cancels an older run.
+It holds no logic: one step calls Nix. `nix flake check` runs the hooks, the host checks and each part derivation of the machine test in an empty folder. A newer push of the same branch cancels an older run.
 
 The design: `docs/TOOLS.md`, "The commands of the tool".
 
@@ -906,11 +906,31 @@ The design: `src/md/infrastructure/machine_test_parts.md`; `docs/TOOLS.md`, "The
 
 Do not use: test suite, test group, shard.
 
+### Test inputs
+
+The test inputs are the files of a whole build that the machine test reads, in one folder that Nix names by the hash of its bytes.
+
+They are the boot volumes and boot images, the module files and their debug objects, the resources, the fonts, the pointers, and the keys and variable stores that the build wrote. No LLVM IR, object, linked file, build record or log is a test input: these name the compiler in the store, or the time of one build. Two trees whose builds give the same bytes give the same test inputs, so their test parts are the same derivations. `modustool test_inputs` writes them.
+
+The design: `src/md/infrastructure/full_check.md`, "The derivations of the check".
+
+Do not use: test artifacts, test fixtures.
+
+### Part derivation
+
+A part derivation is the derivation of the flake that runs one test part on the test inputs, with no build.
+
+The check `boot-test` depends on one part derivation for each test part, and Nix takes a part derivation from the store when its inputs did not change: the binary of the tool, the test inputs, the sources of `src` and `resources`, and the programs of the host. Its name is `machine-test-<part>`. It is not a test part, which is the row of the table that it runs.
+
+The design: `src/md/infrastructure/full_check.md`, "The derivations of the check".
+
+Do not use: test job, check shard.
+
 ### Full check
 
 A full check is `nix flake check` and `modustool screenshots`, both passed.
 
-`nix flake check` runs the hooks and `modustool check` in the sandbox of Nix: the host tests, the checks of the sources, the whole machine test and the second build. `modustool screenshots` takes the pictures and the logs of that check from the store, with no second run of the machine test, runs the measure runs on the host, and writes the measure record. A full check runs once at the end of a batch of features, before the release and the publication of the site.
+`nix flake check` runs the hooks and the check `boot-test` in the sandbox of Nix: the host tests and the checks of the sources in one derivation, and each test part in a part derivation of its own. `modustool screenshots` takes the pictures and the logs of that check from the store, runs the measure runs on the host, and writes the measure record. A full check runs once at the end of a batch of features, before the release and the publication of the site.
 
 The design: `src/md/infrastructure/full_check.md`; `docs/TOOLS.md`, "What each tool reads".
 

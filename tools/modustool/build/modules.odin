@@ -402,6 +402,9 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 		// (src/md/features/log_facts.md, "The fact key: why the typeid").
 		// A fact type of a support package whose call the code does not
 		// reach has no immediate, and no row: the list names the others.
+		// The facts are read from the sources that the compiler read: its
+		// list, with no path of the store, is written first.
+		module_source_list_write(build.name) or_return
 		facts := module_facts_of_sources(build) or_return
 		reached, problem := facts_reached(string(ir), facts, build.source)
 		if problem != "" {

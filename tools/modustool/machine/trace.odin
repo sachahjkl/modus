@@ -89,10 +89,12 @@ source_lines_of_procedure :: proc(source: string, name: string) -> (first_line: 
 }
 
 // test_debug_objects reads the debug object of the module fault, which the
-// build wrote, against the linked file of the module: the procedure
-// fault::three found by an address inside it, the line of its first
-// instruction, an address outside every procedure, the hash of the module,
-// and a changed copy that a reader refuses.
+// build wrote, against the linked file of the module. `check` runs it after
+// its build: the linked file is no test input, so no test part reads it
+// (src/md/infrastructure/full_check.md, "The derivations of the check"). It
+// checks the procedure fault::three found by an address inside it, the line
+// of its first instruction, an address outside every procedure, the hash of
+// the module, and a changed copy that a reader refuses.
 test_debug_objects :: proc() -> bool {
 	context.allocator = context.temp_allocator
 	fail :: proc(format: string, args: ..any) -> bool {

@@ -179,11 +179,32 @@ COMMANDS :: [?]foundation.Command {
 	//
 	// - `part` (optional): one part only, for the work on it; a word that
 	//   names no part is refused with the list of the parts.
+	// - `from <folder>` (optional, after a part): the part on the test
+	//   inputs of a folder, with no build: the command of a part derivation
+	//   of the flake. It writes the count of its checks in
+	//   build/checks_passed.txt.
 	//
 	// ```
 	// nix develop -c modustool test network
 	// ```
-	{name = "test", about = "build, then run the parts of the machine test, several at once: start each machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test <part>`: one part only", run = run_test},
+	{name = "test", about = "build, then run the parts of the machine test, several at once: start each machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test <part>`: one part only; `test <part> from <folder>`: one part on the test inputs of a folder, with no build", run = run_test},
+	// Copies the test inputs of the build folder (the files of a whole build
+	// that the machine test reads) into `<folder>/test_inputs`, and writes
+	// the names of the test parts into `<folder>/test_parts.json`: the
+	// derivation of the whole build of the flake runs it
+	// (src/md/infrastructure/full_check.md, "The derivations of the check").
+	{name = "test_inputs", about = "copy the test inputs of the build folder into <folder>/test_inputs, and the names of the test parts into <folder>/test_parts.json, for the derivations of the check of the flake", run = run_test_inputs},
+	// Joins the output of the host checks and of each part derivation into
+	// the output of the check `boot-test` of the flake: the logs, the
+	// pictures, and the count of the checks of all. It refuses a join that
+	// lacks a part, has a part twice, or where two outputs write one file.
+	{name = "test_join", about = "<target> <host checks> <part>=<folder> ...: join the outputs of the derivations of the check of the flake into its output", run = run_test_join},
+	// Proves that a change of a document, or of a host test of the tool,
+	// leaves the derivation of each test part the same: three copies of the
+	// tracked files in build/part_cache, two of them changed, and the
+	// derivations of the parts of each. Each evaluation builds the test
+	// inputs of its tree, so it costs two whole builds.
+	{name = "part_cache", about = "check that a change of a document or of a host test of the tool leaves the derivation of each test part the same, so Nix runs no part again", run = run_part_cache},
 	// Builds, then starts the machine under QEMU in a window, with the log of
 	// the kernel on this terminal: the way to use the system by hand.
 	//
@@ -519,8 +540,13 @@ COMMANDS :: [?]foundation.Command {
 	// of the tests, the rule on comments, the form of the glossary, the
 	// file index of the intent, the source paths in the documents, the
 	// changelog, the news and the roadmap. Then the whole machine test
-	// (`test`) and a second build that must give the same bytes.
-	{name = "check", about = "odin check -vet and odin test of the host code, the fuzz targets (their corpus and a fixed count of new executions), the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, roadmap check, then test", run = run_check},
+	// (`test`), the test of the debug objects against the linked files of
+	// the build, and a second build that must give the same bytes.
+	//
+	// - `without_machines` (optional): no machine test; a whole build of the
+	//   main volume before the second build. The check of the flake runs
+	//   this form, and each test part in a derivation of its own.
+	{name = "check", about = "odin check -vet and odin test of the host code, the fuzz targets (their corpus and a fixed count of new executions), the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, roadmap check, then test; `check without_machines`: no machine test", run = run_check},
 	// Fuzzes the readers of the system on the host: the module file, the
 	// debug object, the storage format, QUIC and TLS, TCP and HTTP
 	// (docs/TOOLS.md, "The fuzzing").
@@ -660,17 +686,28 @@ run_test :: proc(args: []string) -> int {
 	}
 	// The times of the test are measures: the report never changes the result.
 	test_started := time.tick_now()
-	// One part boots only its own boot volumes: the build builds those.
-	build_code := build.build_system(machine.boot_volumes_of_test(args))
-	build_duration := time.tick_since(test_started)
-	if build_code != 0 {
-		return build_code
+	build_duration: time.Duration
+	inputs_folder, inputs_given := machine.test_arguments_give_inputs(args)
+	if inputs_given {
+		// A part derivation of the flake: the part on the test inputs of
+		// the whole build, with no build of its own.
+		part, _ := machine.test_part_find(args[0])
+		if !machine.test_inputs_take(inputs_folder, part^) {
+			return foundation.EXIT_FAILURE
+		}
+	} else {
+		// One part boots only its own boot volumes: the build builds those.
+		build_code := build.build_system(machine.boot_volumes_of_test(args))
+		build_duration = time.tick_since(test_started)
+		if build_code != 0 {
+			return build_code
+		}
 	}
 	if !foundation.reset_folder(machine.SCREENSHOT_FOLDER) {
 		return foundation.EXIT_FAILURE
 	}
 	parts := machine.test_parts[:]
-	if len(args) == 1 {
+	if len(args) >= 1 {
 		for part, place in machine.test_parts {
 			if part.name == args[0] {
 				parts = machine.test_parts[place:][:1]
@@ -694,12 +731,40 @@ run_test :: proc(args: []string) -> int {
 	if !passed {
 		return foundation.EXIT_FAILURE
 	}
+	// The join of the check of the flake adds up the counts of the parts.
+	if inputs_given && !machine.checks_passed_write(sync.atomic_load(&foundation.test_passed_count)) {
+		return foundation.EXIT_FAILURE
+	}
 	fmt.println("modustool: all tests passed")
 	return 0
 }
 
-// The check of the flake that runs `modustool check` in the sandbox of Nix.
-// The flake defines its checks for x86_64-linux only.
+// run_test_inputs is the command `test_inputs <folder>` (test_derivations.odin).
+run_test_inputs :: proc(args: []string) -> int {
+	if len(args) != 1 || args[0] == "" {
+		fmt.eprintln("modustool: test_inputs <folder>")
+		return foundation.EXIT_USAGE
+	}
+	return machine.test_inputs_write(args[0]) ? 0 : foundation.EXIT_FAILURE
+}
+
+// run_test_join is the command `test_join` (test_derivations.odin).
+run_test_join :: proc(args: []string) -> int {
+	return machine.test_join(args) ? 0 : foundation.EXIT_FAILURE
+}
+
+// run_part_cache is the command `part_cache` (test_derivations.odin).
+run_part_cache :: proc(args: []string) -> int {
+	if len(args) != 0 {
+		fmt.eprintln("modustool: part_cache takes no argument")
+		return foundation.EXIT_USAGE
+	}
+	return machine.part_cache_check(FLAKE_CHECK_ATTRIBUTE) ? 0 : foundation.EXIT_FAILURE
+}
+
+// The check of the flake that joins the host checks and one derivation for
+// each test part (src/md/infrastructure/full_check.md, "The derivations of
+// the check"). The flake defines its checks for x86_64-linux only.
 FLAKE_CHECK_ATTRIBUTE :: ".#checks.x86_64-linux.boot-test"
 // The link to the output of that check: it keeps the output in the store
 // while the link exists.
@@ -710,7 +775,7 @@ FLAKE_CHECK_LOGS :: FLAKE_CHECK_LINK + "/logs"
 FLAKE_CHECK_PICTURES :: FLAKE_CHECK_LINK + "/screenshots"
 // The count of the checks that passed in `modustool check`: the measure
 // record of `screenshots` adds it to the checks of its own measure runs.
-CHECKS_PASSED_FILE :: foundation.BUILD_FOLDER + "/checks_passed.txt"
+CHECKS_PASSED_FILE :: machine.CHECKS_PASSED_FILE
 
 // run_screenshots takes the outputs of the one run of the machine test of
 // the full check, the check of the flake (src/md/infrastructure/full_check.md):
@@ -734,9 +799,22 @@ run_screenshots :: proc(args: []string) -> int {
 	// pictures and the record into the repository. A log of the check is
 	// copied after this time, so the record reads it as a log of this run.
 	run_facts := checks.measure_run_facts_read()
-	// The check of the flake runs the host checks, the whole machine test
-	// and the second build in the sandbox; it fails when one of them fails.
-	if !foundation.run({"nix", "build", FLAKE_CHECK_ATTRIBUTE, "--out-link", FLAKE_CHECK_LINK, "--print-build-logs"}) {
+	// How many test parts Nix takes from the store, and how many run: a
+	// measure. The evaluation builds the test inputs of the tree first.
+	fmt.println("modustool: the evaluation of the check of the flake builds its test inputs first: a whole build when the tree changed")
+	if in_store, to_run, counted := machine.test_parts_in_store_count(FLAKE_CHECK_ATTRIBUTE); counted {
+		fmt.printfln("modustool: measure: the test parts of the check of the flake: %d taken from the store, %d run", in_store, to_run)
+	} else {
+		fmt.println("modustool: measure: the test parts of the check of the flake: no count, the evaluation failed")
+	}
+	// Each machine has its processors, and a part runs its machines one
+	// after the other: Nix runs at most as many part derivations at once as
+	// the pool of `modustool test` would run parts.
+	processors := foundation.test_processors_of(os.get_processor_core_count(), "")
+	most_jobs := machine.test_parts_at_once(len(machine.test_parts), processors)
+	// The check of the flake runs the host checks, each test part and the
+	// second build in the sandbox; it fails when one of them fails.
+	if !foundation.run({"nix", "build", FLAKE_CHECK_ATTRIBUTE, "--out-link", FLAKE_CHECK_LINK, "--print-build-logs", "--max-jobs", fmt.tprintf("%d", most_jobs)}) {
 		return foundation.EXIT_FAILURE
 	}
 	if !flake_check_outputs_take() {
@@ -893,6 +971,13 @@ run_measure :: proc(args: []string) -> int {
 }
 
 run_check :: proc(args: []string) -> int {
+	// The check of the flake runs each test part in a derivation of its own
+	// (src/md/infrastructure/full_check.md, "The derivations of the check").
+	without_machines := len(args) == 1 && args[0] == "without_machines"
+	if len(args) != 0 && !without_machines {
+		fmt.eprintln("modustool: check takes no argument, or `without_machines`")
+		return foundation.EXIT_USAGE
+	}
 	// The full check proves the build: it keeps no output of an earlier build.
 	build.build_whole = true
 	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.LOG_FACT_ATTRIBUTE_FLAG}) {
@@ -964,7 +1049,19 @@ run_check :: proc(args: []string) -> int {
 	if !checks.reuse_list_check() {
 		return foundation.EXIT_FAILURE
 	}
-	if run_test(nil) != 0 {
+	if without_machines {
+		// The second build compares its bytes with a first whole build:
+		// the modules and the main volume, whose boot program it compares.
+		if code := build.build_system([]string{build.BOOT_VOLUME}); code != 0 {
+			return code
+		}
+	} else if run_test(nil) != 0 {
+		return foundation.EXIT_FAILURE
+	}
+	// The debug objects against the linked files: the linked files name the
+	// compiler in the store, so only a build holds them, and no test part
+	// of the flake reads them.
+	if !machine.test_debug_objects() {
 		return foundation.EXIT_FAILURE
 	}
 	if !build.outputs_same_after_second_build() {
@@ -972,9 +1069,7 @@ run_check :: proc(args: []string) -> int {
 	}
 	// `screenshots` reads the count from the output of the check of the
 	// flake, for its measure record.
-	count_line := fmt.tprintf("%d\n", sync.atomic_load(&foundation.test_passed_count))
-	if write_error := os.write_entire_file(CHECKS_PASSED_FILE, count_line); write_error != nil {
-		fmt.eprintfln("modustool: cannot write %s: %v", CHECKS_PASSED_FILE, write_error)
+	if !machine.checks_passed_write(sync.atomic_load(&foundation.test_passed_count)) {
 		return foundation.EXIT_FAILURE
 	}
 	return 0

@@ -568,7 +568,83 @@ facts_reached :: proc(ir: string, facts: []Fact_Description, source: string) -> 
 // an output of the compile step, which the conversion reads, so that both
 // steps name one set of fact types and a kept compile keeps its list.
 module_reached_facts_file :: proc(name: string) -> string {
-	return foundation.join(foundation.module_build_folder, "/", name, "/reached_facts.txt")
+	return foundation.join(foundation.module_build_folder, "/", name, "/", MODULE_REACHED_FACTS_FILE_NAME)
+}
+
+// The names of the two lists that the compile step of a module writes for
+// its conversion and for the tests of the build: they hold no path of the
+// store and no time, so the test inputs of the check of the flake keep them
+// (src/md/infrastructure/full_check.md, "The derivations of the check").
+MODULE_REACHED_FACTS_FILE_NAME :: "reached_facts.list"
+MODULE_SOURCE_LIST_FILE_NAME :: "sources.list"
+
+// module_source_list_file gives the path of the list of the sources of the
+// repository that the compiler read for a module.
+module_source_list_file :: proc(name: string) -> string {
+	return foundation.join(foundation.module_build_folder, "/", name, "/", MODULE_SOURCE_LIST_FILE_NAME)
+}
+
+// module_source_list_text gives the text of the list of the sources of a
+// module from the list of its compiler: each Odin source of the repository,
+// by its path from the root of the repository, one on each line, sorted,
+// each one time. The list of the compiler also names the libraries of the
+// compiler by their place in the store, and its order is the order of the
+// threads of the compiler: neither enters the list.
+module_source_list_text :: proc(compiler_sources: []string) -> string {
+	paths := make([dynamic]string, context.temp_allocator)
+	for listed_path in compiler_sources {
+		path, of_the_repository := source_of_the_repository(listed_path)
+		if !of_the_repository || !strings.has_suffix(path, ".odin") || slice.contains(paths[:], path) {
+			continue
+		}
+		append(&paths, path)
+	}
+	slice.sort(paths[:])
+	text := strings.builder_make(context.temp_allocator)
+	for path in paths {
+		fmt.sbprintfln(&text, "%s", path)
+	}
+	return strings.to_string(text)
+}
+
+// module_source_list_write writes the list of the sources of a module, from
+// the list that its compiler just wrote.
+module_source_list_write :: proc(name: string) -> bool {
+	source_files, _, listed := dependency_list_read(module_dependency_file(name))
+	if !listed {
+		fmt.eprintfln("modustool: the list of the sources of the compiler of %s cannot be read", name)
+		return false
+	}
+	path := module_source_list_file(name)
+	if error := os.write_entire_file(path, module_source_list_text(source_files)); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", path, error)
+		return false
+	}
+	return true
+}
+
+// module_source_list_read reads the list of the sources of a module. It
+// refuses a list that cannot be read and an empty line inside the list.
+module_source_list_read :: proc(name: string) -> (paths: []string, ok: bool) {
+	path := module_source_list_file(name)
+	text, readable := foundation.read_text_file_quiet(path)
+	if !readable {
+		fmt.eprintfln("modustool: the list of the sources of %s, %s, cannot be read", name, path)
+		return nil, false
+	}
+	list := make([dynamic]string, context.temp_allocator)
+	lines := strings.split_lines(strings.trim_suffix(text, "\n"), context.temp_allocator)
+	for line in lines {
+		if line == "" {
+			if len(lines) == 1 {
+				break
+			}
+			fmt.eprintfln("modustool: the list of the sources of %s, %s, has an empty line", name, path)
+			return nil, false
+		}
+		append(&list, line)
+	}
+	return list[:], true
 }
 
 // module_reached_facts_write writes the list of the fact keys that the
@@ -628,18 +704,18 @@ module_facts_of_sources :: proc(build: foundation.Module_Build) -> (facts: []Fac
 }
 
 // module_sources gives each source of the repository that the compiler
-// read for a module, with no test file: its list of dependencies. The log
-// facts and the record streams of a module come from these sources.
+// read for a module, with no test file: its source list, which the compile
+// step writes with no path of the store. The log facts and the record
+// streams of a module come from these sources.
 module_sources :: proc(build: foundation.Module_Build) -> (sources: []Fact_Source, ok: bool) {
-	source_files, _, listed := dependency_list_read(module_dependency_file(build.name))
+	source_files, listed := module_source_list_read(build.name)
 	if !listed {
-		fmt.eprintfln("modustool: the sources of %s: the list of the sources of the compiler cannot be read", build.name)
+		fmt.eprintfln("modustool: the sources of %s: the list of its sources cannot be read", build.name)
 		return nil, false
 	}
 	read_sources := make([dynamic]Fact_Source, context.temp_allocator)
-	for listed_path in source_files {
-		path, of_the_repository := source_of_the_repository(listed_path)
-		if !of_the_repository || !strings.has_suffix(path, ".odin") || strings.has_suffix(path, "_test.odin") {
+	for path in source_files {
+		if strings.has_suffix(path, "_test.odin") {
 			continue
 		}
 		source := foundation.read_file(path) or_return

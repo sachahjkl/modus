@@ -754,12 +754,8 @@ boot_volumes_build :: proc(needed_paths: []string) -> bool {
 	if len(to_build) == 0 {
 		return true
 	}
-	// The file of this process, not its first argument (parallel_build.odin).
-	tool_path, path_error := os.get_executable_path(context.temp_allocator)
-	if path_error != nil {
-		fmt.eprintfln("modustool: cannot find the file of the tool: %v", path_error)
-		return false
-	}
+	// The binary of this process, not its first argument (parallel_build.odin).
+	tool_path := foundation.tool_executable_path() or_return
 	commands := make([][]string, len(to_build), context.temp_allocator)
 	for volume, place in to_build {
 		command := make([]string, 3, context.temp_allocator)
