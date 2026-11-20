@@ -6,19 +6,23 @@ import "core:sync"
 import "core:time"
 
 // A UDP relay in the peer of the tool (docs/QUIC.md, section 6): a host
-// process, such as the QUIC client of OpenSSL, reaches the UDP port
-// 4433 of the machine through the peer, with no network of the host but
-// its loopback. QEMU user networking with restrict=on drops each UDP
-// datagram of the machine (libslirp, udp_input), so the machine of
-// `test quic-real` has the network device of the peer (-netdev dgram).
+// process reaches one UDP port of the machine through the peer, with no
+// network of the host but its loopback. QEMU user networking with
+// restrict=on drops each UDP datagram of the machine (libslirp,
+// udp_input), so a machine with a relay has the network device of the peer
+// (-netdev dgram). The port is a parameter of the peer: 4433 of quic_echo
+// for the QUIC client of OpenSSL (`test quic-real`), 7101 of
+// remote_display for a native viewer (`run --remote-display`,
+// remote_display_run.odin).
 //
 // - The relay has one UDP socket on the loopback of the host, at a port
-//   that the system chooses (relay_port of the peer).
+//   that the system chooses (Peer_Relay.port).
 // - A datagram of a local client becomes a frame from 10.0.2.2, from a
 //   source port that the relay gives that client (RELAY_PORT_FIRST + its
-//   place), to 10.0.2.15 port 4433.
-// - A datagram of the machine to 10.0.2.2 at a port of the relay goes back
-//   to its client, from the socket of the relay.
+//   place), to 10.0.2.15 at the port of the machine of the relay
+//   (Peer_Relay.machine_port).
+// - A datagram of the machine from that port to 10.0.2.2 at a port of the
+//   relay goes back to its client, from the socket of the relay.
 // - A table of RELAY_CLIENTS clients: a new client takes a free place, or
 //   the place with the oldest datagram.
 // - A datagram over RELAY_DATA_LIMIT bytes, from either side, is dropped
@@ -45,6 +49,7 @@ Relay_Client :: struct {
 Peer_Relay :: struct {
 	socket:          net.UDP_Socket,
 	port:            int, // The port of the relay on the loopback of the host.
+	machine_port:    u16, // The UDP port of the machine that the clients reach.
 	clients:         [RELAY_CLIENTS]Relay_Client,
 	// The counts, read after the thread of the peer ended.
 	to_machine:      int,
@@ -56,8 +61,9 @@ Peer_Relay :: struct {
 	trace:           [dynamic]string,
 }
 
-// peer_relay_start opens the socket of the relay. The peer starts it.
-peer_relay_start :: proc(relay: ^Peer_Relay) -> bool {
+// peer_relay_start opens the socket of the relay to a UDP port of the
+// machine. The peer starts it.
+peer_relay_start :: proc(relay: ^Peer_Relay, machine_port: u16) -> bool {
 	socket, err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
 	if err != nil {
 		fmt.eprintfln("modustool: the UDP relay of the peer has no socket: %v", err)
@@ -69,7 +75,7 @@ peer_relay_start :: proc(relay: ^Peer_Relay) -> bool {
 		return false
 	}
 	_ = net.set_blocking(socket, false)
-	relay^ = {socket = socket, port = bound.port}
+	relay^ = {socket = socket, port = bound.port, machine_port = machine_port}
 	return true
 }
 
@@ -140,7 +146,7 @@ peer_relay_tick :: proc(peer: ^Peer) {
 		relay.clients[place].last_used = time.tick_now()
 		port := u16(RELAY_PORT_FIRST + place)
 		peer_relay_describe(peer, true, port, buffer[:count])
-		peer_send(peer, peer_quic_udp(peer, PEER_ADDRESS, port, buffer[:count]))
+		peer_send(peer, peer_udp_to_machine(peer, PEER_ADDRESS, port, relay.machine_port, buffer[:count]))
 		relay.to_machine += 1
 	}
 }
@@ -153,12 +159,12 @@ same_endpoint :: proc(first, second: net.Endpoint) -> bool {
 	return first.port == second.port && first_four && second_four && first_address == second_address
 }
 
-// peer_relay_datagram takes a datagram of the machine to 10.0.2.2: when its
-// port is a port of the relay, it goes back to its client, and the call
-// gives true.
-peer_relay_datagram :: proc(peer: ^Peer, port: u16, data: []u8) -> bool {
+// peer_relay_datagram takes a datagram of the machine to 10.0.2.2: when it
+// comes from the port of the machine of the relay and goes to a port of the
+// relay, it goes back to its client, and the call gives true.
+peer_relay_datagram :: proc(peer: ^Peer, source_port: u16, port: u16, data: []u8) -> bool {
 	relay := &peer.relay
-	if relay.port == 0 || port < RELAY_PORT_FIRST || int(port) >= RELAY_PORT_FIRST + RELAY_CLIENTS {
+	if relay.port == 0 || source_port != relay.machine_port || port < RELAY_PORT_FIRST || int(port) >= RELAY_PORT_FIRST + RELAY_CLIENTS {
 		return false
 	}
 	place := int(port) - RELAY_PORT_FIRST

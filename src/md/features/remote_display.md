@@ -81,6 +81,22 @@ The first viewer is a native program in a repository of its own, which runs on L
 
 The socket of each system is a part of the viewer, in the files of each system.
 
+### A machine for a viewer on the host
+
+`modustool run --remote-display <viewer key>` runs a machine that a viewer on the same computer reaches, with no person at the machine. The command `viewertool machine <port> <machine key>` of the viewer connects to it.
+
+- **The path of the datagrams.** QEMU user networking with `restrict=on` drops each UDP datagram of the machine, so the machine has the network device of the peer of the tool (`-netdev dgram`), and the UDP relay of the peer carries the datagrams of the viewer. The relay reaches one port of the machine, which is a parameter of the peer: 7101 of `remote_display` here, 4433 of `quic_echo` for `test quic-real`. Each datagram of the relay comes from 10.0.2.2, the one address that the listen grant of `remote_display` admits, so the grant does not change.
+- **No window.** The machine runs as a test machine: its log goes to a file, and the tool types through the machine protocol of QEMU. A run for a program never opens a window on the desktop of the host.
+- **The allow and the start.** The tool types `remote_display_allow("<viewer key>", "view_and_input")` in the console of principal 0 first: the root service holds the client table, with no `remote_display`. The boot image of `run` holds `remote_display`, and the start policy does not start it, so the tool then types `start("remote_display")`. When the service listens, the tool prints the port of the relay and the line of the public key of the service: a viewer that connects at once is allowed and finds the service. The machine has a new data disk, so no named principal is unlocked, and the session in front is the session of principal 0, the principal of the row of the key. The uses last until the machine stops: the next run allows the key again.
+- **The viewer key.** The viewer keeps its key, and prints its public key with `modus-viewer -print-key`. The tool allows that key only: it never allows a key that the machine refused, because an allow of any key that tries is a grant to whoever reaches the relay.
+- **The end.** The tool waits until the last viewer ends (`remote_display: no viewer: the capture face is closed`), then stops the machine with `shutdown()`. The bound of that wait is one hour: it ends only a run that no viewer used.
+
+The refused forms:
+
+- **`hostfwd=udp` of QEMU user networking.** libslirp drops the datagrams of the machine before any forward (docs/QUIC.md, section 6).
+- **`run` in its window, with the allow typed by a person.** The run of a program, a screenshot of the viewer for example, must open no window on the desktop, and a person is not there to type.
+- **A key of the viewer drawn by the tool.** The key of the viewer is the viewer's: the tool would hand a private key to another program, and the viewer would not run as a person runs it.
+
 ### The authority
 
 - **A grant of a principal to a client key.** Each row of the client table holds the uses of its key, a set of three: `Calls` (the calls of `remote`), `View` (the view of the screen) and `Input` (the keys and the pointer). `Input` never comes without `View`: the border of the word of the uses refuses that set, and an unknown bit. `remote_allow(key)` gives `Calls`, as before. `remote_display_allow(key, "view")` gives `View`, and `remote_display_allow(key, "view_and_input")` gives `View` and `Input`. An allow of a key that the principal holds already adds the uses to its row and keeps its serial: a grant that grows ends no connection. `remote` takes only a key whose row holds `Calls`, and `remote_display` only a key whose row holds `View`; a key with `View` alone makes no call. One table of client keys serves `remote` and `remote_display`, because the key, the principal, the serial and the revocation are the same concept for both.
