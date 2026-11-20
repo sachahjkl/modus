@@ -108,6 +108,16 @@ The design: `docs/TOOLS.md`, "A module from a source outside the repository".
 
 Do not use: third-party module, external module, plugin.
 
+### Outside source
+
+An outside source is the source of a work of others in C that a module of the system compiles in, which the flake fetches at one commit and patches.
+
+The repository holds no source file of the work: the folder `src/outside/<work>` holds its license, the patches of the system, the files of the system that it needs and the thin libc. The flake makes one folder of the store from them, and the tool compiles its C files into the module. The row of the module table names it with `c_source`. `chibicc` is the first one. It is not an outside module, whose Odin source is in a folder of a developer.
+
+The design: `src/md/infrastructure/outside_source.md`; the guide: `docs/TOOLS.md`, "The outside sources of a module".
+
+Do not use: vendored code, third-party source.
+
 ### Rich module
 
 A rich module is an outside module whose interface is built with `gui_toolkit`, the toolkit of rich modules.

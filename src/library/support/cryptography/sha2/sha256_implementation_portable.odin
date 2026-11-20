@@ -5,7 +5,7 @@
 // core/crypto/sha2/sha256_impl_hw_gen.odin does on the other processors
 // (its procedures, unchanged): SHA-256 runs in the portable code of
 // sha2.odin (docs/CRYPTOGRAPHY.md).
-package sha2
+package modus_sha2
 
 is_hardware_accelerated_256 :: proc "contextless" () -> bool {
 	return false

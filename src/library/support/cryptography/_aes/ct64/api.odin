@@ -1,5 +1,5 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_aes/ct64/api.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
-package aes_ct64
+// Altered source: Odin dev-2026-11a, core/crypto/_aes/ct64/api.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+package modus_aes_ct64
 
 import crypto "modus:support/cryptography/compatibility_crypto"
 

@@ -26,7 +26,8 @@ CRYPTOGRAPHY_ORIGIN_PREFIX :: "core/crypto/"
 HASH_TO_COMPUTE :: "TO_COMPUTE"
 CRYPTOGRAPHY_ORIGIN_RELEASE :: "dev-2026-11a" // The release of Odin that flake.nix pins.
 
-// The only changes of a file that is taken: its imports go to the copies in
+// With the package name of the copy (cryptography_packages below), the only
+// changes of a file that is taken: its imports go to the copies in
 // src/library/support/cryptography, and to the compatibility layer for the helpers of
 // the origin. Order matters: the base package first, with its quote.
 // The packages of the compatibility layer have their own names
@@ -41,6 +42,133 @@ cryptography_import_changes := [?][2]string {
 	{"\"core:encoding/endian\"", "endian \"modus:support/cryptography/compatibility_endian\""},
 	{"\"core:math/bits\"", "bits \"modus:support/cryptography/compatibility_bits\""},
 	{"\"core:bytes\"", "bytes \"modus:support/cryptography/compatibility_bytes\""},
+}
+
+// The start of the declared name of each package of the copy; the name of
+// its package in the origin follows it whole. Odin refuses two packages of
+// one declared name in one program, so a host program that imports
+// core:crypto and the copy needs names that core:crypto does not use. The
+// name of an import comes from its path, so no import changes. One prefix keeps the name
+// of the origin readable in each name, keeps `_chacha20` apart from
+// `chacha20`, and is one rule for the check
+// (src/md/infrastructure/cryptography_package_names.md).
+CRYPTOGRAPHY_PACKAGE_PREFIX :: "modus_"
+
+// A package of core:crypto that the copy holds: its folder under
+// core/crypto, which the copy keeps under src/library/support/cryptography,
+// and the name of its package in the origin.
+Cryptography_Package :: struct {
+	folder:      string,
+	origin_name: string,
+}
+
+// Each package of the copy. A taken file is in one of these folders; a file
+// of the system in one of them declares the package of the copy too.
+@(rodata)
+cryptography_packages := [?]Cryptography_Package {
+	{"_aes", "_aes"},
+	{"_aes/ct64", "aes_ct64"},
+	{"_aes/hw", "aes_hw"},
+	{"_blake2", "_blake2"},
+	{"_chacha20", "_chacha20"},
+	{"_chacha20/ref", "chacha20_ref"},
+	{"_edwards25519", "_edwards25519"},
+	{"_fiat", "fiat"},
+	{"_fiat/field_curve25519", "field_curve25519"},
+	{"_fiat/field_poly1305", "field_poly1305"},
+	{"_fiat/field_scalar25519", "field_scalar25519"},
+	{"_subtle", "_subtle"},
+	{"aes", "aes"},
+	{"argon2id", "argon2id"},
+	{"blake2b", "blake2b"},
+	{"chacha20", "chacha20"},
+	{"chacha20poly1305", "chacha20poly1305"},
+	{"ed25519", "ed25519"},
+	{"hkdf", "hkdf"},
+	{"hmac", "hmac"},
+	{"poly1305", "poly1305"},
+	{"sha2", "sha2"},
+	{"x25519", "x25519"},
+}
+
+// cryptography_package_of_folder gives the package of the copy whose folder
+// under core/crypto is folder.
+cryptography_package_of_folder :: proc(folder: string) -> (copied: Cryptography_Package, found: bool) {
+	for candidate in cryptography_packages {
+		if candidate.folder == folder {
+			return candidate, true
+		}
+	}
+	return {}, false
+}
+
+// cryptography_folder_of_file gives the folder of a file, from the start of
+// the path to its last "/": "sha2/sha2.odin" gives "sha2".
+cryptography_folder_of_file :: proc(path: string) -> string {
+	end := strings.last_index_byte(path, '/')
+	return end < 0 ? "" : path[:end]
+}
+
+// cryptography_package_line gives the line that declares a package of the
+// copy: `package modus_<name of the origin>`.
+cryptography_package_line :: proc(copied: Cryptography_Package) -> string {
+	return strings.concatenate({"package ", CRYPTOGRAPHY_PACKAGE_PREFIX, copied.origin_name}, context.temp_allocator)
+}
+
+// cryptography_line_count counts the lines of text that are line whole: a
+// comment line that starts with the same words is another line.
+cryptography_line_count :: proc(text, line: string) -> int {
+	count := 0
+	for candidate in strings.split(text, "\n", context.temp_allocator) {
+		if candidate == line {
+			count += 1
+		}
+	}
+	return count
+}
+
+// cryptography_package_rename gives the origin with its package line
+// `package <name of the origin>` as the package line of the copy. Only the
+// declared name changes: Odin names an import with no alias by the last
+// element of its path, so the importing code keeps its names, and the
+// declared name is the one that two packages of one program must not share.
+// ok is false when the origin is in a folder that no package of the copy
+// names, or has its package line other than exactly one time.
+cryptography_package_rename :: proc(origin: string, origin_path: string) -> (renamed: string, ok: bool) {
+	copied, found := cryptography_package_of_folder(cryptography_folder_of_file(strings.trim_prefix(origin_path, CRYPTOGRAPHY_ORIGIN_PREFIX)))
+	if !found {
+		fmt.eprintfln("modustool: the folder of %s is in no row of cryptography_packages: a package of the copy has its row first", origin_path)
+		return "", false
+	}
+	origin_line := strings.concatenate({"package ", copied.origin_name}, context.temp_allocator)
+	if cryptography_line_count(origin, origin_line) != 1 {
+		fmt.eprintfln("modustool: %s has the line %q %d times, not 1: the origin changed; read its row of cryptography_packages again", origin_path, origin_line, cryptography_line_count(origin, origin_line))
+		return "", false
+	}
+	lines := strings.split(origin, "\n", context.temp_allocator)
+	for &line in lines {
+		if line == origin_line {
+			line = cryptography_package_line(copied)
+		}
+	}
+	return strings.join(lines, "\n", context.temp_allocator), true
+}
+
+// cryptography_system_file_package_holds says if a file of the system has
+// the package line of the copy when it is in a folder of the copy: a file
+// that kept the name of the origin would bring the clash back. A file of
+// another folder (the compatibility layer, the vectors) has names that
+// core:crypto does not use.
+cryptography_system_file_package_holds :: proc(path: string, text: string) -> bool {
+	copied, found := cryptography_package_of_folder(cryptography_folder_of_file(strings.trim_prefix(path, foundation.CRYPTOGRAPHY_FOLDER + "/")))
+	if !found || !strings.has_prefix(path, foundation.CRYPTOGRAPHY_FOLDER + "/") {
+		return true
+	}
+	if cryptography_line_count(text, cryptography_package_line(copied)) != 1 {
+		fmt.eprintfln("modustool: test failed: %s is in the folder of the package %s of the copy, and has not the line %q exactly one time", path, copied.origin_name, cryptography_package_line(copied))
+		return false
+	}
+	return true
 }
 
 // One listed adjustment of a taken file: lines of the origin, and the lines
@@ -126,14 +254,15 @@ cryptography_adjusted :: proc(origin_path: string) -> bool {
 // cryptography_marking is the first line of each file that is taken: the
 // zlib license of Odin asks that an altered source says so.
 cryptography_marking :: proc(origin_path: string) -> string {
-	what := cryptography_adjusted(origin_path) ? "its imports changed, and the adjustments that tools/modustool/checks/cryptography_origin.odin lists" : "only its imports changed"
+	what := cryptography_adjusted(origin_path) ? "its package name and its imports changed, and the adjustments that tools/modustool/checks/cryptography_origin.odin lists" : "only its package name and its imports changed"
 	return fmt.tprintf("// Altered source: Odin %s, %s; %s (" + foundation.CRYPTOGRAPHY_MANIFEST + ", docs/CRYPTOGRAPHY.md).\n", CRYPTOGRAPHY_ORIGIN_RELEASE, origin_path, what)
 }
 
 // cryptography_file_from_origin gives the bytes that the file of the
-// repository must have: the marking, then the origin with each import
-// change and each listed adjustment of that file. ok is false when the
-// lines of an adjustment are not in the origin exactly one time.
+// repository must have: the marking, then the origin with each listed
+// adjustment of that file, the package name of the copy, and each import
+// change. ok is false when the lines of an adjustment are not in the origin
+// exactly one time, or when cryptography_package_rename refuses the origin.
 cryptography_file_from_origin :: proc(origin: string, origin_path: string) -> (file: string, ok: bool) {
 	text := origin
 	for adjustment in cryptography_adjustments {
@@ -146,6 +275,7 @@ cryptography_file_from_origin :: proc(origin: string, origin_path: string) -> (f
 		}
 		text, _ = strings.replace(text, adjustment.origin_lines, adjustment.lines, 1, context.temp_allocator)
 	}
+	text = cryptography_package_rename(text, origin_path) or_return
 	for change in cryptography_import_changes {
 		text, _ = strings.replace_all(text, change[0], change[1], context.temp_allocator)
 	}
@@ -220,6 +350,9 @@ cryptography_system_files_check :: proc(listed: ^map[string]string) -> bool {
 		}
 		if hex_text(hash[:]) != parts[1] {
 			fmt.eprintfln("modustool: test failed: %s has the hash %s, not %s: a file of the system changed; review it, then write its new hash", parts[0], hex_text(hash[:]), parts[1])
+			return false
+		}
+		if !cryptography_system_file_package_holds(parts[0], string(bytes)) {
 			return false
 		}
 	}
@@ -349,7 +482,7 @@ cryptography_origin_check :: proc() -> bool {
 		}
 	}
 	foundation.test_passed_print("each of the %d .odin files of %s is in a list; %d files of the system have the hash of their list", len(found), foundation.CRYPTOGRAPHY_FOLDER, len(listed) - files)
-	foundation.test_passed_print("%d files of " + foundation.CRYPTOGRAPHY_FOLDER + " are their origin in Odin %s (each with the BLAKE3 hash of the manifest) with the %d listed import changes, the %d listed adjustments, and nothing else", files, CRYPTOGRAPHY_ORIGIN_RELEASE, len(cryptography_import_changes), len(cryptography_adjustments))
+	foundation.test_passed_print("%d files of " + foundation.CRYPTOGRAPHY_FOLDER + " are their origin in Odin %s (each with the BLAKE3 hash of the manifest) with the package names of the %d packages of the copy, the %d listed import changes, the %d listed adjustments, and nothing else", files, CRYPTOGRAPHY_ORIGIN_RELEASE, len(cryptography_packages), len(cryptography_import_changes), len(cryptography_adjustments))
 	return true
 }
 

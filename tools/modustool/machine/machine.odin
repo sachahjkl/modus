@@ -1797,6 +1797,42 @@ scenario := [?]Step {
 	{kind = .Type, text = "unload(\"adder\")"},
 	{kind = .Wait, text = "[console]   module    adder", fails_on = "[console]   memory    its sandboxed process stopped"},
 	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
+	// The C compiler (src/md/features/c_compiler.md): chibicc, ported,
+	// writes a text that the assembler takes, and the console calls the
+	// function of the C source. An empty source is refused at the border,
+	// before the C part, so the one compile of the call host is still free;
+	// a second compile is refused. add(-7, 2)
+	// proves that an export that gives an int extends its sign.
+	{kind = .Type, text = "isolate(\"c_compiler\")"},
+	{kind = .Wait, text = "[c_compiler] host: ready, 1 exports"},
+	{kind = .Wait, text = "[console]   module     c_compiler"},
+	{kind = .Type, text = "t = buffer(1)"},
+	{kind = .Type, text = "compile(\"\", t)"},
+	{kind = .Wait, text = "[console] error: compile: "},
+	{kind = .Type, text = "n = compile(\"int add(int a, int b) { return a + b; }\", t)"},
+	{kind = .Wait, text = "c_compiler: a text of "},
+	{kind = .Type, text = "m = assemble(bytes(t, 0, n), f)"},
+	{kind = .Wait, text = "assemble: a module file of "},
+	{kind = .Type, text = "isolate_memory(\"c_adder\", f, m)"},
+	// The call host is ready before the console writes its line about the
+	// module: two processes, in either order.
+	{kind = .Wait, text = "[c_adder] host: ready, 1 exports", any_order = true},
+	{kind = .Wait, text = "console: c_adder is a module from memory: "},
+	{kind = .Type, text = "add(2, 3)"},
+	{kind = .Wait, text = "[console] > add(2, 3)"},
+	{kind = .Wait, text = "[console] 5"},
+	{kind = .Type, text = "add(-7, 2)"},
+	{kind = .Wait, text = "[console] > add(-7, 2)"},
+	{kind = .Wait, text = "[console] -5"},
+	{kind = .Type, text = "compile(\"int other;\", t)"},
+	{kind = .Wait, text = "c_compiler: a call host compiles one source: unload the module and isolate it again"},
+	{kind = .Type, text = "unload(\"c_adder\")"},
+	{kind = .Wait, text = "[console]   module    c_adder", fails_on = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Type, text = "unload(\"c_compiler\")"},
+	{kind = .Wait, text = "[console]   module    c_compiler", fails_on = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
+	{kind = .Type, text = "release(t)"},
 	{kind = .Type, text = "unload(\"assemble\")"},
 	{kind = .Wait, text = "[console]   module    assemble", fails_on = "[console]   memory    its sandboxed process stopped"},
 	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
@@ -3955,6 +3991,10 @@ key_name :: proc(character: u8) -> string {
 		return "bracket_left"
 	case ']':
 		return "bracket_right"
+	case '{':
+		return "shift-bracket_left"
+	case '}':
+		return "shift-bracket_right"
 	case '^':
 		return "shift-6"
 	case '>':

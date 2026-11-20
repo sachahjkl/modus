@@ -27,11 +27,11 @@ fact_key :: proc(package_name, type_name: string) -> u64 {
 }
 
 // siphash_2_4 is SipHash-2-4 (Aumasson and Bernstein, 2012) with the key
-// words k0 and k1. The tool cannot import core:crypto/siphash: that package
-// brings core:crypto/_subtle, and the copy of the cryptography of Odin in
-// src/library has a package of the same name, which the compiler refuses
-// in one build. A host test checks it against the vector of the paper and
-// against typeid_of.
+// words k0 and k1. It was written when the copy of the cryptography of Odin
+// in src/library had the package names of core:crypto, so that the tool
+// could not import core:crypto/siphash. The copy has its own names now, and
+// ROADMAP.md holds the change to core:crypto/siphash. A host test checks it
+// against the vector of the paper and against typeid_of.
 siphash_2_4 :: proc(message: []u8, k0, k1: u64) -> u64 {
 	v0 := k0 ~ 0x736f_6d65_7073_6575
 	v1 := k1 ~ 0x646f_7261_6e64_6f6d

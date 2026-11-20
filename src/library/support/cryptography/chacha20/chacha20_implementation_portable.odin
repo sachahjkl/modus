@@ -5,7 +5,7 @@
 // the one implementation is the portable one of the origin,
 // src/library/support/cryptography/_chacha20/ref, taken unchanged. The names are the
 // names of the origin (docs/CRYPTOGRAPHY.md).
-package chacha20
+package modus_chacha20
 
 import "modus:support/cryptography/_chacha20/ref"
 

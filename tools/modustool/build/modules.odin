@@ -274,6 +274,75 @@ module_assembly_files :: proc(build: foundation.Module_Build) -> (files: []strin
 	return assembly[:], true
 }
 
+// The flags of clang for each C file of an outside source, after the
+// command name. The reason of each one is in
+// src/md/infrastructure/outside_source.md, "The compile of a C file". The
+// wrapper of clang in Nix adds the protections of a program of the host
+// before them; a later flag of the same kind wins, so each one is written.
+@(rodata)
+c_compile_flags := [?]string {
+	"--target=x86_64-unknown-none-elf",
+	"-std=gnu11",
+	"-O2",
+	"-ffreestanding",
+	"-nostdinc",
+	"-fPIC",
+	"-fvisibility=hidden",
+	"-fno-omit-frame-pointer",
+	"-mno-omit-leaf-frame-pointer",
+	"-mlong-double-64",
+	"-fno-stack-protector",
+	"-fno-stack-clash-protection",
+	"-fcf-protection=none",
+	"-fzero-call-used-regs=skip",
+	"-U_FORTIFY_SOURCE",
+	"-Wno-format-security",
+	"-fno-asynchronous-unwind-tables",
+	"-fno-unwind-tables",
+	"-fno-common",
+	"-ffunction-sections",
+	"-fdata-sections",
+}
+
+// module_c_commands gives the command of clang for each C file of the
+// outside source of a module, in the order of the names, and an empty list
+// for a module with no C part. Each command names the folder of the store,
+// which Nix names by the hash of its content: the build key of the module
+// holds the commands, so a change of a patch or of a file of the system
+// builds the module again. The objects go into the folder of the objects of
+// the module, which the link reads whole.
+module_c_commands :: proc(build: foundation.Module_Build) -> (commands: [][]string, ok: bool) {
+	if build.c_source.folder == "" {
+		return nil, true
+	}
+	folder := os.get_env(build.c_source.variable, context.temp_allocator)
+	if folder == "" {
+		fmt.eprintfln("modustool: the module %s compiles in the C files of %s, and the variable %s is not set: run the tool in a shell of the flake (src/md/infrastructure/outside_source.md)", build.name, build.c_source.work, build.c_source.variable)
+		return nil, false
+	}
+	sources := foundation.files_with_suffix(folder, ".c") or_return
+	if len(sources) == 0 {
+		fmt.eprintfln("modustool: the folder %s of %s (the variable %s) has no C file", folder, build.c_source.work, build.c_source.variable)
+		return nil, false
+	}
+	objects := foundation.join(foundation.module_build_folder, "/", build.name, "/objects")
+	list := make([dynamic][]string, context.temp_allocator)
+	for source in sources {
+		name := strings.trim_suffix(source[strings.last_index(source, "/") + 1:], ".c")
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, "clang")
+		append(&command, ..c_compile_flags[:])
+		// The headers of the thin libc first: a folder of -I comes before
+		// each folder of -isystem that the wrapper adds.
+		append(&command, foundation.join("-I", folder, "/libc/include"), foundation.join("-I", folder))
+		// __FILE__ names the work, not a folder of the store.
+		append(&command, foundation.join("-ffile-prefix-map=", folder, "=", build.c_source.work))
+		append(&command, "-c", "-o", foundation.join(objects, "/c_", name, ".o"), source)
+		append(&list, command[:])
+	}
+	return list[:], true
+}
+
 // module_linked_file gives the path of the linked file of a module: the
 // output of its compile step, and the input of its conversion.
 module_linked_file :: proc(name: string) -> string {
@@ -287,7 +356,8 @@ build_module :: proc(build: foundation.Module_Build) -> bool {
 }
 
 // module_compile is the compile step of a module: it compiles a package
-// to objects, assembles its .asm files, and links all with lld into one
+// to objects, assembles its .asm files, compiles the C files of its
+// outside source when it has one, and links all with lld into one
 // position-independent object, the linked file.
 //
 // The step reads no file of an import. A source names an export of an
@@ -372,6 +442,11 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 		} else {
 			foundation.run({"nasm", "-f", "elf64", "-o", foundation.join(objects, "/", name, ".o"), source}) or_return
 		}
+	}
+	// The C files of an outside source join the same link.
+	c_commands := module_c_commands(build) or_return
+	for command in c_commands {
+		foundation.run(command) or_return
 	}
 
 	// Only the exports of the module are visible in the linked object.

@@ -1,5 +1,5 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_edwards25519/edwards25519_table.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
-package _edwards25519
+// Altered source: Odin dev-2026-11a, core/crypto/_edwards25519/edwards25519_table.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+package modus__edwards25519
 
 /*
 	------ GENERATED ------ DO NOT EDIT ------ GENERATED ------ DO NOT EDIT ------ GENERATED ------

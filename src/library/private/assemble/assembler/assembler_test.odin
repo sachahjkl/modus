@@ -113,6 +113,135 @@ addresses_and_the_stack_have_the_bytes_of_the_manual :: proc(t: ^testing.T) {
 }
 
 @(test)
+sign_extended_moves_have_the_bytes_of_the_manual :: proc(t: ^testing.T) {
+	// MOVSXD r64, r/m32: REX.W 63 /r, with R for a destination past %rdi
+	// and B for a source or a base past %rdi.
+	expect_code(t, "movsxd %eax, %rax", {0x48, 0x63, 0xC0})
+	expect_code(t, "movsxd %edi, %r8", {0x4C, 0x63, 0xC7})
+	expect_code(t, "movsxd %r9d, %rax", {0x49, 0x63, 0xC1})
+	expect_code(t, "movsxd %r15d, %r15", {0x4D, 0x63, 0xFF})
+	expect_code(t, "movsxd (%rax), %rax", {0x48, 0x63, 0x00})
+	expect_code(t, "movsxd -8(%rbp), %rcx", {0x48, 0x63, 0x4D, 0xF8})
+	expect_code(t, "movsxd (%rsp), %rdx", {0x48, 0x63, 0x14, 0x24})
+	expect_code(t, "movsxd 0x1000(%r12), %r10", {0x4D, 0x63, 0x94, 0x24, 0x00, 0x10, 0x00, 0x00})
+	// A label of the data: the data starts on the page after the code,
+	// 4096 - 7.
+	expect_code(t, "movsxd value(%rip), %rax; ret; section data; value: byte 1, 2, 3, 4", {0x48, 0x63, 0x05, 0xF9, 0x0F, 0x00, 0x00, 0xC3})
+}
+
+@(test)
+sign_extended_moves_of_a_wrong_form_are_refused :: proc(t: ^testing.T) {
+	// The source is 32 bits and the destination 64: each other pair is refused.
+	expect_refusal(t, "movsxd %rax, %rax", .Operand_Size_Wrong, 1, 8)
+	expect_refusal(t, "movsxd %eax, %eax", .Operand_Size_Wrong, 1, 14)
+	expect_refusal(t, "movsxd (%rax), %eax", .Operand_Size_Wrong, 1, 16)
+	// No immediate, no label, and memory is a source only.
+	expect_refusal(t, "movsxd $1, %rax", .Operand_Form_Not_Valid, 1, 8)
+	expect_refusal(t, "movsxd top, %rax; top: ret", .Operand_Form_Not_Valid, 1, 8)
+	expect_refusal(t, "movsxd %eax, (%rax)", .Operand_Form_Not_Valid, 1, 14)
+	expect_refusal(t, "movsxd %eax, %rax; section data; movsxd %eax, %rax", .Instruction_In_Data, 1, 34)
+	// One operand, three, none.
+	record := expect_refusal(t, "movsxd %eax", .Operand_Count_Wrong, 1, 1)
+	testing.expect_value(t, record.value, u64(1))
+	record = expect_refusal(t, "movsxd", .Operand_Count_Wrong, 1, 1)
+	testing.expect_value(t, record.value, u64(0))
+	record = expect_refusal(t, "movsxd %eax, %rax, %rbx", .Operand_Count_Wrong, 1, 20)
+	testing.expect_value(t, record.value, u64(3))
+	// The name says both sizes: a suffix of size is no mnemonic.
+	expect_refusal(t, "movsxdq %eax, %rax", .Mnemonic_Unknown, 1, 1)
+	expect_refusal(t, "movsxdl %eax, %rax", .Mnemonic_Unknown, 1, 1)
+	expect_refusal(t, "movslq %eax, %rax", .Mnemonic_Unknown, 1, 1)
+}
+
+// The text that the module c_compiler writes for
+// `int add(int a, int b) { return a + b; }`: the patch of chibicc writes the
+// directives of modus, each `int` is loaded with movsxd, and an export that
+// gives an `int` extends its sign at its end (src/md/features/c_compiler.md).
+// chibicc defines `__func__` and `__FUNCTION__` in each function, as two
+// strings of the data, in the reverse order of their labels. The assembler
+// must take it whole.
+@(test)
+the_text_of_the_c_compiler_for_add_is_assembled :: proc(t: ^testing.T) {
+	text := `section data
+.L..1:
+  byte 97
+  byte 100
+  byte 100
+  byte 0
+section data
+.L..0:
+  byte 97
+  byte 100
+  byte 100
+  byte 0
+section code
+export add(a: Integer, b: Integer) -> Integer
+add:
+  push %rbp
+  mov %rsp, %rbp
+  sub $16, %rsp
+  mov %rsp, -8(%rbp)
+  mov %edi, -12(%rbp)
+  mov %esi, -16(%rbp)
+  lea -16(%rbp), %rax
+  movsxd (%rax), %rax
+  push %rax
+  lea -12(%rbp), %rax
+  movsxd (%rax), %rax
+  pop %rdi
+  add %edi, %eax
+  jmp .L.return.add
+.L.return.add:
+  movsxd %eax, %rax
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+`
+	expected := [?]u8 {
+		0x55, // push %rbp
+		0x48, 0x89, 0xE5, // mov %rsp, %rbp
+		0x48, 0x83, 0xEC, 0x10, // sub $16, %rsp
+		0x48, 0x89, 0x65, 0xF8, // mov %rsp, -8(%rbp)
+		0x89, 0x7D, 0xF4, // mov %edi, -12(%rbp)
+		0x89, 0x75, 0xF0, // mov %esi, -16(%rbp)
+		0x48, 0x8D, 0x45, 0xF0, // lea -16(%rbp), %rax
+		0x48, 0x63, 0x00, // movsxd (%rax), %rax
+		0x50, // push %rax
+		0x48, 0x8D, 0x45, 0xF4, // lea -12(%rbp), %rax
+		0x48, 0x63, 0x00, // movsxd (%rax), %rax
+		0x5F, // pop %rdi
+		0x01, 0xF8, // add %edi, %eax
+		0xE9, 0x00, 0x00, 0x00, 0x00, // jmp .L.return.add, the next instruction
+		0x48, 0x63, 0xC0, // movsxd %eax, %rax
+		0x48, 0x89, 0xEC, // mov %rbp, %rsp
+		0x5D, // pop %rbp
+		0xC3, // ret
+	}
+	expect_code(t, text, expected[:])
+
+	workspace := new(Workspace)
+	defer free(workspace)
+	parts, refusal := assemble(text, workspace)
+	testing.expect_value(t, refusal.refusal, Refusal.None)
+	if !testing.expect_value(t, len(parts.exports), 1) {
+		return
+	}
+	export := parts.exports[0]
+	testing.expect_value(t, export.name, "add")
+	testing.expect_value(t, export.code_offset, u64(0))
+	testing.expect_value(t, len(export.parameters), 2)
+	testing.expect_value(t, export.result, module.Type.Integer)
+	for parameter in export.parameters {
+		testing.expect_value(t, parameter, module.Type.Integer)
+	}
+	// The two names of the function, on the page after the code.
+	if testing.expect_value(t, len(parts.segments), 2) {
+		testing.expect_value(t, string(parts.segments[1].data), "add\x00add\x00")
+		testing.expect_value(t, parts.segments[1].memory_offset, u64(module.PAGE_SIZE))
+	}
+}
+
+@(test)
 jumps_and_labels_have_the_bytes_of_the_manual :: proc(t: ^testing.T) {
 	// The displacement counts from the end of the instruction.
 	expect_code(t, "jmp next; next: ret", {0xE9, 0x00, 0x00, 0x00, 0x00, 0xC3})

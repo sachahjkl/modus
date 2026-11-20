@@ -1,5 +1,5 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_fiat/fiat.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
-package fiat
+// Altered source: Odin dev-2026-11a, core/crypto/_fiat/fiat.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+package modus_fiat
 
 // This package provides various helpers and types common to all of the
 // fiat-crypto derived backends.

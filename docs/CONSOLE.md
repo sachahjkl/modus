@@ -84,7 +84,7 @@ Each value has one kind. The kinds are those of the module contract (`MODULE_CON
 | `Table` | Records of one description, one after the other | A line of the names of the fields, a line for each row, then the count: `2 rows of Import` |
 | `Bytes` | Bytes with no description | Rows of 16 bytes: the place of the row, the bytes in hexadecimal, their characters; then the count |
 
-A parameter of the kind `Bytes` takes a `Text` value as its argument. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
+A parameter of the kind `Bytes` takes a `Text` value as its argument, or the `Bytes` of a memory object that `bytes(memory, first, count)` read: `assemble(bytes(t, 0, n), f)` gives the text that `compile` wrote to the assembler. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
 
 A command gives a result and never prints. A command that does something and has nothing to give has no result: `start`, `stop`, `clear`. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing. The section "Results and their drawers" has the result of each built-in command.
 

@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_aes/ct64/ghash.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_aes/ct64/ghash.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 // Copyright (c) 2016 Thomas Pornin <pornin@bolet.org>
 // All rights reserved.
 //
@@ -21,7 +21,7 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 // THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-package aes_ct64
+package modus_aes_ct64
 
 import "modus:support/cryptography/_aes"
 import endian "modus:support/cryptography/compatibility_endian"

@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/chacha20/chacha20.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/chacha20/chacha20.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `ChaCha20` and `XChaCha20` stream ciphers.
 
@@ -6,7 +6,7 @@ See:
 - [[ https://datatracker.ietf.org/doc/html/rfc8439 ]]
 - [[ https://datatracker.ietf.org/doc/draft-irtf-cfrg-xchacha/03/ ]]
 */
-package chacha20
+package modus_chacha20
 
 import bytes "modus:support/cryptography/compatibility_bytes"
 import crypto "modus:support/cryptography/compatibility_crypto"

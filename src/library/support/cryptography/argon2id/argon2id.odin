@@ -1,10 +1,10 @@
-// Altered source: Odin dev-2026-11a, core/crypto/argon2id/argon2id.odin; its imports changed, and the adjustments that tools/modustool/checks/cryptography_origin.odin lists (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/argon2id/argon2id.odin; its package name and its imports changed, and the adjustments that tools/modustool/checks/cryptography_origin.odin lists (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 package argon2id implements the Argon2id password hashing algorithm.
 
 See: [[ https://datatracker.ietf.org/doc/rfc9106/ ]]
 */
-package argon2id
+package modus_argon2id
 
 import "modus:support/cryptography/blake2b"
 import endian "modus:support/cryptography/compatibility_endian"
