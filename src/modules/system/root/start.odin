@@ -550,9 +550,9 @@ start_finish :: proc "contextless" (work: ^Start_Work) -> system.Status {
 			system.process_stop(slot.process)
 			return status
 		}
-		started_log(work.name, work.principal, ", with a terminal")
+		started_log(work.name, work.principal, true)
 		return .Ok
 	}
-	started_log(work.name, work.principal, "")
+	started_log(work.name, work.principal, false)
 	return .Ok
 }

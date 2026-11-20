@@ -690,7 +690,11 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 	if len(result) > 0 {
 		result[0] = {share = number, ring = i64(given_ring), region = i64(given_region)}
 	}
-	system.log(.Info, "storage: a share of the store ", caller.store.name, free.read_only ? string(", read only") : string(""), ", the share ", number)
+	if free.read_only {
+		system.log_fact(.Info, Read_Only_Share_Made{share = u64(number), store = store_field(caller.store.name)})
+	} else {
+		system.log_fact(.Info, Share_Made{share = u64(number), store = store_field(caller.store.name)})
+	}
 	return 1
 }
 
@@ -727,7 +731,7 @@ unshare :: proc "c" (number: i64, error: ^errors.Error_Record) -> i64 {
 		return errors.fail(error, failure(.Place), .Absent, .Connections, 1, number)
 	}
 	share_end(item)
-	system.log(.Info, "storage: the share ", number, " ended")
+	system.log_fact(.Info, Share_Ended{share = u64(number)})
 	return 0
 }
 
@@ -1335,19 +1339,19 @@ disk_open :: proc "contextless" () {
 		if mounted.first_cut {
 			system.log(.Warning, "storage: the first root of the disk has a wrong check and no commit followed it: a format that a stop cut; the service formats again")
 		}
-		system.log(.Info, "storage: ok, a new disk: generation 1, ", system.Size{root.disk_blocks, .Blocks})
+		system.log_fact(.Info, New_Disk_Formatted{blocks = blocks_field(root.disk_blocks)})
 	case:
 		if mounted.cut != 0 {
-			system.log(.Warning, "storage: the root of generation ", mounted.cut, " has a wrong check: a write that a stop cut; the service uses the root before it")
+			system.log_fact(.Warning, Cut_Root_Skipped{generation = mounted.cut})
 		}
 		if mounted.older {
 			system.log(.Warning, "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used")
 		}
 		if mounted.wrong != 0 {
-			system.log(.Warning, "storage: ", mounted.wrong, " blocks have a wrong check: ", mounted.damaged_objects, " objects and ", mounted.damaged_stores, " stores are damaged; the service serves the others, and a write or a remove replaces a damaged object")
+			system.log_fact(.Warning, Blocks_Damaged{blocks = mounted.wrong, objects = mounted.damaged_objects, stores = mounted.damaged_stores})
 		}
 		if mounted.damaged_versions != 0 {
-			system.log(.Warning, "storage: ", mounted.damaged_versions, " versions have a wrong block: a read of them gives Damaged")
+			system.log_fact(.Warning, Versions_Damaged{versions = mounted.damaged_versions})
 		}
 		if mounted.named_twice != 0 || mounted.named_by_two_stores != 0 || mounted.reference_overflow != 0 {
 			faulty: u64
@@ -1357,11 +1361,11 @@ disk_open :: proc "contextless" () {
 			system.log(.Error, "storage: a fault of the engine: ", mounted.named_twice, " blocks of one name named two times, ", mounted.named_by_two_stores, " blocks named from two stores, ", mounted.reference_overflow, " counts of names that pass their limit; the service makes no change in the ", faulty, faulty == 1 ? string(" store") : string(" stores"), " with such a block, and gives their objects")
 		}
 		if mounted.stores_recounted != 0 || mounted.stores_with_wrong_count != 0 {
-			system.log(.Warning, "storage: the disk gives ", mounted.stores_recounted, " stores another count of blocks than the open counted; the service takes the counts of the open (", mounted.stores_with_wrong_count, " stores with no damage have a wrong count: a fault of the engine that wrote it)")
+			system.log_fact(.Warning, Store_Counts_Differ{stores_recounted = mounted.stores_recounted, stores_with_wrong_count = mounted.stores_with_wrong_count})
 		}
-		system.log(.Info, "storage: ok, generation ", mounted.generation, ": ", mounted.stores, " stores, ", mounted.objects, " objects, ", mounted.trees, " trees, ", mounted.versions, " versions, ", system.Size{opened.in_use_count, .Blocks}, " in use, ", mounted.shared, " shared, ", mounted.checked, " blocks checked, ", mounted.wrong, " wrong, in ", system.Duration{elapsed, .Milliseconds})
+		system.log_fact(.Info, Disk_Opened{generation = mounted.generation, stores = mounted.stores, objects = mounted.objects, trees = mounted.trees, versions = mounted.versions, in_use = blocks_field(opened.in_use_count), shared = mounted.shared, checked = mounted.checked, wrong = mounted.wrong, elapsed = milliseconds_field(elapsed)})
 		if mounted.removing != 0 {
-			system.log(.Info, "storage: ", mounted.removing, " trees wait to be freed: the removal continues")
+			system.log_fact(.Info, Trees_Wait_To_Be_Freed{trees = mounted.removing})
 		}
 	}
 	disk_opened = true

@@ -588,9 +588,9 @@ Do not use: key badge, key chip, kbd.
 
 ### Element line
 
-An element line is the line of the log that says where an element with an element name is, or that it is gone: `interface: debugger_window: the element watch at x,y,width,height`.
+An element line is the log fact that says where an element with an element name is, or that it is gone: `interface: debugger_window: the element watch at x,y,width,height`.
 
-A window writes it after a drawn frame in which the rectangle of the name is new or changed, and writes `the element <name> is gone` when its frame no longer has the name. A frame with no change writes no line. The compositor writes the element lines of the palette in pixels of the screen. The modus tool reads the last element line of an element before a press. An element line is not a contract between two processes: no process reads it.
+A window writes `interface.Element_Placed` after a drawn frame in which the rectangle of the name is new or changed, and `interface.Element_Gone` when its frame no longer has the name. A frame with no change writes none. The compositor writes the element lines of the palette, `compositor.Palette_Element_Placed`, in pixels of the screen. The modus tool reads the fields of the last element line of an element before a press. An element line is not a contract between two processes: no process reads it.
 
 The design: `src/md/infrastructure/test_pointer.md`.
 
@@ -809,6 +809,56 @@ The caret is not the pointer: the pointer follows the pointing device, the caret
 The design: `docs/DESIGN.md`, "Palette".
 
 Do not use: cursor, text cursor, insertion point.
+
+### Selection
+
+The selection is the part of a text between the caret and the anchor, the place where the selection started.
+
+Shift with a key that moves the caret, or a drag of the pointer, moves the caret and keeps the anchor; a typed character replaces the selection, and Backspace removes it. When the caret and the anchor are at one place, nothing is selected. In the editor `edit` the selection is drawn with the color of a chosen row, its characters in white. It is not a chosen row of a list, which is one whole row that Enter takes.
+
+The design: `src/md/features/editor.md`.
+
+Do not use: highlight, marked text.
+
+### Display row
+
+A display row is one row of cells in which a window shows a part of a line of a text.
+
+A line longer than the window goes on more display rows, so no text is cut at the edge. The editor `edit` computes the display rows of the whole text after each change, never in a frame: each row has its start in the text and its line, and the gutter numbers the first row of each line. Up and Down move the caret by display rows; Home and End go to the ends of the line.
+
+The design: `src/md/features/editor.md`, "The text model".
+
+Do not use: visual line, soft-wrapped line, screen line.
+
+### Gap buffer
+
+A gap buffer is a text in one array with a free part, the gap, at the place where the keys act.
+
+A typed key moves the gap to the caret and writes into it, so a run of keys at one place copies no byte of the rest of the text. The editor `edit` keeps its text of at most 32768 bytes in one, in the private part `modus:private/edit/text_model`. It is not a file and not a copy of the object in the store.
+
+The design: `src/md/features/editor.md`, "The text model".
+
+Do not use: edit buffer.
+
+### Group of changes
+
+A group of changes is the changes of a text that one commit of its object holds.
+
+The editor `edit` ends a group after a typed space, tab or line end, before a change of another kind, when the caret moves to another line, and before an undo or a redo; it then writes the text in one commit, which is a version. A stop of the process loses only the group in progress. It is the answer of the editor to the question of property 9: which small changes are one step.
+
+The design: `src/md/features/editor.md`, "The groups of changes".
+
+Do not use: autosave, save point.
+
+### Version walk
+
+The version walk is the undo of the editor `edit`: Ctrl+Z restores a version of the object from the store, and Ctrl+Y goes forward again.
+
+The walk keeps the generation that the editor shows and the generations that Ctrl+Z left; the text of each state stays in the store, so Ctrl+Z works after a restart. A change of the text ends what Ctrl+Y can reach. It is not an undo list in memory, and not the versions of the store themselves, which the walk only reads and restores.
+
+The design: `src/md/features/editor.md`, "The walk over the versions".
+
+Do not use: undo stack, undo history, undo log.
 
 ### Picker
 

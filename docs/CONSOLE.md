@@ -95,7 +95,7 @@ A call is `name(argument, ...)`, with at most 12 arguments: the arguments of an 
 **Where a command comes from.** A name can be called when the command table of the console has it. A command comes from one of three places:
 
 - **The console itself**: the built-in commands. They exist before any module is loaded.
-- **A module of the boot image**, after `load("sample")` or `isolate("sample")`: each export becomes a command with the name of the export, and each record of the description of the module becomes a command that makes a record from its fields. A module from memory, after `isolate_memory(name, memory, size)`, adds its commands the same way.
+- **A module of the boot image**, after `load("sample")` or `isolate("sample")`: each export becomes a command with the name of the export, and each record of the description of the module becomes a command that makes a record from its fields. A log fact type is no command: `facts(...)` reads it from the log. A module from memory, after `isolate_memory(name, memory, size)`, adds its commands the same way.
 - **A service that runs**, after `connect("monitor")`: each export becomes a command named `service.export`, as `monitor.count`.
 
 When two commands have one name, the command added last runs.

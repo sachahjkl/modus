@@ -1238,7 +1238,7 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 		if callable == 0 {
 			return fail("the module ", name, " exports no command; start(\"", name, "\") starts a process")
 		}
-		if loaded_count == LOADED_CAPACITY || command_count + callable + int(module.count(file, .Records)) > COMMAND_CAPACITY {
+		if loaded_count == LOADED_CAPACITY || command_count + callable + record_command_count(file) > COMMAND_CAPACITY {
 			return fail("no room for the commands of ", name)
 		}
 		base: u64
@@ -1475,6 +1475,19 @@ callable_count :: proc "contextless" (file: []u8) -> (callable: int) {
 	return callable
 }
 
+// record_command_count gives the count of the records of a module that
+// can become commands: each one that is not a fact type. It is the room
+// that commands_add can take, at most.
+record_command_count :: proc "contextless" (file: []u8) -> int {
+	count := 0
+	for index in 1 ..< module.count(file, .Records) {
+		if !module.record_is_fact(file, index) {
+			count += 1
+		}
+	}
+	return count
+}
+
 // commands_add makes each callable export of a module a command. The
 // description of the export gives its name, its types and its help.
 // Each record of the module is a command too, with the name of the record:
@@ -1485,7 +1498,9 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 	head, _ := module.header(file)
 	for index in 1 ..< module.count(file, .Records) {
 		described, ok := module.record_type(file, index)
-		if !ok || described.field_count > ARGUMENT_CAPACITY {
+		// A fact type is read through facts(), never made by hand: it is
+		// no command, and takes no room of the commands.
+		if !ok || described.field_count > ARGUMENT_CAPACITY || module.record_is_fact(file, index) {
 			continue
 		}
 		item := &commands[command_count]
@@ -1635,7 +1650,7 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 			break
 		}
 		callable := callable_count(file)
-		if callable == 0 || command_count + callable + int(module.count(file, .Records)) > COMMAND_CAPACITY || len(names) - names_count < callable * 64 {
+		if callable == 0 || command_count + callable + record_command_count(file) > COMMAND_CAPACITY || len(names) - names_count < callable * 64 {
 			service_disconnect(sandbox)
 			sandbox^ = {}
 			return fail("the service ", name, callable == 0 ? " exports no command" : ": no room for its commands")

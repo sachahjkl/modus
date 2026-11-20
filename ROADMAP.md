@@ -4,6 +4,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
+- **The clipboard, the search and any object in the editor `edit`.** A principal copies and pastes the text of the editor, finds a text with Ctrl+F, and edits a text of any store with `edit(store, name)`. Copying more than one line needs a clipboard that carries line ends. [Design](src/md/features/editor.md)
+
 ## Next
 
 - **The text grid measured against text runs.** The terminal draws a full grid both ways through the drawing module, and the kind `Text_Grid` stays only if the runs cost more than 1 ms more for a frame or more than 4 096 records. The format then has one text form, or a measured reason for two. [Design](src/md/api/draw_table.md)
@@ -13,7 +15,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **Log facts in place of formatted lines.** A process writes a record of typed values that its module file describes, in place of a formatted text, so a reader filters the log by field and a machine test waits for a fact and its fields, with each name checked before the machine runs. [Design](src/md/features/log_facts.md)
 - **Record outputs and record inputs of a module.** A module declares streams of records that it writes or reads, and a starter, the start policy or the console wires a record output to a record input through a ring that loses no record, with the types checked at the wiring, and a starter can give the wiring of a child with its start. A developer then gives the records of a stream to another program with no text and no log, and the console reads `server.requests |> where(status >= 500)`. [Design](src/md/features/module_outputs.md)
 - **The native viewer of the remote display.** A principal sees and drives the desktop of a machine from a program of its own on Linux, macOS and Windows that uses gui_toolkit, with the key that it allowed, in place of the peer of the tool. [Design](src/md/features/remote_display.md)
-- **The editor `edit`.** A principal edits a text object of a store in a window, with the keys of most systems, Shift to select and the pointer, and no save action: each change is a version, and Ctrl+Z goes back over the versions, also after a restart. [Design](src/md/features/editor.md)
 - **The uses of a viewer key across a restart.** The disk grant table keeps the uses View and Input of a key with the key, so a viewer allowed for the view sees the screen again after a restart, as a client of `remote` calls again; today they last until the machine stops. [Design](src/md/features/remote_display.md)
 
 ## Later

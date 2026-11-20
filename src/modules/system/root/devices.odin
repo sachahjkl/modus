@@ -375,9 +375,9 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	driver.granted = {.Log}
 	copy(driver.name[:len(driver.name) - 1], kind.name)
 	if place.bus == 0 {
-		system.log(.Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(place.device), " of the bus")
+		system.log_fact(.Info, Device_Service_Started{service = module_name_field(kind.name), device = u64(place.device)})
 	} else {
-		system.log(.Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(place.device), " of the bus ", u64(place.bus), ", behind a bridge")
+		system.log_fact(.Info, Device_Service_Started_Behind_Bridge{service = module_name_field(kind.name), device = u64(place.device), bus = u64(place.bus)})
 	}
 	if behind_conventional_bridge {
 		system.log(.Info, "root: ", system.Module_Name{kind.name}, " also holds the registers of each other device behind the conventional bridge in front of the bus ", u64(group.first_bus), ", which shares its requester; other devices: ", u64(bridge_device_count))

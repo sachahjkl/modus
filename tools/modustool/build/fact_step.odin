@@ -1,6 +1,7 @@
 package build
 
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:private/console/console_condition"
 import "modus:support/sentence"
 import "core:fmt"
@@ -83,6 +84,51 @@ fact_catalog_types :: proc(catalog: ^Fact_Catalog) -> []Fact_Catalog_Type {
 	return types[:]
 }
 
+// fact_types_of_name gives the fact type of a name ("interface.Element_Placed")
+// in each module of the catalog that writes it, in the temporary memory: a
+// fact type of a support package is in each module that compiles it in and
+// reaches its call.
+fact_types_of_name :: proc(known: []Fact_Catalog_Type, name: string) -> []Fact_Step_Type {
+	types := make([dynamic]Fact_Step_Type, context.temp_allocator)
+	for item in known {
+		if item.name == name {
+			append(&types, Fact_Step_Type{hash_prefix = item.hash_prefix, key = item.key, file = item.file, description = item.description})
+		}
+	}
+	return types[:]
+}
+
+// fact_line_of_types gives the type of a line of a fact among types, and
+// the bytes of its record: the values of the line, whose bytes after
+// value_count are zero (op.log_fact_line). ok is false for a line of
+// another fact type, and for a line with more value bytes than its record.
+// values holds a copy, so a reader keeps a Text field after the line.
+fact_line_of_types :: proc(types: []Fact_Step_Type, line: Fact_Line) -> (type: Fact_Step_Type, values: []u8, ok: bool) {
+	for entry in types {
+		if entry.hash_prefix != line.hash_prefix || entry.key != line.key {
+			continue
+		}
+		size := int(entry.description.size)
+		if line.value_count > size || size > op.LOG_FACT_VALUE_CAPACITY {
+			return {}, nil, false
+		}
+		// A parameter cannot be sliced: its bytes are copied first.
+		line_values := line.values
+		values = make([]u8, size, context.temp_allocator)
+		copy(values, line_values[:size])
+		return entry, values, true
+	}
+	return {}, nil, false
+}
+
+// fact_field_value gives the value of the field of a name of a record of a
+// fact type: a Text or an Integer. ok is false for a name that the record
+// does not have, and for a field with no such value.
+fact_field_value :: proc(type: Fact_Step_Type, values: []u8, name: string) -> (value: console_condition.Field_Value, ok: bool) {
+	item := console_condition.field_find(type.file, type.description, name) or_return
+	return console_condition.field_value_of(values, item)
+}
+
 // fact_name_parts gives the package name and the record name of a fact
 // name: the parts before and after its one dot, neither empty.
 fact_name_parts :: proc(name: string) -> (package_name, type_name: string, ok: bool) {
@@ -107,16 +153,11 @@ fact_step_check :: proc(catalog: ^Fact_Catalog, fact_name, process, condition_te
 		return step, .Not_A_Fact_Name, .None, fmt.tprintf("\"%s\" is not the name of a fact type: a package name, a dot and a record name, as storage.Bad_Block", fact_name)
 	}
 	known := fact_catalog_types(catalog)
-	types := make([dynamic]Fact_Step_Type, context.temp_allocator)
-	for item in known {
-		if item.name == fact_name {
-			append(&types, Fact_Step_Type{hash_prefix = item.hash_prefix, key = item.key, file = item.file, description = item.description})
-		}
-	}
+	types := fact_types_of_name(known, fact_name)
 	if len(types) == 0 {
 		return step, .Unknown_Fact_Type, .None, fact_name_unknown_sentence(known, fact_name, package_name)
 	}
-	step.types = types[:]
+	step.types = types
 	if condition_text == "" {
 		return step, .None, .None, ""
 	}
