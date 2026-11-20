@@ -1,7 +1,5 @@
 package text_rendering
 
-import "modus:contract/glyph_cache"
-
 // The private glyph cache (src/md/features/text_rendering.md, "The cache"):
 // the glyphs that this copy of the package drew, in its own memory, which
 // the budget of the process pays. No other process reads it, so its
@@ -9,7 +7,7 @@ import "modus:contract/glyph_cache"
 //
 // An entry is one glyph: its key (the face, the font of the chain, the
 // glyph index in that font, the text size and the position across a
-// pixel) and its glyph entry in the form of a glyph cache. Its words take
+// pixel) and its glyph entry (Glyph_Entry). Its words take
 // one run of blocks: BLOCK_WORDS words split and joined by halves, so a
 // glyph is contiguous and a freed run joins its free neighbour. The order
 // of use counts in frames: a glyph used in a frame goes to the newest end
@@ -51,9 +49,23 @@ KEY_SIZE_SHIFT :: 24
 KEY_POSITION_SHIFT :: 40
 #assert(POSITION_LIMIT <= 1 << 2)
 
+// Glyph_Entry: one drawn glyph, the box of its words. Its words are
+// row_count rows of width words each, 0xGGRRGGBB: the coverage of the whole
+// pixel in the high byte, then the coverage of the red, the green and the
+// blue stripe after the filter, with red at the left of the pixel. A glyph
+// keeps only its rows with ink.
+Glyph_Entry :: struct #packed {
+	first_row:   u16, // The first row with ink, from the top of the line.
+	row_count:   u16, // 0: a glyph with no ink, a space.
+	word_offset: u32, // In the private glyph cache: from its first word. 0 for a glyph that is not kept.
+	left:        i16, // The column of the first word, in pixels from the whole pixel of the origin.
+	width:       u16, // The words of each row.
+}
+#assert(size_of(Glyph_Entry) == 12)
+
 Private_Entry :: struct {
 	key:            u64, // key_of; 0: a free entry.
-	glyph:          glyph_cache.Glyph_Entry, // word_offset: from the first word of the cache.
+	glyph:          Glyph_Entry, // word_offset: from the first word of the cache.
 	frame:          u64, // The frame of its last use.
 	newer, older:   u16, // Its neighbours in the order of use, plus one.
 	next_in_bucket: u16, // The next entry of its place in the table, plus one; for a free entry, the next free entry.
@@ -416,7 +428,7 @@ words_take :: proc "contextless" (cache: ^Private_Cache, count: int, frame: u64)
 // at or before its own, after the rows before it, so no row that is still
 // to move is written.
 @(private)
-not_kept_glyph :: proc "contextless" (box: Raster_Box) -> (entry: glyph_cache.Glyph_Entry, words: [^]u32, source: Glyph_Source) {
+not_kept_glyph :: proc "contextless" (box: Raster_Box) -> (entry: Glyph_Entry, words: [^]u32, source: Glyph_Source) {
 	raster := &cache_state.memory.raster
 	cache_state.frame_full = true
 	cache_state.counts.not_kept += 1
@@ -429,7 +441,7 @@ not_kept_glyph :: proc "contextless" (box: Raster_Box) -> (entry: glyph_cache.Gl
 // private_glyph gives the glyph of a key from the private glyph cache, and
 // draws it there at its first use.
 @(private)
-private_glyph :: proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> (entry: glyph_cache.Glyph_Entry, words: [^]u32, source: Glyph_Source) {
+private_glyph :: proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> (entry: Glyph_Entry, words: [^]u32, source: Glyph_Source) {
 	// The key holds 16 bits of the glyph index: a larger index, which no
 	// font file of TrueType gives, would be the key of another glyph.
 	if glyph_index < 0 || glyph_index > GLYPH_INDEX_LIMIT {

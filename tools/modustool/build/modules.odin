@@ -502,10 +502,16 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 // for the number of each export that a slot names. It runs no compiler.
 module_convert :: proc(build: foundation.Module_Build) -> bool {
 	description := describe_package(build.source) or_return
-	// The log facts of the sources that the compiler read: the table Facts
-	// and the records of their types.
-	facts := module_facts(build) or_return
+	// The log facts of the sources that the compiler read and that the
+	// code of the module reaches: the table Facts and the records of their
+	// types.
+	sources := module_sources(build) or_return
+	facts := module_facts(build, sources) or_return
 	facts_merge(&description, facts) or_return
+	// The record outputs and the record inputs that the package declares:
+	// the tables Record_Outputs and Record_Inputs and their records.
+	outputs, inputs := record_streams_of_sources(build.source, sources) or_return
+	record_streams_merge(&description, outputs, inputs) or_return
 	// The request of the table Budget counts the pages of each import, at
 	// each level.
 	if description.budget.stated {
@@ -648,6 +654,9 @@ load_on_host :: proc(name: string, imports: []Host_Module) -> (loaded: Host_Modu
 	if !module.own_hash_write(file, memory, blake3.hash(file)) {
 		return fail(name, "the own-hash place is not in writable data")
 	}
+	if !module.record_stream_indexes_write(file, memory) {
+		return fail(name, "the place of a record stream is not in writable data")
+	}
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)
 		protection: linux.Mem_Protection
@@ -676,8 +685,11 @@ test_descriptions :: proc() -> bool {
 	for build in foundation.module_builds {
 		file := foundation.read_file(foundation.module_path(build.name)) or_return
 		described := describe_package(build.source) or_return
-		facts := module_facts(build) or_return
+		sources := module_sources(build) or_return
+		facts := module_facts(build, sources) or_return
 		facts_merge(&described, facts) or_return
+		outputs, inputs := record_streams_of_sources(build.source, sources) or_return
+		record_streams_merge(&described, outputs, inputs) or_return
 		exports := described.exports
 		about, text := module.documentation(file)
 		if about != described.about || text != described.text || about == "" {
@@ -769,6 +781,33 @@ test_descriptions :: proc() -> bool {
 				return false
 			}
 			foundation.test_passed_print("the log fact %s.%s of %s, key %d, comes from its source: \"%s\"", item.package_name, item.type_name, build.name, item.key, item.template)
+		}
+		// The record outputs and the record inputs: each row is the
+		// declaration of its source, in the order of the names, and the
+		// tables keep the rules of a reader.
+		if fault, place := module.record_streams_check(file); fault != .None {
+			fmt.eprintfln("modustool: test failed: the record streams of %s break a rule: %v at the row %d", build.name, fault, place)
+			return false
+		}
+		if int(max(module.count(file, .Record_Outputs), 1)) != len(described.record_outputs) + 1 || int(max(module.count(file, .Record_Inputs), 1)) != len(described.record_inputs) + 1 {
+			fmt.eprintfln("modustool: test failed: %s has %d record outputs and %d record inputs, its source declares %d and %d", build.name, int(max(module.count(file, .Record_Outputs), 1)) - 1, int(max(module.count(file, .Record_Inputs), 1)) - 1, len(described.record_outputs), len(described.record_inputs))
+			return false
+		}
+		for item, index in described.record_outputs {
+			row, pairing, _, row_ok := module.record_output(file, u32(index + 1))
+			if !row_ok || module.string_at(file, row.name_offset, row.name_count) != item.name || module.string_at(file, row.about_offset, row.about_count) != item.about || row.record != item.record_index || pairing != item.pairing {
+				fmt.eprintfln("modustool: test failed: the record output %s of %s does not agree with its source", item.name, build.name)
+				return false
+			}
+			foundation.test_passed_print("the record output %s.%s of the record %s comes from its source", build.name, item.name, item.generic ? "Any_Record" : item.record.name)
+		}
+		for item, index in described.record_inputs {
+			row, wirings, _, _, row_ok := module.record_input(file, u32(index + 1))
+			if !row_ok || module.string_at(file, row.name_offset, row.name_count) != item.name || module.string_at(file, row.about_offset, row.about_count) != item.about || row.record != item.record_index || row.terms != item.terms_index || wirings != item.wirings {
+				fmt.eprintfln("modustool: test failed: the record input %s of %s does not agree with its source", item.name, build.name)
+				return false
+			}
+			foundation.test_passed_print("the record input %s.%s of the record %s, %v, comes from its source", build.name, item.name, item.generic ? "Any_Record" : item.record.name, item.wirings)
 		}
 		if build.name == "math" {
 			foundation.test_passed_print("the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))

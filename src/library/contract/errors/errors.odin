@@ -295,6 +295,177 @@ Unit :: enum i64 {
 	Dropped_Writes = 52, // Device: the blocks of a commit that the disk answered with Ok and did not keep; found: their count. The storage service refused the commit (docs/STORAGE.md, "3.3 The commit and the open").
 	Nanoseconds = 53, // A time of the system clock, or a span of it, in nanoseconds: the time of a record of a timed stream (src/library/contract/timed_stream).
 	Frames      = 54, // Frames of a timed stream: one sample of each channel (src/library/contract/timed_stream).
+	Record_Types = 55, // Bad_Value: the record descriptions of the two ends of a wiring differ (src/library/contract/output, record_descriptions_compare). value: the Description_Difference; limit: the first field that differs, from 1, or 0 for the record; found: the row of the wiring list.
+	Wiring_Rows = 56, // Bad_Value: a row of a wiring list. argument: the field, from 1 (output.Wiring_Field); value: the word; limit: the largest word there; found: the row from 1, or 0 for the list as a whole.
+	Wiring_Terms = 57, // Bad_Value or Out_Of_Range: the wiring terms of a row. value: their count of bytes; limit: the size of their description, 0 for a record input that takes none; found: the row.
+	Wirings     = 58, // The wirings of the root service. No_Grant: the asker did not start the process of the end, or does not act for the principal of the connection. Busy: the wiring ring of a process has no room, limit its capacity. Bad_Value: one process at both ends. found: the row.
+}
+
+// The name of each error kind, as the contract names it: a column of a
+// table and a log fact write it (module.contract_enum_member_name).
+@(rodata)
+KIND_NAMES := [Kind]string {
+	.None              = "None",
+	.Empty             = "Empty",
+	.Too_Long          = "Too_Long",
+	.Too_Small         = "Too_Small",
+	.Bad_Value         = "Bad_Value",
+	.Bad_Flags         = "Bad_Flags",
+	.Bad_Byte          = "Bad_Byte",
+	.Bad_Address       = "Bad_Address",
+	.Handle_Absent     = "Handle_Absent",
+	.Handle_Ended      = "Handle_Ended",
+	.Handle_Kind       = "Handle_Kind",
+	.Handle_Rights     = "Handle_Rights",
+	.Budget            = "Budget",
+	.Budget_Hidden     = "Budget_Hidden",
+	.Over_Limit        = "Over_Limit",
+	.Full              = "Full",
+	.State             = "State",
+	.Absent            = "Absent",
+	.Damaged           = "Damaged",
+	.Device            = "Device",
+	.No_Grant          = "No_Grant",
+	.Malformed         = "Malformed",
+	.No_Target         = "No_Target",
+	.Overlap           = "Overlap",
+	.Unknown_Operation = "Unknown_Operation",
+	.Refused           = "Refused",
+	.No_Answer         = "No_Answer",
+	.Unsupported       = "Unsupported",
+	.Link_Down         = "Link_Down",
+	.Busy              = "Busy",
+	.Out_Of_Range      = "Out_Of_Range",
+	.Reserved          = "Reserved",
+	.Not_Payer         = "Not_Payer",
+	.Object_Shared     = "Object_Shared",
+	.Object_Marked     = "Object_Marked",
+	.Whole_Only        = "Whole_Only",
+	.Not_Multiple      = "Not_Multiple",
+	.Not_Authentic     = "Not_Authentic",
+	.Seed_Too_Weak     = "Seed_Too_Weak",
+	.Exists            = "Exists",
+	.Starter_Module    = "Starter_Module",
+}
+
+// The name of each unit, as the contract names it. UNIT_NAMES gives the
+// words of a sentence; a column of a table and a log fact write the name.
+@(rodata)
+UNIT_MEMBER_NAMES := [Unit]string {
+	.None               = "None",
+	.Bytes              = "Bytes",
+	.Pages              = "Pages",
+	.Blocks             = "Blocks",
+	.Objects            = "Objects",
+	.Stores             = "Stores",
+	.Processes          = "Processes",
+	.Threads            = "Threads",
+	.Handles            = "Handles",
+	.Mappings           = "Mappings",
+	.Modules            = "Modules",
+	.Words              = "Words",
+	.Log_Records        = "Log_Records",
+	.Processor          = "Processor",
+	.Budgets            = "Budgets",
+	.Interrupts         = "Interrupts",
+	.Memory             = "Memory",
+	.Store              = "Store",
+	.Acts_For_Principal = "Acts_For_Principal",
+	.Records            = "Records",
+	.Connection         = "Connection",
+	.Milliseconds       = "Milliseconds",
+	.Connections        = "Connections",
+	.Tcp_Ports          = "Tcp_Ports",
+	.Requests           = "Requests",
+	.Endpoint           = "Endpoint",
+	.Region             = "Region",
+	.Root_Commands      = "Root_Commands",
+	.Services           = "Services",
+	.Grants             = "Grants",
+	.Display            = "Display",
+	.Terminal           = "Terminal",
+	.Lent_Handles       = "Lent_Handles",
+	.Versions           = "Versions",
+	.Counts             = "Counts",
+	.References         = "References",
+	.Commit_Blocks      = "Commit_Blocks",
+	.Principals         = "Principals",
+	.Places             = "Places",
+	.Trees              = "Trees",
+	.Changes            = "Changes",
+	.Pending            = "Pending",
+	.Debug_Objects      = "Debug_Objects",
+	.Breakpoints        = "Breakpoints",
+	.Held_Threads       = "Held_Threads",
+	.Debugged_Processes = "Debugged_Processes",
+	.Readable_Variables = "Readable_Variables",
+	.Debug_Access       = "Debug_Access",
+	.Stack_Frames       = "Stack_Frames",
+	.Source_Places      = "Source_Places",
+	.Stop_Reports       = "Stop_Reports",
+	.Versions_Erase     = "Versions_Erase",
+	.Dropped_Writes     = "Dropped_Writes",
+	.Nanoseconds        = "Nanoseconds",
+	.Frames             = "Frames",
+	.Record_Types       = "Record_Types",
+	.Wiring_Rows        = "Wiring_Rows",
+	.Wiring_Terms       = "Wiring_Terms",
+	.Wirings            = "Wirings",
+}
+
+// The word of a Kind as the record of another party holds it: a field of a
+// log fact copies it with no cast to Kind, and a reader writes the name of
+// its member, or its number when it names none
+// (src/md/features/log_facts.md, "The error record as fields"). It is
+// unsigned, as each field of a contract enum is: the word -1 of a record
+// is the largest word, which names no member.
+Kind_Word :: distinct u64
+
+// The word of a Unit as the record of another party holds it, as Kind_Word.
+Unit_Word :: distinct u64
+
+// The fields of an error record in a log fact: the seven values of the
+// record, with the kind and the unit as the words of their contract enums,
+// so that a reader writes their names and a condition reads them by name
+// (`where(kind = Too_Long)`). A module declares its fact type as a
+// distinct type of it, with its own template, and writes it with
+// error_record_fact_fields:
+//
+// ```odin
+// @(log_fact = "storage: the block service refused a request: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+// Block_Request_Refused :: distinct errors.Error_Record_Fact_Fields
+//
+// system.log_fact(.Warning, Block_Request_Refused(errors.error_record_fact_fields(record)))
+// ```
+Error_Record_Fact_Fields :: struct {
+	kind:      Kind_Word, // What is wrong.
+	unit:      Unit_Word, // What value, limit and found count.
+	operation: i64, // The kernel operation, or the number of the export or of the command.
+	argument:  i64, // The number of the argument that is wrong, from 1. 0: the call as a whole.
+	value:     i64, // The value that the argument had.
+	limit:     i64, // What the argument must respect.
+	found:     i64, // What the system found.
+}
+#assert(size_of(Error_Record_Fact_Fields) == size_of(Error_Record))
+
+// The words of the fact template of an error record after the words of
+// the module: each field once, by its name. A template of a fact type of
+// Error_Record_Fact_Fields ends with them, so that each such fact reads
+// the same; a host test of the tool checks it.
+ERROR_RECORD_FACT_TEMPLATE_END :: "kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}"
+
+// error_record_fact_fields gives the fields of a log fact of an error
+// record: each word as it is, a kind or a unit that names no member too.
+error_record_fact_fields :: proc "contextless" (record: Error_Record) -> Error_Record_Fact_Fields {
+	return {
+		kind      = Kind_Word(record.kind),
+		unit      = Unit_Word(record.unit),
+		operation = record.operation,
+		argument  = record.argument,
+		value     = record.value,
+		limit     = record.limit,
+		found     = record.found,
+	}
 }
 
 // How a handle ended (Handle_Ended).
@@ -394,6 +565,10 @@ UNIT_NAMES := [Unit]string {
 	.Dropped_Writes = "blocks that the disk did not keep",
 	.Nanoseconds = "nanoseconds",
 	.Frames      = "frames",
+	.Record_Types = "record types of the two ends of a wiring",
+	.Wiring_Rows = "rows of the wiring list",
+	.Wiring_Terms = "bytes of the wiring terms",
+	.Wirings     = "wirings of the root service",
 }
 
 // A ring completion (src/library/contract/ring) has the status of the contract of its

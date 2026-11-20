@@ -673,3 +673,178 @@ a_written_module_is_valid :: proc(t: ^testing.T) {
 	testing.expect_value(t, about, parts.about)
 	testing.expect_value(t, text, parts.text)
 }
+
+// The places of the record streams of the tests: aligned words of the data
+// segment, apart from the own-hash place.
+@(private = "file")
+OUTPUT_PLACE :: DATA_OFFSET + 128
+@(private = "file")
+INPUT_PLACE :: DATA_OFFSET + 132
+
+// expect_refused_file checks a refusal of the last check: file_size_needed
+// takes the parts, and write refuses them with the refusal, the table and
+// the value, and leaves the bytes of the file at zero.
+@(private = "file")
+expect_refused_file :: proc(t: ^testing.T, parts: Module_Parts, refusal: Refusal, table: module.Table_Kind, value: u64, loc := #caller_location) {
+	size, needed := file_size_needed(parts)
+	testing.expect_value(t, needed.refusal, Refusal.None, loc)
+	output := make([]u8, int(size))
+	defer delete(output)
+	for &item in output {
+		item = UNTOUCHED
+	}
+	written_size, written := write(parts, output)
+	testing.expect_value(t, written.refusal, refusal, loc)
+	testing.expect_value(t, written.table, table, loc)
+	testing.expect_value(t, written.value, value, loc)
+	testing.expect_value(t, written_size, 0, loc)
+	for item in output {
+		if item != 0 {
+			testing.expect(t, false, "a refused file kept a byte", loc = loc)
+			break
+		}
+	}
+}
+
+// The record streams that a loader or a reader refuses are refused, each
+// with its table and the index of its part: one past the bound in each
+// table, a name that is not a name, a record or terms that name no record,
+// and a place that is not aligned, in the code, in a segment that loses
+// Write after the load, or past the memory.
+@(test)
+record_streams_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
+	storage: Test_Storage
+	parts := test_parts(&storage)
+	too_many_outputs := make([]Record_Output_Part, module.RECORD_STREAM_INDEX_MOST + 1)
+	defer delete(too_many_outputs)
+	too_many_inputs := make([]Record_Input_Part, module.RECORD_STREAM_INDEX_MOST + 1)
+	defer delete(too_many_inputs)
+	{
+		past := parts
+		past.record_outputs = too_many_outputs
+		expect_refusal(t, past, .Record_Streams_Past_Bound, .Record_Outputs, 0)
+		past = parts
+		past.record_inputs = too_many_inputs
+		expect_refusal(t, past, .Record_Streams_Past_Bound, .Record_Inputs, 0)
+	}
+	outputs := [1]Record_Output_Part{{name = "sizes", record_index = 1, place = OUTPUT_PLACE}}
+	inputs := [1]Record_Input_Part{{name = "orders", record_index = 1, place = INPUT_PLACE}}
+	with_streams := parts
+	with_streams.record_outputs = outputs[:]
+	with_streams.record_inputs = inputs[:]
+
+	outputs[0].name = "9sizes"
+	expect_refusal(t, with_streams, .Not_A_Name, .Record_Outputs, 0)
+	outputs[0].name = "sizes"
+	inputs[0].name = ""
+	expect_refusal(t, with_streams, .Not_A_Name, .Record_Inputs, 0)
+	inputs[0].name = "orders"
+
+	outputs[0].record_index = u32(len(parts.records)) + 1
+	expect_refusal(t, with_streams, .Record_Stream_Without_Description, .Record_Outputs, 0)
+	outputs[0].record_index = 1
+	inputs[0].terms_index = u32(len(parts.records)) + 1
+	expect_refusal(t, with_streams, .Record_Stream_Without_Description, .Record_Inputs, 0)
+	inputs[0].terms_index = 0
+
+	for place in ([?]u64{OUTPUT_PLACE + 2, CODE_OFFSET + 4, AFTER_LOAD_OFFSET + 16, MEMORY_SIZE, max(u64) - 3}) {
+		outputs[0].place = place
+		expect_refusal(t, with_streams, .Record_Stream_Place_Not_Writable, .Record_Outputs, 0)
+	}
+	outputs[0].place = OUTPUT_PLACE
+	inputs[0].place = INPUT_PLACE + 1
+	expect_refusal(t, with_streams, .Record_Stream_Place_Not_Writable, .Record_Inputs, 0)
+}
+
+// The rules of the whole tables and of the places, which the written file
+// shows: names out of order, a name in both tables, a generic record output
+// alone, a place over the own-hash place, two rows at one place. Each
+// leaves no byte of the file.
+@(test)
+record_streams_that_the_written_file_breaks_are_refused :: proc(t: ^testing.T) {
+	storage: Test_Storage
+	parts := test_parts(&storage)
+	out_of_order := [2]Record_Output_Part{{name = "zeta", record_index = 1}, {name = "alpha", record_index = 1}}
+	unordered := parts
+	unordered.record_outputs = out_of_order[:]
+	expect_refused_file(t, unordered, .Record_Streams_Not_Valid, .Record_Outputs, u64(module.Record_Stream_Fault.Outputs_Out_Of_Order))
+
+	same_output := [1]Record_Output_Part{{name = "same", record_index = 1}}
+	same_input := [1]Record_Input_Part{{name = "same", record_index = 1}}
+	both := parts
+	both.record_outputs, both.record_inputs = same_output[:], same_input[:]
+	expect_refused_file(t, both, .Record_Streams_Not_Valid, .Record_Outputs, u64(module.Record_Stream_Fault.Name_Of_Both))
+
+	generic := [1]Record_Output_Part{{name = "forward", record_index = 0, pairing = .Paired}}
+	alone := parts
+	alone.record_outputs = generic[:]
+	expect_refused_file(t, alone, .Record_Streams_Not_Valid, .Record_Outputs, u64(module.Record_Stream_Fault.Generic_Output_Alone))
+
+	over_hash := [1]Record_Output_Part{{name = "sizes", record_index = 1, place = OWN_HASH_PLACE}}
+	on_hash := parts
+	on_hash.record_outputs = over_hash[:]
+	expect_refused_file(t, on_hash, .Written_File_Not_Valid, .None, u64(module.Error.Bad_Record_Stream_Place))
+
+	shared_output := [1]Record_Output_Part{{name = "sizes", record_index = 1, place = OUTPUT_PLACE}}
+	shared_input := [1]Record_Input_Part{{name = "orders", record_index = 1, place = OUTPUT_PLACE}}
+	one_place := parts
+	one_place.record_outputs, one_place.record_inputs = shared_output[:], shared_input[:]
+	expect_refused_file(t, one_place, .Written_File_Not_Valid, .None, u64(module.Error.Bad_Record_Stream_Place))
+}
+
+// The record streams that a reader takes, last: the bound of each table
+// with place 0 (the link kept no variable), and a record output and a
+// record input with their places, read back by the readers of the
+// contract, and their indexes written at their places by a loader.
+@(test)
+record_streams_are_written_and_read_back :: proc(t: ^testing.T) {
+	storage: Test_Storage
+	parts := test_parts(&storage)
+	at_bound := make([]Record_Output_Part, module.RECORD_STREAM_INDEX_MOST)
+	defer delete(at_bound)
+	names := make([]string, module.RECORD_STREAM_INDEX_MOST)
+	defer delete(names)
+	for &item, index in at_bound {
+		digits := [2]u8{'0' + u8(index / 10), '0' + u8(index % 10)}
+		names[index] = strings.concatenate({"stream_", string(digits[:])}, context.temp_allocator)
+		item = {name = names[index], record_index = 1}
+	}
+	full := parts
+	full.record_outputs = at_bound
+	full_file := write_to_memory(t, full)
+	defer delete(full_file)
+	testing.expect_value(t, module.count(full_file, .Record_Outputs), module.RECORD_STREAM_INDEX_MOST + 1)
+
+	outputs := [1]Record_Output_Part{{name = "sizes", about = "The sizes of each rectangle.", text = "Each rectangle that the probe measured.", record_index = 1, place = OUTPUT_PLACE}}
+	inputs := [1]Record_Input_Part{{name = "orders", about = "The rectangles to measure.", record_index = 1, terms_index = 2, wirings = .Many, place = INPUT_PLACE}}
+	with_streams := parts
+	with_streams.record_outputs = outputs[:]
+	with_streams.record_inputs = inputs[:]
+	file := write_to_memory(t, with_streams)
+	defer delete(file)
+	testing.expect_value(t, module.validate(file), module.Error.None)
+	fault, row := module.record_streams_check(file)
+	testing.expect_value(t, fault, module.Record_Stream_Fault.None)
+	testing.expect_value(t, row, 0)
+
+	output_row, pairing, _, output_ok := module.record_output(file, 1)
+	testing.expect(t, output_ok)
+	testing.expect_value(t, module.string_at(file, output_row.name_offset, output_row.name_count), "sizes")
+	testing.expect_value(t, module.string_at(file, output_row.about_offset, output_row.about_count), outputs[0].about)
+	testing.expect_value(t, module.string_at(file, output_row.text_offset, output_row.text_count), outputs[0].text)
+	testing.expect_value(t, output_row.record, 1)
+	testing.expect_value(t, pairing, module.Record_Output_Pairing.Unpaired)
+	testing.expect_value(t, output_row.place, OUTPUT_PLACE)
+	input_row, wirings, _, _, input_ok := module.record_input(file, 1)
+	testing.expect(t, input_ok)
+	testing.expect_value(t, module.string_at(file, input_row.name_offset, input_row.name_count), "orders")
+	testing.expect_value(t, input_row.terms, 2)
+	testing.expect_value(t, wirings, module.Wiring_Count.Many)
+	testing.expect_value(t, input_row.place, INPUT_PLACE)
+
+	memory := make([]u8, MEMORY_SIZE)
+	defer delete(memory)
+	testing.expect(t, module.record_stream_indexes_write(file, memory))
+	testing.expect_value(t, (^u32)(&memory[OUTPUT_PLACE])^, 1)
+	testing.expect_value(t, (^u32)(&memory[INPUT_PLACE])^, 1)
+}

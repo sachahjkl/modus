@@ -58,6 +58,7 @@ Console_Command_Entry :: struct {
 	documentation: string,
 	file:          string,
 	line:          int,
+	optional_last: bool, // A call may leave out the last parameter: `optional_last = true`.
 }
 
 // is_odin_identifier says if a text is an Odin identifier.
@@ -587,10 +588,12 @@ odin_string_at :: proc(text: string, start: int) -> (value: string, end: int, fo
 // console_commands_read reads the built-in commands of the console.
 // The form: each line whose code starts with "command(\"" is
 // `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`,
-// with `forms = {...}` after it for a parameter that the parser reads as
-// names. The kind None of a parameter is any value: the console prints
-// "Value". The form Fact_Name prints "Fact_Type", the form Condition
-// "Condition".
+// then the units `{...}` by their place, then the named arguments
+// `forms = {...}` for a parameter that the parser reads as names and
+// `optional_last = true` for a last parameter that a call may leave out
+// (console_command_tail_read). The kind None of a parameter is any value:
+// the console prints "Value". The form Fact_Name prints "Fact_Type", the
+// form Condition "Condition", the form Field_Names "Field...".
 // The comment lines just above a command, up to a line that is not a
 // comment, are its documentation.
 console_commands_read :: proc(content, file: string) -> (commands: []Console_Command_Entry, problem: string) {
@@ -636,28 +639,32 @@ console_commands_read :: proc(content, file: string) -> (commands: []Console_Com
 		if !has_about || !strings.has_prefix(rest[after_about:], ", ") || !strings.has_suffix(rest, ")") {
 			return nil, wrong
 		}
-		// `forms = {...}`: a parameter that the parser reads as names has
-		// the name of its form in the signature, as the console writes it.
-		if forms_at := strings.index(rest[after_about:], "forms = {"); forms_at >= 0 {
-			forms_text := rest[after_about + forms_at + len("forms = {"):]
-			forms_end := strings.index_byte(forms_text, '}')
-			if forms_end < 0 {
+		// The arguments after the help: the procedure, then the units by
+		// their place, then the named arguments.
+		tail, tail_ok := console_command_tail_read(rest[after_about + len(", "):len(rest) - 1])
+		if !tail_ok {
+			return nil, fmt.tprintf("%s, line %d: after the help of a command come its procedure, its units `{...}`, then the named arguments `forms = {.<Form>, ...}` and `optional_last = true`, each once", file, index + 1)
+		}
+		// A parameter that the parser reads as names has the name of its
+		// form in the signature, as the console writes it.
+		for form, form_index in tail.forms {
+			if form_index >= len(parameters) {
 				return nil, wrong
 			}
-			for part, form_index in strings.split(forms_text[:forms_end], ",", context.temp_allocator) {
-				if form_index >= len(parameters) {
-					return nil, wrong
-				}
-				switch strings.trim_space(part) {
-				case ".Expression":
-				case ".Fact_Name":
-					parameters[form_index] = "Fact_Type"
-				case ".Condition":
-					parameters[form_index] = "Condition"
-				case:
-					return nil, wrong
-				}
+			switch form {
+			case "Expression":
+			case "Fact_Name":
+				parameters[form_index] = "Fact_Type"
+			case "Condition":
+				parameters[form_index] = "Condition"
+			case "Field_Names":
+				parameters[form_index] = "Field..."
+			case:
+				return nil, fmt.tprintf("%s, line %d: the form .%s names no Parameter_Form of the console", file, index + 1, form)
 			}
+		}
+		if tail.optional_last && len(parameters) == 0 {
+			return nil, fmt.tprintf("%s, line %d: optional_last on a command with no parameter", file, index + 1)
 		}
 		above := index
 		for above > 0 && strings.has_prefix(strings.trim_space(lines[above - 1]), "//") {
@@ -668,7 +675,7 @@ console_commands_read :: proc(content, file: string) -> (commands: []Console_Com
 			_, text, _ := markdown_comment_line(comment_line)
 			documentation = markdown_comment_add(documentation, text)
 		}
-		append(&list, Console_Command_Entry{name = name, parameters = parameters[:], result = result, about = about, documentation = markdown_comment_end(documentation), file = file, line = index + 1})
+		append(&list, Console_Command_Entry{name = name, parameters = parameters[:], result = result, about = about, documentation = markdown_comment_end(documentation), file = file, line = index + 1, optional_last = tail.optional_last})
 	}
 	if len(list) == 0 {
 		return nil, fmt.tprintf("%s: no line `command(\"<name>\", ...)`", file)
@@ -676,8 +683,98 @@ console_commands_read :: proc(content, file: string) -> (commands: []Console_Com
 	return list[:], ""
 }
 
+// What follows the help of a command, after console_command_tail_read.
+Console_Command_Tail :: struct {
+	forms:         []string, // The names of the members of `forms = {...}`, with no dot; none when the line has no forms.
+	optional_last: bool,
+}
+
+// console_command_tail_read reads the arguments of a line of a command
+// after its help, with its closing parenthesis cut: the procedure, an
+// identifier; then at most one list of units by its place, `{...}`; then
+// the named arguments, each at most once: `units = {...}`,
+// `forms = {.<Form>, ...}` and `optional_last = true` or `false`. It
+// refuses a named argument that `command` does not take, a value of
+// another form, a positional argument after a named one, and braces that
+// do not close.
+console_command_tail_read :: proc(text: string) -> (tail: Console_Command_Tail, ok: bool) {
+	parts := make([dynamic]string, context.temp_allocator)
+	depth, start := 0, 0
+	for index in 0 ..< len(text) {
+		switch text[index] {
+		case '{', '(':
+			depth += 1
+		case '}', ')':
+			depth -= 1
+			if depth < 0 {
+				return {}, false
+			}
+		case ',':
+			if depth == 0 {
+				append(&parts, strings.trim_space(text[start:index]))
+				start = index + 1
+			}
+		}
+	}
+	if depth != 0 {
+		return {}, false
+	}
+	append(&parts, strings.trim_space(text[start:]))
+	if len(parts) == 0 || !is_odin_identifier(parts[0]) {
+		return {}, false
+	}
+	named := false
+	units_seen, forms_seen, optional_seen := false, false, false
+	for part in parts[1:] {
+		equal := strings.index(part, " = ")
+		if equal < 0 {
+			// The units by their place: before any named argument.
+			if named || units_seen || !strings.has_prefix(part, "{") || !strings.has_suffix(part, "}") {
+				return {}, false
+			}
+			units_seen = true
+			continue
+		}
+		named = true
+		key, value := part[:equal], part[equal + len(" = "):]
+		switch key {
+		case "units":
+			if units_seen || !strings.has_prefix(value, "{") || !strings.has_suffix(value, "}") {
+				return {}, false
+			}
+			units_seen = true
+		case "forms":
+			if forms_seen || !strings.has_prefix(value, "{") || !strings.has_suffix(value, "}") {
+				return {}, false
+			}
+			forms_seen = true
+			forms := make([dynamic]string, context.temp_allocator)
+			for member in strings.split(value[1:len(value) - 1], ",", context.temp_allocator) {
+				trimmed := strings.trim_space(member)
+				if !strings.has_prefix(trimmed, ".") || !is_odin_identifier(trimmed[1:]) {
+					return {}, false
+				}
+				append(&forms, trimmed[1:])
+			}
+			tail.forms = forms[:]
+		case "optional_last":
+			if optional_seen || (value != "true" && value != "false") {
+				return {}, false
+			}
+			optional_seen = true
+			tail.optional_last = value == "true"
+		case:
+			return {}, false
+		}
+	}
+	return tail, true
+}
+
 // console_signature gives a command as `help()` of the console prints
-// it: "repeat(Text, Integer) -> Text"; no arrow for the result None.
+// it: "repeat(Text, Integer) -> Text"; no arrow for the result None. A
+// last parameter that a call may leave out is in brackets:
+// "start(Text, [Table])", and the names of fields of columns are
+// "Field...": "columns(Table, Field...) -> Table".
 console_signature :: proc(command: Console_Command_Entry) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	strings.write_string(&builder, command.name)
@@ -686,7 +783,14 @@ console_signature :: proc(command: Console_Command_Entry) -> string {
 		if index > 0 {
 			strings.write_string(&builder, ", ")
 		}
+		optional := command.optional_last && index == len(command.parameters) - 1
+		if optional {
+			strings.write_byte(&builder, '[')
+		}
 		strings.write_string(&builder, parameter)
+		if optional {
+			strings.write_byte(&builder, ']')
+		}
 	}
 	strings.write_byte(&builder, ')')
 	if command.result != "None" {

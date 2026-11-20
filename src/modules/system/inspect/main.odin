@@ -55,6 +55,7 @@
 package inspect
 
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:private/inspect/addresses"
 import "modus:support/display"
 import "modus:support/system"
@@ -181,7 +182,7 @@ sample_take :: proc "contextless" () {
 		if fresh.process.process_serial != serial || fresh.mappings.process_serial != serial || fresh.modules.process_serial != serial || fresh.threads.process_serial != serial || fresh.stop.process_serial != serial {
 			dropped_samples += 1
 			if dropped_samples <= 4 {
-				system.log(.Info, "inspect: a sample mixed two processes of slot ", slot, ": dropped, ", dropped_samples, " in all")
+				system.log_fact(.Info, Sample_Mixed{slot = slot, dropped = dropped_samples})
 			}
 			current.time = system.time()
 			return
@@ -203,20 +204,16 @@ sample_take :: proc "contextless" () {
 // sample_log writes the counts of the chosen process on the log, one time
 // for each choice: the test compares them with the reports of monitor.
 sample_log :: proc "contextless" () {
-	name := system.name_of(current.process.name[:])
 	present: u64
 	pages: u64
 	for &mapping in current.mappings.mappings[:current.mappings.count] {
 		pages += mapping.page_count
 		present += mapping.present
 	}
-	system.log(.Info, "inspect: ", name, ": ", current.mappings.count, " mappings, ", pages, " mapped pages, ", present, " with a frame, ", current.threads.count, " threads, ", current.modules.count, " modules; the kernel says ", current.process.mapped_pages, " mapped pages and ", current.process.thread_count, " threads")
-	system.log(.Info, "inspect: one sample of ", name, " took ", current.nanoseconds / 1000, " us and ", current.entries, " kernel entries")
+	system.log_fact(.Info, Process_Counts{mappings = current.mappings.count, mapped_pages = pages, present_pages = present, threads = current.threads.count, modules = current.modules.count, kernel_mapped_pages = current.process.mapped_pages, kernel_threads = current.process.thread_count, sampled_process = process_field(current.process.name[:])})
+	system.log_fact(.Info, Sample_Cost{elapsed = value_kinds.Time_In_Microseconds(current.nanoseconds / 1000), kernel_entries = current.entries, sampled_process = process_field(current.process.name[:])})
 	if current.stop.cause != 0 {
-		buffer: [512]u8
-		writer := system.Writer{buffer = buffer[:]}
-		stop_write(&writer, &current.stop)
-		system.log(.Info, "inspect: ", name, " stopped: ", system.written(&writer))
+		stop_log(&current.stop)
 	}
 }
 
@@ -309,24 +306,32 @@ frame_name :: proc "contextless" (number: int) -> string {
 	return string(frame_names.texts[number][:frame_names.counts[number]])
 }
 
-// stop_write writes a stop report: the vector, the address, and each frame.
-stop_write :: proc "contextless" (writer: ^system.Writer, stop: ^op.Stop_Report) {
-	system.write_part(writer, stop.vector == 14 ? "page fault at " : "fault ")
-	system.write_number(writer, stop.address)
-	system.write_part(writer, "; stack: ")
+// stop_log writes a stop report on the log: the fault and its address,
+// then one fact for each frame of the stack, then the values that the
+// kernel hid. A frame is its place as the window names it: the name of its
+// procedure and its line from the debug image, or a module and an offset,
+// or "not code".
+stop_log :: proc "contextless" (stop: ^op.Stop_Report) {
+	sampled_process := process_field(current.process.name[:])
+	if stop.vector == 14 {
+		system.log_fact(.Info, Stopped_On_Page_Fault{address = value_kinds.Hexadecimal_No_Leading_Zero(stop.address), sampled_process = sampled_process})
+	} else {
+		system.log_fact(.Info, Stopped_On_Fault{address = value_kinds.Hexadecimal_No_Leading_Zero(stop.address), sampled_process = sampled_process})
+	}
 	for &frame, number in stop.frames[:min(stop.frame_count, op.STOP_FRAME_CAPACITY)] {
-		system.write_part(writer, number == 0 ? "" : ", ")
+		buffer: [256]u8
+		writer := system.Writer{buffer = buffer[:]}
 		if frame.address == 0 {
-			system.write_part(writer, "not code")
+			system.write_part(&writer, "not code")
 		} else if name := frame_name(number); name != "" {
-			system.write_part(writer, name)
+			system.write_part(&writer, name)
 		} else {
-			address_write(writer, frame.address, true)
+			address_write(&writer, frame.address, true)
 		}
+		system.log_fact(.Info, Stack_Frame{frame = u64(number), sampled_process = sampled_process}, system.written(&writer))
 	}
 	if stop.hidden_value_count != 0 {
-		system.write_part(writer, "; values hidden by the kernel: ")
-		system.write_part(writer, stop.hidden_value_count)
+		system.log_fact(.Info, Values_Hidden{hidden_values = u64(stop.hidden_value_count), sampled_process = sampled_process})
 	}
 }
 
@@ -357,16 +362,20 @@ key :: proc "contextless" (event: display.Event) {
 		choose(min(position_of_selected() + 1, shown_count - 1))
 	case event.code == KEY_TAB:
 		hex_view = !hex_view
-		system.log(.Info, "inspect: ", hex_view ? "the bytes of the memory of inspect" : "the reports of ", hex_view ? "" : system.name_of(current.process.name[:]))
+		if hex_view {
+			system.log_fact(.Info, Own_Memory_Shown{})
+		} else {
+			system.log_fact(.Info, Reports_Shown{sampled_process = process_field(current.process.name[:])})
+		}
 	case event.character == ' ':
 		frozen = !frozen
-		system.log(.Info, "inspect: the sample is ", frozen ? "frozen" : "live")
+		system.log_fact(.Info, Sample_State_Changed{sample_state = value_kinds.text_field(frozen ? "frozen" : "live", SAMPLE_STATE_FIELD_BYTES)})
 	case event.code == display.KEY_BACKSPACE:
 		had := filter_count
 		filter_count = max(filter_count - 1, 0)
 		list_read()
 		if had == 1 {
-			system.log(.Info, "inspect: the list shows all ", u64(shown_count), " processes")
+			system.log_fact(.Info, Filter_Emptied{processes = u64(shown_count)})
 		}
 	case event.code == display.KEY_ENTER:
 		choose(0)
@@ -422,7 +431,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	sample_take()
-	system.log(.Info, "inspect: ok, ", u64(entry_count), " processes; up, down, letters: choose; space: freeze; tab: the bytes of its own memory")
+	system.log_fact(.Info, Window_Ready{processes = u64(entry_count)})
 	for {
 		draw(&window)
 		next := current.time + SAMPLE_INTERVAL

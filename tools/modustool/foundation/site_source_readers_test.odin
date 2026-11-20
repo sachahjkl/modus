@@ -71,6 +71,26 @@ source_readers_refuse_a_damaged_file :: proc(t: ^testing.T) {
 	testing.expect(t, strings.has_prefix(name, "file.odin, line 2:"), name)
 	_, command := console_commands_read("\tcommand(\"help\", {}, .None, help)\n", "file.odin")
 	testing.expect(t, strings.has_prefix(command, "file.odin, line 1:"), command)
+	// The arguments after the help: a named argument that command does not
+	// take, each malformed one, one named twice, the units by their place
+	// after a named argument, a form that names nothing, and optional_last
+	// on a command with no parameter. Each names its line.
+	wrong_tails := [?]string{
+		"\tcommand(\"a\", {.Text}, .None, \"help\", run, speed = 3)\n",
+		"\tcommand(\"a\", {.Text}, .None, \"help\", run, forms = .Condition)\n",
+		"\tcommand(\"a\", {.Text}, .None, \"help\", run, forms = {Condition})\n",
+		"\tcommand(\"a\", {.Text}, .None, \"help\", run, forms = {.Condition)\n",
+		"\tcommand(\"a\", {.Text}, .None, \"help\", run, optional_last = yes)\n",
+		"\tcommand(\"a\", {.Text}, .None, \"help\", run, optional_last = true, optional_last = true)\n",
+		"\tcommand(\"a\", {.Text}, .None, \"help\", run, forms = {.Expression}, {value_kinds.size_in(.Pages)})\n",
+		"\tcommand(\"a\", {.Text}, .None, \"help\", run, forms = {.Field_Name})\n",
+		"\tcommand(\"a\", {}, .None, \"help\", run, optional_last = true)\n",
+		"\tcommand(\"a\", {.Text}, .None, \"help\", 3)\n",
+	}
+	for text in wrong_tails {
+		_, tail_problem := console_commands_read(text, "file.odin")
+		testing.expectf(t, strings.has_prefix(tail_problem, "file.odin, line 1:"), "the line %q gave %q", text, tail_problem)
+	}
 	// The row on line 3 has no name: the reader names its line.
 	_, no_name := role_table_read("package root\nprocess_roles := [?]Row {\n\t{grants = {}},\n}\n", "file.odin", "process_roles")
 	testing.expect(t, strings.has_prefix(no_name, "file.odin, line 3:"), no_name)
@@ -97,6 +117,17 @@ source_readers_of_small_files :: proc(t: ^testing.T) {
 		testing.expect_value(t, console_signature(commands[0]), "say(Text, Value) -> Text")
 		testing.expect_value(t, commands[0].documentation, "")
 		testing.expect_value(t, commands[1].documentation, "Its first line.\n\n- `item`: a list.")
+	}
+	// The named arguments that command takes: the forms, Field_Names among
+	// them, and optional_last, after the units by their place.
+	named, named_problem := console_commands_read("\tcommand(\"columns\", {.Table, .None}, .Table, \"help\", table_columns, forms = {.Expression, .Field_Names})\n\tcommand(\"start\", {.Text, .Table}, .None, \"help\", start_process, optional_last = true)\n\tcommand(\"wait\", {.Text, .Integer}, .Table, \"help\", wait_run, {{}, value_kinds.time_in(.Milliseconds)}, forms = {.Condition, .Expression}, optional_last = false)\n", "file.odin")
+	testing.expect_value(t, named_problem, "")
+	testing.expect_value(t, len(named), 3)
+	if len(named) == 3 {
+		testing.expect_value(t, console_signature(named[0]), "columns(Table, Field...) -> Table")
+		testing.expect_value(t, console_signature(named[1]), "start(Text, [Table])")
+		testing.expect_value(t, console_signature(named[2]), "wait(Condition, Integer) -> Table")
+		testing.expect(t, named[1].optional_last && !named[0].optional_last && !named[2].optional_last)
 	}
 	operation := operation_comment_split(Enumeration_Member{name = "Do", comment = "(a, b (or 0)) -> the count. More text."})
 	testing.expect_value(t, operation.parameters, "a, b (or 0)")

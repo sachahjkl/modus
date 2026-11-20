@@ -37,6 +37,7 @@ package fetch
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -97,13 +98,19 @@ seen: tcp.Event_Kinds // The events of the connection of the case.
 calls: [8]ring.Record // Completions of Send with a tag of CALL_TAG and more.
 call_count: int
 
+// note keeps the row of a case for the window. The caller writes its line:
+// a fact of the case, or a text where no fact holds it.
 note :: proc "contextless" (text: string, right: bool, parts: ..system.Part) {
 	item := &cases[case_count]
 	item.text = text
 	item.right = right
 	item.count = len(system.format(item.answer[:], ..parts))
 	case_count += 1
-	system.log(.Info, "fetch: ", text, ": ", string(item.answer[:item.count]), right ? "" : " (WRONG)")
+}
+
+// wrong_mark gives the end of the sentence of a case: nothing when it held.
+wrong_mark :: proc "contextless" (right: bool) -> [16]u8 {
+	return value_kinds.text_field(right ? "" : " (WRONG)", 16)
 }
 
 place_bytes :: proc "contextless" (place: u32) -> []u8 {
@@ -122,7 +129,7 @@ command_push_or_hold :: proc "contextless" (record: ring.Record) {
 		return
 	}
 	if held_count == len(held) {
-		system.log(.Info, "fetch: the held commands passed their proven bound")
+		system.log_fact(.Info, Held_Commands_Past_Bound{})
 		system.stop(.Failed)
 	}
 	held[held_count] = record
@@ -330,7 +337,9 @@ cases_run :: proc "contextless" () {
 	block := u16(grant.tcp && !grant.listen ? datagram.PORT_BLOCK : 1)
 	writer := system.Writer{buffer = text[:]}
 	network.address_write(&writer, grant.address)
-	note("the grant", has_info && grant_known && grant.tcp && !grant.listen && grant.address == REMOTE && grant.port == REMOTE_PORT && block == datagram.PORT_BLOCK, "TCP to ", system.written(&writer), " port ", u64(grant.port), " only, from the local ports ", u64(first), " to ", u64(first) + u64(block) - 1)
+	grant_right := has_info && grant_known && grant.tcp && !grant.listen && grant.address == REMOTE && grant.port == REMOTE_PORT && block == datagram.PORT_BLOCK
+	note("the grant", grant_right, "TCP to ", system.written(&writer), " port ", u64(grant.port), " only, from the local ports ", u64(first), " to ", u64(first) + u64(block) - 1)
+	system.log_fact(.Info, Grant_Read{remote_port = u64(grant.port), first_local_port = u64(first), last_local_port = u64(first) + u64(block) - 1, remote_address = value_kinds.text_field(system.written(&writer), 16), wrong_mark = wrong_mark(grant_right)})
 	table.local_address = u32(info.values[0])
 	table.port_first = first
 	table.port_count = block
@@ -342,12 +351,18 @@ cases_run :: proc "contextless" () {
 	refused, has_refused := segment_refused(OTHER, first, CALL_TAG + 2)
 	writer = {buffer = sentence[:]}
 	refusal := network.completion_error_text(&writer, refused)
-	note("a SYN to 10.0.2.2 port 80", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(refusal.kind) == .No_Grant && refusal.limit == errors.endpoint_pack(REMOTE, REMOTE_PORT) && refusal.found == 0, "refused by the network service: ", system.written(&writer))
+	refusal_right := has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(refusal.kind) == .No_Grant && refusal.limit == errors.endpoint_pack(REMOTE, REMOTE_PORT) && refusal.found == 0
+	note("a SYN to 10.0.2.2 port 80", refusal_right, "refused by the network service: ", system.written(&writer))
+	fields := errors.error_record_fact_fields(refusal)
+	system.log_fact(.Info, Syn_To_Other_Remote_Refused{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, wrong_mark = wrong_mark(refusal_right)})
 	// 3. A local port that is not in the block.
 	refused, has_refused = segment_refused(REMOTE, 1234, CALL_TAG + 3)
 	writer = {buffer = sentence[:]}
 	refusal = network.completion_error_text(&writer, refused)
-	note("a SYN from the local port 1234", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(refusal.kind) == .No_Grant && refusal.found == 1234, "refused: ", system.written(&writer), " (its ports are ", u64(first), " to ", u64(first) + u64(block) - 1, ")")
+	refusal_right = has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(refusal.kind) == .No_Grant && refusal.found == 1234
+	note("a SYN from the local port 1234", refusal_right, "refused: ", system.written(&writer), " (its ports are ", u64(first), " to ", u64(first) + u64(block) - 1, ")")
+	fields = errors.error_record_fact_fields(refusal)
+	system.log_fact(.Info, Syn_From_Other_Port_Refused{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, first_local_port = u64(first), last_local_port = u64(first) + u64(block) - 1, wrong_mark = wrong_mark(refusal_right)})
 
 	// 4. The handshake.
 	start := system.nanoseconds()
@@ -357,7 +372,14 @@ cases_run :: proc "contextless" () {
 	}
 	opened := connections[0].state == .Established
 	handshake := connections[0].established_at - connections[0].opened_at
-	note("the handshake with 10.0.2.100 port 80", opened && .Opened in seen, opened ? "established in " : "no answer", opened ? handshake : u64(0), opened ? " us, the MSS " : "", opened ? u64(connections[0].mss) : u64(0))
+	if opened {
+		handshake_right := .Opened in seen
+		note("the handshake with 10.0.2.100 port 80", handshake_right, "established in ", handshake, " us, the MSS ", u64(connections[0].mss))
+		system.log_fact(.Info, Handshake_Established{handshake_time = handshake, segment_size_most = u64(connections[0].mss), wrong_mark = wrong_mark(handshake_right)})
+	} else {
+		note("the handshake with 10.0.2.100 port 80", false, "no answer")
+		system.log_fact(.Info, Handshake_Not_Answered{})
+	}
 	if !opened {
 		return
 	}
@@ -370,8 +392,10 @@ cases_run :: proc "contextless" () {
 	for len(body) > 0 && (body[len(body) - 1] == '\n' || body[len(body) - 1] == '\r') {
 		body = body[:len(body) - 1]
 	}
-	note("GET /hello", ok && response.head.status == 200, "status ", u64(response.head.status), ", \"", body, "\" in ", took, " us")
-	system.log(.Info, "fetch: GET /hello: the request went to the network service after ", (first_segment_sent_at - exchange_started_at) / 1000, " us, the first segment came after ", (first_segment_received_at - exchange_started_at) / 1000, " us, the first segment with data after ", (first_data_received_at - exchange_started_at) / 1000, " us")
+	hello_right := ok && response.head.status == 200
+	note("GET /hello", hello_right, "status ", u64(response.head.status), ", \"", body, "\" in ", took, " us")
+	system.log_fact(.Info, Hello_Answered{status_code = u64(response.head.status), request_time = took, wrong_mark = wrong_mark(hello_right), body = value_kinds.text_field(body, 64)})
+	system.log_fact(.Info, Hello_Timed{request_sent = (first_segment_sent_at - exchange_started_at) / 1000, first_segment = (first_segment_received_at - exchange_started_at) / 1000, first_data = (first_data_received_at - exchange_started_at) / 1000})
 
 	// 6. The large page: 1 MiB from the remote.
 	start = system.nanoseconds()
@@ -379,7 +403,10 @@ cases_run :: proc "contextless" () {
 	took = system.nanoseconds() - start
 	expected := web.pattern_hash(web.LARGE_SIZE)
 	speed: [24]u8
-	note("GET /large", ok && response.head.status == 200 && response.bytes == web.LARGE_SIZE && response.hash == expected, u64(response.bytes), " bytes, fnv1a64 ", system.Hex(response.hash), response.hash == expected ? " as expected, " : " NOT the expected one, ", megabytes(speed[:], rate(u64(response.bytes), took)))
+	large_right := ok && response.head.status == 200 && response.bytes == web.LARGE_SIZE && response.hash == expected
+	large_rate := rate(u64(response.bytes), took)
+	note("GET /large", large_right, u64(response.bytes), " bytes, fnv1a64 ", system.Hex(response.hash), response.hash == expected ? " as expected, " : " NOT the expected one, ", megabytes(speed[:], large_rate))
+	system.log_fact(.Info, Large_Page_Received{received_bytes = u64(response.bytes), received_hash = value_kinds.Hexadecimal_Sixteen_Digits(response.hash), rate = value_kinds.Hundredths(large_rate / 10), wrong_mark = wrong_mark(large_right), hash_check = value_kinds.text_field(response.hash == expected ? "as expected" : "NOT the expected one", 24)})
 
 	// 7. A body of 1 MiB to the remote: it gives the hash that it computed.
 	start = system.nanoseconds()
@@ -390,7 +417,10 @@ cases_run :: proc "contextless" () {
 	answer: [64]u8
 	wanted := system.format(answer[:], "received ", u64(web.LARGE_SIZE), " bytes, fnv1a64 ", system.Hex(expected))
 	got := string(response.body[:min(response.bytes, len(response.body), len(wanted))])
-	note("POST /sink, 1 MiB", ok && response.head.status == 200 && got == wanted, got == wanted ? "the remote got the same hash, " : "the remote answered another hash, ", megabytes(speed[:], rate(u64(web.LARGE_SIZE), took)))
+	sink_right := ok && response.head.status == 200 && got == wanted
+	sink_rate := rate(u64(web.LARGE_SIZE), took)
+	note("POST /sink, 1 MiB", sink_right, got == wanted ? "the remote got the same hash, " : "the remote answered another hash, ", megabytes(speed[:], sink_rate))
+	system.log_fact(.Info, Body_Sent{rate = value_kinds.Hundredths(sink_rate / 10), wrong_mark = wrong_mark(sink_right), hash_answer = value_kinds.text_field(got == wanted ? "the remote got the same hash" : "the remote answered another hash", 40)})
 
 	// 8. The close from this side. The remote acknowledges the FIN; then it
 	// sends its own FIN (TIME-WAIT here), or keeps its half of the
@@ -407,8 +437,11 @@ cases_run :: proc "contextless" () {
 		pump()
 	}
 	state := connections[0].state
-	note("the close from this side", (state == .Time_Wait || state == .Fin_Wait_2) && connections[0].fin_acknowledged, "the remote acknowledged the FIN, ", state == .Time_Wait ? "and sent its own: TIME-WAIT for 10 s" : state == .Fin_Wait_2 ? "and keeps its half open: FIN-WAIT-2" : "WRONG: no ACK of the FIN")
-	system.log(.Info, "fetch: the connection: ", connections[0].segments_sent, " segments sent, ", connections[0].segments_received, " received, ", connections[0].retransmissions, " retransmissions, srtt ", connections[0].smoothed_rtt, " us, ", table.bad_checksums, " segments dropped for a wrong checksum")
+	close_right := (state == .Time_Wait || state == .Fin_Wait_2) && connections[0].fin_acknowledged
+	close_end: string = state == .Time_Wait ? "and sent its own: TIME-WAIT for 10 s" : state == .Fin_Wait_2 ? "and keeps its half open: FIN-WAIT-2" : "WRONG: no ACK of the FIN"
+	note("the close from this side", close_right, "the remote acknowledged the FIN, ", close_end)
+	system.log_fact(.Info, Close_Acknowledged{wrong_mark = wrong_mark(close_right), close_end = value_kinds.text_field(close_end, 40)})
+	system.log_fact(.Info, Connection_Counted{segments_sent = connections[0].segments_sent, segments_received = connections[0].segments_received, retransmissions = connections[0].retransmissions, smoothed_round_trip = connections[0].smoothed_rtt, bad_checksums = table.bad_checksums})
 }
 
 rate :: proc "contextless" (bytes: u64, nanoseconds: u64) -> u64 {
@@ -453,7 +486,7 @@ process_generator: random.Generator
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "fetch: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "fetch")
@@ -462,12 +495,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
-		system.log(.Info, "fetch: no endpoint: the process has no grant of the network")
+		system.log_fact(.Info, No_Endpoint{})
 		system.stop(.Refused)
 	}
 	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
 	if map_status != .Ok {
-		system.log(.Info, "fetch: no datagram region")
+		system.log_fact(.Info, No_Datagram_Region{})
 		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
@@ -477,7 +510,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	memory, memory_status := system.memory_create(BUFFER_PAGES)
 	buffers, buffers_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || buffers_status != .Ok {
-		system.log(.Info, "fetch: no memory for the buffers of the connections")
+		system.log_fact(.Info, No_Connection_Memory{})
 		system.stop(.Failed)
 	}
 	// The secret of the initial sequence numbers: 32 bytes of the generator
@@ -486,7 +519,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	random.fill(&process_generator, secret[:])
 	tcp.table_init(&table, connections[:], ([^]u8)(buffers)[:BUFFER_PAGES * system.PAGE_SIZE], SEND_SIZE, RECEIVE_SIZE, 0, secret)
 	secret = {}
-	system.log(.Info, "fetch: the secret of the initial sequence numbers from the generator of the process")
+	system.log_fact(.Info, Sequence_Secret_Taken{})
 	for place in 0 ..< RECEIVE_PLACES {
 		post(u32(place))
 	}
@@ -504,9 +537,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if wrong == 0 && case_count == 8 {
-		system.log(.Info, "fetch: ok, ", u64(case_count), " cases")
+		system.log_fact(.Info, Fetch_Held{cases = u64(case_count)})
 	} else {
-		system.log(.Info, "fetch: WRONG: ", u64(wrong), " of ", u64(case_count), " cases")
+		system.log_fact(.Info, Fetch_Wrong{wrong_cases = u64(wrong), cases = u64(case_count)})
 	}
 	draw(&window)
 	// A half-closed connection ends with a RST: the library has no timer of
@@ -517,7 +550,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for connections[0].state != .Closed || connections[0].reset_pending {
 		pump()
 	}
-	system.log(.Info, "fetch: the connection ended, its record is free")
+	system.log_fact(.Info, Connection_Ended{})
 	for {
 		display.wait(&window)
 		for event in display.next_event(&window) {

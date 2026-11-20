@@ -24,6 +24,11 @@ LOG_MEASURES_RECORD :: foundation.BUILD_FOLDER + "/log_measures.txt"
 LOG_MEASURE_KERNEL_READY :: "kernel: ok"
 LOG_MEASURE_MACHINE_USABLE :: "root: the machine is usable"
 LOG_MEASURE_MACHINE_USABLE_PROCESS :: "root"
+// The line of the root service is the fact root.Machine_Usable, whose
+// sentence starts with LOG_MEASURE_MACHINE_USABLE. The serial log holds
+// the raw line of a fact, so the measure finds it by the key tag of its
+// fact type, which the tool computes as the compiler does.
+LOG_MEASURE_MACHINE_USABLE_FACT :: "Machine_Usable"
 // The head of the serial line of a record of the kernel, which has no
 // "[name] " head. The lines of the firmware and of the boot program have
 // neither: they are no log records.
@@ -115,7 +120,7 @@ log_line_records :: proc(body: Log_Line_Body, shape: Log_Record_Shape) -> (recor
 // What the measures read from one serial log.
 Log_Measures :: struct {
 	records_to_kernel_ready:   int, // The log records of today up to the line of the kernel LOG_MEASURE_KERNEL_READY, that line included; -1: the log has no such line.
-	records_to_machine_usable: int, // The same up to the first line of the root service that starts with LOG_MEASURE_MACHINE_USABLE.
+	records_to_machine_usable: int, // The same up to the first fact root.Machine_Usable of the root service, whose sentence starts with LOG_MEASURE_MACHINE_USABLE.
 	lines:                     int,
 	fact_lines:                int,
 	body_classes:              [LOG_BODY_CLASS_COUNT]int, // The lines by the bytes of their body (log_body_class_bounds).
@@ -129,6 +134,7 @@ Log_Measures :: struct {
 // and of the boot program come before the log exists.
 log_measures_read :: proc(log: string) -> (measures: Log_Measures) {
 	measures.records_to_kernel_ready, measures.records_to_machine_usable = -1, -1
+	machine_usable_tag := op.log_fact_key_tag(fact_key(LOG_MEASURE_MACHINE_USABLE_PROCESS, LOG_MEASURE_MACHINE_USABLE_FACT))
 	records := 0
 	for raw_line in strings.split_lines(log, context.temp_allocator) {
 		line := strings.trim_right(raw_line, "\r")
@@ -160,8 +166,10 @@ log_measures_read :: proc(log: string) -> (measures: Log_Measures) {
 		if measures.records_to_kernel_ready < 0 && process == "" && text == LOG_MEASURE_KERNEL_READY {
 			measures.records_to_kernel_ready = records
 		}
-		if measures.records_to_machine_usable < 0 && process == LOG_MEASURE_MACHINE_USABLE_PROCESS && strings.has_prefix(text, LOG_MEASURE_MACHINE_USABLE) {
-			measures.records_to_machine_usable = records
+		if measures.records_to_machine_usable < 0 && process == LOG_MEASURE_MACHINE_USABLE_PROCESS && body.is_fact {
+			if fact, parsed := fact_line_parse(text); parsed && fact.key_tag == machine_usable_tag {
+				measures.records_to_machine_usable = records
+			}
 		}
 	}
 	return measures
@@ -218,7 +226,7 @@ log_measures_missing_line :: proc(log_path: string, measures: Log_Measures) -> s
 	case measures.records_to_kernel_ready < 0:
 		return fmt.tprintf("the measures of the log: %s has no line of the kernel \"%s\", so the records up to it are not counted", log_path, LOG_MEASURE_KERNEL_READY)
 	case measures.records_to_machine_usable < 0:
-		return fmt.tprintf("the measures of the log: %s has no line of the process %s that starts with \"%s\", so the records up to it are not counted", log_path, LOG_MEASURE_MACHINE_USABLE_PROCESS, LOG_MEASURE_MACHINE_USABLE)
+		return fmt.tprintf("the measures of the log: %s has no fact %s.%s of the process %s, \"%s ...\", so the records up to it are not counted", log_path, LOG_MEASURE_MACHINE_USABLE_PROCESS, LOG_MEASURE_MACHINE_USABLE_FACT, LOG_MEASURE_MACHINE_USABLE_PROCESS, LOG_MEASURE_MACHINE_USABLE)
 	}
 	return ""
 }

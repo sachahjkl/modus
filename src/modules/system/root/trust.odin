@@ -4,6 +4,7 @@ import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import op "modus:contract/operation"
 import "modus:contract/system_description"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The check of the root service (docs/TRUSTED_BOOT.md, "Layer 1: the signed system description").
@@ -42,11 +43,33 @@ trust_check :: proc "contextless" () {
 	result := system_description.image_check(description, image)
 	spent := system.nanoseconds() - start
 	if result.fault != .None {
-		expected := system_description.hexadecimal(result.expected_hash)
-		found_digits := system_description.hexadecimal(result.found_hash)
 		buffer: [256]u8
 		text := system.format(buffer[:], system_description.name_of(&result.name), ": ", system_description.fault_sentences[result.fault])
-		system.log(.Error, "root: ", text, ": expected ", string(expected[:]), ", found ", string(found_digits[:]))
+		expected := value_kinds.Hash_Field(result.expected_hash)
+		found_hash := value_kinds.Hash_Field(result.found_hash)
+		entry := module_name_field(system_description.name_of(&result.name))
+		switch result.fault {
+		case .None:
+			// The check passed: this branch never sees it.
+		case .Not_Valid:
+			system.log_fact(.Error, Image_Check_Failed_Not_Valid{expected_hash = expected, found_hash = found_hash, checked_entry = entry})
+		case .Image_Not_Valid:
+			system.log_fact(.Error, Image_Check_Failed_Image_Not_Valid{expected_hash = expected, found_hash = found_hash, checked_entry = entry})
+		case .Count_Differs:
+			system.log_fact(.Error, Image_Check_Failed_Count_Differs{expected_hash = expected, found_hash = found_hash, checked_entry = entry})
+		case .Name_Differs:
+			system.log_fact(.Error, Image_Check_Failed_Name_Differs{expected_hash = expected, found_hash = found_hash, checked_entry = entry})
+		case .Kind_Differs:
+			system.log_fact(.Error, Image_Check_Failed_Kind_Differs{expected_hash = expected, found_hash = found_hash, checked_entry = entry})
+		case .Size_Differs:
+			system.log_fact(.Error, Image_Check_Failed_Size_Differs{expected_hash = expected, found_hash = found_hash, checked_entry = entry})
+		case .Hash_Differs:
+			system.log_fact(.Error, Image_Check_Failed_Hash_Differs{expected_hash = expected, found_hash = found_hash, checked_entry = entry})
+		case .Stated_Hash_Differs:
+			system.log_fact(.Error, Image_Check_Failed_Stated_Hash_Differs{expected_hash = expected, found_hash = found_hash, checked_entry = entry})
+		case .Outside_Image:
+			system.log_fact(.Error, Image_Check_Failed_Outside_Image{expected_hash = expected, found_hash = found_hash, checked_entry = entry})
+		}
 		switch result.fault {
 		case .Name_Differs, .Kind_Differs, .Outside_Image, .Size_Differs, .Hash_Differs, .Stated_Hash_Differs:
 			screen_data.failed_name = system_description.name_of(&result.name)
@@ -55,49 +78,48 @@ trust_check :: proc "contextless" () {
 		}
 		fail(text, .Bad_State)
 	}
-	system.log(.Info, "root: the boot image agrees with the system description that the boot program verified: ", trust.entry_count - 1, " modules and resources checked in ", system.Duration{spent / 1000, .Microseconds}, "; the kernel was checked by the boot program only")
+	system.log_fact(.Info, Boot_Image_Agrees{checked_entries = trust.entry_count - 1, check_time = value_kinds.Time_In_Microseconds(spent / 1000)})
 	if report.cycle_frequency != 0 {
-		system.log(.Info, "root: the boot program checked the signature and every hash in ", system.Duration{trust.check_cycles * 1_000_000 / report.cycle_frequency, .Microseconds})
+		system.log_fact(.Info, Boot_Program_Check_Time{check_time = value_kinds.Time_In_Microseconds(trust.check_cycles * 1_000_000 / report.cycle_frequency)})
 	}
 	if trust.key_kind == .Test {
-		system.log(.Warning, "root: the system description is signed by the test signing key, whose private key is published: this system is not trusted")
+		system.log_fact(.Warning, Description_Signed_By_Test_Key{})
 	}
 	if trust.verifier == .Boot_Program {
-		system.log(.Info, "root: verified by the boot program, which the firmware did not verify")
+		system.log_fact(.Info, Verified_By_Boot_Program{})
 	} else {
-		system.log(.Info, "root: verified by the firmware (Secure Boot), then by the boot program")
+		system.log_fact(.Info, Verified_By_Firmware{})
 	}
 	switch trust.measure {
 	case .Measured:
-		digits := system_description.hexadecimal(trust.measure_value)
-		system.log(.Info, "root: measured: PCR ", trust.measure_register, " = ", string(digits[:]), ", at try ", trust.measure_tries)
+		system.log_fact(.Info, System_Description_Measured{measure_register = trust.measure_register, measure_tries = trust.measure_tries, measure_value = value_kinds.Hash_Field(trust.measure_value)})
 	case .No_Tpm:
-		system.log(.Info, "root: the system description is not measured into the TPM: the firmware has no TPM")
+		system.log_fact(.Info, Description_Unmeasured_No_Tpm{})
 	case .Refused:
-		system.log(.Warning, "root: the TPM refused the measure of the system description: status ", system.Hex(trust.measure_status), ", after ", trust.measure_tries, " tries: PCR ", trust.measure_register, " does not hold it")
+		system.log_fact(.Warning, Description_Measure_Refused{measure_status = value_kinds.Hexadecimal_Sixteen_Digits(trust.measure_status), measure_tries = trust.measure_tries, measure_register = trust.measure_register})
 	case .Not_Read:
-		system.log(.Warning, "root: the system description is measured, but the read of PCR ", trust.measure_register, " failed: status ", system.Hex(trust.measure_status))
+		system.log_fact(.Warning, Description_Register_Unread{measure_register = trust.measure_register, measure_status = value_kinds.Hexadecimal_Sixteen_Digits(trust.measure_status)})
 	case .None:
-		system.log(.Warning, "root: the boot program did not try the measure")
+		system.log_fact(.Warning, Measure_Not_Tried{})
 	}
 	// The TPM floors that the boot program compared
 	// (src/md/features/rollback_floors.md).
-	system.log(.Info, "root: the TPM floors before this start: the key floor ", trust.key_floor, " for the key number ", trust.key_number, ", the version floor of that key number ", trust.version_floor, " for the security version ", trust.security_version)
+	system.log_fact(.Info, Tpm_Floors{key_floor = trust.key_floor, key_number = trust.key_number, version_floor = trust.version_floor, security_version = trust.security_version})
 	for word in ([2]u64{trust.key_floor_state, trust.version_floor_state}) {
 		// The trust record comes through the boot report of the kernel: a
 		// word that names no state is said, never read as a state.
 		state, state_known := info.floor_state_of_word(word)
 		if !state_known {
-			system.log(.Warning, "root: the boot record names the floor state ", word, ", which names no state")
+			system.log_fact(.Warning, Floor_State_Unknown{floor_state = word})
 			continue
 		}
 		switch state {
 		case .None, .Absent, .Held:
 			// A floor that the boot program read or wrote: the line above says it.
 		case .Foreign, .Never_Written, .Read_Refused:
-			system.log(.Warning, "root: an index of a TPM floor was not a floor that the boot program could read: another system defined or planted it, or PCR 7 changed; the boot program took it as 0, and replaced it with Secure Boot on")
+			system.log_fact(.Warning, Tpm_Floor_Foreign{})
 		case .Not_Read:
-			system.log(.Warning, "root: the boot program could not read a TPM floor: status ", system.Hex(trust.floor_status), "; it took it as 0")
+			system.log_fact(.Warning, Tpm_Floor_Unread{floor_status = value_kinds.Hexadecimal_Sixteen_Digits(trust.floor_status)})
 		}
 	}
 }

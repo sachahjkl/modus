@@ -17,7 +17,7 @@ REGION_CAPACITY :: 2048
 // The root budget holds the log records of a process of normal use for
 // each process slot: the contract counts the slots of the kernel.
 PROCESS_CAPACITY :: op.PROCESS_SLOTS_OF_THE_MACHINE
-HANDLE_CAPACITY :: 128
+HANDLE_CAPACITY :: op.HANDLE_TABLE_CAPACITY
 MAPPING_CAPACITY :: 128
 
 // A memory object: pages, each with a page frame or with none yet.

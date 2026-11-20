@@ -39,6 +39,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:support/random"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 import "modus:support/twins"
 
@@ -146,7 +147,7 @@ twins_start :: proc "contextless" (processes: ^[TWIN_COUNT]system.Handle, table:
 	for &process, index in processes {
 		status: system.Status
 		if process, status = twin_start(TWIN_NAMES[index], .Wait, table); status != .Ok {
-			system.log(.Info, "frames: cannot start a twin: status ", u64(status))
+			system.log_fact(.Info, Twin_Not_Started{status_word = op.Status_Word(status)})
 			return 0, 0, false
 		}
 	}
@@ -270,7 +271,7 @@ shared_code_cases :: proc "contextless" () {
 	for process in processes {
 		system.close(process)
 	}
-	system.log(.Info, "frames: 4 twins: ", own_paid, " pages with a copy of the module each, ", shared_paid, " pages with the shared code (", shared_pages, " pages of the module, once)")
+	system.log_fact(.Info, Twins_Paid{own_copy_pages = u64(own_paid), shared_code_pages = u64(shared_paid), module_pages = u64(shared_pages)})
 }
 
 // The random generator of this process (src/library/support/random).
@@ -285,7 +286,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "frames: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "frames")
@@ -300,18 +301,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	first_use_cases()
 	shared_code_cases()
-	system.log(.Info, "frames: create and map 8192 pages: ", create_now, " us with each frame now, ", create_first_use, " us with pages on first use")
-	system.log(.Info, "frames: the first use of a page: ", first_use, " ns; a write to a page that has its frame: ", write_present, " ns")
-	system.log(.Info, "frames: start a twin: ", start_own, " us with its own copy of the module, ", start_shared, " us with the shared code")
+	system.log_fact(.Info, Create_And_Map_Measured{frames_now = create_now, frames_on_first_use = create_first_use})
+	system.log_fact(.Info, First_Use_Measured{first_use = first_use, write_present = write_present})
+	system.log_fact(.Info, Twin_Start_Measured{own_copy_start = start_own, shared_code_start = start_shared})
 	wrong: u64
 	for item in cases[:case_count] {
 		if !item.right {
 			wrong += 1
-			system.log(.Info, "frames: wrong answer: ", item.text, ": ", item.answer)
+			system.log_fact(.Info, Wrong_Answer{case_text = value_kinds.text_field(item.text, 48), answer = value_kinds.text_field(item.answer, 56)})
 		}
 	}
 	if wrong == 0 {
-		system.log(.Info, "frames: ok, ", u64(case_count), " cases")
+		system.log_fact(.Info, Frames_Held{cases = u64(case_count)})
 	}
 
 	for {

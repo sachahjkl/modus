@@ -52,21 +52,31 @@ Do not use: condition variable, semaphore, signal, barrier.
 
 A source library is a named folder of source packages that a module compiles in.
 
-An import of the source names the library and the package: `modus:contract/ring`. The modules have one source library, `modus`, in the folder `src/library`. It has three parts: `contract` (what two parties agree on), `support` (what two modules or more compile in) and `private` (what one module alone compiles in). The kernel has a second source library of its own, `kernel`, in the folder `src/kernel`, for its kernel parts: `kernel:iommu`. A source library is not a module: it has no file, no hash and no edge in the module graph.
+An import of the source names the library and the package: `modus:contract/ring`. The system has three: `modus`, the public library; `internal`, for the internal parts; `kernel`, for the kernel parts (`kernel:iommu`). The flag of the compiler is `-collection`. Today the modules have one source library, `modus`, in `src/library`, in three parts: `contract`, `support` and `private`. A source library is not a module: it has no file, no hash and no edge in the module graph.
 
-The design: `docs/MODULE_CONTRACT.md`, "The source library of a module".
+The design: `src/md/infrastructure/repository_layout.md`, "The two source libraries of the modules".
 
-Do not use: collection, SDK, libc, static library.
+Do not use: collection, libc, static library.
 
-### Private part
+### Public library
 
-A private part is a package of the source library that one module alone compiles in, with its host tests.
+The public library is the source library `modus`: the contract packages and the support packages, the one part of the sources of the system that ships.
 
-A private part holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole module for the host. Its folder is `src/library/private/<module>/<part>`, and its import line names the module: `modus:private/storage/storage_tree`. The tool refuses an import of it from another module, and a support package that only one module reaches. The tool and the host tests of a caller of a library module read some private parts too (`cryptography_primitives`); that does not make them shared.
+Its folder is `src/library/modus`: `modus:contract/ring` for a contract, `modus:quic` for a support package. A module of the system and an outside module import it with the same lines. The SDK holds its folder whole. A package that a program outside the repository needs is a package of the public library. It holds no internal part and no kernel part. Today its packages are under `src/library/contract` and `src/library/support`.
 
-The design: `src/md/infrastructure/repository_layout.md`.
+The design: `src/md/infrastructure/repository_layout.md`, "The two source libraries of the modules".
 
-Do not use: internal package, helper package, program package.
+Do not use: standard library, runtime, framework.
+
+### Internal part
+
+An internal part is a package of the source library `internal` that one module alone compiles in, with its host tests.
+
+It holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole module for the host. Its folder is `src/library/internal/<module>/<part>`, and its import line names the module: `internal:storage/storage_tree`. The tool refuses its import from another module, and the compiler refuses it in the kernel and in an outside module, which get no flag `internal`. It never ships. Today its folder is `src/library/private/<module>/<part>`.
+
+The design: `src/md/infrastructure/repository_layout.md`, "Where the internal part of a module lives".
+
+Do not use: private part, private package, helper package, program package.
 
 ### Kernel part
 
@@ -107,6 +117,16 @@ Its developer writes one Odin package that imports the packages of the system fr
 The design: `docs/TOOLS.md`, "A module from a source outside the repository".
 
 Do not use: third-party module, external module, plugin.
+
+### SDK
+
+The SDK, the development kit of the system, is the archive of a release that holds what an outside module needs, with no checkout of the system and with no Nix.
+
+It holds the public library, the runtime, the module files of the module group `libraries` of the release, the contract description, the tool and a manifest of the hash of each file, at the paths of a checkout. Its file is `modus-sdk-<release number>.tar.zst`; the release signature covers it. The compiler that it names is a second archive of the release. A module that imports a library module runs on the release of its SDK. It is not a checkout: it holds no internal part and no kernel.
+
+The design: `src/md/infrastructure/sdk.md`.
+
+Do not use: devkit, toolchain, distribution.
 
 ### Outside source
 
@@ -354,7 +374,7 @@ Do not use: color code, severity (for text).
 
 A token is the smallest part of a line of the console: a name, a number, a text, an operator, the arrow `->`, the pipe operator `|>`, or one byte of no other token.
 
-One scanner (`src/library/private/console/console_language`) gives them to the parser of the console and to its colors, so the colors never disagree with the parser.
+One scanner (`src/library/private/console/console_language`) gives them to the parser of Lex and to the colors of the console, so the colors never disagree with the parser.
 
 Do not use: lexeme, word (for this).
 
@@ -572,6 +592,16 @@ The design: `docs/CONSOLE.md`, "The pipe operator".
 
 Do not use: pipe (alone), pipeline, bar, forward operator.
 
+### Placeholder
+
+The placeholder `_` marks the argument of the call on the right of `|>` that takes the value on its left: `a |> f(b, _)` is `f(b, a)`.
+
+With no `_`, the value is the first argument. A call holds at most one `_`, as one whole argument. A `_` outside the call on the right of `|>`, inside a call nested in it, or inside an expression is refused before any call. Example: `compile(src, t) |> bytes(t, 0, _) |> assemble(f)`. It is not a variable: `_` alone is no name.
+
+The design: `src/md/features/pipe_operator.md`, "The placeholder `_`".
+
+Do not use: hole, wildcard, blank (for this), `$`.
+
 ### Condition
 
 A condition is the argument of `where` in the console: a field of the record of a table, an operator and a value, as `block = 12` or `level = Warning`.
@@ -586,7 +616,7 @@ Do not use: filter expression, where clause.
 
 A record output is a stream of records of one record type that a module declares and writes while it works, with no known end.
 
-The module file names each record output in its table `Record_Outputs`, with its record description. A wiring joins it to the record input of another process through one output ring for each reader; a declaration with no wiring costs nothing. Each process also has the record output `log`, which only its starter wires. A record output loses no record: a full ring makes its writer wait, or refuses the record and says so. It replaces standard output, and it is never the lossy log of the kernel. Example: `server.requests`.
+The module file names each record output in its table `Record_Outputs`, with its record description. A wiring joins it to the record input of another process through one output ring for each reader; a declaration with no wiring costs nothing. Each process also has the record output `log`, which only its starter wires. A record output loses no record: a full ring makes its writer wait, or refuses the record and says so. It replaces standard output, and it is never the lossy log of the kernel. Example: `requests: system.Record_Output(Access_Record)`, which the console names `server.requests`.
 
 The design: `src/md/features/module_outputs.md`.
 
@@ -604,27 +634,37 @@ Do not use: input (alone, except after "record input" in the same passage), chan
 
 ### Output ring
 
-An output ring is the ring that carries the records of one record output to one reader: places of the size of the record in its command queue, and completions of 64 bytes.
+An output ring is the ring that carries the records of one record output to one reader: compartments of the size of the record in its command queue, and completions of 64 bytes.
 
-The root service makes it from the budget of the asker of the wiring, and gives one end to the writer and one to the reader. Each side computes the size of a place and the capacity from the record description and the size of the memory, never from the shared bytes. Its first place is a joined record. The completion queue carries the refusals of the reader and the acknowledgement of the end, not one answer for each record.
+The root service makes it from the budget of the asker of the wiring, and gives one end to the writer and one to the reader. Each side computes the size of a compartment and the capacity from the record description and the size of the memory, never from the shared bytes. Its first compartment is a joined record. The completion queue carries the refusals of the reader and the acknowledgement of the end, not one answer for each record.
 
 The design: `src/md/features/module_outputs.md`, "The ring and its records".
 
 Do not use: pipe, stream buffer, channel.
 
-### Place word
+### Compartment
 
-A place word is the first 8 bytes of each place of an output ring: the kind of the place (a record, a gap record, an end record or a joined record) and the serial of the record.
+A compartment is the part of the command queue of an output ring that holds one record: the compartment word, then the record, rounded up to a multiple of 64 bytes.
+
+Both sides compute its size from the record description: a record of 72 bytes takes a compartment of 128 bytes, a log record of 256 bytes one of 320. The writer copies a whole compartment in, and the reader copies it out into private memory before it checks it (`output.record_of_compartment`). A compartment is not a place of the storage service ("Place") and not a slot of a module ("Slot").
+
+The design: `src/md/features/module_outputs.md`, "The ring and its records".
+
+Do not use: place (for this), slot (for this), cell (for this), frame (for this), entry (for this).
+
+### Compartment word
+
+A compartment word is the first 8 bytes of each compartment of an output ring: the kind of the compartment (a record, a gap record, an end record or a joined record) and the serial of the record.
 
 The serial counts the records of the record output from 0, so a copy of one record has one serial in each ring. The reader takes the kind through one border, which refuses a word that names no kind, and refuses a serial that does not follow: the serials of a ring jump only by the count of a joined record or a gap record. All-zero bytes are a record with the serial 0.
 
 The design: `src/md/features/module_outputs.md`, "The ring and its records".
 
-Do not use: frame header, envelope.
+Do not use: frame header, envelope, place word, slot word.
 
 ### Gap record
 
-A gap record is the place of an output ring that says how many records the writer refused there because the ring was full.
+A gap record is the compartment of an output ring that says how many records the writer refused there because the ring was full.
 
 A writer that does not wait gets `Full` and counts each refused record, and a ring of the pace `Never_Holds_Writer` refuses for its reader alone. When the ring has room again, the library writes one gap record with the count before the next record. So the reader knows where records are missing and how many, and the console draws it as one dim row.
 
@@ -634,7 +674,7 @@ Do not use: drop marker, overflow record.
 
 ### End record
 
-An end record is the last place of an output ring that the writer writes: the end of its stream, with an error record that is zero for a clean end.
+An end record is the last compartment of an output ring that the writer writes: the end of its stream, with an error record that is zero for a clean end.
 
 The reader reads each record before it, acknowledges it in the completion queue, and closes its end. A writer that stops with no end record gets an end word from the root service in place of it, with its stop cause and its stop outcome.
 
@@ -654,9 +694,9 @@ Do not use: subscription, binding, connection (a connection is a call ring and a
 
 ### Wiring ring
 
-The wiring ring is the ring between the root service and a process that declares a record output or a record input: one command record gives or ends one end of an output ring, with its handle, its pace, its wiring terms and, for a generic record input, its record description.
+The wiring ring is the ring between the root service and a process that declares a record output or a record input: one command record gives one end of an output ring, with its handle, its pace or its wiring terms.
 
-The writer reads it at each write with one compare of its counters, so a reader that comes while the process runs gets the next record. A process that declares no record output and no record input has none: the end of its record output `log` comes in its context.
+The process finds it at the handle 16 of its context, or an asker with its list page, and answers each command with one completion, then writes `Closed` when it closes that end. Each handle comes through the memory of the ring, so the process proves it. No command ends an end: the end page of the wiring says it. The writer reads the wiring ring at each write with one compare of its counters. A process that declares no record output and no record input has none.
 
 The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
 
@@ -672,6 +712,26 @@ The design: `src/md/features/module_outputs.md`, "The console form".
 
 Do not use: pipe, feed, live table, stream (alone, for this).
 
+### Typed name
+
+A typed name is the name of a record output in a line of the console: the name of its owner, a dot, and the name of the record output, as `server.requests`.
+
+The owner is a process that the console started or a service that it connected. The console reads the record outputs and their record descriptions in the module file of the owner, so it checks and completes the name, and the fields of a condition after it, before the line runs. A typed name gives a record stream that holds no wiring: the first command that reads it wires it. It is no global name: it is local to the handle that the console holds.
+
+The design: `src/md/features/module_outputs.md`, "The console form".
+
+Do not use: topic, path (for this), stream address, channel name.
+
+### Condition of a wiring
+
+A condition of a wiring is one field of the record of a record output, one operator and one value that a row of a wiring list carries, so that the writer writes into that ring only the records that pass it.
+
+The asker writes the terms with the row; the root service checks them against the record description and gives the writer the place of the field, never reading a record itself. The serials of such a ring move forward by any count. The console sends the first condition of a record stream this way, and refuses a record that fails it as a fault of the writer.
+
+The design: `src/md/features/module_outputs.md`, "The condition of a wiring".
+
+Do not use: subscription filter, predicate pushdown, server-side filter.
+
 ### Body region
 
 A body region is the memory object of the writer of a record output that holds the bytes that a record of that record output names past its 256 bytes.
@@ -684,7 +744,7 @@ Do not use: payload buffer, shared buffer, blob.
 
 ### Joined record
 
-A joined record is the first place of each output ring: it says how many records of the record output the writer wrote before this reader joined.
+A joined record is the first compartment of each output ring: it says how many records of the record output the writer wrote before this reader joined.
 
 The writer writes it when it takes the new end, before its next record. A joined record of 0 says that the reader has the whole stream: each wiring of the wiring list of a start gets one, because the root service applies the list before the first instruction of the child. A wiring that comes while the writer runs gets the records from that point only. The console draws it as the first row of a stream, "joined after 5 000 records".
 
@@ -716,17 +776,57 @@ Do not use: untyped output, passthrough type.
 
 A wiring list is the table of wiring records that a starter gives with `Start`, which the root service applies whole before the first instruction of the child.
 
-Each row joins a record output, a record input or the `log` of the child to a process that the starter started, to a service of a connection, or to the starter. A record output that no row names has no reader. The list is whole or refused: on a refusal, no process starts and the budget of the starter does not change. In the console it is a `Table(Wiring)`, and `+` joins two lists. Example: `start(server, audit(server))`.
+Each row names a writer and a reader: the child, a process that the starter started, a service of a connection, or the starter as the reader. `Wire` lends the same form with one row and no child. A record output that no row names has no reader. The list is whole or refused: on a refusal, no process starts and the budget of the starter does not change. In the console it is a `Table(Wiring)`, and `+` joins two lists. Example: `start(server, audit(server))`.
 
 The design: `src/md/features/module_outputs.md`, "The wiring list of a start".
 
 Do not use: manifest, wiring plan, pipeline, redirection.
 
+### List page
+
+The list page is the memory object in which an asker writes a wiring list for `Wire` or `Start`, and which the root service owns.
+
+The root service makes it once from the budget of the asker, keeps its own handle, and gives the asker a handle with Write. It copies the list from its own handle, so a revocation by the asker reaches only the handle of the asker, never the copy of the root service.
+
+The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
+
+Do not use: lent list, argument memory.
+
+### End page
+
+The end page is the page of one wiring in which the root service alone writes the end words, and which each side maps with Read only.
+
+A side waits on its end word beside its queue, and reads it once its queue is empty. A side cannot forge the end of the other, as it could in the head page of the ring, which both sides write.
+
+The design: `src/md/features/module_outputs.md`, "The end of a stream".
+
+Do not use: end record (an end record is a compartment), status page.
+
+### Description file
+
+A description file is the small module file that the root service gives the reader of a wiring: the one record of the wiring, its fields and their names.
+
+A process has no copy of its own module file, so the reader checks each compartment against this file, which the root service writes from the module file of the writer after the type check. A generic reader takes the type that its wiring fixed from it.
+
+The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
+
+Do not use: schema, type message.
+
+### Wiring page
+
+A wiring page is a page of the budget of an asker in which the root service keeps the records of the wirings that the asker asked for: a head and 63 wiring records.
+
+The root service makes the first page at the first wiring of the asker, chains a new page when the pages are full, and gives a page back to the budget when its last wiring ends. So the root service keeps no table of a fixed size for the wirings: each one is paid by its asker. The wirings of a page end when the asker stops.
+
+The design: `src/md/features/module_outputs.md`, "The budget".
+
+Do not use: subscription table, wiring table.
+
 ### Wiring terms
 
 The wiring terms are the record that the asker of a wiring gives for the record input, and that the reader receives with its end.
 
-A record input declares their record type in its row of the table `Record_Inputs`. The root service checks their size against that description and copies them once; the reader checks their fields. Examples: the condition of `filter` (a field, an operator and a value), the kind, the bound and the forward of a collector space. A free text is never a term.
+A source declares them with the record input, `system.Record_Input_With_Terms(system.Any_Record, Condition)`, and the module file holds their record type in its row of the table `Record_Inputs`. The root service checks their size against that description and copies them once; the reader checks their fields. Examples: the condition of `filter` (a field, an operator and a value), the kind, the bound and the forward of a collector space. A free text is never a term.
 
 The design: `src/md/features/module_outputs.md`, "The wiring and its rights".
 

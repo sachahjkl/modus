@@ -42,10 +42,12 @@
 package module_files
 
 import "modus:contract/blake3"
+import "modus:contract/storage_status"
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/disk_process"
 import "modus:support/network"
 import "modus:support/random"
@@ -127,7 +129,7 @@ service: system.Service
 process_generator: random.Generator // The random generator of this process, from the seed of its starter.
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Info, "module_files: ", text)
+	system.log_fact(.Info, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -253,7 +255,7 @@ remote_ended :: proc "contextless" (index: int) -> bool {
 // network_failure writes the line of a failure of the fetch, and gives the
 // result of the export.
 network_failure :: proc "contextless" (error: ^errors.Error_Record, result: i64, kind: errors.Kind, unit: errors.Unit, path: string, why: string, found: i64 = 0) -> i64 {
-	system.log(.Info, "module_files: GET ", path, ": ", why, ": nothing is stored")
+	system.log_fact(.Info, Get_Failed{problem = value_kinds.text_field(why, GET_PROBLEM_FIELD_BYTES)}, path)
 	return errors.fail(error, result, kind, unit, 2, 0, 0, found)
 }
 
@@ -347,18 +349,32 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 	return size, 0
 }
 
-// store_failure writes the line of a refusal of the storage service, and
-// gives the result of the export. subject says what was refused.
-store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^errors.Error_Record, status: storage.Status, subject: ..system.Part) -> i64 {
-	subject_buffer: [96]u8
-	sentence: [240]u8
-	writer := system.Writer{buffer = sentence[:]}
-	if status == .Failed {
-		storage.error_text(&writer, &store_client, store_error)
-	} else {
-		system.write_bytes(&writer, transmute([]u8)string("the storage service gave no answer that its export allows"))
+// store_failure writes the fact of a refusal of the storage service, and
+// gives the result of the export. subject says what was refused, and
+// nickname names the file of the subject File. A status Failed has the
+// error record of the export; each other status is an answer that the
+// export does not allow. The subjects of an entry of a listing are checks
+// of this service, whose status is always Refused.
+store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^errors.Error_Record, status: storage_status.Status, subject: Store_Subject, nickname := "") -> i64 {
+	switch subject {
+	case .File:
+		if status == .Failed {
+			fields := errors.error_record_fact_fields(store_error^)
+			system.log_fact(.Info, File_Store_Refused{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, nickname = value_kinds.module_name_field(nickname)})
+		} else {
+			system.log_fact(.Info, File_Store_Answer_Refused{nickname = value_kinds.module_name_field(nickname)})
+		}
+	case .Listing:
+		if status == .Failed {
+			system.log_fact(.Info, Listing_Store_Refused(errors.error_record_fact_fields(store_error^)))
+		} else {
+			system.log_fact(.Info, Listing_Store_Answer_Refused{})
+		}
+	case .Listing_Entry_Name:
+		system.log_fact(.Info, Listing_Entry_Name_Refused{})
+	case .Listing_Entry_Kind:
+		system.log_fact(.Info, Listing_Entry_Kind_Refused{})
 	}
-	system.log(.Info, "module_files: the store module_files refused ", system.format(subject_buffer[:], ..subject), ": ", system.written(&writer))
 	return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
 }
 
@@ -447,19 +463,19 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	for piece_start := 0; piece_start < size; piece_start += WRITE_PIECE {
 		piece := file[piece_start:min(piece_start + WRITE_PIECE, size)]
 		if _, status := storage.write_range(&store_client, storage.ROOT, name, u64(piece_start), piece, &store_error); status != .Ok {
-			return store_failure(error, &store_error, status, "the file ", system.Module_Name{name})
+			return store_failure(error, &store_error, status, .File, name)
 		}
 	}
 	// An older file of the nickname can be longer.
 	if status := storage.set_size(&store_client, storage.ROOT, name, u64(size), &store_error); status != .Ok {
-		return store_failure(error, &store_error, status, "the file ", system.Module_Name{name})
+		return store_failure(error, &store_error, status, .File, name)
 	}
 	if _, status := storage.commit(&store_client, storage.ROOT, name, &store_error); status != .Ok {
-		return store_failure(error, &store_error, status, "the file ", system.Module_Name{name})
+		return store_failure(error, &store_error, status, .File, name)
 	}
 	digits: [disk_process.HASH_DIGITS]u8
 	disk_process.hash_write(&digits, hash)
-	system.log(.Info, "module_files: stored ", system.Module_Name{name}, " from ", request_path, ": ", u64(size), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
+	system.log_fact(.Info, File_Stored{size = value_kinds.Size_In_Bytes(size), file_hash = value_kinds.Hash_Field(hash), nickname = value_kinds.module_name_field(name)}, request_path)
 	copy(result^, digits[:])
 	return disk_process.HASH_DIGITS
 }
@@ -517,21 +533,21 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 		store_error: errors.Error_Record
 		page, status := storage.list(&store_client, storage.ROOT, string(after[:after_length]), rows[:], names[:], &store_error)
 		if status != .Ok {
-			return store_failure(error, &store_error, status, "the listing of its root tree")
+			return store_failure(error, &store_error, status, .Listing)
 		}
 		if len(page) == 0 {
-			system.log(.Info, "module_files: listed ", u64(total), " module files of the store module_files, each hash computed on its bytes")
+			system.log_fact(.Info, Files_Listed{files = u64(total)})
 			return i64(total)
 		}
 		for item in page {
 			// The offsets come from the storage service: each one is
 			// checked before a use.
 			if item.name_offset < 0 || item.name_count <= 0 || item.name_count > i64(len(after)) || item.name_offset > i64(len(names)) - item.name_count {
-				return store_failure(error, &store_error, .Refused, "the listing of its root tree: an entry has a name out of its page")
+				return store_failure(error, &store_error, .Refused, .Listing_Entry_Name)
 			}
 			entry_kind, entry_kind_ok := storage.entry_kind_of_word(item.kind)
 			if !entry_kind_ok {
-				return store_failure(error, &store_error, .Refused, "the listing of its root tree: an entry has a kind that names no kind")
+				return store_failure(error, &store_error, .Refused, .Listing_Entry_Kind)
 			}
 			entry_name := string(names[item.name_offset:][:item.name_count])
 			after_length = copy(after[:], entry_name)
@@ -544,9 +560,9 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 			hash, hashed := bytes_hash(entry_name, int(min(item.size, i64(disk_process.FILE_BYTES_LIMIT) + 1)))
 			if hashed {
 				disk_process.hash_write(&digits, hash)
-				system.log(.Info, "module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, the BLAKE3 hash of its bytes ", string(digits[:]))
+				system.log_fact(.Info, File_Hashed{size = value_kinds.Size_In_Bytes(max(item.size, 0)), file_hash = value_kinds.Hash_Field(hash), file_name = value_kinds.text_field(entry_name, FILE_NAME_FIELD_BYTES)})
 			} else {
-				system.log(.Info, "module_files: the file ", system.Module_Name{entry_name}, ", ", u64(max(item.size, 0)), " bytes, has no hash: its bytes did not come, or pass the 4194304 bytes of a module file")
+				system.log_fact(.Info, File_Not_Hashed{size = value_kinds.Size_In_Bytes(max(item.size, 0)), file_name = value_kinds.text_field(entry_name, FILE_NAME_FIELD_BYTES)})
 			}
 			if total < len(result^) {
 				row := &result[total]
@@ -559,7 +575,7 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 			total += 1
 		}
 	}
-	system.log(.Info, "module_files: the listing of the store module_files did not end after ", u64(LIST_PAGE_LIMIT), " pages")
+	system.log_fact(.Info, Listing_Not_Ended{listing_pages = u64(LIST_PAGE_LIMIT)})
 	return errors.fail(error, ERROR_STORE, .Refused, .Store)
 }
 
@@ -653,7 +669,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address_buffer: [16]u8
 	address_writer := system.Writer{buffer = address_buffer[:]}
 	network.address_write(&address_writer, remote_address)
-	system.log(.Info, "module_files: serves the store module_files of principal ", store_principal, ": a file from the web server ", system.written(&address_writer), " port ", u64(remote_port), ", and the list of the files with the hash of their bytes")
+	system.log_fact(.Info, Serving{principal = store_principal, remote_port = u64(remote_port), remote_address = value_kinds.text_field(system.written(&address_writer), ADDRESS_FIELD_BYTES)})
 	for {
 		wait := system.wait_begin()
 		deadline, _ := network_step()

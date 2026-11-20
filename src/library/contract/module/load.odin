@@ -22,6 +22,8 @@ Error :: enum u32 {
 	Bad_Import      = 10, // No check gives it today.
 	Bad_Export      = 11, // `entry_export` is not an index of the export table.
 	Bad_Own_Hash_Place = 12, // The own-hash place is not `HASH_SIZE` bytes inside one segment that the loader can write.
+	Bad_Record_Stream_Place = 13, // The place of a record output or a record input is not 0, nor `RECORD_STREAM_PLACE_SIZE` aligned bytes inside one segment that the loader can write and that is not `Read_Only_After_Load`; or it meets the own-hash place, a rebase location, an import slot or the place of another row.
+	Too_Many_Record_Streams = 14, // The table `Record_Outputs` or `Record_Inputs` has more than `RECORD_STREAM_INDEX_MOST` rows after the entry 0.
 }
 
 // read copies a T from file at offset. It gives zero when the range is not in file.
@@ -141,6 +143,15 @@ validate :: proc "contextless" (file: []u8) -> Error {
 	// would let a file make the loader write into its code.
 	if place, present := own_hash_place(file); present && !writable_range(file, place, HASH_SIZE) {
 		return .Bad_Own_Hash_Place
+	}
+	// Each loader writes the index of each record stream at its place, as
+	// it writes the hash. The count of the rows is checked before any row
+	// is read: it bounds the work of the check of the places.
+	if !record_stream_counts_valid(file) {
+		return .Too_Many_Record_Streams
+	}
+	if !record_stream_places_valid(file) {
+		return .Bad_Record_Stream_Place
 	}
 	return .None
 }
@@ -439,8 +450,8 @@ records_equal :: proc "contextless" (file: []u8, index: u32, other_file: []u8, o
 		a := field(file, first, number) or_return
 		b := field(other_file, second, number) or_return
 		// The kind and the enum are part of what the field means, as the
-		// unit is: a reader writes the value by them.
-		if a.offset != b.offset || a.type != b.type || a.detail != b.detail || a.integer_unit != b.integer_unit || a.kind != b.kind || a.contract_enum != b.contract_enum || string_at(file, a.name_offset, a.name_count) != string_at(other_file, b.name_offset, b.name_count) {
+		// unit and the sign are: a reader writes the value by them.
+		if a.offset != b.offset || a.type != b.type || a.unsigned != b.unsigned || a.detail != b.detail || a.integer_unit != b.integer_unit || a.kind != b.kind || a.contract_enum != b.contract_enum || string_at(file, a.name_offset, a.name_count) != string_at(other_file, b.name_offset, b.name_count) {
 			return false
 		}
 	}
@@ -476,9 +487,21 @@ field_integer_unit_valid :: proc "contextless" (item: Field) -> bool {
 // - Status: an unsigned Integer with no unit and an enum that is not None.
 // - Module_Name: a Text with no enum.
 // - Hash: Bytes of 1 to value_kinds.HASH_FIELD_BYTES bytes, with no enum.
+// - Fact_Values: Bytes of value_kinds.FACT_VALUES_FIELD_BYTES, with no enum.
+// - Hexadecimal_Sixteen_Digits: an unsigned Integer of 8 bytes with no
+//   unit and no enum: its 16 digits are the digits of 8 bytes.
+// - Hash_Head: Bytes of value_kinds.HASH_FIELD_BYTES, with no enum: the
+//   field holds a whole hash.
+// - Hundredths: an Integer with no unit and no enum.
+// - Nanoseconds_As_Microseconds and Time_Of_Day: an unsigned Integer with
+//   no unit and no enum: the field states its own unit.
+// - Tenths: an Integer with no unit and no enum.
+// - Hexadecimal_No_Leading_Zero: an unsigned Integer of 8 bytes with no
+//   unit and no enum.
+// - Text_View: Bytes of value_kinds.TEXT_VIEW_BYTES, with no enum.
 //
-// A Bytes field is a Hash and nothing else: a reader has no form for other
-// bytes.
+// A Bytes field is a hash, its head, the values of a fact or a text view,
+// and nothing else: a reader has no form for other bytes.
 field_kind_valid :: proc "contextless" (item: Field) -> bool {
 	kind, kind_ok := field_kind(item)
 	which, which_ok := field_contract_enum(item)
@@ -504,6 +527,32 @@ field_kind_valid :: proc "contextless" (item: Field) -> bool {
 		// The values of one fact, whole: a reader renders them with the
 		// description of the fact type, which needs every byte.
 		return type == .Bytes && item.detail == value_kinds.FACT_VALUES_FIELD_BYTES
+	case .Hexadecimal_Sixteen_Digits:
+		return type == .Integer && item.unsigned && field_size(item) == 8 && item.integer_unit == {}
+	case .Hash_Head:
+		return type == .Bytes && item.detail == value_kinds.HASH_FIELD_BYTES
+	case .Hundredths:
+		return type == .Integer && item.integer_unit == {}
+	case .Nanoseconds_As_Microseconds, .Time_Of_Day:
+		return type == .Integer && item.unsigned && item.integer_unit == {}
+	case .Tenths:
+		return type == .Integer && item.integer_unit == {}
+	case .Hexadecimal_No_Leading_Zero:
+		return type == .Integer && item.unsigned && field_size(item) == 8 && item.integer_unit == {}
+	case .Text_View:
+		return type == .Bytes && item.detail == value_kinds.TEXT_VIEW_BYTES
+	}
+	return false
+}
+
+// record_has_text_view says if a record has a field of the kind Text_View:
+// the values of its fact then go on past the record, in its out-of-line
+// area (src/md/features/log_facts.md, "Text views").
+record_has_text_view :: proc "contextless" (file: []u8, of: Record) -> bool {
+	for number in 0 ..< of.field_count {
+		if item, ok := field(file, of, number); ok && item.kind == u8(value_kinds.Field_Kind.Text_View) {
+			return true
+		}
 	}
 	return false
 }

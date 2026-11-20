@@ -264,9 +264,11 @@ refused_for_the_rows :: proc(problems: []string, rows: []string) -> bool {
 // for the starts, and holds no graph and no logic of its own.
 START_POLICY_SOURCE_LINE_LIMIT :: 400
 
-// The imports that the source of the start policy may name.
+// The imports that the source of the start policy may name. operation and
+// value_kinds give the types of the fields of its log facts, which the
+// tool reads by their names; they hold no logic of a start.
 @(rodata)
-START_POLICY_ALLOWED_IMPORTS := [?]string{"modus:contract/start_list", "modus:contract/root_ring", "modus:contract/ring", "modus:support/system"}
+START_POLICY_ALLOWED_IMPORTS := [?]string{"modus:contract/start_list", "modus:contract/root_ring", "modus:contract/ring", "modus:contract/operation", "modus:contract/value_kinds", "modus:support/system"}
 
 // start_policy_source_problems gives each fault of the sources of the
 // start policy, tests not counted: more lines than the bound in all its

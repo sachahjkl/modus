@@ -13,6 +13,7 @@ import debug_object "modus:contract/debug_object"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/disk_process"
 import "modus:support/system"
 
@@ -143,7 +144,7 @@ stop_report :: proc "c" (process: ^string, result: ^[]Stop_Frame_Row, error: ^er
 		row.line = i64(place.line)
 		named += 1
 	}
-	system.log(.Info, "debugger: the stop report of ", system.Module_Name{name}, ": ", u64(frame_count), " frames, ", u64(named), " named by the debug objects of their modules")
+	system.log_fact(.Info, Stop_Report_Read{frames = u64(frame_count), named = u64(named), debugged_process = value_kinds.module_name_field(name)})
 	return i64(frame_count)
 }
 

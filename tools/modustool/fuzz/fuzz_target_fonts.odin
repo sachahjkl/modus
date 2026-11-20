@@ -1,21 +1,20 @@
 package fuzz
 
 import "core:fmt"
-import "core:mem"
 import "core:slice"
 import "modus:contract/blake3"
 import "modus:contract/font_outlines"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "modus:support/vector_font"
 
 // The fuzz targets of the fonts (src/md/infrastructure/fuzzing.md, "The
 // targets, in order of value"): each process with text reads the font
-// files of the outlines with the vector font reader, and validates its
-// glyph caches and the font outlines once, then trusts each entry. A signed
-// image writes them today; a fault there still stops a service.
+// files of the outlines with the vector font reader, and validates the
+// font outlines once, then trusts each entry. A signed image writes them
+// today; a fault there still stops a service.
 
-// fuzz_aligned_input gives an input on a multiple of 8: the readers of a
-// cache, of the outlines and of a theme refuse other memory, as the
+// fuzz_aligned_input gives an input on a multiple of 8: the readers of the
+// outlines and of a theme refuse other memory, as the
 // starter maps them on a page. An input that is aligned already is given
 // as it is, so the page with no access beside it still catches a read past
 // its ends; only another input is copied, and loses that guard.
@@ -48,7 +47,7 @@ fuzz_vector_font_start :: proc() -> bool {
 // The characters that the target asks of a font: the edges of the code
 // points, the characters that font_measures reads, and some past ASCII.
 @(rodata, private = "file")
-fuzz_font_characters := [?]rune{0, ' ', 'A', 'V', 'g', 'x', 'H', 0xE9, glyph_cache.EURO_SIGN, 0xFFFD, 0xFFFF, 0x10000, 0x10FFFF}
+fuzz_font_characters := [?]rune{0, ' ', 'A', 'V', 'g', 'x', 'H', 0xE9, font_characters.EURO_SIGN, 0xFFFD, 0xFFFF, 0x10000, 0x10FFFF}
 
 // fuzz_vector_font_execute: a font that font_open accepts gives each glyph,
 // outline, advance, pair and substitution with no fault, and an outline in
@@ -109,146 +108,6 @@ fuzz_vector_font_execute :: proc(input: []u8) -> Fuzz_Verdict {
 
 fuzz_vector_font_seeds :: proc(seeds: ^[dynamic][]u8) {
 	append(seeds, slice.clone(fuzz_font_seed), slice.clone(fuzz_font_seed[:12]), make([]u8, 0))
-}
-
-// ---------------------------------------------------------------------
-// The glyph cache.
-
-// fuzz_glyph_cache_execute: a cache that validate accepts gives each glyph
-// of each scale and each position with its rows in its line and its words
-// in the words of the file, each advance and each pair; a refusal gives no
-// cache.
-fuzz_glyph_cache_execute :: proc(input: []u8) -> Fuzz_Verdict {
-	bytes := fuzz_aligned_input(input)
-	cache, problem := glyph_cache.validate(bytes)
-	if problem.kind > max(glyph_cache.Problem_Kind) {
-		return fuzz_broken(.Contract, "validate gives a problem out of its enumeration: %d", u8(problem.kind))
-	}
-	if problem.kind != .None {
-		if cache.header != nil || len(cache.glyphs) != 0 || len(cache.words) != 0 {
-			return fuzz_broken(.Contract, "validate refuses with %v and gives a cache", problem.kind)
-		}
-		return FUZZ_PASSED
-	}
-	character_count := int(cache.header.character_count)
-	for scale in 0 ..= len(cache.sizes) + 1 {
-		advances := glyph_cache.advances_of(&cache, scale)
-		pairs := glyph_cache.pairs_of(&cache, scale)
-		inside := scale >= 1 && scale <= len(cache.sizes)
-		if inside != (len(advances) == character_count) || !inside && len(pairs) != 0 {
-			return fuzz_broken(.Contract, "the scale %d gives %d advances", scale, len(advances))
-		}
-		previous := -1
-		for pair in pairs {
-			key := int(pair.left) << 8 | int(pair.right)
-			if key <= previous {
-				return fuzz_broken(.Contract, "the pairs of the scale %d are not in order", scale)
-			}
-			previous = key
-		}
-		for index in 0 ..= character_count {
-			for position in 0 ..= glyph_cache.POSITION_LIMIT {
-				size, entry, found := glyph_cache.glyph_of_index(&cache, index, scale, position)
-				if !found {
-					continue
-				}
-				if u32(entry.first_row) + u32(entry.row_count) > u32(size.cell_height) {
-					return fuzz_broken(.Contract, "the glyph %d of the scale %d has rows outside its line", index, scale)
-				}
-				// A reader takes the words of the glyph with no check: the
-				// bounds check of the slice is the oracle.
-				_ = cache.words[entry.word_offset:][:int(entry.row_count) * int(entry.width)]
-			}
-		}
-	}
-	for index in 0 ..< glyph_cache.CHARACTER_COUNT {
-		character, _ := glyph_cache.character_of_index(index)
-		if back, in_cache := glyph_cache.character_index(character); !in_cache || back != index {
-			return fuzz_broken(.Two_Readers, "the character of the index %d has the index %d", index, back)
-		}
-	}
-	return FUZZ_PASSED
-}
-
-// fuzz_glyph_cache_write writes a cache by the rules of validate: a cell
-// at each scale, the glyph of 'A' with ink and the others without, and for
-// a proportional font two positions and one pair at each scale.
-@(private = "file")
-fuzz_glyph_cache_write :: proc(size_count: int, proportional: bool) -> []u8 {
-	positions := proportional ? 2 : 1
-	pair_count := proportional ? 1 : 0
-	glyph_count := size_count * positions * glyph_cache.CHARACTER_COUNT
-	glyphs_place := glyph_cache.HEADER_SIZE + size_count * glyph_cache.SIZE_ENTRY_SIZE
-	advances_place := glyphs_place + glyph_count * glyph_cache.GLYPH_ENTRY_SIZE
-	pairs_place := advances_place + size_count * glyph_cache.CHARACTER_COUNT * glyph_cache.ADVANCE_SIZE
-	tables_end := pairs_place + size_count * pair_count * glyph_cache.PAIR_ENTRY_SIZE
-	words_place := (tables_end + 63) / 64 * 64
-	ink, _ := glyph_cache.character_index('A')
-	ROWS :: 3
-	WIDTH :: 2
-	word_count := size_count * positions * ROWS * WIDTH
-	bytes := make([]u8, words_place + 4 * word_count)
-	header := glyph_cache.Header {
-		magic           = glyph_cache.MAGIC,
-		version         = glyph_cache.VERSION,
-		file_size       = u64(len(bytes)),
-		character_count = glyph_cache.CHARACTER_COUNT,
-		size_count      = u32(size_count),
-		flags           = proportional ? glyph_cache.FLAG_PROPORTIONAL : glyph_cache.FLAG_GRID_FIT,
-		word_offset     = u64(words_place),
-		word_count      = u64(word_count),
-		pair_count      = u32(pair_count),
-	}
-	copy(header.font_name[:], "fuzz")
-	mem.copy(&bytes[0], &header, size_of(header))
-	next_word := 0
-	for scale in 1 ..= size_count {
-		size := glyph_cache.Size_Entry {
-			cell_width     = u16(8 * scale),
-			cell_height    = u16(16 * scale),
-			baseline       = u16(12 * scale),
-			position_count = u16(positions),
-			first_glyph    = u32((scale - 1) * positions * glyph_cache.CHARACTER_COUNT),
-		}
-		mem.copy(&bytes[glyph_cache.HEADER_SIZE + (scale - 1) * glyph_cache.SIZE_ENTRY_SIZE], &size, size_of(size))
-		for position in 0 ..< positions {
-			entry := glyph_cache.Glyph_Entry{first_row = 2, row_count = ROWS, word_offset = u32(next_word), width = WIDTH}
-			next_word += ROWS * WIDTH
-			at := glyphs_place + (int(size.first_glyph) + position * glyph_cache.CHARACTER_COUNT + ink) * glyph_cache.GLYPH_ENTRY_SIZE
-			mem.copy(&bytes[at], &entry, size_of(entry))
-		}
-		for character in 0 ..< glyph_cache.CHARACTER_COUNT {
-			advance := proportional ? i32(300) : i32(size.cell_width) * glyph_cache.SUBPIXEL
-			mem.copy(&bytes[advances_place + ((scale - 1) * glyph_cache.CHARACTER_COUNT + character) * glyph_cache.ADVANCE_SIZE], &advance, size_of(advance))
-		}
-		if proportional {
-			pair := glyph_cache.Pair_Entry{left = 0, right = 1, adjustment = -64}
-			mem.copy(&bytes[pairs_place + (scale - 1) * glyph_cache.PAIR_ENTRY_SIZE], &pair, size_of(pair))
-		}
-	}
-	for word in 0 ..< word_count {
-		coverage := u32(0xFF00_0000) | u32(word)
-		mem.copy(&bytes[words_place + 4 * word], &coverage, size_of(coverage))
-	}
-	return bytes
-}
-
-fuzz_glyph_cache_seeds :: proc(seeds: ^[dynamic][]u8) {
-	append(seeds, fuzz_glyph_cache_write(1, false), fuzz_glyph_cache_write(glyph_cache.SIZE_LIMIT, false), fuzz_glyph_cache_write(1, true))
-	append(seeds, make([]u8, glyph_cache.HEADER_SIZE - 1))
-}
-
-fuzz_glyph_cache_regions :: proc(input: []u8, regions: ^[dynamic]Fuzz_Region) {
-	if len(input) < glyph_cache.HEADER_SIZE {
-		return
-	}
-	append(regions, Fuzz_Region{offset = 0, type = glyph_cache.Header, count = 1})
-	header: glyph_cache.Header
-	mem.copy(&header, raw_data(input), size_of(header))
-	sizes := min(int(header.size_count), glyph_cache.SIZE_LIMIT, (len(input) - glyph_cache.HEADER_SIZE) / glyph_cache.SIZE_ENTRY_SIZE)
-	if sizes > 0 {
-		append(regions, Fuzz_Region{offset = glyph_cache.HEADER_SIZE, type = glyph_cache.Size_Entry, count = sizes})
-	}
 }
 
 // ---------------------------------------------------------------------

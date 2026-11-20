@@ -84,7 +84,7 @@ blend_premultiplied_alpha_row_scalar :: proc "contextless" (to: [^]Color, from: 
 
 
 // blend_coverage_row blends a color over the pixels of one row of a canvas,
-// with the coverage words of one row of a glyph (src/library/contract/glyph_cache): a
+// with the coverage words of one row of a glyph (text_rendering.Glyph_Entry): a
 // coverage for each channel, from the stripe of the screen that has that
 // color (docs/FONTS.md, "Subpixel bands"). line is the row of the canvas
 // from the first column of the glyph; the columns first ..< last are drawn.

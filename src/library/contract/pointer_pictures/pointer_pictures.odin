@@ -525,6 +525,81 @@ choose :: proc "contextless" (file: []u8, form: Pointer_Form, shape: Pointer_Sha
 	return chosen
 }
 
+// The name of each member of Part, Field and Problem_Kind, as the enum
+// names it: a reader of a log fact writes it (value_kinds.Contract_Enum).
+// PART_NAMES, FIELD_NAMES and KIND_SENTENCES give the words of a sentence.
+@(rodata)
+PART_MEMBER_NAMES := [Part]string {
+	.None     = "None",
+	.File     = "File",
+	.Header   = "Header",
+	.Shapes   = "Shapes",
+	.Pictures = "Pictures",
+	.Pixels   = "Pixels",
+}
+
+@(rodata)
+FIELD_MEMBER_NAMES := [Field]string {
+	.None           = "None",
+	.Size           = "Size",
+	.Address        = "Address",
+	.Magic          = "Magic",
+	.Version        = "Version",
+	.File_Size      = "File_Size",
+	.Shape_Count    = "Shape_Count",
+	.Picture_Count  = "Picture_Count",
+	.Pixel_Offset   = "Pixel_Offset",
+	.Pixel_Size     = "Pixel_Size",
+	.Theme_Name     = "Theme_Name",
+	.License        = "License",
+	.Attribution    = "Attribution",
+	.Shape          = "Shape",
+	.First_Picture  = "First_Picture",
+	.Size_Count     = "Size_Count",
+	.Frame_Count    = "Frame_Count",
+	.Nominal_Size   = "Nominal_Size",
+	.Width          = "Width",
+	.Height         = "Height",
+	.Hot_Spot_X     = "Hot_Spot_X",
+	.Hot_Spot_Y     = "Hot_Spot_Y",
+	.Delay          = "Delay",
+	.Picture_Pixels = "Picture_Pixels",
+	.Pixel          = "Pixel",
+	.Form_Count     = "Form_Count",
+}
+
+@(rodata)
+PROBLEM_KIND_NAMES := [Problem_Kind]string {
+	.None                 = "None",
+	.Too_Short            = "Too_Short",
+	.Not_Aligned          = "Not_Aligned",
+	.Wrong_Magic          = "Wrong_Magic",
+	.Wrong_Version        = "Wrong_Version",
+	.Wrong_Size           = "Wrong_Size",
+	.Too_Many             = "Too_Many",
+	.Wrong_Offset         = "Wrong_Offset",
+	.Wrong_Text           = "Wrong_Text",
+	.Empty_Text           = "Empty_Text",
+	.Out_Of_Order         = "Out_Of_Order",
+	.Unknown_Shape        = "Unknown_Shape",
+	.No_Arrow             = "No_Arrow",
+	.Out_Of_Range         = "Out_Of_Range",
+	.Zero                 = "Zero",
+	.Hot_Spot_Outside     = "Hot_Spot_Outside",
+	.Sizes_Not_Increasing = "Sizes_Not_Increasing",
+	.Frames_Differ        = "Frames_Differ",
+	.Wrong_Delay          = "Wrong_Delay",
+	.Not_Premultiplied    = "Not_Premultiplied",
+}
+
+// The words of Part, Field and Problem_Kind in 8 bytes, for a record that
+// holds them beside fields of 8 bytes with no padding
+// (value_kinds.Contract_Enum_Type), as a Problem holds its index.
+Part_Word :: distinct u64
+Field_Word :: distinct u64
+Problem_Kind_Word :: distinct u64
+#assert(size_of(Part_Word) >= size_of(Part) && size_of(Field_Word) >= size_of(Field) && size_of(Problem_Kind_Word) >= size_of(Problem_Kind))
+
 @(rodata)
 PART_NAMES := [Part]string {
 	.None     = "",

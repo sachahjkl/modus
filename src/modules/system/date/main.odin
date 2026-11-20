@@ -43,6 +43,7 @@ import "base:intrinsics"
 import "modus:contract/date"
 import "modus:contract/fixed_addresses"
 import "modus:contract/settings"
+import "modus:contract/value_kinds"
 import "modus:support/calendar"
 import "modus:support/system"
 
@@ -146,7 +147,7 @@ zone_follow :: proc "contextless" () {
 	// The line comes before the write: the lines that the new zone causes
 	// (the root service, the bar) then come after it on the log.
 	text: [settings.ZONE_TEXT_SIZE]u8
-	system.log(.Info, "date: the time zone of the date page is ", settings.zone_text(text[:], choice.zone_offset_minutes), ", from the setting ", settings.TIME_ZONE_NAME)
+	system.log_fact(.Info, Time_Zone_Written{time_zone = value_kinds.text_field(settings.zone_text(text[:], choice.zone_offset_minutes), ZONE_FIELD_BYTES)})
 	date.zone_write(page, zone)
 	system.word_wake(&page.change_count, system.WAKE_ALL)
 }
@@ -222,7 +223,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	address, status := system.memory_map(ctx.handles[date.GRANT_PAGE], {.Write})
 	if status != .Ok || ctx.handles[date.GRANT_PORTS] == 0 {
-		system.log(.Error, "date: no date page or no ports of the clock: the system has no date")
+		system.log_fact(.Error, No_Date_Page_Or_Clock{})
 		// The ports of the clock are a handle of the context: none is a
 		// refused context. A page that does not map is refused only when the
 		// context names none or a handle that cannot be mapped.
@@ -239,14 +240,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	started := system.nanoseconds()
 	at_zero, seconds, edge, valid := synchronize()
 	if !valid {
-		system.log(.Error, "date: the real-time clock gives no valid date: the system has no date")
+		system.log_fact(.Error, Clock_Date_Not_Valid{})
 	} else {
 		date.write(page, .Real_Time_Clock, at_zero)
 		// The first date changes the rule of the day: the root service waits
 		// on this word for it.
 		system.word_wake(&page.change_count, system.WAKE_ALL)
 		text: [32]u8
-		system.log(.Info, "date: ok, ", calendar.iso_text(text[:], seconds), " UTC, seconds since 1970 ", seconds, ", from the real-time clock at the time ", edge, " ms of the system; the date of the time 0 in ", (system.nanoseconds() - started) / 1000, " us")
+		system.log_fact(.Info, Date_Read{seconds = seconds, clock_edge = value_kinds.Time_In_Milliseconds(edge), start_time = value_kinds.Time_In_Microseconds((system.nanoseconds() - started) / 1000), utc_date = value_kinds.text_field(calendar.iso_text(text[:], seconds), DATE_FIELD_BYTES)})
 	}
 	// The time of the system comes from the cycle counter, with a frequency
 	// that the kernel measured at boot: it can run faster or slower than the
@@ -281,7 +282,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if !known || corrections == 1 || corrections % 30 == 0 || abs(corrected - before) >= 1000 {
 			// The drift since the first read: what the time of the system lost
 			// or gained against the clock.
-			system.log(.Info, "date: the clock read again at the time ", edge_now, " ms of the system: the date moved by ", corrected - before, " ms; ", corrected - first_at_zero, " ms since the start, ", corrections, corrections == 1 ? string(" read") : string(" reads"), " after the first")
+			// One read and several reads are two sentences: each one is a
+			// fact type.
+			if corrections == 1 {
+				system.log_fact(.Info, Clock_Read_Again_Once{clock_edge = value_kinds.Time_In_Milliseconds(edge_now), moved = value_kinds.Time_In_Milliseconds(corrected - before), since_start = value_kinds.Time_In_Milliseconds(corrected - first_at_zero), reads = corrections})
+			} else {
+				system.log_fact(.Info, Clock_Read_Again{clock_edge = value_kinds.Time_In_Milliseconds(edge_now), moved = value_kinds.Time_In_Milliseconds(corrected - before), since_start = value_kinds.Time_In_Milliseconds(corrected - first_at_zero), reads = corrections})
+			}
 			// The first date after a clock that gave none, or a move of a
 			// second or more (a machine paused, a clock set again), can move
 			// the next edge of the rule of the day: the root service waits on

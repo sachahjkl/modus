@@ -201,7 +201,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "font_vector.png", group = .Interface, guide = "docs/FONTS.md", caption = "The text of the system is a vector font with subpixel bands: Paper Mono by default, changed to Spleen 8x16 and back while every window runs."},
 	{file = "font_spleen.png", group = .Interface, guide = "docs/FONTS.md", caption = "The setting of the font on Spleen 8x16: every window draws its text again in the bitmap font."},
 	{file = "font_without_grid_fit.png", group = .Interface, guide = "docs/FONTS.md", caption = "The setting of the grid fit turned off: the vector font drawn from its second glyph cache."},
-	{file = "font_candidates.png", group = .Interface, guide = "docs/FONTS.md", caption = "Six candidate fonts beside Spleen 8x16, each from a glyph cache in fixed point, and a word of each enlarged."},
+	{file = "font_candidates.png", group = .Interface, guide = "docs/FONTS.md", caption = "Six candidate fonts beside Spleen 8x16, each drawn in fixed point through the face of the cells, and a word of each enlarged."},
 	{file = "settings.png", group = .Interface, guide = "docs/FONTS.md", caption = "The process settings: the font, the subpixel order, the pointer theme and the grid fit change while the processes run."},
 	{file = "desktop_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The light appearance: the bar, the console and the settings in the light form of the color tokens, set with settings.set(\"appearance\", \"light\")."},
 	{file = "console_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The console in the light appearance: each value kind keeps its color, in its light value."},

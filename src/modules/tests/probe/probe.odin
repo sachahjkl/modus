@@ -60,7 +60,7 @@ spin :: proc "c" () -> i64 {
 	// the call: a test waits for this line before it presses Escape. An
 	// Escape before the call is a key of the next line, by design
 	// (docs/CONSOLE.md, "When a line ends, and the keys typed during a line").
-	system.log(.Info, "probe: spin runs, and never returns")
+	system.log_fact(.Info, Spin_Runs{})
 	for {
 		intrinsics.volatile_store(&calls, intrinsics.volatile_load(&calls) + 1)
 	}

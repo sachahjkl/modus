@@ -216,7 +216,7 @@ COMMANDS :: [?]foundation.Command {
 	// starts the peer of the host that takes the calls of `modustool call`,
 	// on a socket that only this user reaches. Close the window, or run
 	// `shutdown()` in the console, to end it.
-	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
+	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build; `run --remote-display <viewer key>`: a machine with no window for a viewer on the host, through the UDP relay of the peer to remote_display", run = run_machine},
 	// Takes the results of the check of the flake, which ran the whole
 	// machine test and the second build, then publishes them into the
 	// repository (src/md/infrastructure/full_check.md).
@@ -417,6 +417,23 @@ COMMANDS :: [?]foundation.Command {
 	// origin/master; when origin moved, it undoes, merges and tries again with
 	// the next number (docs/TOOLS.md, "The release").
 	{name = "ship", about = "step | correction | <release number> [--dry-run]: the release in one command: the changelog, a commit, a signed release tag v<number>, one atomic push to master", run = checks.run_ship},
+	// Merges a batch of branches into master after one full check, in the
+	// order of its arguments, each with its own merge commit. When the check
+	// fails, it checks the two halves of the batch, to name the branch at
+	// fault, and merges the halves that pass; it stops after two branches at
+	// fault, and never passes its budget of full checks. Then it pushes
+	// master and removes each merged branch and its worktree. It refuses a
+	// wrong list, a branch that git does not allow and an identity that is
+	// not the configured git user, with nothing changed
+	// (docs/TOOLS.md, "The merge queue").
+	{name = "queue", about = "<branch>...: merge a batch of branches into master after one full check in a worktree beside the main tree, split the batch in halves to name a branch at fault, push master, and remove the merged branches and their worktrees", run = checks.run_queue},
+	// Moves the folders of the source library into the two source libraries
+	// and rewrites the import lines, the comments and the documents. A
+	// second run changes nothing, so a branch runs it after its merge of
+	// master. It prints each move, each file changed and each string of a
+	// source that still holds an old form, for a hand change
+	// (docs/TOOLS.md, "The rename of the library").
+	{name = "rename-library", about = "move the folders of the source library into its two source libraries with git mv, and rewrite the import lines, the comments and the documents; idempotent, for each branch after its merge of master", run = checks.run_rename_library},
 	// Gives each release tag whose tree holds a measure record its copy in
 	// the measure history, for the releases from before the release command
 	// copied the record. It changes no file that exists
@@ -614,6 +631,18 @@ run_site :: proc(args: []string) -> int {
 }
 
 run_machine :: proc(args: []string) -> int {
+	if len(args) >= 1 && args[0] == "--remote-display" {
+		// A machine for a viewer on the host: no window, the relay of the
+		// peer to remote_display (machine/remote_display_run.odin).
+		if len(args) != 2 {
+			fmt.eprintln("modustool: run --remote-display <viewer key>: the viewer key is the 64 hexadecimal digits that `modus-viewer -print-key` prints")
+			return foundation.EXIT_USAGE
+		}
+		if code := build.build_system(build.boot_volumes_of_command("run")); code != 0 {
+			return code
+		}
+		return machine.remote_display_run(args[1]) ? 0 : foundation.EXIT_FAILURE
+	}
 	if len(args) >= 1 && args[0] == "without_checks" {
 		build.test_build_checks = false
 	}

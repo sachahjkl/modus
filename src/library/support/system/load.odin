@@ -128,15 +128,23 @@ Prepared :: struct {
 	first:   u64, // The offset in the module of the first page of the memory object.
 	memory:  Handle, // 0: the place is free.
 	pages:   u64, // The pages of the memory object.
+	// The value of Prepared_Modules.uses at its last find: the order of use
+	// that prepared_yield reads. A count of the finds, no time.
+	last_use: u64,
 }
 
 // The prepared modules of a process that starts processes. The zero value is
 // an empty table. The budget of the process that owns the table pays for
 // each prepared module. A prepared module stays while a process maps it:
-// each start closes the ones that no process maps.
+// each start closes the ones that no process maps. The table is a cache:
+// each part holds one handle of its owner, and prepared_yield closes the
+// parts used least recently when the owner needs the room of its handle
+// table. A process that maps a part keeps its mapping; the next start of
+// that module prepares the part again.
 Prepared_Modules :: struct {
 	lock:    Lock, // The threads of the owner that start processes take it.
 	modules: [PREPARED_CAPACITY]Prepared,
+	uses:    u64, // The finds of the table: the last one stamps the part that it gives.
 }
 
 // The load source: where a loader finds the imports of a module. Nothing
@@ -519,7 +527,7 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 		prepared_sweep(space.prepared)
 		code, fixed: ^Prepared
 		if code, status = prepared_find(space.prepared, item.file, item.hash, .Code, 0, {}, nil, error); status == .Ok {
-			if fixed, status = prepared_find(space.prepared, item.file, item.hash, .Fixed, item.base, binding_of(space, item), imports, error); status == .Ok {
+			if fixed, status = prepared_find(space.prepared, item.file, item.hash, .Fixed, item.base, binding_of(space, item), imports, error, keep = code); status == .Ok {
 				status = segments_map(item.file, item.hash, code, fixed, space.process, item.base, space.budget, imports, error)
 			}
 		}
@@ -700,6 +708,13 @@ code_ready :: proc "contextless" (file: []u8, hash: [32]u8, view: []u8, base: u6
 		error.stage, error.file_error = .Read, .Bad_Own_Hash_Place
 		return false
 	}
+	// The index of each record stream, which the library reads in its
+	// variable (src/md/features/module_outputs.md, "The declaration in the
+	// module").
+	if !module.record_stream_indexes_write(file, view, first, end) {
+		error.stage, error.file_error = .Read, .Bad_Record_Stream_Place
+		return false
+	}
 	return module.bind(file, view, imports, error, first, end)
 }
 
@@ -720,12 +735,16 @@ prepared_sweep :: proc "contextless" (table: ^Prepared_Modules) {
 // table, and prepares it if the table does not have it. The part Code is
 // for each base and each binding; the part Fixed is for one base and one
 // binding of its slots. The caller checked the hash of the file. A part
-// with no segment has no memory object.
+// with no segment has no memory object. A table with no free place closes
+// its part used least recently, but never keep, the part that the caller
+// still holds.
 @(private)
-prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash: [32]u8, part: Module_Part, base: u64, binding: [32]u8, imports: []module.Bound_Import, error: ^module.Load_Error) -> (found: ^Prepared, status: Status) {
+prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash: [32]u8, part: Module_Part, base: u64, binding: [32]u8, imports: []module.Bound_Import, error: ^module.Load_Error, keep: ^Prepared = nil) -> (found: ^Prepared, status: Status) {
 	free: ^Prepared
+	table.uses += 1
 	for &item in table.modules {
 		if item.memory != 0 && item.hash == hash && item.part == part && item.base == base && item.binding == binding {
+			item.last_use = table.uses
 			return &item, .Ok
 		}
 		if item.memory == 0 && free == nil {
@@ -733,8 +752,20 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 		}
 	}
 	if free == nil {
-		error.stage = .Room
-		return nil, .No_Slot
+		// A full table is a cache too: it closes the part used least
+		// recently, never the part that this load already holds (keep).
+		uses: [PREPARED_CAPACITY]Prepared_Use
+		for item, place in table.modules {
+			uses[place] = {held = item.memory != 0, last_use = item.last_use, in_use = &table.modules[place] == keep}
+		}
+		chosen: [1]int
+		if prepared_drop_choose(uses[:], 1, chosen[:]) == 0 {
+			error.stage = .Room
+			return nil, .No_Slot
+		}
+		free = &table.modules[chosen[0]]
+		close(free.memory)
+		free^ = {}
 	}
 	written := module_prepare(file, hash, part, base, 0, imports, error) or_return
 	if written.memory == 0 {
@@ -746,7 +777,15 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 	// handle without Write, and closes the one that wrote.
 	free^ = written
 	free.hash, free.binding = hash, binding
-	free.memory = give(0, written.memory, {.Read, .Execute}) or_return
+	free.last_use = table.uses
+	// A refused copy leaves the place free: the place must never name the
+	// handle that the defer above closes.
+	given, given_status := give(0, written.memory, {.Read, .Execute})
+	if given_status != .Ok {
+		free^ = {}
+		return nil, given_status
+	}
+	free.memory = given
 	return free, .Ok
 }
 
@@ -877,10 +916,14 @@ source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[
 //   error:    when the load fails, the record of the failure.
 //   from_budget: the budget that pays `amounts`, with the right Spend; 0:
 //             the budget of this process.
+//   wiring:   not nil: the wiring ring of the process and the ends that it
+//             takes before its first instruction, and the handles that the
+//             starter keeps (Start_Wiring). Its handle slot
+//             CONTEXT_WIRING_RING must be 0. On a failure its outputs are 0.
 // The module is at PROCESS_BASE, its imports after it.
 // The process stops when the last handle to it closes.
-process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0) -> (process: Handle, status: Status) {
-	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 {
+process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0, wiring: ^Start_Wiring = nil) -> (process: Handle, status: Status) {
+	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 || grants[op.CONTEXT_WIRING_RING].handle != 0 {
 		return 0, .Bad_Operation
 	}
 	// Each process has a random seed from its starter (docs/RANDOMNESS.md):
@@ -931,8 +974,13 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	if error != nil {
 		error^ = loaded
 	}
+	if status == .Ok && wiring != nil && wiring.keep_budget {
+		// The starter keeps a handle of the budget, to pay what the child
+		// asks for from it.
+		wiring.budget, status = give(0, budget, {.Read, .Spend})
+	}
 	if status == .Ok {
-		status = process_fill(process, budget, grants, values, mappings)
+		status = process_fill(process, budget, grants, values, mappings, file, wiring)
 	}
 	if status == .Ok {
 		_, status = call(.Process_Start, u64(process), u64(entry), op.STACK_TOP, op.CONTEXT_ADDRESS)
@@ -940,13 +988,22 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	if status != .Ok {
 		process_stop(process)
 		close(process)
+		if wiring != nil {
+			if wiring.budget != 0 {
+				close(wiring.budget)
+			}
+			if wiring.wiring_memory != 0 {
+				close(wiring.wiring_memory)
+			}
+			wiring.budget, wiring.wiring_memory = 0, 0
+		}
 		return 0, status
 	}
 	return process, .Ok
 }
 
 @(private)
-process_fill :: proc "contextless" (process: Handle, budget: Handle, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping) -> Status {
+process_fill :: proc "contextless" (process: Handle, budget: Handle, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping, file: []u8 = nil, wiring: ^Start_Wiring = nil) -> Status {
 	for mapping in mappings {
 		memory_map(mapping.memory, mapping.flags, process, mapping.address, mapping.first, mapping.page_count) or_return
 	}
@@ -965,6 +1022,15 @@ process_fill :: proc "contextless" (process: Handle, budget: Handle, grants: [op
 		}
 	}
 	record.handles[op.CONTEXT_BUDGET] = give(process, budget, {.Give, .Read, .Spend}) or_return
+	if wiring != nil {
+		// The objects of the ends come after the load of the modules: the
+		// loader prepared each module with the table of the starter free
+		// of them.
+		if wiring.ends_make != nil {
+			wiring.ends = wiring.ends_make(wiring.ends_data) or_return
+		}
+		start_wiring_give(process, budget, record, file, wiring) or_return
+	}
 	record.values = values
 	memory_map(record_memory, {.Write}, process, op.CONTEXT_ADDRESS) or_return
 	return .Ok
@@ -985,6 +1051,8 @@ file_error_names := [module.Error]string {
 	.Bad_Import      = "an import is not valid",
 	.Bad_Export      = "an export is not valid",
 	.Bad_Own_Hash_Place = "its own-hash place is not in writable data",
+	.Bad_Record_Stream_Place = "the place of a record output or a record input is not in writable data",
+	.Too_Many_Record_Streams = "it declares more record outputs or more record inputs than a module can",
 }
 
 // load_error_text writes a load error for a reader: one line or more, each

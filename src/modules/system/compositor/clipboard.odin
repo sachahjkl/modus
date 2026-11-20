@@ -2,6 +2,7 @@ package compositor
 
 import clipboard_rules "modus:private/compositor/clipboard"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/system"
 
@@ -81,14 +82,14 @@ clipboard_lend_end :: proc "contextless" () {
 clipboard_copy_key :: proc "contextless" () {
 	clipboard_lend_end()
 	if order_count == 0 {
-		system.log(.Info, "compositor: the copy key with no window in front")
+		system.log_fact(.Info, Copy_Key_Without_Window{})
 		return
 	}
 	client := &clients[order[order_count - 1]]
 	serial := clipboard_rules.serial_next(&clipboard_serials)
 	clipboard_rules.copy_key_take(&client.clipboard, serial)
 	send(client, .Copy_Asked, {0 = serial})
-	system.log(.Info, "compositor: the copy key goes to ", system.name_of(client.title[:]))
+	system.log_fact(.Info, Copy_Key_Sent{window = window_field(client.title[:])})
 }
 
 // clipboard_paste_key lends the content to the window in front: a copy of
@@ -109,10 +110,10 @@ clipboard_paste_key :: proc "contextless" () {
 	switch refusal {
 	case .None:
 	case .No_Window:
-		system.log(.Info, "compositor: the paste key with no window in front")
+		system.log_fact(.Info, Paste_Key_Without_Window{})
 		return
 	case .No_Content:
-		system.log(.Info, "compositor: a paste with an empty clipboard: nothing goes to ", system.name_of(client.title[:]))
+		system.log_fact(.Info, Paste_Of_Empty_Clipboard{window = window_field(client.title[:])})
 		return
 	}
 	lent, status := system.give(0, clipboard_content.memory, {.Read, .Give})
@@ -125,12 +126,12 @@ clipboard_paste_key :: proc "contextless" () {
 	}
 	if status != .Ok {
 		client.clipboard.lend_serial = 0
-		system.log(.Warning, "compositor: the paste to ", system.name_of(client.title[:]), " is refused by the kernel: nothing goes")
+		system.log_fact(.Warning, Paste_Refused{window = window_field(client.title[:])})
 		return
 	}
 	clipboard_lend_client, clipboard_lend_handle, clipboard_lend_owner = index, lent, clipboard_content.owner
 	send(client, .Pasted, {0 = u64(given), 1 = u64(clipboard_content.kind), 2 = u64(clipboard_content.count), 3 = serial})
-	system.log(.Info, "compositor: a paste of ", u64(clipboard_content.count), " bytes of text from ", system.name_of(clipboard_content.owner_title[:]), " goes to ", system.name_of(client.title[:]))
+	system.log_fact(.Info, Paste_Sent{length = value_kinds.Size_In_Bytes(clipboard_content.count), owner_window = window_field(clipboard_content.owner_title[:]), window = window_field(client.title[:])})
 }
 
 // clipboard_copy_take takes the record Copy of a window: the content of
@@ -174,7 +175,7 @@ clipboard_copy_take :: proc "contextless" (index: int, record: ring.Record) {
 		system.close(clipboard_content.memory)
 	}
 	clipboard_content = {memory = memory, kind = content_kind, count = int(facts.count), owner = index, owner_title = client.title}
-	system.log(.Info, "compositor: a copy of ", facts.count, " bytes of text from ", system.name_of(client.title[:]))
+	system.log_fact(.Info, Text_Copied{length = value_kinds.Size_In_Bytes(facts.count), window = window_field(client.title[:])})
 }
 
 // clipboard_answer_take takes Copy_Declined or Paste_Taken, whose first
@@ -191,7 +192,7 @@ clipboard_answer_take :: proc "contextless" (index: int, answer: clipboard_rules
 	case .Copy:
 		// A Copy goes through clipboard_copy_take.
 	case .Copy_Declined:
-		system.log(.Info, "compositor: ", system.name_of(client.title[:]), " has nothing to copy")
+		system.log_fact(.Info, Nothing_To_Copy{window = window_field(client.title[:])})
 	case .Paste_Taken:
 		if clipboard_lend_client == index {
 			clipboard_lend_end()
@@ -211,7 +212,7 @@ clipboard_client_remove :: proc "contextless" (index: int) {
 	if effects.content_ends {
 		system.close(clipboard_content.memory)
 		clipboard_content = {}
-		system.log(.Info, "compositor: the clipboard is empty: ", system.name_of(clients[index].title[:]), " ended")
+		system.log_fact(.Info, Clipboard_Emptied{window = window_field(clients[index].title[:])})
 	}
 	if clients[index].clipboard_refused != 0 {
 		system.log_fact(.Info, Window_Closed_After_Refused_Clipboard_Records{window = window_field(clients[index].title[:]), refused = clients[index].clipboard_refused})

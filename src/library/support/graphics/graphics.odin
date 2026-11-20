@@ -10,7 +10,8 @@
 //
 // - `Canvas`, `Color`, `fill`, `line`, `outline`, `view`: shapes.
 // - `text`, `text_sized`, `text_scaled`, `text_bold`, `character` (`text.odin`): the text of
-//   the system, from a glyph cache or from Spleen 8x16 (`font.odin`).
+//   the system, from the faces of the text rendering or from Spleen 8x16
+//   (`font.odin`); `character_of_set` for a candidate font.
 // - `Blend_Tables` (`blend.odin`): the blend of a glyph over a color.
 // - The design rules (`rules.odin`): the grid, and the color tokens (the
 //   surfaces, one color for each concept, the desktop) in the dark and the

@@ -53,9 +53,9 @@ scenario_kernel_events := [?]Step {
 	{kind = .Wait, text = "kernel_events: the address of a fault: a rule for every process: "},
 	{kind = .Wait, text = "kernel_events: 1000 gives and ends under load: 1000 ends with "},
 	{kind = .Wait, text = "kernel_events: kernel entries in one second of the load child (its own count and time): no rule "},
-	{kind = .Wait, text = "; a rule that names another process "},
-	{kind = .Wait, text = " lost, of 0); a rule for every process that matches nothing "},
-	{kind = .Wait, text = " lost, of 0); a rule that accepts each of its operations "},
+	{kind = .Wait, text = "kernel_events: kernel entries in one second of the load child (its own count and time): a rule that names another process "},
+	{kind = .Wait, text = "kernel_events: kernel entries in one second of the load child (its own count and time): a rule for every process that matches nothing "},
+	{kind = .Wait, text = "kernel_events: kernel entries in one second of the load child (its own count and time): a rule that accepts each of its operations "},
 	{kind = .Wait, text = "kernel_events: in 200 ms while this process sleeps, every process: "},
 	// A later stop by a holder keeps the first stop cause.
 	{kind = .Wait, text = "kernel_events: the child that faults, stopped again by this process: its stop cause stays a fault: as it must"},
@@ -222,12 +222,13 @@ kernel_events_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	if !machine_test(part, steps[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_KERNEL_EVENTS, exit_status = build.MACHINE_STOP_OK}) {
 		return false
 	}
-	log, read_err := os.read_entire_file(TEST_OUTPUT_KERNEL_EVENTS, context.temp_allocator)
-	if read_err != nil {
-		fmt.eprintfln("modustool: cannot read %s for the thread counters: %v", TEST_OUTPUT_KERNEL_EVENTS, read_err)
+	// The lines of the process counters are facts: the check reads their
+	// sentences, which the module files of the build render.
+	log, rendered := log_file_rendered(TEST_OUTPUT_KERNEL_EVENTS)
+	if !rendered {
 		return false
 	}
-	counted, missing, ok := thread_counters_outcome_check(string(log))
+	counted, missing, ok := thread_counters_outcome_check(log)
 	gives, reason := host_gives_thread_counters()
 	if !ok {
 		fmt.eprintfln("modustool: the thread counters: the line \"%s\" did not come (the kernel %s; the host: %s)", missing, counted ? "found its counters" : "found no counters", reason)

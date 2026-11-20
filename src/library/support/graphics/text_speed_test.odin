@@ -1,26 +1,15 @@
 #+build !freestanding
 package graphics
 
-import "modus:contract/glyph_cache"
 import "core:fmt"
+import "core:sync"
 import "core:testing"
 import "core:time"
-import "modus:support/vector_font"
 
 // The cost of the text, part by part, on the host (docs/FONTS.md, section
 // 5): run with `taskset -c N` and -o:speed. Each number is the least of
-// many batches, so that an interruption of the host does not count.
-
-@(private = "file")
-speed_cache_build :: proc(bytes: []u8) -> glyph_cache.Cache {
-	font, _ := vector_font.font_open(bytes)
-	memory := new(vector_font.Render_Memory)
-	out := make([]u64, vector_font.GLYPH_CACHE_LIMIT / 8)
-	file := ([^]u8)(raw_data(out))[:vector_font.GLYPH_CACHE_LIMIT]
-	size, _ := vector_font.glyph_cache_build(&font, bytes, "jetbrains_mono", true, memory, file)
-	cache, _ := glyph_cache.validate(file[:size])
-	return cache
-}
+// many batches, so that an interruption of the host does not count. The
+// glyphs are those of the face of the cells (face_glyphs_test.odin).
 
 @(private = "file")
 speed_sample := "compositor  12.4 ms  2 418 pages {fill} [rings] gi Rb 0O 1lI"
@@ -43,13 +32,19 @@ speed_least :: proc(batch: proc(canvas: Canvas, data: rawptr), canvas: Canvas, d
 
 @(test)
 text_speed_parts :: proc(t: ^testing.T) {
-	cache := speed_cache_build(#load("../../../../resources/fonts/jetbrains_mono.ttf"))
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
+	glyphs := test_glyphs_of(t, .Cells)
+	defer test_glyphs_free(glyphs)
 	// Where the words of a cell fall, at scale 1, over the sample line.
 	zero, full, partial, outside: int
 	for index in 0 ..< len(speed_sample) {
-		size, entry, _ := glyph_cache.glyph(&cache, rune(speed_sample[index]), 1)
-		outside += (int(size.cell_height) - int(entry.row_count)) * int(entry.width)
-		for word in cache.words[entry.word_offset:][:int(entry.row_count) * int(entry.width)] {
+		entry, words, _ := test_glyph(glyphs, rune(speed_sample[index]), 1)
+		outside += (CELL_HEIGHT - int(entry.row_count)) * int(entry.width)
+		if entry.row_count == 0 {
+			continue
+		}
+		for word in words[:int(entry.row_count) * int(entry.width)] {
 			switch {
 			case word == 0:
 				zero += 1
@@ -65,7 +60,7 @@ text_speed_parts :: proc(t: ^testing.T) {
 
 	data := new(Speed_Data)
 	defer free(data)
-	data.cache = &cache
+	data.glyphs = glyphs
 	square_root_table_fill(&data.table)
 	pixels := make([]Color, 640 * 48)
 	defer delete(pixels)
@@ -74,8 +69,11 @@ text_speed_parts :: proc(t: ^testing.T) {
 		data := (^Speed_Data)(raw)
 		sum: u32
 		for index in 0 ..< SPEED_GLYPHS {
-			_, entry, _ := glyph_cache.glyph(data.cache, rune(speed_sample[index]), 1)
-			for word in data.cache.words[entry.word_offset:][:int(entry.row_count) * int(entry.width)] {
+			entry, words, _ := test_glyph(data.glyphs, rune(speed_sample[index]), 1)
+			if entry.row_count == 0 {
+				continue
+			}
+			for word in words[:int(entry.row_count) * int(entry.width)] {
 				sum += word
 			}
 		}
@@ -93,14 +91,14 @@ text_speed_parts :: proc(t: ^testing.T) {
 		reference := speed_least(proc(canvas: Canvas, raw: rawptr) {
 			data := (^Speed_Data)(raw)
 			for index in 0 ..< SPEED_GLYPHS {
-				character_vector_reference(data.cache, &data.table, .Red_Green_Blue, canvas, 8 * index, 8, rune(speed_sample[index]), DARK_TEXT, 1)
+				test_glyph_reference_draw(data.glyphs, &data.table, .Red_Green_Blue, canvas, 8 * index, 8, rune(speed_sample[index]), DARK_TEXT, 1)
 			}
 		}, canvas, data, background)
 		data.tables = {}
 		fast := speed_least(proc(canvas: Canvas, raw: rawptr) {
 			data := (^Speed_Data)(raw)
 			for index in 0 ..< SPEED_GLYPHS {
-				character_vector_with(data.cache, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * index, 8, rune(speed_sample[index]), DARK_TEXT, 1)
+				test_glyph_fast_draw(data.glyphs, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * index, 8, rune(speed_sample[index]), DARK_TEXT, 1)
 			}
 		}, canvas, data, background)
 		fmt.printfln("graphics: one glyph at scale 1 over %v: the reference blend %.1f ns, the fast blend %.1f ns, %v tables made", background, reference, fast, data.tables.made)
@@ -111,13 +109,13 @@ text_speed_parts :: proc(t: ^testing.T) {
 		reference := speed_least(proc(canvas: Canvas, raw: rawptr) {
 			data := (^Speed_Data)(raw)
 			for index in 0 ..< SPEED_GLYPHS / 3 {
-				character_vector_reference(data.cache, &data.table, .Red_Green_Blue, canvas, 8 * data.scale * index, 0, rune(speed_sample[index]), DARK_TEXT, data.scale)
+				test_glyph_reference_draw(data.glyphs, &data.table, .Red_Green_Blue, canvas, 8 * data.scale * index, 0, rune(speed_sample[index]), DARK_TEXT, data.scale)
 			}
 		}, canvas, data)
 		fast := speed_least(proc(canvas: Canvas, raw: rawptr) {
 			data := (^Speed_Data)(raw)
 			for index in 0 ..< SPEED_GLYPHS / 3 {
-				character_vector_with(data.cache, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * data.scale * index, 0, rune(speed_sample[index]), DARK_TEXT, data.scale)
+				test_glyph_fast_draw(data.glyphs, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * data.scale * index, 0, rune(speed_sample[index]), DARK_TEXT, data.scale)
 			}
 		}, canvas, data)
 		enlarged := speed_least(proc(canvas: Canvas, raw: rawptr) {
@@ -131,7 +129,7 @@ text_speed_parts :: proc(t: ^testing.T) {
 }
 
 Speed_Data :: struct {
-	cache:  ^glyph_cache.Cache,
+	glyphs: ^Test_Glyphs,
 	table:  [4096]u8,
 	tables: Blend_Tables,
 	scale:  int,

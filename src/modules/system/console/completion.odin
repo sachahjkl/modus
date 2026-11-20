@@ -21,6 +21,7 @@ import op "modus:contract/operation"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:private/console/console_language"
+import "modus:private/console/console_stream"
 import "modus:support/display"
 import "modus:support/line_editor"
 import "modus:support/system"
@@ -165,7 +166,7 @@ completion_key :: proc "contextless" (pressed: Key) -> (taken: bool) {
 		// A machine test takes the picture of the search after this line:
 		// the list that the terminal shows then has the search and its choice.
 		if completion.mode == .History {
-			system.log(.Info, "console: the history search \"", string(completion.search[:completion.search_count]), "\" chooses the row ", u64(completion.chosen + 1), " of ", u64(completion.ranked_count))
+			system.log_fact(.Info, History_Search_Chose{row = u64(completion.chosen + 1), rows = u64(completion.ranked_count), search = value_kinds.text_field(string(completion.search[:completion.search_count]), SEARCH_FIELD_BYTES)})
 		}
 		// While the search is open, each key is for the search.
 		return true
@@ -203,7 +204,7 @@ completion_tab :: proc "contextless" () {
 	buffer: [terminal.RUN_LIMIT]u8
 	runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
 	_, _, run_count := candidate_row_runs(&buffer, candidate^, runs[:])
-	system.log(.Info, "console: the completion list opens by Tab: ", u64(completion.matched_count), " names of ", u64(completion.names.count), " match \"", completion.place.query, "\", the first is ", candidate.name, "; one ranking takes ", completion.longest_ranking / 1000, " us at most, over ", completion.rankings, " keys; its first row has ", u64(run_count), " runs of code")
+	system.log_fact(.Info, Completion_List_Opened{matched_names = u64(completion.matched_count), names = u64(completion.names.count), longest_ranking = value_kinds.Time_In_Microseconds(completion.longest_ranking / 1000), rankings = completion.rankings, code_runs = u64(run_count)}, completion.place.query, candidate.name)
 }
 
 completion_close :: proc "contextless" () {
@@ -291,6 +292,11 @@ names_of_a_call :: proc "contextless" (table: ^Candidate_Table, place: line_edit
 	call_start := int(uintptr(raw_data(name)) - uintptr(raw_data(text)))
 	piped := console_language.pipe_before(text, call_start)
 	parameter := argument + (piped ? 1 : 0)
+	// Each name after the first of a list of field names is the same
+	// parameter.
+	if item.parameter_count > 0 && parameter >= item.parameter_count && item.parameter_forms[item.parameter_count - 1] == .Field_Names {
+		parameter = item.parameter_count - 1
+	}
 	if parameter >= item.parameter_count {
 		return false
 	}
@@ -315,6 +321,27 @@ names_of_a_call :: proc "contextless" (table: ^Candidate_Table, place: line_edit
 		case .None, .Quoted:
 		}
 		return false
+	case .Field_Names:
+		// Inside columns( after a "|>": the fields of the record on the
+		// left, for each name of the list.
+		if place.place != .Name || !piped {
+			return false
+		}
+		file, detail, known := pipe_left_record_at(text, call_start)
+		if !known {
+			return false
+		}
+		described, described_ok := module.record_type(file, detail)
+		if !described_ok {
+			return false
+		}
+		for number in 0 ..< described.field_count {
+			field_item, field_ok := module.field(file, described, number)
+			if field_ok {
+				candidate_add(table, module.string_at(file, field_item.name_offset, field_item.name_count), .Field, int(number))
+			}
+		}
+		return true
 	case .Condition:
 		if place.place != .Name || !piped {
 			// The record of a table that the line names in the call is
@@ -349,8 +376,8 @@ names_of_a_call :: proc "contextless" (table: ^Candidate_Table, place: line_edit
 				if kind, _ := module.field_kind(field_item); kind != .Status || !which_ok {
 					return true
 				}
-				for word in 0 ..< op.contract_enum_member_count(which) {
-					if member, named := op.contract_enum_member_name(which, word); named {
+				for word in 0 ..< module.contract_enum_member_count(which) {
+					if member, named := module.contract_enum_member_name(which, word); named {
 						candidate_add(table, member, .Member, int(which))
 					}
 				}
@@ -427,12 +454,33 @@ names_collect :: proc "contextless" (table: ^Candidate_Table, place: line_editor
 		for &variable, index in variables {
 			candidate_add(table, string(variable.name[:clamp(variable.name_count, 0, VARIABLE_NAME_SIZE)]), .Variable, index)
 		}
+		// The processes that the console started with a record output: the
+		// owners of typed names.
+		for &owner, index in stream_owners {
+			if owner.process != 0 {
+				candidate_add(table, owner.name, .Process, index)
+			}
+		}
 	case .Member:
 		// The exports of a service: the commands "owner.name".
 		owner := place.owner
 		for &item, index in commands[:command_count] {
 			if len(item.name) > len(owner) + 1 && item.name[:len(owner)] == owner && item.name[len(owner)] == '.' {
 				candidate_add(table, item.name[len(owner) + 1:], command_kind(&item), index)
+			}
+		}
+		// The record outputs of a process that the console started or of a
+		// service that it connected: the typed names "owner.output".
+		if found, found_ok := stream_owner_find(owner, false); found_ok {
+			for row in 1 ..= console_stream.record_output_count(found.file) {
+				if value, _, _, ok := module.record_output(found.file, row); ok && value.record != 0 {
+					candidate_add(table, module.string_at(found.file, value.name_offset, value.name_count), .Stream, int(row))
+				}
+			}
+			for row in 1 ..= console_stream.record_input_count(found.file) {
+				if value, _, _, _, ok := module.record_input(found.file, row); ok && value.record != 0 {
+					candidate_add(table, module.string_at(found.file, value.name_offset, value.name_count), .Stream, int(row))
+				}
 			}
 		}
 	case .Quoted:
@@ -556,7 +604,7 @@ pipe_completion_filter :: proc "contextless" (table: ^Candidate_Table, text: str
 		switch item.kind {
 		case .Command, .Export, .Record:
 			takes = int(item.number) < command_count && pipe_stage_takes(&commands[item.number], left, knowledge)
-		case .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member:
+		case .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream:
 			// No call: "|>" refuses it.
 		}
 		if takes {
@@ -637,7 +685,7 @@ list_take :: proc "contextless" () -> (changed: bool) {
 	if !line_editor.line_replace(&line, start, end, system.written(&writer)) {
 		return false
 	}
-	system.log(.Info, "console: the completion gave the line ", line_editor.line_text(&line))
+	system.log_fact(.Info, Completion_Gave_Line{}, line_editor.line_text(&line))
 	return true
 }
 
@@ -665,7 +713,7 @@ history_take :: proc "contextless" () {
 	if completion.ranked_count > 0 {
 		line_editor.line_set(&line, completion.names.items[completion.ranked[completion.chosen].candidate].name)
 		history_place = 0
-		system.log(.Info, "console: the history search gave the line ", line_editor.line_text(&line))
+		system.log_fact(.Info, History_Search_Gave_Line{}, line_editor.line_text(&line))
 	}
 	completion_close()
 }
@@ -687,6 +735,16 @@ signature_write :: proc "contextless" (writer: ^system.Writer, item: ^Command, m
 		if index == marked {
 			marked_start = writer.count
 		}
+		// A last parameter that a call may leave out is in brackets:
+		// start(Text, [Table]). The site writes the same signature
+		// (foundation.console_signature).
+		optional := item.optional_last && index == item.parameter_count - 1
+		if optional {
+			system.write_part(writer, "[")
+		}
+		defer if optional {
+			system.write_part(writer, "]")
+		}
 		if item.parameter_names[index] != "" {
 			system.write_part(writer, item.parameter_names[index])
 			system.write_part(writer, ": ")
@@ -696,6 +754,10 @@ signature_write :: proc "contextless" (writer: ^system.Writer, item: ^Command, m
 			system.write_part(writer, "Fact_Type") // A name of a fact type, which the console checks.
 		case item.parameter_forms[index] == .Condition:
 			system.write_part(writer, "Condition") // A field, an operator and a value: `block = 12`.
+		case item.parameter_forms[index] == .Field_Names:
+			system.write_part(writer, "Field...") // One name of a field or more: `slot, name`.
+		case kind == .Stream || kind == .Record_Input:
+			system.write_part(writer, kind_names[kind])
 		case kind == .None:
 			system.write_part(writer, "Value") // Any kind: the command checks it.
 		case:
@@ -739,7 +801,7 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 			system.write_part(writer, "command ")
 		case .Record:
 			system.write_part(writer, "record ")
-		case .Export, .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member:
+		case .Export, .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream:
 			system.write_part(writer, "export of ")
 			system.write_part(writer, owner_name(item))
 			system.write_part(writer, " ")
@@ -777,6 +839,8 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 			system.write_part(writer, "member of ")
 			system.write_part(writer, value_kinds.CONTRACT_ENUM_TYPES[which].name)
 		}
+	case .Stream:
+		system.write_part(writer, "record stream: a typed name")
 	}
 }
 
@@ -825,6 +889,7 @@ list_icon_of_candidate := [line_editor.Candidate_Kind]terminal.List_Icon {
 	.Fact_Type    = .Record, // A fact type is a record type.
 	.Field        = .None,
 	.Member       = .None,
+	.Stream       = .Variable, // A value of the line, as a variable is.
 }
 
 list_send :: proc "contextless" () {

@@ -83,6 +83,7 @@ import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/frame"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/network"
 import "modus:support/system"
 
@@ -230,7 +231,7 @@ answered: u64 // Echo requests from the wire that this service answered.
 machine_problems: network.Problem_Table // The frames that no endpoint owns.
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Error, "network: ", text)
+	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -241,7 +242,7 @@ place_bytes :: proc "contextless" (place: int) -> []u8 {
 frame_command :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {}) {
 	if !ring.push(&frames.commands, ring.Record{kind = u32(command), tag = tag, values = values}) {
 		// The accounting of the places keeps room: this does not happen.
-		system.log(.Error, "network: the frame ring is full")
+		system.log_fact(.Error, Frame_Ring_Full{})
 	}
 	frames_changed = true
 }
@@ -1147,19 +1148,26 @@ controlled :: proc "contextless" (record: ring.Record) {
 // the first SEND_HEADER_COPIED bytes of each, for the check, and no byte of
 // the data, which the device read from the region; no pass for a checksum.
 data_passes_log :: proc "contextless" (endpoint: ^Endpoint) {
-	hundredths :: proc "contextless" (buffer: []u8, count: Data_Count) -> string {
-		value := count.bytes_passed * 100 / max(count.payload_bytes, 1)
-		fraction := value % 100
-		return system.format(buffer, value / 100, ".", fraction < 10 ? "0" : "", fraction)
+	hundredths :: proc "contextless" (count: Data_Count) -> value_kinds.Hundredths {
+		return value_kinds.Hundredths(count.bytes_passed * 100 / max(count.payload_bytes, 1))
 	}
 	name := system.name_of(endpoint.name[:])
 	protocol := endpoint.tcp ? "TCP" : "UDP"
-	unit := endpoint.tcp ? " segments), " : " datagrams), "
 	arrived, left := endpoint.arrived_data, endpoint.left_data
-	arrived_text, left_text: [24]u8
-	system.log(.Info, "network: a measure: the endpoint of ", name, ", ", protocol, ": the passes of this service over the data for each payload byte: ", hundredths(arrived_text[:], arrived), " on receive (", arrived.payload_bytes, " bytes in ", arrived.units, unit, hundredths(left_text[:], left), " on send (", left.payload_bytes, " bytes in ", left.units, unit, "the payload is the datagram or the segment with its header; the bytes of the data that this service read on send: ", left.data_bytes_read)
+	// The unit of the payload, a segment or a datagram, is a case of the
+	// sentence: each protocol is a fact type.
+	if endpoint.tcp {
+		system.log_fact(.Info, Tcp_Passes_Measured{receive_passes = hundredths(arrived), received_bytes = u64(arrived.payload_bytes), received_units = u64(arrived.units), send_passes = hundredths(left), sent_bytes = u64(left.payload_bytes), sent_units = u64(left.units), data_bytes_read = u64(left.data_bytes_read), owner = value_kinds.module_name_field(name)})
+	} else {
+		system.log_fact(.Info, Udp_Passes_Measured{receive_passes = hundredths(arrived), received_bytes = u64(arrived.payload_bytes), received_units = u64(arrived.units), send_passes = hundredths(left), sent_bytes = u64(left.payload_bytes), sent_units = u64(left.units), data_bytes_read = u64(left.data_bytes_read), owner = value_kinds.module_name_field(name)})
+	}
 	right := arrived.bytes_passed == arrived.payload_bytes && left.bytes_passed == left.units * SEND_HEADER_COPIED && left.data_bytes_read == 0
-	system.log(.Info, "network: the endpoint of ", name, ", ", protocol, ": this service read each payload byte one time on receive, for the copy, and on send only the ", u64(SEND_HEADER_COPIED), " bytes of each header that it checks, and ", left.data_bytes_read, " bytes of the data; it computed no checksum", right ? ": as it must" : " (WRONG)")
+	// The verdict is a case of the sentence: each one is a fact type.
+	if right {
+		system.log_fact(.Info, Payload_Passes_Checked{header_bytes = value_kinds.Size_In_Bytes(SEND_HEADER_COPIED), data_bytes_read = value_kinds.Size_In_Bytes(left.data_bytes_read), owner = value_kinds.module_name_field(name), protocol = value_kinds.text_field(protocol, PROTOCOL_FIELD_BYTES)})
+	} else {
+		system.log_fact(.Info, Payload_Passes_Wrong{header_bytes = value_kinds.Size_In_Bytes(SEND_HEADER_COPIED), data_bytes_read = value_kinds.Size_In_Bytes(left.data_bytes_read), owner = value_kinds.module_name_field(name), protocol = value_kinds.text_field(protocol, PROTOCOL_FIELD_BYTES)})
+	}
 }
 
 // frame_service_stopped_fail writes the line of a frame service that
@@ -1297,7 +1305,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	network.address_write(&writer, LOCAL_ADDRESS)
 	system.write_bytes(&writer, {'/', '2', '4', ' '})
 	network.hardware_write(&writer, hardware)
-	system.log(.Info, "network: ok, the address ", system.written(&writer), ", the gateway 10.0.2.2, the link is ", link_up ? "up" : "down", ", ", u64(min(RECEIVE_PLACES, int(info.values[3]))), " places for frames that arrive")
+	// The state of the link is a case of the sentence: each one is a fact
+	// type.
+	if link_up {
+		system.log_fact(.Info, Ready_Link_Up{receive_places = u64(min(RECEIVE_PLACES, int(info.values[3]))), interface_address = value_kinds.text_field(system.written(&writer), INTERFACE_ADDRESS_FIELD_BYTES)})
+	} else {
+		system.log_fact(.Info, Ready_Link_Down{receive_places = u64(min(RECEIVE_PLACES, int(info.values[3]))), interface_address = value_kinds.text_field(system.written(&writer), INTERFACE_ADDRESS_FIELD_BYTES)})
+	}
 	// The cost of what this process writes for each datagram or segment that leaves:
 	// the headers of IPv4 and Ethernet, with the checksum of the IPv4
 	// header. No byte of the payload is read: its checksum is the work of
@@ -1312,7 +1326,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		took := system.time() - start
 		send_place_free(place)
-		system.log(.Info, "network: the headers of IPv4 and Ethernet of a frame with a payload of ", u64(PAYLOAD), " bytes: ", took * 1_000_000 / ROUNDS, " ns, in this process (no checksum of the payload)")
+		system.log_fact(.Info, Headers_Measured{payload_size = value_kinds.Size_In_Bytes(PAYLOAD), header_time = value_kinds.Time_In_Nanoseconds(took * 1_000_000 / ROUNDS)})
 	}
 
 	for {

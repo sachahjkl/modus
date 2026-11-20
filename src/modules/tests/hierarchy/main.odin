@@ -1,6 +1,6 @@
 // A test of the trees of a store (docs/STORAGE.md): many entries in trees inside trees, a listing in pages, a rename, the removal of a tree, and a handle on a part of the store that reaches nothing outside it.
 //
-// The first run (an empty store) makes 100 trees of 10 trees of 100 objects, one commit for each 100 entries, and checks each case. The second run, on the same disk after a new start of the machine, checks the counts and the contents that the first run left. Each case ends with a line "...: as it must", or a line "WRONG". The times are measures: no case checks a speed.
+// The first run (an empty store) makes 100 trees of 10 trees of 100 objects, one commit for each 100 entries, and checks each case. The second run, on the same disk after a new start of the machine, checks the counts and the contents that the first run left. Each case ends with a line "...: as it must", or a line "...: WRONG". The times are measures: no case checks a speed.
 //
 // **What it is for.** It checks that a [store](term:store) holds a large
 // [tree](term:tree) of entries across a restart of the machine, and that a
@@ -10,8 +10,9 @@
 //
 // **What a reader sees.** It has no window and no menu line: the machine
 // test starts it with `start("hierarchy")` on a machine with a data disk,
-// two times. Each case writes one log line, `hierarchy: <case>: as it
-// must`, or `hierarchy: WRONG: <case>` at the level error. The first run
+// two times. Each case writes one log fact of its own type, `hierarchy:
+// <case>: as it must`, or `hierarchy: <case>: WRONG` at the level error;
+// `where(verdict = "WRONG")` keeps the cases that failed. The first run
 // writes `hierarchy: a new store: the first run`, and the time to make the
 // 100 000 objects.
 //
@@ -19,6 +20,7 @@
 package hierarchy
 
 import "modus:contract/errors"
+import "modus:contract/storage_status"
 import format "modus:contract/store"
 import "modus:support/storage"
 import "modus:support/system"
@@ -74,29 +76,14 @@ scrambled_name :: proc "contextless" (buffer: []u8, number: int) -> string {
 	return string(buffer[:count])
 }
 
-outcome :: proc "contextless" (good: bool, what: string, parts: ..system.Part) {
-	writer_bytes: [480]u8
-	writer := system.Writer{buffer = writer_bytes[:]}
-	for part in parts {
-		system.write_part(&writer, part)
-	}
-	if good {
-		system.log(.Info, "hierarchy: ", what, system.written(&writer), ": as it must")
-	} else {
-		wrong_cases += 1
-		system.log(.Error, "hierarchy: WRONG: ", what, system.written(&writer))
-	}
-}
-
-// refused_with says if a call failed with an error kind, and writes its
-// sentence.
-refused_with :: proc "contextless" (status: storage.Status, error: ^errors.Error_Record, kind: errors.Kind) -> bool {
+// refused_with says if a call failed with an error kind.
+refused_with :: proc "contextless" (status: storage_status.Status, error: ^errors.Error_Record, kind: errors.Kind) -> bool {
 	return status == .Failed && error.kind == i64(kind)
 }
 
 // count_entries counts the entries of the tree of a place, page by page,
 // and checks that each page continues the order of the one before.
-count_entries :: proc "contextless" (connection: ^storage.Client, place: storage.Place) -> (objects: int, trees: int, in_order: bool, status: storage.Status) {
+count_entries :: proc "contextless" (connection: ^storage.Client, place: storage.Place) -> (objects: int, trees: int, in_order: bool, status: storage_status.Status) {
 	rows: [PAGE_ROWS]storage.Listed
 	names: [PAGE_ROWS * 64]u8
 	last: [64]u8
@@ -147,7 +134,7 @@ name_after :: proc "contextless" (name, before: []u8) -> bool {
 }
 
 // add_names makes entries of one kind under a place, in one commit.
-add_names :: proc "contextless" (place: storage.Place, prefix: string, count: int, kind: storage.Entry_Kind) -> (storage.Status, i64) {
+add_names :: proc "contextless" (place: storage.Place, prefix: string, count: int, kind: storage.Entry_Kind) -> (storage_status.Status, i64) {
 	rows: [OBJECTS_IN_PART]storage.Add_Row
 	names: [OBJECTS_IN_PART * 16]u8
 	used := 0
@@ -165,7 +152,8 @@ add_names :: proc "contextless" (place: storage.Place, prefix: string, count: in
 first_run :: proc "contextless" () {
 	start := system.time()
 	if status, _ := add_names(storage.ROOT, "tree_", TOP_TREES, .Tree); status != .Ok {
-		outcome(false, "the top trees: ", "status ", u64(status))
+		verdict := outcome(false)
+		system.log_fact(verdict.level, Top_Trees_Refused{status = storage_status.Status_Word(status), verdict = verdict.words})
 		return
 	}
 	commits: u64 = 1
@@ -173,7 +161,8 @@ first_run :: proc "contextless" () {
 		buffer: [16]u8
 		top_place, status := storage.open_tree(&client, storage.ROOT, number_name(buffer[:], "tree_", top))
 		if status != .Ok {
-			outcome(false, "open a top tree: ", "status ", u64(status))
+			verdict := outcome(false)
+			system.log_fact(verdict.level, Top_Tree_Open_Refused{status = storage_status.Status_Word(status), verdict = verdict.words})
 			return
 		}
 		add_names(top_place, "part_", PARTS, .Tree)
@@ -182,11 +171,13 @@ first_run :: proc "contextless" () {
 			part_buffer: [16]u8
 			part_place, part_status := storage.open_tree(&client, top_place, number_name(part_buffer[:], "part_", part))
 			if part_status != .Ok {
-				outcome(false, "open a part: ", "status ", u64(part_status))
+				verdict := outcome(false)
+				system.log_fact(verdict.level, Part_Open_Refused{status = storage_status.Status_Word(part_status), verdict = verdict.words})
 				return
 			}
 			if add_status, _ := add_names(part_place, "object_", OBJECTS_IN_PART, .Object); add_status != .Ok {
-				outcome(false, "add the objects of a part: ", "status ", u64(add_status))
+				verdict := outcome(false)
+				system.log_fact(verdict.level, Part_Objects_Refused{status = storage_status.Status_Word(add_status), verdict = verdict.words})
 				return
 			}
 			commits += 1
@@ -200,16 +191,22 @@ first_run :: proc "contextless" () {
 		commits += 1
 		storage.close_tree(&client, top_place)
 		if (top + 1) % 10 == 0 {
-			system.log(.Info, "hierarchy: ", i64((top + 1) * PARTS * OBJECTS_IN_PART), " objects made in ", commits, " commits, in ", system.time() - start, " ms")
+			system.log_fact(.Info, Objects_Made{objects = i64((top + 1) * PARTS * OBJECTS_IN_PART), commits = commits, elapsed = elapsed_since(start)})
 		}
 	}
 	counts, _ := storage.usage(&client)
-	outcome(counts.objects == MADE_OBJECTS + TOP_TREES && counts.trees == TOP_TREES + TOP_TREES * PARTS, "made ", counts.objects, " objects and ", counts.trees, " trees in ", commits, " commits, in ", system.time() - start, " ms, ", counts.blocks, " blocks")
+	{
+		verdict := outcome(counts.objects == MADE_OBJECTS + TOP_TREES && counts.trees == TOP_TREES + TOP_TREES * PARTS)
+		system.log_fact(verdict.level, Trees_Made{objects = counts.objects, trees = counts.trees, commits = commits, elapsed = elapsed_since(start), blocks = counts.blocks, verdict = verdict.words})
+	}
 
 	// The listing: the root in pages, one part, then every part.
 	listing_start := system.time()
 	objects, trees, in_order, status := count_entries(&client, storage.ROOT)
-	outcome(status == .Ok && trees == TOP_TREES && objects == 0 && in_order, "the root in pages of 16: ", i64(trees), " trees, in order")
+	{
+		verdict := outcome(status == .Ok && trees == TOP_TREES && objects == 0 && in_order)
+		system.log_fact(verdict.level, Root_Listed{trees = i64(trees), verdict = verdict.words})
+	}
 	all_objects := 0
 	all_in_order := true
 	for top in 0 ..< TOP_TREES {
@@ -225,7 +222,10 @@ first_run :: proc "contextless" () {
 		}
 		storage.close_tree(&client, top_place)
 	}
-	outcome(all_objects == MADE_OBJECTS && all_in_order, "listed ", i64(all_objects), " objects in ", i64(TOP_TREES * PARTS), " trees in pages of 16, each page after the one before, in ", system.time() - listing_start, " ms")
+	{
+		verdict := outcome(all_objects == MADE_OBJECTS && all_in_order)
+		system.log_fact(verdict.level, Parts_Listed{objects = i64(all_objects), trees = i64(TOP_TREES * PARTS), elapsed = elapsed_since(listing_start), verdict = verdict.words})
+	}
 
 	// Rename: an object up two trees, and a tree with all under it.
 	tree_0, _ := storage.open_tree(&client, storage.ROOT, "tree_000")
@@ -234,18 +234,30 @@ first_run :: proc "contextless" () {
 	_, status = storage.rename(&client, part_0, "object_000", storage.ROOT, "moved", &error)
 	moved_objects, _, _, _ := count_entries(&client, part_0)
 	_, found_moved, _ := storage.read(&client, storage.ROOT, "moved", nil)
-	outcome(status == .Ok && moved_objects == OBJECTS_IN_PART - 1 && found_moved, "rename of an object to the root: the part has ", i64(moved_objects), " objects")
+	{
+		verdict := outcome(status == .Ok && moved_objects == OBJECTS_IN_PART - 1 && found_moved)
+		system.log_fact(verdict.level, Object_Renamed{objects = i64(moved_objects), verdict = verdict.words})
+	}
 	_, status = storage.rename(&client, storage.ROOT, "tree_001", tree_0, "tree_001_moved", &error)
 	moved_tree, tree_status := storage.open_tree(&client, tree_0, "tree_001_moved")
 	_, moved_parts, _, _ := count_entries(&client, moved_tree)
-	outcome(status == .Ok && tree_status == .Ok && moved_parts == PARTS, "rename of a tree of ", i64(PARTS), " trees and ", i64(PARTS * OBJECTS_IN_PART), " objects: one commit")
+	{
+		verdict := outcome(status == .Ok && tree_status == .Ok && moved_parts == PARTS)
+		system.log_fact(verdict.level, Tree_Renamed{trees = i64(PARTS), objects = i64(PARTS * OBJECTS_IN_PART), verdict = verdict.words})
+	}
 	storage.close_tree(&client, moved_tree)
 	error = {}
 	_, status = storage.rename(&client, storage.ROOT, "tree_000", part_0, "inside", &error)
-	outcome(refused_with(status, &error, .Bad_Value), "a tree cannot move inside itself")
+	{
+		verdict := outcome(refused_with(status, &error, .Bad_Value))
+		system.log_fact(verdict.level, Move_Inside_Refused{verdict = verdict.words})
+	}
 	error = {}
 	_, status = storage.rename(&client, storage.ROOT, "moved", storage.ROOT, "tree_003", &error)
-	outcome(refused_with(status, &error, .Exists), "a rename onto a name that exists is refused")
+	{
+		verdict := outcome(refused_with(status, &error, .Exists))
+		system.log_fact(verdict.level, Rename_Onto_Name_Refused{verdict = verdict.words})
+	}
 	storage.close_tree(&client, part_0)
 	storage.close_tree(&client, tree_0)
 
@@ -255,7 +267,10 @@ first_run :: proc "contextless" () {
 	_, status = storage.remove(&client, storage.ROOT, "tree_002", &error)
 	after, _ := storage.usage(&client)
 	_, top_trees, _, _ := count_entries(&client, storage.ROOT)
-	outcome(status == .Ok && top_trees == TOP_TREES - 2, "remove of a tree: the name is gone at its commit; ", after.removing, " trees wait to be freed")
+	{
+		verdict := outcome(status == .Ok && top_trees == TOP_TREES - 2)
+		system.log_fact(verdict.level, Tree_Removed{removing = after.removing, verdict = verdict.words})
+	}
 	for {
 		counts, _ = storage.usage(&client)
 		if counts.removing == 0 || system.time() - removal_start > system.TEST_HANG_BOUND_MILLISECONDS {
@@ -263,12 +278,18 @@ first_run :: proc "contextless" () {
 		}
 		system.sleep(system.time() + 1)
 	}
-	outcome(counts.removing == 0 && counts.objects == before.objects - (PARTS * OBJECTS_IN_PART + 1) && counts.trees == before.trees - (1 + PARTS) && counts.blocks < before.blocks, "the removal freed ", before.objects - counts.objects, " objects, ", before.trees - counts.trees, " trees and ", before.blocks - counts.blocks, " blocks, in ", system.time() - removal_start, " ms")
+	{
+		verdict := outcome(counts.removing == 0 && counts.objects == before.objects - (PARTS * OBJECTS_IN_PART + 1) && counts.trees == before.trees - (1 + PARTS) && counts.blocks < before.blocks)
+		system.log_fact(verdict.level, Removal_Freed{objects = before.objects - counts.objects, trees = before.trees - counts.trees, blocks = before.blocks - counts.blocks, elapsed = elapsed_since(removal_start), verdict = verdict.words})
+	}
 
 	scrambled_case()
 	confinement()
 	counts, _ = storage.usage(&client)
-	outcome(counts.objects == OBJECTS_LEFT && counts.trees == TREES_LEFT, "the first run leaves ", counts.objects, " objects and ", counts.trees, " trees")
+	{
+		verdict := outcome(counts.objects == OBJECTS_LEFT && counts.trees == TREES_LEFT)
+		system.log_fact(verdict.level, First_Run_Left{objects = counts.objects, trees = counts.trees, verdict = verdict.words})
+	}
 }
 
 // scrambled_case adds names to one tree in an order that is not the order
@@ -283,7 +304,8 @@ scrambled_case :: proc "contextless" () {
 	_, status := storage.add(&client, storage.ROOT, tree_row[:], transmute([]u8)tree_name)
 	place, open_status := storage.open_tree(&client, storage.ROOT, "scrambled")
 	if status != .Ok || open_status != .Ok {
-		outcome(false, "the tree scrambled: ", "status ", u64(status), " ", u64(open_status))
+		verdict := outcome(false)
+		system.log_fact(verdict.level, Scrambled_Tree_Refused{status = storage_status.Status_Word(status), open_status = storage_status.Status_Word(open_status), verdict = verdict.words})
 		return
 	}
 	rows: [250]storage.Add_Row
@@ -299,7 +321,8 @@ scrambled_case :: proc "contextless" () {
 			used += copy(names[used:], name)
 		}
 		if _, add_status := storage.add(&client, place, rows[:count], names[:used]); add_status != .Ok {
-			outcome(false, "the scrambled adds: ", "status ", u64(add_status))
+			verdict := outcome(false)
+			system.log_fact(verdict.level, Scrambled_Adds_Refused{status = storage_status.Status_Word(add_status), verdict = verdict.words})
 			return
 		}
 		commits += 1
@@ -327,7 +350,8 @@ scrambled_case :: proc "contextless" () {
 	_, even_found, _ := storage.read(&client, place, scrambled_name(even_buffer[:], 2), nil)
 	_, odd_found, _ := storage.read(&client, place, scrambled_name(odd_buffer[:], 3), nil)
 	storage.close_tree(&client, place)
-	outcome(objects == SCRAMBLED_NAMES && in_order && found_all && removed == SCRAMBLED_LEFT && left == SCRAMBLED_LEFT && left_in_order && !even_found && odd_found, "added ", i64(objects), " names in a scrambled order in ", commits, " commits, listed in order, each read back; removed ", i64(removed), " in another order, ", i64(left), " left in order, in ", system.time() - start, " ms")
+	verdict := outcome(objects == SCRAMBLED_NAMES && in_order && found_all && removed == SCRAMBLED_LEFT && left == SCRAMBLED_LEFT && left_in_order && !even_found && odd_found)
+	system.log_fact(verdict.level, Scrambled_Names_Checked{added = i64(objects), commits = commits, removed = i64(removed), left = i64(left), elapsed = elapsed_since(start), verdict = verdict.words})
 }
 
 // The bytes that the holder of a writable share of a tree writes, and that
@@ -368,7 +392,8 @@ share_and_same_bytes :: proc "contextless" (writable: ^storage.Client, maker_pla
 	share_saw := tree_after_maker.blocks - tree_after_share.blocks
 	freed := tree_after_maker.blocks - tree_after_remove.blocks
 	counted := tree_before.blocks != storage.USAGE_NOT_COUNTED && tree_before.removing == 0
-	outcome(statuses && counted && share_took == GUESS_HELD && maker_took == GUESS_HELD && share_saw == 0 && freed == GUESS_HELD, "while a writable share of a tree is open, its write took ", share_took, " blocks of the count of its tree; the same bytes written by the maker outside the tree took ", maker_took, " blocks of the store and ", share_saw, " of the count of the share; the removal through the share freed ", freed, ": the share sees the count of its own tree only")
+	verdict := outcome(statuses && counted && share_took == GUESS_HELD && maker_took == GUESS_HELD && share_saw == 0 && freed == GUESS_HELD)
+	system.log_fact(verdict.level, Share_Count_Checked{share_took = share_took, maker_took = maker_took, share_saw = share_saw, freed = freed, verdict = verdict.words})
 }
 
 // guess_hidden_after_unshare: the guess that the holder wrote while its
@@ -382,7 +407,8 @@ guess_hidden_after_unshare :: proc "contextless" (share_place: storage.Place, ma
 	_, maker_remove := storage.remove(&client, maker_place, "same_bytes")
 	_, guess_remove := storage.remove(&client, share_place, "kept_guess")
 	took := after.blocks - before.blocks
-	outcome(before_status == .Ok && maker_write == .Ok && maker_remove == .Ok && guess_remove == .Ok && took == GUESS_HELD, "after unshare, the guess of the holder stays hidden: the same bytes written by the maker took ", took, " blocks")
+	verdict := outcome(before_status == .Ok && maker_write == .Ok && maker_remove == .Ok && guess_remove == .Ok && took == GUESS_HELD)
+	system.log_fact(verdict.level, Guess_Hidden{maker_took = took, verdict = verdict.words})
 }
 
 // confinement: a share reaches the tree of its place and nothing outside
@@ -391,44 +417,72 @@ confinement :: proc "contextless" () {
 	tree_3, _ := storage.open_tree(&client, storage.ROOT, "tree_003")
 	tree_4, _ := storage.open_tree(&client, storage.ROOT, "tree_004")
 	shared, number, status := storage.share(&client, tree_3, true)
-	outcome(status == .Ok, "a read-only share of tree_003")
+	{
+		verdict := outcome(status == .Ok)
+		system.log_fact(verdict.level, Read_Only_Share_Made{verdict = verdict.words})
+	}
 	if status != .Ok {
 		return
 	}
 	_, parts, _, _ := count_entries(&shared, storage.ROOT)
-	outcome(parts == PARTS, "the share lists the ", i64(parts), " trees of tree_003 only")
+	{
+		verdict := outcome(parts == PARTS)
+		system.log_fact(verdict.level, Share_Listed{trees = i64(parts), verdict = verdict.words})
+	}
 	for name in ([]string{"..", ".", "/tree_004", "part_000/../..", "../tree_004"}) {
 		error: errors.Error_Record
 		_, _, read_status := storage.read(&shared, storage.ROOT, name, nil, &error)
-		outcome(refused_with(read_status, &error, .Bad_Byte), "the name \"", name, "\" is refused")
+		verdict := outcome(refused_with(read_status, &error, .Bad_Byte))
+		system.log_fact(verdict.level, Name_Refused{name = name_field(name), verdict = verdict.words})
 	}
 	error: errors.Error_Record
 	_, _, read_status := storage.read(&shared, tree_4, "content", nil, &error)
-	outcome(refused_with(read_status, &error, .Absent) && errors.Unit(error.unit) == .Places, "a place of another connection names nothing on the share")
+	{
+		verdict := outcome(refused_with(read_status, &error, .Absent) && errors.Unit(error.unit) == .Places)
+		system.log_fact(verdict.level, Foreign_Place_Refused{verdict = verdict.words})
+	}
 	// Another store: a share does not act for a principal.
 	error = {}
 	_, store_status := storage.open_store(&shared, "notes", &error)
-	outcome(refused_with(store_status, &error, .No_Grant) && errors.Unit(error.unit) == .Acts_For_Principal, "a name of another store is refused")
+	{
+		verdict := outcome(refused_with(store_status, &error, .No_Grant) && errors.Unit(error.unit) == .Acts_For_Principal)
+		system.log_fact(verdict.level, Foreign_Store_Refused{verdict = verdict.words})
+	}
 	error = {}
 	_, write_status := storage.write(&shared, storage.ROOT, "written", transmute([]u8)string("no"), &error)
-	outcome(refused_with(write_status, &error, .No_Grant) && errors.Unit(error.unit) == .Changes, "the read-only share cannot write")
+	{
+		verdict := outcome(refused_with(write_status, &error, .No_Grant) && errors.Unit(error.unit) == .Changes)
+		system.log_fact(verdict.level, Read_Only_Write_Refused{verdict = verdict.words})
+	}
 	error = {}
 	_, remove_status := storage.remove(&shared, storage.ROOT, "part_000", &error)
-	outcome(refused_with(remove_status, &error, .No_Grant), "the read-only share cannot remove")
+	{
+		verdict := outcome(refused_with(remove_status, &error, .No_Grant))
+		system.log_fact(verdict.level, Read_Only_Remove_Refused{verdict = verdict.words})
+	}
 	storage.unshare(&client, number)
 	_, _, ended_status := storage.read(&shared, storage.ROOT, "content", nil)
-	outcome(ended_status == .Gone, "after unshare, the handles of the share are revoked: a call gives Gone")
+	{
+		verdict := outcome(ended_status == .Gone)
+		system.log_fact(verdict.level, Share_Handles_Revoked{verdict = verdict.words})
+	}
 
 	tree_5, _ := storage.open_tree(&client, storage.ROOT, "tree_005")
 	writable, writable_number, writable_status := storage.share(&client, tree_5, false)
 	_, written_status := storage.write(&writable, storage.ROOT, "written_through_a_share", transmute([]u8)string("kept"))
 	text: [8]u8
 	bytes, found, _ := storage.read(&client, tree_5, "written_through_a_share", text[:])
-	outcome(writable_status == .Ok && written_status == .Ok && found && string(bytes) == "kept", "a writable share writes in tree_005, and the maker reads it")
+	{
+		verdict := outcome(writable_status == .Ok && written_status == .Ok && found && string(bytes) == "kept")
+		system.log_fact(verdict.level, Writable_Share_Written{verdict = verdict.words})
+	}
 	// A share of a tree never gets a place on the root of its store.
 	error = {}
 	_, own_status := storage.open_store(&writable, STORE_NAME, &error)
-	outcome(refused_with(own_status, &error, .No_Grant) && errors.Unit(error.unit) == .Acts_For_Principal, "a share of a tree cannot open the root of its own store")
+	{
+		verdict := outcome(refused_with(own_status, &error, .No_Grant) && errors.Unit(error.unit) == .Acts_For_Principal)
+		system.log_fact(verdict.level, Share_Root_Refused{verdict = verdict.words})
+	}
 	share_and_same_bytes(&writable, tree_4)
 	storage.unshare(&client, writable_number)
 	guess_hidden_after_unshare(tree_5, tree_4)
@@ -441,7 +495,10 @@ confinement :: proc "contextless" () {
 // machine: the open of the disk read every tree again.
 second_run :: proc "contextless" (counts: storage.Usage) {
 	start := system.time()
-	outcome(counts.objects == OBJECTS_LEFT && counts.trees == TREES_LEFT && counts.removing == 0, "after the remount: ", counts.objects, " objects and ", counts.trees, " trees")
+	{
+		verdict := outcome(counts.objects == OBJECTS_LEFT && counts.trees == TREES_LEFT && counts.removing == 0)
+		system.log_fact(verdict.level, Remount_Counted{objects = counts.objects, trees = counts.trees, verdict = verdict.words})
+	}
 	total_objects := 0
 	contents_good := 0
 	for top in 0 ..< TOP_TREES {
@@ -471,7 +528,10 @@ second_run :: proc "contextless" (counts: storage.Usage) {
 	// The odd half of the scrambled names, in order.
 	scrambled, _ := storage.open_tree(&client, storage.ROOT, "scrambled")
 	scrambled_left, _, scrambled_in_order, _ := count_entries(&client, scrambled)
-	outcome(scrambled_left == SCRAMBLED_LEFT && scrambled_in_order, "after the remount: ", i64(scrambled_left), " scrambled names left, in order")
+	{
+		verdict := outcome(scrambled_left == SCRAMBLED_LEFT && scrambled_in_order)
+		system.log_fact(verdict.level, Remount_Scrambled_Left{left = i64(scrambled_left), verdict = verdict.words})
+	}
 	// tree_001 is inside tree_000 now, with its parts.
 	tree_0, _ := storage.open_tree(&client, storage.ROOT, "tree_000")
 	moved, _ := storage.open_tree(&client, tree_0, "tree_001_moved")
@@ -479,7 +539,10 @@ second_run :: proc "contextless" (counts: storage.Usage) {
 	_, found_moved, _ := storage.read(&client, storage.ROOT, "moved", nil)
 	// The parts of the 98 top trees, less the object that moved to the root.
 	expected := (TOP_TREES - 2) * PARTS * OBJECTS_IN_PART - 1
-	outcome(total_objects == expected && contents_good == TOP_TREES - 2 && moved_parts == PARTS && found_moved, "after the remount: ", i64(total_objects), " objects listed in the parts, ", i64(contents_good), " contents byte for byte, the renamed tree and object in their places, in ", system.time() - start, " ms")
+	{
+		verdict := outcome(total_objects == expected && contents_good == TOP_TREES - 2 && moved_parts == PARTS && found_moved)
+		system.log_fact(verdict.level, Remount_Parts_Listed{objects = i64(total_objects), contents = i64(contents_good), elapsed = elapsed_since(start), verdict = verdict.words})
+	}
 }
 
 // entry connects to the private store and reads its usage. On an empty
@@ -493,22 +556,22 @@ second_run :: proc "contextless" (counts: storage.Usage) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ok: bool
 	if client, ok = storage.open(ctx); !ok {
-		system.log(.Error, "hierarchy: WRONG: no store")
+		system.log_fact(.Error, Wrong_No_Store{})
 		system.stop(.Failed)
 	}
 	counts, status := storage.usage(&client)
 	if status != .Ok {
-		system.log(.Error, "hierarchy: WRONG: no usage")
+		system.log_fact(.Error, Wrong_No_Usage{})
 		system.stop(.Failed)
 	}
 	if counts.objects == 0 {
-		system.log(.Info, "hierarchy: a new store: the first run")
+		system.log_fact(.Info, First_Run{})
 		first_run()
 	} else {
-		system.log(.Info, "hierarchy: a store with ", counts.objects, " objects: the run after the remount")
+		system.log_fact(.Info, Store_Remounted{objects = counts.objects})
 		second_run(counts)
 	}
-	system.log(.Info, "hierarchy: done, ", u64(wrong_cases), " wrong")
+	system.log_fact(.Info, Run_Done{wrong_cases = u64(wrong_cases)})
 	if wrong_cases != 0 {
 		system.stop(.Failed)
 	}

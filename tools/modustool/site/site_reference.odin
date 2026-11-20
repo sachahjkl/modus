@@ -499,7 +499,16 @@ site_console_signature_html :: proc(site: ^Site, command: foundation.Console_Com
 			site_code_span(&b, .Punctuation, ",")
 			strings.write_byte(&b, ' ')
 		}
+		// The brackets of a last parameter that a call may leave out, as
+		// foundation.console_signature writes them.
+		optional := command.optional_last && index == len(command.parameters) - 1
+		if optional {
+			site_code_span(&b, .Punctuation, "[")
+		}
 		site_type_reference(site, &b, strings.concatenate({"wire.", parameter}, context.temp_allocator), parameter, false)
+		if optional {
+			site_code_span(&b, .Punctuation, "]")
+		}
 	}
 	site_code_span(&b, .Punctuation, ")")
 	if command.result != "None" {

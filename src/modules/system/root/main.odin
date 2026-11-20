@@ -124,8 +124,6 @@ import "modus:contract/palette_table"
 import "modus:contract/start_grant"
 import "modus:contract/value_kinds"
 
-ROOT_MARK :: "root: ok"
-
 // What a process receives, by name: a start grant. The list and the name of
 // each one are a contract, because the reader of an error record names the
 // start grant that refused a debug access (src/library/contract/start_grant).
@@ -230,7 +228,7 @@ own_records_amount_of :: proc "contextless" (caller: ^Started) -> u64 {
 	}
 	amount, ok := log_scope.own_records_amount(slot, serial)
 	if !ok {
-		system.log(.Warning, "root: the process slot ", slot, " or the process serial ", serial, " of ", system.Module_Name{system.name_of(caller.name[:])}, " does not fit the grant of the log service: it reads no record")
+		system.log_fact(.Warning, Log_Scope_Refused{slot = u64(slot), serial = u64(serial), caller = module_name_field(system.name_of(caller.name[:]))})
 		return 0
 	}
 	return amount
@@ -310,6 +308,38 @@ Started :: struct {
 	// is no fault of the process, and the stop of the compositor so is no
 	// absence of the screen, whatever the order of the reap.
 	stop_asked_by_root_service: bool,
+	// The process that asked for the start of this one with Start: the
+	// rule of an end Started of a wiring (wirings.odin). nil: this service
+	// started it by itself, or the asker stopped.
+	asker:           ^Started,
+	// The module file of the process, in the boot image: the record
+	// descriptions of its record outputs and record inputs. Empty for a
+	// process that this service did not start with start(): no wiring
+	// names it.
+	file:            []u8,
+	// A handle of the budget of the process with Read and Spend, for a
+	// process that can send Wire, the one kind of asker: the wirings that
+	// the process asks for are paid from it. Closed at the stop of the
+	// process (src/md/features/module_outputs.md, "The budget").
+	budget:          system.Handle,
+	// The wiring ring of a process that declares a record output or a
+	// record input, or of an asker that asked for its list page, mapped in
+	// this service, which writes its commands.
+	wiring:          ring.Ring,
+	wiring_memory:   system.Handle,
+	// The words of its wiring ring that named no wiring of the process:
+	// one line at the first, and the count at its stop.
+	unknown_wiring_words: u64,
+	// The list page of an asker, as this service holds it: the asker
+	// writes its wiring lists there, and this service copies them from
+	// this handle, which a revocation by the asker does not reach.
+	list_memory:     system.Handle,
+	// The wiring pages of the wirings that the process asked for.
+	wiring_pages:    ^Wiring_Page,
+	// The wirings that the process asked for and that run, and the ends
+	// that it holds: each is bounded (wirings.odin).
+	wirings_asked:   int,
+	ends_given:      int,
 }
 
 // place_is_free says if a place of the table of the processes holds no
@@ -324,6 +354,10 @@ Connection :: struct {
 	service: ^Started,
 	ring:    system.Handle, // The call ring, as the service names it.
 	region:  system.Handle, // The call region, as the service names it.
+	// The process handle of the service as the caller names it: the number
+	// that the completion of Connect gave. A Connected end of a wiring
+	// names the connection by it, since that handle has no Give.
+	caller_service_handle: system.Handle,
 	// The connection to the store of the line history of the caller
 	// (Root_Command.Connect_History): its grant is the limit of that store,
 	// never the private store and never the grant to act for the principal.
@@ -439,7 +473,7 @@ shortage_start :: proc "contextless" () -> system.Status {
 	}
 	process, status := system.process_start(system.image_find(image, "shortage"), "shortage", context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared)
 	if status != .Ok {
-		system.log(.Info, "root: cannot start shortage: status ", status)
+		system.log_fact(.Info, Shortage_Start_Failed{status = status})
 		shortage_failed()
 	}
 	part_place_fill(slot, "shortage", process)
@@ -511,7 +545,7 @@ operation_fuzzing_start :: proc "contextless" () -> system.Status {
 	}
 	process, status := system.process_start(system.image_find(image, OPERATION_FUZZING_NAME), OPERATION_FUZZING_NAME, context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared)
 	if status != .Ok {
-		system.log(.Error, "root: cannot start operation_fuzzing: status ", status)
+		system.log_fact(.Error, Operation_Fuzzing_Start_Failed{status = status})
 		return status
 	}
 	part_place_fill(slot, OPERATION_FUZZING_NAME, process)
@@ -535,7 +569,7 @@ shortage_failed :: proc "contextless" () -> ! {
 // stop: the boot display stays, with the failure, until the machine is
 // stopped from outside.
 fail :: proc "contextless" (text: string, status: system.Status) -> ! {
-	system.log(.Error, "root: ", text, ": status ", status)
+	system.log_fact(.Error, Root_Failed{status = status, failure = text_field(text, 140)})
 	failure_show(text, status)
 	for {
 		system.sleep(max(u64))
@@ -566,7 +600,7 @@ failure_show :: proc "contextless" (text: string, status: system.Status) {
 	bootscreen.put(&message, ": status ")
 	bootscreen.put_number(&message, u64(status))
 	show(string(message.bytes[:message.count]), .Failed, screen_data.step)
-	system.log(.Info, "root: the boot display shows the failure")
+	system.log_fact(.Info, Failure_Shown{})
 }
 
 // The random generator of the root service: its seed comes from the
@@ -648,7 +682,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			fail("Machine_Stop did not refuse a code past one byte with its error record", refused)
 		}
 	}
-	system.log(.Info, "root: Machine_Stop refused the codes ", refused_codes[0], " and ", refused_codes[1], " with Bad_Operation and the record Bad_Value of the code, limit ", u64(op.MACHINE_STOP_CODE_MOST), ", and the machine runs on: as it must")
+	system.log_fact(.Info, Machine_Stop_Codes_Refused{first_code = refused_codes[0], second_code = refused_codes[1], code_limit = u64(op.MACHINE_STOP_CODE_MOST)})
 	// The screen first: a failure of the check below stays on it.
 	screen_at_the_start := boot_display_take(ctx)
 	// The boot image against the system description, before any process
@@ -722,7 +756,7 @@ boot_image_take :: proc "contextless" (ctx: ^system.Context) {
 		fail("cannot map the boot image", status)
 	}
 	image = ([^]u8)(address)[:ctx.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE]]
-	system.log(.Info, ROOT_MARK, ", ", u64(len(system.image_entries(image))), " modules in the boot image")
+	system.log_fact(.Info, Root_Ready{image_modules = u64(len(system.image_entries(image)))})
 	debug_image_take(ctx)
 }
 
@@ -757,7 +791,7 @@ random_seed_make :: proc "contextless" () {
 		fail("the random seed of the system is 32 zero bytes: no process can get a seed", .Bad_Operation)
 	}
 	report := &entropy_report
-	system.log(.Info, "root: the random seed of the system, strength ", op.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
+	system.log_fact(.Info, Random_Seed_Made{rdseed_good = u64(report.rdseed_good), rdseed_refused = u64(report.rdseed_refused), rdrand_good = u64(report.rdrand_good), rdrand_refused = u64(report.rdrand_refused), jitter_samples = u64(report.jitter_samples), jitter_distinct = u64(report.jitter_distinct), strength = text_field(op.seed_strength_names[report.strength], 32), rdseed_presence = text_field(report.rdseed_present ? "present" : "absent", 8), rdrand_presence = text_field(report.rdrand_present ? "present" : "absent", 8)})
 }
 
 // replacement_table_create makes the replacement table of the machine,
@@ -828,7 +862,7 @@ input_start :: proc "contextless" () -> system.Status {
 	}
 	process, status := system.process_start(system.image_find(image, "input"), "input", context_grants.grants, random.values_with_seed(&process_generator, input_values.values), budget_of(system.image_find(image, "input"), "input"), input_mappings, &prepared)
 	if status != .Ok {
-		system.log(.Warning, "root: cannot start input: status ", status)
+		system.log_fact(.Warning, Input_Start_Failed{status = status})
 		return status
 	}
 	part_place_fill(slot, "input", process)
@@ -847,9 +881,9 @@ screen_absence_note :: proc "contextless" () {
 	}
 	screen_absent = true
 	if no_screen_at_the_start {
-		system.log(.Warning, "root: no screen: no console, no window; the other services start")
+		system.log_fact(.Warning, No_Screen{})
 	} else {
-		system.log(.Warning, "root: the compositor stopped: no screen; a start of a window or a terminal is refused from now on")
+		system.log_fact(.Warning, Compositor_Stopped{})
 	}
 }
 
@@ -871,7 +905,7 @@ compositor_start :: proc "contextless" () -> system.Status {
 	}
 	new_control_memory, new_control, status := system.ring_create()
 	if status != .Ok {
-		system.log(.Warning, "root: cannot start the compositor: no control ring: status ", status)
+		system.log_fact(.Warning, Compositor_Control_Ring_Failed{status = status})
 		return status
 	}
 	if control_memory != 0 {
@@ -919,7 +953,7 @@ compositor_start :: proc "contextless" () -> system.Status {
 		if system.name_of(item.name[:]) == "compositor" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 			served.service_memory, served.service, status = system.ring_create()
 			if status != .Ok {
-				system.log(.Warning, "root: cannot start the compositor: no service ring: status ", status)
+				system.log_fact(.Warning, Compositor_Service_Ring_Failed{status = status})
 				served^ = {}
 				return status
 			}
@@ -958,12 +992,10 @@ compositor_start :: proc "contextless" () -> system.Status {
 	compositor, status = system.process_start(system.image_find(image, "compositor"), "compositor", context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared, load_source(), &compositor_load_error)
 	if status != .Ok {
 		if compositor_load_error.stage != .None {
-			buffer: [512]u8
-			writer := system.Writer{buffer = buffer[:]}
-			system.load_error_text(&writer, &compositor_load_error)
-			system.log(.Error, "root: cannot load the compositor: ", system.written(&writer))
+			system.log_fact(.Error, Compositor_Load_Refused{})
+			load_error_log(.Error, &compositor_load_error)
 		}
-		system.log(.Warning, "root: cannot start the compositor: status ", status)
+		system.log_fact(.Warning, Compositor_Start_Failed{status = status})
 		compositor = 0
 		compositor_place_free(served)
 		return status
@@ -1014,7 +1046,17 @@ root_loop_pass :: proc "contextless" () {
 		if item.process != 0 && item.requests.head != nil {
 			root_ring_serve(&item)
 		}
+		// The answers of the process to the ends of its wirings: Taken,
+		// Closed or a refusal. They are in the wait below, so an answer
+		// starts a pass and never waits for another event.
+		if item.process != 0 && item.wiring.head != nil {
+			wiring_completions_read(&item)
+		}
 	}
+	// A wiring ring whose process holds no end is unmapped: this service
+	// holds one mapping for each process with an end, and the wait below
+	// skips a ring that no answer can come in.
+	wiring_rings_let_go()
 	// Before reap: an entropy service that answered and stopped still has
 	// its answers in the ring.
 	entropy_answers(&wait)
@@ -1033,11 +1075,16 @@ root_loop_pass :: proc "contextless" () {
 		if item.process != 0 && item.requests.head != nil {
 			system.wait_records(&wait, &item.requests.commands)
 		}
+		if item.process != 0 && item.wiring.head != nil {
+			system.wait_records(&wait, &item.wiring.completions)
+		}
 	}
 	// The appearance in force at an edge of the rule of the day
 	// (appearance_edge.odin): one more deadline, and the change count of
 	// the date page.
 	appearance_step(&wait)
+	// The count of wait_words.odin keeps each list in the wait.
+	root_wait_full_tell(&wait)
 	// A load from the disk and a call for the disk grant table have a
 	// deadline: the wait ends there, with or without an answer of the
 	// storage service. The next read of the fresh bytes has one too, a
@@ -1052,14 +1099,14 @@ control_ring_serve :: proc "contextless" () {
 	for record in system.receive(&control.completions) {
 		control_word, known := enum_word.member_of_word(display.Control, u64(record.kind))
 		if !known {
-			system.log(.Warning, "root: refused a record of the compositor of the kind ", u64(record.kind), ", which names no control")
+			system.log_fact(.Warning, Compositor_Record_Unknown{record_kind = u64(record.kind)})
 			continue
 		}
 		switch control_word {
 		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started:
 			// This service sends these to the compositor, and takes none
 			// from it.
-			system.log(.Warning, "root: refused a record of the compositor of the kind ", u64(record.kind), ", which this service sends and does not take")
+			system.log_fact(.Warning, Compositor_Record_Not_Taken{record_kind = u64(record.kind)})
 		case .Start:
 			// The desktop starts a process in the session that runs.
 			name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
@@ -1288,7 +1335,7 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 			return .Bad_State
 		}
 		values[0] = debug_end(target)
-		system.log(.Info, "root: ", system.Module_Name{system.name_of(holder.name[:])}, " ended the debugging of ", system.Module_Name{name}, " for ", system.Module_Name{system.name_of(caller.name[:])})
+		system.log_fact(.Info, Debugging_Ended{debugger = module_name_field(system.name_of(holder.name[:])), target = module_name_field(name), caller = module_name_field(system.name_of(caller.name[:]))})
 		return .Ok
 	}
 	if target == caller || target == holder {
@@ -1305,7 +1352,7 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 	}
 	if grant, refuses := debug_refusing_grant(caller, target); refuses {
 		values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1, 0, 0, 1 + i64(grant))
-		system.log(.Info, "root: refused ", system.Module_Name{system.name_of(caller.name[:])}, " the debug access to ", system.Module_Name{name}, ": the grant ", start_grant.GRANT_NAMES[grant], " of the process refuses it")
+		system.log_fact(.Info, Debug_Access_Refused{caller = module_name_field(system.name_of(caller.name[:])), target = module_name_field(name), grant = text_field(start_grant.GRANT_NAMES[grant], 24)})
 		return .Bad_State
 	}
 	// One debugger for one process: the kernel has the same rule.
@@ -1385,7 +1432,7 @@ debug_check_again :: proc "contextless" (caller: ^Started) {
 		_, refuses := debug_refusing_grant(caller, &other)
 		if refuses || .Acts_For_Principal not_in grants_held(caller) {
 			debug_end(&other)
-			system.log(.Info, "root: ended the debugging of ", system.Module_Name{system.name_of(other.name[:])}, " for ", system.Module_Name{system.name_of(caller.name[:])}, ": the rule no longer gives the debug access, after a revocation")
+			system.log_fact(.Info, Debugging_Ended_After_Revocation{target = module_name_field(system.name_of(other.name[:])), caller = module_name_field(system.name_of(caller.name[:]))})
 		}
 	}
 }
@@ -1441,7 +1488,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		// service is the one writer of a service ring, so the room cannot
 		// shrink between the check and the sends.
 		if service := grant_room_short(item); service != nil {
-			system.log(.Warning, "root: refused the revocation of acts_for_principal of ", system.Module_Name{name}, ": the service ", system.Module_Name{system.name_of(service.name[:])}, " has no room for the new grants; nothing changed")
+			system.log_fact(.Warning, Acts_For_Principal_Revocation_Refused{holder = module_name_field(name), service = module_name_field(system.name_of(service.name[:]))})
 			return .No_Slot
 		}
 		item.granted -= {which}
@@ -1511,6 +1558,15 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
 		return .Ok
+	case .Wirings:
+		// Each wiring that the process asked for ends with the end word
+		// Revoked; the process can ask for new ones, as a revocation ends
+		// what was given and not the right to ask.
+		count := wirings_revoke(item)
+		item.granted -= {which}
+		values[0] = count
+		system.log(.Info, "root: revoked the grant wirings of ", system.Module_Name{name}, ", wirings ended: ", count)
+		return .Ok
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
 	case .Machine:
@@ -1579,7 +1635,7 @@ palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> sys
 	caller.granted += {.Palette}
 	values^ = {0 = u64(given_table), 1 = u64(given_ring)}
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Palette_Provider_Add), values = {0 = u64(palette_ring_in_compositor), 1 = u64(palette_table_in_compositor)}})
-	system.log(.Info, "root: ", system.Module_Name{system.name_of(caller.name[:])}, " is the palette provider")
+	system.log_fact(.Info, Palette_Provider_Set{provider = module_name_field(system.name_of(caller.name[:]))})
 	return .Ok
 }
 
@@ -1602,7 +1658,7 @@ palette_provider_end :: proc "contextless" (item: ^Started, revoke: bool) -> (co
 	system.close(palette_ring_memory)
 	palette_provider = nil
 	palette_table_memory, palette_ring_memory = 0, 0
-	system.log(.Info, "root: no palette provider")
+	system.log_fact(.Info, Palette_Provider_Absent{})
 	return count
 }
 
@@ -1638,10 +1694,8 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	process, status := system.process_start(system.image_find(image, "terminal"), "terminal", context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
 		if load_error.stage != .None {
-			buffer: [512]u8
-			writer := system.Writer{buffer = buffer[:]}
-			system.load_error_text(&writer, &load_error)
-			system.log(.Warning, "root: cannot load the terminal: ", system.written(&writer))
+			system.log_fact(.Warning, Terminal_Load_Refused{})
+			load_error_log(.Warning, &load_error)
 		}
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return status
@@ -1680,6 +1734,7 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 		disconnect(free)
 		return status
 	}
+	free.caller_service_handle = given[0]
 	hash := transmute([4]u64)service.hash
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), hash[0], hash[1], hash[2], hash[3]}
 	// The principal of the connection, and whether the caller acts for it.
@@ -1762,7 +1817,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		// principal of the row.
 		principal_of_the_store := client.place != 0 ? client.principal : caller.principal
 		if !principals.store_name_write(&store_name, process_of_the_store, principal_of_the_store, history) {
-			system.log(.Warning, "root: the name of the store of ", system.Module_Name{system.name_of(caller.name[:])}, " for principal ", caller.principal, " has more than 31 bytes: no connection")
+			system.log_fact(.Warning, Store_Name_Too_Long{principal = caller.principal, caller = module_name_field(system.name_of(caller.name[:]))})
 			return nil, nil, 0, 0, .Bad_Operation
 		}
 	} else {
@@ -1874,8 +1929,18 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 	connection^ = {}
 }
 
-// release frees what this service holds for a process, and tells the compositor.
-release :: proc "contextless" (item: ^Started) {
+// The stop of a process as the reap read it from the kernel: one read of
+// Process_State for the fact of the stop and for the end words.
+Process_Stop :: struct {
+	state:   op.Process_State,
+	cause:   op.Stop_Cause,
+	outcome: op.Stop_Outcome,
+}
+
+// release frees what this service holds for a process, and tells the
+// compositor. stop is the stop that the reap read; a start that this
+// service abandons, or a process that it lets go with no reap, gives none.
+release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	// The row goes before the handle closes: the kernel can then give the
 	// slot to another process, which the row must not name.
 	disk_process_page_remove(item)
@@ -1892,12 +1957,20 @@ release :: proc "contextless" (item: ^Started) {
 	if item.debugger != nil {
 		debug_end(item)
 	}
+	// Each wiring that names the process ends, with the end word of its
+	// part, before its handle closes: the other side reads the end, with
+	// the stop that the kernel recorded for a writer, as the reap read it
+	// for the fact of the stop.
+	wirings_at_stop(item, stop.state, stop.cause, stop.outcome)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {
 			debug_end(&other)
 		}
 		if other.writer == item {
 			other.writer = nil
+		}
+		if other.asker == item {
+			other.asker = nil
 		}
 		if other.driver == item {
 			other.driver = nil
@@ -2008,7 +2081,20 @@ reap :: proc "contextless" () {
 			// A compositor that this service stopped for the rescue is
 			// started again by the rescue: it is no absence of the screen.
 			stopped_for_the_rescue := item.stop_asked_by_root_service
-			release(&item)
+			// The stop of an asker of wirings: the tables of this service,
+			// after the wirings of the asker ended, as a measure of its
+			// margin (own_tables.odin).
+			asker_name: system.Name
+			asker_measured := root_ring.sender_allowed(.Wire, item.role.grants)
+			if asker_measured {
+				asker_name = item.name
+			}
+			// The one read of the stop serves the fact above and the end
+			// words of the wirings of the process.
+			release(&item, {state = state, cause = cause, outcome = outcome})
+			if asker_measured {
+				own_tables_measure(system.name_of(asker_name[:]))
+			}
 			// A later start gets no window and a start with a terminal is
 			// refused (start_view_give), and nothing starts here.
 			if compositor_reaped {

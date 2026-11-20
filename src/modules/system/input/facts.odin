@@ -27,3 +27,30 @@ Key_Records_Lost :: struct {
 Pointer_Records_Lost :: struct {
 	pointer_records: u64,
 }
+
+// The facts below have no value: their sentence is their template. The
+// mouse with and without a wheel are two sentences, so two fact types.
+
+// The ring of the input does not open.
+@(log_fact = "input: no ring")
+No_Ring :: struct {}
+
+// The machine has no PS/2 controller.
+@(log_fact = "input: no PS/2 controller: no keyboard and no mouse")
+No_Controller :: struct {}
+
+// The service is ready, and the mouse has no wheel.
+@(log_fact = "input: ok, the mouse has no wheel")
+Ready_Mouse_Without_Wheel :: struct {}
+
+// The service is ready, and the mouse has a wheel.
+@(log_fact = "input: ok, the mouse has a wheel")
+Ready_Mouse_With_Wheel :: struct {}
+
+// The input ring is full: the controller keeps its bytes.
+@(log_fact = "input: the input ring is full: the keyboard controller keeps its bytes")
+Input_Ring_Full :: struct {}
+
+// The input ring has room again.
+@(log_fact = "input: the input ring has room again")
+Input_Ring_Room_Again :: struct {}

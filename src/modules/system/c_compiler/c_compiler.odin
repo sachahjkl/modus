@@ -29,6 +29,7 @@ package c_compiler
 
 import "base:intrinsics"
 import "modus:contract/errors"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The bytes of a source that the module takes. The source is copied
@@ -129,8 +130,10 @@ diagnostic_log :: proc "contextless" (size: u64) {
 	start := 0
 	for index in 0 ..= len(text) {
 		if index == len(text) || text[index] == '\n' {
-			if index > start {
-				system.log(.Info, "c_compiler: ", text[start:index])
+			// A line that passes the field is one fact for each piece.
+			for piece := start; piece < index; piece += DIAGNOSTIC_PIECE_FIELD_BYTES - 1 {
+				end := min(index, piece + DIAGNOSTIC_PIECE_FIELD_BYTES - 1)
+				system.log_fact(.Info, Diagnostic_Line{diagnostic = value_kinds.text_field(text[piece:end], DIAGNOSTIC_PIECE_FIELD_BYTES)})
 			}
 			start = index + 1
 		}
@@ -192,7 +195,7 @@ compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, 
 		}
 	}
 	if compiler_used {
-		system.log(.Info, "c_compiler: a call host compiles one source: unload the module and isolate it again")
+		system.log_fact(.Info, Second_Source_Refused{})
 		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, 0)
 	}
 
@@ -226,7 +229,7 @@ compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, 
 	word := chibicc_compile(&call)
 	result, known := compile_result_of_word(word)
 	if !known {
-		system.log(.Error, "c_compiler: the C entry gave the word ", i64(word), ", which names no result")
+		system.log_fact(.Error, Entry_Word_Refused{word = i64(word)})
 		system.arena_end(&arena)
 		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, i64(word))
 	}
@@ -266,6 +269,6 @@ compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, 
 	intrinsics.mem_copy_non_overlapping(raw_data(memory), call.text, int(size))
 	system.memory_unmap(raw_data(memory))
 	system.arena_end(&arena)
-	system.log(.Info, "c_compiler: a text of ", size, " bytes")
+	system.log_fact(.Info, Text_Written{size = value_kinds.Size_In_Bytes(size)})
 	return i64(size)
 }

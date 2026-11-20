@@ -1,6 +1,6 @@
 package bootscreen
 
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "modus:contract/text_encoding"
 import "modus:support/graphics"
 
@@ -78,7 +78,7 @@ spleen_text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, char
 // spleen_character_draw draws one character in the cell at (x, y).
 @(private)
 spleen_character_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, character: rune, color: graphics.Color, form: Spleen_Form) {
-	index, found := glyph_cache.character_index(character)
+	index, found := font_characters.character_index(character)
 	if !found {
 		// The box of the replacement glyph is drawn on the grid of 8x16.
 		graphics.character_replacement(canvas, x, y, color, spleen_size_widths[form.size] / graphics.CELL_WIDTH * form.factor)

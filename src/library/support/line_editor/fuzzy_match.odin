@@ -166,6 +166,7 @@ Candidate_Kind :: enum u8 {
 	Fact_Type    = 8, // The name of a fact type of a log fact: "package.Type".
 	Field        = 9, // A field of the record of a table, in a condition.
 	Member       = 10, // A member of a contract enum, after the operator of a condition on a status.
+	Stream       = 11, // A record output of a process, after the name of the process and its dot: a value, not a call.
 }
 
 // A name that can complete what the input typed. The caller fills a

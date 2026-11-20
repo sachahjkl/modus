@@ -48,10 +48,6 @@ refusal_recorded :: proc "contextless" (error: ^errors.Error_Record, part: op.Th
 	return error.kind == i64(errors.Kind.Bad_Value) && u64(error.value) == refused && u64(error.limit) == most && error.found == i64(part)
 }
 
-verdict_of :: proc "contextless" (as_it_must: bool) -> string {
-	return as_it_must ? ": as it must" : ": WRONG"
-}
-
 // placement_settles waits until the thread report shows a thread of this
 // process inside a set, then takes PLACEMENT_SAMPLES more reports and
 // counts those that show it outside. A thread that ran on a processor
@@ -149,7 +145,7 @@ placement_own :: proc "contextless" (processors: u64) -> bool {
 	first_right := result.read == .Ok && result.first.processors == every && result.first.processors_limit == every
 	second_right := result.again == .Ok && result.second.processors == kept && result.second.processors_limit == every
 	as_it_must := first_right && result.write == .Ok && second_right && result.samples == PLACEMENT_SAMPLES && result.outside == 0
-	system.log(.Info, "scheduler: a thread read its own placement: each of the ", processors, " processors in its set and in its limit: ", u64(first_right), "; its own write of the processor ", u64(result.processor), " alone: ", op.STATUS_NAMES[result.write], ", and it then read that processor alone, with the same limit: ", u64(second_right), "; in ", result.samples, " samples of its thread report, each after one more tick of its run, its home or its processor was another one ", result.outside, " times", verdict_of(as_it_must))
+	system.log_fact(.Info, Own_Placement_Read{processors = processors, first_right = u64(first_right), processor = u64(result.processor), write = op.Status_Word(result.write), second_right = u64(second_right), samples = result.samples, outside = result.outside, verdict = verdict_field(as_it_must)})
 	return as_it_must
 }
 
@@ -157,7 +153,7 @@ placement_own :: proc "contextless" (processors: u64) -> bool {
 // that runs and that the machine handle keeps on the processor 0.
 placement_refusals :: proc "contextless" (processors: u64) -> bool {
 	if processors < 2 || processors >= 64 {
-		system.log(.Info, "scheduler: the refused writes of a placement are not checked on a machine with ", processors, " processors: the case needs a processor that the thread does not have, and a processor that the machine does not have")
+		system.log_fact(.Info, Refused_Placement_Not_Checked{processors = processors})
 		return true
 	}
 	every := every_processor(processors)
@@ -222,8 +218,8 @@ placement_refusals :: proc "contextless" (processors: u64) -> bool {
 	rights_right := no_schedule == .No_Right && no_inspect == .No_Right && blind_write == .No_Right && no_control == .No_Right && reads && rights_changed_nothing
 	rights_right &&= ended_read == .Bad_State && ended_write == .Bad_State
 	// Two lines: one line of the log holds 512 bytes.
-	system.log(.Info, "scheduler: refused sets of a placement, on a spinner that the machine handle keeps on the processor 0: through its thread handle a wider set ", op.STATUS_NAMES[wider], " and a processor that the machine does not have ", op.STATUS_NAMES[nowhere], ", with their error records: ", u64(process_records), "; through the machine handle a limit of no processor of the machine ", op.STATUS_NAMES[no_limit], " and a set outside its limit ", op.STATUS_NAMES[outside_limit], ", with their error records: ", u64(machine_records), "; the placement stayed: ", u64(unchanged), verdict_of(sets_right))
-	system.log(.Info, "scheduler: the rights of a placement: the machine handle with no right Schedule ", op.STATUS_NAMES[no_schedule], "; a read and a write through the machine handle with Schedule and no Inspect ", op.STATUS_NAMES[no_inspect], " and ", op.STATUS_NAMES[blind_write], "; a thread handle with Inspect and no Control ", op.STATUS_NAMES[no_control], ", and it reads: ", u64(reads), "; the placement stayed: ", u64(rights_changed_nothing), "; a read and a write by the machine number of a thread that ended ", op.STATUS_NAMES[ended_read], " and ", op.STATUS_NAMES[ended_write], verdict_of(rights_right))
+	system.log_fact(.Info, Placement_Sets_Refused{wider = op.Status_Word(wider), nowhere = op.Status_Word(nowhere), process_records = u64(process_records), no_limit = op.Status_Word(no_limit), outside_limit = op.Status_Word(outside_limit), machine_records = u64(machine_records), unchanged = u64(unchanged), verdict = verdict_field(sets_right)})
+	system.log_fact(.Info, Placement_Rights{no_schedule = op.Status_Word(no_schedule), no_inspect = op.Status_Word(no_inspect), blind_write = op.Status_Word(blind_write), no_control = op.Status_Word(no_control), reads = u64(reads), stayed = u64(rights_changed_nothing), ended_read = op.Status_Word(ended_read), ended_write = op.Status_Word(ended_write), verdict = verdict_field(rights_right)})
 	return sets_right && rights_right
 }
 
@@ -258,7 +254,7 @@ limited_placement_child_run :: proc "c" (parameter: rawptr) -> ! {
 
 placement_limits :: proc "contextless" (processors: u64) -> bool {
 	if processors < 4 {
-		system.log(.Info, "scheduler: the limit of a placement is not checked on a machine with ", processors, " processors: the case needs a limit of two processors and a processor outside it")
+		system.log_fact(.Info, Placement_Limit_Not_Checked{processors = processors})
 		return true
 	}
 	every := every_processor(processors)
@@ -288,8 +284,8 @@ placement_limits :: proc "contextless" (processors: u64) -> bool {
 		wrong += u64(!narrow_kept || !placement_is(0, number, limit, limit))
 	}
 	rounds_right := accepted == PLACEMENT_LIMIT_ROUNDS && refused == 2 * PLACEMENT_LIMIT_ROUNDS && machine_widened == PLACEMENT_LIMIT_ROUNDS && wrong == 0
-	system.log(.Info, "scheduler: the limit of the processors 0 to ", processors / 2 - 1, " written through the machine handle: the thread has that set: ", u64(limited), "; its own write of each processor ", op.STATUS_NAMES[widen], ", the error record has the set of the thread: ", u64(record_right), "; its own write of a wider limit changed nothing: ", u64(kept), verdict_of(first_right))
-	system.log(.Info, "scheduler: under that limit, ", u64(PLACEMENT_LIMIT_ROUNDS), " rounds of the own writes of the thread, of the processor 0, of the set of the limit and of each processor, then the limit again through the machine handle: ", accepted, " of its own accepted, ", refused, " refused, ", machine_widened, " widened by the machine handle, a wrong set or limit ", wrong, " times", verdict_of(rounds_right))
+	system.log_fact(.Info, Placement_Limit_Written{last_processor = processors / 2 - 1, limited = u64(limited), widen = op.Status_Word(widen), record_right = u64(record_right), kept = u64(kept), verdict = verdict_field(first_right)})
+	system.log_fact(.Info, Placement_Limit_Rounds{rounds = u64(PLACEMENT_LIMIT_ROUNDS), accepted = accepted, refused = refused, widened = machine_widened, wrong = wrong, verdict = verdict_field(rounds_right)})
 
 	// A new thread has the limit as its set and as its limit, and its
 	// first queue is the queue of a processor of the limit.
@@ -305,7 +301,7 @@ placement_limits :: proc "contextless" (processors: u64) -> bool {
 	widened := system.thread_placement_write(machine, self_machine_number, {})
 	restored := widened == .Ok && placement_is(0, number, every, every)
 	child_right := inherited && home_inside && result.widen == .Bad_Operation
-	system.log(.Info, "scheduler: under that limit: a new thread has the limit as its set and as its limit: ", u64(inherited), ", its home is a processor of the limit: ", u64(home_inside), ", and its own write of each processor ", op.STATUS_NAMES[result.widen], "; after the machine handle wrote the zero record the first thread has each processor in its set and in its limit: ", u64(restored), verdict_of(child_right && restored))
+	system.log_fact(.Info, Placement_Limit_Inherited{inherited = u64(inherited), home_inside = u64(home_inside), widen = op.Status_Word(result.widen), restored = u64(restored), verdict = verdict_field(child_right && restored)})
 	return first_right && rounds_right && child_right && restored
 }
 
@@ -453,7 +449,7 @@ listed_or_running_placed :: proc "contextless" (every: u64, count: int, numbers:
 
 placement_states :: proc "contextless" (processors: u64) -> bool {
 	if processors < 2 || processors + 1 > SPINNER_LIMIT {
-		system.log(.Info, "scheduler: a set without the home of a thread is not checked on a machine with ", processors, " processors: the case needs a second processor, and one spinner more than the processors")
+		system.log_fact(.Info, Set_Without_Home_Not_Checked{processors = processors})
 		return true
 	}
 	every := every_processor(processors)
@@ -475,8 +471,8 @@ placement_states :: proc "contextless" (processors: u64) -> bool {
 	off_right &&= started && held_moved && held_settled && held_outside == 0
 	on_right := started && listed_found && listed_settled && listed_outside == 0 && running_found && running_settled && running_outside == 0
 	as_it_must := off_right && on_right
-	system.log(.Info, "scheduler: a set without the home of a thread, written through the machine handle: a thread that waits has a home of the set in the next report: ", u64(waiting_moved), ", and after its wake it ran inside the set: ", u64(waiting_settled), ", outside in ", waiting_outside, " reports; a spinner that a Stop holds has a home of the set in the next report: ", u64(held_moved), ", and after the Resume it ran inside the set: ", u64(held_settled), ", outside in ", held_outside, " reports", verdict_of(off_right))
-	system.log(.Info, "scheduler: a set without the home of a spinner, written through the machine handle: a spinner in a list ran inside the set: ", u64(listed_settled), ", outside in ", listed_outside, " reports after the first one inside; a spinner on a processor ran inside the set: ", u64(running_settled), ", outside in ", running_outside, " reports after the first one inside", verdict_of(on_right))
+	system.log_fact(.Info, Set_Without_Home_Of_Thread{waiting_moved = u64(waiting_moved), waiting_settled = u64(waiting_settled), waiting_outside = waiting_outside, held_moved = u64(held_moved), held_settled = u64(held_settled), held_outside = held_outside, verdict = verdict_field(off_right)})
+	system.log_fact(.Info, Set_Without_Home_Of_Spinner{listed_settled = u64(listed_settled), listed_outside = listed_outside, running_settled = u64(running_settled), running_outside = running_outside, verdict = verdict_field(on_right)})
 	return as_it_must
 }
 
@@ -488,7 +484,7 @@ placement_states :: proc "contextless" (processors: u64) -> bool {
 // group, so the case cannot pass with spinners that do not run.
 placement_apart :: proc "contextless" (processors: u64) -> bool {
 	if processors < 2 {
-		system.log(.Info, "scheduler: two groups of spinners with no common processor are not checked on a machine with one processor")
+		system.log_fact(.Info, Groups_Not_Checked{})
 		return true
 	}
 	every := every_processor(processors)
@@ -532,8 +528,8 @@ placement_apart :: proc "contextless" (processors: u64) -> bool {
 	}
 	spinners_stop(0, count)
 	as_it_must := started && restored && inherited && seen == every && samples >= APART_SAMPLES && outside == 0
-	system.log(.Info, "scheduler: two groups of ", u64(APART_GROUP), " spinners, each created under the limit of its group, the processors 0 to ", processors / 2 - 1, " and ", processors / 2, " to ", processors - 1, ": each spinner has that limit as its set and as its limit: ", u64(inherited), "; each of the ", processors, " processors ran a spinner of its group: ", u64(seen == every), "; in at least ", u64(APART_SAMPLES), " reports of the threads a spinner had a home or a processor of the other group ", outside, " times", verdict_of(as_it_must))
-	system.log(.Info, "scheduler: the two groups were read in ", samples, " reports (a measure)")
+	system.log_fact(.Info, Groups_Apart{group = u64(APART_GROUP), first_group_last = processors / 2 - 1, second_group_first = processors / 2, second_group_last = processors - 1, inherited = u64(inherited), processors = processors, each_seen = u64(seen == every), samples = u64(APART_SAMPLES), outside = outside, verdict = verdict_field(as_it_must)})
+	system.log_fact(.Info, Groups_Read{samples = samples})
 	return as_it_must
 }
 
@@ -655,16 +651,16 @@ placement_balance_case :: proc "contextless" (processors: u64, by_budget: bool) 
 	restored := system.thread_placement_write(machine, self_machine_number, {}) == .Ok
 	as_it_must := prepared && apart && restored
 	if by_budget {
-		system.log(.Info, "scheduler: ", u64(BLOCKERS), " threads of a budget with no processor time, in the queue of the processor 0, make it the busiest, and each processor from 2 runs a spinner of its own; two spinners of the queue of the processor 1 got the processors 1 to ", processors - 1, ": a report showed the two on two processors at one time: ", u64(apart), verdict_of(as_it_must))
+		system.log_fact(.Info, Balance_Past_Budget_Queue{blockers = u64(BLOCKERS), last_processor = processors - 1, apart = u64(apart), verdict = verdict_field(as_it_must)})
 	} else {
-		system.log(.Info, "scheduler: ", u64(BLOCKERS), " spinners that only the processor 0 can run make its queue the busiest, and each processor from 2 runs a spinner of its own; two spinners of the queue of the processor 1 got the processors 1 to ", processors - 1, ": a report showed the two on two processors at one time: ", u64(apart), verdict_of(as_it_must))
+		system.log_fact(.Info, Balance_Past_Spinner_Queue{blockers = u64(BLOCKERS), last_processor = processors - 1, apart = u64(apart), verdict = verdict_field(as_it_must)})
 	}
 	return as_it_must
 }
 
 placement_balance :: proc "contextless" (processors: u64) -> bool {
 	if processors < 4 || BLOCKERS + processors > SPINNER_LIMIT {
-		system.log(.Info, "scheduler: the balance past a queue of threads that a processor cannot take is not checked on a machine with ", processors, " processors: the case needs two processors for the two queues, two more for the first thread, and a spinner for each processor from 2, at most ", u64(SPINNER_LIMIT - BLOCKERS), " processors")
+		system.log_fact(.Info, Balance_Not_Checked{processors = processors, processors_most = u64(SPINNER_LIMIT - BLOCKERS)})
 		return true
 	}
 	with_placements := placement_balance_case(processors, false)
@@ -691,7 +687,7 @@ WIDENED_REPORTS :: 50
 
 placement_widened :: proc "contextless" (processors: u64) -> bool {
 	if processors < 2 {
-		system.log(.Info, "scheduler: a set that gets an idle processor is not checked on a machine with one processor")
+		system.log_fact(.Info, Idle_Set_Not_Checked{})
 		return true
 	}
 	numbers: [SPINNER_LIMIT]u64
@@ -744,8 +740,8 @@ placement_widened :: proc "contextless" (processors: u64) -> bool {
 	spinners_stop(0, 2)
 	restored := system.thread_placement_write(machine, self_machine_number, {}) == .Ok
 	as_it_must := prepared && reached && restored
-	system.log(.Info, "scheduler: two spinners and the first thread kept on the processor 0; the spinner of the list got the processor 1 too through the machine handle: a report showed it on the processor 1: ", u64(reached), verdict_of(as_it_must))
-	system.log(.Info, "scheduler: the spinner was seen on the processor 1 in the round ", rounds, " (a measure)")
+	system.log_fact(.Info, Idle_Processor_Reached{reached = u64(reached), verdict = verdict_field(as_it_must)})
+	system.log_fact(.Info, Idle_Processor_Round{round = rounds})
 	return as_it_must
 }
 
@@ -831,8 +827,8 @@ placement_changes :: proc "contextless" (processors: u64) -> bool {
 	spinners_stop(0, EQUAL_COUNT)
 	system.strategy_set(machine, before)
 	as_it_must := started && ran && placed && changer.changes == CHANGES && changer.refused == 0
-	system.log(.Info, "scheduler: writes of a placement through the machine handle while the strategy changed ", u64(CHANGES), " times: none was refused, each of the ", u64(EQUAL_COUNT), " spinners ran after them and has each processor again", verdict_of(as_it_must))
-	system.log(.Info, "scheduler: ", placement_writer.writes, " writes of a placement during ", changer.changes, " changes of strategy, ", placement_writer.refused, " refused (measures)")
+	system.log_fact(.Info, Placement_Writes_During_Changes{changes = u64(CHANGES), spinners = u64(EQUAL_COUNT), verdict = verdict_field(as_it_must)})
+	system.log_fact(.Info, Placement_Writes_Measured{writes = placement_writer.writes, changes = changer.changes, refused = placement_writer.refused})
 	return as_it_must
 }
 

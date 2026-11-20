@@ -83,14 +83,14 @@ a_start_policy_past_its_bound_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(start_policy_source_problems(past)), 1)
 	split := [][2]string{{"main.odin", lines_of(START_POLICY_SOURCE_LINE_LIMIT)}, {"rows.odin", "package start_policy\n"}}
 	testing.expect_value(t, len(start_policy_source_problems(split)), 1)
-	imports := [?]string{"import \"core:fmt\"\n", "import op \"modus:contract/operation\"\n", "import \"modus:support/storage\"\n", "import\n", "foreign import code \"code.asm\"\n", "\tforeign code {\n", "foreign {\n"}
+	imports := [?]string{"import \"core:fmt\"\n", "import \"modus:contract/errors\"\n", "import \"modus:support/storage\"\n", "import\n", "foreign import code \"code.asm\"\n", "\tforeign code {\n", "foreign {\n"}
 	for line in imports {
 		source := [][2]string{{"main.odin", strings.concatenate({"package start_policy\n", line}, context.temp_allocator)}}
 		testing.expectf(t, len(start_policy_source_problems(source)) == 1, "the import %q is taken", line)
 	}
 	with_a_test := [][2]string{{"main.odin", lines_of(START_POLICY_SOURCE_LINE_LIMIT)}, {"rows_test.odin", strings.concatenate({lines_of(START_POLICY_SOURCE_LINE_LIMIT), "import \"core:testing\"\n"}, context.temp_allocator)}}
 	testing.expect_value(t, len(start_policy_source_problems(with_a_test)), 0)
-	allowed := [][2]string{{"main.odin", "package start_policy\n\nimport \"base:intrinsics\"\nimport \"modus:contract/ring\"\nimport \"modus:contract/root_ring\"\nimport \"modus:contract/start_list\"\nimport \"modus:support/system\"\n"}}
+	allowed := [][2]string{{"main.odin", "package start_policy\n\nimport \"base:intrinsics\"\nimport op \"modus:contract/operation\"\nimport \"modus:contract/ring\"\nimport \"modus:contract/root_ring\"\nimport \"modus:contract/start_list\"\nimport \"modus:contract/value_kinds\"\nimport \"modus:support/system\"\n"}}
 	testing.expect_value(t, len(start_policy_source_problems(allowed)), 0)
 	testing.expect(t, start_policy_source_check(), "the source of the start policy of the repository is refused")
 }

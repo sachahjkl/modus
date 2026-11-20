@@ -2,6 +2,7 @@ package compositor
 
 import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:private/compositor/bar"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -40,12 +41,12 @@ resizable_take :: proc "contextless" (client: ^Client, record: ring.Record) {
 	if problem != .None {
 		if !client.resizable_refusal_logged {
 			client.resizable_refusal_logged = true
-			system.log(.Warning, "compositor: window ", system.name_of(client.title[:]), " asks to be resizable with limits that it cannot have: ", display.SIZE_LIMITS_PROBLEM_SENTENCES[problem], "; it stays as it was. A window writes this line one time")
+			system.log_fact(.Warning, Resizable_Refused{limits_problem = value_kinds.text_field(display.SIZE_LIMITS_PROBLEM_SENTENCES[problem], LIMITS_PROBLEM_FIELD_BYTES), window = window_field(client.title[:])})
 		}
 		return
 	}
 	client.resizable, client.size_limits = true, limits
-	system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " is resizable from ", u64(limits.least_width), "x", u64(limits.least_height), " to ", u64(limits.largest_width), "x", u64(limits.largest_height))
+	system.log_fact(.Info, Window_Resizable{least_width = u64(limits.least_width), least_height = u64(limits.least_height), largest_width = u64(limits.largest_width), largest_height = u64(limits.largest_height), window = window_field(client.title[:])})
 }
 
 // surface_resize_take takes the record Surface_Resize of a window: the
@@ -95,7 +96,7 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 		// the screen does not show, and the window keeps its old picture.
 		client.resizes_refused += 1
 		client.resize_asked, client.resize_edges = false, {}
-		system.log(.Warning, "compositor: window ", system.name_of(client.title[:]), ": the surface of ", facts.width, "x", facts.height, " cannot be mapped; the window keeps its size")
+		system.log_fact(.Warning, Surface_Not_Mapped{width = facts.width, height = facts.height, window = window_field(client.title[:])})
 		return
 	}
 	// The answer ends the request. A surface that waits for its Present
@@ -119,7 +120,7 @@ resize_declined_take :: proc "contextless" (client: ^Client) {
 		return
 	}
 	client.resize_asked, client.resize_edges = false, {}
-	system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " keeps its size ", u64(client.surface.width), "x", u64(client.surface.height))
+	system.log_fact(.Info, Window_Keeps_Size{width = u64(client.surface.width), height = u64(client.surface.height), window = window_field(client.title[:])})
 }
 
 // size_range_of gives the limits of a window as the pure procedures of the
@@ -153,7 +154,7 @@ resize_surface_take :: proc "contextless" (client: ^Client) {
 	// The line of a new surface, as surface_create writes it: a reader of
 	// the log finds the size and the place of the window in the last one.
 	system.log_fact(.Info, Surface_Made{window = window_field(client.title[:]), width = u64(client.surface.width), height = u64(client.surface.height), x = u64(max(client.x, 0)), y = u64(max(client.y, 0))})
-	system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " resized from ", u64(old_width), "x", u64(old_height), " to ", u64(client.surface.width), "x", u64(client.surface.height))
+	system.log_fact(.Info, Window_Resized{old_width = u64(old_width), old_height = u64(old_height), width = u64(client.surface.width), height = u64(client.surface.height), window = window_field(client.title[:])})
 }
 
 // resize_edges_under_pointer gives the window whose edges are under the
@@ -222,7 +223,7 @@ resize_pointer_moved :: proc "contextless" (held: bool) {
 	client.resize_asked_width, client.resize_asked_height = width, height
 	client.resize_edges = resize_start.edges
 	send(client, .Resized, {0 = u64(width), 1 = u64(height)})
-	system.log(.Info, "compositor: window ", system.name_of(client.title[:]), " asked to draw at ", u64(width), "x", u64(height))
+	system.log_fact(.Info, Draw_Size_Asked{width = u64(width), height = u64(height), window = window_field(client.title[:])})
 }
 
 // resize_outline_damage records the rectangle of the outline.

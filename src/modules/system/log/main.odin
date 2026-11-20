@@ -156,7 +156,10 @@ repeated_start :: proc "contextless" (record: ^system.Log_Record, text: string) 
 // (Log_Record.more): the window joins them again, so that the text is whole
 // and its lines end at a space (docs/INTERFACE.md, "The text in a box"),
 // never inside a word where a record ended.
-JOIN_PARTS :: 4 // The records of one text that the window joins: a text of system.log has at most 512 bytes. More records start a second text.
+// The records of one text that the window joins: a text of system.log has
+// at most 512 bytes, and a fact has at most op.LOG_FACT_RECORDS_MOST
+// records. More records start a second text.
+JOIN_PARTS :: max(4, op.LOG_FACT_RECORDS_MOST)
 RECORD_TEXT_SIZE :: size_of(system.Log_Record) - offset_of(system.Log_Record, text)
 JOIN_CAPACITY :: JOIN_PARTS * RECORD_TEXT_SIZE
 JOIN_RUN_CAPACITY :: 64 // The value runs of one joined text that keep their color; a run past them is plain.
@@ -262,32 +265,96 @@ Rendered_Fact :: struct {
 }
 rendered_facts: [ROWS]Rendered_Fact // rendered_facts[n % ROWS] is the fact of record n of this reader, when it is one.
 
-// fact_render writes the sentence of a fact, each value with its value
-// run, or the raw form of the fact, the line of the serial port, when the
-// image has no module or no valid description for it. A sentence longer
-// than the room of a joined text is no sentence: its raw form fits, and no
-// text is cut.
-fact_render :: proc "contextless" (rendered: ^Rendered_Fact, record: ^system.Log_Record) {
+// fact_render writes the sentence of a whole fact into the place of its
+// last record, each value with its value run, from the values of each of
+// its records joined. false: the image has no module or no valid
+// description for it, or the sentence is longer than the room of a joined
+// text: the caller shows the raw form, and no text is cut.
+fact_render :: proc "contextless" (rendered: ^Rendered_Fact, record: ^system.Log_Record, values: []u8) -> bool {
 	rendered.count, rendered.run_count = 0, 0
 	fact := op.log_record_fact(record)
-	value_count := min(int(fact.value_count), len(fact.values))
-	if file := fact_module_of_hash(fact.module_hash); file != nil {
-		runs: [module.FACT_SENTENCE_RUNS_MOST]value_kinds.Value_Run_In_Call
-		written, run_count, refusal := module.fact_sentence_write(file, fact.key, fact.values[:value_count], rendered.bytes[:], runs[:])
-		if refusal == .None {
-			for run in runs[:run_count] {
-				kind, kind_ok := value_kinds.value_kind_of(run.kind)
-				if kind_ok && kind != .None && rendered.run_count < FACT_RUN_CAPACITY {
-					rendered.runs[rendered.run_count] = {int(run.start), int(run.start) + int(run.length), kind}
-					rendered.run_count += 1
-				}
-			}
-			rendered.count = written
-			return
+	file := fact_module_of_hash(fact.module_hash)
+	if file == nil {
+		return false
+	}
+	runs: [module.FACT_SENTENCE_RUNS_MOST]value_kinds.Value_Run_In_Call
+	written, run_count, refusal := module.fact_sentence_write(file, fact.key, values, rendered.bytes[:], runs[:])
+	if refusal != .None {
+		return false
+	}
+	for run in runs[:run_count] {
+		kind, kind_ok := value_kinds.value_kind_of(run.kind)
+		if kind_ok && kind != .None && rendered.run_count < FACT_RUN_CAPACITY {
+			rendered.runs[rendered.run_count] = {int(run.start), int(run.start) + int(run.length), kind}
+			rendered.run_count += 1
 		}
 	}
+	rendered.count = written
+	return true
+}
+
+// fact_raw writes the raw form of one record of a fact: its part of the
+// line of the serial port. A record after the first that continues the
+// raw form of the record before it writes "/" and its values, so the
+// joined text of the records is the line of the fact; a record of a fact
+// that the window cannot join writes the mark first, and its part alone.
+fact_raw :: proc "contextless" (rendered: ^Rendered_Fact, record: ^system.Log_Record, continuation: bool, marked: bool) {
+	rendered.count, rendered.run_count = 0, 0
+	if marked {
+		rendered.count = copy(rendered.bytes[:], op.LOG_FACT_JOIN_BROKEN_MARK)
+	}
 	raw: [op.LOG_FACT_LINE_BYTES_MOST]u8
-	rendered.count = copy(rendered.bytes[:], raw[:op.log_fact_line(fact, &raw)])
+	rendered.count += copy(rendered.bytes[rendered.count:], raw[:op.log_fact_line(op.log_record_fact(record), &raw, continuation)])
+}
+
+// The join of the records of a fact of several records, in the order in
+// which the window takes them, and the place of the first record of the
+// open fact among the records that the window took.
+fact_records_join: op.Log_Fact_Join
+fact_records_join_first: u64
+
+// fact_parts_raw writes again the raw form of the records of the window
+// from the place first to the place end, which the window took: the
+// records of a fact that it cannot join (marked), or that it cannot render
+// (a raw line). A record that the window no longer holds is not written.
+fact_parts_raw :: proc "contextless" (first, end: u64, marked: bool) {
+	for place in first ..< end {
+		if row_count - place > ROWS {
+			continue
+		}
+		fact_raw(&rendered_facts[place % ROWS], &rows[place % ROWS], !marked && place != first, marked)
+	}
+}
+
+// fact_take takes the record of a fact into the join, and writes what the
+// window shows for it: nothing for a record of a fact that waits for its
+// next record, the sentence of a whole fact in the place of its last
+// record, or the raw forms. A broken fact shows each of its records raw,
+// after the mark.
+fact_take :: proc "contextless" (record: ^system.Log_Record) {
+	was_open, first := fact_records_join.open, fact_records_join_first
+	whole, fault := op.log_fact_join_take(&fact_records_join, op.log_fact_part_of_record(record, record.sequence))
+	if fault != .None && was_open {
+		fact_parts_raw(first, row_count, true)
+	}
+	rendered := &rendered_facts[row_count % ROWS]
+	rendered.count, rendered.run_count = 0, 0
+	switch {
+	case whole:
+		started := fact_records_join.part_count == 1 ? row_count : fact_records_join_first
+		if !fact_render(rendered, record, fact_records_join.values[:fact_records_join.value_count]) {
+			fact_parts_raw(started, row_count, false)
+			fact_raw(rendered, record, started != row_count, false)
+		}
+	case fact_records_join.open:
+		// The record waits for the next records of its fact: the first
+		// record keeps the place of the fact.
+		if op.log_record_fact(record).part == 0 {
+			fact_records_join_first = row_count
+		}
+	case:
+		fact_raw(rendered, record, false, true)
+	}
 }
 
 // fact_join adds the sentence that take() rendered for the record at a
@@ -396,7 +463,9 @@ take :: proc "contextless" (record: ^system.Log_Record) -> bool {
 		return false
 	}
 	if form, form_known := op.log_record_form(record); form_known && form == .Fact {
-		fact_render(&rendered_facts[row_count % ROWS], record)
+		fact_take(record)
+	} else if fact_records_join.open && op.log_fact_join_other_record(&fact_records_join, record.sequence, op.log_fact_writer(record)) != .None {
+		fact_parts_raw(fact_records_join_first, row_count, true)
 	}
 	rows[row_count % ROWS] = record^
 	row_count += 1
@@ -590,7 +659,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	reader, status := system.log_open(ctx.handles[system.GRANT_LOG_RECORDS])
 	if status != .Ok {
-		system.log(.Error, "log: cannot read the records of the log: status ", u64(status))
+		system.log_fact(.Error, Records_Not_Readable{status = op.Status_Word(status)})
 		system.stop(.Failed)
 	}
 	// The service reads the same memory object: exports.odin. Its handle
@@ -653,8 +722,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// The memory object of the log is its head and its records,
 			// each of the size of one record.
 			memory_bytes := (reader.head.capacity + 1) * size_of(system.Log_Record)
-			system.log(.Info, "log: the memory of the log: ", reader.head.capacity, " records in ", system.Size{memory_bytes / 1024, .Kibibytes})
-			system.log(.Info, "log: ok, ", row_count, " records, ", gone_before_start, " gone before its start, ", lost, " lost since, ", u64(process_count), " processes")
+			system.log_fact(.Info, Log_Memory{capacity = reader.head.capacity, memory = value_kinds.Size_In_Kibibytes(memory_bytes / 1024)})
+			system.log_fact(.Info, Window_Ready{records = row_count, gone_before_start = gone_before_start, lost = lost, processes = u64(process_count)})
 			continue
 		}
 		// The list comes after the reads and after the question to the

@@ -44,6 +44,7 @@
 package randomness
 
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -61,7 +62,7 @@ report: random.Entropy_Report
 first_bytes: [16]u8 // The first bytes of the stream of this process: the log has them, so a test compares two processes and two boots.
 live_bytes: [32]u8 // A draw of each picture.
 byte_counts: [16]u64 // The bytes of HISTOGRAM_SIZE by their high 4 bits.
-megabytes_per_second_tenths: u64
+megabytes_per_second_hundredths: u64 // The rate of the generator: the window and the log write it with two decimals.
 measure_microseconds: u64
 measured: bool
 
@@ -182,9 +183,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 	fresh_bytes_line(&frame, &column)
 	if measured {
 		builder.count = 0
-		interface.text_put_number(&builder, megabytes_per_second_tenths / 10)
-		interface.text_put(&builder, ".")
-		interface.text_put_number(&builder, megabytes_per_second_tenths % 10)
+		// Two decimals, as the log writes the rate.
+		interface.text_put_number(&builder, megabytes_per_second_hundredths / 100)
+		interface.text_put(&builder, megabytes_per_second_hundredths % 100 < 10 ? ".0" : ".")
+		interface.text_put_number(&builder, megabytes_per_second_hundredths % 100)
 		interface.text_put(&builder, " MB/s, 4 MiB in ")
 		interface.text_put_number(&builder, measure_microseconds)
 		interface.text_put(&builder, " us, no kernel entry")
@@ -219,12 +221,12 @@ draw :: proc "contextless" (window: ^display.Window) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&process_generator, ctx) {
-		system.log(.Info, "randomness: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	report_ok: bool
 	if report, report_ok = random.report_values_read(&ctx.values); !report_ok {
-		system.log(.Info, "randomness: the root service gave the seed strength ", ctx.values[0] & 0xFF, ", which names no strength: nothing is shown")
+		system.log_fact(.Info, Seed_Strength_Unknown{strength_word = ctx.values[0] & 0xFF})
 		system.stop(.Refused)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "randomness")
@@ -233,11 +235,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	random.fill(&process_generator, first_bytes[:])
 	hex: interface.Text_Builder
-	system.log(.Info, "randomness: the seed of the system: strength ", op.seed_strength_names[report.strength], "; the first bytes of the stream of this process: ", hex_text(&hex, first_bytes[:]))
+	system.log_fact(.Info, Seed_Shown{strength = value_kinds.text_field(op.seed_strength_names[report.strength], STRENGTH_FIELD_BYTES), first_bytes = value_kinds.text_field(hex_text(&hex, first_bytes[:]), FIRST_BYTES_FIELD_BYTES)})
 	if report.device_present {
-		system.log(.Info, "randomness: the entropy device: ", u64(report.device_bytes), " bytes mixed after the gathering; refused reads: ", u64(report.device_reads_refused))
+		system.log_fact(.Info, Entropy_Device_Shown{device_bytes = value_kinds.Size_In_Bytes(report.device_bytes), refused_reads = u64(report.device_reads_refused)})
 	} else {
-		system.log(.Info, "randomness: the entropy device: absent")
+		system.log_fact(.Info, Entropy_Device_Absent{})
 	}
 	draw(&window)
 
@@ -253,16 +255,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for count in byte_counts {
 		least, most = min(least, count), max(most, count)
 	}
-	system.log(.Info, "randomness: 1 MiB by the high 4 bits of each byte: from ", least, " to ", most, " in each of 16 (the mean is 65536)")
+	system.log_fact(.Info, Byte_Counts_Shown{least = least, most = most})
 	start := system.nanoseconds()
 	for _ in 0 ..< MEASURE_SIZE / len(chunk) {
 		random.fill(&process_generator, chunk[:])
 	}
 	took := max(system.nanoseconds() - start, 1)
 	measure_microseconds = took / 1000
-	megabytes_per_second_tenths = u64(MEASURE_SIZE) * 10_000 / took
+	megabytes_per_second_hundredths = u64(MEASURE_SIZE) * 100_000 / took
 	measured = true
-	system.log(.Info, "randomness: the generator: 4 MiB in ", measure_microseconds, " us, ", megabytes_per_second_tenths / 10, ".", megabytes_per_second_tenths % 10, " MB/s")
+	system.log_fact(.Info, Generator_Measured{elapsed = value_kinds.Time_In_Microseconds(measure_microseconds), rate = value_kinds.Hundredths(megabytes_per_second_hundredths)})
 	deadline := system.time()
 	// The line of the first mix comes after the picture that shows it, so a
 	// test that waits for the line finds the row in the window.
@@ -272,7 +274,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		draw(&window)
 		if mixes, change_count := random.fresh_bytes_mixes(&process_generator); mixes > 0 && !fresh_bytes_logged {
 			fresh_bytes_logged = true
-			system.log(.Info, "randomness: the fresh bytes of the root service are mixed into the generator of this process, at the change ", u64(change_count), " of its page")
+			system.log_fact(.Info, Fresh_Bytes_Mixed{change = u64(change_count)})
 		}
 		deadline += 500
 		display.wait(&window, deadline)

@@ -23,6 +23,7 @@ package root
 // nickname to its next file.
 
 import "modus:contract/blake3"
+import "modus:contract/storage_status"
 import "modus:contract/enum_word"
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/errors"
@@ -104,18 +105,95 @@ disk_grant_table_of :: proc "contextless" (principal: u64) -> ^disk_process.Gran
 	return &disk_grant_tables[principal]
 }
 
-// disk_grant_table_lasts gives the end of the sentence of a change of a
-// table: how long the table of the principal lasts.
-disk_grant_table_lasts :: proc "contextless" (principal: u64) -> string {
+// How long the disk grant table of a principal lasts: the end of the
+// sentence of a change of the table. A fact template has no condition, so
+// each line of a change has one fact type for each member.
+Table_Lasting :: enum u8 {
+	Until_Stop, // Principal 0 has no passphrase: the table lasts until the machine stops.
+	Kept_By_Machine_Passphrase, // The machine passphrase keeps the table of principal 0 on the disk.
+	Kept_By_Passphrase, // The passphrase of a named principal keeps its table on the disk.
+}
+
+// disk_grant_table_lasting gives how long the table of a principal lasts.
+disk_grant_table_lasting :: proc "contextless" (principal: u64) -> Table_Lasting {
 	if principal == principals.MACHINE {
 		if persisted_tables[principals.MACHINE].state == .No_Passphrase {
-			return "; principal 0 has no passphrase, so its disk grant table lasts until the machine stops"
+			return .Until_Stop
 		}
-		return "; the machine passphrase keeps the disk grant table of principal 0 on the disk"
+		return .Kept_By_Machine_Passphrase
 	}
 	// A change of the table of a named principal is taken only when the
 	// table is kept on the disk (persisted_table_refusal).
-	return "; the passphrase of the principal keeps its disk grant table on the disk"
+	return .Kept_By_Passphrase
+}
+
+// grant_lost_log writes the line of a grant that a nickname lost.
+grant_lost_log :: proc "contextless" (principal: u64, hash: [disk_process.HASH_SIZE]u8, nickname, grant: string) {
+	fact_hash, fact_nickname, fact_grant := value_kinds.Hash_Field(hash), module_name_field(nickname), text_field(grant, 24)
+	switch disk_grant_table_lasting(principal) {
+	case .Until_Stop:
+		system.log_fact(.Info, Grant_Lost_Until_Stop{hash = fact_hash, principal = principal, nickname = fact_nickname, grant = fact_grant})
+	case .Kept_By_Machine_Passphrase:
+		system.log_fact(.Info, Grant_Lost_Kept_By_Machine_Passphrase{hash = fact_hash, principal = principal, nickname = fact_nickname, grant = fact_grant})
+	case .Kept_By_Passphrase:
+		system.log_fact(.Info, Grant_Lost_Kept_By_Passphrase{hash = fact_hash, principal = principal, nickname = fact_nickname, grant = fact_grant})
+	}
+}
+
+// grant_given_log writes the line of a grant that a nickname has from its
+// next start.
+grant_given_log :: proc "contextless" (principal: u64, hash: [disk_process.HASH_SIZE]u8, nickname, grant: string) {
+	fact_hash, fact_nickname, fact_grant := value_kinds.Hash_Field(hash), module_name_field(nickname), text_field(grant, 24)
+	switch disk_grant_table_lasting(principal) {
+	case .Until_Stop:
+		system.log_fact(.Info, Grant_Given_Until_Stop{hash = fact_hash, principal = principal, nickname = fact_nickname, grant = fact_grant})
+	case .Kept_By_Machine_Passphrase:
+		system.log_fact(.Info, Grant_Given_Kept_By_Machine_Passphrase{hash = fact_hash, principal = principal, nickname = fact_nickname, grant = fact_grant})
+	case .Kept_By_Passphrase:
+		system.log_fact(.Info, Grant_Given_Kept_By_Passphrase{hash = fact_hash, principal = principal, nickname = fact_nickname, grant = fact_grant})
+	}
+}
+
+// nickname_moved_log writes the line of a nickname that names another
+// file, with its grants and its store.
+nickname_moved_log :: proc "contextless" (principal: u64, hash: [disk_process.HASH_SIZE]u8, nickname: string) {
+	fact_hash, fact_nickname := value_kinds.Hash_Field(hash), module_name_field(nickname)
+	switch disk_grant_table_lasting(principal) {
+	case .Until_Stop:
+		system.log_fact(.Info, Nickname_Moved_Until_Stop{hash = fact_hash, nickname = fact_nickname})
+	case .Kept_By_Machine_Passphrase:
+		system.log_fact(.Info, Nickname_Moved_Kept_By_Machine_Passphrase{hash = fact_hash, nickname = fact_nickname})
+	case .Kept_By_Passphrase:
+		system.log_fact(.Info, Nickname_Moved_Kept_By_Passphrase{hash = fact_hash, nickname = fact_nickname})
+	}
+}
+
+// table_persistence_log writes the line of the global setting of
+// persistence of a table.
+table_persistence_log :: proc "contextless" (principal: u64, persistence: string) {
+	words := text_field(persistence, 32)
+	switch disk_grant_table_lasting(principal) {
+	case .Until_Stop:
+		system.log_fact(.Info, Table_Persistence_Set_Until_Stop{principal = principal, persistence = words})
+	case .Kept_By_Machine_Passphrase:
+		system.log_fact(.Info, Table_Persistence_Set_Kept_By_Machine_Passphrase{principal = principal, persistence = words})
+	case .Kept_By_Passphrase:
+		system.log_fact(.Info, Table_Persistence_Set_Kept_By_Passphrase{principal = principal, persistence = words})
+	}
+}
+
+// row_persistence_log writes the line of the setting of persistence of the
+// row of a nickname.
+row_persistence_log :: proc "contextless" (principal: u64, nickname, persistence: string) {
+	fact_nickname, words := module_name_field(nickname), text_field(persistence, 32)
+	switch disk_grant_table_lasting(principal) {
+	case .Until_Stop:
+		system.log_fact(.Info, Row_Persistence_Set_Until_Stop{principal = principal, nickname = fact_nickname, persistence = words})
+	case .Kept_By_Machine_Passphrase:
+		system.log_fact(.Info, Row_Persistence_Set_Kept_By_Machine_Passphrase{principal = principal, nickname = fact_nickname, persistence = words})
+	case .Kept_By_Passphrase:
+		system.log_fact(.Info, Row_Persistence_Set_Kept_By_Passphrase{principal = principal, nickname = fact_nickname, persistence = words})
+	}
 }
 
 // disk_store_limit gives the blocks of the store of a disk process in a
@@ -142,12 +220,11 @@ disk_process_running :: proc "contextless" (nickname: string, principal: u64) ->
 	return nil
 }
 
-// disk_refused writes the line of a refusal on the log, and gives the
-// values of the completion.
-disk_refused :: proc "contextless" (name: string, values: [7]u64, parts: ..system.Part) -> [7]u64 {
-	text: [384]u8
-	system.log(.Warning, "root: refused ", system.Module_Name{name}, " from the disk: ", system.format(text[:], ..parts))
-	return values
+// disk_loader_refusal_log writes the line of a disk process whose file the
+// loader refused, then the fact of the load error.
+disk_loader_refusal_log :: proc "contextless" (name: string, error: ^module.Load_Error) {
+	system.log_fact(.Warning, Disk_Load_Refused_By_Loader{refused_process = module_name_field(name)})
+	load_error_log(.Warning, error)
 }
 
 // disk_name_refusal says if a name cannot be the name of a disk process,
@@ -162,27 +239,34 @@ disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refu
 	switch problem {
 	case .None:
 	case .Empty:
-		values^ = disk_refused(name, errors.ring_fail(kind, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT), "the name has no byte")
+		system.log_fact(.Warning, Disk_Load_Refused_Name_Empty{refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT)
 		return true
 	case .Too_Long:
-		values^ = disk_refused(name, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(len(name)), disk_process.NAME_LIMIT), "the name has more than ", u64(disk_process.NAME_LIMIT), " bytes")
+		system.log_fact(.Warning, Disk_Load_Refused_Name_Too_Long{name_limit = u64(disk_process.NAME_LIMIT), refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(len(name)), disk_process.NAME_LIMIT)
 		return true
 	case .Bad_Byte:
-		values^ = disk_refused(name, errors.ring_fail(kind, .Bad_Byte, .None, 1, i64(offset), 0, i64(name[offset])), "the name is no name of a process: visible characters of ASCII, no \"/\", not \".\" or \"..\"")
+		system.log_fact(.Warning, Disk_Load_Refused_Name_Not_A_Process_Name{refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Bad_Byte, .None, 1, i64(offset), 0, i64(name[offset]))
 		return true
 	case .Store_Name:
-		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the name is the name of the store of the module files")
+		system.log_fact(.Warning, Disk_Load_Refused_Name_Of_Module_Store{refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
 		return true
 	case .Table_Name:
-		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the name is the name of the object of the disk grant table")
+		system.log_fact(.Warning, Disk_Load_Refused_Name_Of_Grant_Table{refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
 		return true
 	}
 	if name_is_a_system_part(name) || role_names_the_process(name) {
-		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the grant table of the root service names it, and a disk process takes no grant by its name")
+		system.log_fact(.Warning, Disk_Load_Refused_Name_In_Grant_Table{refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
 		return true
 	}
 	if len(system.image_find(image, name)) != 0 {
-		values^ = disk_refused(name, errors.ring_fail(kind, .Exists, .Modules, 1), "a module of the boot image has this name")
+		system.log_fact(.Warning, Disk_Load_Refused_Name_In_Boot_Image{refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Exists, .Modules, 1)
 		return true
 	}
 	return false
@@ -205,7 +289,8 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 	// takes the hash of the row of the nickname.
 	table := disk_grant_table_of(asker.principal)
 	if table == nil {
-		values^ = disk_refused(name, errors.ring_fail(kind, .Absent, .Principals, 0), "the asker has no principal with a record")
+		system.log_fact(.Warning, Disk_Load_Refused_Asker_Without_Principal{refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Absent, .Principals, 0)
 		return .Bad_State, false
 	}
 	file, _, problem_of_the_nickname := disk_process.start_file(table, name, hash)
@@ -213,16 +298,19 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 	case .None, .Absent, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Start_Policy_Row, .Holds_Store:
 		// start_file gives only None, No_File and Other_File: the start goes on.
 	case .No_File:
-		values^ = disk_refused(name, errors.ring_fail(kind, .Absent, .Grants, 2), "the nickname has no row in the disk grant table of principal ", asker.principal, ": name the hash of its file")
+		system.log_fact(.Warning, Disk_Load_Refused_Nickname_Without_Row{principal = asker.principal, refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Absent, .Grants, 2)
 		return .Bad_Handle, false
 	case .Other_File:
 		head := transmute([4]u64)file
-		values^ = disk_refused(name, errors.ring_fail(kind, .Exists, .Grants, 2, i64(head[0])), "the nickname names the file ", system.Hash{file[:]}, ", and the command names the file ", system.Hash{hash[:]}, "; nickname_move points it to another file")
+		system.log_fact(.Warning, Disk_Load_Refused_Nickname_Other_File{named_hash = value_kinds.Hash_Field(file), hash = value_kinds.Hash_Field(hash), refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Exists, .Grants, 2, i64(head[0]))
 		return .Bad_Operation, false
 	}
 	hash = file
 	if disk_load.stage != .Idle {
-		values^ = disk_refused(name, errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1), "another load from the disk runs")
+		system.log_fact(.Warning, Disk_Load_Refused_Load_Busy{refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
 		return .Bad_State, false
 	}
 	// The connection: the store `module_files` of the principal of the asker.
@@ -231,7 +319,8 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 	disk_reader.principal = asker.principal
 	connection, service, ring_memory, region_memory, open_status := connection_open(&disk_reader, "storage")
 	if open_status != .Ok {
-		values^ = disk_refused(name, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(open_status)), "no connection to the storage service: status ", open_status)
+		system.log_fact(.Warning, Disk_Load_Refused_No_Connection{status = open_status, refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(open_status))
 		return open_status, false
 	}
 	client, opened := storage.open_handles(ring_memory, region_memory, service.process, system.image_find(image, "storage"))
@@ -239,7 +328,8 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 		system.close(ring_memory)
 		system.close(region_memory)
 		disconnect(connection)
-		values^ = disk_refused(name, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.No_Memory)), "the call ring and the call region of the storage service do not map")
+		system.log_fact(.Warning, Disk_Load_Refused_Not_Mapped{refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.No_Memory))
 		return .No_Memory, false
 	}
 	disk_load = {
@@ -254,12 +344,13 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 		client      = client,
 		deadline    = system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS,
 	}
-	system.log(.Info, "root: reads ", system.Module_Name{name}, " from the store ", disk_process.STORE_NAME, " of the storage service, for principal ", asker.principal)
+	system.log_fact(.Info, Disk_Load_Started{principal = asker.principal, loaded_process = module_name_field(name)})
 	if !disk_load_ask("size", 0, false) {
 		// The asker receives the completion from the caller of this
 		// procedure, not from the end of the load.
 		disk_load.asker = nil
-		values^ = disk_load_end(.Bad_State, disk_refused(name, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State)), "the storage service took no call"))
+		system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = module_name_field(name)})
+		values^ = disk_load_end(.Bad_State, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State)))
 		return .Bad_State, false
 	}
 	return .Ok, true
@@ -278,7 +369,7 @@ disk_load_ask :: proc "contextless" (export: string, offset: u64, with_offset: b
 		load.arguments[2].integer = offset
 		load.argument_count = 3
 	}
-	status: storage.Status
+	status: storage_status.Status
 	load.sent, status = storage.call_send(&load.client, export, load.arguments[:load.argument_count])
 	return status == .Ok
 }
@@ -347,22 +438,26 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 	name := string(load.name[:load.name_length])
 	refused_status := errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 	if load.asker == nil && !load.for_start_policy {
-		disk_load_end(.Bad_State, disk_refused(name, refused_status, "the process that asked for it stopped"))
+		system.log_fact(.Warning, Disk_Load_Refused_Asker_Stopped{refused_process = module_name_field(name)})
+		disk_load_end(.Bad_State, refused_status)
 		return
 	}
 	if load.connection == nil {
-		disk_load_end(.Bad_State, disk_refused(name, refused_status, "the storage service stopped"))
+		system.log_fact(.Warning, Disk_Load_Refused_Storage_Stopped{refused_process = module_name_field(name)})
+		disk_load_end(.Bad_State, refused_status)
 		return
 	}
 	error: errors.Error_Record
 	value, text, status, answered := storage.call_answer(&load.client, &load.sent, load.arguments[:load.argument_count], &error)
 	if !answered {
 		if !storage.connected(&load.client) {
-			disk_load_end(.Bad_State, disk_refused(name, refused_status, "the storage service stopped"))
+			system.log_fact(.Warning, Disk_Load_Refused_Storage_Stopped{refused_process = module_name_field(name)})
+			disk_load_end(.Bad_State, refused_status)
 			return
 		}
 		if system.time() >= load.deadline {
-			disk_load_end(.Bad_State, disk_refused(name, errors.ring_fail(kind, .No_Answer, .Milliseconds, 0, 0, disk_process.LOAD_DEADLINE_MILLISECONDS), "the storage service gave no answer in ", u64(disk_process.LOAD_DEADLINE_MILLISECONDS), " ms"))
+			system.log_fact(.Warning, Disk_Load_Refused_No_Answer{bound = disk_process.LOAD_DEADLINE_MILLISECONDS, refused_process = module_name_field(name)})
+			disk_load_end(.Bad_State, errors.ring_fail(kind, .No_Answer, .Milliseconds, 0, 0, disk_process.LOAD_DEADLINE_MILLISECONDS))
 			return
 		}
 		system.wait_records(wait, &load.client.calls.completions)
@@ -375,18 +470,21 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		return
 	}
 	if storage.export_failed_with(status, value, .Absent) {
-		disk_load_end(.Bad_Handle, disk_refused(name, errors.ring_fail(kind, .Absent, .Objects, 1), "the store ", disk_process.STORE_NAME, " has no object with this name"))
+		system.log_fact(.Warning, Disk_Load_Refused_No_Object{refused_process = module_name_field(name)})
+		disk_load_end(.Bad_Handle, errors.ring_fail(kind, .Absent, .Objects, 1))
 		return
 	}
 	if status == .Failed {
-		sentence: [240]u8
-		writer := system.Writer{buffer = sentence[:]}
-		storage.error_text(&writer, &load.client, &error)
-		disk_load_end(.Bad_State, disk_refused(name, errors.ring_fail(kind, storage.export_failed_with(status, value, .Damaged) ? errors.Kind.Damaged : errors.Kind.Refused, .Objects, 1, 0, 0, value), "the storage service refused the read: ", system.written(&writer)))
+		// The error record is a fact of its own fields after the line of
+		// the refusal.
+		system.log_fact(.Warning, Disk_Load_Refused_Read_Refused{refused_process = module_name_field(name)})
+		system.log_fact(.Warning, Disk_Load_Read_Refused(errors.error_record_fact_fields(error)))
+		disk_load_end(.Bad_State, errors.ring_fail(kind, storage.export_failed_with(status, value, .Damaged) ? errors.Kind.Damaged : errors.Kind.Refused, .Objects, 1, 0, 0, value))
 		return
 	}
 	if status != .Ok || value < 0 {
-		disk_load_end(.Bad_State, disk_refused(name, refused_status, "the storage service gave no answer that the description of its export allows"))
+		system.log_fact(.Warning, Disk_Load_Refused_Answer_Not_Allowed{refused_process = module_name_field(name)})
+		disk_load_end(.Bad_State, refused_status)
 		return
 	}
 	switch load.stage {
@@ -400,10 +498,12 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		switch answer {
 		case .Good:
 		case .Empty:
-			disk_load_end(.Bad_Operation, disk_refused(name, errors.ring_fail(kind, .Malformed, .None, 1), "the object has no byte"))
+			system.log_fact(.Warning, Disk_Load_Refused_Object_Empty{refused_process = module_name_field(name)})
+			disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Malformed, .None, 1))
 			return
 		case .Too_Large:
-			disk_load_end(.Bad_Operation, disk_refused(name, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(min(size, 1 << 62)), disk_process.FILE_BYTES_LIMIT), "the object has ", size, " bytes, and the module file of a disk process has at most ", u64(disk_process.FILE_BYTES_LIMIT)))
+			system.log_fact(.Warning, Disk_Load_Refused_Object_Too_Large{object_bytes = size, file_bytes_limit = u64(disk_process.FILE_BYTES_LIMIT), refused_process = module_name_field(name)})
+			disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(min(size, 1 << 62)), disk_process.FILE_BYTES_LIMIT))
 			return
 		}
 		pages := (size + system.PAGE_SIZE - 1) / system.PAGE_SIZE
@@ -414,13 +514,15 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 			address, create_status = system.memory_map(memory)
 		}
 		if create_status != .Ok {
-			disk_load_end(create_status, disk_refused(name, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(create_status)), "no memory for its ", size, " bytes: status ", create_status))
+			system.log_fact(.Warning, Disk_Load_Refused_No_Memory{object_bytes = size, status = op.Status_Word(create_status), refused_process = module_name_field(name)})
+			disk_load_end(create_status, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(create_status)))
 			return
 		}
 		load.bytes = ([^]u8)(address)[:size]
 		load.stage = .Bytes
 		if !disk_load_ask("read_range", 0, true) {
-			disk_load_end(.Bad_State, disk_refused(name, refused_status, "the storage service took no call"))
+			system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = module_name_field(name)})
+			disk_load_end(.Bad_State, refused_status)
 			return
 		}
 		system.wait_records(wait, &load.client.calls.completions)
@@ -434,15 +536,18 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		case .More, .Complete:
 			copy(load.bytes[load.read.received - count:][:count], text)
 		case .No_Progress:
-			disk_load_end(.Bad_State, disk_refused(name, refused_status, "the storage service gave no byte at the byte ", load.read.received, " of ", load.read.size))
+			system.log_fact(.Warning, Disk_Load_Refused_No_Byte_At{received_bytes = load.read.received, object_bytes = load.read.size, refused_process = module_name_field(name)})
+			disk_load_end(.Bad_State, refused_status)
 			return
 		case .Too_Many:
-			disk_load_end(.Bad_State, disk_refused(name, refused_status, "the storage service gave ", count, " bytes where the file has ", load.read.size - load.read.received, " left"))
+			system.log_fact(.Warning, Disk_Load_Refused_Too_Many_Bytes{given_bytes = count, left_bytes = load.read.size - load.read.received, refused_process = module_name_field(name)})
+			disk_load_end(.Bad_State, refused_status)
 			return
 		}
 		if step == .More {
 			if !disk_load_ask("read_range", load.read.received, true) {
-				disk_load_end(.Bad_State, disk_refused(name, refused_status, "the storage service took no call"))
+				system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = module_name_field(name)})
+				disk_load_end(.Bad_State, refused_status)
 				return
 			}
 			system.wait_records(wait, &load.client.calls.completions)
@@ -477,7 +582,8 @@ disk_load_complete :: proc "contextless" (wait: ^system.Wait) {
 	found := blake3.hash(load.bytes)
 	if found != asked {
 		head := transmute([4]u64)found
-		disk_load_end(.Bad_Operation, disk_refused(name, errors.ring_fail(kind, .Not_Authentic, .None, 2, i64(head[0])), "its bytes have the hash ", system.Hash{found[:]}, ", and the hash asked is ", system.Hash{asked[:]}))
+		system.log_fact(.Warning, Disk_Load_Refused_Hash_Differs{found_hash = value_kinds.Hash_Field(found), hash = value_kinds.Hash_Field(asked), refused_process = module_name_field(name)})
+		disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Not_Authentic, .None, 2, i64(head[0])))
 		return
 	}
 	disk_imports_begin(wait)
@@ -497,12 +603,9 @@ disk_load_start :: proc "contextless" () {
 		chosen_error: module.Load_Error
 		chosen_status := start_policy_chosen_run(name, load.bytes, found, disk_imports_files(), &chosen_error)
 		if chosen_status != .Ok && chosen_error.stage != .None {
-			buffer: [512]u8
-			writer := system.Writer{buffer = buffer[:]}
-			system.load_error_text(&writer, &chosen_error)
-			_ = disk_refused(name, {}, "the loader refused its file: ", system.written(&writer))
+			disk_loader_refusal_log(name, &chosen_error)
 		} else if chosen_status != .Ok {
-			_ = disk_refused(name, {}, "it does not start: status ", chosen_status)
+			system.log_fact(.Warning, Disk_Load_Refused_Not_Started{status = chosen_status, refused_process = module_name_field(name)})
 		}
 		disk_load_end(chosen_status, {})
 		return
@@ -511,24 +614,25 @@ disk_load_start :: proc "contextless" () {
 	// during the load is the table of this start.
 	table := disk_grant_table_of(principal)
 	if table == nil {
-		disk_load_end(.Bad_State, disk_refused(name, errors.ring_fail(kind, .Absent, .Principals, 0), "its principal has no record"))
+		system.log_fact(.Warning, Disk_Load_Refused_Principal_Without_Record{refused_process = module_name_field(name)})
+		disk_load_end(.Bad_State, errors.ring_fail(kind, .Absent, .Principals, 0))
 		return
 	}
 	file, granted, problem_of_the_nickname := disk_process.start_file(table, name, found)
 	if problem_of_the_nickname != .None {
-		disk_load_end(.Bad_Operation, disk_refused(name, errors.ring_fail(kind, .Exists, .Grants, 2), "the nickname names the file ", system.Hash{file[:]}, " since the command, and the bytes have the hash ", system.Hash{found[:]}))
+		system.log_fact(.Warning, Disk_Load_Refused_Nickname_Moved{named_hash = value_kinds.Hash_Field(file), found_hash = value_kinds.Hash_Field(found), refused_process = module_name_field(name)})
+		disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Exists, .Grants, 2))
 		return
 	}
 	load_error: module.Load_Error
 	status := disk_process_run(name, load.bytes, found, principal, granted, disk_imports_files(), &load_error)
 	if status != .Ok {
 		if load_error.stage != .None {
-			buffer: [512]u8
-			writer := system.Writer{buffer = buffer[:]}
-			system.load_error_text(&writer, &load_error)
-			disk_load_end(status, disk_refused(name, errors.ring_fail(kind, .Malformed, .None, 1, i64(load_error.file_error)), "the loader refused its file: ", system.written(&writer)))
+			disk_loader_refusal_log(name, &load_error)
+			disk_load_end(status, errors.ring_fail(kind, .Malformed, .None, 1, i64(load_error.file_error)))
 		} else {
-			disk_load_end(status, disk_refused(name, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status)), "it does not start: status ", status))
+			system.log_fact(.Warning, Disk_Load_Refused_Not_Started{status = status, refused_process = module_name_field(name)})
+			disk_load_end(status, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status)))
 		}
 		return
 	}
@@ -720,11 +824,11 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 	case .Given:
 	case .Never:
 		values^ = errors.ring_fail(kind, .Reserved, .Grants, 2, i64(number))
-		system.log(.Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": no command gives it to a disk process, as it reaches the whole machine or the principal")
+		system.log_fact(.Warning, Disk_Grant_Refused_Never{nickname = module_name_field(nickname), grant = text_field(asked_name, 24)})
 		return .Bad_Operation
 	case .Not_Built:
 		values^ = errors.ring_fail(kind, .Unsupported, .Grants, 2, i64(number))
-		system.log(.Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": a command gives a disk process the grant Store only")
+		system.log_fact(.Warning, Disk_Grant_Refused_Not_Built{nickname = module_name_field(nickname), grant = text_field(asked_name, 24)})
 		return .Bad_Operation
 	}
 	problem_of_the_name, offset := disk_process.nickname_grant_problem(nickname)
@@ -738,11 +842,11 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		return .Bad_Operation
 	case .Bad_Byte:
 		values^ = errors.ring_fail(kind, .Bad_Byte, .None, 1, i64(offset), 0, i64(offset < len(nickname) ? nickname[offset] : 0))
-		system.log(.Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": a nickname with a grant has letters, digits, '-' and '_' only")
+		system.log_fact(.Warning, Disk_Grant_Refused_Nickname_Characters{nickname = module_name_field(nickname), grant = text_field(asked_name, 24)})
 		return .Bad_Operation
 	case .Store_Name, .Table_Name:
 		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
-		system.log(.Warning, "root: refused the grant ", asked_name, " to the nickname ", system.Module_Name{nickname}, ": the store of the module files keeps this name for itself")
+		system.log_fact(.Warning, Disk_Grant_Refused_Reserved_Name{nickname = module_name_field(nickname), grant = text_field(asked_name, 24)})
 		return .Bad_Operation
 	}
 	table := disk_grant_table_of(caller.principal)
@@ -762,7 +866,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 			values^ = errors.ring_fail(kind, .Absent, .Grants, problem == .Absent ? 1 : 2)
 			return .Bad_Handle
 		}
-		system.log(.Info, "root: the nickname ", system.Module_Name{nickname}, ", the file ", system.Hash{row.hash[:]}, ", lost the grant ", grant_name, " for principal ", caller.principal, ", from its next start; its store stays on the disk", disk_grant_table_lasts(caller.principal))
+		grant_lost_log(caller.principal, row.hash, nickname, grant_name)
 		persisted_table_changed(caller.principal)
 		return .Ok
 	}
@@ -775,7 +879,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		hash = running.hash
 	} else {
 		values^ = errors.ring_fail(kind, .Absent, .Processes, 1)
-		system.log(.Warning, "root: refused the grant ", grant_name, " to the nickname ", system.Module_Name{nickname}, ": it has no row in the disk grant table of principal ", caller.principal, ", and no disk process of that nickname runs; start it by its hash first")
+		system.log_fact(.Warning, Disk_Grant_Refused_No_Row{principal = caller.principal, nickname = module_name_field(nickname), grant = text_field(grant_name, 24)})
 		return .Bad_Handle
 	}
 	// The name of the store must fit: a cut name can be the name of
@@ -783,7 +887,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 	process_buffer, store_buffer: [32]u8
 	if grant == .Store && !principals.store_name_write(&store_buffer, disk_process.store_process_name(&process_buffer, nickname), caller.principal, false) {
 		values^ = errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(nickname_length), i64(len(store_buffer) - 1))
-		system.log(.Warning, "root: refused the grant store to the nickname ", system.Module_Name{nickname}, ": the name of its store for principal ", caller.principal, " has more than 31 bytes")
+		system.log_fact(.Warning, Disk_Grant_Refused_Store_Name{principal = caller.principal, nickname = module_name_field(nickname)})
 		return .Bad_Operation
 	}
 	switch disk_process.table_allow(table, nickname, hash, grant) {
@@ -795,13 +899,13 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		// The chosen start policy holds its one start grant and nothing
 		// else (src/md/features/start_policy.md).
 		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
-		system.log(.Warning, "root: refused the grant ", grant_name, " to the nickname ", system.Module_Name{nickname}, ": it names the chosen start policy, which holds the grant Start_Policy and nothing else")
+		system.log_fact(.Warning, Disk_Grant_Refused_Start_Policy{nickname = module_name_field(nickname), grant = text_field(grant_name, 24)})
 		return .Bad_Operation
 	case .No_File, .Other_File, .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Holds_Store:
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	system.log(.Info, "root: the nickname ", system.Module_Name{nickname}, ", the file ", system.Hash{hash[:]}, ", has the grant ", grant_name, " for principal ", caller.principal, ", from its next start", disk_grant_table_lasts(caller.principal))
+	grant_given_log(caller.principal, hash, nickname, grant_name)
 	persisted_table_changed(caller.principal)
 	return .Ok
 }
@@ -831,7 +935,7 @@ nickname_move :: proc "contextless" (caller: ^Started, record: ring.Record, valu
 	row := disk_process.table_find(table, nickname)
 	if row == nil {
 		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
-		system.log(.Warning, "root: refused the move of the nickname ", system.Module_Name{nickname}, ": it has no row in the disk grant table of principal ", caller.principal)
+		system.log_fact(.Warning, Nickname_Move_Refused_No_Row{principal = caller.principal, nickname = module_name_field(nickname)})
 		return .Bad_Handle
 	}
 	if hash == {} || hash == row.hash {
@@ -842,15 +946,15 @@ nickname_move :: proc "contextless" (caller: ^Started, record: ring.Record, valu
 	// a new choice changes it.
 	if .Start_Policy in row.grants {
 		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
-		system.log(.Warning, "root: refused the move of the nickname ", system.Module_Name{nickname}, ": it names the chosen start policy; start_policy_choose names another file")
+		system.log_fact(.Warning, Nickname_Move_Refused_Start_Policy{nickname = module_name_field(nickname)})
 		return .Bad_Operation
 	}
-	system.log(.Info, "root: the file ", system.Hash{hash[:]}, " will get the data of ", system.Module_Name{nickname})
+	system.log_fact(.Info, Nickname_Move_Announced{hash = value_kinds.Hash_Field(hash), nickname = module_name_field(nickname)})
 	if disk_process.table_move(table, nickname, hash) != .None {
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	system.log(.Info, "root: the nickname ", system.Module_Name{nickname}, " names the file ", system.Hash{hash[:]}, ", with its grants and its store", disk_grant_table_lasts(caller.principal))
+	nickname_moved_log(caller.principal, hash, nickname)
 	persisted_table_changed(caller.principal)
 	return .Ok
 }
@@ -895,17 +999,17 @@ disk_grant_persistence :: proc "contextless" (caller: ^Started, record: ring.Rec
 	case .None:
 	case .Start_Policy_Row:
 		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
-		system.log(.Warning, "root: refused the setting of persistence of the nickname ", system.Module_Name{nickname}, ": it names the chosen start policy, which persists until start_policy_default ends the choice")
+		system.log_fact(.Warning, Persistence_Refused_Start_Policy{nickname = module_name_field(nickname)})
 		return .Bad_Operation
 	case .Absent, .No_File, .Other_File, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Holds_Store:
 		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
-		system.log(.Warning, "root: refused the setting of persistence of the nickname ", system.Module_Name{nickname}, ": it has no row in the disk grant table of principal ", caller.principal)
+		system.log_fact(.Warning, Persistence_Refused_No_Row{principal = caller.principal, nickname = module_name_field(nickname)})
 		return .Bad_Handle
 	}
 	if nickname == "" {
-		system.log(.Info, "root: each row of the disk grant table of principal ", caller.principal, " with no exception will ", persistence_words[persistence], disk_grant_table_lasts(caller.principal))
+		table_persistence_log(caller.principal, persistence_words[persistence])
 	} else {
-		system.log(.Info, "root: the row of the nickname ", system.Module_Name{nickname}, " in the disk grant table of principal ", caller.principal, " has the setting: ", persistence_words[persistence], disk_grant_table_lasts(caller.principal))
+		row_persistence_log(caller.principal, nickname, persistence_words[persistence])
 	}
 	persisted_table_changed(caller.principal)
 	return .Ok

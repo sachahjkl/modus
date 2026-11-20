@@ -217,7 +217,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output_memory = ctx.handles[GRANT_RING]
 	status: system.Status
 	if output, status = system.ring_open(output_memory); status != .Ok {
-		system.log(.Info, "input: no ring")
+		system.log_fact(.Info, No_Ring{})
 		system.stop(.Failed)
 	}
 
@@ -238,7 +238,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.port_read_8(PORT_DATA)
 			bytes_drained += 1
 		case .No_Controller:
-			system.log(.Info, "input: no PS/2 controller: no keyboard and no mouse")
+			system.log_fact(.Info, No_Controller{})
 			system.stop(.Failed)
 		}
 	}
@@ -262,7 +262,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if keyboard_bytes_dropped_at_start > 0 {
 		system.log_fact(.Info, Keyboard_Bytes_Lost_At_Start{keyboard_bytes = keyboard_bytes_dropped_at_start})
 	}
-	system.log(.Info, "input: ok, the mouse has ", mouse_decoder.protocol == .Standard ? "no wheel" : "a wheel")
+	if mouse_decoder.protocol == .Standard {
+		system.log_fact(.Info, Ready_Mouse_Without_Wheel{})
+	} else {
+		system.log_fact(.Info, Ready_Mouse_With_Wheel{})
+	}
 
 	held_before := false // The turn before left a byte in the controller.
 	for {
@@ -296,9 +300,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if held != held_before {
 			held_before = held
 			if held {
-				system.log(.Info, "input: the input ring is full: the keyboard controller keeps its bytes")
+				system.log_fact(.Info, Input_Ring_Full{})
 			} else {
-				system.log(.Info, "input: the input ring has room again")
+				system.log_fact(.Info, Input_Ring_Room_Again{})
 			}
 		}
 		if held || pointer_backlog.count > 0 {

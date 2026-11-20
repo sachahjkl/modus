@@ -58,6 +58,10 @@
 // - Replacements: `replace(module, other)`, `replacements()`.
 // - Tables: `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`,
 //   `row`. `where` takes a condition on a field: `where(t, block = 12)`.
+// - Record streams: a typed name, `output_counter.counts`, reads a record
+//   output of a process that the console started; `where`, `first` and
+//   `table` take it, and `record_outputs(module)` lists them
+//   (docs/CONSOLE.md, "Streams").
 // - Log facts: `facts(table, package.Type)`, the fields of one fact type
 //   of the rows of `log.records` as columns.
 // - Others: `help()`, `describe(name)`, `memory()`, `locks()`, `time()`,
@@ -74,7 +78,7 @@
 // **The keys** (docs/CONSOLE.md, "1. The keys"): Enter runs the line; Tab
 // and the typed name open the [completion list](term:completion-list); Up
 // and Down walk the [line history](term:line-history); Escape stops an
-// isolated call that does not return.
+// isolated call that does not return, and the read of a record stream.
 //
 // **The two threads.** The first thread reads the keys and owns the
 // [edit line](term:edit-line), the line history and the completion list.
@@ -115,6 +119,7 @@
 package console
 
 import "modus:contract/text_encoding"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/key_path"
 import "modus:support/line_editor"
@@ -125,8 +130,6 @@ import "base:intrinsics"
 
 // Itself and four sandboxes, each a call host with its thread.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7583, processes = 5, threads = 6}
-
-CONSOLE_MARK :: "console: ready"
 
 LINE_CAPACITY :: line_editor.LINE_CAPACITY
 PROMPT :: "> "
@@ -222,24 +225,24 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, start_context) {
-		system.log(.Info, "console: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	ctx = start_context
 	ok: bool
 	if output, ok = terminal.open(ctx); !ok {
-		system.log(.Info, "console: no terminal")
+		system.log_fact(.Info, No_Terminal{})
 		system.stop(.Refused)
 	}
 	commands_start()
 	palette_provider_start() // palette_provider.odin
 	if _, status := system.thread_start(run_lines, nil); status != .Ok {
-		system.log(.Info, "console: cannot start a thread")
+		system.log_fact(.Info, Thread_Not_Started{})
 		system.stop(.Failed)
 	}
 	print("kernel console. A command is a typed function: try help()\n")
 	edit_show()
-	system.log(.Info, CONSOLE_MARK)
+	system.log_fact(.Info, Ready{})
 	// The line history of the run before. The second thread runs no line
 	// yet: the history has one user. The keys that come meanwhile wait in
 	// the terminal ring.
@@ -274,7 +277,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 			// it is a key of the next line, as the keys before it.
 			switch line_editor.running_key_action(pressed.code == display.KEY_ESCAPE, stoppable, pending_count, PENDING_CAPACITY) {
 			case .Stop_Call:
-				system.log(.Info, "console: Escape stops the line after ", system.time() - work.since, " ms; keys that wait: ", u64(pending_count))
+				system.log_fact(.Info, Escape_Stops_Line{line_time = value_kinds.Time_In_Milliseconds(system.time() - work.since), waiting_keys = u64(pending_count)})
 				intrinsics.atomic_store(&work.cancel, 1)
 				system.word_wake(&work.cancel)
 			case .Wait:
@@ -286,14 +289,14 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 				// The console must read each key to find an Escape that
 				// stops the call, and it has no place for this one.
 				if key_path.loss_count(&keys_loss) {
-					system.log(.Info, "console: ", u64(PENDING_CAPACITY), " keys wait for the end of the line, and the console reads on to find an Escape: a new key is lost")
+					system.log_fact(.Info, Waiting_Keys_Full{capacity = u64(PENDING_CAPACITY)})
 				}
 			}
 		}
 		if running && intrinsics.atomic_load_explicit(&work.finished, .Relaxed) == work.started {
 			running = false
 			if lost, ended := key_path.loss_end(&keys_loss); ended {
-				system.log(.Info, "console: the line ended: ", lost, " keys were lost while it ran")
+				system.log_fact(.Info, Line_Ended_With_Lost_Keys{lost_keys = lost})
 			}
 			// The keys that waited, until one of them starts a line.
 			taken := 0
@@ -417,7 +420,7 @@ line_enter :: proc "contextless" () {
 		system.lock(&history_lock)
 		line_editor.history_add(&history, text)
 		system.unlock(&history_lock)
-		system.log(.Info, PROMPT, text)
+		system.log_fact(.Info, Line_Entered{}, text)
 		work.count = copy(work.text[:], text)
 		work.since = system.time()
 		intrinsics.atomic_store(&work.cancel, 0)
@@ -486,7 +489,7 @@ edit_show :: proc "contextless" () {
 		system.write_part(&writer, elapsed / 1000)
 		system.write_part(&writer, ".")
 		system.write_part(&writer, elapsed / 100 % 10)
-		system.write_part(&writer, " s. Escape stops an isolated call. Keys that wait: ")
+		system.write_part(&writer, " s. Escape stops a call or a record stream. Keys that wait: ")
 		for waiting in pending[:pending_count] {
 			shown_key: rune = '^' // A key with no character: an arrow key, Control with a key.
 			switch {
@@ -527,10 +530,10 @@ edit_show :: proc "contextless" () {
 		if !running && pasted_characters > 0 {
 			pasted_characters = 0
 			paste_shown = true
-			system.log(.Info, "console: the line shows \"", line_editor.line_text(&line), "\" after a paste")
+			system.log_fact(.Info, Line_After_Paste{}, line_editor.line_text(&line))
 		} else if !running && paste_shown && len(line_editor.line_text(&line)) == 0 {
 			paste_shown = false
-			system.log(.Info, "console: the line is empty again after a paste")
+			system.log_fact(.Info, Line_Empty_After_Paste{})
 		}
 	}
 	completion_show()

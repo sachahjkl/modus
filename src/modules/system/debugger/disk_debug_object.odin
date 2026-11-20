@@ -19,10 +19,12 @@ package debugger
 // when the hash that it names is the hash of the module record.
 
 import debug_object "modus:contract/debug_object"
+import "modus:contract/storage_status"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/disk_process"
 import "modus:support/storage"
 import "modus:support/system"
@@ -122,16 +124,16 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 	for_report := kept != nil
 	tag := root_request_send(name, connection_ring, false, store = true, kept = for_report)
 	if tag == 0 {
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the command to the root service was not sent")
+		system.log_fact(.Info, Debug_Object_Command_Not_Sent{debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	completion, answered = root_answer_wait(tag, limit)
 	if !answered {
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the root service gave no connection to the store in ", u64(DISK_DEBUG_OBJECT_MILLISECONDS), " ms")
+		system.log_fact(.Info, Debug_Object_Connection_Silent{bound = value_kinds.Time_In_Milliseconds(DISK_DEBUG_OBJECT_MILLISECONDS), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	if system.Status(completion.kind) != .Ok {
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the root service refused the connection to the store, status word ", u64(completion.kind))
+		system.log_fact(.Info, Debug_Object_Connection_Refused{status_word = u64(completion.kind), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	// The connection lives for the read only: after it, on each path, the
@@ -185,18 +187,17 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		}
 		switch {
 		case for_report && !report_received:
-			system.log(.Info, "debugger: no stop report of ", system.Module_Name{name}, ": the page of the root service does not map")
+			system.log_fact(.Info, Stop_Report_Not_Mapped{debugged_process = value_kinds.module_name_field(name)})
 		case held_by_the_session:
 			// The object of the session describes the module: no read.
 		case:
-			system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the connection to the store does not open")
+			system.log_fact(.Info, Debug_Object_Connection_Not_Opened{debugged_process = value_kinds.module_name_field(name)})
 		}
 		return
 	}
 	module_hash := into.module_hash
 	digits: [disk_process.HASH_DIGITS]u8
 	disk_process.debug_object_name_write(&digits, module_hash)
-	object_name := string(digits[:])
 	// The connection is closed in each case: the object is read whole in
 	// this export.
 	defer {
@@ -211,27 +212,27 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 	arguments[1].text = digits[:]
 	answer_value, text, status, done := store_call(&client, "size", arguments[:2], limit)
 	if !done {
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the storage service gave no size in ", u64(DISK_DEBUG_OBJECT_MILLISECONDS), " ms")
+		system.log_fact(.Info, Debug_Object_Size_Silent{bound = value_kinds.Time_In_Milliseconds(DISK_DEBUG_OBJECT_MILLISECONDS), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	if storage.export_failed_with(status, answer_value, .Absent) {
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the store ", disk_process.STORE_NAME, " of principal ", store_principal, " has no object ", object_name)
+		system.log_fact(.Info, Debug_Object_Absent{principal = store_principal, module_hash = value_kinds.Hash_Field(module_hash), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	if status != .Ok || answer_value < 0 {
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the storage service refused the size of ", object_name, ", status ", u64(status))
+		system.log_fact(.Info, Debug_Object_Size_Status_Refused{status = status, module_hash = value_kinds.Hash_Field(module_hash), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	// The size is copied here and checked one time: no later answer
 	// changes it.
 	object_read, size_answer := disk_process.read_begin(u64(answer_value), disk_process.DEBUG_OBJECT_BYTES_LIMIT)
 	if size_answer != .Good {
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": the object ", object_name, " has ", u64(answer_value), " bytes, and a debug object has 1 to ", u64(disk_process.DEBUG_OBJECT_BYTES_LIMIT))
+		system.log_fact(.Info, Debug_Object_Size_Refused{size = value_kinds.Size_In_Bytes(answer_value), size_limit = u64(disk_process.DEBUG_OBJECT_BYTES_LIMIT), module_hash = value_kinds.Hash_Field(module_hash), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	object_memory, create_status := system.memory_create((object_read.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 	if create_status != .Ok {
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": no memory for its ", object_read.size, " bytes: status ", create_status)
+		system.log_fact(.Info, Debug_Object_Memory_Refused{size = value_kinds.Size_In_Bytes(object_read.size), status = op.Status_Word(create_status), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	into.memory = object_memory
@@ -239,7 +240,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 	if map_status != .Ok {
 		held_object_forget(into)
 		into.module_hash = module_hash
-		system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": its memory does not map: status ", map_status)
+		system.log_fact(.Info, Debug_Object_Map_Refused{status = op.Status_Word(map_status), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	bytes := ([^]u8)(address)[:object_read.size]
@@ -273,7 +274,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 			system.memory_unmap(address)
 			held_object_forget(into)
 			into.module_hash = module_hash
-			system.log(.Info, "debugger: no debug object for ", system.Module_Name{name}, ": ", problem)
+			system.log_fact(.Info, Debug_Object_Read_Stopped{debugged_process = value_kinds.module_name_field(name), problem = value_kinds.text_field(problem, READ_PROBLEM_FIELD_BYTES)})
 			return
 		}
 		if read_answer == .Complete {
@@ -288,22 +289,18 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		system.memory_unmap(address)
 		held_object_forget(into)
 		into.module_hash = module_hash
-		if fault != .None {
-			system.log(.Info, "debugger: refused the debug object ", object_name, " of ", system.Module_Name{name}, ": ", debug_object.fault_sentences[fault])
-		} else {
-			system.log(.Info, "debugger: refused the debug object ", object_name, " of ", system.Module_Name{name}, ": it names the module ", system.Hash{named[:]}, ", not this module")
-		}
+		debug_object_refused_log(fault, named, module_hash, name)
 		return
 	}
 	into.object = bytes
-	system.log(.Info, "debugger: read the debug object ", object_name, " of ", system.Module_Name{name}, " from the store ", disk_process.STORE_NAME, " of principal ", store_principal, ": ", object_read.size, " bytes, checked whole")
+	system.log_fact(.Info, Debug_Object_Read{principal = store_principal, size = value_kinds.Size_In_Bytes(object_read.size), module_hash = value_kinds.Hash_Field(module_hash), debugged_process = value_kinds.module_name_field(name)})
 	return
 }
 
 // store_call sends one call to the storage service and waits for its
 // answer until the time `limit`. done is false when no answer came in that
 // time; a call that the client cannot send is done, with its status.
-store_call :: proc "contextless" (client: ^storage.Client, export: string, arguments: []isolated.Argument, limit: u64) -> (result_value: i64, text: []u8, status: storage.Status, done: bool) {
+store_call :: proc "contextless" (client: ^storage.Client, export: string, arguments: []isolated.Argument, limit: u64) -> (result_value: i64, text: []u8, status: storage_status.Status, done: bool) {
 	sent: storage.Sent_Call
 	if sent, status = storage.call_send(client, export, arguments); status != .Ok {
 		return 0, nil, status, true

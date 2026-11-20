@@ -15,6 +15,7 @@ import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
 import "modus:contract/settings"
+import "modus:contract/value_kinds"
 import "modus:private/compositor/bar"
 import "modus:support/graphics"
 import "modus:private/compositor/palette"
@@ -85,17 +86,16 @@ pointer_theme_open :: proc "contextless" (ctx: ^system.Context) {
 		problem := pointer_pictures.validate(file)
 		spent := system.nanoseconds() - start
 		if problem.kind != .None {
-			buffer: [256]u8
-			system.log(.Warning, "compositor: the pointer theme file ", pointer_pictures.RESOURCE_PREFERENCE[index], " is not valid, not used: ", pointer_pictures.sentence(problem, buffer[:]))
+			system.log_fact(.Warning, Pointer_Theme_Refused{problem_kind = pointer_pictures.Problem_Kind_Word(problem.kind), theme_part = pointer_pictures.Part_Word(problem.part), theme_field = pointer_pictures.Field_Word(problem.field), place_index = problem.index, value = problem.value, limit = problem.limit, theme_file = value_kinds.text_field(pointer_pictures.RESOURCE_PREFERENCE[index], THEME_FILE_FIELD_BYTES)})
 			continue
 		}
 		theme = file
 		head := pointer_pictures.header(file)
-		system.log(.Info, "compositor: the pointer theme ", pointer_pictures.text_of(head.theme_name[:]), " (", pointer_pictures.text_of(head.license[:]), "): ", u64(head.shape_count), " shapes, ", u64(head.picture_count), " pictures, ", size, " bytes, validated in ", spent / 1000, " us")
+		system.log_fact(.Info, Pointer_Theme_Validated{shapes = u64(head.shape_count), pictures = u64(head.picture_count), size = value_kinds.Size_In_Bytes(size), elapsed = value_kinds.Time_In_Microseconds(spent / 1000), theme = value_kinds.text_field(pointer_pictures.text_of(head.theme_name[:]), THEME_TEXT_FIELD_BYTES), license = value_kinds.text_field(pointer_pictures.text_of(head.license[:]), THEME_TEXT_FIELD_BYTES)})
 	}
 	pointer_theme_choose(.Of_The_Owner)
 	if pointer_theme == nil {
-		system.log(.Warning, "compositor: no pointer theme: the arrow of squares")
+		system.log_fact(.Warning, No_Pointer_Theme{})
 		pointer_update(0)
 		return
 	}
@@ -125,7 +125,7 @@ pointer_form_choose :: proc "contextless" (form: pointer_pictures.Pointer_Form) 
 	pointer_form = form
 	pointer_drawn_valid = false // The next update chooses its picture in the new form.
 	pointer_update(0)
-	system.log(.Info, "compositor: the pointer form in use: ", pointer_form_name(form))
+	system.log_fact(.Info, Pointer_Form_In_Use{pointer_form = value_kinds.text_field(pointer_form_name(form), POINTER_FORM_FIELD_BYTES)})
 }
 
 // pointer_theme_choose takes the theme of the setting: the first theme of
@@ -149,7 +149,7 @@ pointer_theme_choose :: proc "contextless" (setting: settings.Pointer_Theme) {
 	pointer_drawn_valid = false // The next update chooses its picture in the new theme.
 	pointer_update(0)
 	if chosen != nil {
-		system.log(.Info, "compositor: the pointer theme in use: ", pointer_pictures.text_of(pointer_pictures.header(chosen).theme_name[:]))
+		system.log_fact(.Info, Pointer_Theme_In_Use{theme = value_kinds.text_field(pointer_pictures.text_of(pointer_pictures.header(chosen).theme_name[:]), THEME_TEXT_FIELD_BYTES)})
 	}
 }
 
@@ -262,7 +262,7 @@ pointer_shape_request :: proc "contextless" (client: ^Client, record: ring.Recor
 		return
 	}
 	client.pointer_shape = shape
-	system.log(.Info, "compositor: ", system.name_of(client.title[:]), " asks for the pointer shape ", pointer_pictures.SHAPE_NAMES[client.pointer_shape], " over its surface")
+	system.log_fact(.Info, Pointer_Shape_Asked{shape_name = value_kinds.text_field(pointer_pictures.SHAPE_NAMES[client.pointer_shape], SHAPE_NAME_FIELD_BYTES), window = window_field(client.title[:])})
 }
 
 // pointer_draw draws the pointer in one damage rectangle: the canvas is the
@@ -307,7 +307,7 @@ pointer_frame_end :: proc "contextless" () {
 	pointer_measure_longest = max(pointer_measure_longest, pointer_frame_time)
 	pointer_frame_time = 0
 	if pointer_measure_frames == POINTER_MEASURE_FRAMES {
-		system.log(.Info, "compositor: the pointer picture in ", u64(POINTER_MEASURE_FRAMES), " frames: ", pointer_measure_time / POINTER_MEASURE_FRAMES, " ns for a frame in the mean, ", pointer_measure_longest, " ns the longest")
+		system.log_fact(.Info, Pointer_Picture_Measured{frames = u64(POINTER_MEASURE_FRAMES), mean_time = value_kinds.Time_In_Nanoseconds(pointer_measure_time / POINTER_MEASURE_FRAMES), longest_time = value_kinds.Time_In_Nanoseconds(pointer_measure_longest)})
 	}
 }
 
@@ -335,5 +335,5 @@ pointer_blend_measure :: proc "contextless" () {
 			transparent += 1
 		}
 	}
-	system.log(.Info, "compositor: the blend of the arrow of ", u64(picture.width), "x", u64(picture.height), " (", u64(transparent), " of ", u64(len(chosen.pixels)), " pixels transparent): ", blend, " ns; a copy of the same size: ", copied, " ns")
+	system.log_fact(.Info, Arrow_Blend_Measured{width = u64(picture.width), height = u64(picture.height), transparent_pixels = u64(transparent), pixels = u64(len(chosen.pixels)), blend_time = value_kinds.Time_In_Nanoseconds(blend), copy_time = value_kinds.Time_In_Nanoseconds(copied)})
 }

@@ -327,7 +327,7 @@ log_second: u64
 log_count: u64
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Info, "remote: ", text)
+	system.log_fact(.Info, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -694,7 +694,6 @@ calls_work :: proc "contextless" () {
 			}
 			continue
 		}
-		text: [40]u8
 		record_log := &record_logs[place]
 		if record_log.generation != record.generation {
 			record_log^ = {generation = record.generation}
@@ -733,7 +732,16 @@ calls_work :: proc "contextless" () {
 		if connection.state == .Closed && !record_log.end_logged {
 			record_log.end_logged = true
 			if log_allowed() {
-				system.log(.Info, "remote: ", address_text(text[:], record.remote), " ended (", end_reason(connection), ", the code ", system.Hex(connection.close_error_code), connection.close_is_application ? " of the application" : "", "): in ", connection.data_consumed_total, " bytes, out ", connection.data_sent_total, " bytes")
+				// A code of the application and a transport code are two
+				// sentences: each one is a fact type.
+				close_code := value_kinds.Hexadecimal_Sixteen_Digits(connection.close_error_code)
+				bytes_in, bytes_out := value_kinds.Size_In_Bytes(connection.data_consumed_total), value_kinds.Size_In_Bytes(connection.data_sent_total)
+				reason := value_kinds.text_field(end_reason(connection), END_REASON_FIELD_BYTES)
+				if connection.close_is_application {
+					system.log_fact(.Info, Connection_Ended_By_Application{close_code = close_code, bytes_in = bytes_in, bytes_out = bytes_out, peer = peer_field(record.remote), end_reason = reason})
+				} else {
+					system.log_fact(.Info, Connection_Ended{close_code = close_code, bytes_in = bytes_in, bytes_out = bytes_out, peer = peer_field(record.remote), end_reason = reason})
+				}
 				if connection.closed_by_idle_timeout {
 					idle_end_log(connection, record.remote)
 				}
@@ -932,9 +940,9 @@ refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service:
 	system.error_text(&writer, &error, "remote", field)
 	if counts.refused <= LOG_REFUSALS {
 		if counts.refused == LOG_REFUSALS {
-			system.log(.Info, "remote: refused a request: ", system.written(&writer), "; the next refusals are counted only")
+			system.log_fact(.Info, Request_Refused_Last_Logged(errors.error_record_fact_fields(error)))
 		} else {
-			system.log(.Info, "remote: refused a request: ", system.written(&writer))
+			system.log_fact(.Info, Request_Refused(errors.error_record_fact_fields(error)))
 		}
 	}
 	answer := remote.Answer{status = .Refused, error = error, hash = hash}
@@ -1216,7 +1224,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// A seed under the least strength is an error that the process
 		// shows: no key, and no endpoint.
 		weak_seed = true
-		system.log(.Info, "remote: the random seed of this process is weak: it makes no key, and listens on nothing")
+		system.log_fact(.Info, Seed_Weak{})
 		for {
 			if has_window {
 				draw(&window)
@@ -1231,7 +1239,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	key_text: [64]u8
-	system.log(.Info, "remote: the public key of this service: ", hex_text(key_text[:], public_key[:]))
+	system.log_fact(.Info, Public_Key_Made{public_key = value_kinds.text_field(hex_text(key_text[:], public_key[:]), KEY_FIELD_BYTES)})
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
 		fail("no endpoint: the process has no grant of the network")
@@ -1306,7 +1314,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log(.Info, "remote: listening on the UDP port ", u64(listen_port), ", for the host 10.0.2.2 only, and for the client keys that a principal allowed: ", u64(CAPACITY), " connections, each with ", u64(STREAMS_PER_CONNECTION), " calls at one time")
+	system.log_fact(.Info, Listening{listen_port = u64(listen_port), connection_capacity = u64(CAPACITY), calls_per_connection = u64(STREAMS_PER_CONNECTION)})
 
 	arrived: [RECEIVE_PLACES]ring.Record
 	drawn: u64
@@ -1377,8 +1385,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// to show (docs/DESIGN.md, section 7).
 				if !draw_logged && counts.calls >= 1000 {
 					draw_logged = true
-					system.log(.Info, "remote: the window drew one picture in ", (system.nanoseconds() - start) / 1000, " us")
-					system.log(.Info, "remote: the interface: ", u64(window_memory.drawing.now.record_count), " records, ", u64(window_memory.drawing.damage.count), " damage rectangles; build ", window_memory.drawing.build_time / 1000, " us, difference ", window_memory.drawing.difference_time / 1000, " us, draw ", window_memory.drawing.draw_time / 1000, " us")
+					system.log_fact(.Info, Window_Drawn{picture_time = value_kinds.Time_In_Microseconds((system.nanoseconds() - start) / 1000)})
+					system.log_fact(.Info, Interface_Measured{records = u64(window_memory.drawing.now.record_count), damage_rectangles = u64(window_memory.drawing.damage.count), build_time = value_kinds.Time_In_Microseconds(window_memory.drawing.build_time / 1000), difference_time = value_kinds.Time_In_Microseconds(window_memory.drawing.difference_time / 1000), draw_time = value_kinds.Time_In_Microseconds(window_memory.drawing.draw_time / 1000)})
 				}
 			}
 		}

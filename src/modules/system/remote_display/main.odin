@@ -268,7 +268,7 @@ small_viewer_frame_count: int
 small_viewer_frames_logged: bool
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Error, "remote_display: ", text)
+	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -632,7 +632,7 @@ viewer_frame_taken :: proc "contextless" (viewer: ^Viewer) {
 	spent := taken_at - min(viewer.viewer_frame_started_at, taken_at)
 	if !viewer.whole_logged && viewer.viewer_frame_pixels == u64(screen.width) * u64(screen.height) {
 		viewer.whole_logged = true
-		system.log(.Info, "remote_display: a measure: the whole screen of ", u64(screen.width), "x", u64(screen.height), " in one viewer frame: ", u64(viewer.viewer_frame_pieces), " screen pieces, ", viewer.viewer_frame_bytes, " bytes of screen pieces for ", viewer.viewer_frame_pixels * 4, " bytes of pixels, coded in ", viewer.viewer_frame_coded_time / 1000, " us, taken by the viewer ", spent / 1000, " us after its start")
+		system.log_fact(.Info, Whole_Screen_Measured{width = u64(screen.width), height = u64(screen.height), screen_pieces = u64(viewer.viewer_frame_pieces), piece_bytes = value_kinds.Size_In_Bytes(viewer.viewer_frame_bytes), pixel_bytes = value_kinds.Size_In_Bytes(viewer.viewer_frame_pixels * 4), coded_time = value_kinds.Time_In_Microseconds(viewer.viewer_frame_coded_time / 1000), taken_time = value_kinds.Time_In_Microseconds(spent / 1000)})
 	}
 	if viewer.viewer_frame_pixels > 0 && viewer.viewer_frame_pixels <= SMALL_VIEWER_FRAME_PIXELS && small_viewer_frame_count < SMALL_VIEWER_FRAME_SAMPLES {
 		small_viewer_frame_bytes[small_viewer_frame_count] = viewer.viewer_frame_bytes
@@ -643,7 +643,7 @@ viewer_frame_taken :: proc "contextless" (viewer: ^Viewer) {
 		small_viewer_frames_logged = true
 		median_sort(small_viewer_frame_bytes[:])
 		median_sort(small_viewer_frame_times[:])
-		system.log(.Info, "remote_display: a measure: viewer frames of a small damage (at most ", u64(SMALL_VIEWER_FRAME_PIXELS), " pixels), the median of ", u64(SMALL_VIEWER_FRAME_SAMPLES), ": ", small_viewer_frame_bytes[SMALL_VIEWER_FRAME_SAMPLES / 2], " bytes of screen pieces, ", small_viewer_frame_times[SMALL_VIEWER_FRAME_SAMPLES / 2] / 1000, " us from Viewer_Frame_Start in the stream to Viewer_Frame_Taken; the least ", small_viewer_frame_bytes[0], " bytes and ", small_viewer_frame_times[0] / 1000, " us")
+		system.log_fact(.Info, Small_Damage_Measured{pixels = u64(SMALL_VIEWER_FRAME_PIXELS), frames = u64(SMALL_VIEWER_FRAME_SAMPLES), median_size = value_kinds.Size_In_Bytes(small_viewer_frame_bytes[SMALL_VIEWER_FRAME_SAMPLES / 2]), median_time = value_kinds.Time_In_Microseconds(small_viewer_frame_times[SMALL_VIEWER_FRAME_SAMPLES / 2] / 1000), least_size = value_kinds.Size_In_Bytes(small_viewer_frame_bytes[0]), least_time = value_kinds.Time_In_Microseconds(small_viewer_frame_times[0] / 1000)})
 	}
 }
 
@@ -974,7 +974,7 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 		return
 	}
 	if width == 0 || height == 0 || width > protocol.SCREEN_WIDTH_LIMIT || height > protocol.SCREEN_HEIGHT_LIMIT {
-		system.log(.Info, "remote_display: the screen of ", width, "x", height, " is past the reference screen of the protocol: no capture face")
+		system.log_fact(.Info, Screen_Past_Reference{width = width, height = height})
 		capture_state = .Closed
 		return
 	}
@@ -982,14 +982,14 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 	pages := display.capture_pages(int(width), int(height))
 	status: system.Status
 	if capture_memory, status = system.memory_create(pages); status != .Ok {
-		system.log(.Info, "remote_display: no memory for the capture face: ", pages, " pages")
+		system.log_fact(.Info, Capture_Memory_Refused{pages = value_kinds.Size_In_Pages(pages)})
 		capture_state = .Closed
 		return
 	}
 	address, map_status := system.memory_map(capture_memory, {})
 	given, give_status := system.give(window_memory, capture_memory, {.Read, .Write})
 	if map_status != .Ok || give_status != .Ok {
-		system.log(.Info, "remote_display: the memory of the capture face does not map, or the compositor does not take it")
+		system.log_fact(.Info, Capture_Memory_Not_Given{})
 		system.close(capture_memory)
 		capture_memory = 0
 		capture_state = .Closed
@@ -1018,7 +1018,7 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 	mirror_valid = false
 	compositor_send({kind = u32(display.Command.Capture_Open), values = {0 = u64(given), 1 = width, 2 = height}})
 	capture_state = .Open
-	system.log(.Info, "remote_display: the capture face is open: a copy of ", width, "x", height)
+	system.log_fact(.Info, Capture_Face_Opened{width = width, height = height})
 	viewers_tell()
 }
 
@@ -1088,7 +1088,7 @@ capture_follow :: proc "contextless" () {
 			held_picture = -1
 			mirror_valid = false
 			capture_state = .Closed
-			system.log(.Info, "remote_display: no viewer: the capture face is closed, after ", captures, " pictures of the compositor")
+			system.log_fact(.Info, Capture_Face_Closed{pictures = captures})
 		}
 	}
 }
@@ -1196,7 +1196,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the module cryptography refused to make the public key")
 	}
 	key_text: [64]u8
-	system.log(.Info, "remote_display: the public key of this service: ", hex_text(key_text[:], public_key[:]))
+	system.log_fact(.Info, Public_Key_Made{public_key = value_kinds.text_field(hex_text(key_text[:], public_key[:]), KEY_FIELD_BYTES)})
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
 		fail("no endpoint: the process has no grant of the network")
@@ -1258,7 +1258,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log(.Info, "remote_display: listening on the UDP port ", u64(listen_port), ", for the host 10.0.2.2 only, and for the viewer keys that a principal allowed: ", u64(CAPACITY), " viewers at one time")
+	system.log_fact(.Info, Listening{listen_port = u64(listen_port), viewer_capacity = u64(CAPACITY)})
 
 	arrived: [RECEIVE_PLACES]ring.Record
 	for {

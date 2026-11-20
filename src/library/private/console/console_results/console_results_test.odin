@@ -608,6 +608,68 @@ bytes_view :: proc(t: ^testing.T) {
 	testing.expect_value(t, drawn_text(drawn), "0 bytes\n")
 }
 
+// The digits of an Integer of each size, at its edges: the largest value
+// and, with a sign, the least one.
+@(test)
+the_digits_of_an_integer_hold_its_largest_text :: proc(t: ^testing.T) {
+	testing.expect_value(t, integer_digits(1, true), len("255"))
+	testing.expect_value(t, integer_digits(1, false), len("-128"))
+	testing.expect_value(t, integer_digits(2, true), len("65535"))
+	testing.expect_value(t, integer_digits(2, false), len("-32768"))
+	testing.expect_value(t, integer_digits(4, true), len("4294967295"))
+	testing.expect_value(t, integer_digits(4, false), len("-2147483648"))
+	testing.expect_value(t, integer_digits(8, true), len("18446744073709551615"))
+	testing.expect_value(t, integer_digits(8, false), len("-9223372036854775808"))
+}
+
+// A Stream has no columns for a description that the contract does not
+// read, and a row of another size draws nothing. Then the head and the
+// rows: each line has the same width, the row of the least Integer too, so
+// a row never moves the rows above it.
+@(test)
+a_stream_draws_each_row_in_the_widths_of_its_description :: proc(t: ^testing.T) {
+	table := new(Test_Table, context.temp_allocator)
+	test_table_make(t, table)
+	_, ok := stream_columns_of(nil, 1)
+	testing.expect(t, !ok, "a stream of no file has columns")
+	_, ok = stream_columns_of(table.file, 0)
+	testing.expect(t, !ok, "a stream of the record 0 has columns")
+	_, ok = stream_columns_of(table.file, 2)
+	testing.expect(t, !ok, "a stream of a record past the table has columns")
+
+	columns: Stream_Columns
+	columns, ok = stream_columns_of(table.file, 1)
+	testing.expect(t, ok && columns.count == 3 && columns.size == table.size)
+	testing.expect_value(t, columns.widths[0], 20)
+	testing.expect_value(t, columns.widths[1], 12)
+	testing.expect_value(t, columns.widths[2], 20)
+
+	drawn := new(Drawn, context.temp_allocator)
+	sink := drawn_sink(drawn)
+	short: [8]u8
+	draw_stream_row(&sink, &columns, short[:])
+	testing.expect_value(t, drawn.lines, 0)
+
+	draw_stream_head(&sink, &columns, table.file)
+	test_table_add(table, 3, "alpha", 7)
+	test_table_add(table, min(i64), "twelve", max(i64))
+	rows := test_table_bytes(table)
+	draw_stream_row(&sink, &columns, rows[:table.size])
+	draw_stream_row(&sink, &columns, rows[table.size:])
+	draw_note(&sink, "joined after 5 records")
+	testing.expect_value(t, drawn.lines, 4)
+	text := drawn_text(drawn)
+	lines := strings.split_lines(text, context.temp_allocator)
+	width := 20 + COLUMN_GAP + 12 + COLUMN_GAP + 20
+	for line in lines[:3] {
+		testing.expectf(t, len(line) == width, "the line %q has %d bytes, not %d", line, len(line), width)
+	}
+	testing.expect(t, strings.has_suffix(lines[0], "pages") && strings.contains(lines[0], "slot  name"), lines[0])
+	testing.expect(t, strings.has_prefix(lines[2], "-9223372036854775808  twelve "), lines[2])
+	testing.expect_value(t, lines[3], "joined after 5 records")
+	testing.expect_value(t, drawn.parts[Part.Note], len("joined after 5 records"))
+}
+
 // An error of the console itself is its sentence. An error record adds its
 // values; its details follow when there is more than one.
 @(test)

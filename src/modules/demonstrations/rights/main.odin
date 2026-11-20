@@ -162,7 +162,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for attempt in attempts[:attempt_count] {
 		if attempt.status != attempt.expected {
 			wrong += 1
-			system.log(.Info, "rights: wrong answer: ", attempt.text, ": status ", u64(attempt.status))
+			system.log_fact(.Info, Attempt_Wrong{status = attempt.status, attempt = attempt_field(attempt.text)})
 		} else if attempt.status == .Ok {
 			allowed += 1
 		} else {
@@ -170,7 +170,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if wrong == 0 {
-		system.log(.Info, "rights: ok, ", allowed, " allowed, ", refused, " refused")
+		system.log_fact(.Info, Attempts_Passed{allowed = allowed, refused = refused})
 	}
 
 	for {

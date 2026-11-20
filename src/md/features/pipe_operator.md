@@ -1,10 +1,10 @@
 # The pipe operator of the console
 
-`a |> f(b, c)` is `f(a, b, c)`: the value on the left is the first argument of the call on the right. `a |> f` is `f(a)`. It chains from the left: `x |> h |> g(1) |> f` is `f(g(h(x), 1))`. The guide is [`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "The pipe operator".
+`a |> f(b, c)` is `f(a, b, c)`: the value on the left is the first argument of the call on the right. `a |> f` is `f(a)`. `a |> f(b, _, c)` is `f(b, a, c)`: the placeholder `_` puts the value in another place. It chains from the left: `x |> h |> g(1) |> f` is `f(g(h(x), 1))`. The guide is [`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "The pipe operator".
 
 ## Purpose
 
-A frequent task of the console is a chain of calls: a table, then a filter, then the columns. With calls in calls, the reader reads it from the inside out, and the name of the last call is the first word of the line. With `|>`, the line reads in the order in which its calls run, which property 22 asks for: `processes() |> where(name = "server") |> columns("name slot")`. The designs of the log facts and of the record outputs write their frequent tasks with it ([log_facts.md](log_facts.md), [module_outputs.md](module_outputs.md)).
+A frequent task of the console is a chain of calls: a table, then a filter, then the columns. With calls in calls, the reader reads it from the inside out, and the name of the last call is the first word of the line. With `|>`, the line reads in the order in which its calls run, which property 22 asks for: `processes() |> where(name = "server") |> columns(name, slot)`. The designs of the log facts and of the record outputs write their frequent tasks with it ([log_facts.md](log_facts.md), [module_outputs.md](module_outputs.md)).
 
 ## Constraints
 
@@ -27,12 +27,27 @@ A frequent task of the console is a chain of calls: a table, then a filter, then
 
 **The completion after `|>`.** The list offers the commands that take an argument and whose first parameter takes the value on the left, from the same knowledge. The console reads the line up to the `|>`, with a name of one byte in the place of the typed one, so the name being typed does not change the value on the left. When it does not know the value, it offers each command that takes an argument.
 
-**Why `|>`, and not `|`.** `|>` has no other meaning in the language, so a reader and the parser never take it for another operator, and `|` stays free for a union of sets. The arrow reads as "goes to". Elixir, Gleam and R give the same sign this meaning. F#, where the sign comes from, gives the value to a function of one argument: `x |> f a` is `f a x` there, with the value last; the console has no curried call, so the first argument is the one place that reads as the line.
+**The placeholder `_`.** In `a |> f(b, _, c)`, the value on the left takes the place of `_`: it is `f(b, a, c)`. With no `_`, the value stays the first argument. So a command that takes its subject in another place reads in the order of its data: `compile(src, t) |> bytes(t, 0, _) |> assemble(f)` is `assemble(bytes(t, 0, compile(src, t)), f)`. The rules, each checked by the pure procedure before any call:
+
+- `_` is a whole argument of the call on the right of `|>`: a positional argument, or the value of a named argument (`f(count = _)`). `f(_ + 1)` is refused: `error: |>: _ is a whole argument; ((v) => f(v + 1)) takes an expression`.
+- At most one `_` in that call. Two are refused: `error: |>: f has two _; the value on the left takes one place`.
+- A `_` outside the right side of a `|>` is refused: on the left of `|>`, and in a line with no `|>`: `error: _ is a place of the call on the right of |>; this call has no |> before it`.
+- A `_` inside a call nested in the call on the right is refused: `f(g(_))`, and `_` in the body of a function. `error: |>: _ names an argument of f, not of g inside it`.
+- `_` alone is no name: a variable or a field named `_` is refused. A name that holds `_`, such as `sum_values`, is a name.
+
+The nested form puts the text of the left value in the place of `_`, and removes the `_` and the `|>`, so it stays shorter than its line. The count of the arguments counts `_` as one: `f(b, _, c)` passes 3 arguments, `f(b, c)` with no `_` passes 3 too. The check of the first parameter becomes the check of the parameter at `_`, from the same `Left_Knowledge`, and the completion after `|>` offers the commands that take the value at that place.
+
+**Why `_` names a place of the call on the right only.** Each `|>` then has one place, which a reader finds in the call that follows it. A `_` in a nested call `f(g(_))` hides that the value goes through `g` first, and a `_` in `g` that a `|>` inside an argument also owns would need a rule of scope. The order of the data says it with no rule: `x |> g(_) |> f(_)`. An expression around the value is a function: `x |> ((v) => f(v + 1))`.
+
+**Why `|>`, and not `|`.** `|>` has no other meaning in Lex, so a reader and the parser never take it for another operator, and `|` stays free for a union of sets. The arrow reads as "goes to". Elixir, Gleam and R give the same sign this meaning. F#, where the sign comes from, gives the value to a function of one argument: `x |> f a` is `f a x` there, with the value last; the console has no curried call, so the first argument is the one place that reads as the line.
 
 ## The refused forms
 
 - **`|`.** It reads as a pipe of text between processes, which property 19 refuses, and it takes the sign that a union of sets needs.
-- **The value as the last argument**, as in F#. The commands of the console take their subject first (`where(table, ...)`, `columns(table, ...)`), so the last place would need the arguments of each command in another order.
+- **The value as the last argument**, as in F#. The commands of the console take their subject first (`where(table, ...)`, `columns(table, ...)`), so the last place would need the arguments of each command in another order. A command that takes its subject elsewhere takes `_`.
+- **Functions only, for a place other than the first.** `compile(src, t) |> ((n) => bytes(t, 0, n)) |> assemble(f)` names a value that the line already says, and puts a function in a frequent task.
+- **Several placeholders (`_1`, `_2`) or two `_` in one call.** One value on the left fills one place; a second place is a `let`.
+- **`_` in a nested call or inside an expression.** The place of the value then hides in the depth of the call ("Why `_` names a place of the call on the right only").
 - **The operator in the parser**, with a call that takes a first value from the left. It is a second path through the parser and the check, which the equivalence would have to test case by case.
 - **A check during the run only.** The left part would run before a fault of the right part: `processes() |> help` would connect to `monitor` and then fail.
 - **A check of each kind before the run.** A built-in command makes the description of its table when it runs; a check before the run would need a second description of each one. The call checks it then, after the left part ran, with the sentence of the nested form.
@@ -43,8 +58,9 @@ A frequent task of the console is a chain of calls: a table, then a filter, then
 - **An error that quotes the line** (`unexpected "..."`) quotes the nested form, which the parser read.
 - **A `|` alone fails each line**, also a line with no `|>`: it was an unknown byte, and its line failed after the part before it ran.
 - **A call with no `)`** keeps none in the nested form, so the parser says that it misses, as for the line with calls in calls.
+- **`_` and the order of the effects.** The line means its nested form, and an export forces its arguments from the left to the right ([declarations.md](declarations.md), "One parser, one lazy evaluator, two modes"). So in `x() |> f(g(), _)`, which is `f(g(), x())`, `g()` runs before `x()`, though `x()` is written first. With no `_`, or with `_` first, the value on the left runs first. A line whose effects must run in the order of its text puts `_` first, or names the value with `let`.
 - **The hint line** under the edit line marks the parameter by the count of the arguments in the parentheses, one place before the parameter that takes the argument at the caret: `ROADMAP.md` has the correction.
 
 ## State
 
-Built: the operator for the calls of today (tables, records, exports), its refusals, its completion and its colors (an Operator). Left: the hint line after `|>`; the Stream of the record outputs, which takes `|>` as each value does.
+Built: the operator for the calls of today (tables, records, exports), its refusals, its completion and its colors (an Operator). Left: the hint line after `|>`; the Stream of the record outputs, which takes `|>` as each value does; the placeholder `_`, designed, which comes with the record literal in layer 3 of the build order of [declarations.md](declarations.md), "The build order".

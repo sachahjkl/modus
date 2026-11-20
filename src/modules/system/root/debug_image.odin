@@ -2,6 +2,7 @@ package root
 
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The debug image (docs/MODULE_CONTRACT.md, "Debug information"): the
@@ -18,10 +19,10 @@ debug_image_take :: proc "contextless" (ctx: ^system.Context) {
 	debug_image_size = ctx.values[op.ROOT_VALUE_DEBUG_IMAGE_SIZE]
 	if debug_image_memory == 0 || debug_image_size == 0 || debug_image_size > fixed_addresses.RANGE_SPAN {
 		debug_image_memory, debug_image_size = 0, 0
-		system.log(.Info, "root: no debug image: a stop report names each frame by its module and its offset")
+		system.log_fact(.Info, Debug_Image_Absent{})
 		return
 	}
-	system.log(.Info, "root: the debug image has ", system.Size{debug_image_size, .Bytes})
+	system.log_fact(.Info, Debug_Image_Found{debug_image_size = value_kinds.Size_In_Bytes(debug_image_size)})
 }
 
 // debug_image_give adds the debug image, read-only, to the mappings of a

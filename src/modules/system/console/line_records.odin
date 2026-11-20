@@ -59,16 +59,31 @@ Line_Records :: struct {
 	fact_count:  int,
 }
 
-// One fact of the rows that the console draws: what the render needs.
+// What the console shows for one record of a fact.
+Line_Fact_State :: enum u8 {
+	Waits  = 0, // A record of a fact before its last: nothing, and the line goes on.
+	Whole  = 1, // The last record of a fact: the sentence of the whole fact.
+	Broken = 2, // A record of a fact that the console cannot join: its part, raw, after the mark.
+}
+
+// One record of a fact of the rows that the console draws: what the render
+// needs. The last record of a whole fact holds the values of each of its
+// records, joined.
 Line_Fact :: struct {
-	number: i64,
-	hash:   [32]u8,
-	key:    u64,
-	count:  int, // The value bytes.
-	values: [op.LOG_FACT_VALUE_CAPACITY]u8,
+	number:     i64,
+	hash:       [32]u8,
+	key:        u64,
+	state:      Line_Fact_State,
+	part:       int,
+	part_count: int,
+	count:      int, // The value bytes of the record, or of the whole fact for Whole.
+	values:     [op.LOG_FACT_VALUES_MOST]u8,
 }
 
 line_records: Line_Records
+// The join of the facts of one read of the records of a line: not on the
+// stack, it holds the values of a whole fact.
+line_records_join: op.Log_Fact_Join
 
 // line_records_start forgets the calls of the line before.
 line_records_start :: proc "contextless" () {
@@ -349,40 +364,106 @@ line_records_facts_read :: proc "contextless" (table: Table, kept_rows: Value, k
 		return
 	}
 	after := u64(first)
-	for _ in 0 ..< LINE_RECORD_ANSWERS {
+	// The join of the records of a fact of several records, in the order
+	// of their numbers (op.log_fact_join_take), and the first kept item of
+	// the open fact.
+	join := &line_records_join
+	join^ = {}
+	join_first_item := 0
+	// The read stopped at its page: a record of the scope after the last
+	// row that the console draws, or the count of answers. An open fact
+	// then goes on past the page; else its next record is lost.
+	stopped_at_page := false
+	answers: for answer_index in 0 ..< LINE_RECORD_ANSWERS {
 		answer, total, ok := line_records_ask(line_records.fact_records, line_records.fact_records_export, after)
 		answer_table, valid := table_of(answer)
 		if !ok || !valid || answer_table.rows == 0 {
-			return
+			break answers
 		}
 		fields, fields_ok := fact_row_fields(answer_table)
 		if !fields_ok {
-			return
+			break answers
 		}
 		reached := i64(after)
 		for index in 0 ..< answer_table.rows {
 			row := table_row(answer_table, answer, index)
 			fact_number := module.field_integer(row, fields.number)
 			reached = max(reached, fact_number)
-			if fact_number > last || line_records.fact_count == LINE_RECORD_BATCH || !line_records_has_number(table, kept_rows, kept, number, fact_number) {
-				continue
-			}
 			hash := module.field_bytes(row, fields.module_hash)
 			values := module.field_bytes(row, fields.values)
 			count := module.field_integer(row, fields.value_count)
+			if fact_number > last {
+				stopped_at_page = true
+				continue
+			}
 			if len(hash) != 32 || values == nil || count < 0 || count > i64(len(values)) {
 				continue
 			}
+			// A row of fact_records names no process: the writer is 0 for
+			// each. The records of one fact have numbers that follow each
+			// other in one numbering, which the kernel writes under one
+			// lock, so a number with no gap says that no record of
+			// another process came between them.
+			part := op.Log_Fact_Part {
+				number     = u64(max(fact_number, 0)),
+				key        = u64(module.field_integer(row, fields.key)),
+				part       = int(module.field_integer(row, fields.part)),
+				part_count = int(module.field_integer(row, fields.part_count)),
+				values     = values[:count],
+			}
+			copy(part.module_hash[:], hash)
+			was_open := join.open
+			whole, fault := op.log_fact_join_take(join, part)
+			if fault != .None && was_open {
+				for &broken in line_records.facts[join_first_item:line_records.fact_count] {
+					broken.state = .Broken
+				}
+			}
+			if join.open && part.part == 0 {
+				join_first_item = line_records.fact_count
+			}
+			if line_records.fact_count == LINE_RECORD_BATCH || !line_records_has_number(table, kept_rows, kept, number, fact_number) {
+				continue
+			}
 			item := &line_records.facts[line_records.fact_count]
-			item.number, item.key, item.count = fact_number, u64(module.field_integer(row, fields.key)), int(count)
-			copy(item.hash[:], hash)
-			copy(item.values[:], values)
+			item.number, item.key, item.part, item.part_count = fact_number, part.key, part.part, part.part_count
+			item.hash = part.module_hash
+			switch {
+			case whole:
+				item.state, item.count = .Whole, join.value_count
+				copy(item.values[:], join.values[:join.value_count])
+			case join.open:
+				item.state, item.count = .Waits, int(count)
+				copy(item.values[:], values[:count])
+			case:
+				item.state, item.count = .Broken, int(count)
+				copy(item.values[:], values[:count])
+			}
 			line_records.fact_count += 1
 		}
-		if reached >= last || u64(answer_table.rows) >= total {
-			return
+		if u64(answer_table.rows) >= total {
+			break answers
+		}
+		if reached >= last || answer_index == LINE_RECORD_ANSWERS - 1 {
+			stopped_at_page = true
+			break answers
 		}
 		after = u64(max(reached, 0)) + 1
+	}
+	line_records_join_end(join, join_first_item, stopped_at_page)
+}
+
+// line_records_join_end ends the join of a read: a fact that is still open
+// when the read had no record after it lost its next record, and each of
+// its records shows raw after the mark, never nothing. A read that stopped
+// at its page keeps the fact open: its next record is past the rows that
+// the console draws.
+line_records_join_end :: proc "contextless" (join: ^op.Log_Fact_Join, first_item: int, stopped_at_page: bool) {
+	if op.log_fact_join_end(join, stopped_at_page) == .None {
+		return
+	}
+	for &broken in line_records.facts[min(first_item, line_records.fact_count):line_records.fact_count] {
+		broken.state = .Broken
 	}
 }
 
@@ -472,11 +553,24 @@ line_records_draw :: proc "contextless" (table: Table, kept_rows: Value, kept: i
 				emit("    ", {})
 			}
 			if module.field_integer(row, form) == i64(op.Log_Record_Form.Fact) {
-				// A fact is one record: its sentence, and the line ends.
-				if fact := line_records_fact(module.field_integer(row, number)); fact != nil {
-					fact_emit(fact.hash, fact.key, fact.values[:fact.count], plain)
-				} else {
+				// A fact is its sentence in the place of its last record,
+				// and the line ends there.
+				fact := line_records_fact(module.field_integer(row, number))
+				if fact == nil {
 					emit("a log fact whose values the service log did not give", {tone = u8(terminal.Tone.Dim)})
+					open = false
+					emit_end()
+					continue
+				}
+				switch fact.state {
+				case .Waits:
+					open = true
+					continue
+				case .Whole:
+					fact_emit(fact.hash, fact.key, fact.values[:fact.count], plain)
+				case .Broken:
+					emit(op.LOG_FACT_JOIN_BROKEN_MARK, {tone = u8(terminal.Tone.Dim)})
+					fact_part_raw_emit(fact.hash, fact.key, fact.part, fact.part_count, fact.values[:fact.count], plain)
 				}
 				open = false
 				emit_end()

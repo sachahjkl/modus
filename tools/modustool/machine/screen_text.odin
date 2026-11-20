@@ -4,7 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "core:time"
 
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "modus:support/graphics"
 import "modustool:build"
 import "modustool:foundation"
@@ -87,7 +87,7 @@ cells_text :: proc(pixels: []u8, width, height: int, x, y: int, count: int) -> (
 		found := false
 		for glyph, index in graphics.font {
 			if glyph == rows {
-				character, _ := glyph_cache.character_of_index(index)
+				character, _ := font_characters.character_of_index(index)
 				strings.write_rune(&builder, character)
 				found = true
 				break

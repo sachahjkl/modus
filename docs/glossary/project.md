@@ -936,6 +936,16 @@ The design: `src/md/infrastructure/full_check.md`; `docs/TOOLS.md`, "What each t
 
 Do not use: CI run, test suite, full test.
 
+### Merge queue
+
+The merge queue is the command `modustool queue`, which merges a batch of branches into `master` in their order after one full check of the whole batch.
+
+It merges the batch in a worktree beside the main tree, each branch with its own merge commit. When the full check fails, it checks the two halves of the batch, then the halves of a half that fails, until one branch fails alone: that branch is at fault and stays a branch, and the halves that pass are merged. Its count of full checks has a budget, and it stops after two branches at fault.
+
+The design: `src/md/infrastructure/branch_batches.md`; `docs/TOOLS.md`, "The merge queue".
+
+Do not use: merge train, merge bot, bisect (for the whole).
+
 ### Host process
 
 A host process is a process of the host system that the tool starts and waits for: a compiler, QEMU, the TPM emulator, a child of the fuzzer or the build of one boot volume.

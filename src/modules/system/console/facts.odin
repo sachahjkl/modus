@@ -5,6 +5,7 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:private/console/console_results"
+import "modus:private/console/lex_parser"
 import "modus:support/system"
 import terminal "modus:support/terminal"
 
@@ -25,10 +26,13 @@ import terminal "modus:support/terminal"
 // console checks against the fact tables of the image before any call,
 // never a text.
 
-FACT_NAME_CAPACITY :: 256 // The fact names of the boot image that the console knows: a name past them is not offered and not found.
+// The fact names of the boot image that the console knows: a name past them
+// is not offered and not found. Every line of a module is a fact, so the
+// image holds about 2000 fact types; the bound keeps room for twice that.
+FACT_NAME_CAPACITY :: 4096
 FACT_NAME_BYTES :: 64 // The bytes of one fact name, "package.Type": a longer one is not offered and not found.
 FACT_MATCH_CAPACITY :: 16 // The modules whose fact table holds one fact name, that facts() reads; more are left out.
-FACT_FILE_CAPACITY :: 64 // The module files of the boot image with a fact table that the console keeps; the facts of a module past them show raw.
+FACT_FILE_CAPACITY :: 160 // The module files of the boot image with a fact table that the console keeps; the facts of a module past them show raw.
 
 // The fact names of the boot image: each pair of a package name and a
 // record name that a table Facts holds, once. The image does not change
@@ -240,12 +244,12 @@ fact_name_fail :: proc "contextless" (command_name, name: string) -> Value {
 	return fail(command_name, ": no fact type has the name ", name, "; the fact types are ", close)
 }
 
-// fact_name_read reads the argument of a parameter of the form Fact_Name:
-// a name with one dot, checked against the fact names of the boot image
-// before any call.
-fact_name_read :: proc "contextless" (command_name: string) -> Value {
-	name := read_name()
-	if name == "" {
+// fact_name_evaluate evaluates a Fact_Name node, the argument of a
+// parameter of the form Fact_Name: a name with one dot, checked against the
+// fact names of the boot image before the command runs.
+fact_name_evaluate :: proc "contextless" (command_name: string, fact_name_node: lex_parser.Node_Index) -> Value {
+	name := lex_parser.node_text(&line_tree, fact_name_node)
+	if lex_parser.node_at(&line_tree, fact_name_node).refusal == .Fact_Name_Missing {
 		return fail(command_name, " takes the name of a fact type, as ", command_name, "(t, storage.Bad_Block), not a value")
 	}
 	if !fact_name_known(name) {
@@ -303,11 +307,24 @@ fact_emit :: proc "contextless" (hash: [32]u8, key: u64, values: []u8, plain: te
 		}
 	}
 	// The raw form is the line of the fact on the serial port: no field
-	// name, because the names are in the module file only.
-	fact := op.Log_Fact{module_hash = hash, key = key, value_count = u16(min(len(values), op.LOG_FACT_VALUE_CAPACITY))}
+	// name, because the names are in the module file only. A fact of
+	// several records is the line of each of its records, joined.
+	part_count := op.log_fact_part_count(len(values))
+	for part in 0 ..< part_count {
+		start := part * op.LOG_FACT_VALUE_CAPACITY
+		end := min(len(values), start + op.LOG_FACT_VALUE_CAPACITY)
+		fact_part_raw_emit(hash, key, part, part_count, values[start:end], plain, continuation = part > 0)
+	}
+}
+
+// fact_part_raw_emit writes the raw form of one record of a fact: its part
+// of the line of the serial port, after the line of the record before it
+// for a continuation.
+fact_part_raw_emit :: proc "contextless" (hash: [32]u8, key: u64, part, part_count: int, values: []u8, plain: terminal.Style, continuation := false) {
+	fact := op.Log_Fact{module_hash = hash, key = key, value_count = u16(min(len(values), op.LOG_FACT_VALUE_CAPACITY)), part = u8(clamp(part, 0, 255)), part_count = u8(clamp(part_count, 0, 255))}
 	copy(fact.values[:], values)
 	raw: [op.LOG_FACT_LINE_BYTES_MOST]u8
-	emit(string(raw[:op.log_fact_line(&fact, &raw)]), plain)
+	emit(string(raw[:op.log_fact_line(&fact, &raw, continuation)]), plain)
 }
 
 // ---- facts().
@@ -477,7 +494,13 @@ table_facts :: proc "contextless" (arguments: []Value) -> Value {
 				hash := module.field_bytes(fact_row, fact_fields.module_hash)
 				values := module.field_bytes(fact_row, fact_fields.values)
 				value_count := module.field_integer(fact_row, fact_fields.value_count)
-				if len(hash) != 32 || values == nil || value_count != i64(first.description.size) {
+				// The first record of a fact holds its whole record of fixed
+				// fields; the records after it hold the out-of-line area of
+				// its text views, which a row of the table does not carry.
+				if module.field_integer(fact_row, fact_fields.part) != 0 {
+					continue
+				}
+				if len(hash) != 32 || values == nil || value_count < i64(first.description.size) || value_count > i64(len(values)) || !module.record_has_text_view(first.file, first.description) && value_count != i64(first.description.size) {
 					continue
 				}
 				kept := false
@@ -516,7 +539,7 @@ FACTS_ANSWERS_MOST :: 64
 // The fields of a row of log.fact_records that facts() and the records of
 // a line read.
 Fact_Row_Fields :: struct {
-	number, key, module_hash, value_count, values: module.Field,
+	number, key, module_hash, value_count, part, part_count, values: module.Field,
 }
 
 // fact_row_fields finds the fields of the rows of log.fact_records, with
@@ -526,8 +549,13 @@ fact_row_fields :: proc "contextless" (table: Table) -> (fields: Fact_Row_Fields
 	fields.key = table_field(table, "key") or_return
 	fields.module_hash = table_field(table, "module_hash") or_return
 	fields.value_count = table_field(table, "value_count") or_return
+	fields.part = table_field(table, "part") or_return
+	fields.part_count = table_field(table, "part_count") or_return
 	fields.values = table_field(table, "values") or_return
 	values_kind, values_kind_ok := module.field_kind(fields.values)
+	if fields.part.type != u8(module.Type.Integer) || fields.part_count.type != u8(module.Type.Integer) {
+		return {}, false
+	}
 	if fields.number.type != u8(module.Type.Integer) || fields.key.type != u8(module.Type.Integer) || fields.value_count.type != u8(module.Type.Integer) || fields.module_hash.type != u8(module.Type.Bytes) || fields.module_hash.detail != 32 || !values_kind_ok || values_kind != .Fact_Values {
 		return {}, false
 	}

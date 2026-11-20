@@ -271,12 +271,9 @@ transfer :: proc "contextless" (command: block.Command, requests: []Request) -> 
 			if block.Status(completion.kind) != .Ok {
 				if good {
 					// The first refusal of this batch goes on the log, with the
-					// sentence of its error record.
+					// values of its error record.
 					error := errors.completion_record(completion.values)
-					text: [240]u8
-					writer := system.Writer{buffer = text[:]}
-					system.ring_error_text(&writer, &error, "block", block.command_name(error.operation), block.argument_name(error.operation, error.argument))
-					system.log(.Error, "storage: the block service refused a request: ", system.written(&writer))
+					system.log_fact(.Error, Block_Request_Refused(errors.error_record_fact_fields(error)))
 				}
 				good = false
 			}

@@ -31,9 +31,9 @@ import "base:intrinsics"
 
 // One row of the log: records(). A row has 256 bytes, the most that a
 // record of a description has, and holds one log record: its text has the
-// 168 bytes of the text of a log record. A row says that its text goes on in
-// the next row (continues), as a log record says that its text goes on in
-// the next log record (Log_Record.more). The level and the form are members
+// 168 bytes of the text of a log record. A row says that its text, or its
+// fact of several records, goes on in the next row (continues), as a log
+// record says it of the next log record (Log_Record.more). The level and the form are members
 // of contract enums, so a reader compares a member and parses no text
 // (src/md/features/log_facts.md, "The reader path").
 Record :: struct {
@@ -44,7 +44,7 @@ Record :: struct {
 	level:     op.Log_Level, // Info, Debug, Warning or Error.
 	form:      op.Log_Record_Form, // Text, or Fact: fact_records() gives the fact, and the text is empty.
 	lost:      i64, // The first row only: the log records after `after` that the kernel wrote over before this call read them.
-	continues: i64, // 1: the text goes on in the next row.
+	continues: i64, // 1: the text, or the fact of several records, goes on in the next row.
 	runs:      i64, // The count of the value runs of the text: value_runs() gives them.
 	text:      [168]u8, // op.LOG_TEXT_CAPACITY: the tool that reads the descriptions needs the number.
 }
@@ -99,11 +99,14 @@ own_records_read :: proc "contextless" (scope: log_scope.Scope, after: i64) -> (
 row_fill :: proc "contextless" (row: ^Record, number: i64, record: ^op.Log_Record, form: op.Log_Record_Form, level: op.Log_Level) {
 	row^ = {number = number, time = i64(record.time), slot = i64(record.process), level = level, form = form}
 	copy(row.process[:len(row.process) - 1], system.name_of(record.name[:]))
+	// `more` joins the records of a long text and the records of a fact of
+	// several records alike: a reader that groups the rows by it reads a
+	// whole fact, never one part as a fact.
+	row.continues = record.more != 0 ? 1 : 0
 	switch form {
 	case .Text:
 		text_count := min(int(record.text_count), len(record.text))
 		copy(row.text[:], record.text[:text_count])
-		row.continues = record.more != 0 ? 1 : 0
 		row.runs = i64(min(int(record.run_count), len(record.runs)))
 	case .Fact:
 	}
@@ -205,7 +208,8 @@ scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^err
 // a member of `Log_Level`: `Info`, `Debug`, `Warning` or `Error`; `form`,
 // `Text`, or `Fact` for a [log fact](term:log-fact), whose text is empty
 // and whose values `fact_records` gives; `lost`, in the first row only;
-// `continues`, 1 when the text goes on in the next row; `runs`, the count of
+// `continues`, 1 when the text, or the fact of several records, goes on in
+// the next row; `runs`, the count of
 // its value runs; `text`, at most 168 bytes.
 //
 // **The result** counts the rows of the scope from `after` to the last
@@ -419,12 +423,13 @@ value_runs_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, r
 Fact_Row :: struct {
 	number:      i64, // The number of the log record, as in records().
 	form:        op.Log_Record_Form, // Fact for each row, as the field form of records() names it: the same enum in the two tables.
-	continues:   i64, // The byte `more` of the record: 0 for a fact.
+	continues:   i64, // The byte `more` of the record: 1 for a record of a fact before its last.
 	key:         value_kinds.Hexadecimal_64, // The fact key that the writer gave.
 	module_hash: value_kinds.Hash_Field, // The module hash that the writer gave: its own-hash place.
-	value_count: i64, // The value bytes of the fact, as the kernel counted them from the length.
-	reserved:    value_kinds.Hexadecimal_64, // The 6 reserved bytes of the fact, as a number: 0, which the kernel writes.
-	values:      value_kinds.Fact_Values_Field, // The value bytes, each of them: the bytes past value_count are 0.
+	value_count: i64, // The value bytes of this record, as the kernel counted them from the length.
+	part:        u32, // The place of the record among the records of its fact, from 0, which the kernel writes.
+	part_count:  u32, // The records of its fact, 1 to op.LOG_FACT_RECORDS_MOST, which the kernel writes.
+	values:      value_kinds.Fact_Values_Field, // The value bytes of this record, each of them: the bytes past value_count are 0.
 }
 #assert(size_of(Fact_Row) == 224)
 // A reader that reads records and fact_records from one number, in call
@@ -446,20 +451,15 @@ fact_row_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result:
 	}
 	fact := op.log_record_fact(record)
 	row := &result[count^]
-	row^ = {number = number, form = .Fact, continues = i64(record.more), key = value_kinds.Hexadecimal_64(fact.key), value_count = i64(fact.value_count)}
+	row^ = {number = number, form = .Fact, continues = i64(record.more), key = value_kinds.Hexadecimal_64(fact.key), value_count = i64(fact.value_count), part = u32(fact.part), part_count = u32(fact.part_count)}
 	copy(row.module_hash[:], fact.module_hash[:])
-	reserved: u64
-	for value, index in fact.reserved {
-		reserved |= u64(value) << (8 * u64(index))
-	}
-	row.reserved = value_kinds.Hexadecimal_64(reserved)
 	// The bytes past the count that the kernel wrote are the zeros of the
 	// record, so a value never carries bytes of an older record.
 	copy(row.values[:min(int(fact.value_count), len(row.values))], fact.values[:])
 	count^ += 1
 }
 
-// fact_records gives the log facts of the log scope of the caller from the number `after` on, one row each, with the bytes that its writer gave: the record form, the fact key, the module hash, the count of the value bytes, the reserved bytes and the first value bytes. The result is the count of the facts of the scope from `after` to the last record.
+// fact_records gives the log facts of the log scope of the caller from the number `after` on, one row each, with the bytes that its writer gave: the record form, the fact key, the module hash, the count of the value bytes, its part and its count of parts, and the value bytes of the record. The result is the count of the facts of the scope from `after` to the last record.
 //
 // **What it is for.** A log fact is a record with no text: its row in
 // `records` has its number, its time, its process and its level, and an
@@ -472,8 +472,9 @@ fact_row_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result:
 //
 // **A row** (`Fact_Row`): `number`, the record; `form`, `Fact`, a member
 // of `Log_Record_Form` as in a row of `records`; `continues`, its byte `more`; `key`; `module_hash`;
-// `value_count`; `reserved`; `values`, the 144 value bytes, with 0 past
-// `value_count`.
+// `value_count`; `part`, from 0, and `part_count`, the records of its fact
+// (src/md/features/log_facts.md, "A fact of several records"); `values`,
+// the 144 value bytes of the record, with 0 past `value_count`.
 //
 // **Grant**: the [log scope](term:log-scope) of the connection, as for
 // `records`.

@@ -65,6 +65,7 @@ import "modus:private/manual/manual_navigation"
 import info "modus:contract/boot_info"
 import "modus:contract/manual_pages"
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
@@ -131,10 +132,10 @@ navigation_leave :: proc "contextless" () {
 page_back :: proc "contextless" () {
 	place, ok := manual_navigation.history_back(&history)
 	if !ok {
-		system.log(.Info, "manual: back: no page before")
+		system.log_fact(.Info, No_Page_Before{})
 		return
 	}
-	system.log(.Info, "manual: back to the page before")
+	system.log_fact(.Info, Back_To_Page_Before{})
 	switch place.kind {
 	case .Module:
 		select(int(place.index))
@@ -663,7 +664,7 @@ list_build :: proc "contextless" () {
 	}
 	list_row[list_count] = line
 	if list_count < len(entries) {
-		system.log(.Info, "manual: the list shows ", u64(list_count), " of the ", u64(len(entries)), " modules of the boot image")
+		system.log_fact(.Info, List_Cut{shown = u64(list_count), modules = u64(len(entries))})
 	}
 }
 
@@ -733,14 +734,14 @@ show :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 // count of exports of the module of a module page.
 page_log :: proc "contextless" () -> int {
 	if page_kind == .Link_Page {
-		system.log(.Info, "manual: the page ", manual_pages.target_of(link_pages, link_page_index), ": ", manual_pages.title_of(link_pages, link_page_index), ", ", u64(rows()), " rows")
+		system.log_fact(.Info, Link_Page_Shown{rows = u64(rows())}, manual_pages.target_of(link_pages, link_page_index), manual_pages.title_of(link_pages, link_page_index))
 		return 0
 	}
 	entries := system.image_entries(image)
 	file := file_of(&entries[selected])
 	head, _ := module.header(file)
 	exports := described_exports(file)
-	system.log(.Info, "manual: ", system.name_of(entries[selected].name[:]), head.entry_export != 0 ? ": a module with an entry, " : ": no entry, ", u64(exports), " exports, ", u64(rows()), " rows")
+	system.log_fact(.Info, Module_Page_Shown{exports = u64(exports), rows = u64(rows()), entry_words = value_kinds.text_field(head.entry_export != 0 ? "a module with an entry" : "no entry", ENTRY_WORDS_FIELD_BYTES), module_name = module_field(entries[selected].name[:])})
 	return exports
 }
 
@@ -836,7 +837,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		documented += int(line != "")
 	}
 	select(max(find("manual"), 0))
-	system.log(.Info, "manual: ok, ", u64(len(entries)), " modules, ", u64(documented), " have their documentation")
+	system.log_fact(.Info, Window_Ready{modules = u64(len(entries)), documented = u64(documented)})
 	markdown_check()
 	changed := true
 	pressed := false

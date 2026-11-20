@@ -36,10 +36,10 @@
 package interface
 
 import "modus:contract/draw_record"
-import "modus:contract/glyph_cache"
 import "modus:contract/scale_factor"
 import "modus:support/display"
 import "modus:support/graphics"
+import "modus:support/text_rendering"
 
 // The names of the contract that the package and its callers use. One
 // concept keeps one name: these are the names of the contract.
@@ -957,7 +957,7 @@ draw_text_right :: proc "contextless" (table: ^Draw_Table, right, y: int, text: 
 @(private)
 interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: int, text: string, color: graphics.Color, font: Font, element: u32, alpha: u8 = draw_record.OPAQUE_ALPHA) -> int {
 	width := interface_width_subpixels(font, text)
-	pixel, third := glyph_cache.position_of(place, 3)
+	pixel, third := text_rendering.position_of(place, text_rendering.POSITION_LIMIT)
 	origin := pixel * 64 + i64(third) * 64 / 3
 	end := int((origin + width + 63) / 64)
 	if len(text) == 0 {

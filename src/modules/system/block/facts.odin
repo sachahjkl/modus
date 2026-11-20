@@ -23,3 +23,34 @@ Device_Silent :: struct {
 Device_Needs_Reset :: struct {
 	in_flight: u64,
 }
+
+// The bytes of the Text field of the failure that stops the service: the
+// longest of the failures of the services of the devices and of the
+// network has 91 bytes, and a zero byte.
+FAILURE_FIELD_BYTES :: 96
+
+// The service stops on a failure: the words of the failure come from a
+// closed set of sentences of this module.
+@(log_fact = "block: {failure}")
+Service_Failed :: struct {
+	failure: [96]u8,
+}
+
+// The device is ready, and it takes a Flush. The template names the size
+// of a block by its words: it is a constant of the contract.
+@(log_fact = "block: ok, {disk_size} of 4096 bytes, a queue of {queue_size}, {requests_in_flight} requests in flight at most, flush: yes")
+Ready_With_Flush :: struct {
+	disk_size:          value_kinds.Size_In_Blocks,
+	queue_size:         u64,
+	requests_in_flight: u64,
+}
+
+// The device is ready, and it takes no Flush.
+@(log_fact = "block: ok, {disk_size} of 4096 bytes, a queue of {queue_size}, {requests_in_flight} requests in flight at most, flush: no")
+Ready_Without_Flush :: struct {
+	disk_size:          value_kinds.Size_In_Blocks,
+	queue_size:         u64,
+	requests_in_flight: u64,
+}
+
+#assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)

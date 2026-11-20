@@ -60,6 +60,7 @@ import "modus:contract/datagram"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -158,13 +159,14 @@ entries_process, entries_network, entries_frame: u64 // Hundredths of an entry f
 measured: bool
 inspect: bool // The grant has the right Inspect: the facts of the machine.
 
+// note keeps the answer of a case for the window. The case writes its own
+// log fact, with the values of its answer as fields.
 note :: proc "contextless" (text: string, right: bool, parts: ..system.Part) {
 	item := &cases[case_count]
 	item.text = text
 	item.right = right
 	item.count = len(system.format(item.answer[:], ..parts))
 	case_count += 1
-	system.log(.Info, "net: ", text, ": ", string(item.answer[:item.count]), right ? "" : " (WRONG)")
 }
 
 microseconds :: proc "contextless" (cycles: u64) -> u64 {
@@ -306,19 +308,25 @@ cases_run :: proc "contextless" () {
 	grant, grant_known := datagram.grant_unpack(info.values[6])
 	inspect = grant.inspect
 	local_address, local_port = u32(info.values[0]), u16(info.values[1])
-	note("the link and the address", link && grant_known && info.values[0] == LOCAL && info.values[3] == 24 && info.values[5] == 1 && grant.address == GATEWAY && grant.port == ECHO_PORT && !grant.tcp, address_text(text[:], u32(info.values[0])), "/24, the link is ", info.values[5] == 1 ? "up, " : "down, ", hardware_text(other[:], info.values[4]))
+	link_right := link && grant_known && info.values[0] == LOCAL && info.values[3] == 24 && info.values[5] == 1 && grant.address == GATEWAY && grant.port == ECHO_PORT && !grant.tcp
+	note("the link and the address", link_right, address_text(text[:], u32(info.values[0])), "/24, the link is ", info.values[5] == 1 ? "up, " : "down, ", hardware_text(other[:], info.values[4]))
+	system.log_fact(.Info, Link_And_Address{address = value_kinds.text_field(address_text(text[:], u32(info.values[0])), ADDRESS_FIELD_BYTES), link = value_kinds.text_field(info.values[5] == 1 ? "up" : "down", LINK_FIELD_BYTES), hardware = value_kinds.text_field(hardware_text(other[:], info.values[4]), HARDWARE_FIELD_BYTES), wrong_mark = wrong_mark_field(link_right)})
 
 	// 2. The hardware address of the gateway (ARP).
 	start := system.cycles()
 	resolved, has_resolved := call(.Resolve, {0 = GATEWAY})
 	took := microseconds(system.cycles() - start)
-	note("ARP: who has 10.0.2.2", has_resolved && datagram.Status(resolved.kind) == .Ok && resolved.values[0] != 0 && resolved.values[1] == GATEWAY, "the gateway answered ", hardware_text(text[:], resolved.values[0]), " in ", took, " us")
+	resolved_right := has_resolved && datagram.Status(resolved.kind) == .Ok && resolved.values[0] != 0 && resolved.values[1] == GATEWAY
+	note("ARP: who has 10.0.2.2", resolved_right, "the gateway answered ", hardware_text(text[:], resolved.values[0]), " in ", took, " us")
+	system.log_fact(.Info, Gateway_Resolved{took = value_kinds.Time_In_Microseconds(took), hardware = value_kinds.text_field(hardware_text(text[:], resolved.values[0]), HARDWARE_FIELD_BYTES), wrong_mark = wrong_mark_field(resolved_right)})
 
 	// 3. An echo of the gateway (ICMP).
 	start = system.cycles()
 	echo, has_echo := call(.Echo, {0 = GATEWAY, 1 = 1, 2 = 56})
 	took = microseconds(system.cycles() - start)
-	note("ICMP echo to 10.0.2.2, 56 bytes", has_echo && datagram.Status(echo.kind) == .Ok && echo.values[0] == 1 && echo.values[1] == 56, "the echo reply came in ", took, " us, time to live ", echo.values[2])
+	echo_right := has_echo && datagram.Status(echo.kind) == .Ok && echo.values[0] == 1 && echo.values[1] == 56
+	note("ICMP echo to 10.0.2.2, 56 bytes", echo_right, "the echo reply came in ", took, " us, time to live ", echo.values[2])
+	system.log_fact(.Info, Gateway_Echoed{took = value_kinds.Time_In_Microseconds(took), time_to_live = echo.values[2], wrong_mark = wrong_mark_field(echo_right)})
 
 	// 4. A datagram to the echo server, and its answer.
 	for place in 0 ..< RECEIVE_COUNT {
@@ -332,6 +340,7 @@ cases_run :: proc "contextless" () {
 	took = microseconds(system.cycles() - start)
 	same := has_answer && string(data) == MESSAGE && remote == GATEWAY && port == ECHO_PORT
 	note("UDP to 10.0.2.2 port 7, 41 bytes", same, "the same 41 bytes came back from ", address_text(text[:], u32(remote)), " port ", port, " in ", took, " us")
+	system.log_fact(.Info, Echo_Server_Answered{remote_port = port, took = value_kinds.Time_In_Microseconds(took), remote = value_kinds.text_field(address_text(text[:], u32(remote)), ADDRESS_FIELD_BYTES), wrong_mark = wrong_mark_field(same)})
 	if has_answer {
 		post(place)
 	}
@@ -345,19 +354,37 @@ cases_run :: proc "contextless" () {
 	refused, has_refused := call(.Send, {0 = (SEND_FIRST + 1) * PLACE_SIZE, 1 = u64(datagram_write(SEND_FIRST + 1, 11, OTHER_PORT)), 2 = GATEWAY})
 	refusal_writer := system.Writer{buffer = sentence[:]}
 	error := network.completion_error_text(&refusal_writer, refused)
-	note("UDP to 10.0.2.2 port 9", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.argument == 3 && error.value == errors.endpoint_pack(GATEWAY, OTHER_PORT) && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT), "refused: ", system.written(&refusal_writer))
+	port_right := has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.argument == 3 && error.value == errors.endpoint_pack(GATEWAY, OTHER_PORT) && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT)
+	note("UDP to 10.0.2.2 port 9", port_right, "refused: ", system.written(&refusal_writer))
+	if port_right {
+		system.log_fact(.Info, Other_Port_Refused(errors.error_record_fact_fields(error)))
+	} else {
+		system.log_fact(.Info, Other_Port_Refused_Wrong(errors.error_record_fact_fields(error)))
+	}
 
 	// 6. An echo of another address.
 	refused, has_refused = call(.Echo, {0 = 0x0A000203, 1 = 2, 2 = 8})
 	refusal_writer = {buffer = sentence[:]}
 	error = network.completion_error_text(&refusal_writer, refused)
-	note("ICMP echo to 10.0.2.3", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.value == errors.endpoint_pack(0x0A000203, 0), "refused: ", system.written(&refusal_writer))
+	address_right := has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.value == errors.endpoint_pack(0x0A000203, 0)
+	note("ICMP echo to 10.0.2.3", address_right, "refused: ", system.written(&refusal_writer))
+	if address_right {
+		system.log_fact(.Info, Other_Address_Echo_Refused(errors.error_record_fact_fields(error)))
+	} else {
+		system.log_fact(.Info, Other_Address_Echo_Refused_Wrong(errors.error_record_fact_fields(error)))
+	}
 
 	// 7. A datagram larger than one frame.
 	refused, has_refused = call(.Send, {0 = 0, 1 = 2000, 2 = GATEWAY})
 	refusal_writer = {buffer = sentence[:]}
 	error = network.completion_error_text(&refusal_writer, refused)
-	note("UDP of 2000 bytes", has_refused && datagram.Status(refused.kind) == .Too_Large && errors.Kind(error.kind) == .Too_Long && error.value == 2000 && error.limit == datagram.DATAGRAM_LIMIT, "refused, no fragment: ", system.written(&refusal_writer))
+	large_right := has_refused && datagram.Status(refused.kind) == .Too_Large && errors.Kind(error.kind) == .Too_Long && error.value == 2000 && error.limit == datagram.DATAGRAM_LIMIT
+	note("UDP of 2000 bytes", large_right, "refused, no fragment: ", system.written(&refusal_writer))
+	if large_right {
+		system.log_fact(.Info, Large_Datagram_Refused(errors.error_record_fact_fields(error)))
+	} else {
+		system.log_fact(.Info, Large_Datagram_Refused_Wrong(errors.error_record_fact_fields(error)))
+	}
 
 	// 8. A datagram that this process wrote with another source port, to
 	// the remote of the grant, with a correct checksum. The network service
@@ -366,7 +393,9 @@ cases_run :: proc "contextless" () {
 	copy(data_of(SEND_FIRST + 2), "a forged source port")
 	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 2) * PLACE_SIZE, 1 = u64(datagram_write(SEND_FIRST + 2, 20, ECHO_PORT, FORGED_SOURCE_PORT)), 2 = GATEWAY})
 	error = errors.completion_record(refused.values)
-	note("UDP from the source port 1234", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.found == FORGED_SOURCE_PORT && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT), "refused: the source port ", u64(error.found), " of the header is not the local port of this endpoint, ", u64(local_port))
+	source_right := has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.found == FORGED_SOURCE_PORT && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT)
+	note("UDP from the source port 1234", source_right, "refused: the source port ", u64(error.found), " of the header is not the local port of this endpoint, ", u64(local_port))
+	system.log_fact(.Info, Source_Port_Refused{found_port = u64(error.found), local_port = u64(local_port), wrong_mark = wrong_mark_field(source_right)})
 
 	// A datagram whose length field is not its count of bytes: the field
 	// says one byte more than the Send gives. The network service reads the
@@ -377,18 +406,28 @@ cases_run :: proc "contextless" () {
 	byte_order.write_u16_big_endian(place_of(SEND_FIRST + 3), 4, u16(whole_count + 1))
 	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 3) * PLACE_SIZE, 1 = u64(whole_count), 2 = GATEWAY})
 	error = errors.completion_record(refused.values)
-	note("UDP with a wrong length field", has_refused && datagram.Status(refused.kind) == .Bad_Command && errors.Kind(error.kind) == .Bad_Value && error.argument == 2 && error.value == i64(whole_count + 1) && error.limit == i64(whole_count) && whole_count == network.UDP_HEADER + 20, "refused: the length field of the header says ", u64(error.value), " bytes, the Send has ", u64(error.limit))
+	length_right := has_refused && datagram.Status(refused.kind) == .Bad_Command && errors.Kind(error.kind) == .Bad_Value && error.argument == 2 && error.value == i64(whole_count + 1) && error.limit == i64(whole_count) && whole_count == network.UDP_HEADER + 20
+	note("UDP with a wrong length field", length_right, "refused: the length field of the header says ", u64(error.value), " bytes, the Send has ", u64(error.limit))
+	system.log_fact(.Info, Length_Field_Refused{field_bytes = u64(error.value), send_bytes = u64(error.limit), wrong_mark = wrong_mark_field(length_right)})
 
 	// A datagram shorter than the UDP header: it has no ports to check.
 	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 3) * PLACE_SIZE, 1 = network.UDP_HEADER - 1, 2 = GATEWAY})
 	error = errors.completion_record(refused.values)
-	note("UDP of 7 bytes", has_refused && datagram.Status(refused.kind) == .Bad_Command && errors.Kind(error.kind) == .Too_Small && error.argument == 2 && error.value == network.UDP_HEADER - 1 && error.limit == datagram.DATAGRAM_LEAST, "refused: the Send has ", u64(error.value), " bytes, a datagram has ", u64(error.limit), " bytes at least, its header")
+	short_right := has_refused && datagram.Status(refused.kind) == .Bad_Command && errors.Kind(error.kind) == .Too_Small && error.argument == 2 && error.value == network.UDP_HEADER - 1 && error.limit == datagram.DATAGRAM_LEAST
+	note("UDP of 7 bytes", short_right, "refused: the Send has ", u64(error.value), " bytes, a datagram has ", u64(error.limit), " bytes at least, its header")
+	system.log_fact(.Info, Short_Datagram_Refused{send_bytes = u64(error.value), least_bytes = u64(error.limit), wrong_mark = wrong_mark_field(short_right)})
 
 	// 9. The datagram of the peer with a wrong checksum. The peer sent it
 	// before its first answer, so case 4 saw it first: the network service
 	// gave it to this endpoint (the port and the remote are the ones of the
 	// grant), and datagram_wait dropped it.
-	note("UDP from 10.0.2.2 port 7 with a wrong checksum", wrong_checksums == 1 && malformed_datagrams == 0, "dropped by this process: ", wrong_checksums, wrong_checksums == 1 ? " datagram" : " datagrams", "; the network service gave it to the endpoint of its port")
+	checksum_right := wrong_checksums == 1 && malformed_datagrams == 0
+	note("UDP from 10.0.2.2 port 7 with a wrong checksum", checksum_right, "dropped by this process: ", wrong_checksums, wrong_checksums == 1 ? " datagram" : " datagrams", "; the network service gave it to the endpoint of its port")
+	if wrong_checksums == 1 {
+		system.log_fact(.Info, Wrong_Checksum_Dropped{datagrams = wrong_checksums, wrong_mark = wrong_mark_field(checksum_right)})
+	} else {
+		system.log_fact(.Info, Wrong_Checksums_Dropped{datagrams = wrong_checksums, wrong_mark = wrong_mark_field(checksum_right)})
+	}
 
 	// 10 and 11. The frames that the network service refused. The peer sent
 	// them before its first answer, so they arrived before case 4. A row of
@@ -412,7 +451,7 @@ cases_run :: proc "contextless" () {
 				own_right += 1
 				own_from = u64(row.last.value)
 			}
-			system.log(.Info, "net: refused for this endpoint: ", row.count, " x ", system.written(&writer))
+			system.log_fact(.Info, Refused_For_Endpoint{count = row.count, problem = value_kinds.text_field(system.written(&writer), PROBLEM_FIELD_BYTES)})
 		case .Machine:
 			machine_rows += 1
 			machine_total += row.count
@@ -421,24 +460,39 @@ cases_run :: proc "contextless" () {
 					machine_found += 1
 				}
 			}
-			system.log(.Info, "net: refused for the machine: ", row.count, " x ", system.written(&writer))
+			system.log_fact(.Info, Refused_For_Machine{count = row.count, problem = value_kinds.text_field(system.written(&writer), PROBLEM_FIELD_BYTES)})
 		case:
 			machine_rows += 1000 // A scope that the contract does not have.
 		}
 	}
-	note("UDP from 10.0.2.2 port 9 to this endpoint", has_problems && own_rows == 1 && own_right == 1 && own_from == OTHER_PORT, "refused: from port ", own_from, "; a row of this endpoint")
+	row_right := has_problems && own_rows == 1 && own_right == 1 && own_from == OTHER_PORT
+	note("UDP from 10.0.2.2 port 9 to this endpoint", row_right, "refused: from port ", own_from, "; a row of this endpoint")
+	system.log_fact(.Info, Endpoint_Row_Found{from_port = own_from, wrong_mark = wrong_mark_field(row_right)})
 	if inspect {
-		note("malformed frames from the wire", has_problems && machine_found == len(expected_machine_rows) && machine_rows == len(expected_machine_rows), machine_total, " refused in ", u64(machine_rows), " kinds, ", u64(machine_found), " of ", u64(len(expected_machine_rows)), " expected; no fault")
+		rows_right := has_problems && machine_found == len(expected_machine_rows) && machine_rows == len(expected_machine_rows)
+		note("malformed frames from the wire", rows_right, machine_total, " refused in ", u64(machine_rows), " kinds, ", u64(machine_found), " of ", u64(len(expected_machine_rows)), " expected; no fault")
+		system.log_fact(.Info, Machine_Rows_Found{refused = machine_total, kinds = u64(machine_rows), found = u64(machine_found), expected = u64(len(expected_machine_rows)), wrong_mark = wrong_mark_field(rows_right)})
 	} else {
-		note("malformed frames from the wire", has_problems && machine_rows == 0, "not shown: the grant has no right Inspect")
+		rows_right := has_problems && machine_rows == 0
+		note("malformed frames from the wire", rows_right, "not shown: the grant has no right Inspect")
+		system.log_fact(.Info, Machine_Rows_Not_Shown{wrong_mark = wrong_mark_field(rows_right)})
 	}
 
 	// 12. The echo requests of the gateway, that the network service answered.
 	statistics, has_statistics := call(.Statistics)
 	if inspect {
-		note("ICMP echo from 10.0.2.2 to this machine", has_statistics && statistics.values[5] >= 1, "the network service answered ", statistics.values[5], statistics.values[5] == 1 ? " request" : " requests")
+		requests := statistics.values[5]
+		requests_right := has_statistics && requests >= 1
+		note("ICMP echo from 10.0.2.2 to this machine", requests_right, "the network service answered ", requests, requests == 1 ? " request" : " requests")
+		if requests == 1 {
+			system.log_fact(.Info, Echo_Request_Answered{requests = requests, wrong_mark = wrong_mark_field(requests_right)})
+		} else {
+			system.log_fact(.Info, Echo_Requests_Answered{requests = requests, wrong_mark = wrong_mark_field(requests_right)})
+		}
 	} else {
-		note("ICMP echo from 10.0.2.2 to this machine", has_statistics && statistics.values[5] == 0, "not shown: the grant has no right Inspect")
+		requests_right := has_statistics && statistics.values[5] == 0
+		note("ICMP echo from 10.0.2.2 to this machine", requests_right, "not shown: the grant has no right Inspect")
+		system.log_fact(.Info, Echo_Requests_Not_Shown{wrong_mark = wrong_mark_field(requests_right)})
 	}
 }
 
@@ -462,9 +516,11 @@ command_words_check :: proc "contextless" () {
 		after, has_after := call(.Info)
 		right := has_refused && refused.kind == u32(datagram.Status.Bad_Command) && error.kind == i64(errors.Kind.Unsupported) && error.unit == i64(errors.Unit.None) && error.operation == i64(word) && error.argument == 0 && error.value == i64(word) && has_after && after.kind == u32(datagram.Status.Ok) && after.values[1] == u64(local_port)
 		if right {
-			system.log(.Info, "net: the command word ", u64(word), " of the datagram ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must")
+			system.log_fact(.Info, Command_Word_Refused{word = u64(word)})
+		} else if has_refused {
+			system.log_fact(.Info, Command_Word_Wrong{word = u64(word), status = u64(refused.kind), error_kind = errors.Kind_Word(error.kind), operation = u64(max(error.operation, 0)), next_status = u64(after.kind)})
 		} else {
-			system.log(.Info, "net: the command word ", u64(word), " of the datagram ring: WRONG: ", has_refused ? "the status " : "no answer, the status ", u64(refused.kind), ", the error kind ", u64(max(error.kind, 0)), ", the operation ", u64(max(error.operation, 0)), "; the next Info: the status ", u64(after.kind))
+			system.log_fact(.Info, Command_Word_Unanswered{word = u64(word), status = u64(refused.kind), error_kind = errors.Kind_Word(error.kind), operation = u64(max(error.operation, 0)), next_status = u64(after.kind)})
 		}
 	}
 }
@@ -495,7 +551,7 @@ measure_round_trips :: proc "contextless" () {
 	}
 	round_least = microseconds(times[0])
 	round_middle = microseconds(times[ROUND_TRIPS / 2])
-	system.log(.Info, "net: the round trip of one datagram of ", u64(DATA_BYTES), " bytes: ", round_least, " us at least, ", round_middle, " us in the middle, over ", u64(ROUND_TRIPS))
+	system.log_fact(.Info, Round_Trip_Measured{datagram_size = value_kinds.Size_In_Bytes(DATA_BYTES), least = value_kinds.Time_In_Microseconds(round_least), middle = value_kinds.Time_In_Microseconds(round_middle), trips = u64(ROUND_TRIPS)})
 }
 
 // measure_refusals measures a request that the network service refuses
@@ -511,7 +567,7 @@ measure_refusals :: proc "contextless" () {
 		}
 	}
 	nanoseconds := microseconds(system.cycles() - start) * 1000 / REFUSALS
-	system.log(.Info, "net: a refused request of the datagram ring (Send of 2000 bytes, Too_Large), from the command to its completion: ", nanoseconds, " ns, ", u64(refused), " of ", u64(REFUSALS), " refused")
+	system.log_fact(.Info, Refusal_Measured{request = value_kinds.Time_In_Nanoseconds(nanoseconds), refused = u64(refused), requests = u64(REFUSALS)})
 }
 
 // measure_checksum measures what this process writes for each datagram
@@ -524,7 +580,7 @@ measure_checksum :: proc "contextless" () {
 		datagram_write(SEND_FIRST, datagram.DATA_LIMIT)
 	}
 	nanoseconds := microseconds(system.cycles() - start) * 1000 / ROUNDS
-	system.log(.Info, "net: the header and the checksum of a datagram of ", u64(datagram.DATA_LIMIT), " bytes: ", nanoseconds, " ns, in this process (no offload)")
+	system.log_fact(.Info, Checksum_Measured{datagram_size = value_kinds.Size_In_Bytes(datagram.DATA_LIMIT), header_and_checksum = value_kinds.Time_In_Nanoseconds(nanoseconds)})
 }
 
 // measure_burst keeps BURST_IN_FLIGHT datagrams in flight for one second:
@@ -566,9 +622,8 @@ measure_burst :: proc "contextless" () {
 	entries_process = process * 100 / max(received, 1)
 	entries_network = (after.values[2] - before.values[2]) * 100 / max(received, 1)
 	entries_frame = (after.values[3] - before.values[3]) * 100 / max(received, 1)
-	a, b, c: [16]u8
-	system.log(.Info, "net: a burst with ", u64(BURST_IN_FLIGHT), " datagrams in flight: ", burst_rate, " datagrams in one second, sent and answered, ", burst_lost, " lost")
-	system.log(.Info, "net: kernel entries for each datagram: ", hundredths(a[:], entries_process), " of this process, ", hundredths(b[:], entries_network), " of the network service, ", hundredths(c[:], entries_frame), " of the frame service")
+	system.log_fact(.Info, Burst_Measured{in_flight = u64(BURST_IN_FLIGHT), rate = burst_rate, lost = burst_lost})
+	system.log_fact(.Info, Burst_Entries_Measured{this_process = value_kinds.Hundredths(entries_process), network_service = value_kinds.Hundredths(entries_network), frame_service = value_kinds.Hundredths(entries_frame)})
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
@@ -642,7 +697,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_memory := ctx.handles[datagram.GRANT_RING]
 	status: system.Status
 	if datagrams, status = system.ring_open(ring_memory); status != .Ok {
-		system.log(.Info, "net: no endpoint: the process has no grant of the network")
+		system.log_fact(.Info, No_Endpoint{})
 		system.stop(.Refused)
 	}
 	// The datagram region: the root service made it, with the ring.
@@ -650,7 +705,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address, map_status := system.memory_map(region_memory, {.Write})
 	region_pages, size_status := system.memory_size(region_memory)
 	if map_status != .Ok || size_status != .Ok || region_pages < REGION_PAGES {
-		system.log(.Info, "net: no datagram region")
+		system.log_fact(.Info, No_Datagram_Region{})
 		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)
@@ -665,16 +720,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if wrong == 0 {
-		system.log(.Info, "net: ok, ", u64(case_count), " cases")
+		system.log_fact(.Info, Cases_Passed{cases = u64(case_count)})
 	} else {
-		system.log(.Info, "net: WRONG: ", u64(wrong), " of ", u64(case_count), " cases")
+		system.log_fact(.Info, Cases_Wrong{wrong = u64(wrong), cases = u64(case_count)})
 	}
 	measure_checksum()
 	measure_round_trips()
 	measure_refusals()
 	measure_burst()
 	measured = true
-	system.log(.Info, "net: the measures are done")
+	system.log_fact(.Info, Measures_Done{})
 	for {
 		draw(&window)
 		display.wait(&window)
@@ -697,12 +752,14 @@ after_key :: proc "contextless" () {
 	case !has_sent:
 		item.count = len(system.format(item.answer[:], "no answer of the network service"))
 		item.right = false
+		system.log_fact(.Info, Key_Datagram_Unanswered{})
 	case datagram.Status(sent.kind) == .Not_Granted && errors.completion_record(sent.values).limit == 0:
 		writer := system.Writer{buffer = item.answer[:]}
 		system.write_part(&writer, "refused, the endpoint has no grant now: ")
-		network.completion_error_text(&writer, sent)
+		error := network.completion_error_text(&writer, sent)
 		item.count = len(system.written(&writer))
 		item.right = true
+		system.log_fact(.Info, Key_Datagram_Refused(errors.error_record_fact_fields(error)))
 	case datagram.Status(sent.kind) == .Ok:
 		place, data, _, _, ok := datagram_wait(system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
 		if ok {
@@ -710,14 +767,19 @@ after_key :: proc "contextless" () {
 		}
 		item.count = len(system.format(item.answer[:], ok ? "sent, and " : "sent, and no ", "answer"))
 		item.right = ok && len(data) == 11
+		if ok {
+			system.log_fact(.Info, Key_Datagram_Answered{})
+		} else {
+			system.log_fact(.Info, Key_Datagram_Sent_Without_Answer{})
+		}
 	case:
 		writer := system.Writer{buffer = item.answer[:]}
 		system.write_part(&writer, "refused: ")
-		network.completion_error_text(&writer, sent)
+		error := network.completion_error_text(&writer, sent)
 		item.count = len(system.written(&writer))
 		item.right = false
+		system.log_fact(.Info, Key_Datagram_Refused_Otherwise(errors.error_record_fact_fields(error)))
 	}
 	case_count = CASE_CAPACITY
-	system.log(.Info, "net: a datagram to 10.0.2.2 port 7 after a key: ", string(item.answer[:item.count]))
 }
 #assert(REGION_PAGES == datagram.REGION_PAGES)

@@ -266,9 +266,11 @@ Operation :: enum u32 {
 	// - `log`: the log handle, with **Write**. Each process has it in its context at `CONTEXT_LOG`.
 	// - `address`, `length`: the bytes of the record, in memory that the process can read. For the form `Text`,
 	//   the text, at most `LOG_TEXT_BYTES_MOST` bytes. A text longer than `LOG_TEXT_CAPACITY` continues in the
-	//   next records (`Log_Record`, `more`). For the form `Fact`, a `Log_Fact` up to the end of its values:
-	//   from `LOG_FACT_HEAD_BYTES` to `size_of(Log_Fact)` bytes. The kernel writes `value_count` from the
-	//   length, and reads no other field of it.
+	//   next records (`Log_Record`, `more`). For the form `Fact`, a `Log_Fact_Call` up to the end of its
+	//   values: from `LOG_FACT_HEAD_BYTES` to `LOG_FACT_CALL_BYTES_MOST` bytes. The kernel cuts the values in
+	//   parts of `LOG_FACT_VALUE_CAPACITY` bytes and writes one record of each part, in a row, each with the
+	//   module hash and the key, and `more` but on the last; it writes `value_count`, `part` and `part_count`
+	//   of each, and reads no other field.
 	// - `level`: a `Log_Level`, from `Info` (0) to `Error` (3).
 	// - `runs`: the count of the value runs of the text, at most `LOG_CALL_RUN_LIMIT`; 0 is a plain text. The
 	//   runs (`value_kinds.Value_Run_In_Call`) follow the `length` bytes of the text at `address`. A run says
@@ -283,13 +285,13 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Handle`, `No_Right`: `log` is not a log handle with **Write**.
 	// - `Bad_Address`: `length` is above `LOG_TEXT_BYTES_MOST`, or the process cannot read the text and its runs.
-	//   For a fact: `length` is below `LOG_FACT_HEAD_BYTES` or above `size_of(Log_Fact)`, or the process cannot
-	//   read the bytes.
+	//   For a fact: `length` is below `LOG_FACT_HEAD_BYTES` or above `LOG_FACT_CALL_BYTES_MOST`, or the
+	//   process cannot read the bytes.
 	// - `Bad_Operation`: `level` is above `Error`, `runs` is above `LOG_CALL_RUN_LIMIT`, `form` names no
 	//   `Log_Record_Form`, or a fact has runs.
 	// - `No_Budget`: the budget of the process accepted all the records of its amount in this second
 	//   (`Budget_Amounts`, `log_records`). No other budget counts the record, so the refusal says nothing of
-	//   what other processes wrote. A fact counts one record.
+	//   what other processes wrote. A fact counts one record for each of its parts.
 	Memory_Create  = 2, // (budget, pages, flags: Memory_Flags) -> memory handle.
 	// Makes a memory object of `pages` pages of 4096 bytes, and gives a handle to it with each right of
 	// memory: **Give**, **Read**, **Write** and **Execute**. The memory is zero. The budget pays now, so an
@@ -3108,6 +3110,10 @@ Process_Mapping :: struct {
 #assert(size_of(Process_Mapping) == 64)
 
 MAPPING_REPORT_CAPACITY :: 128 // MAPPING_CAPACITY of the kernel: the mappings of one process. `Memory_Map` gives `No_Slot` for one more.
+// HANDLE_CAPACITY of the kernel: the places of the handle table of one process. The place 0 holds no handle,
+// so a process holds `HANDLE_TABLE_CAPACITY - 1` handles at most, and one more gives `No_Slot` with the
+// record `Full` of the unit `Handles`.
+HANDLE_TABLE_CAPACITY :: 128
 
 // The mappings of one process, in the order of their addresses. `Inspect`
 // with the kind `Process_Mappings` writes it; the developer tools show the
@@ -3383,13 +3389,27 @@ Log_Record :: struct {
 // (src/md/features/log_facts.md, "The record").
 Log_Record_Form :: enum u8 {
 	Text = 0, // The value runs and the text. A zero record is a text record.
-	Fact = 1, // A log fact: one `Log_Fact`, in one record (`more` is 0).
+	Fact = 1, // A part of a log fact: one `Log_Fact`. A fact of more values than one record holds is several records, each with `more` but the last (`log_fact_join_take`).
 }
 
-// The bytes of the values of one log fact: the fields of its record type,
-// with no padding. A fact is one record, so its values fit in it beside the
-// module hash and the fact key.
+// The bytes of the values of one record of a log fact: the fields of its
+// record type, with no padding, beside the module hash and the fact key.
 LOG_FACT_VALUE_CAPACITY :: 144
+
+// The bytes of the out-of-line area of one log fact, at most: the texts of
+// its text views that do not fit in their 16 bytes (a path, a line of the
+// console, the target of a link), after its fixed record, which the records
+// after the first carry (src/md/features/log_facts.md, "Text views"). A
+// writer cuts a text that does not fit, on a whole character, with the cut
+// mark; the kernel refuses a longer fact.
+LOG_FACT_TEXT_AREA_BYTES_MOST :: 1024
+// The bytes of the values of one log fact, at most: its fixed record, which
+// one record holds, and its out-of-line area.
+LOG_FACT_VALUES_MOST :: LOG_FACT_VALUE_CAPACITY + LOG_FACT_TEXT_AREA_BYTES_MOST
+// The records of one log fact, at most: its value bytes cut in parts of
+// one record each, which follow each other in the log of its process (src/md/features/log_facts.md, "A fact of several records").
+LOG_FACT_RECORDS_MOST :: (LOG_FACT_VALUES_MOST + LOG_FACT_VALUE_CAPACITY - 1) / LOG_FACT_VALUE_CAPACITY
+#assert(LOG_FACT_RECORDS_MOST == 9)
 
 // The bytes of a log record after the name of the process, for the form
 // Fact: the module hash, the fact key, the count of the value bytes, and
@@ -3403,13 +3423,33 @@ LOG_FACT_VALUE_CAPACITY :: 144
 Log_Fact :: struct {
 	module_hash: [32]u8, // The hash of the module that holds the description of the fact: its own-hash place. Zero: no module.
 	key:         u64, // The fact key: the typeid of the record type. Never 0 from `system.log_fact`.
-	value_count: u16, // The bytes of `values` in use, at most `LOG_FACT_VALUE_CAPACITY`: the kernel writes it.
-	reserved:    [6]u8, // 0: the kernel writes it.
-	values:      [LOG_FACT_VALUE_CAPACITY]u8, // The bytes of the record of the fact type, in the order of its fields.
+	value_count: u16, // The bytes of `values` in use in this record, at most `LOG_FACT_VALUE_CAPACITY`: the kernel writes it.
+	part:        u8, // The place of this record among the records of its fact, from 0: the kernel writes it.
+	part_count:  u8, // The records of its fact, 1 to `LOG_FACT_RECORDS_MOST`: the kernel writes it.
+	reserved:    [4]u8, // 0: the kernel writes it.
+	values:      [LOG_FACT_VALUE_CAPACITY]u8, // The bytes of the record of the fact type from the place part * LOG_FACT_VALUE_CAPACITY, in the order of its fields.
 }
 // The bytes of a fact before its values: the least `length` of a fact.
 LOG_FACT_HEAD_BYTES :: 48
 #assert(offset_of(Log_Fact, values) == LOG_FACT_HEAD_BYTES)
+
+// The bytes that a writer gives to `Log` of the form Fact: the head of a
+// fact, then each value byte of its fact type, up to `LOG_FACT_VALUES_MOST`.
+// The writer fills the module hash, the key and the values; the kernel
+// writes the count, the part and the count of the parts of each record.
+Log_Fact_Call :: struct {
+	module_hash: [32]u8,
+	key:         u64,
+	value_count: u16,
+	part:        u8,
+	part_count:  u8,
+	reserved:    [4]u8,
+	values:      [LOG_FACT_VALUES_MOST]u8,
+}
+#assert(offset_of(Log_Fact_Call, values) == LOG_FACT_HEAD_BYTES)
+#assert(offset_of(Log_Fact_Call, key) == offset_of(Log_Fact, key))
+// The most bytes of `Log` of the form Fact.
+LOG_FACT_CALL_BYTES_MOST :: LOG_FACT_HEAD_BYTES + LOG_FACT_VALUES_MOST
 // A fact fills the bytes of a record after the name of the process, which
 // end at the offset 64.
 #assert(size_of(Log_Fact) + 64 == size_of(Log_Record))
@@ -3597,7 +3637,7 @@ Process_Report :: struct {
 // place of text arguments that it must parse. The address of the record is
 // the parameter of the entry.
 //
-// The record has 16 handles and 24 values of 64 bits. Its starter writes
+// The record has 18 handles and 24 values of 64 bits. Its starter writes
 // it and maps it read-write at `CONTEXT_ADDRESS` before the first thread
 // runs (the kernel does both for the root service, which has no starter). A process finds each thing at a **fixed place**: the
 // index of a handle or of a value is its role. So a process needs no name,
@@ -3609,8 +3649,8 @@ Process_Report :: struct {
 // Three groups of places exist:
 //
 // - **The places that the system fixes for every process**: the log, the
-//   budget, the seed, the fixed ranges that the starter mapped. Every
-//   starter writes them in the same way.
+//   budget, the wiring ring, the seed, the fixed ranges that the starter
+//   mapped. Every starter writes them in the same way.
 // - **The places of the first process**, the root service: the kernel
 //   writes them at boot, with every handle that exists then (the machine,
 //   the framebuffer, the boot image, the records of the log).
@@ -3623,7 +3663,12 @@ Process_Report :: struct {
 // more than the starter holds. Who starts a process decides what it can
 // reach: the context is the whole of its authority at its start. The
 // design: (docs/MODULE_CONTRACT.md, "The context").
-CONTEXT_HANDLES :: 16
+//
+// The handles 0 to 13 are the places of a starter and its process, and
+// each is taken by some role. A new role of the system takes a handle from
+// 16, never under 14. The handle 17 has no role yet: it keeps the values
+// that follow at a multiple of 8 bytes.
+CONTEXT_HANDLES :: 18
 // The values 0 to 15 began as free values, and the roles of the system
 // took 9 to 15 one after the other until two roles wanted one number. The
 // values 16 to 23 are for the roles that the system fixes for every
@@ -3645,13 +3690,13 @@ CONTEXT_VALUES :: 24
 // the process `handles[CONTEXT_BUDGET]`, and the random seed the four values
 // from `values[CONTEXT_VALUE_SEED]`.
 Context :: struct {
-	handles: [CONTEXT_HANDLES]Handle, // The granted handles. The role of each index is fixed by who starts the process,
-	// except the last two.
+	handles: [CONTEXT_HANDLES]Handle, // The granted handles. The role of each index below 14 is fixed by who starts the process,
+	// from 14 by the system.
 	values:  [CONTEXT_VALUES]u64, // Numbers that the starter gives: sizes, addresses, flags. The role of each index is fixed by who starts the process, from 16 by the system.
 }
 
-// The two roles that the system fixes for each process. A handle that the
-// process was not granted is 0.
+// The roles of the handles that the system fixes for each process. A
+// handle that the process was not granted is 0.
 //
 // The handle 14: the log of the kernel, with the right **Write**. A process
 // writes its lines with the kernel operation `Log` on it (`system.log`
@@ -3778,6 +3823,13 @@ CONTEXT_VALUE_MEASURE_RUN :: 22
 // service receives the root budget with **Commit** too. When the process
 // stops, what the budget still holds returns to the budget of its starter.
 CONTEXT_BUDGET :: 15 // The budget of the process.
+// The handle 16: the wiring ring, a memory object with **Read** and
+// **Write**, for a process whose module declares a record output or a
+// record input; 0 for each other process. The root service gives each end
+// of a wiring of the process on it (modus:contract/output, Wiring_Command),
+// and gives the handle of each end through its memory, so the process
+// proves that the handle came through it. See [wiring ring](term:wiring-ring).
+CONTEXT_WIRING_RING :: 16 // The wiring ring.
 // The values 13 and 15 have no role: the settings page and the date page
 // are fixed ranges, mapped when their bit of the value 20 is set. A new
 // role of the system takes a number from 16, never 13 or 15, so that an

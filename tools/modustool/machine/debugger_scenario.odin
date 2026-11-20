@@ -144,73 +144,73 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 
 	// The attach: the module of the process has its debug object.
-	{kind = .Type, text = "columns(debug(\"debug_target\"), \"process described\")"},
+	{kind = .Type, text = "columns(debug(\"debug_target\"), process, described)"},
 	{kind = .Wait, text = "[console] debug_target          1"},
 
 	// A breakpoint by a procedure name: the main thread stops at the first
 	// instruction of its next round, and its caller is the next frame.
-	{kind = .Type, text = "columns(break_at(\"debug_target::count_rounds\"), \"number kind place\")"},
+	{kind = .Type, text = "columns(break_at(\"debug_target::count_rounds\"), number, kind, place)"},
 	// The thread can stop before or after the console draws the row of the
 	// command that let it run. The row is looked for first, with no move of
 	// the place in the log; then the stop is waited for from the same place.
 	{kind = .Wait, text = "[console]      0  execute  debug_target::count_rounds", any_order = true},
 	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 0"},
-	{kind = .Type, text = "columns(events(), \"thread kind procedure offset\")"},
+	{kind = .Type, text = "columns(events(), thread, kind, procedure, offset)"},
 	{kind = .Wait, text = "[console]      0  breakpoint 0  debug_target::count_rounds       0"},
-	{kind = .Type, text = "columns(stack(0), \"frame procedure\")"},
+	{kind = .Type, text = "columns(stack(0), frame, procedure)"},
 	{kind = .Wait, text = "[console]     0  debug_target::count_rounds"},
 	{kind = .Wait, text = "[console]     1  debug_target::run_rounds"},
 
 	// A second breakpoint: the first call of add_step of that round. The
 	// chain of the known procedures, and a local variable of the caller,
 	// which is in memory at its frame pointer.
-	{kind = .Type, text = "columns(where(break_at(\"debug_target::add_step\"), number = 1), \"number kind place\")"},
+	{kind = .Type, text = "columns(where(break_at(\"debug_target::add_step\"), number = 1), number, kind, place)"},
 	{kind = .Wait, text = "[console]      1  execute  debug_target::add_step"},
-	{kind = .Type, text = "columns(resume(0), \"thread\")"},
+	{kind = .Type, text = "columns(resume(0), thread)"},
 	{kind = .Wait, text = "[console]      0", any_order = true},
 	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 1"},
-	{kind = .Type, text = "columns(wait_stop(3000), \"thread kind procedure offset\")"},
+	{kind = .Type, text = "columns(wait_stop(3000), thread, kind, procedure, offset)"},
 	{kind = .Wait, text = "[console]      0  breakpoint 1  debug_target::add_step       0"},
-	{kind = .Type, text = "columns(stack(0), \"frame procedure\")"},
+	{kind = .Type, text = "columns(stack(0), frame, procedure)"},
 	{kind = .Wait, text = "[console]     0  debug_target::add_step"},
 	{kind = .Wait, text = "[console]     1  debug_target::count_rounds"},
 	{kind = .Wait, text = "[console]     2  debug_target::run_rounds"},
-	{kind = .Type, text = "columns(where(locals(0, 1), name = \"total\"), \"name role value type\")"},
+	{kind = .Type, text = "columns(where(locals(0, 1), name = \"total\"), name, role, value, type)"},
 	{kind = .Wait, text = "[console] total  local  0      u64"},
 
 	// One step: the first instruction of the procedure, one byte. Then one
 	// line: from the line of the procedure to the line of its first
 	// statement.
-	{kind = .Type, text = "columns(step(0), \"thread state procedure offset\")"},
+	{kind = .Type, text = "columns(step(0), thread, state, procedure, offset)"},
 	{kind = .Wait, text = "[console]      0  stopped  debug_target::add_step       1"},
-	{kind = .Type, text = "columns(step_line(0), \"procedure line pending\")"},
+	{kind = .Type, text = "columns(step_line(0), procedure, line, pending)"},
 	// The compiler gives the load and the store one row of the line table,
 	// with the line of the store: the next line after the first one is it.
 	{kind = .Wait, text = "[console] debug_target::add_step    " + DEBUG_TARGET_LINE_OF_THE_STORE + "        0"},
 
 	// A breakpoint by a file and a line, in the place of the second one.
-	{kind = .Type, text = "columns(break_remove(1), \"number place\")"},
+	{kind = .Type, text = "columns(break_remove(1), number, place)"},
 	{kind = .Wait, text = "[console]      0  debug_target::count_rounds"},
-	{kind = .Type, text = "columns(where(break_at(\"" + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_STORE + "\"), number = 1), \"number kind\")"},
+	{kind = .Type, text = "columns(where(break_at(\"" + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_STORE + "\"), number = 1), number, kind)"},
 	{kind = .Wait, text = "[console]      1  execute"},
-	{kind = .Type, text = "columns(resume(0), \"thread\")"},
+	{kind = .Type, text = "columns(resume(0), thread)"},
 	{kind = .Wait, text = "[console]      0", any_order = true},
 	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 1"},
 	// The ends of the step and of the line above are no events: one row.
-	{kind = .Type, text = "columns(events(), \"kind procedure line\")"},
+	{kind = .Type, text = "columns(events(), kind, procedure, line)"},
 	{kind = .Wait, text = "[console] breakpoint 1  debug_target::add_step    " + DEBUG_TARGET_LINE_OF_THE_STORE},
 
 	// The values, each by a path from a global: the fields of a record
 	// inside a record, an element of an array, the name of an enumeration
 	// value, a text.
-	{kind = .Type, text = "columns(value(0, 0, \"debug_target::shape.size\"), \"name value type\")"},
+	{kind = .Type, text = "columns(value(0, 0, \"debug_target::shape.size\"), name, value, type)"},
 	{kind = .Wait, text = "[console] x     30     i64"},
 	{kind = .Wait, text = "[console] y     40     i64"},
-	{kind = .Type, text = "columns(value(0, 0, \"debug_target::table[2]\"), \"name value\")"},
+	{kind = .Type, text = "columns(value(0, 0, \"debug_target::table[2]\"), name, value)"},
 	{kind = .Wait, text = "[console] debug_target::table[2]  30"},
-	{kind = .Type, text = "columns(value(0, 0, \"debug_target::shape.phase\"), \"name value\")"},
+	{kind = .Type, text = "columns(value(0, 0, \"debug_target::shape.phase\"), name, value)"},
 	{kind = .Wait, text = "[console] debug_target::shape.phase  Counting"},
-	{kind = .Type, text = "columns(value(0, 0, \"debug_target::title\"), \"name value\")"},
+	{kind = .Type, text = "columns(value(0, 0, \"debug_target::title\"), name, value)"},
 	{kind = .Wait, text = "[console] debug_target::title  \"debug target\""},
 
 	// A step over a call. With one breakpoint, at the line of count_rounds
@@ -218,38 +218,38 @@ scenario_debugger_commands := [?]Step {
 	// runs the call to its end: the service says so, and the thread is at
 	// the next line of count_rounds, not in add_step. The breakpoint that
 	// the step put at the return is gone: the table has one row.
-	{kind = .Type, text = "columns(break_remove(1), \"number place\")"},
+	{kind = .Type, text = "columns(break_remove(1), number, place)"},
 	{kind = .Wait, text = "[console]      0  debug_target::count_rounds"},
 	{kind = .Type, text = "break_remove(0)"},
 	{kind = .Wait, text = "[console] 0 rows of Break_Row"},
-	{kind = .Type, text = "columns(break_at(\"" + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_CALL + "\"), \"number kind\")"},
+	{kind = .Type, text = "columns(break_at(\"" + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_CALL + "\"), number, kind)"},
 	{kind = .Wait, text = "[console]      0  execute"},
-	{kind = .Type, text = "columns(resume(0), \"thread\")"},
+	{kind = .Type, text = "columns(resume(0), thread)"},
 	{kind = .Wait, text = "[console]      0", any_order = true},
 	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 0"},
-	{kind = .Type, text = "columns(events(), \"kind procedure line\")"},
+	{kind = .Type, text = "columns(events(), kind, procedure, line)"},
 	{kind = .Wait, text = "[console] breakpoint 0  debug_target::count_rounds   " + DEBUG_TARGET_LINE_OF_THE_CALL},
-	{kind = .Type, text = "columns(step_over(0), \"procedure line pending\")"},
+	{kind = .Type, text = "columns(step_over(0), procedure, line, pending)"},
 	{kind = .Wait, text = "debugger: the thread 0 of debug_target ran a call to its end, for step_over"},
 	{kind = .Wait, text = "[console] debug_target::count_rounds   " + DEBUG_TARGET_LINE_AFTER_THE_CALL + "        0"},
-	{kind = .Type, text = "columns(breaks(), \"number kind\")"},
+	{kind = .Type, text = "columns(breaks(), number, kind)"},
 	{kind = .Wait, text = "[console] 1 row of Break_Row"},
 
 	// A watch on a global, with no other breakpoint: the thread stops after
 	// the instruction that writes it, in the one procedure that does.
 	{kind = .Type, text = "break_remove(0)"},
 	{kind = .Wait, text = "[console] 0 rows of Break_Row"},
-	{kind = .Type, text = "columns(watch(\"debug_target::rounds\", 8), \"number kind length place\")"},
+	{kind = .Type, text = "columns(watch(\"debug_target::rounds\", 8), number, kind, length, place)"},
 	{kind = .Wait, text = "[console]      0  write       8  debug_target::rounds"},
-	{kind = .Type, text = "columns(resume(0), \"thread\")"},
+	{kind = .Type, text = "columns(resume(0), thread)"},
 	{kind = .Wait, text = "[console]      0", any_order = true},
 	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: watch 0"},
-	{kind = .Type, text = "columns(events(), \"thread kind procedure\")"},
+	{kind = .Type, text = "columns(events(), thread, kind, procedure)"},
 	{kind = .Wait, text = "[console]      0  watch 0  debug_target::record_round"},
 
 	// The detach: one breakpoint leaves, the held thread runs, and the
 	// process writes its line again.
-	{kind = .Type, text = "columns(detach(), \"process breakpoints\")"},
+	{kind = .Type, text = "columns(detach(), process, breakpoints)"},
 	{kind = .Wait, text = "[console] debug_target            1"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 
@@ -353,10 +353,10 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Type, text = "start(\"clock\")"},
 	{kind = .Wait, text = "compositor: surface clock"},
 	{kind = .Front, text = "console"},
-	{kind = .Type, text = "columns(debug(\"clock\"), \"process described\")"},
+	{kind = .Type, text = "columns(debug(\"clock\"), process, described)"},
 	// Two modules with a debug object: clock and the drawing module it imports.
 	{kind = .Wait, text = "[console] clock            2"},
-	{kind = .Type, text = "columns(hold(0), \"thread state\")"},
+	{kind = .Type, text = "columns(hold(0), thread, state)"},
 	{kind = .Wait, text = "[console]      0  held"},
 	{kind = .Type, text = "revoke(\"console\", \"machine\")"},
 	{kind = .Wait, text = "root: revoked the grant machine of console, holdings ended: "},
@@ -368,9 +368,9 @@ scenario_debugger_commands := [?]Step {
 	// holds a thread of debug_target: the root service ends the debugging,
 	// the held thread runs again (the process writes its line), and the
 	// service has no session left for the console.
-	{kind = .Type, text = "columns(debug(\"debug_target\"), \"process described\")"},
+	{kind = .Type, text = "columns(debug(\"debug_target\"), process, described)"},
 	{kind = .Wait, text = "[console] debug_target          1"},
-	{kind = .Type, text = "columns(hold(0), \"thread state\")"},
+	{kind = .Type, text = "columns(hold(0), thread, state)"},
 	{kind = .Wait, text = "[console]      0  held"},
 	// The key of the client of the peer, for the calls from the host at
 	// the end: the console allows it while it still acts for principal 0.

@@ -30,7 +30,7 @@ A recipe is three things:
 
 The recipe hash is the BLAKE3 hash of the builder hash, then of each input name and hash in the order of the table, then of the bytes of the argument record. The recipe hash is the identity of the recipe: two recipes with one hash are one recipe.
 
-In the language, `recipe(builder, arguments)` is a lazy value. Its inputs are the hashes that the evaluation of its arguments gives. Forcing it gives its recipe hash; it builds nothing.
+In Lex, `recipe(builder, arguments)` is a lazy value. Its inputs are the hashes that the evaluation of its arguments gives. Forcing it gives its recipe hash; it builds nothing.
 
 ### Trees
 
@@ -110,7 +110,7 @@ The modes:
 The policy has one place, never a global file:
 
 - The plan of each principal holds its `Substitution`. The plan of principal 0 holds the policy of the system plan.
-- A value of the language changes it for one evaluation: `build(kernel) with substitution = { mode = .Verify }`.
+- A named argument of `build` changes it for one build: `build(kernel, substitution = { mode = .Verify })` ([declarations.md](declarations.md), "A record literal is typed by its use").
 - The plan records, for each realisation that it uses, its source and its signer, so an audit reads where each output came from.
 - A key that a principal trusts is valid for that principal only. The system plan trusts the publisher of the system alone.
 
@@ -163,7 +163,7 @@ modus has:
 - a recipe as a typed record whose hash is its identity;
 - no place;
 - the sandbox as the default of every process;
-- the language of the console.
+- Lex, the language of the console.
 
 The ideas taken from Nix are the closure, the content address and the substitution. The design is not a copy.
 
@@ -172,8 +172,8 @@ The ideas taken from Nix are the closure, the content address and the substituti
 | Task | Expression |
 |---|---|
 | Build an output | `build(kernel)` |
-| Build with no cache | `build(kernel) with substitution = { mode = .Build_Only }` |
-| Check a cache against a local build | `build(kernel) with substitution = { mode = .Verify }` |
+| Build with no cache | `build(kernel, substitution = { mode = .Build_Only })` |
+| Check a cache against a local build | `build(kernel, substitution = { mode = .Verify })` |
 | See where each output of the system came from | `provenance(system)` |
 | Fetch a git repository at one commit | `git_fetch("https://…", commit = "…", tree = blake3:…)` |
 | Name the output of a guest build | `catalog.linux_build({ inputs = { source = here() }, run = ["cargo", "build", "--release", "--offline"] })` |

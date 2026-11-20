@@ -1,6 +1,7 @@
 #+build !freestanding
 package value_kinds
 
+import "base:intrinsics"
 import "core:testing"
 
 // A record of 168 bytes, as a log record holds (operation.LOG_TEXT_CAPACITY):
@@ -317,6 +318,87 @@ each_field_kind_has_its_value_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, field_kind_value_kind(.Module_Name), Value_Kind.Module)
 	testing.expect_value(t, field_kind_value_kind(.Hash), Value_Kind.Version)
 	testing.expect_value(t, field_kind_value_kind(.Fact_Values), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Hexadecimal_Sixteen_Digits), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Hash_Head), Value_Kind.Version)
+	testing.expect_value(t, field_kind_value_kind(.Hundredths), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Nanoseconds_As_Microseconds), Value_Kind.Time)
+	testing.expect_value(t, field_kind_value_kind(.Tenths), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Hexadecimal_No_Leading_Zero), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Time_Of_Day), Value_Kind.Time)
+	testing.expect_value(t, field_kind_value_kind(.Text_View), Value_Kind.None)
+}
+
+// view_of gives the 16 bytes of a text view as a writer makes them: a
+// text of at most 12 bytes whole, a longer one by its offset in an area.
+@(private = "file")
+view_of :: proc(text: string, offset: u64) -> (view: [TEXT_VIEW_BYTES]u8) {
+	length := u32(len(text))
+	view[0], view[1], view[2], view[3] = u8(length), u8(length >> 8), u8(length >> 16), u8(length >> 24)
+	if len(text) <= TEXT_VIEW_INLINE_BYTES_MOST {
+		copy(view[4:], text)
+		return
+	}
+	copy(view[4:8], text)
+	for index in 0 ..< 8 {
+		view[8 + index] = u8(offset >> (8 * u64(index)))
+	}
+	return
+}
+
+// A view that breaks its form is refused: a byte past a short text that
+// is not zero, a long text past its area, at the largest offset, with a
+// prefix that is not its start, and a view of another size. Then the
+// edges of the length are read whole: 0, 1, 4, 12, 13, the first text out
+// of line, and a text at the end of its area.
+@(test)
+a_text_view_is_read_with_its_checks :: proc(t: ^testing.T) {
+	area := "0123456789abcdefghij"
+	dirty := view_of("abc", 0)
+	dirty[15] = 1
+	_, dirty_ok := text_view_read(dirty[:], transmute([]u8)area)
+	testing.expect(t, !dirty_ok)
+	past := view_of("0123456789abc", 8)
+	_, past_ok := text_view_read(past[:], transmute([]u8)area)
+	testing.expect(t, !past_ok)
+	largest := view_of("0123456789abc", max(u64))
+	_, largest_ok := text_view_read(largest[:], transmute([]u8)area)
+	testing.expect(t, !largest_ok)
+	wrong_prefix := view_of("x123456789abc", 0)
+	_, prefix_ok := text_view_read(wrong_prefix[:], transmute([]u8)area)
+	testing.expect(t, !prefix_ok)
+	_, size_ok := text_view_read(wrong_prefix[:15], transmute([]u8)area)
+	testing.expect(t, !size_ok)
+	for text in ([?]string{"", "a", "abcd", "abcdefghijkl"}) {
+		view := view_of(text, 0)
+		read, ok := text_view_read(view[:], nil)
+		testing.expectf(t, ok && string(read) == text, "the short text %q reads %q", text, string(read))
+	}
+	first_out := view_of("0123456789abc", 0)
+	read, ok := text_view_read(first_out[:], transmute([]u8)area)
+	testing.expect(t, ok && string(read) == "0123456789abc")
+	at_end := view_of("789abcdefghij", 7)
+	read, ok = text_view_read(at_end[:], transmute([]u8)area)
+	testing.expect(t, ok && string(read) == "789abcdefghij")
+}
+
+// The comparison from the fixed record: another length or another prefix
+// differ with no read of the area; a short text is decided whole; a long
+// text with the same length and prefix asks for its area.
+@(test)
+a_text_view_is_compared_by_its_head_first :: proc(t: ^testing.T) {
+	short := view_of("hello", 0)
+	testing.expect_value(t, text_view_compare_head(short[:], "hello"), Text_View_Comparison.Equal)
+	testing.expect_value(t, text_view_compare_head(short[:], "hellp"), Text_View_Comparison.Different)
+	testing.expect_value(t, text_view_compare_head(short[:], "hell"), Text_View_Comparison.Different)
+	testing.expect_value(t, text_view_compare_head(short[:], ""), Text_View_Comparison.Different)
+	empty: [TEXT_VIEW_BYTES]u8
+	testing.expect_value(t, text_view_compare_head(empty[:], ""), Text_View_Comparison.Equal)
+	long := view_of("/modules/a/b/c", 0)
+	testing.expect_value(t, text_view_compare_head(long[:], "/modules/a/b/c"), Text_View_Comparison.Read_Area)
+	testing.expect_value(t, text_view_compare_head(long[:], "/modulez/a/b/c"), Text_View_Comparison.Read_Area)
+	testing.expect_value(t, text_view_compare_head(long[:], "/mod"), Text_View_Comparison.Different)
+	testing.expect_value(t, text_view_compare_head(long[:], "xmodules/a/b/c"), Text_View_Comparison.Different)
+	testing.expect_value(t, text_view_compare_head(long[:15], "/modules/a/b/c"), Text_View_Comparison.Different)
 }
 
 // The table of the types of a field kind gives each name once, with the
@@ -325,27 +407,40 @@ each_field_kind_has_its_value_kind :: proc(t: ^testing.T) {
 @(test)
 each_field_kind_type_has_its_size :: proc(t: ^testing.T) {
 	Named_Size :: struct {
-		name: string,
-		size: u32,
+		name:     string,
+		size:     u32,
+		unsigned: bool,
 	}
+	// The sign is the sign of the type, which the compiler gives: the
+	// table that the tool reads must not say another one.
 	sizes := [?]Named_Size {
-		{"Hexadecimal_8", size_of(Hexadecimal_8)},
-		{"Hexadecimal_16", size_of(Hexadecimal_16)},
-		{"Hexadecimal_32", size_of(Hexadecimal_32)},
-		{"Hexadecimal_64", size_of(Hexadecimal_64)},
-		{"Module_Name_Field", size_of(Module_Name_Field)},
-		{"Hash_Field", size_of(Hash_Field)},
-		{"Fact_Values_Field", size_of(Fact_Values_Field)},
+		{"Hexadecimal_8", size_of(Hexadecimal_8), intrinsics.type_is_unsigned(Hexadecimal_8)},
+		{"Hexadecimal_16", size_of(Hexadecimal_16), intrinsics.type_is_unsigned(Hexadecimal_16)},
+		{"Hexadecimal_32", size_of(Hexadecimal_32), intrinsics.type_is_unsigned(Hexadecimal_32)},
+		{"Hexadecimal_64", size_of(Hexadecimal_64), intrinsics.type_is_unsigned(Hexadecimal_64)},
+		{"Module_Name_Field", size_of(Module_Name_Field), false},
+		{"Hash_Field", size_of(Hash_Field), false},
+		{"Hash_Sixteen_Bytes_Field", size_of(Hash_Sixteen_Bytes_Field), false},
+		{"Fact_Values_Field", size_of(Fact_Values_Field), false},
+		{"Hexadecimal_Sixteen_Digits", size_of(Hexadecimal_Sixteen_Digits), intrinsics.type_is_unsigned(Hexadecimal_Sixteen_Digits)},
+		{"Hash_Head_Field", size_of(Hash_Head_Field), false},
+		{"Hundredths", size_of(Hundredths), intrinsics.type_is_unsigned(Hundredths)},
+		{"Nanoseconds_As_Microseconds", size_of(Nanoseconds_As_Microseconds), intrinsics.type_is_unsigned(Nanoseconds_As_Microseconds)},
+		{"Tenths", size_of(Tenths), intrinsics.type_is_unsigned(Tenths)},
+		{"Hexadecimal_No_Leading_Zero", size_of(Hexadecimal_No_Leading_Zero), intrinsics.type_is_unsigned(Hexadecimal_No_Leading_Zero)},
+		{"Time_Of_Day", size_of(Time_Of_Day), intrinsics.type_is_unsigned(Time_Of_Day)},
+		{"Text_View", size_of(Text_View), false},
 	}
 	testing.expect_value(t, len(FIELD_KIND_TYPES), len(sizes))
 	for item, index in FIELD_KIND_TYPES {
-		size, named := u32(0), false
+		size, unsigned, named := u32(0), false, false
 		for row in sizes {
 			if row.name == item.name {
-				size, named = row.size, true
+				size, unsigned, named = row.size, row.unsigned, true
 			}
 		}
 		testing.expectf(t, named && size == item.size, "the type %s has %d bytes in the table", item.name, item.size)
+		testing.expectf(t, unsigned == item.unsigned, "the type %s has the sign unsigned = %v in the table", item.name, item.unsigned)
 		testing.expectf(t, item.kind != .Plain && item.kind != .Status, "the type %s has the kind %v", item.name, item.kind)
 		found, ok := field_kind_of_type_name(item.name)
 		testing.expectf(t, ok && found == item, "the name %s gives %v", item.name, found)
@@ -362,6 +457,10 @@ each_field_kind_type_has_its_size :: proc(t: ^testing.T) {
 	// it in a fixed buffer of two digits for each byte.
 	testing.expect_value(t, size_of(Hash_Field), HASH_FIELD_BYTES)
 	testing.expect_value(t, size_of(Fact_Values_Field), FACT_VALUES_FIELD_BYTES)
+	// The head of a hash is written from a whole hash: the field holds
+	// each byte, and the head is a part of it.
+	testing.expect_value(t, size_of(Hash_Head_Field), HASH_FIELD_BYTES)
+	testing.expect(t, HASH_HEAD_BYTES >= 1 && HASH_HEAD_BYTES < HASH_FIELD_BYTES)
 }
 
 // Each contract enum but None names a type of the contract, and no two
@@ -375,8 +474,19 @@ each_contract_enum_names_one_type :: proc(t: ^testing.T) {
 		}
 		row := CONTRACT_ENUM_TYPES[which]
 		testing.expectf(t, row.package_name != "" && row.name != "", "the enum %v names no type", which)
+		testing.expectf(t, row.word_name != row.name, "the enum %v has its own name as its word type", which)
 		for other in Contract_Enum {
-			testing.expectf(t, other == which || CONTRACT_ENUM_TYPES[other] != row, "the enums %v and %v name one type", which, other)
+			if other == which {
+				continue
+			}
+			other_row := CONTRACT_ENUM_TYPES[other]
+			if other_row.package_name != row.package_name {
+				continue
+			}
+			// A name names one type of a package: the tool reads a field
+			// of that name as the one enum.
+			testing.expectf(t, other_row.name != row.name && other_row.name != row.word_name, "the enums %v and %v name one type", which, other)
+			testing.expectf(t, row.word_name == "" || other_row.word_name != row.word_name, "the enums %v and %v name one word type", which, other)
 		}
 	}
 }

@@ -32,8 +32,11 @@ Fact :: struct {
 }
 #assert(size_of(Fact) == 32)
 
-// The bytes of a fact template, at most.
-FACT_TEMPLATE_BYTES_MOST :: 256
+// The bytes of a fact template, at most. The template is in the string
+// table of the module file once for each fact type, never in a record, so
+// a longer template costs bytes of the file and nothing of the log
+// (src/md/features/log_facts.md, "The fact template").
+FACT_TEMPLATE_BYTES_MOST :: 512
 
 // The fields of the record of a fact, at most: record_type refuses a record
 // with more fields, so the check of a template holds one mark for each.
@@ -221,7 +224,7 @@ fact_template_check :: proc "contextless" (template: string, names: []string) ->
 				return .Unclosed_Brace, at
 			}
 			name := template[start:closing]
-			if !fact_field_name_valid(name) {
+			if !source_name_valid(name) {
 				return .Not_A_Field_Name, start
 			}
 			found := -1
@@ -251,11 +254,11 @@ fact_template_check :: proc "contextless" (template: string, names: []string) ->
 	return .None, 0
 }
 
-// fact_field_name_valid says if a text is a name of a field as a record
-// type of the source has it: a letter of ASCII or "_", then letters,
-// digits and "_".
-@(private = "file")
-fact_field_name_valid :: proc "contextless" (name: string) -> bool {
+// source_name_valid says if a text is a name as the source has it, the
+// name of a field of a record type or of a package variable: a letter of
+// ASCII or "_", then letters, digits and "_".
+@(private)
+source_name_valid :: proc "contextless" (name: string) -> bool {
 	if len(name) == 0 {
 		return false
 	}
@@ -296,9 +299,11 @@ fact_template_valid :: proc "contextless" (file: []u8, value: Fact, description:
 
 // The bytes of the buffer in which a reader writes the sentence of one
 // fact. A sentence that does not fit is refused, and the reader shows the
-// raw form: a template of 256 bytes with values of 144 bytes fits in most
-// cases, and a cut sentence would say another thing.
-FACT_SENTENCE_BYTES_MOST :: 1024
+// raw form: a template of FACT_TEMPLATE_BYTES_MOST bytes with a record of
+// 144 bytes and the texts of an out-of-line area of
+// op.LOG_FACT_TEXT_AREA_BYTES_MOST bytes fits in most cases, and a cut
+// sentence would say another thing.
+FACT_SENTENCE_BYTES_MOST :: 2048
 
 // The value runs of the sentence of one fact that a reader keeps: one for
 // each field, at most.
@@ -312,6 +317,7 @@ Fact_Render_Refusal :: enum u8 {
 	Value_Count  = 2, // The count of the value bytes is not the size of the record of the fact type.
 	Template     = 3, // The fact template breaks a rule of its language (fact_template_valid).
 	Too_Long     = 4, // The sentence does not fit in the buffer of the reader.
+	Text_View    = 5, // A text view of the fact is not one that value_kinds.text_view_read takes: a byte past a short text, or a long text past the out-of-line area.
 }
 
 // sentence_byte writes one byte of a sentence at the place `written`, and
@@ -371,12 +377,152 @@ sentence_hexadecimal_byte :: proc "contextless" (sentence: []u8, written: ^int, 
 	sentence_byte(sentence, written, digit(value & 0xF))
 }
 
+// field_kind_value_write writes the value of a field whose field kind
+// alone decides its form: 16 hexadecimal digits, the head of a hash,
+// hundredths, nanoseconds as microseconds, tenths, an address with no
+// leading zero, a time of the day, a text view. It gives the value kind,
+// and false for a field of another kind, which it does not write, and for
+// a text view that text_view_read refuses. record holds the record of the
+// description; area is the out-of-line area of the fact, which only a text
+// view reads. field_kind_valid took the field.
+@(private = "file")
+field_kind_value_write :: proc "contextless" (sentence: []u8, written: ^int, record: []u8, item: Field, area: []u8) -> (value_kind: value_kinds.Value_Kind, ok: bool) {
+	kind := field_kind(item) or_return
+	switch kind {
+	case .Tenths:
+		value := field_integer(record, item)
+		magnitude := u64(value)
+		if !(item.unsigned && field_size(item) == 8) && value < 0 {
+			sentence_byte(sentence, written, '-')
+			magnitude = ~u64(value) + 1
+		}
+		sentence_unsigned(sentence, written, magnitude / 10)
+		sentence_byte(sentence, written, '.')
+		sentence_byte(sentence, written, '0' + u8(magnitude % 10))
+		return .Number, true
+	case .Hexadecimal_No_Leading_Zero:
+		// As write_number of the support package sentence writes an
+		// address: "0x", then no zero before the first digit; 0 is "0x0".
+		value := u64(field_integer(record, item))
+		digits := 1
+		for digits < 16 && value >> uint(4 * digits) != 0 {
+			digits += 1
+		}
+		sentence_text(sentence, written, "0x")
+		for index := digits - 1; index >= 0; index -= 1 {
+			nibble := u8(value >> uint(4 * index)) & 0xF
+			sentence_byte(sentence, written, nibble < 10 ? '0' + nibble : 'a' + nibble - 10)
+		}
+		return .Number, true
+	case .Time_Of_Day:
+		value := u64(field_integer(record, item))
+		hours, minutes := value / 3600, value / 60 % 60
+		if hours < 10 {
+			sentence_byte(sentence, written, '0')
+		}
+		sentence_unsigned(sentence, written, hours)
+		sentence_byte(sentence, written, ':')
+		sentence_byte(sentence, written, '0' + u8(minutes / 10))
+		sentence_byte(sentence, written, '0' + u8(minutes % 10))
+		return .Time, true
+	case .Text_View:
+		text := value_kinds.text_view_read(field_bytes(record, item), area) or_return
+		// The bytes of the writer that nobody checked, as a Text field:
+		// the rule of the filter of the kernel, in the copy that the
+		// sentence holds, so the bytes of the caller do not change.
+		start := written^
+		sentence_text(sentence, written, string(text))
+		if written^ <= len(sentence) {
+			text_encoding.invalid_sequences_replace(sentence[start:written^])
+		}
+		return .None, true
+	case .Hexadecimal_Sixteen_Digits:
+		// As system.Hex writes it: each digit of 8 bytes, no "0x".
+		value := u64(field_integer(record, item))
+		for index := 7; index >= 0; index -= 1 {
+			sentence_hexadecimal_byte(sentence, written, u8(value >> (8 * u64(index))))
+		}
+		return .Number, true
+	case .Hash_Head:
+		bytes := field_bytes(record, item)
+		if len(bytes) < value_kinds.HASH_HEAD_BYTES {
+			return .None, false
+		}
+		for value in bytes[:value_kinds.HASH_HEAD_BYTES] {
+			sentence_hexadecimal_byte(sentence, written, value)
+		}
+		sentence_text(sentence, written, value_kinds.HASH_HEAD_MARK)
+		return .Version, true
+	case .Hundredths:
+		value := field_integer(record, item)
+		magnitude := u64(value)
+		if !(item.unsigned && field_size(item) == 8) && value < 0 {
+			sentence_byte(sentence, written, '-')
+			// The opposite of the least i64 does not fit in an i64: the
+			// bits do.
+			magnitude = ~u64(value) + 1
+		}
+		sentence_unsigned(sentence, written, magnitude / 100)
+		sentence_byte(sentence, written, '.')
+		sentence_byte(sentence, written, '0' + u8(magnitude % 100 / 10))
+		sentence_byte(sentence, written, '0' + u8(magnitude % 10))
+		return .Number, true
+	case .Nanoseconds_As_Microseconds:
+		// The tenth is cut, not rounded, as the lines of the measures
+		// wrote it before the facts: 812_499 ns is 812.4 us.
+		value := u64(field_integer(record, item))
+		sentence_unsigned(sentence, written, value / 1000)
+		sentence_byte(sentence, written, '.')
+		sentence_byte(sentence, written, '0' + u8(value / 100 % 10))
+		sentence_text(sentence, written, value_kinds.DURATION_UNIT_TEXTS[.Microseconds])
+		return .Time, true
+	case .Plain, .Hexadecimal, .Status, .Module_Name, .Hash, .Fact_Values:
+		// Each of them takes its form from its type too: fact_value_write
+		// and each reader write them.
+	}
+	return .None, false
+}
+
+// fact_text_views_valid says if each text view of the record of a fact is
+// one that text_view_read takes, in the out-of-line area of the fact: a
+// sentence is written from whole texts, or not at all.
+@(private = "file")
+fact_text_views_valid :: proc "contextless" (file: []u8, description: Record, record: []u8, area: []u8) -> bool {
+	for number in 0 ..< description.field_count {
+		item := field(file, description, number) or_return
+		if item.kind == u8(value_kinds.Field_Kind.Text_View) {
+			_ = value_kinds.text_view_read(field_bytes(record, item), area) or_return
+		}
+	}
+	return true
+}
+
+// field_kind_text writes in buffer the text of a field whose field kind
+// alone decides its form (Hexadecimal_Sixteen_Digits, Hash_Head,
+// Hundredths, Nanoseconds_As_Microseconds, Tenths,
+// Hexadecimal_No_Leading_Zero, Time_Of_Day, Text_View), as the sentence of
+// a fact writes it: a reader that shows a field in a column writes the
+// same text. area is the out-of-line area of the fact of the record, which
+// a text view of more than 12 bytes needs. ok is false for a field of
+// another kind, for a text view that text_view_read refuses or whose area
+// is not given, and for a text that the buffer cannot hold whole.
+//
+// Example: a field Hundredths of the value -50 gives "-0.50".
+field_kind_text :: proc "contextless" (buffer: []u8, record: []u8, item: Field, area: []u8 = nil) -> (text: string, value_kind: value_kinds.Value_Kind, ok: bool) {
+	written := 0
+	value_kind = field_kind_value_write(buffer, &written, record, item, area) or_return
+	if written > len(buffer) {
+		return "", .None, false
+	}
+	return string(buffer[:written]), value_kind, true
+}
+
 // fact_value_write writes the value of one field of a fact by its type and
 // its field kind, as log_facts.md says ("The fact template"), and gives its
 // value kind: None for a plain Text, which has no color of its own. values
 // is a copy of the reader: a Text field in it is made valid in place.
 @(private = "file")
-fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: []u8, item: Field) -> value_kinds.Value_Kind {
+fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: []u8, item: Field, area: []u8) -> value_kinds.Value_Kind {
 	type, type_ok := field_type(item)
 	kind, kind_ok := field_kind(item)
 	if !type_ok || !kind_ok {
@@ -384,6 +530,9 @@ fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: [
 		// here has none.
 		sentence_byte(sentence, written, '?')
 		return .None
+	}
+	if value_kind, written_by_kind := field_kind_value_write(sentence, written, values, item, area); written_by_kind {
+		return value_kind
 	}
 	switch type {
 	case .Integer:
@@ -399,7 +548,7 @@ fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: [
 			// The words of the member in a sentence: the name, or the
 			// words that a line of a stop wrote before the facts.
 			which, which_ok := field_contract_enum(item)
-			if words, named := op.contract_enum_member_words(which, u64(value)); which_ok && named {
+			if words, named := contract_enum_member_words(which, u64(value)); which_ok && named {
 				sentence_text(sentence, written, words)
 				return .Status
 			}
@@ -407,8 +556,10 @@ fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: [
 			// another member.
 			sentence_unsigned(sentence, written, u64(value))
 			return .Number
-		case .Plain, .Module_Name, .Hash, .Fact_Values:
-			// field_kind_valid refuses the three last on an Integer.
+		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View:
+			// field_kind_valid refuses each of them but Plain on an Integer.
+		case .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
+			// field_kind_value_write wrote them above.
 		}
 		if item.unsigned && field_size(item) == 8 {
 			sentence_unsigned(sentence, written, u64(value))
@@ -474,8 +625,9 @@ fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: [
 // written by its kind. It gives the bytes written in sentence, and one
 // value run for each value that has a value kind, in runs: a run past
 // len(runs) is not kept, and its value stays in the sentence. values are
-// the value bytes of the fact, which must have the size of its record; the
-// procedure reads a copy and changes none of them. The readers of the
+// the value bytes of the fact: its record, then, for a record with a text
+// view, its out-of-line area, of at most op.LOG_FACT_TEXT_AREA_BYTES_MOST
+// bytes; the procedure reads a copy and changes none of them. The readers of the
 // system and the tool call it, so they never write two sentences for one
 // fact. A refusal gives 0 bytes and leaves sentence and runs as they were:
 // the reader shows the raw form. A sentence of more than
@@ -490,14 +642,21 @@ fact_sentence_write :: proc "contextless" (file: []u8, key: u64, values: []u8, s
 	if !found {
 		return 0, 0, .No_Fact_Type
 	}
-	if len(values) != int(description.size) {
+	// The values are the record, then the out-of-line area of its text
+	// views, which only a record with a text view has.
+	has_text_view := record_has_text_view(file, description)
+	if len(values) < int(description.size) || !has_text_view && len(values) != int(description.size) || len(values) > int(description.size) + op.LOG_FACT_TEXT_AREA_BYTES_MOST {
 		return 0, 0, .Value_Count
 	}
 	if fact_template_valid(file, row, description) != .None {
 		return 0, 0, .Template
 	}
-	copied: [op.LOG_FACT_VALUE_CAPACITY]u8
+	copied: [op.LOG_FACT_VALUES_MOST]u8
 	own := copied[:copy(copied[:], values)]
+	area := own[description.size:]
+	if !fact_text_views_valid(file, description, own[:description.size], area) {
+		return 0, 0, .Text_View
+	}
 	// The sentence and its runs go to memory of this procedure first: a
 	// refusal leaves the buffer and the runs of the caller as they were.
 	local_sentence: [FACT_SENTENCE_BYTES_MOST]u8
@@ -528,7 +687,7 @@ fact_sentence_write :: proc "contextless" (file: []u8, key: u64, values: []u8, s
 					continue
 				}
 				start := written
-				kind := fact_value_write(kept_sentence, &written, own, item)
+				kind := fact_value_write(kept_sentence, &written, own, item, area)
 				value_kinds.value_run_add(kept_runs, &runs_written, start, written, kind)
 				break
 			}

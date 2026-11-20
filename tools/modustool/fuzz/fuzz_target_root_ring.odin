@@ -121,7 +121,7 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, role: bit_s
 		return true
 	case .Machine_Usable:
 		return .Start_Policy in role
-	case .Start, .Stop:
+	case .Start, .Stop, .Wire:
 		return .Root_Ring in role || .Start_Policy in role
 	case .Grants, .Revoke, .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Remote_Client, .Start_Policy_Choice:
 		return .Root_Ring in role
