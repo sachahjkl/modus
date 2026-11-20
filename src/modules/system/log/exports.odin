@@ -190,7 +190,7 @@ scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^err
 	return log_scope.lent_process_scope(slot, serial), true
 }
 
-// records gives the log records of the log scope of the caller from the number `after` on, one row each: the number, the time in microseconds, the process and its slot, the level, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows of the scope from `after` to the last record.
+// records gives the log records of the log scope of the caller from the number `after` on, one row each: the number, the time in microseconds, the process and its slot, the level, the count of its value runs, and the text. A row says when its text or its fact goes on in the next record. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows of the scope from `after` to the last record.
 //
 // **What it is for.** A reader of the log checks the process and the level
 // of a record as fields, not by a search in a line of text.

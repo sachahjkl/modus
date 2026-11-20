@@ -5429,12 +5429,21 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				// (log.records: a row is one log record, of 168 bytes of
 				// text): the rows of one text are joined before the
 				// comparison.
+				// A row joins the group only when it is the next record of the
+				// same writer and form: an answer can miss a record that the
+				// kernel wrote over during the read, and a group across that
+				// gap would join the records of two processes.
+				row_follows :: proc(table: ^Call_Table, last: int) -> bool {
+					last_number, _ := strconv.parse_i64(table_value(table, last, "number"))
+					next_number, _ := strconv.parse_i64(table_value(table, last + 1, "number"))
+					return next_number == last_number + 1 && table_value(table, last + 1, "form") == table_value(table, last, "form") && table_value(table, last + 1, "slot") == table_value(table, last, "slot")
+				}
 				for row := 0; row < rows; {
 					last := row
-					for last < rows - 1 && table_value(&table, last, "continues") == "1" {
+					for last < rows - 1 && table_value(&table, last, "continues") == "1" && row_follows(&table, last) {
 						last += 1
 					}
-					if table_value(&table, last, "continues") == "1" {
+					if last == rows - 1 && table_value(&table, last, "continues") == "1" {
 						break // The rest of the text is after the rows of this call: read again from it.
 					}
 					joined := strings.builder_make(context.temp_allocator)
