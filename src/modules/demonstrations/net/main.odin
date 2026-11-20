@@ -518,9 +518,9 @@ command_words_check :: proc "contextless" () {
 		if right {
 			system.log_fact(.Info, Command_Word_Refused{word = u64(word)})
 		} else if has_refused {
-			system.log_fact(.Info, Command_Word_Wrong{word = u64(word), status = u64(refused.kind), error_kind = u64(max(error.kind, 0)), operation = u64(max(error.operation, 0)), next_status = u64(after.kind)})
+			system.log_fact(.Info, Command_Word_Wrong{word = u64(word), status = u64(refused.kind), error_kind = errors.Kind_Word(error.kind), operation = u64(max(error.operation, 0)), next_status = u64(after.kind)})
 		} else {
-			system.log_fact(.Info, Command_Word_Unanswered{word = u64(word), status = u64(refused.kind), error_kind = u64(max(error.kind, 0)), operation = u64(max(error.operation, 0)), next_status = u64(after.kind)})
+			system.log_fact(.Info, Command_Word_Unanswered{word = u64(word), status = u64(refused.kind), error_kind = errors.Kind_Word(error.kind), operation = u64(max(error.operation, 0)), next_status = u64(after.kind)})
 		}
 	}
 }

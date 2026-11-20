@@ -265,15 +265,13 @@ child_start :: proc "contextless" (role: Role, name: string, amounts: system.Bud
 	error: module.Load_Error
 	child.process, status = system.process_start(system.image_find(image, "kernel_events"), "kernel_events child", grants, random.values_with_seed(&process_generator, values), amounts, mappings[:], nil, {image = image}, &error)
 	if status != .Ok {
-		buffer: [512]u8
-		lines := system.Writer{buffer = buffer[:]}
-		system.load_error_text(&lines, &error)
 		// No_Budget: Budget_Create moves the pages, the processes and the
 		// threads from this budget, and refuses a processor limit or a log
 		// limit above the limits of this budget; then the new budget pays
 		// for the process, its page tables, its first thread and the load.
 		// Each amount, what this budget holds and what the child asks.
-		system.log(.Info, "kernel_events: ", name, ": process_start failed: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this process can give pages ", child.before.pages, ", processes ", child.before.processes, ", threads ", child.before.threads, ", processor ", child.before.processor, ", log records ", child.before.log_records, "; the child asks pages ", amounts.pages, ", processes ", amounts.processes, ", threads ", amounts.threads, ", processor ", amounts.processor, ", log records ", amounts.log_records)
+		system.log_fact(.Info, Child_Start_Refused{status = op.Status_Word(status), given_pages = child.before.pages, given_processes = child.before.processes, given_threads = child.before.threads, given_processor = child.before.processor, given_log_records = child.before.log_records, asked_pages = amounts.pages, asked_processes = amounts.processes, asked_threads = amounts.threads, asked_processor = amounts.processor, asked_log_records = amounts.log_records, child = value_kinds.text_field(name, CHILD_FIELD_BYTES)})
+		child_load_error_log(&error)
 		system.memory_unmap(address)
 		system.close(child.shared_memory)
 		return

@@ -244,12 +244,13 @@ Command_Word_Refused :: struct {
 }
 
 // The network service answered a command word that names no command with
-// another completion than the refusal.
+// another completion than the refusal. The error kind is the contract enum
+// Kind, written by its name; a word that names no kind, by its number.
 @(log_fact = "net: the command word {word} of the datagram ring: WRONG: the status {status}, the error kind {error_kind}, the operation {operation}; the next Info: the status {next_status}")
 Command_Word_Wrong :: struct {
 	word:        u64,
 	status:      u64,
-	error_kind:  u64,
+	error_kind:  errors.Kind_Word,
 	operation:   u64,
 	next_status: u64,
 }
@@ -260,7 +261,7 @@ Command_Word_Wrong :: struct {
 Command_Word_Unanswered :: struct {
 	word:        u64,
 	status:      u64,
-	error_kind:  u64,
+	error_kind:  errors.Kind_Word,
 	operation:   u64,
 	next_status: u64,
 }

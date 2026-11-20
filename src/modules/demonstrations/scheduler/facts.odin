@@ -1,7 +1,9 @@
 package scheduler
 
+import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
+import "modus:support/system"
 
 // The log facts of scheduler (src/md/features/log_facts.md): each fact
 // template is the line that the process wrote before it was a fact, so a
@@ -17,9 +19,72 @@ import "modus:contract/value_kinds"
 // the strategies, is one fact for each strategy. A value that a line wrote
 // twice is two fields, as a template names each field once.
 //
-// The line of a process of the share policy that did not start stays text:
-// its load error is a sentence of module.Load_Error, whose names pass the
-// 144 bytes of one fact, and no contract form gives a load error as fields.
+// The line of a process of the share policy that did not start had its
+// load error in the middle: it is a fact of the status and of the budgets,
+// then, when the load failed, a fact of the stage of the load error, a
+// distinct type of its shape in the contract module (log_facts.md, "The
+// load error as facts").
+
+// The bytes of the Text field of the name of a process of a case: the
+// longest, "started_under_policy", has 20 bytes.
+PROCESS_NAME_FIELD_BYTES :: 24
+
+// A process of a case of the share policy did not start: the status, what
+// this process can give, and what the process asks.
+@(log_fact = "scheduler: the process {process_name} did not start: {status}; this process can give pages {given_pages}, processes {given_processes}, threads {given_threads}; the process asks pages {asked_pages}, threads {asked_threads}")
+Share_Process_Not_Started :: struct {
+	status:          op.Status_Word,
+	given_pages:     u64,
+	given_processes: u64,
+	given_threads:   u64,
+	asked_pages:     u64,
+	asked_threads:   u64,
+	process_name:    [24]u8,
+}
+
+// The load error of a process of a case that did not start, one fact type
+// for each stage. Map and Unmap share their shape, and each has its
+// template.
+@(log_fact = "scheduler: the load of a process of the share policy: the load of {module_name} ({module_hash}) found no file of its import {imported_name} ({imported_hash})")
+Share_Load_Find_Failed :: distinct module.Load_Find_Fields
+@(log_fact = "scheduler: the load of a process of the share policy: the file of {subject_name} ({subject_hash}) does not have the hash that names it, or is not a valid module: {file_error}")
+Share_Load_Read_Failed :: distinct module.Load_Read_Fields
+@(log_fact = "scheduler: the load of a process of the share policy: an import cycle: {module_name} imports {imported_name}, and {replacement_name} still loads its imports")
+Share_Load_Cycle_Failed :: distinct module.Load_Cycle_Fields
+@(log_fact = "scheduler: the load of a process of the share policy: {module_name} imports {imported_name}, and its replacement fails the check: export {export}: {difference}, parameter {parameter}")
+Share_Load_Check_Failed :: distinct module.Load_Check_Fields
+@(log_fact = "scheduler: the load of a process of the share policy: slot {slot} of {module_name} cannot be bound: export {export} of {imported_name}")
+Share_Load_Bind_Failed :: distinct module.Load_Bind_Fields
+@(log_fact = "scheduler: the load of a process of the share policy: the kernel refused to map {module_name} ({module_hash}): status {status}")
+Share_Load_Map_Failed :: distinct module.Load_Memory_Fields
+@(log_fact = "scheduler: the load of a process of the share policy: the kernel refused to remove {module_name} ({module_hash}): status {status}")
+Share_Load_Unmap_Failed :: distinct module.Load_Memory_Fields
+@(log_fact = "scheduler: the load of a process of the share policy: no room for {module_name} ({module_hash}): a process has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts, and its modules fit below the fixed ranges of the system")
+Share_Load_Room_Failed :: distinct module.Load_Room_Fields
+
+// share_load_error_log writes the fact of the stage of a load error. A
+// stage None writes nothing: the start failed after the load.
+share_load_error_log :: proc "contextless" (error: ^module.Load_Error) {
+	switch error.stage {
+	case .None:
+	case .Find:
+		system.log_fact(.Info, Share_Load_Find_Failed(module.load_find_fact_fields(error)))
+	case .Read:
+		system.log_fact(.Info, Share_Load_Read_Failed(module.load_read_fact_fields(error)))
+	case .Cycle:
+		system.log_fact(.Info, Share_Load_Cycle_Failed(module.load_cycle_fact_fields(error)))
+	case .Check:
+		system.log_fact(.Info, Share_Load_Check_Failed(module.load_check_fact_fields(error)))
+	case .Bind:
+		system.log_fact(.Info, Share_Load_Bind_Failed(module.load_bind_fact_fields(error)))
+	case .Map:
+		system.log_fact(.Info, Share_Load_Map_Failed(module.load_memory_fact_fields(error)))
+	case .Unmap:
+		system.log_fact(.Info, Share_Load_Unmap_Failed(module.load_memory_fact_fields(error)))
+	case .Room:
+		system.log_fact(.Info, Share_Load_Room_Failed(module.load_room_fact_fields(error)))
+	}
+}
 
 // The line of one strategy is two facts, as one template holds at most 512
 // bytes: the two threads that wake each other, then the shares and the

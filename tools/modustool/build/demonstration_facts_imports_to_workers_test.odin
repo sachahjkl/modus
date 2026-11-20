@@ -1,7 +1,10 @@
 package build
 
+import "modus:contract/call_status"
 import "modus:contract/errors"
+import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/sentence"
 import "core:fmt"
 import "core:strings"
@@ -56,6 +59,9 @@ Demonstration_Text_Most :: struct {
 @(test)
 the_texts_of_the_demonstration_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	LONGEST_PEER :: "255.255.255.255 port 65535"
+	// The names of a load error: a name of a module or of an export has
+	// module.NAME_SIZE bytes at most.
+	load_names := [5]string{"module_name", "imported_name", "replacement_name", "subject_name", "export"}
 	Module_Texts :: struct {
 		folder: string,
 		texts:  []Demonstration_Text_Most,
@@ -80,7 +86,7 @@ the_texts_of_the_demonstration_facts_come_last_and_whole :: proc(t: ^testing.T) 
 		{"return_fault", {{"case_name", len("a stack address that is not canonical at a syscall")}, {"verdict", len("as it must")}}},
 		{"rights", {{"attempt", 44}}},
 		{"rings", {{"cause", len("no grant to read the boot image")}}},
-		{"scheduler", {{"verdict", len("as it must")}, {"strategy", len("round robin")}, {"previous_strategy", len("round robin")}, {"problem", 103}, {"verdict_words", len("no round had a lag below 0, so nothing was checked: WRONG")}}},
+		{"scheduler", {{"verdict", len("as it must")}, {"strategy", len("round robin")}, {"previous_strategy", len("round robin")}, {"problem", 103}, {"verdict_words", len("no round had a lag below 0, so nothing was checked: WRONG")}, {"process_name", len("started_under_policy")}}},
 		{"server", {{"cause", len("no endpoint: the process has no grant of the network")}, {"method", len("OPTIONS")}, {"target", 48}, {"peer", len(LONGEST_PEER)}, {"how", len("aborted: an answer under 4096 bytes in one second")}, {"page", 39}}},
 		{"tables", {{"direct", len("refused")}, {"call_host", len("refused")}, {"service", len("refused")}, {"way", len("call host, memory object")}, {"case_name", 37}, {"call_way", 11}, {"answer", 87}}},
 		{"threads", {}},
@@ -97,6 +103,11 @@ the_texts_of_the_demonstration_facts_come_last_and_whole :: proc(t: ^testing.T) 
 		most := make(map[string]u32, context.temp_allocator)
 		for text in item.texts {
 			most[text.name] = text.most
+		}
+		if item.folder == "kernel_events" || item.folder == "scheduler" || item.folder == "tables" {
+			for name in load_names {
+				most[name] = module.NAME_SIZE
+			}
 		}
 		facts_expect_text_fields_last(t, file, most)
 	}
@@ -312,8 +323,14 @@ the_facts_of_net_write_the_lines_of_before :: proc(t: ^testing.T) {
 		}
 		for word in words {
 			facts_expect_line(t, render(t, file, "Command_Word_Refused", {{"word", word}}), line_of_before("net: the command word ", word, " of the datagram ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must"))
-			facts_expect_line(t, render(t, file, "Command_Word_Wrong", {{"word", word}, {"status", count}, {"error_kind", other}, {"operation", count}, {"next_status", other}}), line_of_before("net: the command word ", word, " of the datagram ring: WRONG: ", "the status ", count, ", the error kind ", other, ", the operation ", count, "; the next Info: the status ", other))
-			facts_expect_line(t, render(t, file, "Command_Word_Unanswered", {{"word", word}, {"status", count}, {"error_kind", other}, {"operation", count}, {"next_status", other}}), line_of_before("net: the command word ", word, " of the datagram ring: WRONG: ", "no answer, the status ", count, ", the error kind ", other, ", the operation ", count, "; the next Info: the status ", other))
+			// The error kind is written by its name, and a word that names
+			// no kind by its number.
+			kinds := [3]u64{u64(errors.Kind.Unsupported), u64(errors.Kind.None), max(u64)}
+			kind_words := [3]string{errors.KIND_NAMES[.Unsupported], errors.KIND_NAMES[.None], "18446744073709551615"}
+			for kind, index in kinds {
+				facts_expect_line(t, render(t, file, "Command_Word_Wrong", {{"word", word}, {"status", count}, {"error_kind", kind}, {"operation", count}, {"next_status", other}}), line_of_before("net: the command word ", word, " of the datagram ring: WRONG: ", "the status ", count, ", the error kind ", kind_words[index], ", the operation ", count, "; the next Info: the status ", other))
+				facts_expect_line(t, render(t, file, "Command_Word_Unanswered", {{"word", word}, {"status", count}, {"error_kind", kind}, {"operation", count}, {"next_status", other}}), line_of_before("net: the command word ", word, " of the datagram ring: WRONG: ", "no answer, the status ", count, ", the error kind ", kind_words[index], ", the operation ", count, "; the next Info: the status ", other))
+			}
 		}
 		facts_expect_line(t, render(t, file, "Burst_Measured", {{"in_flight", count}, {"rate", other}, {"lost", count}}), line_of_before("net: a burst with ", count, " datagrams in flight: ", other, " datagrams in one second, sent and answered, ", count, " lost"))
 		facts_expect_line(t, render(t, file, "Cases_Passed", {{"cases", count}}), line_of_before("net: ok, ", count, " cases"))
@@ -1085,11 +1102,178 @@ the_facts_of_net_pointers_and_tables_write_their_texts :: proc(t: ^testing.T) {
 			facts_expect_line(t, fact_test_render(t, imports, "imports", "Answer_Wrong", {{"case_text", name}, {"answer", answer}}), line_of_before("imports: wrong answer: ", name, ": ", answer))
 		}
 	}
+	// The status of a call is written by its name, and a word that names
+	// no status by its number.
 	measure_ways := [2]string{strings.repeat("w", 24, context.temp_allocator), "direct call"}
 	for way in measure_ways {
 		for count in DEMONSTRATION_EDGE_COUNTS {
 			other := max(u64) - count
-			facts_expect_line(t, fact_test_render(t, tables, "tables", "Measure_Call_Refused", {{"rows", count}, {"call", other}, {"status_word", count}, {"way", way}}), line_of_before("tables: ", way, ", ", count, " rows: call ", other, " gave the status ", count))
+			for status in call_status.Call_Status {
+				facts_expect_line(t, fact_test_render(t, tables, "tables", "Measure_Call_Refused", {{"rows", count}, {"call", other}, {"status", u64(status)}, {"way", way}}), line_of_before("tables: ", way, ", ", count, " rows: call ", other, " gave the status ", call_status.CALL_STATUS_NAMES[status]))
+			}
+			facts_expect_line(t, fact_test_render(t, tables, "tables", "Measure_Call_Refused", {{"rows", count}, {"call", other}, {"status", max(u64)}, {"way", way}}), line_of_before("tables: ", way, ", ", count, " rows: call ", other, " gave the status ", max(u64)))
+		}
+	}
+}
+
+// Each start that failed writes the fact of its status and of its budgets:
+// each status by its name, a word that names no status by its number, and
+// the counts at their edges.
+@(test)
+the_refused_starts_of_the_demonstrations_write_their_statuses :: proc(t: ^testing.T) {
+	events, events_ok := facts_file_of_demonstration(t, "kernel_events")
+	scheduler, scheduler_ok := facts_file_of_demonstration(t, "scheduler")
+	tables, tables_ok := facts_file_of_demonstration(t, "tables")
+	if !events_ok || !scheduler_ok || !tables_ok {
+		return
+	}
+	Status_Case :: struct {
+		word: u64,
+		text: string,
+	}
+	statuses := make([dynamic]Status_Case, context.temp_allocator)
+	for status in op.Status {
+		append(&statuses, Status_Case{u64(status), op.STATUS_NAMES[status]})
+	}
+	append(&statuses, Status_Case{max(u64), "18446744073709551615"})
+	children := [2]string{"the child that faults", "the load child"}
+	names := [2]string{"started_under_policy", "spinner_1"}
+	for status in statuses {
+		facts_expect_line(t, fact_test_render(t, tables, "tables", "Call_Host_Not_Started", {{"status", status.word}}), line_of_before("tables: the call host did not start: status ", status.text))
+		for count in DEMONSTRATION_EDGE_COUNTS {
+			other := max(u64) - count
+			for child in children {
+				facts_expect_line(t, fact_test_render(t, events, "kernel_events", "Child_Start_Refused", {{"status", status.word}, {"given_pages", count}, {"given_processes", other}, {"given_threads", count}, {"given_processor", other}, {"given_log_records", count}, {"asked_pages", other}, {"asked_processes", count}, {"asked_threads", other}, {"asked_processor", count}, {"asked_log_records", other}, {"child", child}}), line_of_before("kernel_events: ", child, ": process_start failed: ", status.text, "; this process can give pages ", count, ", processes ", other, ", threads ", count, ", processor ", other, ", log records ", count, "; the child asks pages ", other, ", processes ", count, ", threads ", other, ", processor ", count, ", log records ", other))
+			}
+			for name in names {
+				facts_expect_line(t, fact_test_render(t, scheduler, "scheduler", "Share_Process_Not_Started", {{"status", status.word}, {"given_pages", count}, {"given_processes", other}, {"given_threads", count}, {"asked_pages", other}, {"asked_threads", count}, {"process_name", name}}), line_of_before("scheduler: the process ", name, " did not start: ", status.text, "; this process can give pages ", count, ", processes ", other, ", threads ", count, "; the process asks pages ", other, ", threads ", count))
+			}
+		}
+	}
+}
+
+// demonstration_load_fact_render gives the sentence of a fact of a load
+// error with the record that the procedure of its shape made.
+@(private = "file")
+demonstration_load_fact_render :: proc(t: ^testing.T, file: []u8, package_name, type_name: string, shape: $T) -> string {
+	shape_bytes := transmute([size_of(T)]u8)shape
+	record := shape_bytes[:]
+	key := fact_key(package_name, type_name)
+	_, _, description, found := module.fact_find(file, key)
+	if !testing.expectf(t, found, "the module file has no fact type %s.%s", package_name, type_name) {
+		return ""
+	}
+	if !testing.expectf(t, int(description.size) == len(record), "the fact type %s.%s has %d bytes, its shape %d", package_name, type_name, description.size, len(record)) {
+		return ""
+	}
+	buffer: [module.FACT_SENTENCE_BYTES_MOST]u8
+	count, _, refusal := module.fact_sentence_write(file, key, record, buffer[:], nil)
+	if !testing.expectf(t, refusal == .None && count <= len(buffer), "the fact %s.%s is refused: %v", package_name, type_name, refusal) {
+		return ""
+	}
+	return strings.clone(string(buffer[:count]), context.temp_allocator)
+}
+
+// demonstration_named gives a module of a load error: its name, and a hash
+// whose bytes start at first.
+@(private = "file")
+demonstration_named :: proc(name: string, first: u8) -> (named: module.Named) {
+	copy(named.name[:], name)
+	for index in 0 ..< len(named.hash) {
+		named.hash[index] = first + u8(index)
+	}
+	return named
+}
+
+// demonstration_hash_head gives the head of a hash as a fact writes it.
+@(private = "file")
+demonstration_hash_head :: proc(named: module.Named) -> string {
+	hash := named.hash
+	return fmt.tprintf("%02x%02x%02x%02x%s", hash[0], hash[1], hash[2], hash[3], value_kinds.HASH_HEAD_MARK)
+}
+
+// A load error of each stage, made as the loader makes it, gives the fact
+// of its stage through the procedure of its shape, in each of the three
+// demonstrations: the longest name, a short one and no name, each member of
+// the enum of a stage, and the parameter and the slot at their edges.
+@(test)
+the_load_errors_of_the_demonstrations_write_each_stage :: proc(t: ^testing.T) {
+	Load_Fact_Module :: struct {
+		folder:    string,
+		type_head: string,
+		head:      string,
+	}
+	modules := [3]Load_Fact_Module{{"kernel_events", "Child_Load_", "kernel_events: the load of the child: "}, {"scheduler", "Share_Load_", "scheduler: the load of a process of the share policy: "}, {"tables", "Call_Host_Load_", "tables: the load of the call host: "}}
+	names := [3]string{strings.repeat("m", module.NAME_SIZE, context.temp_allocator), "calendar", ""}
+	edges := [3]u32{0, 1, max(u32)}
+	for item in modules {
+		file, ok := facts_file_of_demonstration(t, item.folder)
+		if !ok {
+			continue
+		}
+		type_name :: proc(head, stage: string) -> string {
+			return strings.concatenate({head, stage, "_Failed"}, context.temp_allocator)
+		}
+		for name in names {
+			error: module.Load_Error
+			error.module = demonstration_named(name, 0x1a)
+			error.imported = demonstration_named("agenda", 0xf0)
+			error.replacement = demonstration_named("calendar_fixed", 0x00)
+			copy(error.export[:], name)
+			own := name
+			agenda := "agenda"
+
+			error.stage = .Find
+			find := module.load_find_fact_fields(&error)
+			facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Find"), find), line_of_before(item.head, "the load of ", own, " (", demonstration_hash_head(error.module), ") found no file of its import ", agenda, " (", demonstration_hash_head(error.imported), ")"))
+
+			error.stage = .Read
+			for file_error in module.Error {
+				error.file_error = file_error
+				read := module.load_read_fact_fields(&error)
+				// The stage concerns the import: it has a hash.
+				facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Read"), read), line_of_before(item.head, "the file of ", agenda, " (", demonstration_hash_head(error.imported), ") does not have the hash that names it, or is not a valid module: ", module.ERROR_NAMES[file_error]))
+			}
+
+			error.stage = .Cycle
+			cycle := module.load_cycle_fact_fields(&error)
+			facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Cycle"), cycle), line_of_before(item.head, "an import cycle: ", own, " imports ", agenda, ", and ", "calendar_fixed", " still loads its imports"))
+
+			error.stage = .Check
+			for difference in module.Difference {
+				for parameter in edges {
+					error.difference, error.parameter = difference, parameter
+					check := module.load_check_fact_fields(&error)
+					facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Check"), check), line_of_before(item.head, own, " imports ", agenda, ", and its replacement fails the check: export ", own, ": ", module.DIFFERENCE_NAMES[difference], ", parameter ", u64(parameter)))
+				}
+			}
+
+			error.stage = .Bind
+			for slot in edges {
+				error.slot = slot
+				bind := module.load_bind_fact_fields(&error)
+				facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Bind"), bind), line_of_before(item.head, "slot ", u64(slot), " of ", own, " cannot be bound: export ", own, " of ", agenda))
+			}
+
+			// Map and Unmap: each status by its name, and a word that names
+			// no status by its number.
+			stages := [2]module.Load_Stage{.Map, .Unmap}
+			verbs := [2]string{"map", "remove"}
+			for stage, index in stages {
+				error.stage = stage
+				for status in op.Status {
+					error.status = u32(status)
+					memory := module.load_memory_fact_fields(&error)
+					facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, index == 0 ? "Map" : "Unmap"), memory), line_of_before(item.head, "the kernel refused to ", verbs[index], " ", own, " (", demonstration_hash_head(error.module), "): status ", op.STATUS_NAMES[status]))
+				}
+				error.status = max(u32)
+				memory := module.load_memory_fact_fields(&error)
+				facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, index == 0 ? "Map" : "Unmap"), memory), line_of_before(item.head, "the kernel refused to ", verbs[index], " ", own, " (", demonstration_hash_head(error.module), "): status ", u64(max(u32))))
+			}
+
+			error.stage = .Room
+			room := module.load_room_fact_fields(&error)
+			facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Room"), room), line_of_before(item.head, "no room for ", own, " (", demonstration_hash_head(error.module), "): a process has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts, and its modules fit below the fixed ranges of the system"))
 		}
 	}
 }

@@ -493,7 +493,7 @@ measure :: proc "contextless" () {
 					result, status := system.call_isolated(connection, sample_file, index, arguments[:], nil, way == .Memory_Object)
 					intrinsics.volatile_store(&sink, result)
 					if status != .Ok && ok {
-						system.log_fact(.Info, Measure_Call_Refused{rows = u64(size), call = u64(call_number), status_word = u64(status), way = value_kinds.text_field(measure_names[way], MEASURE_WAY_FIELD_BYTES)})
+						system.log_fact(.Info, Measure_Call_Refused{rows = u64(size), call = u64(call_number), status = call_status.Call_Status_Word(status), way = value_kinds.text_field(measure_names[way], MEASURE_WAY_FIELD_BYTES)})
 					}
 					ok &&= status == .Ok
 				}
@@ -701,10 +701,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if host, status = system.call_host_start(image, image_memory, sample_file, "sample host", random.values_with_seed(&process_generator, {}), &load_error); status == .Ok {
 		ways_ready[.Call_Host] = true
 	} else {
-		buffer: [256]u8
-		writer := system.Writer{buffer = buffer[:]}
-		system.load_error_text(&writer, &load_error)
-		system.log(.Info, "tables: the call host did not start: status ", u64(status), "; ", system.written(&writer))
+		system.log_fact(.Info, Call_Host_Not_Started{status = op.Status_Word(status)})
+		call_host_load_error_log(&load_error)
 	}
 	// The service: the root service starts sample as a process.
 	if ring_handle := ctx.handles[system.GRANT_ROOT]; ring_handle != 0 {

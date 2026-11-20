@@ -719,11 +719,9 @@ case_processes_start :: proc "contextless" (processes: []Share_Process, describe
 		status: system.Status
 		started.process, status = system.process_start(file, described[index].name, grants, random.values_with_seed(&process_generator, values), amounts, nil, nil, {image = image}, &error)
 		if status != .Ok {
-			buffer: [384]u8
-			lines := system.Writer{buffer = buffer[:]}
-			system.load_error_text(&lines, &error)
 			own, _ := system.budget_read()
-			system.log(.Info, "scheduler: the process ", described[index].name, " did not start: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this process can give pages ", own.pages, ", processes ", own.processes, ", threads ", own.threads, "; the process asks pages ", amounts.pages, ", threads ", amounts.threads)
+			system.log_fact(.Info, Share_Process_Not_Started{status = op.Status_Word(status), given_pages = own.pages, given_processes = own.processes, given_threads = own.threads, asked_pages = amounts.pages, asked_threads = amounts.threads, process_name = value_kinds.text_field(described[index].name, PROCESS_NAME_FIELD_BYTES)})
+			share_load_error_log(&error)
 			return false
 		}
 	}

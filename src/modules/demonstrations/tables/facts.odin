@@ -1,6 +1,9 @@
 package tables
 
+import "modus:contract/call_status"
 import "modus:contract/errors"
+import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:support/system"
 
@@ -16,9 +19,60 @@ import "modus:support/system"
 // writes the fields of the record; its template ends with them, so each
 // such case has its fact types, the answer shown and the wrong answer.
 //
-// The start of the call host that fails stays text: its load error is a
-// sentence of module.Load_Error, whose names pass the 144 bytes of one
-// fact, and no contract form gives a load error as fields.
+// The start of the call host that fails is a fact of its status, which the
+// line wrote as a number and the fact writes by its name, then, when the
+// load failed, a fact of the stage of the load error, a distinct type of
+// its shape in the contract module (log_facts.md, "The load error as
+// facts").
+
+// The call host did not start.
+@(log_fact = "tables: the call host did not start: status {status}")
+Call_Host_Not_Started :: struct {
+	status: op.Status_Word,
+}
+
+// The load error of the call host, one fact type for each stage. Map and
+// Unmap share their shape, and each has its template.
+@(log_fact = "tables: the load of the call host: the load of {module_name} ({module_hash}) found no file of its import {imported_name} ({imported_hash})")
+Call_Host_Load_Find_Failed :: distinct module.Load_Find_Fields
+@(log_fact = "tables: the load of the call host: the file of {subject_name} ({subject_hash}) does not have the hash that names it, or is not a valid module: {file_error}")
+Call_Host_Load_Read_Failed :: distinct module.Load_Read_Fields
+@(log_fact = "tables: the load of the call host: an import cycle: {module_name} imports {imported_name}, and {replacement_name} still loads its imports")
+Call_Host_Load_Cycle_Failed :: distinct module.Load_Cycle_Fields
+@(log_fact = "tables: the load of the call host: {module_name} imports {imported_name}, and its replacement fails the check: export {export}: {difference}, parameter {parameter}")
+Call_Host_Load_Check_Failed :: distinct module.Load_Check_Fields
+@(log_fact = "tables: the load of the call host: slot {slot} of {module_name} cannot be bound: export {export} of {imported_name}")
+Call_Host_Load_Bind_Failed :: distinct module.Load_Bind_Fields
+@(log_fact = "tables: the load of the call host: the kernel refused to map {module_name} ({module_hash}): status {status}")
+Call_Host_Load_Map_Failed :: distinct module.Load_Memory_Fields
+@(log_fact = "tables: the load of the call host: the kernel refused to remove {module_name} ({module_hash}): status {status}")
+Call_Host_Load_Unmap_Failed :: distinct module.Load_Memory_Fields
+@(log_fact = "tables: the load of the call host: no room for {module_name} ({module_hash}): a process has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts, and its modules fit below the fixed ranges of the system")
+Call_Host_Load_Room_Failed :: distinct module.Load_Room_Fields
+
+// call_host_load_error_log writes the fact of the stage of a load error. A
+// stage None writes nothing: the start failed after the load.
+call_host_load_error_log :: proc "contextless" (error: ^module.Load_Error) {
+	switch error.stage {
+	case .None:
+	case .Find:
+		system.log_fact(.Info, Call_Host_Load_Find_Failed(module.load_find_fact_fields(error)))
+	case .Read:
+		system.log_fact(.Info, Call_Host_Load_Read_Failed(module.load_read_fact_fields(error)))
+	case .Cycle:
+		system.log_fact(.Info, Call_Host_Load_Cycle_Failed(module.load_cycle_fact_fields(error)))
+	case .Check:
+		system.log_fact(.Info, Call_Host_Load_Check_Failed(module.load_check_fact_fields(error)))
+	case .Bind:
+		system.log_fact(.Info, Call_Host_Load_Bind_Failed(module.load_bind_fact_fields(error)))
+	case .Map:
+		system.log_fact(.Info, Call_Host_Load_Map_Failed(module.load_memory_fact_fields(error)))
+	case .Unmap:
+		system.log_fact(.Info, Call_Host_Load_Unmap_Failed(module.load_memory_fact_fields(error)))
+	case .Room:
+		system.log_fact(.Info, Call_Host_Load_Room_Failed(module.load_room_fact_fields(error)))
+	}
+}
 
 // The bytes of the Text fields of a case: the name of a case, at most 37
 // bytes; the name of a way, at most 11; its answer, at most 87.
@@ -40,13 +94,14 @@ Refusal_Case :: enum u8 {
 No_Random_Seed :: struct {}
 
 // A call of a measure was refused: its way, its rows, the call and the
-// status of the call, as its number.
-@(log_fact = "tables: {way}, {rows} rows: call {call} gave the status {status_word}")
+// status of the call, which the contract enum Call_Status writes by its
+// name.
+@(log_fact = "tables: {way}, {rows} rows: call {call} gave the status {status}")
 Measure_Call_Refused :: struct {
-	rows:        u64,
-	call:        u64,
-	status_word: u64,
-	way:         [32]u8,
+	rows:   u64,
+	call:   u64,
+	status: call_status.Call_Status_Word,
+	way:    [32]u8,
 }
 
 // A case gave another answer in one way than the one it must give.

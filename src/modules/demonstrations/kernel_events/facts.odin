@@ -1,7 +1,9 @@
 package kernel_events
 
+import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
+import "modus:support/system"
 
 // The log facts of kernel_events (src/md/features/log_facts.md): each fact
 // template is the line that the process wrote before it was a fact, so a
@@ -15,9 +17,71 @@ import "modus:contract/value_kinds"
 // The cost of the rules was one line of 20 values, more than the 144 bytes
 // of one fact: it is one fact for each rule, in the order of the line.
 //
-// The refused start of a child stays text: its load error is a sentence of
-// module.Load_Error, whose names of modules and of an export pass the 144
-// bytes of one fact, and no contract form gives a load error as fields.
+// The refused start of a child was one line with its load error in the
+// middle: it is a fact of the status and of the budgets, then, when the load
+// failed, a fact of the stage of the load error, a distinct type of its
+// shape in the contract module (log_facts.md, "The load error as facts").
+
+// A child did not start: the status, what this process can give, and what
+// the child asks.
+@(log_fact = "kernel_events: {child}: process_start failed: {status}; this process can give pages {given_pages}, processes {given_processes}, threads {given_threads}, processor {given_processor}, log records {given_log_records}; the child asks pages {asked_pages}, processes {asked_processes}, threads {asked_threads}, processor {asked_processor}, log records {asked_log_records}")
+Child_Start_Refused :: struct {
+	status:            op.Status_Word,
+	given_pages:       u64,
+	given_processes:   u64,
+	given_threads:     u64,
+	given_processor:   u64,
+	given_log_records: u64,
+	asked_pages:       u64,
+	asked_processes:   u64,
+	asked_threads:     u64,
+	asked_processor:   u64,
+	asked_log_records: u64,
+	child:             [24]u8,
+}
+
+// The load error of a child that did not start, one fact type for each
+// stage. Map and Unmap share their shape, and each has its template.
+@(log_fact = "kernel_events: the load of the child: the load of {module_name} ({module_hash}) found no file of its import {imported_name} ({imported_hash})")
+Child_Load_Find_Failed :: distinct module.Load_Find_Fields
+@(log_fact = "kernel_events: the load of the child: the file of {subject_name} ({subject_hash}) does not have the hash that names it, or is not a valid module: {file_error}")
+Child_Load_Read_Failed :: distinct module.Load_Read_Fields
+@(log_fact = "kernel_events: the load of the child: an import cycle: {module_name} imports {imported_name}, and {replacement_name} still loads its imports")
+Child_Load_Cycle_Failed :: distinct module.Load_Cycle_Fields
+@(log_fact = "kernel_events: the load of the child: {module_name} imports {imported_name}, and its replacement fails the check: export {export}: {difference}, parameter {parameter}")
+Child_Load_Check_Failed :: distinct module.Load_Check_Fields
+@(log_fact = "kernel_events: the load of the child: slot {slot} of {module_name} cannot be bound: export {export} of {imported_name}")
+Child_Load_Bind_Failed :: distinct module.Load_Bind_Fields
+@(log_fact = "kernel_events: the load of the child: the kernel refused to map {module_name} ({module_hash}): status {status}")
+Child_Load_Map_Failed :: distinct module.Load_Memory_Fields
+@(log_fact = "kernel_events: the load of the child: the kernel refused to remove {module_name} ({module_hash}): status {status}")
+Child_Load_Unmap_Failed :: distinct module.Load_Memory_Fields
+@(log_fact = "kernel_events: the load of the child: no room for {module_name} ({module_hash}): a process has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts, and its modules fit below the fixed ranges of the system")
+Child_Load_Room_Failed :: distinct module.Load_Room_Fields
+
+// child_load_error_log writes the fact of the stage of a load error. A
+// stage None writes nothing: the start failed after the load.
+child_load_error_log :: proc "contextless" (error: ^module.Load_Error) {
+	switch error.stage {
+	case .None:
+	case .Find:
+		system.log_fact(.Info, Child_Load_Find_Failed(module.load_find_fact_fields(error)))
+	case .Read:
+		system.log_fact(.Info, Child_Load_Read_Failed(module.load_read_fact_fields(error)))
+	case .Cycle:
+		system.log_fact(.Info, Child_Load_Cycle_Failed(module.load_cycle_fact_fields(error)))
+	case .Check:
+		system.log_fact(.Info, Child_Load_Check_Failed(module.load_check_fact_fields(error)))
+	case .Bind:
+		system.log_fact(.Info, Child_Load_Bind_Failed(module.load_bind_fact_fields(error)))
+	case .Map:
+		system.log_fact(.Info, Child_Load_Map_Failed(module.load_memory_fact_fields(error)))
+	case .Unmap:
+		system.log_fact(.Info, Child_Load_Unmap_Failed(module.load_memory_fact_fields(error)))
+	case .Room:
+		system.log_fact(.Info, Child_Load_Room_Failed(module.load_room_fact_fields(error)))
+	}
+}
 
 // The child that faults did not start: the cases that need it do not run.
 @(log_fact = "kernel_events: the child that faults did not start: the cases 3 to 8 do not run")
