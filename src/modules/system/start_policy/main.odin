@@ -105,8 +105,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Machine_Usable{})
 	for {
 		wait := system.wait_begin()
+		started := false
 		for &state in states[:count] {
-			row_watch(&state)
+			started |= row_watch(&state)
+		}
+		// A start waits for its completion, and that inner wait can take
+		// the event of the stop of the process that it started: a process
+		// that fails at once stops before this wait. So after a start the
+		// rows are read again before any wait.
+		if started {
+			continue
 		}
 		// The stop of a process that this process holds is an event of its
 		// thread: the wait ends with it.
@@ -140,14 +148,14 @@ row_start :: proc "contextless" (state: ^Row_State) -> bool {
 // row_watch reads whether the process of a row stopped, and starts it again
 // while the row has restarts left, unless it stopped itself with Done or
 // Refused. A row with no restart writes no line: the root service already
-// wrote the stop.
-row_watch :: proc "contextless" (state: ^Row_State) {
+// wrote the stop. started says that it asked for a start again.
+row_watch :: proc "contextless" (state: ^Row_State) -> (started: bool) {
 	if state.process == 0 {
-		return
+		return false
 	}
 	process_state, cause, outcome := system.process_state(state.process)
 	if process_state != .Stopped {
-		return
+		return false
 	}
 	system.close(state.process)
 	state.process = 0
@@ -183,6 +191,7 @@ row_watch :: proc "contextless" (state: ^Row_State) {
 		system.log_fact(.Info, Row_Restarted_Without_Outcome{restarts_left = state.restarts_left, cause = cause, row_process = row_process})
 	}
 	row_start(state)
+	return true
 }
 
 // command_call sends one command of the root ring with a name, and waits
