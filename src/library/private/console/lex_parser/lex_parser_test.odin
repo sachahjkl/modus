@@ -8,8 +8,8 @@ import "modus:private/console/console_condition"
 import "modus:private/console/console_language"
 
 // The forms of the commands of the tests: `where` takes a condition after
-// its table and `facts` a fact name, as in the console; every other
-// argument is an expression.
+// its table, `facts` a fact name and `columns` field names, as in the
+// console; every other argument is an expression.
 @(private = "file")
 test_form_of :: proc "contextless" (data: rawptr, command_name: string, index: int) -> Parameter_Form {
 	switch {
@@ -17,6 +17,8 @@ test_form_of :: proc "contextless" (data: rawptr, command_name: string, index: i
 		return .Condition
 	case command_name == "facts" && index == 1:
 		return .Fact_Name
+	case command_name == "columns" && index == 1:
+		return .Field_Names
 	}
 	return .Expression
 }
@@ -90,6 +92,12 @@ node_form_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, index: No
 			return
 		}
 		fmt.sbprintf(builder, "<%s>", node_text(tree, index))
+	case .Field_Names:
+		if node.refusal == .Field_Name_Missing {
+			fmt.sbprintf(builder, "{{%s!}}", node_text(tree, index))
+			return
+		}
+		fmt.sbprintf(builder, "{{%s}}", node_text(tree, index))
 	case .Refused:
 		fmt.sbprintf(builder, "!%v", node.refusal)
 		if node.first_child != NO_NODE {
@@ -246,6 +254,13 @@ parse_refusals_with_their_places :: proc(t: ^testing.T) {
 		{"facts(t, )", .Fact_Name_Missing, 10, "facts(t, <!>)"},
 		{"facts(t,", .Fact_Name_Missing, 9, "facts(t, <!>)"},
 		{"facts(t, a.B c)", .Comma_Or_Close_Missing, 14, "facts(t, <a.B>, !Comma_Or_Close_Missing)"},
+		// Field names: none, none after a ",", a text in the old form, two
+		// names with no ",".
+		{"columns(t,", .Field_Name_Missing, 11, "columns(t, {!})"},
+		{"columns(t, )", .Field_Name_Missing, 12, "columns(t, {!})"},
+		{"columns(t, a,)", .Field_Name_Missing, 14, "columns(t, {a,!})"},
+		{"columns(t, \"a b\")", .Field_Name_Missing, 12, "columns(t, {!})"},
+		{"columns(t, a b)", .Comma_Or_Close_Missing, 14, "columns(t, {a }, !Comma_Or_Close_Missing)"},
 		// The field and the operator of a condition.
 		{"where(t, = 3)", .Condition_Head_Refused, 10, "where(t, [!No_Field])"},
 		{"where(t,", .Condition_Head_Refused, 9, "where(t, [!No_Field])"},
@@ -359,8 +374,10 @@ parse_trees_of_each_form :: proc(t: ^testing.T) {
 		{"where(t, key > -1)", "where(t, [key > (-1)])"},
 		{"where(t, a < b)", "where(t, [a < b])"},
 		{"facts(log.records(), storage.Bad_Block)", "facts(log.records(), <storage.Bad_Block>)"},
-		{"columns(where(t, a = 1), \"x y\")", "columns(where(t, [a = 1]), \"x y\")"},
-		{"join(columns(a(), \"h\"), columns(b(), \"h n\"), \"h\")", "join(columns(a(), \"h\"), columns(b(), \"h n\"), \"h\")"},
+		{"columns(where(t, a = 1), x, y)", "columns(where(t, [a = 1]), {x, y})"},
+		{"join(columns(a(), h), columns(b(), h, n), \"h\")", "join(columns(a(), {h}), columns(b(), {h, n}), \"h\")"},
+		{"columns(t,name,slot)", "columns(t, {name,slot})"},
+		{"columns(t, name , slot )", "columns(t, {name , slot })"},
 	}
 	for item in cases {
 		tree := parse_of(item.text)

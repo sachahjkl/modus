@@ -375,6 +375,29 @@ process_roles := [?]Process_Role_Row {
 	{name = "interface_font"},
 	// An arena that grows until its own budget refuses a commit.
 	{name = "arena"},
+	// The asker of the test of the record outputs: Start, Wire, Connect and
+	// Revoke are commands of the root ring, which only the grant Root_Ring
+	// sends (src/md/features/module_outputs.md, "How a test waits on a
+	// record output"). It starts and wires only its own children, and
+	// revokes only its own grant wirings.
+	{name = "output_wiring", grants = {.Root_Ring}},
+	// The writer and the reader of that test: their ends come from the root
+	// service in their wiring rings, and they need no grant.
+	{name = "output_writer"},
+	{name = "output_reader"},
+	// A side that writes its own words in its wiring ring, past the
+	// library: it needs no grant either.
+	{name = "output_side"},
+	// The writer of the streams of the console: its end comes in its
+	// wiring ring when the console reads `output_counter.counts`, and it
+	// needs no grant.
+	{name = "output_counter"},
+	// Its reader in the wiring list that the console gives its start: its
+	// end comes in its wiring ring before its first instruction.
+	{name = "output_count_reader"},
+	// A writer that writes its ring past the library and ignores the
+	// condition of its wiring: the console must refuse its record.
+	{name = "output_liar"},
 	// The two rows of the test of the restarts of a start policy, which only
 	// the image of the test of the rescue holds: each stops itself at once,
 	// and needs no grant.

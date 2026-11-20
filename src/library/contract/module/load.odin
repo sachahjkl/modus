@@ -22,6 +22,8 @@ Error :: enum u32 {
 	Bad_Import      = 10, // No check gives it today.
 	Bad_Export      = 11, // `entry_export` is not an index of the export table.
 	Bad_Own_Hash_Place = 12, // The own-hash place is not `HASH_SIZE` bytes inside one segment that the loader can write.
+	Bad_Record_Stream_Place = 13, // The place of a record output or a record input is not 0, nor `RECORD_STREAM_PLACE_SIZE` aligned bytes inside one segment that the loader can write and that is not `Read_Only_After_Load`; or it meets the own-hash place, a rebase location, an import slot or the place of another row.
+	Too_Many_Record_Streams = 14, // The table `Record_Outputs` or `Record_Inputs` has more than `RECORD_STREAM_INDEX_MOST` rows after the entry 0.
 }
 
 // read copies a T from file at offset. It gives zero when the range is not in file.
@@ -141,6 +143,15 @@ validate :: proc "contextless" (file: []u8) -> Error {
 	// would let a file make the loader write into its code.
 	if place, present := own_hash_place(file); present && !writable_range(file, place, HASH_SIZE) {
 		return .Bad_Own_Hash_Place
+	}
+	// Each loader writes the index of each record stream at its place, as
+	// it writes the hash. The count of the rows is checked before any row
+	// is read: it bounds the work of the check of the places.
+	if !record_stream_counts_valid(file) {
+		return .Too_Many_Record_Streams
+	}
+	if !record_stream_places_valid(file) {
+		return .Bad_Record_Stream_Place
 	}
 	return .None
 }
@@ -439,8 +450,8 @@ records_equal :: proc "contextless" (file: []u8, index: u32, other_file: []u8, o
 		a := field(file, first, number) or_return
 		b := field(other_file, second, number) or_return
 		// The kind and the enum are part of what the field means, as the
-		// unit is: a reader writes the value by them.
-		if a.offset != b.offset || a.type != b.type || a.detail != b.detail || a.integer_unit != b.integer_unit || a.kind != b.kind || a.contract_enum != b.contract_enum || string_at(file, a.name_offset, a.name_count) != string_at(other_file, b.name_offset, b.name_count) {
+		// unit and the sign are: a reader writes the value by them.
+		if a.offset != b.offset || a.type != b.type || a.unsigned != b.unsigned || a.detail != b.detail || a.integer_unit != b.integer_unit || a.kind != b.kind || a.contract_enum != b.contract_enum || string_at(file, a.name_offset, a.name_count) != string_at(other_file, b.name_offset, b.name_count) {
 			return false
 		}
 	}

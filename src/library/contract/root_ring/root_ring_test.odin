@@ -6,6 +6,43 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/start_grant"
 
+// values[5] of a Start: one past the last member and the largest word name
+// nothing; each member comes back from its word, last.
+@(test)
+start_answer_of_word_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) {
+	for word in ([?]u64{u64(max(Start_Answer)) + 1, max(u64)}) {
+		_, ok := start_answer_of_word(word)
+		testing.expectf(t, !ok, "the word %d of a Start is taken", word)
+	}
+	for member in Start_Answer {
+		read, ok := start_answer_of_word(u64(member))
+		testing.expect(t, ok && read == member)
+	}
+}
+
+// values[0] of a Wire and values[4] of a Start: None of a Wire, one past
+// the last member and the largest word name nothing; each member comes
+// back from its word, last.
+@(test)
+the_words_of_the_list_page_refuse_a_word_that_names_no_member :: proc(t: ^testing.T) {
+	for word in ([?]u64{u64(Wire_Step.None), u64(max(Wire_Step)) + 1, max(u64)}) {
+		_, ok := wire_step_of_word(word)
+		testing.expectf(t, !ok, "the step %d of a Wire is taken", word)
+	}
+	for word in ([?]u64{u64(max(Start_Wiring_List)) + 1, max(u64)}) {
+		_, ok := start_wiring_list_of_word(word)
+		testing.expectf(t, !ok, "the list word %d of a Start is taken", word)
+	}
+	for member in ([?]Wire_Step{.List_Page, .Apply}) {
+		read, ok := wire_step_of_word(u64(member))
+		testing.expect(t, ok && read == member)
+	}
+	for member in Start_Wiring_List {
+		read, ok := start_wiring_list_of_word(u64(member))
+		testing.expect(t, ok && read == member)
+	}
+}
+
 // The kind of a record becomes a command at command_of_word only. Each word
 // that names no command is refused first: 0, which is None and which no
 // sender sends, one past the largest member, a word far past it, the
@@ -121,6 +158,12 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect(t, sender_allowed(.Start, {.Start_Policy}))
 	testing.expect(t, sender_allowed(.Stop, {.Start_Policy}))
 	testing.expect(t, sender_allowed(.Machine_Usable, {.Start_Policy}))
+	// A wiring comes from the console or the start policy, which start the
+	// processes that it names, and from no other ring.
+	testing.expect(t, !sender_allowed(.Wire, {.Connect, .Principals, .Debugger}))
+	testing.expect(t, !sender_allowed(.Wire, {}))
+	testing.expect(t, sender_allowed(.Wire, {.Root_Ring}))
+	testing.expect(t, sender_allowed(.Wire, {.Start_Policy}))
 	// A refused Connect names the connection; another command the commands.
 	connect := errors.completion_record(sender_refusal(.Connect))
 	testing.expect_value(t, errors.Kind(connect.kind), errors.Kind.No_Grant)

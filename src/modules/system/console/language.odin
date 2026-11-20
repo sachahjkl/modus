@@ -4,8 +4,10 @@ import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:private/console/console_condition"
 import "modus:private/console/console_language"
+import "modus:private/console/console_stream"
 import "modus:private/console/lex_evaluator"
 import "modus:private/console/lex_parser"
+import "modus:support/sentence"
 import "modus:support/system"
 
 // The console as the evaluation host of Lex in mode `console`.
@@ -15,12 +17,13 @@ import "modus:support/system"
 // (src/library/private/console/lex_evaluator) forces it whole, from the
 // left: the calls before a fault run, then the line fails. This file gives
 // the evaluator the names, the commands and the runs of the calls, and
-// writes the sentence of each refusal. The form of each parameter of a command (Parameter_Form) says which argument
-// the parser reads there: an expression, a condition on a field of the
-// table of the first argument (`where(t, block = 12)`), or the name of a
-// fact type (`facts(t, storage.Bad_Block)`). In a condition, a name is a
-// field and, after the operator of a status field, a member of its enum:
-// never a variable.
+// writes the sentence of each refusal. The form of each parameter of a
+// command (Parameter_Form) says which argument the parser reads there: an
+// expression, a condition on a field of the table of the first argument
+// (`where(t, block = 12)`), the name of a fact type
+// (`facts(t, storage.Bad_Block)`), or the names of fields
+// (`columns(t, name, slot)`). In a condition, a name is a field and, after
+// the operator of a status field, a member of its enum: never a variable.
 //
 // The pipe operator has the lowest priority: `a |> f(b)` is `f(a, b)`, and
 // `a |> f` is `f(a)`. The parser reads no "|>": before any call,
@@ -36,14 +39,18 @@ import "modus:support/system"
 // that the console holds. A Table is records of one description, one after
 // the other: a Table result gives one, and the commands of tables.odin
 // combine them. Bytes are bytes with no description: a command gives them,
-// and the console draws them; no variable keeps them.
+// and the console draws them; no variable keeps them. A Stream is a record
+// output of a process, by its typed name `owner.output`: the line wires it
+// when a command reads it, and ends the wiring when the line ends
+// (streams.odin); no variable keeps it either.
 //
 // A line has one result: the value of its expression, or its failure. No
 // command writes to the terminal: the console draws the result of the line
 // by its kind (results.odin).
 
 // The kinds and the values of Lex are those of the evaluator. A value of a
-// condition points into line_conditions.
+// condition points into line_conditions, and a Stream names its place in
+// line_streams.
 Kind :: lex_evaluator.Kind
 Value :: lex_evaluator.Value
 
@@ -52,7 +59,8 @@ Value :: lex_evaluator.Value
 line_conditions: console_condition.Condition_List
 
 // What the parser reads for a parameter of a command: an expression, the
-// name of a fact type (a Text value with the name), or a condition.
+// name of a fact type (a Text value with the name), a condition, or the
+// names of fields (a Text value with the names).
 Parameter_Form :: lex_parser.Parameter_Form
 
 // A condition on one field of the rows of a table: `block = 12`,
@@ -98,6 +106,10 @@ type_of_kind :: proc "contextless" (kind: Kind) -> (type: module.Type) {
 		type = .Table
 	case .Bytes:
 		type = .Bytes
+	case .Stream, .Record_Input:
+		// No type of the module contract: no export takes one, and
+		// type_text names it itself.
+		type = .None
 	}
 	return type
 }
@@ -119,13 +131,19 @@ kind_names := [Kind]string {
 	.Handle  = "Handle",
 	.Table   = "Table",
 	.Bytes   = "Bytes",
+	.Stream  = "Stream",
+	.Record_Input = "Record_Input",
 }
 
-// type_text gives the name of a type: "Integer", the name of a record, or
-// "Handle(Read)". The text lasts for one line.
+// type_text gives the name of a type: "Integer", the name of a record,
+// "Handle(Read)", or "Stream(Counted)". The text lasts for one line.
 type_text :: proc "contextless" (file: []u8, kind: Kind, detail: u32) -> string {
 	if kind == .None {
 		return "None"
+	}
+	if kind == .Stream || kind == .Record_Input {
+		described, _ := module.record_type(file, detail)
+		return scratch_text(kind_names[kind], "(", module.string_at(file, described.name_offset, described.name_count), ")")
 	}
 	writer := system.Writer {
 		buffer = scratch[scratch_count:],
@@ -148,6 +166,10 @@ type_text_of_word :: proc "contextless" (file: []u8, word: u8, detail: u32) -> s
 // parameter_text gives the type of a parameter of a command, with the
 // direction of a Table or Bytes: "Table(Reading, Change)".
 parameter_text :: proc "contextless" (item: ^Command, index: int) -> string {
+	// The kinds of the console only have no type of the module contract.
+	if item.parameters[index] == .Stream || item.parameters[index] == .Record_Input {
+		return kind_names[item.parameters[index]]
+	}
 	writer := system.Writer {
 		buffer = scratch[scratch_count:],
 	}
@@ -245,7 +267,7 @@ console_host :: proc "contextless" () -> lex_evaluator.Evaluation_Host {
 		call_run = host_call_run,
 		condition_value = host_condition_value,
 		fact_name_value = host_fact_name_value,
-		text_join = host_text_join,
+		values_add = host_values_add,
 	}
 }
 
@@ -271,7 +293,7 @@ parameter_form_of :: proc "contextless" (data: rawptr, command_name: string, ind
 // its failure, or the value of an expression. A line that keeps its value
 // in a variable draws nothing.
 run_line :: proc "contextless" (text: string) {
-	failed, scratch_count, table_used, line_conditions.count = false, 0, 0, 0
+	failed, scratch_count, table_used, line_conditions.count, line_stream_count = false, 0, 0, 0, 0
 	failure_reset()
 	line_records_start()
 
@@ -291,11 +313,20 @@ run_line :: proc "contextless" (text: string) {
 		assign(name, value)
 	}
 	line_value = assigned ? Value{} : value
+	// A Stream is drawn one row at a time as each record comes, until its
+	// end or Escape: its draw reads it, and can fail.
+	// A record input has no record to draw: stream_draw says so.
+	typed := value.kind == .Stream || value.kind == .Record_Input
+	if !failed && !assigned && typed {
+		stream_draw(value)
+	}
+	// Each Stream that the line wired ends with the line.
+	line_streams_end()
 	if failed {
 		failure_draw()
 		return
 	}
-	if !assigned {
+	if !assigned && !typed {
 		value_draw(value)
 	}
 }
@@ -307,6 +338,14 @@ assign :: proc "contextless" (name: string, value: Value) {
 	}
 	if value.kind == .Bytes {
 		fail("a variable keeps no Bytes value")
+		return
+	}
+	if value.kind == .Stream {
+		fail(console_stream.VARIABLE_REFUSAL)
+		return
+	}
+	if value.kind == .Record_Input {
+		fail("a variable keeps no Record_Input: a typed name lives in its line, where wire(from, to) names it")
 		return
 	}
 	if len(name) > VARIABLE_NAME_SIZE || len(value.text) > VARIABLE_TEXT_SIZE {
@@ -334,8 +373,9 @@ assign :: proc "contextless" (name: string, value: Value) {
 	slot.name_count = copy(slot.name[:], name)
 	slot.value = value
 	switch value.kind {
-	case .None, .Integer, .Handle, .Bytes:
+	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input:
 		// The value holds no memory of the line: the slot keeps it as it is.
+		// A Bytes value and a Stream were refused above.
 	case .Text:
 		count := copy(slot.text[:], value.text)
 		slot.value.text = string(slot.text[:count])
@@ -424,6 +464,8 @@ text_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
 		fail("the line has more than ", i64(lex_parser.TEXT_BYTES_MOST), " bytes")
 	case .Nodes_Full:
 		fail("the line has more parts than the console reads: ", i64(lex_parser.NODE_CAPACITY))
+	case .Field_Name_Missing:
+		fail(record.command, ": the name of a field comes here, as ", record.command, "(t, name, slot)")
 	case .Unexpected, .None, .Fact_Name_Missing, .Condition_Head_Refused:
 		// A Fact_Name or a Condition node holds the last two, and the
 		// console reads them itself.
@@ -464,8 +506,16 @@ host_fact_name_value :: proc "contextless" (data: rawptr, evaluation: ^lex_evalu
 	return value, !failed
 }
 
-host_text_join :: proc "contextless" (data: rawptr, left, right: string) -> (joined: string, ok: bool) {
-	return scratch_text(left, right), true
+// host_values_add gives "+" of two values of one kind that the evaluator
+// leaves to the console: two Texts join, and two Tables of one record
+// description give the rows of both, a general operation of tables
+// (src/md/features/module_outputs.md, "The wiring list of a start").
+host_values_add :: proc "contextless" (data: rawptr, left, right: Value) -> (sum: Value, ok: bool) {
+	if left.kind == .Table {
+		sum = table_sum_value(left, right)
+		return sum, !failed
+	}
+	return {kind = .Text, text = scratch_text(left.text, right.text)}, true
 }
 
 // name_evaluate gives the value of a name alone: a variable, or one field
@@ -496,6 +546,11 @@ name_evaluate :: proc "contextless" (name: string) -> Value {
 		}
 		break
 	}
+	// owner.stream: a record output of a process that the console started
+	// or of a service that it connected.
+	if value, named := stream_value_of_name(name); named {
+		return value
+	}
 	return fail("no variable has the name ", name)
 }
 
@@ -525,6 +580,11 @@ argument_accepted :: proc "contextless" (found: ^Command, index: int, argument: 
 	if kind == .None && found.run != nil {
 		return true
 	}
+	// A Table parameter of a command that reads each row as it comes takes
+	// a Stream too: where, first, table.
+	if kind == .Table && argument.kind == .Stream {
+		return found.takes_stream
+	}
 	// A table parameter takes a Table value of an equal record; Bytes
 	// take a Text, or the Bytes of a memory object that bytes() read: the
 	// call copies either one. The direction says what the export does with
@@ -544,21 +604,41 @@ argument_accepted :: proc "contextless" (found: ^Command, index: int, argument: 
 	return true
 }
 
+// argument_refusal fails the line for an argument that a parameter does not
+// take: a Stream where a Table is needed has the sentence that names the
+// two ways to make a Table of it.
+argument_refusal :: proc "contextless" (name: string, found: ^Command, index: int, argument: Value) -> Value {
+	if argument.kind == .Stream && found.parameters[index] == .Table {
+		writer := sentence.Writer {
+			buffer = scratch[scratch_count:],
+		}
+		console_stream.table_needed_write(&writer, name)
+		text := sentence.written(&writer)
+		scratch_count += len(text)
+		return fail(text)
+	}
+	return fail(name, ": argument ", i64(index + 1), " is ", parameter_text(found, index), ", not ", type_text(argument.file, argument.kind, argument.detail))
+}
+
 // call_run checks the arguments of a call, which the evaluator forced from
 // the left, against the parameters of its command, and calls the function.
+// The parser read the names of a parameter of the form Field_Names as one
+// argument, a Text.
 call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 	found := command_find(name)
 	if found == nil {
 		return fail("no command has the name ", name, "; try help()")
 	}
 	count := len(arguments)
-	if count != found.parameter_count {
+	// A command whose last parameter may be left out takes one argument
+	// less: start(name) and start(name, list).
+	if count != found.parameter_count && !(found.optional_last && count == found.parameter_count - 1) {
 		return fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(count))
 	}
 	for kind, index in found.parameters[:count] {
 		argument := &arguments[index]
 		if !argument_accepted(found, index, argument^) {
-			return fail(name, ": argument ", i64(index + 1), " is ", parameter_text(found, index), ", not ", type_text(argument.file, argument.kind, argument.detail))
+			return argument_refusal(name, found, index, argument^)
 		}
 		if kind == .Record {
 			// A copy: the export can write in its record, and a call
@@ -626,14 +706,19 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 			fail(name, " has ", i64(stage.argument_count), " arguments already, and |> gives it one more: a call takes at most ", i64(ARGUMENT_CAPACITY))
 			return text
 		}
-		if stage.argument_count + 1 != found.parameter_count {
-			fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(stage.argument_count + 1))
+		// The names of a parameter of the form Field_Names are one argument
+		// of the call, which the stage counts as one for each name.
+		names_last := found.parameter_forms[found.parameter_count - 1] == .Field_Names
+		arguments_given := stage.argument_count + 1
+		count_ok := arguments_given == found.parameter_count || (names_last && arguments_given > found.parameter_count) || (found.optional_last && arguments_given == found.parameter_count - 1)
+		if !count_ok {
+			fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(arguments_given))
 			return text
 		}
 		// The sentence of the same line with calls in calls.
 		left, knowledge := pipe_left_value(text, stages, index)
 		if knowledge == .Whole && !argument_accepted(found, 0, left) {
-			fail(name, ": argument ", i64(1), " is ", parameter_text(found, 0), ", not ", type_text(left.file, left.kind, left.detail))
+			argument_refusal(name, found, 0, left)
 			return text
 		}
 		if !pipe_stage_names_check(text, stages, index, found, left, knowledge) {
@@ -652,11 +737,36 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 pipe_stage_names_check :: proc "contextless" (text: string, stages: []console_language.Pipe_Stage, index: int, found: ^Command, left: Value, knowledge: Left_Knowledge) -> bool {
 	stage := stages[index]
 	name := text[stage.name_start:stage.name_end]
-	if stage.argument_count != 1 || found.parameter_count != 2 {
+	if found.parameter_count != 2 || (stage.argument_count != 1 && found.parameter_forms[1] != .Field_Names) {
 		return true
 	}
 	argument := text[stage.arguments_start:stage.arguments_end]
 	switch found.parameter_forms[1] {
+	case .Field_Names:
+		file, detail, known := pipe_left_record(text, stages, index, left, knowledge)
+		if !known {
+			return true
+		}
+		record, record_ok := module.record_type(file, detail)
+		if !record_ok {
+			return true
+		}
+		// Each name against the record on the left, with the sentence of
+		// the command when it runs.
+		for token := console_language.token_next(argument, 0); token.kind != .None; token = console_language.token_next(argument, token.end) {
+			if token.kind != .Name {
+				continue
+			}
+			field_name := argument[token.start:token.end]
+			if _, field_found := console_condition.field_find(file, record, field_name); !field_found {
+				named := Table {
+					file   = file,
+					record = record,
+				}
+				fail(name, ": the records ", module.string_at(file, record.name_offset, record.name_count), " have no field ", field_name, "; their fields are ", field_names(named))
+				return false
+			}
+		}
 	case .Expression:
 	case .Fact_Name:
 		first := console_language.token_next(argument, 0)
@@ -754,7 +864,7 @@ literal_of :: proc "contextless" (text: string, place: int) -> (type: module.Typ
 // description of a table of facts() goes; nil puts it in the memory of the
 // line.
 pipe_left_record :: proc "contextless" (text: string, stages: []console_language.Pipe_Stage, index: int, left: Value, knowledge: Left_Knowledge, description_buffer: []u8 = nil) -> (file: []u8, detail: u32, known: bool) {
-	if knowledge == .Whole && left.kind == .Table && left.file != nil {
+	if knowledge == .Whole && (left.kind == .Table || left.kind == .Stream) && left.file != nil {
 		return left.file, left.detail, true
 	}
 	stage := stages[index]
@@ -768,7 +878,7 @@ pipe_left_record :: proc "contextless" (text: string, stages: []console_language
 		return nil, 0, false
 	}
 	switch before_name {
-	case "where", "sort", "first", "skip":
+	case "where", "sort", "first", "skip", "table":
 		before_left, before_knowledge := pipe_left_value(text, stages, stage.stage_before)
 		return pipe_left_record(text, stages, stage.stage_before, before_left, before_knowledge, description_buffer)
 	}
@@ -825,6 +935,14 @@ pipe_left_value :: proc "contextless" (text: string, stages: []console_language.
 				value, knowledge = variable.value, .Whole
 			}
 		}
+		// A typed name: its record description is in the module file of its
+		// owner, so the fields of a condition after it are checked before
+		// the line runs, and the completion offers them.
+		if knowledge == .None {
+			if file, detail, kind, known := stream_name_known(name); known {
+				value, knowledge = Value{kind = kind, file = file, detail = detail}, .Whole
+			}
+		}
 	case .Call:
 		value, knowledge = result_knowledge(command_find(text[stage.left_start:stage.left_end]))
 	case .Stage:
@@ -856,6 +974,10 @@ result_knowledge :: proc "contextless" (found: ^Command) -> (value: Value, knowl
 		}
 	case .Handle, .Bytes:
 		// The rights of a Handle come with the value.
+		knowledge = .Kind
+	case .Stream, .Record_Input:
+		// A command of the console makes a Stream, and the record of the
+		// record output comes with the value when the line runs.
 		knowledge = .Kind
 	}
 	return value, knowledge

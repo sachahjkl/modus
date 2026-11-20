@@ -53,9 +53,11 @@ Module_Description :: struct {
 	text:     string, // The documentation text that the module carries: the comment of the package, in its Markdown.
 	markdown: string, // The comment of the package, as its author wrote it: the site renders it.
 	exports:  []Export_Description,
-	records:  []Record_Description, // The records that the exports and the log facts use. Record n + 1 of the module is records[n].
+	records:  []Record_Description, // The records that the exports, the log facts and the record streams use. Record n + 1 of the module is records[n].
 	budget:   Budget_Description, // The budget that the module asks for: the table Budget.
 	facts:    []Fact_Description, // The log facts that the module writes, sorted by key (facts_merge): the table Facts.
+	record_outputs: []Record_Stream_Description, // The record outputs that the module declares, sorted by name (record_streams_merge): the table Record_Outputs.
+	record_inputs:  []Record_Stream_Description, // The record inputs, sorted by name: the table Record_Inputs.
 }
 
 // The parts of the budget that a source states: the record
@@ -352,6 +354,20 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		about              = description.about,
 		text               = description.text,
 	}
+	// The record outputs and the record inputs, sorted by name, each with
+	// the place of its variable that the linked file gives: the writer
+	// writes their tables and checks them.
+	output_parts := make([]module_file_writer.Record_Output_Part, len(description.record_outputs), context.temp_allocator)
+	for item, index in description.record_outputs {
+		place, _ := record_stream_place_of_elf(elf, sections[:], images[:], item.package_name, item.name) or_return
+		output_parts[index] = {name = item.name, about = item.about, text = item.text, record_index = item.record_index, pairing = item.pairing, place = place}
+	}
+	input_parts := make([]module_file_writer.Record_Input_Part, len(description.record_inputs), context.temp_allocator)
+	for item, index in description.record_inputs {
+		place, _ := record_stream_place_of_elf(elf, sections[:], images[:], item.package_name, item.name) or_return
+		input_parts[index] = {name = item.name, about = item.about, text = item.text, record_index = item.record_index, terms_index = item.terms_index, wirings = item.wirings, place = place}
+	}
+	parts.record_outputs, parts.record_inputs = output_parts, input_parts
 	// A module whose source states no budget has no table Budget: it asks
 	// for the least budget.
 	if description.budget.stated {
@@ -387,6 +403,22 @@ module_file_refusal_text :: proc(parts: module_file_writer.Module_Parts, refusal
 	case .Records, .Fields:
 		if refusal.index < u64(len(parts.records)) {
 			part = fmt.tprintf(" (record %s)", parts.records[refusal.index].name)
+		}
+	case .Record_Outputs:
+		// The last check names a row from 1; the checks of the parts an
+		// index from 0.
+		index := refusal.refusal == .Record_Streams_Not_Valid ? refusal.index - 1 : refusal.index
+		if refusal.index != 0 || refusal.refusal != .Record_Streams_Not_Valid {
+			if index < u64(len(parts.record_outputs)) {
+				part = fmt.tprintf(" (record output %s)", parts.record_outputs[index].name)
+			}
+		}
+	case .Record_Inputs:
+		index := refusal.refusal == .Record_Streams_Not_Valid ? refusal.index - 1 : refusal.index
+		if refusal.index != 0 || refusal.refusal != .Record_Streams_Not_Valid {
+			if index < u64(len(parts.record_inputs)) {
+				part = fmt.tprintf(" (record input %s)", parts.record_inputs[index].name)
+			}
 		}
 	case .None, .Segments, .Imports, .Slots, .Rebases, .Strings, .Documentation, .Budget, .Facts, .Own_Hash:
 	}
@@ -433,6 +465,69 @@ own_hash_place_of_elf :: proc(elf: []u8, sections: []Elf_Section_Header, images:
 			}
 			if !writable {
 				fmt.eprintfln("modustool: convert: the symbol %s at %x is not in a segment that the loader can write", module.OWN_HASH_PLACE_SYMBOL, symbol.value)
+				return 0, false, false
+			}
+			memory_offset, found = symbol.value, true
+		}
+	}
+	return memory_offset, found, true
+}
+
+// The two forms of the symbol of a package variable that the compiler
+// writes in the linked file: the package and the name, with "." or "::"
+// between them. The tool takes either, and refuses a file with both.
+RECORD_STREAM_SYMBOL_SEPARATORS :: [2]string{".", "::"}
+
+// record_stream_place_of_elf gives the memory offset of the package
+// variable of one record stream: the object symbol `package.name` of the
+// symbol table of the linked file, of at least
+// module.RECORD_STREAM_PLACE_SIZE bytes, on a multiple of that size, in a
+// segment that the loader can write. found is false for no such symbol:
+// no code uses the variable, and the link dropped it; the row then has the
+// place 0. ok is false for a symbol that breaks a rule, which it prints.
+@(private = "file")
+record_stream_place_of_elf :: proc(elf: []u8, sections: []Elf_Section_Header, images: []Segment_Image, package_name: string, name: string) -> (memory_offset: u64, found: bool, ok: bool) {
+	wanted: [2]string
+	separators := RECORD_STREAM_SYMBOL_SEPARATORS
+	for separator, index in separators {
+		wanted[index] = strings.concatenate({package_name, separator, name}, context.temp_allocator)
+	}
+	for section in sections {
+		if section.type != ELF_SECTION_SYMBOLS || int(section.link) >= len(sections) {
+			continue
+		}
+		symbols, has_symbols := elf_section_bytes(elf, section)
+		names, has_names := elf_section_bytes(elf, sections[section.link])
+		if !has_symbols || !has_names {
+			continue
+		}
+		for at := 0; at + size_of(Elf_Symbol) <= len(symbols); at += size_of(Elf_Symbol) {
+			symbol: Elf_Symbol
+			mem.copy(&symbol, raw_data(symbols[at:]), size_of(symbol))
+			if symbol.section_index == 0 || symbol.section_index >= 0xFF00 || u64(symbol.name) >= u64(len(names)) {
+				continue
+			}
+			symbol_name := text_until_zero(names, u64(symbol.name))
+			if symbol_name != wanted[0] && symbol_name != wanted[1] {
+				continue
+			}
+			if found {
+				fmt.eprintfln("modustool: convert: the linked file has two symbols of the record stream %s: one variable has one place", wanted[0])
+				return 0, false, false
+			}
+			if symbol.size < module.RECORD_STREAM_PLACE_SIZE || symbol.value % module.RECORD_STREAM_PLACE_SIZE != 0 {
+				fmt.eprintfln("modustool: convert: the symbol %s has %d bytes at %x; the place of a record stream has %d bytes, aligned", symbol_name, symbol.size, symbol.value, module.RECORD_STREAM_PLACE_SIZE)
+				return 0, false, false
+			}
+			writable := false
+			for image in images {
+				segment := image.record
+				if .Write in segment.flags && .Execute not_in segment.flags && symbol.value >= segment.memory_offset && symbol.value - segment.memory_offset + module.RECORD_STREAM_PLACE_SIZE <= segment.memory_size {
+					writable = true
+				}
+			}
+			if !writable {
+				fmt.eprintfln("modustool: convert: the variable %s at %x is not in a segment that the loader can write", symbol_name, symbol.value)
 				return 0, false, false
 			}
 			memory_offset, found = symbol.value, true

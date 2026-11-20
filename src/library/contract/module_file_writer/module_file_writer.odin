@@ -12,10 +12,11 @@
 //
 // A refusal is a `Refusal_Record`: what is wrong, the table of the part, and
 // the index of the part in its list. The writer refuses a table past its
-// bound, a name that is not a name, an export with no description of a
-// record that it names, two segments that overlap, and each part that a
-// loader would refuse (`module.validate`). A written file is checked last
-// with `module.validate` and with the readers of the descriptions.
+// bound, a name that is not a name, an export or a record stream with no
+// description of a record that it names, two segments that overlap, and
+// each part that a loader would refuse (`module.validate`). A written file
+// is checked last with `module.validate`, with the readers of the
+// descriptions, and with `module.record_streams_check`.
 //
 // See [module file writer](term:module-file-writer).
 package module_file_writer
@@ -99,6 +100,34 @@ Fact_Part :: struct {
 	package_name: string, // The name of the package that declares the record type.
 }
 
+// One record output that the module declares: one row of the table
+// Record_Outputs (src/md/features/module_outputs.md, "The declaration in
+// the module").
+Record_Output_Part :: struct {
+	name:         string, // A name: the name of its variable in the source. The record outputs are in the order of their names.
+	about:        string, // One line of help.
+	text:         string, // The documentation text, in its Markdown.
+	record_index: u32, // The number of its record, from 1, in Module_Parts.records; 0 for a generic record output.
+	pairing:      module.Record_Output_Pairing,
+	// The memory offset of its variable, where a loader writes the index of
+	// the row: 0 when the link kept no variable, else
+	// module.RECORD_STREAM_PLACE_SIZE aligned bytes in a segment with Write
+	// that keeps Write after the load.
+	place:        u64,
+}
+
+// One record input that the module declares: one row of the table
+// Record_Inputs.
+Record_Input_Part :: struct {
+	name:         string, // A name, as for a record output. The record inputs are in the order of their names, and no name is in both lists.
+	about:        string,
+	text:         string,
+	record_index: u32, // The number of its record, from 1; 0 for a generic record input.
+	terms_index:  u32, // The number of the record of its wiring terms, from 1; 0 for none.
+	wirings:      module.Wiring_Count,
+	place:        u64, // As Record_Output_Part.place.
+}
+
 // The parts of one module file. The record n + 1 of a table of the file is
 // the part n of its list: index 0 of each table is the empty record.
 Module_Parts :: struct {
@@ -115,6 +144,8 @@ Module_Parts :: struct {
 	text:               string, // The documentation text of the module, in its Markdown.
 	has_budget:         bool, // The module asks for a budget: the file has the table Budget.
 	budget:             module.Budget_Request,
+	record_outputs:     []Record_Output_Part, // At most module.RECORD_STREAM_INDEX_MOST: the file has the table Record_Outputs when there is one.
+	record_inputs:      []Record_Input_Part, // At most module.RECORD_STREAM_INDEX_MOST: the table Record_Inputs.
 }
 
 // What is wrong with the parts, or with the memory of the output. The
@@ -141,6 +172,14 @@ Refusal :: enum u32 {
 	Own_Hash_Place_Not_Writable   = 18, // The own-hash place is not module.HASH_SIZE bytes inside one segment with Write and no Execute.
 	Output_Too_Small              = 19, // The memory of the output is smaller than the file. value: the bytes that the file needs.
 	Written_File_Not_Valid        = 20, // module.validate refuses the written file: a fault of this writer. value: the module.Error.
+	Record_Streams_Past_Bound     = 21, // More record outputs, or more record inputs, than module.RECORD_STREAM_INDEX_MOST: each loader checks the place of each one against each other write of its load. value: the count.
+	Record_Stream_Without_Description = 22, // The record or the terms of a record stream names no record of the parts. value: the number that it names.
+	Record_Stream_Place_Not_Writable  = 23, // The place of a record stream is not 0, nor module.RECORD_STREAM_PLACE_SIZE aligned bytes in a segment with Write, no Execute, and not Read_Only_After_Load. value: the place.
+	// module.record_streams_check refuses the record streams of the written file: a row that its reader
+	// refuses, names out of order or two times, a name in both tables, or a generic record output with no
+	// generic record input or with two. index: the row from 1, 0 for the tables; value: the
+	// module.Record_Stream_Fault.
+	Record_Streams_Not_Valid      = 24,
 }
 
 // The refusal of the writer, and where it is.
@@ -279,13 +318,21 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 			return {}, {refusal = .Table_Past_Bound, table = item.table, value = u64(item.count)}
 		}
 	}
+	// The record streams have a bound of their own, far below the bound of
+	// a table, which module.validate checks before it reads a row.
+	streams := [2]Count{{.Record_Outputs, len(parts.record_outputs)}, {.Record_Inputs, len(parts.record_inputs)}}
+	for item in streams {
+		if item.count > module.RECORD_STREAM_INDEX_MOST {
+			return {}, {refusal = .Record_Streams_Past_Bound, table = item.table, value = u64(item.count)}
+		}
+	}
 
 	layout.memory_size, refusal = segments_check(parts.segments)
 	if refusal.refusal != .None {
 		return {}, refusal
 	}
 	Check :: proc "contextless" (checked: Module_Parts) -> Refusal_Record
-	checks := [?]Check{names_check, exports_check, relocations_check, facts_check}
+	checks := [?]Check{names_check, exports_check, relocations_check, facts_check, record_streams_check}
 	for check in checks {
 		refusal = check(parts)
 		if refusal.refusal != .None {
@@ -335,6 +382,12 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 	}
 	if parts.has_own_hash_place {
 		add(&layout, &cursor, .Own_Hash, 2, size_of(module.Own_Hash_Place))
+	}
+	if len(parts.record_outputs) > 0 {
+		add(&layout, &cursor, .Record_Outputs, u64(len(parts.record_outputs)) + 1, size_of(module.Record_Output))
+	}
+	if len(parts.record_inputs) > 0 {
+		add(&layout, &cursor, .Record_Inputs, u64(len(parts.record_inputs)) + 1, size_of(module.Record_Input))
 	}
 	add(&layout, &cursor, .Strings, string_bytes, 1)
 	add(&layout, &cursor, .Documentation, 2, size_of(module.Documentation))
@@ -414,7 +467,77 @@ names_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 			return {refusal = .Not_A_Name, table = .Facts, index = u64(index)}
 		}
 	}
+	for item, index in parts.record_outputs {
+		if !is_name(item.name) {
+			return {refusal = .Not_A_Name, table = .Record_Outputs, index = u64(index)}
+		}
+	}
+	for item, index in parts.record_inputs {
+		if !is_name(item.name) {
+			return {refusal = .Not_A_Name, table = .Record_Inputs, index = u64(index)}
+		}
+	}
 	return {}
+}
+
+// record_streams_check checks the record and the terms of each record
+// stream, which name a record of the parts or 0, and its place, where a
+// loader writes the index of its row. The order of the names and the rules
+// of a generic stream are checked on the written file, by the one reader
+// of the format (written_file_check).
+@(private)
+record_streams_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
+	described_or_none :: proc "contextless" (number: u32, records: []Record_Description) -> bool {
+		return u64(number) <= u64(len(records))
+	}
+	for item, index in parts.record_outputs {
+		where_it_is := Refusal_Record{table = .Record_Outputs, index = u64(index)}
+		if !described_or_none(item.record_index, parts.records) {
+			where_it_is.refusal, where_it_is.value = .Record_Stream_Without_Description, u64(item.record_index)
+			return where_it_is
+		}
+		if !record_stream_place_writable(parts.segments, item.place) {
+			where_it_is.refusal, where_it_is.value = .Record_Stream_Place_Not_Writable, item.place
+			return where_it_is
+		}
+	}
+	for item, index in parts.record_inputs {
+		where_it_is := Refusal_Record{table = .Record_Inputs, index = u64(index)}
+		if !described_or_none(item.record_index, parts.records) {
+			where_it_is.refusal, where_it_is.value = .Record_Stream_Without_Description, u64(item.record_index)
+			return where_it_is
+		}
+		if !described_or_none(item.terms_index, parts.records) {
+			where_it_is.refusal, where_it_is.value = .Record_Stream_Without_Description, u64(item.terms_index)
+			return where_it_is
+		}
+		if !record_stream_place_writable(parts.segments, item.place) {
+			where_it_is.refusal, where_it_is.value = .Record_Stream_Place_Not_Writable, item.place
+			return where_it_is
+		}
+	}
+	return {}
+}
+
+// record_stream_place_writable says if a place is one that a loader writes
+// and that the library writes after the load: 0, or
+// module.RECORD_STREAM_PLACE_SIZE aligned bytes in a segment with Write, no
+// Execute, and not Read_Only_After_Load. A place that meets another write
+// of a loader is refused by module.validate in the last check.
+@(private)
+record_stream_place_writable :: proc "contextless" (segments: []Segment_Part, place: u64) -> bool {
+	if place == 0 {
+		return true
+	}
+	if place % module.RECORD_STREAM_PLACE_SIZE != 0 || !writable_range(segments, place, module.RECORD_STREAM_PLACE_SIZE) {
+		return false
+	}
+	for item in segments {
+		if place >= item.memory_offset && place - item.memory_offset < item.memory_size {
+			return .Read_Only_After_Load not_in item.flags
+		}
+	}
+	return false
 }
 
 // exports_check checks the call form of each export and that each record
@@ -547,6 +670,16 @@ string_bytes_needed :: proc "contextless" (parts: Module_Parts) -> u64 {
 	for item in parts.facts {
 		total = sum_or_most(total, u64(len(item.template)))
 		total = sum_or_most(total, u64(len(item.package_name)))
+	}
+	for item in parts.record_outputs {
+		total = sum_or_most(total, u64(len(item.name)))
+		total = sum_or_most(total, u64(len(item.about)))
+		total = sum_or_most(total, u64(len(item.text)))
+	}
+	for item in parts.record_inputs {
+		total = sum_or_most(total, u64(len(item.name)))
+		total = sum_or_most(total, u64(len(item.about)))
+		total = sum_or_most(total, u64(len(item.text)))
 	}
 	return total
 }
@@ -754,6 +887,37 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 		row.package_offset = string_append(&strings, item.package_name)
 		store(file, place(directory, .Facts, index + 1), row)
 	}
+	// The record streams, with their name, their help and their text in
+	// the strings, after the texts of the facts.
+	for item, index in parts.record_outputs {
+		row := module.Record_Output {
+			name_count  = u32(len(item.name)),
+			about_count = u32(len(item.about)),
+			text_count  = u32(len(item.text)),
+			record      = item.record_index,
+			pairing     = u8(item.pairing),
+			place       = item.place,
+		}
+		row.name_offset = string_append(&strings, item.name)
+		row.about_offset = string_append(&strings, item.about)
+		row.text_offset = string_append(&strings, item.text)
+		store(file, place(directory, .Record_Outputs, index + 1), row)
+	}
+	for item, index in parts.record_inputs {
+		row := module.Record_Input {
+			name_count  = u32(len(item.name)),
+			about_count = u32(len(item.about)),
+			text_count  = u32(len(item.text)),
+			record      = item.record_index,
+			terms       = item.terms_index,
+			wirings     = u8(item.wirings),
+			place       = item.place,
+		}
+		row.name_offset = string_append(&strings, item.name)
+		row.about_offset = string_append(&strings, item.about)
+		row.text_offset = string_append(&strings, item.text)
+		store(file, place(directory, .Record_Inputs, index + 1), row)
+	}
 	if parts.has_own_hash_place {
 		store(file, place(directory, .Own_Hash, 1), module.Own_Hash_Place{memory_offset = parts.own_hash_place})
 	}
@@ -776,7 +940,7 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 
 // written_file_check reads the written file as a loader and a reader do:
 // module.validate, then the description of each export, each record and
-// each fact. A refusal here is a part that only the format of the file
+// each fact, then the record streams. A refusal here is a part that only the format of the file
 // shows wrong, or a fault of this writer.
 @(private)
 written_file_check :: proc "contextless" (parts: Module_Parts, file: []u8) -> Refusal_Record {
@@ -797,6 +961,18 @@ written_file_check :: proc "contextless" (parts: Module_Parts, file: []u8) -> Re
 		if _, _, ok := module.fact(file, u32(index + 1)); !ok {
 			return {refusal = .Fact_Not_Valid, table = .Facts, index = u64(index), value = parts.facts[index].key}
 		}
+	}
+	// The reader of the root service checks the record streams of a file
+	// with this procedure: the writer writes none that it refuses.
+	if fault, row := module.record_streams_check(file); fault != .None {
+		table := module.Table_Kind.Record_Outputs
+		switch fault {
+		case .Too_Many_Inputs, .Bad_Input, .Inputs_Out_Of_Order:
+			table = .Record_Inputs
+		case .None, .Too_Many_Outputs, .Bad_Output, .Outputs_Out_Of_Order, .Name_Of_Both, .Generic_Output_Alone:
+			// A fault of the outputs, or of the two tables together.
+		}
+		return {refusal = .Record_Streams_Not_Valid, table = table, index = u64(row), value = u64(fault)}
 	}
 	return {}
 }

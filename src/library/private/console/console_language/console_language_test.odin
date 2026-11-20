@@ -15,12 +15,54 @@ test_name_role :: proc "contextless" (data: rawptr, name: string) -> Name_Role {
 		return .Module
 	case "x", "r":
 		return .Variable
+	case "server.requests":
+		return .Stream
+	case "server":
+		return .Module
 	}
 	return .Unknown
 }
 
+// A typed name is its owner, the dot and its record output; a record
+// output that the owner does not declare is unknown after the dot, and a
+// typed name being typed has no run after the dot yet.
+@(test)
+a_typed_name_has_the_colors_of_its_parts :: proc(t: ^testing.T) {
+	runs: [16]terminal.Code_Run
+	text := "first(server.requests, 3)"
+	count := line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"first", .Unknown}, {"(", .Operator}, {"server", .Module}, {".", .Operator}, {"requests", .Variable}, {",", .Operator}, {"3", .Number}, {")", .Operator}})
+	text = "server.reqests "
+	count = line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"server", .Module}, {".", .Operator}, {"reqests", .Unknown}})
+	text = "server.req"
+	count = line_runs(text, 0, len(text), test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"server", .Module}, {".", .Operator}})
+}
+
+// The commands of the tests whose arguments are names of fields: columns,
+// from its second argument.
+test_field_names_from :: proc "contextless" (data: rawptr, command: string) -> int {
+	return command == "columns" ? 1 : -1
+}
+
 test_names := Name_Lookup {
-	role_of = test_name_role,
+	role_of          = test_name_role,
+	field_names_from = test_field_names_from,
+}
+
+// The names after the table of columns are fields, with a call inside its
+// first argument and after "|>"; a name in the first argument keeps its
+// role, and so does a name after the call closes.
+@(test)
+the_names_of_fields_of_a_call_have_the_color_of_a_parameter :: proc(t: ^testing.T) {
+	runs: [32]terminal.Code_Run
+	text := "columns(length(x), slot, name) "
+	count := line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"columns", .Unknown}, {"(", .Operator}, {"length", .Function}, {"(", .Operator}, {"x", .Variable}, {")", .Operator}, {",", .Operator}, {"slot", .Parameter}, {",", .Operator}, {"name", .Parameter}, {")", .Operator}})
+	text = "x |> columns(slot) |> length "
+	count = line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"x", .Variable}, {"|>", .Operator}, {"columns", .Unknown}, {"(", .Operator}, {"slot", .Parameter}, {")", .Operator}, {"|>", .Operator}, {"length", .Function}})
 }
 
 Expected_Run :: struct {

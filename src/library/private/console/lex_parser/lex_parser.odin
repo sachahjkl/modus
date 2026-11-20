@@ -8,8 +8,9 @@
 //   term       = factor { ("*" | "/" | "%") factor }
 //   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" expression ")"
 //   arguments  = argument { "," argument }
-//   argument   = expression | condition | fact name
+//   argument   = expression | condition | fact name | field names
 //   condition  = name ("=" | "!=" | "<" | "<=" | ">" | ">=") expression
+//   field names = name { "," name }       (the last argument of its call)
 //
 // The parser reads no "|>": the console gives it the nested form of the
 // line, with calls in calls (console_language, pipe.odin). The form of
@@ -57,9 +58,10 @@ NO_NODE :: Node_Index(-1)
 // description, never a variable (src/md/features/log_facts.md, "Filters
 // of a reader: one form").
 Parameter_Form :: enum u8 {
-	Expression = 0, // An expression, whose value has the kind of the parameter.
-	Fact_Name  = 1, // The name of a fact type, "package.Type".
-	Condition  = 2, // A field of the table of the first argument, an operator and a value.
+	Expression  = 0, // An expression, whose value has the kind of the parameter.
+	Fact_Name   = 1, // The name of a fact type, "package.Type".
+	Condition   = 2, // A field of the table of the first argument, an operator and a value.
+	Field_Names = 3, // The last parameter: one name of a field of the table of the first argument or more, separated by commas.
 }
 
 // The caller gives the form of each parameter of a command. The package
@@ -78,15 +80,16 @@ form_of :: proc "contextless" (lookup: Form_Lookup, command_name: string, index:
 
 // The kinds of nodes.
 Node_Kind :: enum u8 {
-	Integer   = 0, // An integer literal: its value is in `integer`.
-	Text      = 1, // A text literal: its bytes, with the two quotes.
-	Name      = 2, // A name alone: a variable, `variable.field`, or a command named with no parentheses.
-	Call      = 3, // A name and its arguments: the bytes are the name, the children the arguments.
-	Negate    = 4, // "-" before a factor: the child is the factor.
-	Binary    = 5, // Two operands and an operator: the bytes are the operator, the children the left then the right.
-	Condition = 6, // A field, an operator and a value: the bytes are the field and the operator, the child the value.
-	Fact_Name = 7, // The name of a fact type; with the refusal Fact_Name_Missing, no name.
-	Refused   = 8, // The fault where the parse stopped: the child is the part that was read before it, or none.
+	Integer     = 0, // An integer literal: its value is in `integer`.
+	Text        = 1, // A text literal: its bytes, with the two quotes.
+	Name        = 2, // A name alone: a variable, `variable.field`, or a command named with no parentheses.
+	Call        = 3, // A name and its arguments: the bytes are the name, the children the arguments.
+	Negate      = 4, // "-" before a factor: the child is the factor.
+	Binary      = 5, // Two operands and an operator: the bytes are the operator, the children the left then the right.
+	Condition   = 6, // A field, an operator and a value: the bytes are the field and the operator, the child the value.
+	Fact_Name   = 7, // The name of a fact type; with the refusal Fact_Name_Missing, no name.
+	Refused     = 8, // The fault where the parse stopped: the child is the part that was read before it, or none.
+	Field_Names = 9, // The names of fields, with their commas and the spaces after the last; with the refusal Field_Name_Missing, a name is missing.
 }
 
 // The operators of a Binary node.
@@ -124,6 +127,7 @@ Refusal :: enum u8 {
 	Too_Many_Arguments        = 9, // A "," after ARGUMENT_CAPACITY arguments.
 	Fact_Name_Missing         = 10, // The argument of a fact name holds no name.
 	Condition_Head_Refused    = 11, // The field or the operator of a condition. value: the console_condition.Refusal.
+	Field_Name_Missing        = 12, // An argument of field names with no name at the start or after a ",": the place is where the name is missing.
 }
 
 // Where a node is in its text: its first byte.
@@ -508,6 +512,8 @@ call_read :: proc "contextless" (parser: ^Parser, name: string, start: int) -> N
 			argument = fact_name_read(parser)
 		case .Condition:
 			argument = condition_read(parser)
+		case .Field_Names:
+			argument = field_names_read(parser)
 		}
 		child_append(parser.tree, call, argument)
 		if refused(parser) {
@@ -539,6 +545,38 @@ fact_name_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		}
 	}
 	return fact_name
+}
+
+// field_names_read reads the argument of a parameter of the form
+// Field_Names: one name or more, separated by commas, so it takes the
+// commas that would end the argument. Each is a name of a field, never a
+// variable: the console checks it against the record of its table. The
+// bytes of the node run from the first name to the byte after the spaces
+// that follow the last.
+@(private)
+field_names_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
+	skip_spaces(parser)
+	start := parser.position
+	field_names := node_add(parser, .Field_Names, start, start)
+	node := node_at(parser.tree, field_names)
+	if node == nil {
+		return NO_NODE
+	}
+	for {
+		name := read_name(parser)
+		if len(name) == 0 {
+			node.refusal = .Field_Name_Missing
+			node.end = u32(parser.position)
+			refusal_keep(parser, .Field_Name_Missing, parser.position)
+			return field_names
+		}
+		if peek(parser) != ',' {
+			break
+		}
+		parser.position += 1
+	}
+	node.end = u32(parser.position)
+	return field_names
 }
 
 // condition_read reads the argument of a parameter of the form Condition:

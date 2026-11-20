@@ -435,7 +435,7 @@ Status: Decided. The detail below is proposed.
 - **Rule**: The metadata of a module (property 12) describes each exported function completely: its name, the name and type of each parameter, the type of each result, and a text for a reader. This description is sufficient to call the function with no other knowledge of the module.
 - **Rule**: A started process receives no `argc` and no `argv`. At the minimum, it receives one structured context: a typed record with a fixed layout.
 - **Content of the context** (proposed): the typed arguments of the called function, the handles that the caller grants (property 2), and the rings to the caller and to the kernel (property 4). The context holds no strings that the process must parse.
-- **State of the context**: built as 16 handles and 24 values of 64 bits, whose index is their role; the kernel ring is not in it, because each thread finds its own (`MODULE_CONTRACT.md`, "6. The context").
+- **State of the context**: built as 18 handles and 24 values of 64 bits, whose index is their role; the kernel ring is not in it, because each thread finds its own (`MODULE_CONTRACT.md`, "6. The context").
 - **Rule**: No contract of the system depends on a feature of one programming language. The context, the module format, the calling convention, the type description and the ring layouts are defined as memory layouts and numbers. A process in any language that can read and write memory at fixed offsets can use them.
 - **Consequence**: The context is a plain record of the system. It is not the implicit `context` of Odin or Jai. A language binding can copy its fields into a language feature; the system does not know about it.
 - **Consequences**:

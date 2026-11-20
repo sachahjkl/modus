@@ -533,7 +533,7 @@ disk_processes_stop_report_steps :: proc(steps: ^[dynamic]Step, fault_hash: stri
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with no grant", build.OUTSIDE_FAULT_MODULE, fault_hash), any_order = true})
 	append(steps, Step{kind = .Wait, text = "visitor: writes to the address 0, three calls deep: its stop report names the frames of its source", fails_on = "visitor: the write did not stop the process: WRONG"})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: kept the stop report of %s, a disk process of principal 0: stop_report(\"%s\") names its frames", build.OUTSIDE_FAULT_MODULE, build.OUTSIDE_FAULT_MODULE)})
-	append(steps, Step{kind = .Type, text = fmt.aprintf("columns(where(stop_report(\"%s\"), procedure = \"visitor::fault_three\"), \"module procedure file line\")", build.OUTSIDE_FAULT_MODULE)})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("columns(where(stop_report(\"%s\"), procedure = \"visitor::fault_three\"), module, procedure, file, line)", build.OUTSIDE_FAULT_MODULE)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: gave debugger the kept stop report of %s and a connection that reads only to the store %s of principal 0, for console", build.OUTSIDE_FAULT_MODULE, disk_process.STORE_NAME)})
 	// The object of the store has the hash of the module that faulted as
 	// its name.
@@ -558,7 +558,7 @@ disk_processes_stop_report_steps :: proc(steps: ^[dynamic]Step, fault_hash: stri
 // Each row is drawn through `columns`, so that the widths of its columns
 // depend only on values that the scenario knows.
 disk_processes_debugger_steps :: proc(steps: ^[dynamic]Step, outsider_hash: string) {
-	append(steps, Step{kind = .Type, text = fmt.aprintf("columns(debug(\"%s\"), \"process described\")", build.OUTSIDE_DISK_MODULE)})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("columns(debug(\"%s\"), process, described)", build.OUTSIDE_DISK_MODULE)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: gave debugger a connection that reads only to the store %s of principal 0, for the debug object of %s", disk_process.STORE_NAME, build.OUTSIDE_DISK_MODULE)})
 	// The object of the store has the hash of the module as its name.
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("debugger: read the debug object %s of %s from the store %s of principal 0: ", outsider_hash, build.OUTSIDE_DISK_MODULE, disk_process.STORE_NAME)})
@@ -568,14 +568,14 @@ disk_processes_debugger_steps :: proc(steps: ^[dynamic]Step, outsider_hash: stri
 	append(steps, Step{kind = .Wait, text = "root: disconnected module_files from the service storage", any_order = true})
 	// The one module of the process has a debug object: the one of the store.
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s          1", build.OUTSIDE_DISK_MODULE)})
-	append(steps, Step{kind = .Type, text = "columns(hold(0), \"thread state\")"})
+	append(steps, Step{kind = .Type, text = "columns(hold(0), thread, state)"})
 	append(steps, Step{kind = .Wait, text = "[console]      0  held"})
 	// The thread sleeps in a call of the system, whose stub keeps no frame
 	// of its own: the walk of the frame pointers reaches the entry of the
 	// process, at the line where it calls sleep_for_ever. That frame names
 	// the procedure, the source of the copy by the name of its folder, and
 	// the line: what only the debug object from the store gives.
-	append(steps, Step{kind = .Type, text = "columns(where(stack(0), procedure = \"entry\"), \"module procedure file line\")"})
+	append(steps, Step{kind = .Type, text = "columns(where(stack(0), procedure = \"entry\"), module, procedure, file, line)"})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s  entry      %s/main.odin    %s", build.OUTSIDE_DISK_MODULE, build.OUTSIDE_DISK_MODULE, VISITOR_LINE_OF_THE_SLEEP)})
 	// The detach gives the thread back and ends the debug access.
 	append(steps, Step{kind = .Type, text = "detach()"})
@@ -686,7 +686,7 @@ disk_processes_nickname_steps :: proc(steps: ^[dynamic]Step, importer_hash: stri
 	// monitor.processes() and connects to the monitor itself. The name
 	// column is as wide as the nickname, and the hash as wide as its
 	// header, so the line has no padding.
-	append(steps, Step{kind = .Type, text = fmt.aprintf("columns(where(processes(), name = \"%s\"), \"name hash\")", foundation.STORE_IMPORTER_MODULE)})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("columns(where(processes(), name = \"%s\"), name, hash)", foundation.STORE_IMPORTER_MODULE)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s  %s", foundation.STORE_IMPORTER_MODULE, importer_hash)})
 }
 

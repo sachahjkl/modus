@@ -43,11 +43,35 @@ console_name_role :: proc "contextless" (data: rawptr, name: string) -> console_
 	if fact_name_known(name) {
 		return .Record
 	}
+	// A process that the console started, and a typed name of one of its
+	// record outputs, or of a service that it connected (streams.odin).
+	if stream_owner_named(name) {
+		return .Module
+	}
+	if _, _, _, known := stream_name_known(name); known {
+		return .Stream
+	}
 	return .Unknown
 }
 
+// console_field_names_from gives the first argument of a command that is a
+// name of a field: the parameter of the form Field_Names, or -1.
+console_field_names_from :: proc "contextless" (data: rawptr, name: string) -> int {
+	found := command_find(name)
+	if found == nil {
+		return -1
+	}
+	for index in 0 ..< found.parameter_count {
+		if found.parameter_forms[index] == .Field_Names {
+			return index
+		}
+	}
+	return -1
+}
+
 console_names := console_language.Name_Lookup {
-	role_of = console_name_role,
+	role_of          = console_name_role,
+	field_names_from = console_field_names_from,
 }
 
 // edit_runs gives the runs of the edit line: the prompt, then the line, with
@@ -120,6 +144,8 @@ row_runs :: proc "contextless" (row: string, name_length: int, kind: line_editor
 		name_kind = .Type
 	case .Field, .Member:
 		name_kind = .Parameter
+	case .Stream:
+		name_kind = .Variable
 	}
 	if name_kind != .None {
 		last_dot := -1

@@ -1,6 +1,6 @@
 # Module contract
 
-`src/library/contract/module/format.odin` is version 3 of the format at the level of bytes.
+`src/library/contract/module/format.odin` is version 5 of the format at the level of bytes.
 
 This document gives the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `glossary/README.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -66,7 +66,8 @@ A module is one file that holds its code and everything needed to use it: what i
 +--------------------+
 | flat tables        |  segments, imports, slots, exports, rebases,
 |                    |  functions, strings, documentation, records, fields,
-|                    |  budget, facts, own hash
+|                    |  budget, facts, own hash, record outputs,
+|                    |  record inputs
 +--------------------+
 | segment data       |  code, read-only data, data; each segment on a page
 +--------------------+
@@ -358,21 +359,154 @@ offset  size  field          type
 - **The checks of a reader**: `module.fact` refuses a row with the key 0, a `reserved` word that is not 0, a record that `record_type` refuses or whose values pass `op.LOG_FACT_VALUE_CAPACITY` (144 bytes), a template of 0 bytes or of more than `FACT_TEMPLATE_BYTES_MOST` (256), and a text outside the string table. `module.fact_find` finds a row by its key in the sorted table. `module.fact_template_valid` checks the language of the template against the fields: a reader shows a fact whose template breaks a rule raw.
 - **The one render**: `module.fact_sentence_write(file, key, values, sentence, runs)` writes the sentence of a fact, each value by its kind (an Integer in decimal with the unit of a size or a time, a hexadecimal Integer, the name of a member of a status, a Text up to its first zero byte with "?" for each byte of an invalid sequence, a hash in hexadecimal), and one value run for each value that has a value kind. It reads a copy of the values. It refuses, with `Fact_Render_Refusal` and no byte written: no valid row of the key (`No_Fact_Type`), a count of the value bytes that is not the size of the record (`Value_Count`), a template that breaks a rule (`Template`), and a sentence longer than the buffer of the reader (`Too_Long`; `FACT_SENTENCE_BYTES_MOST`, 1024 bytes, is the buffer of the readers of the system). The console, the window of the log and the tool call it, so two readers never write two sentences for one fact.
 - **The own-hash place.** A module file cannot hold its own hash. The support package `system` declares the place, a variable with the symbol `modus_own_hash` (`module.OWN_HASH_PLACE_SYMBOL`), and the build writes its memory offset in the table `Own_Hash`. `validate` refuses a place that is not 32 bytes inside one segment with Write and no Execute (`Bad_Own_Hash_Place`), so no file makes a loader write into its code. A module whose code does not read the place has no table: the link drops the variable.
-- **The version.** Version 3 of the format adds the two tables. A loader of version 2 would leave the place zero, so the version changed, and a loader refuses a file of version 2.
+- **The version.** A loader that does not know the table `Own_Hash` would leave the place zero, and each fact of the module would name no module: a table that a reader must know changes the version (`module.VERSION`), and a loader refuses a file of another version.
 
 What the build checks, and how a source declares a fact type: `TOOLS.md`, "The log facts of the build". The design: `src/md/features/log_facts.md`.
+
+### The record outputs and the record inputs
+
+A record output is a stream of records of one record type that the module writes while it works, with no known end; a record input is a stream that it reads (`glossary/communication.md`, "Record output" and "Record input"). The source declares each one as a package variable of its package, with a documented comment:
+
+```odin
+// One request that the server answered.
+requests: system.Record_Output(Access_Record)
+
+// The orders to serve.
+orders: system.Record_Input(Order, .Many)
+
+// The streams to keep, each with the terms of its space.
+sources: system.Record_Input_With_Terms(system.Any_Record, Space_Terms, .Many_Types)
+```
+
+The generic types of `src/library/support/system` take the record type first:
+
+| Type | Then |
+|---|---|
+| `system.Record_Output(Record_Type, pairing)` | `.Unpaired` by default, or `.Paired` |
+| `system.Record_Input(Record_Type, wirings)` | the count of wirings: `.One` by default, `.Many` or `.Many_Types` |
+| `system.Record_Input_With_Terms(Record_Type, Terms_Type, wirings)` | the record type of the wiring terms, which it always names, then the count of wirings |
+
+A record input with wiring terms has a type of its own because Odin gives no default to a type parameter of a generic type: a record input with no terms, the frequent case, then names no terms, and a record input with terms names them second, before its count. `system.Any_Record` declares a generic record output or record input, whose type a wiring fixes. A declaration costs nothing while no wiring names it. Two tables hold them:
+
+| Table | One record describes |
+|---|---|
+| Record_Outputs | One record output: its name, its line of help and its documentation text in the string table; the index of the description of its record in the table `Records`, or 0 for a generic record output; and its pairing, the byte of a `module.Record_Output_Pairing` |
+| Record_Inputs | One record input: the same name, help and text; the index of its record, or 0 for a generic record input; the index of the record of its wiring terms, or 0 for none; and its count of wirings, the byte of a `module.Wiring_Count` |
+
+```byte-layout module.Record_Output module.Record_Input
+module.Record_Output, 40 bytes: one record of the table Record_Outputs
+offset  size  field         type
+     0     4  name_offset   u32
+     4     4  name_count    u32
+     8     4  about_offset  u32
+    12     4  about_count   u32
+    16     4  text_offset   u32
+    20     4  text_count    u32
+    24     4  record        u32
+    28     1  pairing       u8
+    29     3  reserved      [3]u8
+    32     8  place         u64
+
+module.Record_Input, 48 bytes: one record of the table Record_Inputs
+offset  size  field         type
+     0     4  name_offset   u32
+     4     4  name_count    u32
+     8     4  about_offset  u32
+    12     4  about_count   u32
+    16     4  text_offset   u32
+    20     4  text_count    u32
+    24     4  record        u32
+    28     4  terms         u32
+    32     1  wirings       u8
+    33     7  reserved      [7]u8
+    40     8  place         u64
+```
+
+- **The place of a row** is the memory offset of the package variable of the declaration, in a segment that the loader writes: each loader writes the index of the row there, a u32, the first field of `system.Record_Output` and `system.Record_Input` (`module.record_stream_indexes_write`), as it writes the hash at the own-hash place. The library reads the index in the variable, so a call names its stream by the address of the variable. The tool finds the variable by its symbol in the linked file; 0 says that the link kept no variable, as no code uses it. `validate` refuses a place that is not 0 and not 4 aligned bytes in a segment that the loader writes and that keeps Write after the load, or that meets the own-hash place, a rebase location, an import slot or the place of another row (`Bad_Record_Stream_Place`). Before it reads a row, it refuses a table `Record_Outputs` or `Record_Inputs` with more than `module.RECORD_STREAM_INDEX_MOST` (64) rows (`Too_Many_Record_Streams`): the check of the places costs the rows times the segments, and each location of a rebase or a slot one search among the sorted places, and `validate` runs in the kernel for the root service. The build refuses a module that declares more, with its sentence. The format is version 5 since the place.
+
+- **The record of a row** is a record description of the table `Records`, as the record of an export or of a log fact is: a record that an export takes and a record output writes has one row. A record of a record stream goes into memory that another process reads, so it has no Handle field, and each of its bytes is a byte of one field (`module.record_stream_type`).
+- **The checks of a reader**: `module.record_output` and `module.record_input` refuse a row index of 0 or past `module.RECORD_STREAM_INDEX_MOST` (64: the rows of each table at most), a reserved byte that is not 0, a name that is not a name of the source or is outside the string table, a help or a text outside it, a record or terms that `record_stream_type` refuses, a pairing or a count that names no member, `Paired` on a typed record output, and `Many_Types` on a typed record input. `module.record_streams_check` checks a whole file: each row, the names of each table sorted with no name two times, no name in both tables, and a generic record output only beside one generic record input. The build writes the rows sorted by name, and checks each file that it writes with it.
+
+**The output ring** of a wiring carries the records of one record output to one reader (`glossary/communication.md`, "Output ring"). Its command queue holds one compartment for each record: the compartment word, then the record, rounded up to a multiple of 64 bytes (`output.compartment_size`). The end words that the root service writes when a side stops are in the end page of the wiring, which each side maps with Read only. The contract is `src/library/contract/output`, and the ring of compartments `ring.compartment_open`.
+
+```byte-layout output.Compartment_Word output.End_Words
+output.Compartment_Word, 8 bytes: the start of each compartment of an output ring
+offset  size  field   type
+     0     4  kind    u32
+     4     4  serial  u32
+
+output.End_Words, 64 bytes: the end words in the end page of a wiring
+offset  size  field         type
+     0     4  end           u32
+     4     4  stop_cause    u32
+     8     4  stop_outcome  u32
+    12    52  reserved      [13]u32
+```
+
+**The wiring ring** gives a process each end of a wiring (`glossary/communication.md`, "Wiring ring"). A process whose module declares a record output or a record input receives it at the handle 16 of its context, `op.CONTEXT_WIRING_RING`: a ring of records of 64 bytes, 32 records or the next power of two of the ends of the wiring list of its start. The root service writes one command for each end, and the process answers each with one completion, then with the word `Closed` when it closes the end (`src/library/contract/output/wiring.odin`):
+
+| Word | `Writer_End` (1): the process writes the output ring | `Reader_End` (2): the process reads it into a record input | `Asker_End` (3): the process reads it as the asker |
+|---|---|---|---|
+| `kind` | 1 | 2 | 3 |
+| `tag` | The number of the wiring; the completion carries it back | The same | The same: the number that the completion of `Wire` or `Start` gave |
+| `values[0]` | The handle of the output ring, with Read and Write | The same | The same |
+| `values[1]` | The index of the record output, from 1 | The index of the record input, from 1 | 0 |
+| `values[2]` | The word of its `output.Wiring_Pace`: `Writer_Chooses` (0), `Never_Holds_Writer` (1), `Always_Holds_Writer` (2) | 0 | 0 |
+| `values[3]` | The page of its `output.Writer_Condition`, with Read only, or 0: the writer writes into this ring only the records that pass it | The memory of its wiring terms, with Read only, or 0 | 0 |
+| `values[4]` | 0 | Its description file, with Read only | The same |
+| `values[5]` | The end page of the wiring, with Read only | The same | The same |
+| `values[6]` | 0 | The word of its `output.Reader_Filter`: `None` (0), or `By_Writer` (1) when the wiring has a condition, so the serials of the ring move forward by any count | The same |
+
+- **Each handle comes through the ring.** The root service gives the handles with `Handle_Give` and the memory of the wiring ring as the target, and the process proves each one with `Handle_State` before it maps it.
+- **The border** `output.given_end_of_record` refuses a kind that names no command, a ring handle of 0 or past 32 bits, an index of 0 or past `module.RECORD_STREAM_INDEX_MOST` (an index that is not 0 for the asker), an end page of 0 or past 32 bits, a description file beside a writer end or none beside a reader, a pace that names no member, a pace word beside a reader, a condition page past 32 bits beside a writer, terms beside the asker, a filter word beside a writer, and a filter word that names no `Reader_Filter` beside a reader. Its error record is `Bad_Value` with the index of the word + 1 as the argument, 0 for the kind.
+- **The description file** (`output.description_file_write`) is a module file with the one record of the wiring at the index 1: a process has no copy of its own module file, so the reader checks each compartment against it.
+- **The completion** has the status `Ok` when the process took the end, with the word `output.Wiring_Answer.Taken` (0) in values[0], else the status of its refusal and its error record. When the process closes an end that it took, it writes one more completion: `Ok` with the word `Closed` (1) (`output.wiring_closed_completion`), and the root service gives back that end to the count of the process. The root service takes each completion through `output.wiring_completion_of_record`, which refuses a status that names no member, an answer word that names no member, and an `Ok` with another value. It takes two completions at most for each end, the answer and then `Closed`, and drops each later one with one line.
+- **No command ends an end.** The end page of the wiring says it, which the root service alone writes.
+- **The wiring list** that `Wire` and `Start` name: a head, the rows, the lent process handles of 32 bits, then the wiring terms, in the list page of the asker, which the root service owns and copies from its own handle. `output.wiring_list_check` takes the copy, and `output.wiring_row_check` each row, with the error record of the unit `Wiring_Rows` that names the field and the row.
+- **The library calls** (`src/library/support/system/stream_ends.odin`): `system.output_write(&requests, record, wait, deadline)` writes into the ring of each reader, whole or refused over the rings that hold the writer, and gives an `output.Stream_Status`; `system.output_end(&requests, error)` writes the end record; `system.input_read(&orders, &order, deadline)` gives the next record, joined record, gap record or end, with the end word of a writer that stopped; `system.asker_read(number, &record, deadline)` reads a wiring whose reader is the asker. A process holds at most `system.STREAM_END_CAPACITY` ends; one thread writes a record output, and one thread reads a record input.
+
+```byte-layout output.Wiring_List_Head output.Wiring
+output.Wiring_List_Head, 64 bytes: the head of a wiring list
+offset  size  field         type
+     0     4  row_count     u32
+     4     4  handle_count  u32
+     8    56  reserved      [14]u32
+
+output.Wiring, 64 bytes: one row of a wiring list
+offset  size  field             type
+     0     4  writer_end        u32
+     4     4  writer_handle     u32
+     8     4  writer_stream     u32
+    12     4  writer_index      u32
+    16     4  reader_end        u32
+    20     4  reader_handle     u32
+    24     4  reader_index      u32
+    28     4  pace              u32
+    32     4  capacity          u32
+    36     4  terms_offset      u32
+    40     4  terms_count       u32
+    44     4  condition_offset  u32
+    48     4  condition_count   u32
+    52    12  reserved          [3]u32
+```
+
+- **The condition of a wiring** (`src/md/features/module_outputs.md`, "The condition of a wiring"): `condition_offset` and `condition_count` name an `output.Condition_Terms` after the lent handles, or 0 and 0. The root service takes it through `output.writer_condition_of_terms` against the record of the writer, and gives the writer an `output.Writer_Condition`; the writer writes into that ring only the records for which `output.writer_condition_holds`.
+
+- **The type check** of a wiring is `output.record_descriptions_compare`: the name, the size and the count of the fields of the two records, then each field: its name, offset, type, sign, integer unit, detail, field kind and contract enum. It gives the first difference, with the number of the field from 1, and it refuses a description that `module.record_stream_type` refuses before any comparison.
+
+What the build checks: `TOOLS.md`, "The record outputs and the record inputs of the build". The wiring, the output ring and the design: `src/md/features/module_outputs.md`.
 
 ### The module file writer
 
 One package writes the bytes of a module file: the contract package `modus:contract/module_file_writer` (`glossary/code.md`, "Module file writer"). The modus tool calls it for each module of the build, and a program of modus that writes a module calls the same code.
 
-- **The input** is one record, `Module_Parts`: the segments with their bytes and their access, the exports with their descriptions, the import hashes, the slots, the rebases, the records and their fields, the log facts, the own-hash place, the documentation of the module and the budget request. A part `n` of a list is the record `n + 1` of its table.
+- **The input** is one record, `Module_Parts`: the segments with their bytes and their access, the exports with their descriptions, the import hashes, the slots, the rebases, the records and their fields, the log facts, the own-hash place, the documentation of the module, the budget request, and the record outputs and the record inputs (`Record_Output_Part`, `Record_Input_Part`), each with the place of its variable. A part `n` of a list is the record `n + 1` of its table.
 - **The memory.** `file_size_needed(parts)` gives the bytes of the file. `write(parts, output)` writes into the memory of the caller, and allocates nothing. Memory that is too small gives `Output_Too_Small` with the size that the file needs, and no byte changes.
 - **What it computes.** The header with the entry (the export `entry`) and the memory size, the directory, each table on 8 bytes, the string table, the rebase table in its bitmap form, and the data of each segment on its own pages with its zero bytes at the end not stored. A segment that is read-only after the load and that no rebase and no slot writes becomes a constant segment: a part of the shared code of section 2.
-- **The refusals.** A refusal is a `Refusal_Record`: a member of `Refusal`, the table of the part, the index of the part in its list, and a value. The writer refuses a table past its bound (`Table_Past_Bound`: more than 2³² − 1 records with record 0, or a string table of more bytes), a name that is not 1 to 255 ASCII letters, digits and `_` with no digit first (`Not_A_Name`), two exports with one name, a Record or Table parameter or result or an error record that names no record (`Export_Without_Description`), a call form past 12 arguments, an export outside a segment with Execute, segments off pages, past 64 bits, longer than their memory, out of order or on one page (`Segment_Overlap`), a segment with Execute that the loader writes, a slot, a rebase or an own-hash place outside writable data, rebases out of order or twice, and a fact with the key 0, a key out of order, no record or no template.
-- **The last check.** The written file passes `module.validate`, and `module.function`, `module.record_type` and `module.fact` read each description. A file that a reader refuses gives `Record_Not_Valid` or `Fact_Not_Valid`, and its bytes are set to zero.
+- **The refusals.** A refusal is a `Refusal_Record`: a member of `Refusal`, the table of the part, the index of the part in its list, and a value. The writer refuses a table past its bound (`Table_Past_Bound`: more than 2³² − 1 records with record 0, or a string table of more bytes), a name that is not 1 to 255 ASCII letters, digits and `_` with no digit first (`Not_A_Name`), two exports with one name, a Record or Table parameter or result or an error record that names no record (`Export_Without_Description`), a call form past 12 arguments, an export outside a segment with Execute, segments off pages, past 64 bits, longer than their memory, out of order or on one page (`Segment_Overlap`), a segment with Execute that the loader writes, a slot, a rebase or an own-hash place outside writable data, rebases out of order or twice, a fact with the key 0, a key out of order, no record or no template, more than `module.RECORD_STREAM_INDEX_MOST` record outputs or record inputs (`Record_Streams_Past_Bound`), a record stream whose name is not a name (`Not_A_Name`) or whose record or terms name no record (`Record_Stream_Without_Description`), and the place of a record stream that is not 0 and not 4 aligned bytes in a segment with Write, no Execute and not `Read_Only_After_Load` (`Record_Stream_Place_Not_Writable`).
+- **The last check.** The written file passes `module.validate`, `module.function`, `module.record_type` and `module.fact` read each description, and `module.record_streams_check` takes the record streams: the order of their names, no name in both tables, a generic record output beside one generic record input. A file that a reader refuses gives `Record_Not_Valid`, `Fact_Not_Valid`, `Record_Streams_Not_Valid` (the row and the `module.Record_Stream_Fault`) or `Written_File_Not_Valid` (a place of a record stream that meets another write of a loader gives `module.Error.Bad_Record_Stream_Place`), and its bytes are set to zero. The file has the version 5 of the format (`module.VERSION`).
 
-The tool keeps what reads its input: the linked ELF file, the Odin sources and the DWARF of the debug object. The design: `src/md/features/first_compiler.md`, "1. The module file writer".
+The tool keeps what reads its input: the linked ELF file, the Odin sources and the DWARF of the debug object. It reads the record streams from the sources and the place of each variable from the symbols of the linked file (`record_stream_place_of_elf` in `convert.odin`), and passes both to the writer, so a program of modus that writes a module writes its streams through the same code. The design: `src/md/features/first_compiler.md`, "1. The module file writer".
 
 ### The assembler
 
@@ -709,7 +843,7 @@ The tag does not refuse an older version of the table that the storage service k
 - The record `Client_Add`, which tells the compositor of a new window, holds the nickname (values 1 to 3) and the first 8 bytes of the hash (value 4). The window has the nickname as its title, in the title bar, the menu of the windows and the palette: the title that the process asks for is not read, so the window of a disk process cannot have the title `console`. The menu and the palette (the window and its close) show the hash prefix after the nickname, so a nickname that only looks like a name of the system (`consoIe`) is told apart; the title bar shows the nickname alone.
 - A disk process cannot start a child: its budget holds one process, its own. So no child of it takes the name of a process of the system in the monitor.
 - The disk process page (`modus:contract/disk_process_page`) holds one row for each disk process that runs: its process slot, its process serial, its nickname and its whole hash. The root service maps it read-only into each process that it starts with the right Inspect, as the monitor. The root service learns the process slot and the process serial from `Process_State`, which gives them as its results 5 and 6.
-- The export `monitor.processes()` gives what the window shows: the row of a disk process has its nickname as its `name`, and the whole hash of its file, 64 hexadecimal digits, in `hash`. The row of each other process has an empty `hash`. `columns(where(processes(), name = "store_importer"), "name hash")` in the console gives `store_importer  5f0c1a2b…`.
+- The export `monitor.processes()` gives what the window shows: the row of a disk process has its nickname as its `name`, and the whole hash of its file, 64 hexadecimal digits, in `hash`. The row of each other process has an empty `hash`. `columns(where(processes(), name = "store_importer"), name, hash)` in the console gives `store_importer  5f0c1a2b…`.
 
 The monitor writes one line for each disk process that it shows, and the compositor one line for each disk process in the menu of the windows when the menu opens:
 
@@ -1011,7 +1145,7 @@ A module names each import by its hash. The party that starts a process can give
 - **The replacement is in place of an import only**: `load("calendar")` loads calendar. The table applies to each import of a load, at each level.
 - **A table that changes applies to the loads that follow.** A process that runs keeps the modules that it has. The root service does not start a process again.
 - **Visible**: the module records of the kernel (operation `Process_Module`). `processes()` in the console shows the modules of each process that has more than its module, with "in place of" for each replacement. The manual shows the imports of a module, and the replacement of the machine for each one. When a thread faults, the kernel writes the hash of the module of the instruction, its offset, and the hash that the module replaces: "in module 5d8ff6e736fda684 at offset 00000000000019c0, which replaces b1f1b875df9992f8".
-- **The module graph of what runs** (`glossary/code.md`, "Module graph"): `manual.edges()` gives one row of `Edge` (`src/library/private/manual/information/rows.odin`) for each import edge of each process that runs: `process`, `slot`, `module`, `hash`, `imported_by` and `replaces`. It reads the module records of the kernel, as `manual.running()` does, and the import table of the file of each module, from the boot image: module A of a process imports module B of the same process when an import of A holds the hash that B replaces, or holds the hash of B and no module of the process replaces that hash. A module that no module of its process imports has one row with `imported_by` empty: the module of the process, or a module that the process loaded by its name. `replaces` names the module that the import names. A module that the boot image does not hold is named by the first 16 digits of its hash, so an empty field means "none". It needs a caller that acts for the principal, as `running()`. The console combines it as each table: `columns(where(manual.edges(), replaces = "calendar"), "imported_by module replaces process")` gives `imports calendar_fixed calendar imports`: in the process `imports`, its module imports calendar_fixed, which a replacement put in place of calendar. It is an export of the service that already gives `running()` and `importers()`, not a second mechanism: the console has no command of its own for it.
+- **The module graph of what runs** (`glossary/code.md`, "Module graph"): `manual.edges()` gives one row of `Edge` (`src/library/private/manual/information/rows.odin`) for each import edge of each process that runs: `process`, `slot`, `module`, `hash`, `imported_by` and `replaces`. It reads the module records of the kernel, as `manual.running()` does, and the import table of the file of each module, from the boot image: module A of a process imports module B of the same process when an import of A holds the hash that B replaces, or holds the hash of B and no module of the process replaces that hash. A module that no module of its process imports has one row with `imported_by` empty: the module of the process, or a module that the process loaded by its name. `replaces` names the module that the import names. A module that the boot image does not hold is named by the first 16 digits of its hash, so an empty field means "none". It needs a caller that acts for the principal, as `running()`. The console combines it as each table: `columns(where(manual.edges(), replaces = "calendar"), imported_by, module, replaces, process)` gives `imports calendar_fixed calendar imports`: in the process `imports`, its module imports calendar_fixed, which a replacement put in place of calendar. It is an export of the service that already gives `running()` and `importers()`, not a second mechanism: the console has no command of its own for it.
 - **What the rows do not say** (not built): whether the code of a module is shared code (`glossary/code.md`) of a prepared module or a copy of the process. A module record holds no memory object, and the table of prepared modules is in the process that starts processes. A row would need the mappings of the process (`Inspect_Kind.Process_Mappings`) and an identity of each memory object that two reports can compare.
 - **A view in the window of the manual** (designed, not built): the key `o` shows the table of all the modules (`overview()`); a second view would draw the rows of `edges()` for one process with `src/library/support/interface`: one column for each depth, a rectangle for each module in the color of its kind, a line from the importer to the module that it imports, with a line at an angle only where a column is skipped, and the name of the module that a replacement changed beside the line. The rows are the facts; the window adds no fact.
 - **Where the identity is kept**: the kernel keeps it, as it keeps the name of a process: the fault report and `Inspect` are in the kernel, and the loader of a process is in the process that started it, or in the process itself. A cycle of imports is possible with a replacement, and the loader refuses it.
@@ -1295,11 +1429,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 `system.log` writes with the handle `ctx.handles[CONTEXT_LOG]`; `system.context_record()` gives the same record anywhere in the process.
 
-**The record.** The first design had a header, a table of handles with a role and an argument each, the kernel ring, a caller ring and an argument record. The implemented record is smaller (`op.Context` in `src/library/contract/operation/operation.odin`): 16 handles and 24 values, 256 bytes.
+**The record.** The first design had a header, a table of handles with a role and an argument each, the kernel ring, a caller ring and an argument record. The implemented record is smaller (`op.Context` in `src/library/contract/operation/operation.odin`): 18 handles and 24 values, 264 bytes.
 
 | Part | Content |
 |---|---|
-| `handles` | 16 handles (`CONTEXT_HANDLES`). The index of a handle is its role. The handles 0 to 13 have the roles that the starter and its process agree on. Two roles are the same for every process: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the process (`CONTEXT_BUDGET`). A role that the process was not granted holds 0 |
+| `handles` | 18 handles (`CONTEXT_HANDLES`). The index of a handle is its role. The handles 0 to 13 have the roles that the starter and its process agree on. From 14 the roles are the same for every process: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the process (`CONTEXT_BUDGET`), 16 the wiring ring of a process whose module declares a record output or a record input (`CONTEXT_WIRING_RING`; "The record outputs and the record inputs", above). The handle 17 has no role yet. A new role of the system takes a handle from 16. A role that the process was not granted holds 0 |
 | `values` | 24 values of 64 bits (`CONTEXT_VALUES`): sizes, addresses, flags. The values 0 to 8 and 13 have the roles that the starter and its process agree on. The other values have the roles of the table below |
 
 The values that the system names:
@@ -1789,7 +1923,7 @@ debugger: read the debug object 5f0c… of outsider from the store module_files 
 root: disconnected processes from the service storage
 ```
 
-Then `columns(where(stack(0), procedure = "entry"), "module procedure file line")` in the console gives `outsider  entry      outsider/main.odin    93`: the source of the copy, by the name of its folder.
+Then `columns(where(stack(0), procedure = "entry"), module, procedure, file, line)` in the console gives `outsider  entry      outsider/main.odin    93`: the source of the copy, by the name of its folder.
 
 ### The readers
 

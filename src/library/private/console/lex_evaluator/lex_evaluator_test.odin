@@ -9,8 +9,9 @@ import "modus:private/console/lex_parser"
 // The fake host of the tests. Each call is an effect: the host writes its
 // name in the log, in the order of the runs, and gives the number of the
 // run as its value. `fails` runs and fails, as an export that fails.
-// `missing` names no command. `pure` has no effect. `x` is 7 and `t` is
-// "tee"; no other name is a variable.
+// `missing` names no command. `pure` has no effect. `x` is 7, `t` is
+// "tee", and `rows_a`, `rows_b` and `rows_other` are Tables, the last of
+// another record; no other name is a variable.
 @(private = "file")
 Fake :: struct {
 	log:        [32]string,
@@ -18,6 +19,7 @@ Fake :: struct {
 	finds:      int, // The commands that the evaluator asked for.
 	join:       [256]u8,
 	join_count: int,
+	last_text:  string, // The Text that a call took last as its last argument.
 }
 
 @(private = "file")
@@ -27,6 +29,12 @@ fake_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: Va
 		return {kind = .Integer, integer = 7}, true
 	case "t":
 		return {kind = .Text, text = "tee"}, true
+	case "rows_a":
+		return {kind = .Table, record = transmute([]u8)string("ab"), detail = 1}, true
+	case "rows_b":
+		return {kind = .Table, record = transmute([]u8)string("cd"), detail = 1}, true
+	case "rows_other":
+		return {kind = .Table, record = transmute([]u8)string("ef"), detail = 2}, true
 	}
 	return {}, false
 }
@@ -46,6 +54,9 @@ fake_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Va
 	fake := (^Fake)(data)
 	fake.log[fake.log_count] = name
 	fake.log_count += 1
+	if len(arguments) > 0 && arguments[len(arguments) - 1].kind == .Text {
+		fake.last_text = arguments[len(arguments) - 1].text
+	}
 	if name == "fails" {
 		return {}, false
 	}
@@ -64,13 +75,26 @@ fake_fact_name_value :: proc "contextless" (data: rawptr, evaluation: ^Evaluatio
 	return {kind = .Text, text = lex_parser.node_text(evaluation.tree, node)}, true
 }
 
+// "+" of the fake: two Texts join; two Tables join their rows when their
+// records are one, as the console's table sum, and are refused else.
 @(private = "file")
-fake_text_join :: proc "contextless" (data: rawptr, left, right: string) -> (joined: string, ok: bool) {
+fake_values_add :: proc "contextless" (data: rawptr, left, right: Value) -> (sum: Value, ok: bool) {
 	fake := (^Fake)(data)
+	if left.kind == .Table && left.detail != right.detail {
+		return {}, false
+	}
+	first, second := left.text, right.text
+	if left.kind == .Table {
+		first, second = string(left.record), string(right.record)
+	}
 	start := fake.join_count
-	fake.join_count += copy(fake.join[fake.join_count:], left)
-	fake.join_count += copy(fake.join[fake.join_count:], right)
-	return string(fake.join[start:fake.join_count]), true
+	fake.join_count += copy(fake.join[fake.join_count:], first)
+	fake.join_count += copy(fake.join[fake.join_count:], second)
+	joined := fake.join[start:fake.join_count]
+	if left.kind == .Table {
+		return {kind = .Table, record = joined, detail = left.detail}, true
+	}
+	return {kind = .Text, text = string(joined)}, true
 }
 
 @(private = "file")
@@ -80,6 +104,8 @@ test_form_of :: proc "contextless" (data: rawptr, command_name: string, index: i
 		return .Condition
 	case command_name == "facts" && index == 1:
 		return .Fact_Name
+	case command_name == "columns" && index == 1:
+		return .Field_Names
 	}
 	return .Expression
 }
@@ -105,7 +131,7 @@ run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVAL
 		call_run        = fake_call_run,
 		condition_value = fake_condition_value,
 		fact_name_value = fake_fact_name_value,
-		text_join       = fake_text_join,
+		values_add      = fake_values_add,
 	}
 	evaluation_start(&run.evaluation, &run.tree, mode, host, budget)
 	run.value, run.ok = line_force(&run.evaluation)
@@ -211,6 +237,13 @@ evaluation_refusals :: proc(t: ^testing.T) {
 		{"\"a\" % 2", .Operator_Kinds, 5, .Remainder, .Text, .Integer, nil},
 		{"f() + \"a\"", .Operator_Kinds, 5, .Add, .Integer, .Text, {"f"}},
 		{"-\"a\"", .Negate_Kind, 1, .None, .Text, .None, nil},
+		{"rows_a + 1", .Operator_Kinds, 8, .Add, .Table, .Integer, nil},
+		{"rows_a - rows_b", .Operator_Kinds, 8, .Subtract, .Table, .Table, nil},
+		{"\"a\" + rows_a", .Operator_Kinds, 5, .Add, .Text, .Table, nil},
+		// Two Tables of two records: the host refuses their sum.
+		{"rows_a + rows_other", .Host_Refused, 8, .None, .None, .None, nil},
+		// Field names with a name missing, after the table ran.
+		{"columns(f(), )", .Text, 14, .None, .None, .None, {"f"}},
 		// Results that do not fit, and a division by zero.
 		{"9223372036854775807 + 1", .Overflow, 21, .Add, .Integer, .Integer, nil},
 		{"-9223372036854775807 - 2", .Overflow, 22, .Subtract, .Integer, .Integer, nil},
@@ -250,6 +283,9 @@ evaluation_refusals :: proc(t: ^testing.T) {
 	testing.expect_value(t, run.evaluation.refusal.right, min(i64))
 	run = run_of("f(g(), 1 +")
 	testing.expect_value(t, run.evaluation.refusal.text_refusal, lex_parser.Refusal.Line_Ends_Too_Soon)
+	run = run_of("columns(f(), )")
+	testing.expect_value(t, run.evaluation.refusal.text_refusal, lex_parser.Refusal.Field_Name_Missing)
+	testing.expect_value(t, run.evaluation.refusal.command, "columns")
 	run = run_of("9223372036854775808")
 	testing.expect_value(t, run.evaluation.refusal.text_refusal, lex_parser.Refusal.Number_Too_Large)
 	testing.expect_value(t, lex_parser.node_text(&run.tree, run.evaluation.refusal.node), "9223372036854775808")
@@ -390,4 +426,17 @@ evaluation_values :: proc(t: ^testing.T) {
 	run = run_of("pure()")
 	testing.expect(t, run.ok)
 	testing.expect_value(t, run.value.integer, i64(1))
+
+	// "+" of two Tables of one record: the rows of both, from the host.
+	run = run_of("rows_a + rows_b")
+	testing.expect(t, run.ok)
+	testing.expect_value(t, run.value.kind, Kind.Table)
+	testing.expect_value(t, string(run.value.record), "abcd")
+
+	// Field names: one argument, a Text with the names as the line has
+	// them, after the table ran.
+	run = run_of("columns(f(), name, slot)")
+	testing.expect(t, run.ok)
+	expect_log(t, run, {"f", "columns"}, "columns(f(), name, slot)")
+	testing.expect_value(t, run.fake.last_text, "name, slot")
 }

@@ -35,27 +35,30 @@ Evaluation_Mode :: enum u8 {
 	Declaration = 1, // In the evaluation process: a call with an effect is refused at its border.
 }
 
-// The kinds of the values of Lex. The values are those of module.Type: the
-// kind of a parameter is its type.
+// The kinds of the values of Lex. The values up to Bytes are those of
+// module.Type: the kind of a parameter is its type. Stream and Record_Input
+// are kinds of the console only: no export takes or gives one.
 Kind :: enum u8 {
-	None    = 0,
-	Integer = 1,
-	Text    = 2,
-	Record  = 3,
-	Handle  = 4,
-	Table   = 5,
-	Bytes   = 6, // A parameter: a Text value is its argument. A value: bytes with no description, which the console draws.
+	None         = 0,
+	Integer      = 1,
+	Text         = 2,
+	Record       = 3,
+	Handle       = 4,
+	Table        = 5,
+	Bytes        = 6, // A parameter: a Text value is its argument. A value: bytes with no description, which the console draws.
+	Stream       = 7, // A record output of a process, read while the line runs. No variable keeps one.
+	Record_Input = 8, // A record input of a process, by its typed name: wire names it. No variable keeps one.
 }
 
 // A value of Lex. A parameter of a command of the console with the kind
 // None takes a value of any kind: the command checks it.
 Value :: struct {
 	kind:      Kind,
-	integer:   i64, // An Integer. A Handle: the handle.
+	integer:   i64, // An Integer. A Handle: the handle. A Stream: its place in the streams of the host.
 	text:      string,
 	record:    []u8, // A Record: its bytes. A Table: the bytes of its records.
-	file:      []u8, // A Record or a Table: the module that has the description of the record.
-	detail:    u32, // A Record or a Table: the index of the description of the record in the module.
+	file:      []u8, // A Record, a Table, a Stream or a Record_Input: the module that has the description of the record.
+	detail:    u32, // A Record, a Table, a Stream or a Record_Input: the index of the description of the record in the module.
 	condition: ^console_condition.Condition, // The argument of a parameter of the form Condition, in the memory of the host.
 }
 
@@ -84,7 +87,7 @@ Refusal_Record :: struct {
 	left:         i64, // Overflow.
 	right:        i64, // Overflow.
 	text_refusal: lex_parser.Refusal, // Text.
-	command:      string, // Effect_Refused.
+	command:      string, // Effect_Refused; Text with Field_Name_Missing: the call.
 	steps:        u32, // Budget_Exceeded: the budget.
 }
 
@@ -97,7 +100,7 @@ Evaluation_Host :: struct {
 	call_run:        proc "contextless" (data: rawptr, name: string, arguments: []Value) -> (value: Value, ok: bool), // Checks the arguments and runs the call: the effect.
 	condition_value: proc "contextless" (data: rawptr, evaluation: ^Evaluation, command_name: string, before: []Value, node: lex_parser.Node_Index) -> (value: Value, ok: bool), // A Condition node; it forces the value of the condition through force when it needs it.
 	fact_name_value: proc "contextless" (data: rawptr, evaluation: ^Evaluation, command_name: string, node: lex_parser.Node_Index) -> (value: Value, ok: bool), // A Fact_Name node.
-	text_join:       proc "contextless" (data: rawptr, left, right: string) -> (joined: string, ok: bool), // "+" of two Texts, in the memory of the host.
+	values_add:      proc "contextless" (data: rawptr, left, right: Value) -> (sum: Value, ok: bool), // "+" of two Texts, which it joins, or of two Tables, whose rows it joins: in the memory of the host.
 }
 
 // The state of a thunk.
@@ -146,7 +149,7 @@ line_force :: proc "contextless" (evaluation: ^Evaluation) -> (value: Value, ok:
 	switch tree.refusal.refusal {
 	case .Text_Too_Long, .Nodes_Full:
 		return refuse(evaluation, {refusal = .Text, text_refusal = tree.refusal.refusal, place = tree.refusal.place, node = tree.root})
-	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused:
+	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing:
 	}
 	return force(evaluation, tree.root)
 }
@@ -242,6 +245,16 @@ compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_I
 		}
 		value, ok = host.fact_name_value(host.data, evaluation, command_name, index)
 		return host_answer(evaluation, index, node, value, ok)
+	case .Field_Names:
+		if command_name == "" {
+			break
+		}
+		if node.refusal == .Field_Name_Missing {
+			return refuse(evaluation, {refusal = .Text, text_refusal = .Field_Name_Missing, place = node.place, node = index, command = command_name})
+		}
+		// The names as the line has them: the command checks each one
+		// against the record of its table.
+		return {kind = .Text, text = lex_parser.node_text(tree, index)}, true
 	case .Refused:
 		// The part that the parser read before the fault runs first.
 		if node.first_child != lex_parser.NO_NODE {
@@ -251,8 +264,8 @@ compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_I
 		}
 		return refuse(evaluation, {refusal = .Text, text_refusal = node.refusal, place = node.place, node = index})
 	}
-	// The parser makes a condition and a fact name only as an argument of a
-	// call, which forces them with its name.
+	// The parser makes a condition, a fact name and field names only as an
+	// argument of a call, which forces them with its name.
 	return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = node.place, node = index})
 }
 
@@ -320,13 +333,12 @@ binary_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser
 	fits := true
 	switch node.operator {
 	case .Add:
-		if left.kind == .Text && right.kind == .Text {
+		// Two Texts or two Tables: the host has the memory of the sum, and
+		// refuses two Tables of two records.
+		if left.kind == right.kind && (left.kind == .Text || left.kind == .Table) {
 			host := evaluation.host
-			joined, joined_ok := host.text_join(host.data, left.text, right.text)
-			if !joined_ok {
-				return host_answer(evaluation, index, node, {}, false)
-			}
-			return {kind = .Text, text = joined}, true
+			sum, sum_ok := host.values_add(host.data, left, right)
+			return host_answer(evaluation, index, node, sum, sum_ok)
 		}
 		if !integers {
 			break

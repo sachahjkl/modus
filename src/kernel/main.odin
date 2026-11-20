@@ -240,8 +240,9 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	memory := info.physical_slice(regions[code].physical, head.memory_size, u8)
 	module.copy_segments(file, memory)
 	// The root service has no loader for imports: the kernel writes its
-	// own-hash place, as a loader writes the place of each module.
-	if module.rebase(file, memory, op.PROCESS_BASE) != .None || module.count(file, .Imports) > 1 || !module.own_hash_write(file, memory, hash) {
+	// own-hash place and the index of each record stream, as a loader
+	// writes the places of each module.
+	if module.rebase(file, memory, op.PROCESS_BASE) != .None || module.count(file, .Imports) > 1 || !module.own_hash_write(file, memory, hash) || !module.record_stream_indexes_write(file, memory) {
 		fail("the module cannot be loaded")
 	}
 	for segment_index in 1 ..< module.count(file, .Segments) {
