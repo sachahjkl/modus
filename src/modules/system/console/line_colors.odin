@@ -43,6 +43,14 @@ console_name_role :: proc "contextless" (data: rawptr, name: string) -> console_
 	if fact_name_known(name) {
 		return .Record
 	}
+	// A process that the console started, and a typed name of one of its
+	// record outputs, or of a service that it connected (streams.odin).
+	if stream_owner_named(name) {
+		return .Module
+	}
+	if _, _, known := stream_name_known(name); known {
+		return .Stream
+	}
 	return .Unknown
 }
 
@@ -120,6 +128,8 @@ row_runs :: proc "contextless" (row: string, name_length: int, kind: line_editor
 		name_kind = .Type
 	case .Field, .Member:
 		name_kind = .Parameter
+	case .Stream:
+		name_kind = .Variable
 	}
 	if name_kind != .None {
 		last_dot := -1

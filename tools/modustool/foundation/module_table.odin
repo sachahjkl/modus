@@ -101,6 +101,7 @@ module_builds := [?]Module_Build {
 	{name = "output_writer", source = TEST_MODULE_SOURCES + "output_writer", entry = true, image = true},
 	{name = "output_reader", source = TEST_MODULE_SOURCES + "output_reader", entry = true, image = true},
 	{name = "output_side", source = TEST_MODULE_SOURCES + "output_side", entry = true, image = true},
+	{name = "output_counter", source = TEST_MODULE_SOURCES + "output_counter", entry = true, image = true},
 	{name = "processors", source = DEMONSTRATION_MODULE_SOURCES + "processors", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "boot", source = SYSTEM_MODULE_SOURCES + "boot", entry = true, image = true},
 	{name = "pages", source = SYSTEM_MODULE_SOURCES + "pages", entry = true, image = true},

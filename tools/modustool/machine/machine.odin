@@ -2733,6 +2733,41 @@ scenario := [?]Step {
 	{kind = .Wait, text = "output_wiring: the wiring of this asker gave the joined record of 0 and the probe 0, after ", fails_on = "output_wiring: WRONG"},
 	{kind = .Wait, text = "output_wiring: ok"},
 	{kind = .Wait, text = "output_writer: asked: the ring ended with the end word Asker_Stopped: as it must", fails_on = "output_writer: WRONG"},
+	// The streams of the console (src/md/features/module_outputs.md, "The
+	// console form"): the console starts output_counter and reads its
+	// record output by its typed name. The refusals first, none of which
+	// wires the stream; then first with a condition, + on two tables of
+	// one record, and the draw of a stream that runs, which Escape ends.
+	{kind = .Type, text = "start(\"output_counter\")"},
+	{kind = .Wait, text = "output_counter: it writes one record of counts each 200 ms while a reader is wired, and waits for a reader"},
+	{kind = .Type, text = "record_outputs(\"output_counter\")"},
+	{kind = .Wait, text = "[console] 1 row of Record_Output"},
+	{kind = .Type, text = "output_counter.count"},
+	{kind = .Wait, text = "[console] error: output_counter declares no record output count; its record outputs are counts"},
+	{kind = .Type, text = "sort(output_counter.counts, \"serial\")"},
+	{kind = .Wait, text = "[console] error: sort takes a Table; a Stream has no end: first(s, n) or table(s) makes one"},
+	{kind = .Type, text = "kept = output_counter.counts"},
+	{kind = .Wait, text = "[console] error: a variable keeps no Stream: a Stream is a wiring, and a variable outlives its line; first(s, n) or table(s) makes a Table"},
+	{kind = .Type, text = "output_counter.counts |> where(statut = 404)"},
+	{kind = .Wait, text = "[console] error: where: the records Counted have no field statut; their fields are serial, status"},
+	{kind = .Type, text = "output_counter.counts |> where(status = 404) |> first(3)"},
+	{kind = .Wait, text = "     8     404"},
+	{kind = .Wait, text = "[console] 3 rows of Counted"},
+	{kind = .Type, text = "first(output_counter.counts, 1) + help()"},
+	{kind = .Wait, text = "[console] error: \"+\" joins two tables of one record: the left one has records Counted, the right one Command"},
+	{kind = .Type, text = "first(output_counter.counts, 2) + first(output_counter.counts, 1)"},
+	{kind = .Wait, text = "[console] 3 rows of Counted"},
+	// A stream that runs: its joined record, then its rows as they come,
+	// each at the right of a column as wide as its field can be.
+	{kind = .Type, text = "output_counter.counts"},
+	{kind = .Wait, text = "[console] joined after "},
+	{kind = .Wait, text = "                 200"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "console: Escape stops the line after "},
+	{kind = .Wait, text = "[console] Escape closed the stream after "},
+	{kind = .Wait, text = "output_counter: counts has no reader after "},
+	{kind = .Type, text = "stop(\"output_counter\")"},
+	{kind = .Wait, text = "root: output_counter stopped: a holder"},
 	// The refusals of the root service give an error record: the console
 	// writes its sentence.
 	// No window drew in a picture on the screen: each surface has two

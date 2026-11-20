@@ -705,12 +705,41 @@ asker_read :: proc "contextless" (number: u32, into: ^$Record_Type, deadline: u6
 	return stream_read(.Asker_End, 0, number, ([^]u8)(into)[:size_of(Record_Type)], deadline)
 }
 
+// asker_read_bytes is asker_read for a reader that knows the size of the
+// record only when it runs, as the console does: into has the size of the
+// record description of the wiring, and an end of another size is closed.
+// wake_word, when it is not nil, ends the wait as soon as it holds another
+// value than wake_value: the read then gives No_Record, before its
+// deadline. The console passes the word that Escape changes, so a read
+// that waits ends at once, with no poll.
+asker_read_bytes :: proc "contextless" (number: u32, into: []u8, deadline: u64 = WAIT_FOREVER, wake_word: ^u32 = nil, wake_value: u32 = 0) -> (item: Input_Item, status: output.Stream_Status) {
+	return stream_read(.Asker_End, 0, number, into, deadline, wake_word, wake_value)
+}
+
+// asker_close closes the end of a wiring whose reader is this process as
+// its asker, before the end of its stream: the root service reads the word
+// Closed, and the writer reads the end word Side_Closed. false: this
+// process holds no such end, as after the end of its stream.
+asker_close :: proc "contextless" (number: u32) -> bool {
+	stream_ends_take()
+	for &end in stream_ends {
+		if end.command == .Asker_End && end.tag == number {
+			stream_end_finish(&end)
+			return true
+		}
+	}
+	return false
+}
+
 // stream_read is the reader of input_read and asker_read: the ends of one
 // record input, or the one end of an asker, read in the order of the
 // table.
 @(private = "file")
-stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, tag: u32, into: []u8, deadline: u64) -> (item: Input_Item, status: output.Stream_Status) {
+stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, tag: u32, into: []u8, deadline: u64, wake_word: ^u32 = nil, wake_value: u32 = 0) -> (item: Input_Item, status: output.Stream_Status) {
 	for {
+		if wake_word != nil && intrinsics.atomic_load(wake_word) != wake_value {
+			return {}, .No_Record
+		}
 		stream_ends_take()
 		found := false
 		for &end in stream_ends {
@@ -749,6 +778,9 @@ stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, t
 		}
 		if wiring_ring.head != nil {
 			wait_records(&waiting, &wiring_ring.commands)
+		}
+		if wake_word != nil {
+			wait_word(&waiting, wake_word, wake_value)
 		}
 		closed_words_wait(&waiting)
 		if wait_end(&waiting, deadline) >= deadline {

@@ -21,6 +21,7 @@ import op "modus:contract/operation"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:private/console/console_language"
+import "modus:private/console/console_stream"
 import "modus:support/display"
 import "modus:support/line_editor"
 import "modus:support/system"
@@ -427,12 +428,28 @@ names_collect :: proc "contextless" (table: ^Candidate_Table, place: line_editor
 		for &variable, index in variables {
 			candidate_add(table, string(variable.name[:clamp(variable.name_count, 0, VARIABLE_NAME_SIZE)]), .Variable, index)
 		}
+		// The processes that the console started with a record output: the
+		// owners of typed names.
+		for &owner, index in stream_owners {
+			if owner.process != 0 {
+				candidate_add(table, owner.name, .Process, index)
+			}
+		}
 	case .Member:
 		// The exports of a service: the commands "owner.name".
 		owner := place.owner
 		for &item, index in commands[:command_count] {
 			if len(item.name) > len(owner) + 1 && item.name[:len(owner)] == owner && item.name[len(owner)] == '.' {
 				candidate_add(table, item.name[len(owner) + 1:], command_kind(&item), index)
+			}
+		}
+		// The record outputs of a process that the console started or of a
+		// service that it connected: the typed names "owner.output".
+		if found, found_ok := stream_owner_find(owner); found_ok {
+			for row in 1 ..= console_stream.record_output_count(found.file) {
+				if value, _, _, ok := module.record_output(found.file, row); ok && value.record != 0 {
+					candidate_add(table, module.string_at(found.file, value.name_offset, value.name_count), .Stream, int(row))
+				}
 			}
 		}
 	case .Quoted:
@@ -556,7 +573,7 @@ pipe_completion_filter :: proc "contextless" (table: ^Candidate_Table, text: str
 		switch item.kind {
 		case .Command, .Export, .Record:
 			takes = int(item.number) < command_count && pipe_stage_takes(&commands[item.number], left, knowledge)
-		case .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member:
+		case .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream:
 			// No call: "|>" refuses it.
 		}
 		if takes {
@@ -739,7 +756,7 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 			system.write_part(writer, "command ")
 		case .Record:
 			system.write_part(writer, "record ")
-		case .Export, .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member:
+		case .Export, .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream:
 			system.write_part(writer, "export of ")
 			system.write_part(writer, owner_name(item))
 			system.write_part(writer, " ")
@@ -777,6 +794,8 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 			system.write_part(writer, "member of ")
 			system.write_part(writer, value_kinds.CONTRACT_ENUM_TYPES[which].name)
 		}
+	case .Stream:
+		system.write_part(writer, "record output: a Stream")
 	}
 }
 
@@ -825,6 +844,7 @@ list_icon_of_candidate := [line_editor.Candidate_Kind]terminal.List_Icon {
 	.Fact_Type    = .Record, // A fact type is a record type.
 	.Field        = .None,
 	.Member       = .None,
+	.Stream       = .Variable, // A value of the line, as a variable is.
 }
 
 list_send :: proc "contextless" () {

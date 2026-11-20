@@ -142,6 +142,7 @@ Name_Role :: enum u8 {
 	Record   = 2, // A command that makes a record: its name is a type.
 	Module   = 3, // A module or a service.
 	Variable = 4, // A variable of the console.
+	Stream   = 5, // A typed name of a record output, "owner.output": the owner, then the record output.
 }
 
 // The console gives the roles of its names. The package keeps no table of
@@ -303,6 +304,15 @@ name_runs :: proc "contextless" (text: string, token: Token, being_typed, assign
 		return run_add(runs, written, token.start, token.end, .Module)
 	case .Variable:
 		return run_add(runs, written, token.start, token.end, .Variable)
+	case .Stream:
+		// server.requests: the owner, the dot, and the record output, which
+		// is a value of the line as a variable is.
+		if first_dot <= 0 {
+			return run_add(runs, written, token.start, token.end, .Variable)
+		}
+		written = run_add(runs, written, token.start, token.start + first_dot, .Module)
+		written = run_add(runs, written, token.start + first_dot, token.start + first_dot + 1, .Operator)
+		return run_add(runs, written, token.start + first_dot + 1, token.end, .Variable)
 	case .Unknown:
 	}
 	if assigned {
@@ -311,7 +321,7 @@ name_runs :: proc "contextless" (text: string, token: Token, being_typed, assign
 	if first_dot > 0 {
 		owner := name[:first_dot]
 		switch role_of(lookup, owner) {
-		case .Unknown, .Function, .Record:
+		case .Unknown, .Function, .Record, .Stream:
 			// No field and no export follows such a name: the whole token is unknown below.
 		case .Variable:
 			// variable.field: the console checks the field when the line runs.

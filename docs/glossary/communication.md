@@ -672,6 +672,16 @@ The design: `src/md/features/module_outputs.md`, "The console form".
 
 Do not use: pipe, feed, live table, stream (alone, for this).
 
+### Typed name
+
+A typed name is the name of a record output in a line of the console: the name of its owner, a dot, and the name of the record output, as `server.requests`.
+
+The owner is a process that the console started or a service that it connected. The console reads the record outputs and their record descriptions in the module file of the owner, so it checks and completes the name, and the fields of a condition after it, before the line runs. A typed name gives a record stream that holds no wiring: the first command that reads it wires it. It is no global name: it is local to the handle that the console holds.
+
+The design: `src/md/features/module_outputs.md`, "The console form".
+
+Do not use: topic, path (for this), stream address, channel name.
+
 ### Body region
 
 A body region is the memory object of the writer of a record output that holds the bytes that a record of that record output names past its 256 bytes.

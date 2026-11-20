@@ -428,6 +428,147 @@ draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: [
 	sink.end_line(sink)
 }
 
+// ---- A Stream: a table drawn one row at a time.
+//
+// A Stream has no rows to measure before its draw: each record comes
+// while the line runs. So the width of each column is the widest text that
+// its field can hold, from the record description, and a row never moves
+// the rows above it (src/md/features/module_outputs.md, "The console
+// form").
+
+// The columns of a Stream, from its record description.
+Stream_Columns :: struct {
+	items:  [COLUMN_LIMIT]module.Field,
+	units:  [COLUMN_LIMIT]string,
+	widths: [COLUMN_LIMIT]int,
+	count:  int,
+	size:   int, // The bytes of one record.
+}
+
+// integer_digits gives the most characters of the decimal text of an
+// Integer field of a size: the digits of its largest value, and the sign
+// of its least one.
+integer_digits :: proc "contextless" (size: u32, unsigned: bool) -> int {
+	switch size {
+	case 1:
+		return unsigned ? 3 : 4
+	case 2:
+		return unsigned ? 5 : 6
+	case 4:
+		return unsigned ? 10 : 11
+	}
+	// 8 bytes: "18446744073709551615" and "-9223372036854775808" both have 20.
+	return 20
+}
+
+// field_width gives the widest text that cell_of writes for a field: the
+// digits of an Integer, "0x" and two digits for each byte of a hexadecimal
+// Integer, the longest member of a status or its number, the 10 digits of
+// a handle, the bytes of a Text, two digits for each byte of a Bytes field.
+// A field whose type or kind names nothing gives 0: its cell is empty.
+field_width :: proc "contextless" (item: module.Field) -> int {
+	type, type_ok := module.field_type(item)
+	kind, kind_ok := module.field_kind(item)
+	if !type_ok || !kind_ok {
+		return 0
+	}
+	size := module.field_size(item)
+	switch type {
+	case .None, .Record, .Table:
+		return 0
+	case .Bytes:
+		return 2 * int(size)
+	case .Handle:
+		return 10
+	case .Text:
+		return int(size)
+	case .Integer:
+		switch kind {
+		case .Hexadecimal:
+			return 2 + 2 * int(size)
+		case .Status:
+			// A word that names no member is drawn as its number.
+			width := integer_digits(size, true)
+			if which, which_ok := module.field_contract_enum(item); which_ok {
+				for word in 0 ..< op.contract_enum_member_count(which) {
+					if name, named := op.contract_enum_member_name(which, word); named {
+						width = max(width, len(name))
+					}
+				}
+			}
+			return width
+		case .Plain, .Module_Name, .Hash, .Fact_Values:
+		}
+		return integer_digits(size, item.unsigned)
+	}
+	return 0
+}
+
+// stream_columns_of gives the columns of a Stream of a record description.
+// ok is false for a description that the contract does not read, or of a
+// record of 0 bytes.
+stream_columns_of :: proc "contextless" (file: []u8, detail: u32) -> (columns: Stream_Columns, ok: bool) {
+	described := module.record_type(file, detail) or_return
+	if described.size == 0 {
+		return {}, false
+	}
+	columns.size = int(described.size)
+	columns.count = min(int(described.field_count), COLUMN_LIMIT)
+	for number in 0 ..< columns.count {
+		columns.items[number] = module.field(file, described, u32(number)) or_return
+		_, columns.units[number] = integer_part(columns.items[number])
+		columns.widths[number] = max(head_length(int(columns.items[number].name_count), columns.units[number]), field_width(columns.items[number]))
+	}
+	return columns, true
+}
+
+// stream_continuation gives the column where a row of a Stream goes on
+// when it is wider than the window: under its last column, as draw_table
+// does.
+stream_continuation :: proc "contextless" (columns: ^Stream_Columns) -> int {
+	last_start := 0
+	for number in 0 ..< columns.count - 1 {
+		last_start += columns.widths[number] + COLUMN_GAP
+	}
+	return last_start <= CONTINUATION_MOST ? last_start : COLUMN_GAP
+}
+
+// draw_stream_head draws the line of the names of the fields of a Stream.
+draw_stream_head :: proc "contextless" (sink: ^Sink, columns: ^Stream_Columns, file: []u8) {
+	sink.continuation = stream_continuation(columns)
+	for number in 0 ..< columns.count {
+		item := columns.items[number]
+		head_write(sink, module.string_at(file, item.name_offset, item.name_count), columns.units[number], columns.widths[number], field_at_the_right(item), number == columns.count - 1)
+	}
+	sink.end_line(sink)
+	sink.continuation = 0
+}
+
+// draw_stream_row draws one record of a Stream, in the columns of its head.
+// A row of another size than the record draws nothing: the reader gives
+// each record whole.
+draw_stream_row :: proc "contextless" (sink: ^Sink, columns: ^Stream_Columns, row: []u8) {
+	if len(row) != columns.size {
+		return
+	}
+	sink.continuation = stream_continuation(columns)
+	for number in 0 ..< columns.count {
+		buffer: [CELL_TEXT_CAPACITY]u8
+		cell := cell_of(row, columns.items[number], buffer[:])
+		cell_write(sink, cell.text, columns.widths[number], cell.number, number == columns.count - 1, cell.part)
+	}
+	sink.end_line(sink)
+	sink.continuation = 0
+}
+
+// draw_note draws one line that says something of a result and is no
+// value of it: the joined record of a Stream, a gap, its end.
+draw_note :: proc "contextless" (sink: ^Sink, text: string) {
+	sink.continuation = 0
+	sink.write(sink, text, .Note)
+	sink.end_line(sink)
+}
+
 // draw_handle draws a Handle: its number, the kind of its object and its
 // rights, as the kernel gives them to the caller: "Handle 65541: Memory
 // (Give, Read, Write)". A handle that names no object has no rights.

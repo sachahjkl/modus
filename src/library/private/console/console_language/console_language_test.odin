@@ -15,8 +15,29 @@ test_name_role :: proc "contextless" (data: rawptr, name: string) -> Name_Role {
 		return .Module
 	case "x", "r":
 		return .Variable
+	case "server.requests":
+		return .Stream
+	case "server":
+		return .Module
 	}
 	return .Unknown
+}
+
+// A typed name is its owner, the dot and its record output; a record
+// output that the owner does not declare is unknown after the dot, and a
+// typed name being typed has no run after the dot yet.
+@(test)
+a_typed_name_has_the_colors_of_its_parts :: proc(t: ^testing.T) {
+	runs: [16]terminal.Code_Run
+	text := "first(server.requests, 3)"
+	count := line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"first", .Unknown}, {"(", .Operator}, {"server", .Module}, {".", .Operator}, {"requests", .Variable}, {",", .Operator}, {"3", .Number}, {")", .Operator}})
+	text = "server.reqests "
+	count = line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"server", .Module}, {".", .Operator}, {"reqests", .Unknown}})
+	text = "server.req"
+	count = line_runs(text, 0, len(text), test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"server", .Module}, {".", .Operator}})
 }
 
 test_names := Name_Lookup {

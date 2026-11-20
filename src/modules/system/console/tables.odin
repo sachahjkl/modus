@@ -3,6 +3,7 @@ package console
 import module "modus:contract/module"
 import "modus:private/console/console_condition"
 import "modus:private/console/console_results"
+import "modus:private/console/console_stream"
 import "modus:support/sentence"
 
 // Tables: a value that holds records of one record description, one after
@@ -163,7 +164,17 @@ tables_start :: proc "contextless" () {
 	// the field: "error: where: the field code is Integer, the value is
 	// Text"; a name that names no member of the enum of a status (the error
 	// lists the members); an order on a Text or a status; a hash.
-	command("where", {.Table, .None}, .Table, "the rows of a table whose field passes a condition: where(t, block = 12)", table_where, forms = {.Expression, .Condition})
+	//
+	// A Stream takes a condition too, and gives the same Stream: the
+	// console checks the condition on each record as it reads it, so the
+	// line reads no record that it does not keep (docs/CONSOLE.md,
+	// "Streams").
+	//
+	// ```
+	// > output_counter.counts |> where(status = 404) |> first(3)
+	// ```
+	command("where", {.Table, .None}, .Table, "the rows of a table or a stream whose field passes a condition: where(t, block = 12)", table_where, forms = {.Expression, .Condition})
+	command_takes_stream()
 	// Gives the rows of a table in the increasing order of a field.
 	//
 	// - `table`: a table of any record.
@@ -215,7 +226,15 @@ tables_start :: proc "contextless" () {
 	command("columns", {.Table, .Text}, .Table, "the rows with the fields that a text names: \"a b c\"", table_columns)
 	// Gives the first rows of a table, at most a count: a count larger than
 	// the table gives the whole table, and 0 or less gives no row.
-	command("first", {.Table, .Integer}, .Table, "the first rows of a table", table_first)
+	//
+	// On a Stream, it reads records until it has the count of rows that
+	// pass the conditions of the Stream, or until the stream ends, then
+	// closes the stream: the writer reads the end word `Side_Closed`. The
+	// Table has the rows only; the draw of a Stream shows its joined
+	// record and its gaps. Escape stops the read, and the line fails with
+	// the count of the rows that came.
+	command("first", {.Table, .Integer}, .Table, "the first rows of a table or of a stream", table_first)
+	command_takes_stream()
 	// Gives the rows of a table after its first rows: a count larger than
 	// the table gives no row, and 0 or less gives the whole table.
 	//
@@ -233,6 +252,67 @@ tables_start :: proc "contextless" () {
 	//
 	// Error: "row: the table has N rows, not a row M".
 	command("row", {.Table, .Integer}, .Record, "one row of a table, from 1", table_one)
+	// Gives the rows of a Stream until its end, as a Table.
+	//
+	// - `stream`: a Stream, with its conditions. A Table gives itself.
+	//
+	// The line waits for the end record of the writer, or for an end word:
+	// its stop, a revocation. Escape stops the wait, and the line fails
+	// with the count of the rows that came.
+	//
+	// ```
+	// > table(output_counter.counts |> where(status = 404))
+	// ```
+	//
+	// Error: the rows pass the 32 KiB that a Table of a line keeps before
+	// the end of the stream: `first(s, n)` keeps the first rows.
+	command("table", {.Table}, .Table, "the rows of a stream until its end", stream_table)
+	command_takes_stream()
+	// Gives one row for each record output that a module declares: its
+	// name, its record, and its line of help. The name is the second part
+	// of the typed name of the record output: `output_counter.counts`.
+	//
+	// - `module`: the name of a module of the boot image.
+	//
+	// ```
+	// > record_outputs("output_counter")
+	// output  record   about
+	// counts  Counted  One record each time the writer counts, while a reader is wired.
+	// 1 row of Record_Output
+	// ```
+	//
+	// Errors: no module of the boot image has the name.
+	command("record_outputs", {.Text}, .Table, "the record outputs of a module: record_outputs(\"server\")", record_outputs)
+}
+
+// command_takes_stream marks the command added last as a command whose
+// first parameter, a Table, takes a Stream too.
+command_takes_stream :: proc "contextless" () {
+	commands[command_count - 1].takes_stream = true
+}
+
+// table_sum_value gives the Table of the rows of two Tables of one record
+// description, in the memory of the tables of the line: "+" on two Tables.
+table_sum_value :: proc "contextless" (left, right: Value) -> Value {
+	start := (table_used + 7) &~ 7
+	if start > len(table_memory) {
+		start = len(table_memory)
+	}
+	into := table_memory[start:]
+	written, refusal := console_stream.table_sum(left.file, left.detail, left.record, right.file, right.detail, right.record, into)
+	if refusal != .None {
+		left_record, _ := module.record_type(left.file, left.detail)
+		right_record, _ := module.record_type(right.file, right.detail)
+		writer := sentence.Writer {
+			buffer = scratch[scratch_count:],
+		}
+		console_stream.sum_refusal_write(&writer, refusal, module.string_at(left.file, left_record.name_offset, left_record.name_count), module.string_at(right.file, right_record.name_offset, right_record.name_count), len(into))
+		text := sentence.written(&writer)
+		scratch_count += len(text)
+		return fail(text)
+	}
+	table_used = start + written
+	return {kind = .Table, record = table_memory[start:table_used], file = left.file, detail = left.detail}
 }
 
 // table_where gives the rows of a table whose field passes the condition
@@ -242,6 +322,9 @@ table_where :: proc "contextless" (arguments: []Value) -> Value {
 	// another source has none.
 	if arguments[1].condition == nil {
 		return fail("where takes a condition: a field, an operator and a value, as where(t, block = 12)")
+	}
+	if arguments[0].kind == .Stream {
+		return stream_where(arguments[0], arguments[1].condition)
 	}
 	condition := arguments[1].condition^
 	table, item, ok := table_argument("where", arguments[0], condition.field)
@@ -289,12 +372,17 @@ condition_read :: proc "contextless" (command_name: string, before: []Value) -> 
 	if len(before) == 0 {
 		return fail(command_name, ": a condition comes after a table: ", command_name, "(t, block = 12)")
 	}
-	if before[0].kind != .Table {
-		return fail(command_name, ": argument 1 is ", kind_names[before[0].kind], ", not a Table: a condition names a field of the record of a table")
+	if before[0].kind != .Table && before[0].kind != .Stream {
+		return fail(command_name, ": argument 1 is ", kind_names[before[0].kind], ", not a Table or a Stream: a condition names a field of the record of a table")
 	}
-	table, table_ok := table_of(before[0])
-	if !table_ok {
+	// A Table and a Stream both name the description of their records.
+	described, described_ok := module.record_type(before[0].file, before[0].detail)
+	if !described_ok || described.size == 0 {
 		return fail(command_name, ": the table has no valid description")
+	}
+	table := Table {
+		file   = before[0].file,
+		record = described,
 	}
 	details := console_condition.Refusal_Details {
 		command = command_name,
@@ -523,6 +611,9 @@ table_columns :: proc "contextless" (arguments: []Value) -> Value {
 }
 
 table_first :: proc "contextless" (arguments: []Value) -> Value {
+	if arguments[0].kind == .Stream {
+		return stream_collect("first", arguments[0], int(clamp(arguments[1].integer, 0, i64(max(int)))))
+	}
 	table, ok := table_of(arguments[0])
 	if !ok {
 		return fail("first: the table has no valid description")
