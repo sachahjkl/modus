@@ -119,7 +119,7 @@ entropy_answers :: proc "contextless" (wait: ^system.Wait) {
 			// A completion of a read that was not asked for, or out of its
 			// order: its bytes add nothing.
 			counts.device_reads_refused += 1
-			system.log(.Warning, "root: the entropy service answered the read ", u64(number), " with the tag of the read ", u64(record.tag), ": the answer adds nothing")
+			system.log_fact(.Warning, Entropy_Answer_Out_Of_Order{answered_read = u64(number), tagged_read = u64(record.tag)})
 		} else if entropy_service.Status(record.kind) == .Ok {
 			bytes: [entropy_service.READ_BYTES_LIMIT]u8
 			count := entropy_service.bytes_unpack(record.values, &bytes)
@@ -183,7 +183,7 @@ entropy_reads_late_end :: proc "contextless" () {
 	fresh_bytes_stopped = true
 	fresh_bytes_deadline = system.WAIT_FOREVER
 	intrinsics.mem_zero_volatile(&entropy_mixing, size_of(entropy_mixing)) // No read comes after these.
-	system.log(.Warning, "root: the entropy device did not answer a read in ", u64(entropy_read_deadline.READ_DEADLINE_MILLISECONDS / 1000), " seconds: ", u64(late), " reads count as refused, and the entropy service stops: no more bytes of the device")
+	system.log_fact(.Warning, Entropy_Reads_Late{deadline_seconds = u64(entropy_read_deadline.READ_DEADLINE_MILLISECONDS / 1000), late_reads = u64(late)})
 	system.process_stop(entropy_process.process)
 }
 
@@ -214,13 +214,13 @@ fresh_bytes_refresh_end :: proc "contextless" (mixed: bool) {
 	if !mixed {
 		fresh_bytes_refusals_in_a_row += 1
 		if fresh_bytes_refusals_in_a_row >= FRESH_BYTES_REFUSALS_LIMIT {
-			system.log(.Warning, "root: the entropy device gave ", u64(fresh_bytes_refusals_in_a_row), " refused reads in a row: no more fresh bytes for the running processes")
+			system.log_fact(.Warning, Fresh_Bytes_Reads_Refused_In_A_Row{refused_reads = u64(fresh_bytes_refusals_in_a_row)})
 			fresh_bytes_stopped = true
 			fresh_bytes_deadline = system.WAIT_FOREVER
 			intrinsics.mem_zero_volatile(&entropy_mixing, size_of(entropy_mixing)) // No read comes after this one.
 			return
 		}
-		system.log(.Warning, "root: a read of the entropy device for the fresh bytes added nothing: the pages keep their bytes; refused reads in a row: ", u64(fresh_bytes_refusals_in_a_row))
+		system.log_fact(.Warning, Fresh_Bytes_Read_Added_Nothing{refused_reads = u64(fresh_bytes_refusals_in_a_row)})
 	} else {
 		fresh_bytes_refusals_in_a_row = 0
 		processes := fresh_bytes_write_all()
@@ -242,7 +242,7 @@ entropy_service_end :: proc "contextless" (item: ^Started) {
 	// fresh bytes are stopped: the line of the deadline is the one line.
 	entropy_answers(nil)
 	if entropy_reads_answered < ENTROPY_READS_AT_START {
-		system.log(.Warning, "root: the entropy service stopped after ", u64(entropy_reads_answered), " of ", u64(ENTROPY_READS_AT_START), " reads: the random seed of the system has the bytes of those reads only")
+		system.log_fact(.Warning, Entropy_Service_Stopped_Early{answered_reads = u64(entropy_reads_answered), start_reads = ENTROPY_READS_AT_START})
 	} else if !fresh_bytes_stopped {
 		system.log(.Warning, "root: the entropy service stopped: no more fresh bytes for the running processes")
 	}

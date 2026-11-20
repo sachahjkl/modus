@@ -241,6 +241,45 @@ Debug_Right_Given :: struct {
 	principal: u64,
 }
 
+// The entropy service answered a read with the tag of another read: the
+// answer adds nothing, and counts as a refused read.
+@(log_fact = "root: the entropy service answered the read {answered_read} with the tag of the read {tagged_read}: the answer adds nothing")
+Entropy_Answer_Out_Of_Order :: struct {
+	answered_read: u64,
+	tagged_read:   u64,
+}
+
+// The entropy device did not answer the reads in flight by their deadline:
+// each counts as refused, and the entropy service stops. The deadline is a
+// count of seconds, as the line wrote it: a time field in seconds writes
+// " s".
+@(log_fact = "root: the entropy device did not answer a read in {deadline_seconds} seconds: {late_reads} reads count as refused, and the entropy service stops: no more bytes of the device")
+Entropy_Reads_Late :: struct {
+	deadline_seconds: u64,
+	late_reads:       u64,
+}
+
+// The reads of the fresh bytes were refused too many times in a row: this
+// service asks for no more.
+@(log_fact = "root: the entropy device gave {refused_reads} refused reads in a row: no more fresh bytes for the running processes")
+Fresh_Bytes_Reads_Refused_In_A_Row :: struct {
+	refused_reads: u64,
+}
+
+// A read of the fresh bytes added nothing: the pages of the processes keep
+// their bytes.
+@(log_fact = "root: a read of the entropy device for the fresh bytes added nothing: the pages keep their bytes; refused reads in a row: {refused_reads}")
+Fresh_Bytes_Read_Added_Nothing :: struct {
+	refused_reads: u64,
+}
+
+// The entropy service stopped before it answered the reads of the start.
+@(log_fact = "root: the entropy service stopped after {answered_reads} of {start_reads} reads: the random seed of the system has the bytes of those reads only")
+Entropy_Service_Stopped_Early :: struct {
+	answered_reads: u64,
+	start_reads:    u64,
+}
+
 // The fields of a name: the writers of the facts above fill them with the
 // procedures of the contract, whose host tests give the edges of a cut.
 module_name_field :: value_kinds.module_name_field

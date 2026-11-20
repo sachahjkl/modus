@@ -1,0 +1,3 @@
+type: Changed
+
+**The device services, the network service, remote and remote_display write log facts**: a device found, a device that does not answer, a refused request, record, word or extend, the bytes and records that the input service lost, an endpoint made and ended, a client key or a viewer key that a handshake refuses or takes, a stream that a bound resets, and a read of the entropy device that the root service counts as refused are records of fields, whose sentences are those of before. In the console, `log.records(0) |> facts(remote_service.Client_Key_Refused)` gives each client key that no principal allowed, and `log.records(0) |> facts(network_service.Endpoint_Ended) |> where(owner = "server")` the end of each endpoint of `server`.

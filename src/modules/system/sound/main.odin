@@ -174,7 +174,7 @@ control_answered :: proc "contextless" (name: string, request_bytes: u32, respon
 	answered: bool
 	response, length, answered = control_call(request_bytes, response_bytes)
 	if !answered {
-		system.log(.Error, "sound: the device did not answer ", name, " in ", u64(DEVICE_ANSWER_BOUND_MILLISECONDS), " ms")
+		system.log_fact(.Error, Device_Silent{bound = DEVICE_ANSWER_BOUND_MILLISECONDS, request = request_field(name)})
 		fail("the device does not answer")
 	}
 	return response, length
@@ -187,9 +187,9 @@ control_ok :: proc "contextless" (name: string, response: []u8, length: u32) {
 	case .Ok:
 		return
 	case .Short:
-		system.log(.Error, "sound: the device answered ", name, " with ", u64(length), " bytes, fewer than its code")
+		system.log_fact(.Error, Answer_Too_Short{answer_length = bytes_field(length), request = request_field(name)})
 	case .Refused:
-		system.log(.Error, "sound: the device refused ", name, " with the code ", u64(code))
+		system.log_fact(.Error, Request_Refused{answer_code = u64(code), request = request_field(name)})
 	}
 	fail("the device refused a control request")
 }
@@ -218,11 +218,11 @@ stream_choose :: proc "contextless" () -> (count: u32) {
 	case .Chosen:
 		return count
 	case .Short:
-		system.log(.Error, "sound: the device answered PCM_INFO for ", u64(asked), " streams with ", u64(length), " bytes")
+		system.log_fact(.Error, Stream_Information_Too_Short{streams = u64(asked), answer_length = bytes_field(length)})
 	case .Refused:
-		system.log(.Error, "sound: the device refused PCM_INFO with the code ", u64(code))
+		system.log_fact(.Error, Stream_Information_Refused{answer_code = u64(code)})
 	case .None_Of_The_Format:
-		system.log(.Error, "sound: the device has ", u64(count), " streams, and none plays 48000 frames in one second of 2 channels of signed 16-bit samples")
+		system.log_fact(.Error, No_Stream_Of_The_Format{streams = u64(count)})
 	}
 	fail("no output stream of the format")
 }
@@ -306,7 +306,7 @@ start :: proc "contextless" (queues: system.Handle) {
 
 	count := stream_choose()
 	stream_prepare()
-	system.log(.Info, "sound: ok, the output stream ", u64(stream_number), " of ", u64(count), ", 48000 frames in one second, 2 channels of signed 16-bit samples; ", u64(timed_stream.PERIODS_GIVEN), " periods of ", u64(timed_stream.PERIOD_FRAMES), " frames with the device; a transmit queue of ", u64(transmit_queue.size))
+	system.log_fact(.Info, Device_Ready{stream = u64(stream_number), streams = u64(count), periods = u64(timed_stream.PERIODS_GIVEN), period_frames = u64(timed_stream.PERIOD_FRAMES), transmit_queue = u64(transmit_queue.size)})
 }
 
 // attach takes the sample region of the client, once. A handle that came
@@ -605,7 +605,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			taken_end, problem := sound_device.period_used(&periods, used.id, answer)
 			if problem != .None {
 				if problem == .Refused {
-					system.log(.Error, "sound: the device answered a period with the code ", u64(answer))
+					system.log_fact(.Error, Period_Refused{answer_code = u64(answer)})
 				}
 				device_failed(USED_PROBLEM_TEXTS[problem])
 			}
