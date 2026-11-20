@@ -62,7 +62,7 @@ Stream_Owner :: struct {
 	end:     output.Wiring_End,
 	// The record that a list of start of this console fixed for the generic
 	// record input of the owner, which its generic record output takes
-	// (src/md/features/module_outputs.md, the decisions of step 8): the
+	// (src/md/features/module_outputs.md, "The decisions of the generic record inputs"): the
 	// file that describes it, and its index there. nil: none.
 	generic_file:   []u8,
 	generic_detail: u32,

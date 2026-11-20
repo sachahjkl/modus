@@ -3,8 +3,8 @@ package output
 import "modus:contract/module"
 
 // The rules of the generic record inputs and outputs
-// (src/md/features/module_outputs.md, "Generic record inputs and the
-// utility modules", and its decisions of step 8). The root service reads
+// (src/md/features/module_outputs.md, "The decisions of the generic record
+// inputs"). The root service reads
 // the facts from its tables, and these pure procedures decide, with host
 // tests.
 

@@ -1,6 +1,6 @@
 // The asker of the machine test of the generic record inputs, `merge` and
-// `filter` (src/md/features/module_outputs.md, "Generic record inputs and
-// the utility modules", and its decisions of step 8). It starts
+// `filter` (src/md/features/module_outputs.md, "The decisions of the
+// generic record inputs"). It starts
 // `generic_source` and `filter` with no list, then tries each refusal of
 // the root service, each with its status, its error record and the budget
 // of this process unchanged:

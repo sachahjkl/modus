@@ -157,8 +157,8 @@ Wiring_Plan :: struct {
 }
 
 // One type that a wiring fixed for a generic record input of the count One
-// or Many of a process (src/md/features/module_outputs.md, "Generic record
-// inputs and the utility modules", the decisions of step 8): the record
+// or Many of a process (src/md/features/module_outputs.md, "The decisions
+// of the generic record inputs"): the record
 // index in a module file of the boot image, or in the description file of
 // the contract for log, which both outlive the process.
 Generic_Type :: struct {
@@ -871,7 +871,7 @@ wiring_list_resolve :: proc "contextless" (work: ^Wiring_Work) -> system.Status 
 		}
 	}
 	// The rows from a generic record output, once each other row fixed
-	// what it fixes (the decisions of step 8). A deferred row can fix the
+	// what it fixes. A deferred row can fix the
 	// type that another deferred row takes (merge.merged to filter.source,
 	// then filter.kept): each sweep resolves the rows whose type is fixed
 	// by now, until a sweep resolves none. The rows left are resolved
