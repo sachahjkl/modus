@@ -572,6 +572,16 @@ The design: `docs/CONSOLE.md`, "The pipe operator".
 
 Do not use: pipe (alone), pipeline, bar, forward operator.
 
+### Placeholder
+
+The placeholder `_` marks the argument of the call on the right of `|>` that takes the value on its left: `a |> f(b, _)` is `f(b, a)`.
+
+With no `_`, the value is the first argument. A call holds at most one `_`, as one whole argument. A `_` outside the call on the right of `|>`, inside a call nested in it, or inside an expression is refused before any call. Example: `compile(src, t) |> bytes(t, 0, _) |> assemble(f)`. It is not a variable: `_` alone is no name.
+
+The design: `src/md/features/pipe_operator.md`, "The placeholder `_`".
+
+Do not use: hole, wildcard, blank (for this), `$`.
+
 ### Condition
 
 A condition is the argument of `where` in the console: a field of the record of a table, an operator and a value, as `block = 12` or `level = Warning`.

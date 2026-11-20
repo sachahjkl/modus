@@ -592,13 +592,23 @@ Do not use: C runtime, standard library (for this).
 
 ### Declaration
 
-A declaration is a tree of a store whose root holds a text in the language of the console, whose value is one record.
+A declaration is a tree of a store whose root holds one text entry in Lex, with the extension `.lex`, whose value is one record.
 
-A declaration describes a system, a session, a project or an environment, in the manner of Nix, and has a hash, as a module has. A sandboxed evaluation process reads its text and gives typed values only: a plan, a table of recipes, an environment. Its evaluation has no effect. Example: `kernel = declaration(here())`. No service reads it.
+A declaration describes a system, a session, a project or an environment, in the manner of Nix, and has a hash, as a module has. A sandboxed evaluation process reads its text in the evaluation mode `declaration` and gives typed values only: a plan, a table of recipes, an environment. Its evaluation has no effect. Example: `kernel = declaration(here())`. No service reads it.
 
 The design: `src/md/features/declarations.md`.
 
 Do not use: configuration file, flake, script.
+
+### Declaration reference
+
+A declaration reference is the value of a declaration at the console: the hash of the declaration, a chain of field names, and the records that a `with` composed with it.
+
+The console never evaluates the text of a declaration. `kernel.tools` gives a reference, and a command that needs its value, such as `build`, sends the reference to the evaluation process, which forces it. A variable keeps the reference, never a thunk, so a declaration of any size takes one of the 16 variables. It is not a pin, which is the hash that a declaration input resolved to.
+
+The design: `src/md/features/declarations.md`, "One parser, one lazy evaluator, two modes".
+
+Do not use: handle (for this), pointer, thunk (for this).
 
 ### Plan
 
@@ -624,7 +634,7 @@ Do not use: generation (for this), profile, system list.
 
 A catalog declaration is a declaration whose value is a record of recipes, modules and functions.
 
-A declaration takes the recipes, the tools and the functions that it uses from catalog declarations. `catalog`, the catalog declaration of the system, is the default one, with no mechanism of its own. `catalog with gt.overlay` gives a new catalog declaration. It is not the catalog of an information function, which is the modules that a process can see.
+A declaration takes the recipes, the tools and the functions that it uses from catalog declarations. `catalog`, the catalog declaration of the system, is the default one, with no mechanism of its own. `gt.overlay(catalog)` and `catalog with { odin = … }` give a new catalog declaration. It is not the catalog of an information function, which is the modules that a process can see.
 
 The design: `src/md/features/declarations.md`.
 
@@ -674,7 +684,7 @@ Do not use: package, flake, workspace.
 
 A recipe is a builder hash, a table of the names and hashes of its inputs, and a typed argument record: it names how an output is made.
 
-The recipe hash, its identity, is the BLAKE3 hash of the builder hash, the inputs sorted by name, and the bytes of the argument record. `recipe(builder, arguments)` is a lazy value of the language; forcing it gives its hash and builds nothing. `build` realises it, from a realisation or in a sandbox. It is a record, not a script.
+The recipe hash, its identity, is the BLAKE3 hash of the builder hash, the inputs sorted by name, and the bytes of the argument record. `recipe(builder, arguments)` is a lazy value of Lex; forcing it gives its hash and builds nothing. `build` realises it, from a realisation or in a sandbox. It is a record, not a script.
 
 The design: `src/md/features/recipes.md`.
 
@@ -724,7 +734,7 @@ Do not use: downloader, fixed-output derivation.
 
 The substitution policy is the typed record `Substitution` of a plan that says where a realisation can come from: its sources, its trusted signers and its mode.
 
-For each recipe, a machine uses its own realisation, else a realisation that a source gives and a trusted signer signed, else a build in the sandbox. The modes are `Prefer_Cache`, `Build_Only`, `Cache_Only` and `Verify`. Each principal has its own, in its plan; `with substitution = {…}` changes it for one evaluation.
+For each recipe, a machine uses its own realisation, else a realisation that a source gives and a trusted signer signed, else a build in the sandbox. The modes are `Prefer_Cache`, `Build_Only`, `Cache_Only` and `Verify`. Each principal has its own, in its plan; the named argument `build(kernel, substitution = {…})` changes it for one build.
 
 The design: `src/md/features/recipes.md`, "The substitution policy".
 

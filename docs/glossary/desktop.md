@@ -82,13 +82,23 @@ Do not use: splash screen, boot log, POST screen.
 
 ### Console
 
-The console is a normal process that calls commands, functions with typed parameters and a typed result, in a small programming language.
+The console is a normal process that calls commands, functions with typed parameters and a typed result, in Lex.
 
-The console replaces the shell: a command is an export of a module, so its arguments and its result are typed values. The console has a terminal and no surface, and acts for the principal of its session. Examples: `grants("notes")` shows the grants of a process; `load("calendar")` loads a module into the console and calls its exports directly. The console is not a TTY and not a shell: it starts no process by a path, passes no text between processes, and has no pipe.
+The console replaces the shell: a command is an export of a module, so its arguments and its result are typed values. It evaluates Lex in the evaluation mode `console`. The console has a terminal and no surface, and acts for the principal of its session. Examples: `grants("notes")` shows the grants of a process; `load("calendar")` loads a module into the console and calls its exports directly. The console is not a TTY and not a shell: it starts no process by a path, passes no text between processes, and has no pipe.
 
-The design: `docs/CONSOLE.md`, "The language of the console".
+The design: `docs/CONSOLE.md`, "Lex".
 
 Do not use: TTY, shell.
+
+### Lex
+
+Lex is the one language of the system that a principal writes: the line of the console and the text of a declaration.
+
+One grammar, one parser library and one lazy evaluator read it, in two evaluation modes: `console` in the console, `declaration` in the evaluation process. A line means the same in both; mode `declaration` refuses the effects. A declaration is a text entry with the extension `.lex`. Lex is not the Unix lexer generator `lex`, and not a shell language: no process receives its text.
+
+The design: `docs/CONSOLE.md`, "Lex"; `src/md/features/declarations.md`.
+
+Do not use: console language, the language (for this), shell script, Nix language.
 
 ### Desktop shell
 
@@ -954,10 +964,60 @@ Do not use: shell environment, virtualenv, dev shell.
 
 ### Evaluation budget
 
-The evaluation budget is the count of the steps that one evaluation of a declaration can take.
+The evaluation budget is the fixed count of the steps that one evaluation of Lex can take, in either evaluation mode.
 
-An evaluation past it stops with an error record that names the declaration, its line and column, and the chain of fields that it forced. The budget counts steps, never a time, so one declaration gives the same error on every machine. It is not the budget of a process, which bounds its memory and its processor time.
+A measure over the declarations of the system and the lines of the console tests sets it, with a margin, and nothing can ask for more. An evaluation past it stops with an error record that names the declaration or the line, its line and column, and the chain of fields that it forced. It counts steps of the evaluator, never a time and never the work of an export. It is not the budget of a process.
 
-The design: `src/md/features/declarations.md`.
+The design: `src/md/features/declarations.md`, "The evaluation budget".
 
 Do not use: fuel, timeout, recursion limit.
+
+### Evaluation mode
+
+An evaluation mode is one of the two ways that the one lazy evaluator of Lex runs: `declaration` or `console`.
+
+Mode `declaration` runs in the sandboxed evaluation process: it forces only what is asked, and refuses each export with an effect at its border with an error record. Mode `console` runs in the console: it allows effects and forces each line whole, so no effect is skipped. An export forces its arguments from the left in both, so a line means the same in each mode. The parser, the type rules and the budget are shared.
+
+The design: `src/md/features/declarations.md`, "One parser, one lazy evaluator, two modes".
+
+Do not use: eager evaluator, lazy evaluator, interpreter, REPL.
+
+### Thunk
+
+A thunk is a value of the evaluator of Lex that is not computed yet: the expression of a field or of a `let` binding, with the names that it can read.
+
+The evaluator forces a thunk when a value needs it, and at most once: the result replaces the thunk. In mode `declaration`, `kernel.tools` forces the recipe of the tools and nothing of the image. In mode `console`, each thunk of a line is forced before the line ends, so a variable never keeps one. A field can name another field of its record; a cycle with no end stops at the evaluation budget.
+
+The design: `src/md/features/declarations.md`, "One parser, one lazy evaluator, two modes".
+
+Do not use: promise, future, lazy value (for this).
+
+### Record literal
+
+A record literal is a record written in Lex as `{ field = value, … }`, which takes the type of the parameter or the field that receives it.
+
+A field that the type does not have is refused, and so is a missing field with no default, each with an error that names the field and the type. A field whose type is a table of names, such as `outputs`, takes any name. A literal with no receiver has no type, and the console refuses it. Example: `build(kernel, substitution = { mode = .Verify })`.
+
+The design: `src/md/features/declarations.md`, "A record literal is typed by its use".
+
+Do not use: object literal, struct literal, attribute set.
+
+### Named argument
+
+A named argument is an argument of a call of Lex written with the name of its parameter: `build(kernel, substitution = { mode = .Verify })`.
+
+It follows the rule of the record literal: the parameters of the call are the fields of a record. An unknown name, a parameter given twice, and a missing parameter with no default are refused before the call. It replaces an option after `with`, which composes two records only. Inside `where`, `=` is a comparison, never a named argument.
+
+The design: `src/md/features/declarations.md`, "A record literal is typed by its use".
+
+Do not use: keyword argument, flag, option.
+
+### Anonymous function
+
+An anonymous function is a function value of Lex written as `(name) => expression`.
+
+It can be a field, an argument and a result. `map(list, function)` and the declarations use it: `map(names, (name) => odin.module(name))`. `where` takes a condition and never an anonymous function, because the root service turns a condition into wiring terms and runs no Lex.
+
+The design: `src/md/features/declarations.md`, "`where` keeps the form of a condition".
+
+Do not use: lambda, closure, callback.
