@@ -324,6 +324,17 @@ The desktop is the screen of the compositor: the background, the bar, the window
 - A process reads the clipboard only at a paste of the principal, through a handle that the compositor lends for that paste. The log of the compositor names each copy and each paste, with the two windows.
 - The design: `src/md/features/clipboard.md`.
 
+### The editor
+
+- `start("edit")` opens the editor of a text: the object `text` of the private store of the process `edit`. It has no modes and no save action.
+- **The look.** The text is in the font of the cells, 80 cells to a row. A line longer than a row goes on the next rows, never cut at the edge. A tab goes to the next column that is a multiple of 4. At the left, a gutter shows the number of each line in the dim color, on the first row of the line only. The caret is a bar of 2 × 16 pixels in the strong text color. The selection is `colors.chosen` under its characters, with the characters in white, as a chosen row (section 10); a selected line end is one cell of it after the text of its row. Under the rows, a status line shows a problem of the store or of a key in the color of a failure, and nothing when there is none. The action bar names Ctrl+Z and Ctrl+Y.
+- **The keys.** A character goes in at the caret, in place of the selection. The arrows, Home, End, Page Up and Page Down move the caret; Control with Home or End goes to the start or the end of the text; Shift with each of them selects. Home and End go to the ends of the line, not of the row. Backspace and Delete remove the selection, or one character. Escape ends the selection.
+- **The pointer.** A press places the caret at the boundary between two characters nearest to the pointer; a drag selects; the wheel scrolls 3 rows for each notch.
+- **Undo.** Each group of changes is one commit of the object: a word, a line end, the changes before a deletion, the changes before a move of the caret to another line. Ctrl+Z restores the version before the one shown, and Ctrl+Y goes forward again along the versions that Ctrl+Z left. The versions are in the store, so Ctrl+Z works after a restart too. A stop of the process loses only the group in progress.
+- **The limits.** A text holds at most 32768 bytes. A text from the store with an invalid sequence shows the replacement character in its place. A text that the store cannot give whole, or that is too long, is not written over: the editor starts empty, keeps nothing, and the status line says why.
+- Not built: the clipboard (the editor declines a copy and refuses a paste), Ctrl+F, the edit of another object than its own, and a resizable window.
+- The design: `src/md/features/editor.md`.
+
 ### Pointer
 
 - The pointer is a slanted arrow with a large head and a short slim tail, 13 pixels wide and 18 high at the size 24: a fill inside an edge of 1 pixel. Its point is the top left corner; its left side is upright, its right side at 45 degrees to the wing, and its tail leaves the head along the axis of the arrow, 2 down for 1 across, ended square. This arrow is the shape `arrow` of the pointer theme of the system (`resources/pointers/system.manifest`). Each other pointer shape of that theme has the same style: a fill inside an edge of 1 pixel at every size, strokes of 1 pixel of fill at 24, the level and upright edges on whole pixels, the slanted sides and the curves smooth. The shapes are outlines that the tool draws at the build (`docs/POINTERS.md`, "4. The manifest").
