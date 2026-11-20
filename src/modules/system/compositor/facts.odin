@@ -935,25 +935,17 @@ Palette_Button_Pressed :: struct {
 CANDIDATE_FIELD_BYTES :: 40
 #assert(CANDIDATE_FIELD_BYTES > palette_table.CANDIDATE_NAME_CAPACITY)
 
-// The list of the palette: the entries that match what is typed. One fact
-// for the count, then one for each of the first rows, and one when more
-// rows are left out.
-@(log_fact = "compositor: the palette lists {matched} of {entries} for \"{typed}\"")
+// The list of the palette: the entries that match what is typed, and the
+// names and the kinds of its first rows, ", ..." after them when more rows
+// are left out. The rows are one text view: the waits of the machine tests
+// read the list as one sentence.
+@(log_fact = "compositor: the palette lists {matched} of {entries} for \"{typed}\": {rows}")
 Palette_Listed :: struct {
 	matched: u64,
 	entries: u64,
 	typed:   [72]u8,
+	rows:    value_kinds.Text_View,
 }
-
-@(log_fact = "compositor: the palette lists the row {row}: {entry} ({kind_words})")
-Palette_Listed_Row :: struct {
-	row:        u64,
-	entry:      [72]u8,
-	kind_words: [16]u8,
-}
-
-@(log_fact = "compositor: the palette lists more rows than the log names")
-Palette_Listed_More :: struct {}
 
 // The bytes of the Text field of what is typed in the palette:
 // palette.TYPED_CAPACITY, a zero byte, on 8 bytes.
