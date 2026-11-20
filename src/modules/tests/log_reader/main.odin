@@ -209,7 +209,8 @@ Fact_Row :: struct {
 	key:         u64,
 	module_hash: [32]u8,
 	value_count: i64,
-	reserved:    u64,
+	part:        u32,
+	part_count:  u32,
 	values:      [op.LOG_FACT_VALUE_CAPACITY]u8,
 }
 #assert(size_of(Fact_Row) == 224)
@@ -520,6 +521,7 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 	body := u64(uintptr(&fact_body))
 	head := u64(op.LOG_FACT_HEAD_BYTES)
 	whole := u64(size_of(op.Log_Fact))
+	call_most := u64(op.LOG_FACT_CALL_BYTES_MOST)
 	info := u64(op.Log_Level.Info)
 	fact := u64(op.Log_Record_Form.Fact)
 	refusals := [?]Fact_Refusal {
@@ -529,7 +531,7 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 		{"a fact with one run", body, head, info, 1, fact, .Bad_Operation, .Too_Long, LOG_ARGUMENT_RUNS, 1},
 		{"a fact of 0 bytes", body, 0, info, 0, fact, .Bad_Address, .Too_Small, LOG_ARGUMENT_LENGTH, 0},
 		{"a fact one byte shorter than its head", body, head - 1, info, 0, fact, .Bad_Address, .Too_Small, LOG_ARGUMENT_LENGTH, head - 1},
-		{"a fact one byte longer than a whole fact", body, whole + 1, info, 0, fact, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, whole + 1},
+		{"a fact one byte longer than the longest fact", body, call_most + 1, info, 0, fact, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, call_most + 1},
 		{"a fact of the largest length", body, max(u64), info, 0, fact, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, max(u64)},
 		{"a fact at the address 0", 0, head, info, 0, fact, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, 0},
 		{"a fact past the end of a mapped page", last_byte_of_page, head, info, 0, fact, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, last_byte_of_page},
@@ -565,6 +567,7 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 	for &byte_value in fact_body.reserved {
 		byte_value = FACT_BODY_RESERVED_BYTE
 	}
+	fact_body.part, fact_body.part_count = FACT_BODY_RESERVED_BYTE, FACT_BODY_RESERVED_BYTE
 	counted_before, counted_read := own_record_count(connection, file, records_export)
 	if !counted_read {
 		return "log.records did not give the count of the own records"
@@ -635,12 +638,14 @@ fact_rows_check :: proc "contextless" (connection: ^system.Call_Connection, file
 	}
 	for &row, index in fact_rows[:3] {
 		wanted := &expected[index]
-		if row.form != wanted.form || row.continues != 0 || row.reserved != 0 || row.key != wanted.key || row.value_count != wanted.value_count || row.values != wanted.values || row.module_hash != wanted.module_hash {
+		// The kernel writes the part and the count of the parts of a fact
+		// of one record, over the bytes that this process gave there.
+		if row.form != wanted.form || row.continues != 0 || row.part != 0 || row.part_count != 1 || row.key != wanted.key || row.value_count != wanted.value_count || row.values != wanted.values || row.module_hash != wanted.module_hash {
 			first_values: u64
 			for place in 0 ..< 8 {
 				first_values |= u64(row.values[place]) << (8 * u64(place))
 			}
-			system.log(.Error, "log_reader: WRONG: the fact ", u64(index), " has the form ", u64(row.form), ", more ", row.continues, ", the reserved bytes ", system.Hex(row.reserved), ", the key ", system.Hex(row.key), ", ", row.value_count, " value bytes, the first ", system.Hex(first_values), " and the last ", u64(row.values[len(row.values) - 1]))
+			system.log(.Error, "log_reader: WRONG: the fact ", u64(index), " has the form ", u64(row.form), ", more ", row.continues, ", the part ", u64(row.part), " of ", u64(row.part_count), ", the key ", system.Hex(row.key), ", ", row.value_count, " value bytes, the first ", system.Hex(first_values), " and the last ", u64(row.values[len(row.values) - 1]))
 			return "a fact record does not hold what the kernel must write"
 		}
 	}

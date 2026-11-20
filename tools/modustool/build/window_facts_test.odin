@@ -1,8 +1,12 @@
 package build
 
+import "modus:contract/cut_mark"
+import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/pointer_pictures"
 import "modus:contract/value_kinds"
 import "modus:support/sentence"
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"
@@ -577,6 +581,7 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 		most[setting_field] = 6
 	}
 	most["candidate"] = 31
+	most["theme_file"] = u32(len(pointer_pictures.RESOURCE_OF_THE_SYSTEM))
 	most["typed"] = 64
 	most["profile"] = u32(len("the processor profile"))
 	most["profile_reason"] = u32(len("the system drives no GPU device"))
@@ -592,7 +597,7 @@ CHOICE_REFUSAL_LONGEST :: "a line of the console holds no quote and no invalid s
 // name of its member, or its number for a word that names none.
 @(private = "file")
 contract_enum_words :: proc(which: value_kinds.Contract_Enum, word: u64) -> string {
-	if words, named := op.contract_enum_member_words(which, word); named {
+	if words, named := module.contract_enum_member_words(which, word); named {
 		return words
 	}
 	return line_of_before(word)
@@ -941,5 +946,252 @@ the_other_lines_of_the_windows_write_the_lines_of_before :: proc(t: ^testing.T) 
 		// The line that quality_lines_check reads, whole.
 		facts_expect_line(t, render(t, compositor_file, "Quality_Profile_Chosen", {{"profile", "the processor profile"}, {"profile_reason", "the system drives no GPU device"}}), "compositor: the quality profile is the processor profile: the system drives no GPU device")
 		facts_expect_line(t, render(t, compositor_file, "Full_Frame_Measured", {{"width", u64(1920)}, {"height", u64(1080)}, {"windows", u64(17)}, {"elapsed", u64(2272)}}), "compositor: a full frame of 1920x1080 with 17 windows in 2272 us")
+	}
+}
+
+// views_values gives the values of a fact with text views: the fixed
+// record, its views filled from texts in their order, and the out-of-line
+// area of the long texts, as system.log_fact writes them: a text of at
+// most 12 bytes in its view, a longer one in the area, and a text that the
+// area has no room for cut with the cut mark.
+@(private = "file")
+views_values :: proc(fixed: []u8, texts: []string) -> []u8 {
+	record_size := len(fixed)
+	values := make([]u8, record_size + op.LOG_FACT_TEXT_AREA_BYTES_MOST, context.temp_allocator)
+	copy(values, fixed)
+	views_start := record_size - len(texts) * value_kinds.TEXT_VIEW_BYTES
+	area := values[record_size:]
+	area_count := 0
+	for text, index in texts {
+		view := values[views_start + index * value_kinds.TEXT_VIEW_BYTES:][:value_kinds.TEXT_VIEW_BYTES]
+		length := len(text)
+		if length <= value_kinds.TEXT_VIEW_INLINE_BYTES_MOST {
+			copy(view[4:], text)
+		} else {
+			room := area[area_count:]
+			length = copy(room, text)
+			if length < len(text) {
+				length, _, _ = cut_mark.apply(room, length, len(text) - length)
+			}
+			if length > value_kinds.TEXT_VIEW_INLINE_BYTES_MOST {
+				copy(view[4:8], room[:value_kinds.TEXT_VIEW_PREFIX_BYTES])
+				offset := u64(area_count)
+				for place in 0 ..< 8 {
+					view[8 + place] = u8(offset >> (8 * u64(place)))
+				}
+				area_count += length
+			} else {
+				for &byte_value in room[:length] {
+					byte_value = 0
+				}
+				inline: [value_kinds.TEXT_VIEW_INLINE_BYTES_MOST]u8
+				kept := copy(inline[:], text)
+				length, _, _ = cut_mark.apply(inline[:], kept, len(text) - kept)
+				copy(view[4:], inline[:length])
+			}
+		}
+		view[0], view[1], view[2], view[3] = u8(length), u8(length >> 8), u8(length >> 16), u8(length >> 24)
+	}
+	return values[:record_size + area_count]
+}
+
+// views_text_written gives the text that a view of a fact holds after the
+// write: the text, or the text cut with the cut mark.
+@(private = "file")
+views_text_written :: proc(values: []u8, record_size, view_index, view_count: int) -> string {
+	start := record_size - (view_count - view_index) * value_kinds.TEXT_VIEW_BYTES
+	text, ok := value_kinds.text_view_read(values[start:][:value_kinds.TEXT_VIEW_BYTES], values[record_size:])
+	return ok ? strings.clone(string(text), context.temp_allocator) : "<a view that does not read>"
+}
+
+// views_render gives the sentence of a fact with text views: its fixed
+// fields, then its texts in the order of its views. The sentence is the
+// one of the texts as written, and written is that text for each view.
+@(private = "file")
+views_render :: proc(t: ^testing.T, file: []u8, package_name, type_name: string, values: []Fact_Test_Field, texts: []string) -> (rendered_sentence: string, written: []string) {
+	key, fixed, made := fact_test_record(t, file, package_name, type_name, values)
+	if !made {
+		return "", nil
+	}
+	whole := views_values(fixed, texts)
+	written = make([]string, len(texts), context.temp_allocator)
+	for index in 0 ..< len(texts) {
+		written[index] = views_text_written(whole, len(fixed), index, len(texts))
+	}
+	rendered := false
+	rendered_sentence, rendered = fact_values_render(file, key, whole)
+	testing.expectf(t, rendered, "the fact %s.%s with texts %v is refused", package_name, type_name, texts)
+	return
+}
+
+// The texts of the views at their edges: empty, 12 bytes (whole in the
+// view), 13 (the first in the area), a long one, and one past the area
+// bound, which the write cuts with the mark.
+@(private = "file")
+view_texts :: proc() -> []string {
+	texts := make([]string, 5, context.temp_allocator)
+	texts[0] = ""
+	texts[1] = strings.repeat("a", 12, context.temp_allocator)
+	texts[2] = strings.repeat("b", 13, context.temp_allocator)
+	texts[3] = "fault::three + 0x8 in fault (src/modules/demonstrations/fault/main.odin:15)"
+	texts[4] = strings.repeat("z", op.LOG_FACT_TEXT_AREA_BYTES_MOST + 100, context.temp_allocator)
+	return texts
+}
+
+// A text of no small bound is a text view, at its edges: each sentence is
+// the line of before with the text whole, and the text past the area
+// bound is cut, with the cut mark, never whole and never lost.
+@(test)
+the_texts_of_the_windows_are_views :: proc(t: ^testing.T) {
+	texts := view_texts()
+	longest := texts[len(texts) - 1]
+	// The cut: the text past the bound is written cut, shorter than the
+	// area, its start kept.
+	{
+		file, ok := window_facts_file(t, "console")
+		if ok {
+			_, written := views_render(t, file, "console", "Line_Entered", nil, {longest})
+			if len(written) == 1 {
+				testing.expect(t, written[0] != longest && len(written[0]) <= op.LOG_FACT_TEXT_AREA_BYTES_MOST && strings.has_prefix(written[0], longest[:op.LOG_FACT_TEXT_AREA_BYTES_MOST / 2]))
+			}
+		}
+	}
+	console_file, console_ok := window_facts_file(t, "console")
+	debugger_file, debugger_ok := window_facts_file(t, "debugger_window")
+	manual_file, manual_ok := window_facts_file(t, "manual")
+	compositor_file, compositor_ok := window_facts_file(t, "compositor")
+	inspect_file, inspect_ok := window_facts_file(t, "inspect")
+	for text in texts {
+		if console_ok {
+			sentence_text, written := views_render(t, console_file, "console", "Line_Entered", nil, {text})
+			facts_expect_line(t, sentence_text, line_of_before("> ", written[0]))
+			sentence_text, written = views_render(t, console_file, "console", "Completion_Gave_Line", nil, {text})
+			facts_expect_line(t, sentence_text, line_of_before("console: the completion gave the line ", written[0]))
+			sentence_text, written = views_render(t, console_file, "console", "History_Search_Gave_Line", nil, {text})
+			facts_expect_line(t, sentence_text, line_of_before("console: the history search gave the line ", written[0]))
+			sentence_text, written = views_render(t, console_file, "console", "Line_After_Paste", nil, {text})
+			facts_expect_line(t, sentence_text, line_of_before("console: the line shows \"", written[0], "\" after a paste"))
+			sentence_text, written = views_render(t, console_file, "console", "Palette_Runs_Line", nil, {text})
+			facts_expect_line(t, sentence_text, line_of_before("console: the palette runs ", written[0]))
+			for count in COUNTS {
+				sentence_text, written = views_render(t, console_file, "console", "Completion_List_Opened", {{"matched_names", count}, {"names", max(u64) - count}, {"longest_ranking", u64(max(i64))}, {"rankings", count}, {"code_runs", u64(0)}}, {text, "length"})
+				facts_expect_line(t, sentence_text, line_of_before("console: the completion list opens by Tab: ", count, " names of ", max(u64) - count, " match \"", written[0], "\", the first is ", written[1], "; one ranking takes ", u64(max(i64)), " us at most, over ", count, " keys; its first row has ", u64(0), " runs of code"))
+			}
+		}
+		if debugger_ok {
+			sentence_text, written := views_render(t, debugger_file, "debugger_window", "Breakpoint_Placed", nil, {text})
+			facts_expect_line(t, sentence_text, line_of_before("debugger_window: a breakpoint at ", written[0]))
+			for size in UNIT_VALUES {
+				sentence_text, written = views_render(t, debugger_file, "debugger_window", "Watch_Placed", {{"watch_length", size}}, {text})
+				facts_expect_line(t, sentence_text, line_of_before("debugger_window: a watch of ", size, " bytes at ", written[0]))
+			}
+			for count in COUNTS {
+				sentence_text, written = views_render(t, debugger_file, "debugger_window", "Memory_Shown", {{"rows", count}}, {text})
+				facts_expect_line(t, sentence_text, line_of_before("debugger_window: the memory at ", written[0], ": ", count, " rows of 16 bytes"))
+			}
+		}
+		if manual_ok {
+			for count in COUNTS {
+				sentence_text, written := views_render(t, manual_file, "manual", "Link_Page_Shown", {{"rows", count}}, {text, "Text view"})
+				facts_expect_line(t, sentence_text, line_of_before("manual: the page ", written[0], ": ", written[1], ", ", count, " rows"))
+			}
+			sentence_text, written := views_render(t, manual_file, "manual", "Link_Opened", nil, {"the glossary", text})
+			facts_expect_line(t, sentence_text, line_of_before("manual: the link ", written[0], " opens ", written[1]))
+			sentence_text, written = views_render(t, manual_file, "manual", "Link_Focused", nil, {text, "term:text-view"})
+			facts_expect_line(t, sentence_text, line_of_before("manual: the focus is on the link ", written[0], " to ", written[1]))
+		}
+		if compositor_ok {
+			for count in COUNTS {
+				sentence_text, written := views_render(t, compositor_file, "compositor", "Palette_Field_Shows", {{"field", count}, {"entry", entry_longest()}}, {text})
+				facts_expect_line(t, sentence_text, line_of_before("compositor: the field ", count, " of ", entry_longest(), " shows \"", written[0], "\""))
+			}
+		}
+		if inspect_ok {
+			for count in COUNTS {
+				sentence_text, written := views_render(t, inspect_file, "inspect", "Stack_Frame", {{"frame", count}, {"sampled_process", "fault"}}, {text})
+				facts_expect_line(t, sentence_text, line_of_before("inspect: ", "fault", ", the frame ", count, " of the stack: ", written[0]))
+			}
+		}
+	}
+	// A text that the write keeps whole renders whole.
+	if console_ok {
+		sentence_text, _ := views_render(t, console_file, "console", "Line_Entered", nil, {"length(\"kept across a stop\")"})
+		facts_expect_line(t, sentence_text, "> length(\"kept across a stop\")")
+	}
+}
+
+// The last lines of the windows with new kinds: the stop of a terminal
+// for each cause but itself, the copy measures in tenths, the fault of
+// inspect in hexadecimal with no zero before the first digit, the problem
+// of a pointer theme by the names of its members.
+@(test)
+the_last_lines_of_the_windows_write_their_fields :: proc(t: ^testing.T) {
+	terminal_file, terminal_ok := window_facts_file(t, "terminal")
+	if terminal_ok {
+		for cause in op.Stop_Cause {
+			if cause == .Itself {
+				continue
+			}
+			for count in COUNTS {
+				facts_expect_line(t, fact_test_render(t, terminal_file, "terminal_process", "Stopped_Without_Outcome", {{"lines", count}, {"records", max(u64) - count}, {"cause", u64(cause)}, {"shown_process", "flood"}}), line_of_before("terminal: ", "flood", " stopped: ", op.STOP_CAUSE_TEXTS[cause], ", after ", count, " lines and ", max(u64) - count, " records"))
+			}
+		}
+		// A word of a cause that names no member is written as its number.
+		facts_expect_line(t, fact_test_render(t, terminal_file, "terminal_process", "Stopped_Without_Outcome", {{"lines", u64(1)}, {"records", u64(2)}, {"cause", max(u64)}, {"shown_process", "flood"}}), line_of_before("terminal: flood stopped: ", max(u64), ", after ", u64(1), " lines and ", u64(2), " records"))
+	}
+
+	compositor_file, compositor_ok := window_facts_file(t, "compositor")
+	if compositor_ok {
+		Copy_Form :: struct {
+			type_name, words: string,
+		}
+		forms := [?]Copy_Form {
+			{"Copy_Aligned_Measured", "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned:"},
+			{"Copy_Unaligned_Measured", "compositor: copy_bytes_without_overlap, not aligned:"},
+			{"Loop_Aligned_Measured", "compositor: a loop of 16 bytes, aligned:"},
+			{"Loop_Unaligned_Measured", "compositor: a loop of 16 bytes, not aligned:"},
+			{"Fill_Aligned_Measured", "compositor: fill_bytes_with_value, aligned:"},
+			{"Fill_Unaligned_Measured", "compositor: fill_bytes_with_value, not aligned:"},
+		}
+		// The old line wrote each value as value / 10, a dot, value % 10.
+		tenths := [6]u64{0, 9, 10, 123, 999_999, u64(max(i64))}
+		for form in forms {
+			old := strings.builder_make(context.temp_allocator)
+			strings.write_string(&old, form.words)
+			for value in tenths {
+				strings.write_string(&old, line_of_before(" ", value / 10, ".", value % 10))
+			}
+			facts_expect_line(t, fact_test_render(t, compositor_file, "compositor", form.type_name, {{"time_8", tenths[0]}, {"time_64", tenths[1]}, {"time_512", tenths[2]}, {"time_4096", tenths[3]}, {"time_65536", tenths[4]}, {"time_3145600", tenths[5]}}), strings.to_string(old))
+		}
+		// The problem of a pointer theme: each part, each rule, the largest
+		// index and values, and words that name no member.
+		files := [2]string{pointer_pictures.RESOURCE_OF_THE_OWNER, pointer_pictures.RESOURCE_OF_THE_SYSTEM}
+		for theme_file in files {
+			for part in pointer_pictures.Part {
+				for kind in pointer_pictures.Problem_Kind {
+					field := pointer_pictures.Field.Hot_Spot_X
+					facts_expect_line(t, fact_test_render(t, compositor_file, "compositor", "Pointer_Theme_Refused", {{"problem_kind", u64(kind)}, {"theme_part", u64(part)}, {"theme_field", u64(field)}, {"place_index", u64(3)}, {"value", max(u64)}, {"limit", u64(0)}, {"theme_file", theme_file}}), line_of_before("compositor: the pointer theme file ", theme_file, " is not valid, not used: part ", contract_enum_words(.Pointer_Part, u64(part)), ", index ", u64(3), ", field ", contract_enum_words(.Pointer_Field, u64(field)), ", problem ", contract_enum_words(.Pointer_Problem, u64(kind)), ", value ", max(u64), ", limit ", u64(0)))
+				}
+			}
+			facts_expect_line(t, fact_test_render(t, compositor_file, "compositor", "Pointer_Theme_Refused", {{"problem_kind", max(u64)}, {"theme_part", max(u64)}, {"theme_field", max(u64)}, {"place_index", max(u64)}, {"value", u64(0)}, {"limit", max(u64)}, {"theme_file", theme_file}}), line_of_before("compositor: the pointer theme file ", theme_file, " is not valid, not used: part ", max(u64), ", index ", max(u64), ", field ", max(u64), ", problem ", max(u64), ", value ", u64(0), ", limit ", max(u64)))
+		}
+		testing.expect_value(t, contract_enum_words(.Pointer_Field, u64(pointer_pictures.Field.Hot_Spot_X)), "Hot_Spot_X")
+	}
+
+	inspect_file, inspect_ok := window_facts_file(t, "inspect")
+	if inspect_ok {
+		// The old line wrote an address with system.write_number: "0x" and
+		// the digits with no zero before the first.
+		addresses := [4]u64{0, 0xf, 0x1a2b, max(u64)}
+		names := [2]string{name_longest(), "fault"}
+		for address in addresses {
+			for name in names {
+				facts_expect_line(t, fact_test_render(t, inspect_file, "inspect", "Stopped_On_Page_Fault", {{"address", address}, {"sampled_process", name}}), fmt.tprintf("inspect: %s stopped: page fault at 0x%x", name, address))
+				facts_expect_line(t, fact_test_render(t, inspect_file, "inspect", "Stopped_On_Fault", {{"address", address}, {"sampled_process", name}}), fmt.tprintf("inspect: %s stopped: fault 0x%x", name, address))
+			}
+		}
+		for count in COUNTS {
+			facts_expect_line(t, fact_test_render(t, inspect_file, "inspect", "Values_Hidden", {{"hidden_values", count}, {"sampled_process", "fault"}}), line_of_before("inspect: fault: values hidden by the kernel: ", count))
+		}
 	}
 }

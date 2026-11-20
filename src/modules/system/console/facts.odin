@@ -303,11 +303,24 @@ fact_emit :: proc "contextless" (hash: [32]u8, key: u64, values: []u8, plain: te
 		}
 	}
 	// The raw form is the line of the fact on the serial port: no field
-	// name, because the names are in the module file only.
-	fact := op.Log_Fact{module_hash = hash, key = key, value_count = u16(min(len(values), op.LOG_FACT_VALUE_CAPACITY))}
+	// name, because the names are in the module file only. A fact of
+	// several records is the line of each of its records, joined.
+	part_count := op.log_fact_part_count(len(values))
+	for part in 0 ..< part_count {
+		start := part * op.LOG_FACT_VALUE_CAPACITY
+		end := min(len(values), start + op.LOG_FACT_VALUE_CAPACITY)
+		fact_part_raw_emit(hash, key, part, part_count, values[start:end], plain, continuation = part > 0)
+	}
+}
+
+// fact_part_raw_emit writes the raw form of one record of a fact: its part
+// of the line of the serial port, after the line of the record before it
+// for a continuation.
+fact_part_raw_emit :: proc "contextless" (hash: [32]u8, key: u64, part, part_count: int, values: []u8, plain: terminal.Style, continuation := false) {
+	fact := op.Log_Fact{module_hash = hash, key = key, value_count = u16(min(len(values), op.LOG_FACT_VALUE_CAPACITY)), part = u8(clamp(part, 0, 255)), part_count = u8(clamp(part_count, 0, 255))}
 	copy(fact.values[:], values)
 	raw: [op.LOG_FACT_LINE_BYTES_MOST]u8
-	emit(string(raw[:op.log_fact_line(&fact, &raw)]), plain)
+	emit(string(raw[:op.log_fact_line(&fact, &raw, continuation)]), plain)
 }
 
 // ---- facts().
@@ -477,7 +490,13 @@ table_facts :: proc "contextless" (arguments: []Value) -> Value {
 				hash := module.field_bytes(fact_row, fact_fields.module_hash)
 				values := module.field_bytes(fact_row, fact_fields.values)
 				value_count := module.field_integer(fact_row, fact_fields.value_count)
-				if len(hash) != 32 || values == nil || value_count != i64(first.description.size) {
+				// The first record of a fact holds its whole record of fixed
+				// fields; the records after it hold the out-of-line area of
+				// its text views, which a row of the table does not carry.
+				if module.field_integer(fact_row, fact_fields.part) != 0 {
+					continue
+				}
+				if len(hash) != 32 || values == nil || value_count < i64(first.description.size) || value_count > i64(len(values)) || !module.record_has_text_view(first.file, first.description) && value_count != i64(first.description.size) {
 					continue
 				}
 				kept := false
@@ -516,7 +535,7 @@ FACTS_ANSWERS_MOST :: 64
 // The fields of a row of log.fact_records that facts() and the records of
 // a line read.
 Fact_Row_Fields :: struct {
-	number, key, module_hash, value_count, values: module.Field,
+	number, key, module_hash, value_count, part, part_count, values: module.Field,
 }
 
 // fact_row_fields finds the fields of the rows of log.fact_records, with
@@ -526,8 +545,13 @@ fact_row_fields :: proc "contextless" (table: Table) -> (fields: Fact_Row_Fields
 	fields.key = table_field(table, "key") or_return
 	fields.module_hash = table_field(table, "module_hash") or_return
 	fields.value_count = table_field(table, "value_count") or_return
+	fields.part = table_field(table, "part") or_return
+	fields.part_count = table_field(table, "part_count") or_return
 	fields.values = table_field(table, "values") or_return
 	values_kind, values_kind_ok := module.field_kind(fields.values)
+	if fields.part.type != u8(module.Type.Integer) || fields.part_count.type != u8(module.Type.Integer) {
+		return {}, false
+	}
 	if fields.number.type != u8(module.Type.Integer) || fields.key.type != u8(module.Type.Integer) || fields.value_count.type != u8(module.Type.Integer) || fields.module_hash.type != u8(module.Type.Bytes) || fields.module_hash.detail != 32 || !values_kind_ok || values_kind != .Fact_Values {
 		return {}, false
 	}

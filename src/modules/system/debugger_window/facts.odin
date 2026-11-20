@@ -11,8 +11,8 @@ import "modus:support/system"
 // line of a fact stops at its last byte that is not zero.
 //
 // A debug place has up to PLACE_LIMIT bytes, more than the values of one
-// record hold: the lines of a breakpoint, of a watch and of the memory at a
-// place stay text.
+// record hold: it is a text view, the last field of its fact
+// (src/md/features/log_facts.md, "Text views").
 
 // The bytes of the Text field of the words of an act on one thread: the
 // longest, "one line, over each call, of", and a zero byte.
@@ -91,6 +91,27 @@ Variables_Card_Shown :: struct {
 @(log_fact = "debugger_window: ok, connected to the service debugger; {exports} exports, each record with the size of its description")
 Window_Ready :: struct {
 	exports: u64,
+}
+
+// A breakpoint at a debug place: a procedure name, or a file and a line.
+// A place has up to PLACE_LIMIT bytes: a text view.
+@(log_fact = "debugger_window: a breakpoint at {place}")
+Breakpoint_Placed :: struct {
+	place: value_kinds.Text_View,
+}
+
+// A watch of a length at a debug place: an address or a global.
+@(log_fact = "debugger_window: a watch of {watch_length} at {place}")
+Watch_Placed :: struct {
+	watch_length: value_kinds.Size_In_Bytes,
+	place:        value_kinds.Text_View,
+}
+
+// The card of the memory shows the memory at a debug place.
+@(log_fact = "debugger_window: the memory at {place}: {rows} rows of 16 bytes")
+Memory_Shown :: struct {
+	rows:  u64,
+	place: value_kinds.Text_View,
 }
 
 // The window did not reach the service debugger: the sentence of the step

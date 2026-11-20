@@ -86,8 +86,7 @@ pointer_theme_open :: proc "contextless" (ctx: ^system.Context) {
 		problem := pointer_pictures.validate(file)
 		spent := system.nanoseconds() - start
 		if problem.kind != .None {
-			buffer: [256]u8
-			system.log(.Warning, "compositor: the pointer theme file ", pointer_pictures.RESOURCE_PREFERENCE[index], " is not valid, not used: ", pointer_pictures.sentence(problem, buffer[:]))
+			system.log_fact(.Warning, Pointer_Theme_Refused{problem_kind = pointer_pictures.Problem_Kind_Word(problem.kind), theme_part = pointer_pictures.Part_Word(problem.part), theme_field = pointer_pictures.Field_Word(problem.field), place_index = problem.index, value = problem.value, limit = problem.limit, theme_file = value_kinds.text_field(pointer_pictures.RESOURCE_PREFERENCE[index], THEME_FILE_FIELD_BYTES)})
 			continue
 		}
 		theme = file

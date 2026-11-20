@@ -245,8 +245,18 @@ Paste_Sent :: struct {
 Stopped_Itself :: struct {
 	lines:         u64,
 	records:       u64,
-	cause:         op.Stop_Cause,
-	outcome:       op.Stop_Outcome,
+	cause:         op.Stop_Cause_Word,
+	outcome:       op.Stop_Outcome_Word,
+	shown_process: value_kinds.Module_Name_Field,
+}
+
+// The process stopped for another cause than itself: a stop of this kind
+// has no outcome. The cause is its word of 8 bytes, after the counts.
+@(log_fact = "terminal: {shown_process} stopped: {cause}, after {lines} lines and {records} records")
+Stopped_Without_Outcome :: struct {
+	lines:         u64,
+	records:       u64,
+	cause:         op.Stop_Cause_Word,
 	shown_process: value_kinds.Module_Name_Field,
 }
 

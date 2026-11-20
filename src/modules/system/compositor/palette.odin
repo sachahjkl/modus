@@ -819,7 +819,7 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			// picture after this line, not before the key is drawn.
 			if !leave {
 				form := &panel.form
-				system.log(.Info, "compositor: the field ", u64(form.current), " of ", palette.entry_name(&form.entry), " shows \"", palette.field_text(form, form.current), "\"")
+				system.log_fact(.Info, Palette_Field_Shows{field = u64(form.current), entry = entry_field(palette.entry_name(&form.entry))}, palette.field_text(form, form.current))
 			}
 		}
 	case .Field_Next:

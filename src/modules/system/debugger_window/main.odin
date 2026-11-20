@@ -606,7 +606,7 @@ break_at_place :: proc "contextless" (place: string) -> bool {
 	_, ok := call(.Break_At, arguments[:], bytes_of(rows[:]))
 	if ok {
 		status_set(false, "a breakpoint at ", place)
-		system.log(.Info, "debugger_window: a breakpoint at ", place)
+		system.log_fact(.Info, Breakpoint_Placed{}, place)
 	}
 	tables_read()
 	return ok
@@ -708,7 +708,7 @@ place_watch :: proc "contextless" () {
 	arguments := [2]isolated.Argument{{text = transmute([]u8)place}, {integer = u64(length)}}
 	if _, ok := call(.Watch, arguments[:], bytes_of(rows[:])); ok {
 		status_set(false, "a watch of ", length, " bytes at ", place)
-		system.log(.Info, "debugger_window: a watch of ", length, " bytes at ", place)
+		system.log_fact(.Info, Watch_Placed{watch_length = value_kinds.Size_In_Bytes(length)}, place)
 		place_count = 0
 	}
 	tables_read()
@@ -725,7 +725,7 @@ place_memory :: proc "contextless" () {
 	if memory_read() {
 		shown := string(memory_place[:memory_place_count])
 		status_set(false, "the memory at ", shown, ": ", u64(memory_count), " rows of 16 bytes")
-		system.log(.Info, "debugger_window: the memory at ", shown, ": ", u64(memory_count), " rows of 16 bytes")
+		system.log_fact(.Info, Memory_Shown{rows = u64(memory_count)}, shown)
 	}
 }
 

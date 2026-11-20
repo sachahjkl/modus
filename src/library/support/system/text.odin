@@ -1,6 +1,7 @@
 package system
 
 import "base:intrinsics"
+import "modus:contract/cut_mark"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/text_encoding"
@@ -162,12 +163,26 @@ own_hash: [module.HASH_SIZE]u8
 // ```odin
 // system.log_fact(.Warning, Bad_Block{block = number, check = found, expected = wanted})
 // ```
-log_fact :: proc "contextless" (level: op.Log_Level, value: $T) where intrinsics.type_is_struct(T) && !intrinsics.type_struct_has_implicit_padding(T) && size_of(T) <= op.LOG_FACT_VALUE_CAPACITY {
+//
+// A fact type with text views (value_kinds.Text_View) has them as its last
+// fields, and the call gives one string for each, in their order; the
+// field of the literal stays zero (src/md/features/log_facts.md, "Text
+// views"). The write copies each text: a text of at most 12 bytes into its
+// view, a longer one into the out-of-line area after the record, which the
+// records after the first carry. A text that the area has no room for is
+// cut on a whole character, with the cut mark: a writer of the log learns
+// no result, and a cut text that says so is worth more than no fact. The
+// build refuses a call with another count of texts than the type has views.
+//
+// ```odin
+// system.log_fact(.Info, Request_Served{status = status}, path)
+// ```
+log_fact :: proc "contextless" (level: op.Log_Level, value: $T, texts: ..string) where intrinsics.type_is_struct(T) && !intrinsics.type_struct_has_implicit_padding(T) && size_of(T) <= op.LOG_FACT_VALUE_CAPACITY {
 	handle := context_record().handles[op.CONTEXT_LOG]
 	if handle == 0 {
 		return
 	}
-	fact: op.Log_Fact
+	fact: op.Log_Fact_Call
 	fact.module_hash = own_hash
 	// The typeid of a named type of the package scope is SipHash-2-4 of its
 	// canonical name, an immediate in the code: the fact key, which the
@@ -175,7 +190,79 @@ log_fact :: proc "contextless" (level: op.Log_Level, value: $T) where intrinsics
 	fact.key = transmute(u64)typeid_of(T)
 	values := value
 	intrinsics.mem_copy_non_overlapping(&fact.values[0], &values, size_of(T))
-	log_call(handle, (^u8)(&fact), op.LOG_FACT_HEAD_BYTES + size_of(T), level, 0, .Fact)
+	area_count, written := log_fact_text_views_write(fact.values[:], size_of(T), texts)
+	if !written {
+		// More texts than the record has views: a fact with a text over a
+		// fixed field would say another thing. The build refuses the call;
+		// this is the defense of a call that it did not read.
+		return
+	}
+	log_call(handle, (^u8)(&fact), op.LOG_FACT_HEAD_BYTES + size_of(T) + area_count, level, 0, .Fact)
+}
+
+// log_fact_text_views_write writes the texts of a fact into the views of
+// its record, its last len(texts) fields of value_kinds.TEXT_VIEW_BYTES
+// each, and the long ones into the out-of-line area after the record, in
+// values[record_size:]. It gives the bytes of the area. values has room for
+// the record and op.LOG_FACT_TEXT_AREA_BYTES_MOST bytes.
+//
+// It refuses, and writes nothing, more texts than the record has views: a
+// record of fewer bytes than the views, or a place of a view that is not 16
+// zero bytes, since the literal of a fact type leaves each view zero. The
+// procedure has no count of the views of the type without the tables of
+// the types of the runtime, which a module does not link: a fixed field of
+// zeros at the place of a view is not seen here, and the build refuses
+// such a call (src/md/features/log_facts.md, "Text views").
+@(private)
+log_fact_text_views_write :: proc "contextless" (values: []u8, record_size: int, texts: []string) -> (area_count: int, written: bool) {
+	views_start := record_size - len(texts) * value_kinds.TEXT_VIEW_BYTES
+	if views_start < 0 {
+		return 0, false
+	}
+	for value in values[views_start:record_size] {
+		if value != 0 {
+			return 0, false
+		}
+	}
+	area := values[record_size:][:op.LOG_FACT_TEXT_AREA_BYTES_MOST]
+	for text, index in texts {
+		view := values[views_start + index * value_kinds.TEXT_VIEW_BYTES:][:value_kinds.TEXT_VIEW_BYTES]
+		for &byte_value in view {
+			byte_value = 0
+		}
+		length := len(text)
+		if length <= value_kinds.TEXT_VIEW_INLINE_BYTES_MOST {
+			copy(view[4:], text)
+		} else {
+			// The rest of the area, or the text cut with its mark.
+			room := area[area_count:]
+			length = copy(room, text)
+			if length < len(text) {
+				length, _, _ = cut_mark.apply(room, length, len(text) - length)
+			}
+			if length > value_kinds.TEXT_VIEW_INLINE_BYTES_MOST {
+				copy(view[4:8], room[:value_kinds.TEXT_VIEW_PREFIX_BYTES])
+				offset := u64(area_count)
+				for place in 0 ..< 8 {
+					view[8 + place] = u8(offset >> (8 * u64(place)))
+				}
+				area_count += length
+			} else {
+				// The area has no room for the text and its mark: the view
+				// holds its start and as much of the mark as fits, which
+				// never reads as a whole text.
+				for &byte_value in room[:length] {
+					byte_value = 0
+				}
+				inline: [value_kinds.TEXT_VIEW_INLINE_BYTES_MOST]u8
+				kept := copy(inline[:], text)
+				length, _, _ = cut_mark.apply(inline[:], kept, len(text) - kept)
+				copy(view[4:], inline[:length])
+			}
+		}
+		view[0], view[1], view[2], view[3] = u8(length), u8(length >> 8), u8(length >> 16), u8(length >> 24)
+	}
+	return area_count, true
 }
 
 // The lines of this process that the kernel refused for its log limit, and

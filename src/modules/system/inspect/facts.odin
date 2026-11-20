@@ -79,6 +79,37 @@ Interface_Measured :: struct {
 	draw_time:         value_kinds.Time_In_Microseconds,
 }
 
+// The chosen process stopped on a page fault: the address that the
+// instruction used.
+@(log_fact = "inspect: {sampled_process} stopped: page fault at {address}")
+Stopped_On_Page_Fault :: struct {
+	address:         value_kinds.Hexadecimal_No_Leading_Zero,
+	sampled_process: value_kinds.Module_Name_Field,
+}
+
+// The chosen process stopped on another fault.
+@(log_fact = "inspect: {sampled_process} stopped: fault {address}")
+Stopped_On_Fault :: struct {
+	address:         value_kinds.Hexadecimal_No_Leading_Zero,
+	sampled_process: value_kinds.Module_Name_Field,
+}
+
+// One frame of the stack of a stop, from frame 0, the instruction: its
+// place as the window names it, a text view.
+@(log_fact = "inspect: {sampled_process}, the frame {frame} of the stack: {place}")
+Stack_Frame :: struct {
+	frame:           u64,
+	sampled_process: value_kinds.Module_Name_Field,
+	place:           value_kinds.Text_View,
+}
+
+// The kernel hid values of the stop report.
+@(log_fact = "inspect: {sampled_process}: values hidden by the kernel: {hidden_values}")
+Values_Hidden :: struct {
+	hidden_values:   u64,
+	sampled_process: value_kinds.Module_Name_Field,
+}
+
 // The tab key shows the bytes of the memory of inspect itself.
 @(log_fact = "inspect: the bytes of the memory of inspect")
 Own_Memory_Shown :: struct {}

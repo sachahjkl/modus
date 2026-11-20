@@ -416,7 +416,7 @@ line_enter :: proc "contextless" () {
 		system.lock(&history_lock)
 		line_editor.history_add(&history, text)
 		system.unlock(&history_lock)
-		system.log(.Info, PROMPT, text)
+		system.log_fact(.Info, Line_Entered{}, text)
 		work.count = copy(work.text[:], text)
 		work.since = system.time()
 		intrinsics.atomic_store(&work.cancel, 0)
@@ -526,7 +526,7 @@ edit_show :: proc "contextless" () {
 		if !running && pasted_characters > 0 {
 			pasted_characters = 0
 			paste_shown = true
-			system.log(.Info, "console: the line shows \"", line_editor.line_text(&line), "\" after a paste")
+			system.log_fact(.Info, Line_After_Paste{}, line_editor.line_text(&line))
 		} else if !running && paste_shown && len(line_editor.line_text(&line)) == 0 {
 			paste_shown = false
 			system.log_fact(.Info, Line_Empty_After_Paste{})

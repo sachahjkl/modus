@@ -177,10 +177,8 @@ window_field :: proc "contextless" (title: []u8) -> value_kinds.Module_Name_Fiel
 // The other lines of the compositor that have a value. A Text field that
 // is not a title holds words of a closed set, a palette entry name or a
 // name of the pointer theme: each has a bound, and its field holds the
-// longest one and a zero byte. A line that holds the text of a field of
-// the palette (up to line_editor.LINE_CAPACITY bytes), the measures of the
-// copies of bytes in tenths of a nanosecond, or the sentence of a problem
-// of a pointer theme stays text: see the design of the log facts.
+// longest one and a zero byte. The text of a field of the palette, with
+// no small bound, is a text view.
 
 // The bytes of the Text field of a palette entry name: palette.NAME_CAPACITY,
 // a zero byte, and the bytes that end the record on 8 bytes.
@@ -988,6 +986,99 @@ Key_Time_Measured :: struct {
 	median: value_kinds.Nanoseconds_As_Microseconds,
 	keys:   u64,
 }
+
+// A field of the form of the palette after a key: its text, of up to
+// line_editor.LINE_CAPACITY bytes, is a text view.
+@(log_fact = "compositor: the field {field} of {entry} shows \"{text}\"")
+Palette_Field_Shows :: struct {
+	field: u64,
+	entry: [72]u8,
+	text:  value_kinds.Text_View,
+}
+
+// The measures of the copies and the fills of bytes, one fact for each
+// form: the time of one call for each of the six sizes, in tenths of a
+// nanosecond.
+@(log_fact = "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned: {time_8} {time_64} {time_512} {time_4096} {time_65536} {time_3145600}")
+Copy_Aligned_Measured :: struct {
+	time_8:       value_kinds.Tenths,
+	time_64:      value_kinds.Tenths,
+	time_512:     value_kinds.Tenths,
+	time_4096:    value_kinds.Tenths,
+	time_65536:   value_kinds.Tenths,
+	time_3145600: value_kinds.Tenths,
+}
+
+@(log_fact = "compositor: copy_bytes_without_overlap, not aligned: {time_8} {time_64} {time_512} {time_4096} {time_65536} {time_3145600}")
+Copy_Unaligned_Measured :: struct {
+	time_8:       value_kinds.Tenths,
+	time_64:      value_kinds.Tenths,
+	time_512:     value_kinds.Tenths,
+	time_4096:    value_kinds.Tenths,
+	time_65536:   value_kinds.Tenths,
+	time_3145600: value_kinds.Tenths,
+}
+
+@(log_fact = "compositor: a loop of 16 bytes, aligned: {time_8} {time_64} {time_512} {time_4096} {time_65536} {time_3145600}")
+Loop_Aligned_Measured :: struct {
+	time_8:       value_kinds.Tenths,
+	time_64:      value_kinds.Tenths,
+	time_512:     value_kinds.Tenths,
+	time_4096:    value_kinds.Tenths,
+	time_65536:   value_kinds.Tenths,
+	time_3145600: value_kinds.Tenths,
+}
+
+@(log_fact = "compositor: a loop of 16 bytes, not aligned: {time_8} {time_64} {time_512} {time_4096} {time_65536} {time_3145600}")
+Loop_Unaligned_Measured :: struct {
+	time_8:       value_kinds.Tenths,
+	time_64:      value_kinds.Tenths,
+	time_512:     value_kinds.Tenths,
+	time_4096:    value_kinds.Tenths,
+	time_65536:   value_kinds.Tenths,
+	time_3145600: value_kinds.Tenths,
+}
+
+@(log_fact = "compositor: fill_bytes_with_value, aligned: {time_8} {time_64} {time_512} {time_4096} {time_65536} {time_3145600}")
+Fill_Aligned_Measured :: struct {
+	time_8:       value_kinds.Tenths,
+	time_64:      value_kinds.Tenths,
+	time_512:     value_kinds.Tenths,
+	time_4096:    value_kinds.Tenths,
+	time_65536:   value_kinds.Tenths,
+	time_3145600: value_kinds.Tenths,
+}
+
+@(log_fact = "compositor: fill_bytes_with_value, not aligned: {time_8} {time_64} {time_512} {time_4096} {time_65536} {time_3145600}")
+Fill_Unaligned_Measured :: struct {
+	time_8:       value_kinds.Tenths,
+	time_64:      value_kinds.Tenths,
+	time_512:     value_kinds.Tenths,
+	time_4096:    value_kinds.Tenths,
+	time_65536:   value_kinds.Tenths,
+	time_3145600: value_kinds.Tenths,
+}
+
+// A pointer theme file breaks a rule of its format: it is not used. The
+// part, the field and the rule are members of the contract enums of
+// pointer_pictures, which a reader writes by their names; the index names
+// the entry of a table or the pixel, and is 0 for a part with no entries.
+@(log_fact = "compositor: the pointer theme file {theme_file} is not valid, not used: part {theme_part}, index {place_index}, field {theme_field}, problem {problem_kind}, value {value}, limit {limit}")
+Pointer_Theme_Refused :: struct {
+	problem_kind: pointer_pictures.Problem_Kind_Word,
+	theme_part:   pointer_pictures.Part_Word,
+	theme_field:  pointer_pictures.Field_Word,
+	place_index:  u64,
+	value:        u64,
+	limit:        u64,
+	theme_file:   [16]u8,
+}
+
+// The bytes of the Text field of the name of a pointer theme file: the
+// longest of pointer_pictures.RESOURCE_PREFERENCE, "pointers_system", and
+// a zero byte.
+THEME_FILE_FIELD_BYTES :: 16
+#assert(len(pointer_pictures.RESOURCE_OF_THE_SYSTEM) < THEME_FILE_FIELD_BYTES && len(pointer_pictures.RESOURCE_OF_THE_OWNER) < THEME_FILE_FIELD_BYTES)
 
 // setting_value_field gives the Text field of the name of the value of one
 // setting of a choice.

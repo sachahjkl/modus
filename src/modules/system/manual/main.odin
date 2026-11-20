@@ -734,7 +734,7 @@ show :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 // count of exports of the module of a module page.
 page_log :: proc "contextless" () -> int {
 	if page_kind == .Link_Page {
-		system.log(.Info, "manual: the page ", manual_pages.target_of(link_pages, link_page_index), ": ", manual_pages.title_of(link_pages, link_page_index), ", ", u64(rows()), " rows")
+		system.log_fact(.Info, Link_Page_Shown{rows = u64(rows())}, manual_pages.target_of(link_pages, link_page_index), manual_pages.title_of(link_pages, link_page_index))
 		return 0
 	}
 	entries := system.image_entries(image)

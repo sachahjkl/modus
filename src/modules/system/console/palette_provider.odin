@@ -519,7 +519,7 @@ palette_line_run :: proc "contextless" (tag: u32, text: string) {
 	history_place = 0
 	typed_before := line
 	line_editor.line_set(&line, text)
-	system.log(.Info, "console: the palette runs ", text)
+	system.log_fact(.Info, Palette_Runs_Line{}, text)
 	palette_tag = tag
 	line_enter()
 	line = typed_before

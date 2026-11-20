@@ -3283,9 +3283,11 @@ scenario := [?]Step {
 	{kind = .Wait, text = "inspect: network: "},
 	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
 	{kind = .Type, text = "fault"},
-	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0; stack: fault::three + 0x"},
+	// The stop is a fact, then one fact for each frame of the stack.
+	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0"},
+	{kind = .Wait, text = "inspect: fault, the frame 0 of the stack: fault::three + 0x"},
 	{kind = .Wait, text = " in fault (" + FAULT_SOURCE_FILE + ":"},
-	{kind = .Wait, text = "), fault::two + 0x"},
+	{kind = .Wait, text = "inspect: fault, the frame 1 of the stack: fault::two + 0x"},
 	{kind = .Shot, text = "inspect_stopped"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "inspect: the bytes of the memory of inspect"},

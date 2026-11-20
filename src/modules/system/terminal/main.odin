@@ -1540,14 +1540,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				request.stopped, request.cause, request.outcome = true, cause, outcome
 				view_take()
 				if cause == .Itself {
-					system.log_fact(.Info, Stopped_Itself{lines = view.count - 1, records = view.records, cause = cause, outcome = outcome, shown_process = shown_process_field()})
+					system.log_fact(.Info, Stopped_Itself{lines = view.count - 1, records = view.records, cause = op.Stop_Cause_Word(cause), outcome = op.Stop_Outcome_Word(outcome), shown_process = shown_process_field()})
 				} else {
-					// A stop for another cause has no outcome: its fact
-					// needs an 8-byte word of the cause after the counts.
-					stop_buffer: [64]u8
-					stop_text := system.Writer{buffer = stop_buffer[:]}
-					system.stop_write(&stop_text, cause, outcome)
-					system.log(.Info, "terminal: ", process_name, " stopped: ", system.written(&stop_text), ", after ", view.count - 1, " lines and ", view.records, " records")
+					system.log_fact(.Info, Stopped_Without_Outcome{lines = view.count - 1, records = view.records, cause = op.Stop_Cause_Word(cause), shown_process = shown_process_field()})
 				}
 				if lost, ended := key_path.loss_end(&keys_loss); ended {
 					system.log_fact(.Info, Stopped_With_Lost_Keys{lost_keys = lost, shown_process = shown_process_field()})

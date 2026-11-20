@@ -10,7 +10,30 @@ import "modus:support/system"
 //
 // The target and the title of a link page have up to 256 bytes, and the
 // label of a link has no bound but its page: more than the values of one
-// record hold. The lines of a link and of a link page stay text.
+// record hold. They are text views, the last fields of their facts
+// (src/md/features/log_facts.md, "Text views").
+
+// The window shows a link page: its target, its title, and its rows.
+@(log_fact = "manual: the page {target}: {title}, {rows} rows")
+Link_Page_Shown :: struct {
+	rows:   u64,
+	target: value_kinds.Text_View,
+	title:  value_kinds.Text_View,
+}
+
+// A link of the page opens its target.
+@(log_fact = "manual: the link {label} opens {target}")
+Link_Opened :: struct {
+	label:  value_kinds.Text_View,
+	target: value_kinds.Text_View,
+}
+
+// The focus moved to a link of the page.
+@(log_fact = "manual: the focus is on the link {label} to {target}")
+Link_Focused :: struct {
+	label:  value_kinds.Text_View,
+	target: value_kinds.Text_View,
+}
 
 // The overview of the modules of the boot image.
 @(log_fact = "manual: overview: {modules} modules, {exports} exports, {imports} imports, {running_modules} modules that run in processes")

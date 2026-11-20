@@ -3,6 +3,7 @@ package console_results
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:support/sentence"
 
@@ -142,7 +143,7 @@ field_at_the_right :: proc "contextless" (item: module.Field) -> bool {
 	}
 	switch type {
 	case .Integer:
-		return kind == .Plain || kind == .Hexadecimal || kind == .Hexadecimal_Sixteen_Digits || kind == .Hundredths || kind == .Nanoseconds_As_Microseconds
+		return kind == .Plain || kind == .Hexadecimal || kind == .Hexadecimal_Sixteen_Digits || kind == .Hundredths || kind == .Nanoseconds_As_Microseconds || kind == .Tenths || kind == .Hexadecimal_No_Leading_Zero || kind == .Time_Of_Day
 	case .Handle:
 		return true
 	case .None, .Text, .Record, .Table, .Bytes:
@@ -215,7 +216,21 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 				last -= 1
 			}
 			return {text = hash_text(buffer, bytes[:last]), part = .Number}
-		case .Plain, .Hexadecimal, .Status, .Module_Name, .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds:
+		case .Text_View:
+			// A text of more than 12 bytes whose out-of-line bytes the row
+			// does not carry: its first bytes, then its length, and never
+			// a text that looks whole.
+			if len(bytes) != value_kinds.TEXT_VIEW_BYTES {
+				return {}
+			}
+			length := u64(bytes[0]) | u64(bytes[1]) << 8 | u64(bytes[2]) << 16 | u64(bytes[3]) << 24
+			// Bytes of the writer that nobody checked: the rule of the
+			// filter of the kernel, in a copy.
+			prefix: [value_kinds.TEXT_VIEW_PREFIX_BYTES]u8
+			copy(prefix[:], bytes[4:])
+			text_encoding.invalid_sequences_replace(prefix[:])
+			return {text = sentence.format(buffer, string(prefix[:]), "… (", length, " bytes)"), part = .Plain}
+		case .Plain, .Hexadecimal, .Status, .Module_Name, .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
 			// module.field_kind_valid refuses these kinds on Bytes.
 		case .Hash_Head:
 			// module.field_kind_text wrote it above.
@@ -228,16 +243,16 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 			return {text = hexadecimal_text(buffer, u64(value), module.field_size(item)), number = true, part = .Number}
 		case .Status:
 			which, which_ok := module.field_contract_enum(item)
-			if name, named := op.contract_enum_member_name(which, u64(value)); which_ok && named {
+			if name, named := module.contract_enum_member_name(which, u64(value)); which_ok && named {
 				return {text = name, part = .Status}
 			}
 			// A word that names no member: its number, never the name of
 			// another member.
 			return {text = sentence.format(buffer, u64(value)), part = .Number}
-		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head:
+		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View:
 			// module.field_kind_valid refuses each of them but Plain on an
 			// Integer.
-		case .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds:
+		case .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
 			// module.field_kind_text wrote them above.
 		}
 		part, unit := integer_part(item)

@@ -687,7 +687,7 @@ link_open :: proc "contextless" (number: int) {
 	// are bytes of a module file, of the resource or of built; the log
 	// line is written before the page changes.
 	link := page_links[number - 1]
-	system.log(.Info, "manual: the link ", link.label, " opens ", link.target)
+	system.log_fact(.Info, Link_Opened{}, link.label, link.target)
 	navigation_leave()
 	destination_show(link.destination)
 }
@@ -735,7 +735,7 @@ link_focus_move :: proc "contextless" (backward: bool) {
 	if link.first_row >= 0 && (link.first_row < first_line || link.first_row >= first_line + view_rows()) {
 		first_line = clamp(link.first_row - view_rows() / 3, 0, max(rows() - view_rows(), 0))
 	}
-	system.log(.Info, "manual: the focus is on the link ", link.label, " to ", link.target)
+	system.log_fact(.Info, Link_Focused{}, link.label, link.target)
 }
 
 // The link pages: the resource manual_pages of the boot image, validated

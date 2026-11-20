@@ -44,6 +44,7 @@
 package edit
 
 import "modus:contract/errors"
+import "modus:contract/storage_status"
 import "modus:contract/value_kinds"
 import "modus:private/edit/text_model"
 import "modus:support/display"
@@ -183,7 +184,7 @@ store_open :: proc "contextless" (ctx: ^system.Context) {
 
 // log_storage_failure writes one fact of a call of the storage service that
 // failed: its error record, or that the service gave no answer.
-log_storage_failure :: proc "contextless" (step: Storage_Step, call_status: storage.Status, error: ^errors.Error_Record) {
+log_storage_failure :: proc "contextless" (step: Storage_Step, call_status: storage_status.Status, error: ^errors.Error_Record) {
 	if call_status == .Failed {
 		fields := errors.error_record_fact_fields(error^)
 		switch step {

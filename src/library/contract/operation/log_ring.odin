@@ -99,14 +99,22 @@ LOG_FACT_LINE_KEY_BYTES :: 3
 LOG_FACT_LINE_ZERO_RUN_FIRST: u8 : 'g'
 // The longest run of zero bytes that one letter writes.
 LOG_FACT_LINE_ZERO_RUN_MOST :: int('z' - 'g') + 1
-// The most bytes of the line of a fact after its head (log_fact_line): "#",
-// the digits of the module tag, ":", the digits of the key tag, a space and
-// two digits for each value byte. A run of zero bytes takes fewer bytes
-// than their digits.
-LOG_FACT_LINE_BYTES_MOST :: 1 + 2 * LOG_FACT_LINE_MODULE_HASH_BYTES + 1 + 2 * LOG_FACT_LINE_KEY_BYTES + 1 + 2 * LOG_FACT_VALUE_CAPACITY
-// The most bytes that one record puts on the serial port: the head, its
-// text or the line of its fact, and the end of the line.
-LOG_SERIAL_LINE_BYTES_MOST :: LOG_LINE_HEAD_CAPACITY + max(LOG_TEXT_CAPACITY, LOG_FACT_LINE_BYTES_MOST) + 2
+// The mark after the key tag of the first record of a fact of several
+// records, before the digit of its count of records: "*2".
+LOG_FACT_LINE_PART_COUNT_MARK: u8 : '*'
+// The mark before the values of each record of a fact after its first.
+LOG_FACT_LINE_PART_MARK: u8 : '/'
+// The most bytes that one record of a fact puts on the line of its fact
+// (log_fact_line): "#", the digits of the module tag, ":", the digits of the
+// key tag, the mark and the digit of a count of records, a space or the
+// mark of a part, and two digits for each value byte. A run of zero bytes
+// takes fewer bytes than their digits.
+LOG_FACT_LINE_BYTES_MOST :: 1 + 2 * LOG_FACT_LINE_MODULE_HASH_BYTES + 1 + 2 * LOG_FACT_LINE_KEY_BYTES + 2 + 1 + 2 * LOG_FACT_VALUE_CAPACITY
+#assert(LOG_FACT_RECORDS_MOST <= 9) // One digit says the count of the records of a fact.
+// The most bytes that one record puts on the serial port: the end of a line
+// that a lost record left open, the head, its text or the line of its fact,
+// and the end of the line.
+LOG_SERIAL_LINE_BYTES_MOST :: 2 + LOG_LINE_HEAD_CAPACITY + max(LOG_TEXT_CAPACITY, LOG_FACT_LINE_BYTES_MOST) + 2
 
 // log_record_form reads the form of a record through the border: false for
 // a byte that names no form. A record comes from the memory of the log, and
@@ -140,9 +148,20 @@ log_fact_key_tag :: proc "contextless" (key: u64) -> u32 {
 // forge or hide a line (src/md/features/log_facts.md, "The serial port").
 // A count past the capacity takes the capacity.
 //
+// A fact of several records is one line (src/md/features/log_facts.md, "A
+// fact of several records"): its first record writes "*" and the digit of
+// its count of records after the key tag; each next record, which
+// continues the line (`continuation`), writes "/" and its values. A record
+// after the first that starts a line, because the drain lost the record
+// before it, writes its head and "/" with no count: the tool refuses that
+// line, and shows it raw. Each record cuts its own last zeros: each record
+// before the last of a fact holds LOG_FACT_VALUE_CAPACITY bytes.
+//
 // Example: the hash 1a2b3c4d..., the key 0xfa0adf38a559f4d1 and the
-// values 0c 00 00 23 00 give "#1a2b3c4d:fa0adf 0ch23".
-log_fact_line :: proc "contextless" (fact: ^Log_Fact, line: ^[LOG_FACT_LINE_BYTES_MOST]u8) -> int {
+// values 0c 00 00 23 00 give "#1a2b3c4d:fa0adf 0ch23"; a fact of two
+// records whose second record holds 0d gives "#1a2b3c4d:fa0adf*2 0ch23" then
+// "/0d" on the same line.
+log_fact_line :: proc "contextless" (fact: ^Log_Fact, line: ^[LOG_FACT_LINE_BYTES_MOST]u8, continuation := false) -> int {
 	count := 0
 	put_byte :: proc "contextless" (line: ^[LOG_FACT_LINE_BYTES_MOST]u8, count: ^int, value: u8) {
 		digit :: proc "contextless" (nibble: u8) -> u8 {
@@ -152,25 +171,37 @@ log_fact_line :: proc "contextless" (fact: ^Log_Fact, line: ^[LOG_FACT_LINE_BYTE
 		line[count^ + 1] = digit(value & 0xF)
 		count^ += 2
 	}
-	line[count] = '#'
-	count += 1
-	for value in fact.module_hash[:LOG_FACT_LINE_MODULE_HASH_BYTES] {
-		put_byte(line, &count, value)
-	}
-	line[count] = ':'
-	count += 1
-	for shift := 56; shift >= 64 - 8 * LOG_FACT_LINE_KEY_BYTES; shift -= 8 {
-		put_byte(line, &count, u8(fact.key >> uint(shift)))
+	if !continuation {
+		line[count] = '#'
+		count += 1
+		for value in fact.module_hash[:LOG_FACT_LINE_MODULE_HASH_BYTES] {
+			put_byte(line, &count, value)
+		}
+		line[count] = ':'
+		count += 1
+		for shift := 56; shift >= 64 - 8 * LOG_FACT_LINE_KEY_BYTES; shift -= 8 {
+			put_byte(line, &count, u8(fact.key >> uint(shift)))
+		}
+		if fact.part == 0 && fact.part_count >= 2 {
+			line[count] = LOG_FACT_LINE_PART_COUNT_MARK
+			line[count + 1] = '0' + min(fact.part_count, 9)
+			count += 2
+		}
 	}
 	used := min(int(fact.value_count), LOG_FACT_VALUE_CAPACITY)
 	for used > 0 && fact.values[used - 1] == 0 {
 		used -= 1
 	}
-	if used == 0 {
-		return count
+	if continuation || fact.part > 0 {
+		line[count] = LOG_FACT_LINE_PART_MARK
+		count += 1
+	} else {
+		if used == 0 {
+			return count
+		}
+		line[count] = ' '
+		count += 1
 	}
-	line[count] = ' '
-	count += 1
 	place := 0
 	for place < used {
 		if fact.values[place] != 0 {

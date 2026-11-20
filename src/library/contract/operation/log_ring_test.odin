@@ -250,12 +250,20 @@ the_line_of_a_fact :: proc(t: ^testing.T) {
 	for &value in fact.values {
 		value = 0xAB
 	}
+	// The longest line of one record is the first record of a fact of
+	// several records, full: it writes "*" and the digit of the count too.
+	// A fact of one record writes 2 bytes fewer.
 	for value_count in ([3]u16{LOG_FACT_VALUE_CAPACITY, LOG_FACT_VALUE_CAPACITY + 1, max(u16)}) {
 		fact.value_count = value_count
+		fact.part_count = 1
 		count = log_fact_line(&fact, &line)
-		testing.expectf(t, count == LOG_FACT_LINE_BYTES_MOST, "a count of %d gives a line of %d bytes", value_count, count)
+		testing.expectf(t, count == LOG_FACT_LINE_BYTES_MOST - 2, "a count of %d gives a line of %d bytes", value_count, count)
+		fact.part_count = LOG_FACT_RECORDS_MOST
+		count = log_fact_line(&fact, &line)
+		testing.expectf(t, count == LOG_FACT_LINE_BYTES_MOST, "a count of %d of a first record gives a line of %d bytes", value_count, count)
 	}
 	testing.expect_value(t, line[LOG_FACT_LINE_BYTES_MOST - 1], u8('b'))
+	fact.part_count = 0
 	zero := Log_Fact{value_count = LOG_FACT_VALUE_CAPACITY}
 	count = log_fact_line(&zero, &line)
 	testing.expect_value(t, string(line[:count]), "#00000000:000000")

@@ -148,18 +148,25 @@ module_tag_of :: proc(hash: [module.HASH_SIZE]u8) -> [FACT_LINE_MODULE_TAG_BYTES
 Fact_Line :: struct {
 	module_tag:  [FACT_LINE_MODULE_TAG_BYTES]u8, // The first bytes of the module hash (docs/glossary/running_code.md, "Module tag").
 	key_tag:     u32, // The high bytes of the fact key (op.log_fact_key_tag): one fact type of a module has it.
-	values:      [op.LOG_FACT_VALUE_CAPACITY]u8,
+	values:      [op.LOG_FACT_VALUES_MOST]u8, // Each value byte of the fact, the records of a fact of several records joined.
 	value_count: int, // The value bytes that the line holds: the bytes after them are zero.
+	part_count:  int, // The records of the fact: 1, or the count after "*".
 }
 
 // fact_line_parse reads the line of a fact after its head, as
 // op.log_fact_line writes it: "#", the digits of the module tag, ":", the
 // digits of the key tag, then a space and the value bytes, each two digits
-// or a letter of a run of zero bytes. A digit is lower case. ok is false
-// for any other text: it is not a fact. It also refuses each text that
-// op.log_fact_line never writes, so one line is one fact: a zero byte as
-// two digits, a run that ends the values, a letter after a letter that is
-// not the longest run, and a space with no value after it.
+// or a letter of a run of zero bytes. A digit is lower case. A fact of
+// several records has "*" and the digit of its count after the key tag,
+// and "/" before the values of each record after the first; each record
+// before the last holds op.LOG_FACT_VALUE_CAPACITY bytes, with its last
+// zeros cut. ok is false for any other text: it is not a fact. It also
+// refuses each text that op.log_fact_line never writes, so one line is one
+// fact: a zero byte as two digits, a run that ends the values of a record,
+// a letter after a letter that is not the longest run, a space with no
+// value after it, a count of 0, 1 or past op.LOG_FACT_RECORDS_MOST, another
+// count of "/" than the count of records less one, and a "/" with no count:
+// a record whose first record the line lost, which a reader shows raw.
 fact_line_parse :: proc(text: string) -> (line: Fact_Line, ok: bool) {
 	digit :: proc(character: u8) -> (value: u8, ok: bool) {
 		switch character {
@@ -192,45 +199,116 @@ fact_line_parse :: proc(text: string) -> (line: Fact_Line, ok: bool) {
 		line.key_tag = line.key_tag << 8 | u32(key_byte)
 	}
 	rest := text[HEAD:]
-	if len(rest) == 0 {
-		return line, true
+	line.part_count = 1
+	if len(rest) > 0 && rest[0] == op.LOG_FACT_LINE_PART_COUNT_MARK {
+		if len(rest) < 2 || rest[1] < '2' || rest[1] > '0' + u8(op.LOG_FACT_RECORDS_MOST) {
+			return {}, false
+		}
+		line.part_count = int(rest[1] - '0')
+		rest = rest[2:]
 	}
-	if rest[0] != ' ' || len(rest) == 1 {
+	// The values of each record: the first after a space, or nothing; each
+	// next one after "/".
+	part := 0
+	if len(rest) > 0 && rest[0] == ' ' {
+		if len(rest) == 1 {
+			return {}, false
+		}
+		end := strings.index_byte(rest, op.LOG_FACT_LINE_PART_MARK)
+		if end < 0 {
+			end = len(rest)
+		}
+		if end == 1 {
+			// A space with no value after it.
+			return {}, false
+		}
+		count := fact_line_values_parse(rest[1:end], line.values[:op.LOG_FACT_VALUE_CAPACITY]) or_return
+		line.value_count = count
+		rest = rest[end:]
+	}
+	for len(rest) > 0 {
+		if rest[0] != op.LOG_FACT_LINE_PART_MARK {
+			return {}, false
+		}
+		part += 1
+		if part >= line.part_count {
+			// A "/" with no count, or more records than the count.
+			return {}, false
+		}
+		end := strings.index_byte(rest[1:], op.LOG_FACT_LINE_PART_MARK)
+		end = end < 0 ? len(rest) : end + 1
+		start := part * op.LOG_FACT_VALUE_CAPACITY
+		// The last record of a fact of the most records holds the rest of
+		// the bound of the values, less than one record: a record of more
+		// is refused, never read past the values.
+		count := fact_line_values_parse(rest[1:end], line.values[start:][:min(op.LOG_FACT_VALUE_CAPACITY, len(line.values) - start)]) or_return
+		// The records before hold their whole bytes, their last zeros cut.
+		line.value_count = count == 0 ? max(line.value_count, start) : start + count
+		rest = rest[end:]
+	}
+	if part != line.part_count - 1 {
 		return {}, false
 	}
-	encoded := rest[1:]
+	// A fact of several records holds more than one record: each record
+	// before the last is whole.
+	if line.part_count > 1 {
+		line.value_count = max(line.value_count, (line.part_count - 1) * op.LOG_FACT_VALUE_CAPACITY)
+	}
+	return line, true
+}
+
+// fact_line_values_parse reads the value bytes of one record of the line of
+// a fact into values, which are zero: two digits for each byte that is not
+// zero, a letter for each run of zero bytes. It gives the count of the bytes
+// up to the last one that is not zero, and refuses each text that
+// op.log_fact_line never writes.
+@(private = "file")
+fact_line_values_parse :: proc(encoded: string, values: []u8) -> (count: int, ok: bool) {
+	digit :: proc(character: u8) -> (value: u8, ok: bool) {
+		switch character {
+		case '0' ..= '9':
+			return character - '0', true
+		case 'a' ..= 'f':
+			return character - 'a' + 10, true
+		}
+		return 0, false
+	}
 	RUN_LAST :: op.LOG_FACT_LINE_ZERO_RUN_FIRST + u8(op.LOG_FACT_LINE_ZERO_RUN_MOST - 1)
-	place, count := 0, 0
+	place := 0
 	last_run := 0 // The zero bytes of the letter just before, or 0 after two digits.
 	for place < len(encoded) {
 		character := encoded[place]
 		if character >= op.LOG_FACT_LINE_ZERO_RUN_FIRST && character <= RUN_LAST {
 			if last_run != 0 && last_run != op.LOG_FACT_LINE_ZERO_RUN_MOST {
-				return {}, false
+				return 0, false
 			}
 			last_run = int(character - op.LOG_FACT_LINE_ZERO_RUN_FIRST) + 1
-			if count + last_run > op.LOG_FACT_VALUE_CAPACITY {
-				return {}, false
+			if count + last_run > len(values) {
+				return 0, false
 			}
-			// The values of the line are zero already.
+			// The values are zero already.
 			count += last_run
 			place += 1
 			continue
 		}
-		value := byte_at(encoded, place) or_return
-		if value == 0 || count >= op.LOG_FACT_VALUE_CAPACITY {
-			return {}, false
+		if place + 1 >= len(encoded) {
+			return 0, false
 		}
-		line.values[count] = value
+		high := digit(encoded[place]) or_return
+		low := digit(encoded[place + 1]) or_return
+		value := high << 4 | low
+		if value == 0 || count >= len(values) {
+			return 0, false
+		}
+		values[count] = value
 		count += 1
 		place += 2
 		last_run = 0
 	}
 	if last_run != 0 {
-		return {}, false
+		return 0, false
 	}
-	line.value_count = count
-	return line, true
+	return count, true
 }
 
 // fact_key_of_tag gives the fact key of a module file whose key tag is
@@ -267,10 +345,14 @@ fact_line_render :: proc(catalog: ^Fact_Catalog, text: string) -> (sentence: str
 	}
 	key := fact_key_of_tag(file, line.key_tag) or_return
 	_, _, description := module.fact_find(file, key) or_return
-	if line.value_count > int(description.size) {
+	most := fact_values_most(file, description)
+	if line.value_count > most {
 		return "", false
 	}
-	return fact_values_render(file, key, line.values[:description.size])
+	// The record, and the whole out-of-line area of a record with text
+	// views: the bytes after the last one that is not zero are zero, and
+	// the last bytes of a text of the area can be zeros that the line cut.
+	return fact_values_render(file, key, line.values[:most])
 }
 
 // fact_values_render gives the sentence of a fact of a module file from the

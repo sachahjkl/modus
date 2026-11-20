@@ -1541,21 +1541,28 @@ memory_measure :: proc "contextless" () {
 			tenths[form][index] = (system.nanoseconds() - start) * 10 / u64(rounds)
 		}
 	}
-	names := [Form]string {
-		.Copy           = "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned:",
-		.Copy_Unaligned = "compositor: copy_bytes_without_overlap, not aligned:",
-		.Loop           = "compositor: a loop of 16 bytes, aligned:",
-		.Loop_Unaligned = "compositor: a loop of 16 bytes, not aligned:",
-		.Fill           = "compositor: fill_bytes_with_value, aligned:",
-		.Fill_Unaligned = "compositor: fill_bytes_with_value, not aligned:",
-	}
+	// One fact for each form: the times of the six sizes, in the order of
+	// SIZES, which the template of each form names.
+	#assert(len(SIZES) == 6, "the templates of the copy measures name the six sizes")
 	for form in Form {
-		line: [256]u8
-		count := copy(line[:], names[form])
-		for value in tenths[form] {
-			count += len(system.format(line[count:], " ", value / 10, ".", value % 10))
+		times: [len(SIZES)]value_kinds.Tenths
+		for value, index in tenths[form] {
+			times[index] = value_kinds.Tenths(value)
 		}
-		system.log(.Info, string(line[:count]))
+		switch form {
+		case .Copy:
+			system.log_fact(.Info, Copy_Aligned_Measured{time_8 = times[0], time_64 = times[1], time_512 = times[2], time_4096 = times[3], time_65536 = times[4], time_3145600 = times[5]})
+		case .Copy_Unaligned:
+			system.log_fact(.Info, Copy_Unaligned_Measured{time_8 = times[0], time_64 = times[1], time_512 = times[2], time_4096 = times[3], time_65536 = times[4], time_3145600 = times[5]})
+		case .Loop:
+			system.log_fact(.Info, Loop_Aligned_Measured{time_8 = times[0], time_64 = times[1], time_512 = times[2], time_4096 = times[3], time_65536 = times[4], time_3145600 = times[5]})
+		case .Loop_Unaligned:
+			system.log_fact(.Info, Loop_Unaligned_Measured{time_8 = times[0], time_64 = times[1], time_512 = times[2], time_4096 = times[3], time_65536 = times[4], time_3145600 = times[5]})
+		case .Fill:
+			system.log_fact(.Info, Fill_Aligned_Measured{time_8 = times[0], time_64 = times[1], time_512 = times[2], time_4096 = times[3], time_65536 = times[4], time_3145600 = times[5]})
+		case .Fill_Unaligned:
+			system.log_fact(.Info, Fill_Unaligned_Measured{time_8 = times[0], time_64 = times[1], time_512 = times[2], time_4096 = times[3], time_65536 = times[4], time_3145600 = times[5]})
+		}
 	}
 	_, ebx, _, edx := intrinsics.x86_cpuid(7, 0)
 	system.log_fact(.Info, Processor_Copy_Features{erms = value_kinds.text_field(ebx >> 9 & 1 != 0 ? "yes" : "no", YES_NO_FIELD_BYTES), fsrm = value_kinds.text_field(edx >> 4 & 1 != 0 ? "yes" : "no", YES_NO_FIELD_BYTES)})

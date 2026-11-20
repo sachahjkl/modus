@@ -204,7 +204,6 @@ sample_take :: proc "contextless" () {
 // sample_log writes the counts of the chosen process on the log, one time
 // for each choice: the test compares them with the reports of monitor.
 sample_log :: proc "contextless" () {
-	name := system.name_of(current.process.name[:])
 	present: u64
 	pages: u64
 	for &mapping in current.mappings.mappings[:current.mappings.count] {
@@ -214,10 +213,7 @@ sample_log :: proc "contextless" () {
 	system.log_fact(.Info, Process_Counts{mappings = current.mappings.count, mapped_pages = pages, present_pages = present, threads = current.threads.count, modules = current.modules.count, kernel_mapped_pages = current.process.mapped_pages, kernel_threads = current.process.thread_count, sampled_process = process_field(current.process.name[:])})
 	system.log_fact(.Info, Sample_Cost{elapsed = value_kinds.Time_In_Microseconds(current.nanoseconds / 1000), kernel_entries = current.entries, sampled_process = process_field(current.process.name[:])})
 	if current.stop.cause != 0 {
-		buffer: [512]u8
-		writer := system.Writer{buffer = buffer[:]}
-		stop_write(&writer, &current.stop)
-		system.log(.Info, "inspect: ", name, " stopped: ", system.written(&writer))
+		stop_log(&current.stop)
 	}
 }
 
@@ -310,24 +306,32 @@ frame_name :: proc "contextless" (number: int) -> string {
 	return string(frame_names.texts[number][:frame_names.counts[number]])
 }
 
-// stop_write writes a stop report: the vector, the address, and each frame.
-stop_write :: proc "contextless" (writer: ^system.Writer, stop: ^op.Stop_Report) {
-	system.write_part(writer, stop.vector == 14 ? "page fault at " : "fault ")
-	system.write_number(writer, stop.address)
-	system.write_part(writer, "; stack: ")
+// stop_log writes a stop report on the log: the fault and its address,
+// then one fact for each frame of the stack, then the values that the
+// kernel hid. A frame is its place as the window names it: the name of its
+// procedure and its line from the debug image, or a module and an offset,
+// or "not code".
+stop_log :: proc "contextless" (stop: ^op.Stop_Report) {
+	sampled_process := process_field(current.process.name[:])
+	if stop.vector == 14 {
+		system.log_fact(.Info, Stopped_On_Page_Fault{address = value_kinds.Hexadecimal_No_Leading_Zero(stop.address), sampled_process = sampled_process})
+	} else {
+		system.log_fact(.Info, Stopped_On_Fault{address = value_kinds.Hexadecimal_No_Leading_Zero(stop.address), sampled_process = sampled_process})
+	}
 	for &frame, number in stop.frames[:min(stop.frame_count, op.STOP_FRAME_CAPACITY)] {
-		system.write_part(writer, number == 0 ? "" : ", ")
+		buffer: [256]u8
+		writer := system.Writer{buffer = buffer[:]}
 		if frame.address == 0 {
-			system.write_part(writer, "not code")
+			system.write_part(&writer, "not code")
 		} else if name := frame_name(number); name != "" {
-			system.write_part(writer, name)
+			system.write_part(&writer, name)
 		} else {
-			address_write(writer, frame.address, true)
+			address_write(&writer, frame.address, true)
 		}
+		system.log_fact(.Info, Stack_Frame{frame = u64(number), sampled_process = sampled_process}, system.written(&writer))
 	}
 	if stop.hidden_value_count != 0 {
-		system.write_part(writer, "; values hidden by the kernel: ")
-		system.write_part(writer, stop.hidden_value_count)
+		system.log_fact(.Info, Values_Hidden{hidden_values = u64(stop.hidden_value_count), sampled_process = sampled_process})
 	}
 }
 

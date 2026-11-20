@@ -494,9 +494,9 @@ Do not use: field format, display hint, field style.
 
 ### Contract enum
 
-A contract enum is an enumeration of the contract whose members a field of the kind Status holds, named in the closed list `value_kinds.Contract_Enum`: `Status`, `Log_Level`, `Log_Record_Form`, `Stop_Cause`, `Stop_Outcome`, and the `Kind` and `Unit` of an error record.
+A contract enum is an enumeration of the contract whose members a field of the kind Status holds, named in the closed list `value_kinds.Contract_Enum`, as `operation.Status`, `errors.Kind` or `module.Load_Stage`.
 
-Each reader compiles the contract in, so it writes the name of a member (`operation.contract_enum_member_name`), and the number of a word that names no member. A condition names a member (`level = Warning`). The sentence of a log fact writes the words of a member (`contract_enum_member_words`): the name, or for a stop the words of a reader, `itself`, `done`. An enumeration of a module is no contract enum: the module file holds no names of its members, so its field stays a plain Integer.
+Each reader compiles the contract in, so it writes the name of a member (`module.contract_enum_member_name`), and the number of a word that names no member. A condition names a member (`level = Warning`). The sentence of a log fact writes the words of a member (`contract_enum_member_words`): the name, or for a stop the words of a reader, `itself`, `done`. An enumeration of a module is no contract enum: the module file holds no names of its members, so its field stays a plain Integer.
 
 The design: `src/md/features/console_value_colors.md`.
 
@@ -509,6 +509,14 @@ A word type is a distinct integer of a contract package that holds a word of one
 A field of a word type is a Status field of that enum: a reader writes the name of the member, or the number of a word that names none. A writer copies a word of another party into it with no cast to the enum, and a word type of 8 bytes leaves no padding beside fields of 8 bytes. `value_kinds.CONTRACT_ENUM_TYPES` names it. Examples: `operation.Status_Word`, `errors.Kind_Word`, `errors.Unit_Word`. The design: `src/md/features/log_facts.md`, "Field kinds".
 
 Do not use: raw enum, enum word field.
+
+### Text view
+
+A text view is a field of 16 bytes of a log fact that holds a text of any length up to a bound: its length, its first 4 bytes, and the rest of a short text or the offset of a long one.
+
+A text of at most 12 bytes is whole in its view; a longer one is in the out-of-line area of its fact, after the fixed record, which the records after the first carry. A writer gives a string, and the write copies its bytes: no address crosses the log. A condition compares the length and the prefix before any out-of-line byte. It is the German string of Umbra and CedarDB. Example: `path: value_kinds.Text_View`. The design: `src/md/features/log_facts.md`, "Text views".
+
+Do not use: tail text, string field, long text field.
 
 ### Cut mark
 

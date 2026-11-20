@@ -12,9 +12,9 @@ import "modus:contract/value_kinds"
 // last and holds its longest text and a zero byte: the serial line of a
 // fact stops at its last byte that is not zero.
 //
-// A line that holds a line of the console, a query of the completion or a
-// sentence of an error has no bound below the values of one record: it
-// stays text.
+// A line of the console and a query of the completion have no bound below
+// the values of one record: they are text views, the last fields of their
+// facts. An error record is written by its fields.
 
 // The bytes of the Text field of a search of the history: SEARCH_CAPACITY,
 // a zero byte, and the bytes that end the record on 8 bytes.
@@ -124,6 +124,53 @@ Provider_Ended :: struct {}
 @(log_fact = "console: the palette choice is refused: {refusal}")
 Palette_Choice_Refused :: struct {
 	refusal: [88]u8,
+}
+
+// The lines of the console are text views: a line has up to
+// line_editor.LINE_CAPACITY bytes (src/md/features/log_facts.md, "Text
+// views").
+
+// The input entered a line: the prompt, then the line.
+@(log_fact = "> {line}")
+Line_Entered :: struct {
+	line: value_kinds.Text_View,
+}
+
+// The completion gave the line of the edit line.
+@(log_fact = "console: the completion gave the line {line}")
+Completion_Gave_Line :: struct {
+	line: value_kinds.Text_View,
+}
+
+// The search of the history gave the line of the edit line.
+@(log_fact = "console: the history search gave the line {line}")
+History_Search_Gave_Line :: struct {
+	line: value_kinds.Text_View,
+}
+
+// The edit line after a paste.
+@(log_fact = "console: the line shows \"{line}\" after a paste")
+Line_After_Paste :: struct {
+	line: value_kinds.Text_View,
+}
+
+// The palette runs a line that the console built for it.
+@(log_fact = "console: the palette runs {line}")
+Palette_Runs_Line :: struct {
+	line: value_kinds.Text_View,
+}
+
+// The completion list opens by Tab: its counts, the query and the first
+// name, the longest ranking, and the runs of code of its first row.
+@(log_fact = "console: the completion list opens by Tab: {matched_names} names of {names} match \"{query}\", the first is {first_name}; one ranking takes {longest_ranking} at most, over {rankings} keys; its first row has {code_runs} runs of code")
+Completion_List_Opened :: struct {
+	matched_names:   u64,
+	names:           u64,
+	longest_ranking: value_kinds.Time_In_Microseconds,
+	rankings:        u64,
+	code_runs:       u64,
+	query:           value_kinds.Text_View,
+	first_name:      value_kinds.Text_View,
 }
 
 // The palette opened a command in the edit line, with the caret between
