@@ -1,11 +1,14 @@
-// The asker of the measures 1, 2 and 4 of the record outputs
+// The asker of the measures 1, 2, 4 and 9 of the record outputs
 // (src/md/features/module_outputs.md, "The measures that decide it"). For
 // each count of readers of READER_COUNTS, it starts that many
 // `output_measure_reader`, then starts `output_measure_writer` with a
 // wiring list of one row for each reader, and waits until each one stopped
 // with the outcome Done: each reader read each record in order. The writer
 // prints the time of a write with that count of readers; the run of one
-// reader also prints the time of a log fact and the wake.
+// reader also prints the time of a log fact, of a line and the wake. A last
+// run has one reader and wires the record output `log` of the writer to
+// this process, which reads each of its log records: the writer prints the
+// same log calls with the wiring (measure 9).
 //
 // The largest count is 8, the wirings of one asker at most
 // (output.WIRINGS_OF_AN_ASKER_MOST): the measure of 16 readers needs a
@@ -176,6 +179,75 @@ measure_run :: proc "contextless" (count: int) {
 	wirings_ended_wait()
 }
 
+// The ring of the log of the writer in the run of measure 9: room for the
+// log records of the run, so the writer is held only if this process falls
+// behind; the times print the cost either way.
+LOG_RING_CAPACITY :: 1024
+#assert(LOG_RING_CAPACITY <= output.WIRING_CAPACITY_MOST)
+
+// measure_log_run runs the writer with one reader and its record output log
+// wired to this process (measure 9). This process reads each log record of
+// the writer until the end word, while the writer runs: the pace of log
+// holds the writer, so a reader that waits for the stop first would hold
+// it forever.
+@(private = "file")
+measure_log_run :: proc "contextless" () {
+	status, answer := start_listed("output_measure_reader", false)
+	if status != .Ok || answer[0] == 0 {
+		wrong_refused("the start of a reader gave the status", status, answer)
+	}
+	processes: [2]system.Handle
+	processes[0] = system.Handle(answer[0])
+	lent, lend_status := system.give(requests_memory, processes[0], {.Read})
+	if lend_status != .Ok {
+		wrong("the gift of the handle of a reader to the root service gave the status", u64(lend_status))
+	}
+	rows := [2]output.Wiring {
+		{writer_end = u32(output.Wiring_End.Child), writer_stream = u32(output.Writer_Stream.Record_Output), writer_index = WRITER_SAMPLES, reader_end = u32(output.Wiring_End.Started), reader_handle = 1, reader_index = READER_SAMPLES},
+		{writer_end = u32(output.Wiring_End.Child), writer_stream = u32(output.Writer_Stream.Log), reader_end = u32(output.Wiring_End.Asker), pace = u32(output.Wiring_Pace.Always_Holds_Writer), capacity = LOG_RING_CAPACITY},
+	}
+	handles := [1]u32{u32(lent)}
+	for &value in list_page {
+		value = 0
+	}
+	if !output.wiring_list_write(list_page, rows[:], handles[:]) {
+		wrong("the list does not fit the list page; rows:", u64(len(rows)))
+	}
+	status, answer = start_listed("output_measure_writer", true)
+	if status != .Ok || answer[0] == 0 || answer[1] == 0 {
+		wrong_refused("the start of the writer with its log wired gave the status", status, answer)
+	}
+	processes[1] = system.Handle(answer[0])
+	number := u32(answer[1])
+	record: output.Log_Output_Record
+	item, read_status := system.asker_read(number, &record, hang_deadline())
+	if read_status != .Ok || item.kind != .Joined || item.serial != 0 {
+		wrong("the first compartment of the log of the writer is not the joined record of 0; the status word", u64(read_status))
+	}
+	records := u32(0)
+	for {
+		item, read_status = system.asker_read(number, &record, hang_deadline())
+		if read_status == .Ended {
+			break
+		}
+		if read_status != .Ok || item.kind != .Record || item.serial != records {
+			system.log(.Error, "output_measure: WRONG: the log of the writer: the record ", u64(records), " came as the status word ", u64(read_status), ", the kind word ", u64(item.kind), " and the serial ", u64(item.serial))
+			system.stop(.Failed)
+		}
+		records += 1
+	}
+	if item.end_word != .Writer_Stopped || item.stop_outcome != .Done {
+		system.log(.Error, "output_measure: WRONG: the log of the writer ended with the end word ", u64(item.end_word), " and the stop outcome ", u64(item.stop_outcome), " after ", u64(records), " records")
+		system.stop(.Failed)
+	}
+	system.log(.Info, "output_measure: the log of the writer, wired: ", u64(records), " records in order, then its stop")
+	done_wait(processes[:])
+	for process in processes {
+		system.close(process)
+	}
+	wirings_ended_wait()
+}
+
 // wirings_ended_wait waits until the root service ended each wiring of the
 // run: it reaps a stopped process in its own loop, after the kernel says
 // that it stopped, and the next run asks for up to the limit of this
@@ -211,6 +283,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for count in counts {
 		measure_run(count)
 	}
-	system.log(.Info, "output_measure: the writer with 1, 2, 4 and 8 readers, each record read in order by each reader: as it must")
+	measure_log_run()
+	system.log(.Info, "output_measure: the writer with 1, 2, 4 and 8 readers, each record read in order by each reader, and with its log wired, each log record read in order: as it must")
 	system.stop(.Done)
 }

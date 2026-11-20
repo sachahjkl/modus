@@ -518,6 +518,14 @@ A text of at most 12 bytes is whole in its view; a longer one is in the out-of-l
 
 Do not use: tail text, string field, long text field.
 
+### Log body
+
+A log body is a field of 192 bytes of the field kind `Log_Body`: the bytes of a log record from its value runs to its end, which the form of the same record says how to read.
+
+A text record holds its value runs and its text there; a fact record holds its module hash, its fact key, its part and its values. A record description has no union, so one field holds both forms, and a reader takes it through the border of the form (`output.log_output_text`, `output.log_output_fact`). A reader with no border writes its bytes as hexadecimal digits. Example: the field `body` of `output.Log_Output_Record`. The design: `src/md/features/log_facts.md`, "The record output `log`".
+
+Do not use: payload, log data, union field.
+
 ### Cut mark
 
 A cut mark is the end of a text that a place of a fixed size does not hold: the start of the text, cut after a whole character, then "... and N bytes more" (`modus:contract/cut_mark`).
@@ -1042,9 +1050,9 @@ Do not use: init, PID 1, system manager.
 
 ### Context
 
-The context is the one typed record that a process receives when it starts: 18 handles and 24 values of 64 bits (`op.Context`).
+The context is the one typed record that a process receives when it starts: 20 handles and 24 values of 64 bits (`op.Context`).
 
-The context replaces `argv`, the environment and inherited files. The index of each handle is its role, which the starter fixes; the system fixes the roles of the log handle, the budget, the wiring ring and of some values (the seed of the process, the mapped ranges). It holds no text. A process with an all-zero context can compute and stop, and reach nothing. Example: a call host receives its call ring at role 0.
+The context replaces `argv`, the environment and inherited files. The index of each handle is its role, which the starter fixes; the system fixes the roles of the handles from 14 and of some values (the seed of the process, the mapped ranges). It holds no text. A process with an all-zero context can compute and stop, and reach nothing. Example: a call host receives its call ring at role 0.
 
 The design: `docs/MODULE_CONTRACT.md`, "6. The context", and `docs/PROPERTIES.md`, "19. A command is a function: no text between processes".
 

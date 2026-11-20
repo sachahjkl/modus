@@ -330,6 +330,7 @@ Field_Kind :: enum u8 {
 	Hexadecimal_No_Leading_Zero = 11, // An unsigned Integer of 8 bytes with no unit, written as "0x" and its hexadecimal digits with no zero before the first, as an address: "0x1a2b", "0x0". The value kind is Number.
 	Time_Of_Day                 = 12, // An unsigned Integer with no unit that counts the seconds of a day, written as its hours and its minutes, each of two digits at least: 25_440 is "07:04". The value kind is Time.
 	Text_View                   = 13, // A field of the type Bytes of TEXT_VIEW_BYTES: a text of any length up to the out-of-line area of its fact, as a German string: its length, its first bytes, and the rest of the text or its offset in the out-of-line area (Text_View). The value kind is None: a text.
+	Log_Body                    = 14, // A field of the type Bytes of LOG_BODY_FIELD_BYTES: the bytes of a log record after its head, the value runs and the text of a text record or one part of a log fact, as the form field of the same record says. A reader takes it through the border of the form; a reader with no border writes two hexadecimal digits for each byte up to the last byte that is not zero. The value kind is Number.
 }
 
 // The bytes of a text view: a length of 4 bytes, a prefix of 4 bytes, and
@@ -468,6 +469,8 @@ field_kind_value_kind :: proc "contextless" (kind: Field_Kind) -> Value_Kind {
 		return .Time
 	case .Text_View:
 		return .None
+	case .Log_Body:
+		return .Number
 	}
 	return .None
 }
@@ -610,6 +613,15 @@ FACT_VALUES_FIELD_BYTES :: 144
 // (src/md/features/log_facts.md, "The reader path").
 Fact_Values_Field :: distinct [FACT_VALUES_FIELD_BYTES]u8
 
+// The bytes of the body of a log record, after its head of 64 bytes: its
+// value runs and its text, or one part of a log fact
+// (operation.Log_Record, from runs; the contract output.Log_Output_Record).
+// operation checks the number, because this package imports no other.
+LOG_BODY_FIELD_BYTES :: 192
+// A field of the type Bytes that holds the body of a log record, whose
+// form field in the same record says what it holds.
+Log_Body_Field :: distinct [LOG_BODY_FIELD_BYTES]u8
+
 // An Integer field of 8 bytes, written as 16 hexadecimal digits with no
 // "0x": an address, or a response code of a device.
 Hexadecimal_Sixteen_Digits :: distinct u64
@@ -668,6 +680,7 @@ FIELD_KIND_TYPES := [?]Field_Kind_Type {
 	{"Hexadecimal_No_Leading_Zero", .Hexadecimal_No_Leading_Zero, 8, true},
 	{"Time_Of_Day", .Time_Of_Day, 8, true},
 	{"Text_View", .Text_View, TEXT_VIEW_BYTES, false},
+	{"Log_Body_Field", .Log_Body, LOG_BODY_FIELD_BYTES, false},
 }
 
 // field_kind_of_type_name gives the row of FIELD_KIND_TYPES of the name of

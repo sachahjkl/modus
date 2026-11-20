@@ -47,10 +47,10 @@ measure_processes := [?]Measure_Process {
 	// main test launches that window before it, and so does this run.
 	{name = "log_reader", lines = {"log_reader: measure: the write of one line, ", "log_reader: measure: the render of a log fact "}, done = "log_reader: ok", start_line = "start(\"log_reader\")", service = "log", ready = "[log] log: ok, "},
 	// The measures of the record outputs: a write against a log fact, the
-	// wake, and the fan-out to 1, 2, 4 and 8 readers
-	// (src/md/features/module_outputs.md, "The measures that decide it").
-	// The writer and the reader print them.
-	{name = "output_measure", lines = {"output_measure_writer: one log fact of the same record: ", "output_measure_reader: the wake: "}, done = "output_measure: the writer with 1, 2, 4 and 8 readers, each record read in order by each reader: as it must", start_line = "start(\"output_measure\")", helpers = {"output_measure_writer", "output_measure_reader"}},
+	// wake, the fan-out to 1, 2, 4 and 8 readers, and the log calls with and
+	// without a wiring of log (src/md/features/module_outputs.md, "The
+	// measures that decide it"). The writer and the reader print them.
+	{name = "output_measure", lines = {"output_measure_writer: one log fact of the same record: ", "output_measure_reader: the wake: "}, done = "output_measure: the writer with 1, 2, 4 and 8 readers, each record read in order by each reader, and with its log wired, each log record read in order: as it must", start_line = "start(\"output_measure\")", helpers = {"output_measure_writer", "output_measure_reader"}},
 }
 
 // measure_process_output gives the log of the measure run of a process.

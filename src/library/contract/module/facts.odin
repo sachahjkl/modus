@@ -476,7 +476,7 @@ field_kind_value_write :: proc "contextless" (sentence: []u8, written: ^int, rec
 		sentence_byte(sentence, written, '0' + u8(value / 100 % 10))
 		sentence_text(sentence, written, value_kinds.DURATION_UNIT_TEXTS[.Microseconds])
 		return .Time, true
-	case .Plain, .Hexadecimal, .Status, .Module_Name, .Hash, .Fact_Values:
+	case .Plain, .Hexadecimal, .Status, .Module_Name, .Hash, .Fact_Values, .Log_Body:
 		// Each of them takes its form from its type too: fact_value_write
 		// and each reader write them.
 	}
@@ -556,7 +556,7 @@ fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: [
 			// another member.
 			sentence_unsigned(sentence, written, u64(value))
 			return .Number
-		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View:
+		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View, .Log_Body:
 			// field_kind_valid refuses each of them but Plain on an Integer.
 		case .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
 			// field_kind_value_write wrote them above.
@@ -598,7 +598,7 @@ fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: [
 	case .Bytes:
 		bytes := field_bytes(values, item)
 		last := len(bytes)
-		if kind == .Fact_Values {
+		if kind == .Fact_Values || kind == .Log_Body {
 			// As the raw form: the zeros after the last byte that is not
 			// zero say nothing.
 			for last > 0 && bytes[last - 1] == 0 {

@@ -269,15 +269,25 @@ log_fact_text_views_write :: proc "contextless" (values: []u8, record_size: int,
 // that no note has said yet: one count for all the threads of the process.
 log_lines_refused: u64
 
-// log_call gives one line to the kernel, and never waits: a thread with a
-// deadline (a frame loop, a key path, a lock held) writes at once or
-// counts. A line that the kernel refuses with No_Budget is dropped and
+// log_call gives one line to the kernel, and never waits for the log of the
+// kernel: a thread with a deadline (a frame loop, a key path, a lock held)
+// writes at once or counts. A line that the kernel refuses with No_Budget is dropped and
 // counted. Before the next line, while lines are counted, one record says
 // their count, inside the amount: no line is dropped in silence
 // (src/md/features/log_side_channels.md). A line longer than the whole
 // amount, and each line of a budget with 0 records, are counted the same
 // way; the kernel counts each refused record in the budget too
 // (`budget_used`), which the starter reads.
+//
+// When the start of the process wired its record output `log`, each call
+// that the kernel took, or refused for its budget alone, then goes to that
+// ring, and waits there (log_output.odin): the ring holds what the budget
+// refused. A call that the kernel refuses for another cause (a level or a
+// form that names no member, a count past its bound) is no log record, and
+// the ring never holds it: the border of the kernel is the one border of a
+// log call, and the call of the kernel never waits. The note of the
+// refused lines is a record about the log of the kernel: it goes there
+// only.
 @(private = "file")
 log_call :: proc "contextless" (handle: Handle, text: ^u8, count: int, level: op.Log_Level, run_count: int, form: op.Log_Record_Form) {
 	if refused := intrinsics.atomic_load(&log_lines_refused); refused != 0 {
@@ -289,8 +299,12 @@ log_call :: proc "contextless" (handle: Handle, text: ^u8, count: int, level: op
 			intrinsics.atomic_sub(&log_lines_refused, refused)
 		}
 	}
-	if _, status := call(.Log, u64(handle), u64(uintptr(text)), u64(count), u64(level), u64(run_count), u64(form)); status == .No_Budget {
+	_, status := call(.Log, u64(handle), u64(uintptr(text)), u64(count), u64(level), u64(run_count), u64(form))
+	if status == .No_Budget {
 		intrinsics.atomic_add(&log_lines_refused, 1)
+	}
+	if status == .Ok || status == .No_Budget {
+		log_output_copy(text, count, level, run_count, form)
 	}
 }
 

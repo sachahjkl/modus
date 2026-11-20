@@ -226,11 +226,14 @@ Context_Grants :: struct {
 
 // grant_put writes a handle into a slot of the context. It refuses a slot
 // past the handles of the context, the slot of the budget, which the
-// loader writes, and a slot that holds a handle already: it writes no
-// handle and keeps the refusal, and the caller then does not start the
-// process, and says which slot.
+// loader writes, the slots of the wiring ring and of the record output log,
+// which only a wiring list fills (process_start refuses them too), and a
+// slot that holds a handle already: it writes no handle and keeps the
+// refusal with the slot, and the caller then does not start the process,
+// and says which slot.
 grant_put :: proc "contextless" (context_grants: ^Context_Grants, slot: int, grant: Grant) -> (ok: bool) {
-	if slot < 0 || slot >= op.CONTEXT_HANDLES || slot == op.CONTEXT_BUDGET || slot in context_grants.taken {
+	wiring_slot := slot == op.CONTEXT_WIRING_RING || slot == op.CONTEXT_LOG_OUTPUT || slot == op.CONTEXT_LOG_OUTPUT_END
+	if slot < 0 || slot >= op.CONTEXT_HANDLES || slot == op.CONTEXT_BUDGET || wiring_slot || slot in context_grants.taken {
 		context_refusal_note(&context_grants.refusal, slot)
 		return false
 	}

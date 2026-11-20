@@ -36,6 +36,14 @@ Start_Wiring :: struct {
 	// Out, with keep_budget: a handle of the budget of the child with Read
 	// and Spend. The starter closes it at the stop of the child.
 	budget:        Handle,
+	// In: the output ring and the end page of the record output `log` of
+	// the child, handles of the starter; 0 when the list does not wire
+	// `log`. ends_make may set them, as it makes the objects of the list.
+	// process_start gives them at op.CONTEXT_LOG_OUTPUT, with Read and
+	// Write, and op.CONTEXT_LOG_OUTPUT_END, with Read only: never through
+	// the wiring ring, so a child whose only wiring is `log` has none.
+	log_ring:      Handle,
+	log_end_words: Handle,
 }
 
 // module_declares_record_streams says if a module file declares a record
@@ -51,6 +59,22 @@ module_declares_record_streams :: proc "contextless" (file: []u8) -> bool {
 // the caller then stops the process.
 @(private)
 start_wiring_give :: proc "contextless" (process: Handle, budget: Handle, record: ^op.Context, file: []u8, wiring: ^Start_Wiring) -> Status {
+	// The end of log, in its two places of the context. Both or neither: a
+	// ring with no end page would hold a writer that never learns the end
+	// of its reader.
+	if (wiring.log_ring == 0) != (wiring.log_end_words == 0) {
+		return .Bad_Operation
+	}
+	if wiring.log_ring != 0 {
+		status: Status
+		record.handles[op.CONTEXT_LOG_OUTPUT], status = give(process, wiring.log_ring, {.Read, .Write})
+		if status == .Ok {
+			record.handles[op.CONTEXT_LOG_OUTPUT_END], status = give(process, wiring.log_end_words, {.Read})
+		}
+		if status != .Ok {
+			return status
+		}
+	}
 	if len(wiring.ends) == 0 && !module_declares_record_streams(file) {
 		return .Ok
 	}

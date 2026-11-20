@@ -16,14 +16,18 @@
 //    with the count of the readers of this run).
 //
 // Then, with one reader only, LOG_FACT_SAMPLES log facts of the same record,
-// each timed (measure 1). Then the end record. Each measure is printed,
-// never asserted.
+// each timed (measure 1), and as many lines of text, each timed. In the run
+// whose wiring list also wires the record output `log` of this process,
+// the same facts and lines go to that ring too: the two runs give measure 9,
+// the cost of a log call with and without the wiring. Then the end record.
+// Each measure is printed, never asserted.
 //
 // **Start**: by `output_measure` only. **What a reader sees**: no window;
 // one line for each measure, or a line "output_measure_writer: WRONG: ...".
 // It stops itself with the outcome Done, or Failed after a WRONG line.
 package output_measure_writer
 
+import op "modus:contract/operation"
 import "modus:support/system"
 
 // One record of the measures: the size and the Text fields of the access
@@ -59,7 +63,8 @@ WAKE_SAMPLES :: 200
 BURST_SAMPLES :: 1000
 TIMED_SAMPLES :: 1000
 SAMPLES_OF_A_RUN :: WAKE_SAMPLES + BURST_SAMPLES + TIMED_SAMPLES
-// Log facts within the log records of one second of this process (1000).
+// Log facts, and as many lines, within the log records of one second of
+// this process (1000).
 LOG_FACT_SAMPLES :: 200
 // The pause between two writes of the first part.
 WAKE_PAUSE_MILLISECONDS :: 1
@@ -134,7 +139,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			times[index] = system.cycles() - start
 		}
 		least, median = least_and_median(times[:LOG_FACT_SAMPLES])
-		system.log(.Info, "output_measure_writer: one log fact of the same record: least ", least, ", median ", median, " cycles, of ", u64(LOG_FACT_SAMPLES), " facts")
+		// The context says if the start wired log: the root service writes
+		// the handle of its ring there, and 0 else.
+		wired := ctx.handles[op.CONTEXT_LOG_OUTPUT] != 0
+		state := wired ? "wired" : "not wired"
+		if !wired {
+			system.log(.Info, "output_measure_writer: one log fact of the same record: least ", least, ", median ", median, " cycles, of ", u64(LOG_FACT_SAMPLES), " facts")
+		}
+		system.log(.Info, "output_measure_writer: measure 9, the log ", state, ": one log fact: least ", least, ", median ", median, " cycles, of ", u64(LOG_FACT_SAMPLES), " facts")
+		for index in 0 ..< LOG_FACT_SAMPLES {
+			start := system.cycles()
+			system.log(.Info, "output_measure_writer: a line of the measure ", u64(index))
+			times[index] = system.cycles() - start
+		}
+		least, median = least_and_median(times[:LOG_FACT_SAMPLES])
+		system.log(.Info, "output_measure_writer: measure 9, the log ", state, ": one line of text with one value: least ", least, ", median ", median, " cycles, of ", u64(LOG_FACT_SAMPLES), " lines")
 	}
 	if status := system.output_end(&samples, deadline = system.time() + system.TEST_HANG_BOUND_MILLISECONDS); status != .Ok {
 		wrong("the end of samples gave the status word", u64(status))

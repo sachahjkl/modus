@@ -208,9 +208,10 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 		switch kind {
 		case .Hash:
 			return {text = hash_text(buffer, bytes), part = .Version}
-		case .Fact_Values:
-			// The raw form of the values: the zeros after the last byte
-			// that is not zero say nothing, as on the serial line.
+		case .Fact_Values, .Log_Body:
+			// The raw form of the values or of the body of a log record:
+			// the zeros after the last byte that is not zero say nothing,
+			// as on the serial line.
 			last := len(bytes)
 			for last > 0 && bytes[last - 1] == 0 {
 				last -= 1
@@ -249,7 +250,7 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 			// A word that names no member: its number, never the name of
 			// another member.
 			return {text = sentence.format(buffer, u64(value)), part = .Number}
-		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View:
+		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View, .Log_Body:
 			// module.field_kind_valid refuses each of them but Plain on an
 			// Integer.
 		case .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
@@ -555,7 +556,7 @@ field_width :: proc "contextless" (item: module.Field) -> int {
 				}
 			}
 			return width
-		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View:
+		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View, .Log_Body:
 		}
 		return integer_digits(size, item.unsigned)
 	}

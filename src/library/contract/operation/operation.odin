@@ -3665,10 +3665,10 @@ Process_Report :: struct {
 // design: (docs/MODULE_CONTRACT.md, "The context").
 //
 // The handles 0 to 13 are the places of a starter and its process, and
-// each is taken by some role. A new role of the system takes a handle from
-// 16, never under 14. The handle 17 has no role yet: it keeps the values
-// that follow at a multiple of 8 bytes.
-CONTEXT_HANDLES :: 18
+// each is taken by some role. The handles 14 to 18 have the roles of the
+// system below; a new role of the system takes the handle 19, never under
+// 14. The handle 19 has no role yet.
+CONTEXT_HANDLES :: 20
 // The values 0 to 15 began as free values, and the roles of the system
 // took 9 to 15 one after the other until two roles wanted one number. The
 // values 16 to 23 are for the roles that the system fixes for every
@@ -3830,6 +3830,20 @@ CONTEXT_BUDGET :: 15 // The budget of the process.
 // and gives the handle of each end through its memory, so the process
 // proves that the handle came through it. See [wiring ring](term:wiring-ring).
 CONTEXT_WIRING_RING :: 16 // The wiring ring.
+// The handle 17: the output ring of the record output `log`, a memory
+// object with **Read** and **Write**, when the wiring list of the start of
+// the process wires `log`; 0 for each other process. The library writes
+// there each log record that the kernel took, or refused for its budget
+// alone, after it gave it to the kernel (modus:contract/output,
+// Log_Output_Record). The end of `log` never goes
+// through the wiring ring: a process whose only wiring is `log` has none.
+// See [record output log](term:record-output-log).
+CONTEXT_LOG_OUTPUT :: 17 // The output ring of the record output log.
+// The handle 18: the end page of the wiring of `log`, with **Read** only:
+// the root service alone writes its end words, so the writer learns that
+// its reader stopped or closed, and no side forges the end of the other.
+// 0 when the handle 17 is 0.
+CONTEXT_LOG_OUTPUT_END :: 18 // The end page of the record output log.
 // The values 13 and 15 have no role: the settings page and the date page
 // are fixed ranges, mapped when their bit of the value 20 is set. A new
 // role of the system takes a number from 16, never 13 or 15, so that an

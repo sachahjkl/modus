@@ -72,6 +72,7 @@
 // ```
 package log
 
+import "base:intrinsics"
 import "modus:contract/enum_word"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -685,6 +686,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The service reads the same memory object: exports.odin. Its handle
 	// also reads the own log ring of a caller (Log_Read).
 	reader_head, reader_records = reader.head, reader.records
+	// The first follower joins from the head of the log, not from its
+	// first record, also when it joins before the first pass of the pump.
+	follow_next = intrinsics.atomic_load(&reader_head.written)
 	log_memory = ctx.handles[system.GRANT_LOG_RECORDS]
 	// The catalog of the facts: with no image, each fact shows raw.
 	if address, mapped := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); mapped == .Ok {
@@ -720,6 +724,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			picture_owed = true
 		}
+		// The followers of log.follow: the records since the last pass, or
+		// the record that a full ring refused at it, and a gap where the
+		// kernel wrote over records first (follow.odin).
+		follow_pump()
 		for event in display.next_event(&window) {
 			// A new appearance or a new font: each pixel of the window
 			// changes, with no new record.
@@ -752,6 +760,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.wait_log(&wait, &reader)
+		// A new end of log.follow: the pump takes it at the next pass, so
+		// the follower joins without a wait for the next log record.
+		system.wait_wiring(&wait)
+		// A follower whose full ring refused a row: its read wakes the
+		// pump, which writes the row that it kept, or the gap of the
+		// records that the kernel wrote over meanwhile. The count of the
+		// refused rings past FOLLOW_RINGS_WAITED_MOST is dropped: such a
+		// ring loses nothing, its row comes at the next wake for another
+		// cause, and no reader of this service asks for the count.
+		_ = system.wait_output_room(&wait, &follow, FOLLOW_RINGS_WAITED_MOST)
 		system.service_wait(&wait, &service)
 		system.wait_end(&wait)
 		system.service_run(&service)

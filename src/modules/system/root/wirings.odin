@@ -94,7 +94,8 @@ Wiring_Kept :: struct {
 	reader:          ^Started, // The asker, for a reader Asker.
 	dropped_told:    bool, // The line of a dropped word of this wiring is written: one line for each wiring.
 	end_written:     bool, // The end page holds its one end word: no later word is written over it.
-	padding:         [22]u8,
+	writer_is_log:   bool, // The writer end is the record output log, in the context of the writer: it counts in log_ends_given too.
+	padding:         [21]u8,
 }
 #assert(size_of(Wiring_Kept) == 64)
 
@@ -156,7 +157,32 @@ Wiring_Work :: struct {
 	child_file:      []u8,
 	child_ends:      [output.WIRING_LIST_ROW_LIMIT]output.Given_End,
 	child_end_count: int,
+	// A Start: the wiring of the start of the child, where the end of its
+	// record output log goes: in its context, never through its wiring ring.
+	start_wiring:    ^system.Start_Wiring,
 	refusal:         [7]u64, // The error record of a refusal, with the operation of the command.
+}
+
+// The description file of output.Log_Output_Record: the record of the
+// record output log, which no module file holds. This service writes it
+// once, and takes it as the module file of the writer of each row of log:
+// the type check, the description file of the reader and the size of the
+// ring then come from it, as from the module file of any other writer.
+@(private = "file")
+log_output_file_bytes: [output.DESCRIPTION_FILE_BYTES_MOST]u8
+@(private = "file")
+log_output_file: []u8
+
+// log_output_file_of gives the description file of Log_Output_Record,
+// written at the first row of log.
+@(private = "file")
+log_output_file_of :: proc "contextless" () -> []u8 {
+	if log_output_file == nil {
+		if size, written := output.log_output_file_write(log_output_file_bytes[:]); written {
+			log_output_file = log_output_file_bytes[:size]
+		}
+	}
+	return log_output_file
 }
 
 // The work of the command that runs: one command at a time, in the loop
@@ -465,20 +491,39 @@ wiring_row_resolve :: proc "contextless" (work: ^Wiring_Work, number: u32) -> sy
 	if plan.writer == plan.reader {
 		return wiring_refuse(work, .Bad_State, .Bad_Value, .Wirings, i64(output.Wiring_Field.Reader_End), 0, 0, found)
 	}
-	// The record output log of the child comes with its own step.
+	// The record output log of the child: the contract describes its
+	// record, which no module file holds (output.Log_Output_Record). Its
+	// writer receives no condition: the end of log takes two places of
+	// the context, and a third for a page of a condition is none that an
+	// audit, which keeps each record, needs. The border of the list took
+	// it of the child of a Start only, once. Its writer waits for room
+	// with no deadline: a row that says the writer never waits says what
+	// the writer does not do, so it is refused; Writer_Chooses holds it as
+	// Always_Holds_Writer does.
 	if row.writer_stream == .Log {
-		return wiring_refuse(work, .Bad_Operation, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), 0, found)
+		if row.condition_offset != 0 {
+			return wiring_refuse(work, .Bad_Operation, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Condition_Offset), i64(row.condition_offset), 0, found)
+		}
+		if row.pace == .Never_Holds_Writer {
+			return wiring_refuse(work, .Bad_Operation, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Pace), i64(row.pace), 0, found)
+		}
+		plan.writer_file = log_output_file_of()
+		if len(plan.writer_file) == 0 {
+			return wiring_refuse(work, .Bad_State, .Absent, .Modules, 0, 0, 0, found)
+		}
+		plan.description = output.DESCRIPTION_RECORD_INDEX
+	} else {
+		plan.writer_file = plan.writer == work.child ? work.child_file : plan.writer.file
+		if len(plan.writer_file) == 0 {
+			return wiring_refuse(work, .Bad_State, .Absent, .Modules, 0, 0, 0, found)
+		}
+		output_row, _, _, output_ok := module.record_output(plan.writer_file, row.writer_index)
+		if !output_ok {
+			outputs := max(module.count(plan.writer_file, .Record_Outputs), 1) - 1
+			return wiring_refuse(work, .Bad_Operation, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), i64(row.writer_index), i64(outputs), found)
+		}
+		plan.description = output_row.record
 	}
-	plan.writer_file = plan.writer == work.child ? work.child_file : plan.writer.file
-	if len(plan.writer_file) == 0 {
-		return wiring_refuse(work, .Bad_State, .Absent, .Modules, 0, 0, 0, found)
-	}
-	output_row, _, _, output_ok := module.record_output(plan.writer_file, row.writer_index)
-	if !output_ok {
-		outputs := max(module.count(plan.writer_file, .Record_Outputs), 1) - 1
-		return wiring_refuse(work, .Bad_Operation, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), i64(row.writer_index), i64(outputs), found)
-	}
-	plan.description = output_row.record
 	reader_file := plan.writer_file
 	reader_description := plan.description
 	if row.reader_end != .Asker {
@@ -829,6 +874,7 @@ wiring_plan_make :: proc "contextless" (work: ^Wiring_Work, plan: ^Wiring_Plan, 
 		end_memory      = plan.end_memory,
 		number          = plan.number,
 		writer_index    = plan.row.writer_index,
+		writer_is_log   = plan.row.writer_stream == .Log,
 		reader_index    = plan.row.reader_index,
 		reader_is_asker = plan.row.reader_end == .Asker,
 		writer          = plan.writer,
@@ -890,7 +936,13 @@ wiring_child_ends :: proc "contextless" (work: ^Wiring_Work) -> []output.Given_E
 	work.child_end_count = 0
 	for number in 1 ..= work.list.row_count {
 		plan := &work.plans[number - 1]
-		if plan.writer == work.child {
+		if plan.writer == work.child && plan.row.writer_stream == .Log {
+			// The end of log goes to two places of the context of the
+			// child, not to its wiring ring: process_start gives them.
+			if work.start_wiring != nil {
+				work.start_wiring.log_ring, work.start_wiring.log_end_words = plan.ring_memory, plan.end_memory
+			}
+		} else if plan.writer == work.child {
 			work.child_ends[work.child_end_count] = wiring_end_of_plan(plan, true)
 			work.child_end_count += 1
 		}
@@ -931,7 +983,7 @@ wiring_ring_hold :: proc "contextless" (item: ^Started) -> system.Status {
 // after it read the answers of each process, never inside that read.
 wiring_rings_let_go :: proc "contextless" () {
 	for &item in started {
-		if item.wiring.head != nil && item.ends_given == 0 {
+		if item.wiring.head != nil && item.ends_given - item.log_ends_given == 0 {
 			system.ring_close(&item.wiring)
 		}
 	}
@@ -988,6 +1040,9 @@ wiring_list_deliver :: proc "contextless" (work: ^Wiring_Work) {
 		if status == .Ok {
 			plan.kept.writer_counted = true
 			plan.writer.ends_given += 1
+			if plan.kept.writer_is_log {
+				plan.writer.log_ends_given += 1
+			}
 			if plan.row.reader_end != .Child {
 				status = wiring_end_give(plan.reader, wiring_end_of_plan(plan, false))
 			}
@@ -1008,6 +1063,10 @@ wiring_list_deliver :: proc "contextless" (work: ^Wiring_Work) {
 		plan.kept.asked_counted = true
 		asker.wirings_asked += 1
 		// One line for each wiring, of a Wire as of a Start.
+		if plan.row.writer_stream == .Log {
+			system.log(.Info, "root: wired the record output log of ", system.Module_Name{system.name_of(plan.writer.name[:])}, " to ", plan.row.reader_end == .Asker ? "its asker " : "", system.Module_Name{system.name_of(plan.reader.name[:])}, ", wiring ", u64(plan.number))
+			continue
+		}
 		system.log(.Info, "root: wired the record output ", u64(plan.row.writer_index), " of ", system.Module_Name{system.name_of(plan.writer.name[:])}, " to ", plan.row.reader_end == .Asker ? "its asker " : "", system.Module_Name{system.name_of(plan.reader.name[:])}, ", wiring ", u64(plan.number))
 	}
 	// The recorded grant shows while the asker holds a wiring: a list whose
@@ -1029,6 +1088,9 @@ wiring_end :: proc "contextless" (asker: ^Started, page: ^Wiring_Page, kept: ^Wi
 	system.close(kept.end_memory)
 	if kept.writer_counted {
 		kept.writer.ends_given -= 1
+		if kept.writer_is_log {
+			kept.writer.log_ends_given -= 1
+		}
 	}
 	if kept.reader_counted {
 		kept.reader.ends_given -= 1
@@ -1128,7 +1190,7 @@ wirings_at_stop :: proc "contextless" (item: ^Started, state: op.Process_State, 
 			handle^ = 0
 		}
 	}
-	item.ends_given, item.wirings_asked = 0, 0
+	item.ends_given, item.log_ends_given, item.wirings_asked = 0, 0, 0
 }
 
 // wiring_of_a_stop gives the first wiring that names a process that stops,
@@ -1198,6 +1260,12 @@ wiring_completions_read :: proc "contextless" (item: ^Started) {
 		record := system.receive(&item.wiring.completions) or_break
 		status, tag, answer, _, ok := output.wiring_completion_of_record(record)
 		asker, page, kept := wiring_of_a_side(item, record.tag)
+		// The end of log of a writer came in its context, never through
+		// this ring: a word of the writer for it names no end of the ring,
+		// and must not change its counts.
+		if kept != nil && kept.writer == item && kept.writer_is_log {
+			kept = nil
+		}
 		if kept == nil {
 			if item.unknown_wiring_words == 0 {
 				system.log(.Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " wrote a word of its wiring ring that names no wiring of it: it is dropped, and each later one is counted until its stop")

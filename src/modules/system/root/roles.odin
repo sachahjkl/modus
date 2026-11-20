@@ -385,6 +385,15 @@ process_roles := [?]Process_Role_Row {
 	// service in their wiring rings, and they need no grant.
 	{name = "output_writer"},
 	{name = "output_reader"},
+	// The writer of the test of the record output log: its end comes in
+	// its context before its first instruction, and it needs no grant. Its
+	// log budget holds 0 records (budgets.odin).
+	{name = "log_flood"},
+	// The follower of the test of log.follow: Connect and Wire are commands
+	// of the root ring, and the end Connected of log.follow is given only
+	// to a caller that acts for the principal: log.follow carries the
+	// records of the whole log.
+	{name = "log_follower", grants = {.Root_Ring, .Acts_For_Principal}},
 	// A side that writes its own words in its wiring ring, past the
 	// library: it needs no grant either.
 	{name = "output_side"},

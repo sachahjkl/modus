@@ -113,6 +113,20 @@ Gap_State :: struct {
 Gap_Step :: enum u8 {
 	Counted        = 0, // The count of the gap grows by one: the gap record says it when the ring has room again.
 	Past_The_Count = 1, // The count is the largest that a gap record of this ring carries: one more would give a gap that the reader refuses. The writer closes the end, and the reader reads Side_Closed after the records that its ring holds.
+	// Lost records that do not follow the gap that waits, on a ring with no condition, where each serial is a
+	// record that the ring took or a gap counts: one gap record cannot say both, and no honest writer gives it.
+	// The writer closes the end, as for Past_The_Count.
+	Not_Contiguous = 2,
+}
+
+// room_wait_of says if a writer that keeps its record on Full waits for the
+// room of one ring: only when the last write gave Full with this ring among
+// the rings that held it (refused_full), and the ring still has no room at
+// the read that this write loaded (room). A write that filled the ring
+// exactly keeps no record: a wait on its read would end at the next read of
+// the reader, and the writer would turn with nothing to write.
+room_wait_of :: proc "contextless" (refused_full: bool, room: Ring_Room) -> bool {
+	return refused_full && room == .Holds
 }
 
 // gap_count_most gives the largest count of a gap record of a ring. A gap

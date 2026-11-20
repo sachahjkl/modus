@@ -167,6 +167,11 @@ a_field_kind_on_the_wrong_field_is_refused :: proc(t: ^testing.T) {
 		{type = BYTES, detail = value_kinds.TEXT_VIEW_BYTES + 1, kind = u8(value_kinds.Field_Kind.Text_View)},
 		{type = TEXT, detail = value_kinds.TEXT_VIEW_BYTES, kind = u8(value_kinds.Field_Kind.Text_View)},
 		{type = BYTES, detail = value_kinds.TEXT_VIEW_BYTES, kind = u8(value_kinds.Field_Kind.Text_View), contract_enum = LEVEL},
+		// Log_Body: Bytes of the body of a log record only, with no enum.
+		{type = BYTES, detail = value_kinds.LOG_BODY_FIELD_BYTES - 1, kind = u8(value_kinds.Field_Kind.Log_Body)},
+		{type = BYTES, detail = value_kinds.LOG_BODY_FIELD_BYTES + 1, kind = u8(value_kinds.Field_Kind.Log_Body)},
+		{type = TEXT, detail = value_kinds.LOG_BODY_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Log_Body)},
+		{type = BYTES, detail = value_kinds.LOG_BODY_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Log_Body), contract_enum = LEVEL},
 		// The enums of an error record: an unsigned Integer only.
 		{type = INTEGER, detail = 8, kind = STATUS, contract_enum = ERROR_KIND},
 		{type = TEXT, detail = 8, unsigned = true, kind = STATUS, contract_enum = ERROR_UNIT},
@@ -278,6 +283,7 @@ each_field_kind_on_its_type_is_taken :: proc(t: ^testing.T) {
 		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Hexadecimal_No_Leading_Zero)},
 		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Time_Of_Day)},
 		{type = u8(Type.Bytes), detail = value_kinds.TEXT_VIEW_BYTES, kind = u8(value_kinds.Field_Kind.Text_View)},
+		{type = u8(Type.Bytes), detail = value_kinds.LOG_BODY_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Log_Body)},
 	}
 	for item in accepted {
 		testing.expectf(t, field_kind_valid(item), "the field %v is refused", item)

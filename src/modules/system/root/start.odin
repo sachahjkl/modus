@@ -99,6 +99,11 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 	}
 	work.slot.asker = asker
 	status := start_context_build(&work)
+	// The wiring of this start lives in this frame: the work of the list
+	// names it only while the start runs.
+	defer if wiring_work != nil {
+		wiring_work.start_wiring = nil
+	}
 	if status == .Ok && wiring_work != nil {
 		// The list is resolved against the file and the place of the
 		// child before the child exists. Its rings and its pages are made
@@ -107,6 +112,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 		// none of them in the handle table of this service.
 		wiring_work.child = work.slot
 		wiring_work.child_file = work.file
+		wiring_work.start_wiring = &work.wiring
 		status = wiring_list_resolve(wiring_work)
 		if status == .Ok {
 			work.wiring.ends_make = wiring_child_ends_make

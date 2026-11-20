@@ -531,6 +531,10 @@ field_kind_valid :: proc "contextless" (item: Field) -> bool {
 		return type == .Integer && item.unsigned && field_size(item) == 8 && item.integer_unit == {}
 	case .Hash_Head:
 		return type == .Bytes && item.detail == value_kinds.HASH_FIELD_BYTES
+	case .Log_Body:
+		// The body of one log record, whole: the border of its form reads
+		// the runs and the text, or the part of a fact, from every byte.
+		return type == .Bytes && item.detail == value_kinds.LOG_BODY_FIELD_BYTES
 	case .Hundredths:
 		return type == .Integer && item.integer_unit == {}
 	case .Nanoseconds_As_Microseconds, .Time_Of_Day:

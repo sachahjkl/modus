@@ -19,17 +19,22 @@
 //    wiring of the record input of the first reader, refused by the count
 //    One, and lent memory handles in more rounds than the handle table of
 //    the root service holds.
-// 3. The refusals of Start and of its list: its words, the record output
-//    log, the rows of the asker past six, and a list whose rings the
-//    budget refuses after some of them were made.
+// 3. The refusals of Start and of its list: its words; the record output
+//    log of a service, with Wire and with Start, with an index, twice, with
+//    the pace Never_Holds_Writer and with a condition; the rows of the
+//    asker past six; and a list whose rings the budget refuses after some
+//    of them were made.
 // 4. The end words: Writer_Stopped, Reader_Stopped.
-// 5. The limit of the wirings of an asker, one past it with Wire and with
+// 5. The record output log of `log_flood`, wired to this asker at its
+//    start: each record, in order, while the kernel refuses each of its
+//    calls; then Writer_Stopped.
+// 6. The limit of the wirings of an asker, one past it with Wire and with
 //    the list of a Start, and the revocation of the grant wirings:
 //    Revoked.
-// 6. A side that writes its own words: a refused end, words that the root
+// 7. A side that writes its own words: a refused end, words that the root
 //    service drops, and a wiring ring that it never reads, until the root
 //    service refuses an end for it with Busy.
-// 7. A wiring to this process as its asker, read with asker_read; then
+// 8. A wiring to this process as its asker, read with asker_read; then
 //    this process stops: Asker_Stopped.
 //
 // **Start**: `start("output_wiring")` in the console. **What a reader
@@ -92,6 +97,20 @@ LENT_MEMORY_ROUNDS :: 70
 // The commands that the wiring ring of output_side holds: the capacity of
 // the ring of a start with one end.
 SIDE_RING_CAPACITY :: output.WIRING_RING_CAPACITY
+
+// The constants and the fact of log_flood, which this process checks in
+// its log: the same values as in log_flood.
+FLOOD_LINES :: 600
+FLOOD_LONG_LINE_BYTES :: 400
+FLOOD_MARK :: 0x5a5a_a5a5
+Flood_Fact :: struct {
+	number: u64,
+	mark:   u64,
+}
+// More lines than the default ring holds: log_flood is held at least once.
+#assert(FLOOD_LINES > output.WIRING_CAPACITY_DEFAULT)
+// Three records for the long line, the last one shorter.
+#assert(FLOOD_LONG_LINE_BYTES > 2 * op.LOG_TEXT_CAPACITY && FLOOD_LONG_LINE_BYTES < 3 * op.LOG_TEXT_CAPACITY)
 
 requests: ring.Ring
 requests_memory: system.Handle
@@ -410,6 +429,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	probes_case()
 	start_case()
 	end_words_case()
+	log_case()
 	limit_case()
 	side_case()
 	asker_case()
@@ -662,14 +682,51 @@ start_case :: proc "contextless" () {
 	status, answer = root_call(.Start, {packed[0], packed[1], packed[2], packed[3], 0, 0, 1})
 	refused("a reserved word", before, status, answer, .Bad_Operation, root_ring.word_refusal(.Start, 4, 1, 0))
 
-	// The record output log of the child, before its step: refused before
-	// its reader matters, so the reader is this asker.
+	// The record output log: only the starter of a process wires it, in
+	// the list of its Start, once, to a reader that holds the writer. A
+	// Wire of the log of a service that this asker does not start, and a
+	// Start that names the log of a process other than its child, are
+	// refused at the border of the row.
 	log_row := row(.Child, 0, 0, .Asker, 0, 0)
 	log_row.writer_stream = u32(output.Writer_Stream.Log)
-	log_rows := [1]output.Wiring{log_row}
+	not_owned := log_row
+	not_owned.writer_end, not_owned.writer_handle = u32(output.Wiring_End.Connected), 1
+	status, answer = wire(not_owned, nil)
+	refused("a Wire of the log of a service", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), i64(max(output.Writer_Stream)), 1))
+	log_rows := [1]output.Wiring{not_owned}
 	list_write(log_rows[:], nil)
 	status, answer = start_listed("output_writer", true)
-	refused("the record output log", before, status, answer, .Bad_Operation, fail(.Start, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), 0, 1))
+	refused("a Start that names the log of a service", before, status, answer, .Bad_Operation, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), i64(max(output.Writer_Stream)), 1))
+	// The log has no index: the smallest index that is not 0.
+	indexed := log_row
+	indexed.writer_index = 1
+	log_rows[0] = indexed
+	list_write(log_rows[:], nil)
+	status, answer = start_listed("output_writer", true)
+	refused("an index of the log", before, status, answer, .Bad_Operation, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), 1, 0, 1))
+	// A second row of the log of the same child.
+	two_logs := [2]output.Wiring{log_row, log_row}
+	list_write(two_logs[:], nil)
+	status, answer = start_listed("output_writer", true)
+	refused("a second row of the log", before, status, answer, .Bad_Operation, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), 0, 2))
+	// A pace that says the writer never waits: the writer of log waits.
+	never := log_row
+	never.pace = u32(output.Wiring_Pace.Never_Holds_Writer)
+	log_rows[0] = never
+	list_write(log_rows[:], nil)
+	status, answer = start_listed("output_writer", true)
+	refused("the log with the pace Never_Holds_Writer", before, status, answer, .Bad_Operation, fail(.Start, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Pace), i64(output.Wiring_Pace.Never_Holds_Writer), 0, 1))
+	// A condition: an audit keeps each record, and the writer of log takes
+	// no condition. The terms are zero: the root service refuses the row
+	// before it reads them.
+	conditioned := log_row
+	conditioned.condition_offset = u32(output.wiring_terms_start(1, 0))
+	conditioned.condition_count = size_of(output.Condition_Terms)
+	log_rows[0] = conditioned
+	no_terms: [size_of(output.Condition_Terms)]u8
+	list_write(log_rows[:], nil, no_terms[:])
+	status, answer = start_listed("output_writer", true)
+	refused("a condition on the log", before, status, answer, .Bad_Operation, fail(.Start, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Condition_Offset), i64(conditioned.condition_offset), 0, 1))
 	// One row of the asker past six.
 	asker_rows: [output.WIRING_ASKER_ROWS_OF_A_START + 1]output.Wiring
 	for &each in asker_rows {
@@ -719,6 +776,141 @@ end_words_case :: proc "contextless" () {
 	}
 	budget_settled_wait(settled, "the end words")
 	system.log(.Info, "output_wiring: the writer that stopped and the reader that stopped: as it must")
+}
+
+// decimal_text writes value in decimal into digits, and gives the text.
+@(private = "file")
+decimal_text :: proc "contextless" (digits: []u8, value: u64) -> string {
+	count := 0
+	rest := value
+	for {
+		count += 1
+		rest /= 10
+		if rest == 0 || count == len(digits) {
+			break
+		}
+	}
+	rest = value
+	for place := count - 1; place >= 0; place -= 1 {
+		digits[place] = u8('0' + rest % 10)
+		rest /= 10
+	}
+	return string(digits[:count])
+}
+
+// log_text_wrong stops with the serial, the form, the level and the text
+// of a record of the log of log_flood that is not the one that it wrote.
+@(private = "file")
+log_text_wrong :: proc "contextless" (serial: u32, record: ^output.Log_Output_Record, wanted: string) -> ! {
+	text, _ := output.log_output_text(record)
+	system.log(.Error, "output_wiring: WRONG: the log of log_flood: the record ", u64(serial), " has the form ", u64(record.form), ", the level ", u64(record.level), ", more ", u64(record.more), ", the runs ", u64(record.run_count), " and the text \"", text, "\"; wanted \"", wanted, "\"")
+	system.stop(.Failed)
+}
+
+// log_text_expect checks one text record of the log of log_flood.
+@(private = "file")
+log_text_expect :: proc "contextless" (serial: u32, record: ^output.Log_Output_Record, wanted: string, level: op.Log_Level, more: u8, runs: u8) {
+	text, ok := output.log_output_text(record)
+	if !ok || text != wanted || record.level != level || record.more != more || record.run_count != runs {
+		log_text_wrong(serial, record, wanted)
+	}
+}
+
+// log_case: the record output log of log_flood wired to this asker at its
+// start. The log budget of log_flood is 0: the kernel refuses each of its
+// calls, and its log holds each record, in order, from the joined record
+// of 0 to its stop. Its last line says the count of the calls that the
+// kernel refused, which must be each call before it.
+@(private = "file")
+log_case :: proc "contextless" () {
+	settled := budget_pages()
+	log_row := row(.Child, 0, 0, .Asker, 0, 0)
+	log_row.writer_stream = u32(output.Writer_Stream.Log)
+	log_row.pace = u32(output.Wiring_Pace.Always_Holds_Writer)
+	rows := [1]output.Wiring{log_row}
+	list_write(rows[:], nil)
+	status, answer := start_listed("log_flood", true)
+	if status != .Ok || answer[0] == 0 || answer[1] == 0 {
+		wrong_refused("the start of log_flood with its log wired gave the status", status, answer)
+	}
+	flood := system.Handle(answer[0])
+	number := u32(answer[1])
+	record: output.Log_Output_Record
+	item, read_status := system.asker_read(number, &record, hang_deadline())
+	if read_status != .Ok || item.kind != .Joined || item.serial != 0 {
+		wrong("the first compartment of the log of log_flood is not the joined record of 0; the status word", u64(read_status))
+	}
+	next := u32(0)
+	read_next :: proc "contextless" (number: u32, record: ^output.Log_Output_Record, serial: u32) {
+		item, read_status := system.asker_read(number, record, hang_deadline())
+		if read_status != .Ok || item.kind != .Record || item.serial != serial {
+			system.log(.Error, "output_wiring: WRONG: the log of log_flood: the record ", u64(serial), " came as the status word ", u64(read_status), ", the kind word ", u64(item.kind), " and the serial ", u64(item.serial))
+			system.stop(.Failed)
+		}
+	}
+	// 1. The lines, each with its number as one value run.
+	line: [64]u8
+	digits: [20]u8
+	for number_of_line in u64(0) ..< FLOOD_LINES {
+		read_next(number, &record, next)
+		count := copy(line[:], "log_flood: line ")
+		count += copy(line[count:], decimal_text(digits[:], number_of_line))
+		log_text_expect(next, &record, string(line[:count]), .Info, 0, 1)
+		next += 1
+	}
+	// 2. The long line, cut as the kernel cuts it.
+	long: [FLOOD_LONG_LINE_BYTES]u8
+	for &letter, index in long {
+		letter = 'a' + u8(index % 26)
+	}
+	for start := 0; start < len(long); start += op.LOG_TEXT_CAPACITY {
+		end := min(start + op.LOG_TEXT_CAPACITY, len(long))
+		read_next(number, &record, next)
+		log_text_expect(next, &record, string(long[start:end]), .Info, end < len(long) ? 1 : 0, 0)
+		next += 1
+	}
+	// 3. The fact: one part, its values the bytes of the record.
+	read_next(number, &record, next)
+	wanted_fact := Flood_Fact{number = FLOOD_LINES, mark = FLOOD_MARK}
+	wanted_bytes := transmute([size_of(Flood_Fact)]u8)wanted_fact
+	fact, fact_ok := output.log_output_fact(&record)
+	if !fact_ok || record.level != .Warning || record.more != 0 || fact.part != 0 || fact.part_count != 1 || fact.key == 0 || int(fact.value_count) != size_of(Flood_Fact) || string(fact.values[:size_of(Flood_Fact)]) != string(wanted_bytes[:]) {
+		system.log(.Error, "output_wiring: WRONG: the log of log_flood: the record ", u64(next), " is not the fact Flood_Fact: the form ", u64(record.form), ", the level ", u64(record.level), ", the part ", u64(fact.part), " of ", u64(fact.part_count), ", the values ", u64(fact.value_count))
+		system.stop(.Failed)
+	}
+	next += 1
+	// 4. The count of the calls that the kernel refused: each one before.
+	calls := u64(FLOOD_LINES + 2)
+	read_next(number, &record, next)
+	count := copy(line[:], "log_flood: the kernel refused ")
+	count += copy(line[count:], decimal_text(digits[:], calls))
+	count += copy(line[count:], " lines")
+	log_text_expect(next, &record, string(line[:count]), .Info, 0, 1)
+	next += 1
+	// 5. The end of the reader while the writer waits: log_flood writes
+	// more lines than the ring holds, which this asker never reads. This
+	// asker waits, by a state and within the hang bound, until the ring is
+	// full and log_flood waits for room in it; then it closes its end. The
+	// end word ends that wait, and log_flood stops with Done: its log never
+	// holds it past the end of its reader.
+	full, held_now, capacity := system.asker_full_and_writer_waits(number, output.Log_Output_Record, hang_deadline())
+	if full != .Held || held_now != capacity {
+		system.log(.Error, "output_wiring: WRONG: the ring of the log of log_flood was not full with log_flood waiting on it: the end ", u64(full), ", ", u64(held_now), " compartments of ", u64(capacity))
+		system.stop(.Failed)
+	}
+	if !system.asker_close(number) {
+		wrong("the end of the log of log_flood was not an end of this asker", u64(number))
+	}
+	processes := [1]system.Handle{flood}
+	stopped_wait(processes[:])
+	_, cause, outcome := system.process_state(flood)
+	if cause != .Itself || outcome != .Done {
+		system.log(.Error, "output_wiring: WRONG: log_flood, held by its log, stopped after the end of its reader with the cause ", u64(cause), " and the outcome ", u64(outcome), "; wanted itself and Done")
+		system.stop(.Failed)
+	}
+	system.close(flood)
+	budget_settled_wait(settled, "the log")
+	system.log(.Info, "output_wiring: the log of log_flood kept its ", u64(next), " records in order while the kernel refused its ", calls, " calls; then this asker closed its end, and log_flood, which its log held, stopped with Done: as it must")
 }
 
 // limit_case: the wirings of this process up to its limit, one past it

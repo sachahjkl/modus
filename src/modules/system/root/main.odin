@@ -340,6 +340,10 @@ Started :: struct {
 	// that it holds: each is bounded (wirings.odin).
 	wirings_asked:   int,
 	ends_given:      int,
+	// Of ends_given, the end of the record output log, which is in the
+	// context and never in the wiring ring: it keeps no mapping of the
+	// wiring ring in this service.
+	log_ends_given:  int,
 }
 
 // place_is_free says if a place of the table of the processes holds no

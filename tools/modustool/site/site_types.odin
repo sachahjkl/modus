@@ -832,6 +832,8 @@ site_record_field_type_text :: proc(field: build.Field_Description, size: int) -
 		return fmt.tprintf("Hash(%d)", field.detail)
 	case .Fact_Values:
 		return fmt.tprintf("Fact_Values(%d)", field.detail)
+	case .Log_Body:
+		return fmt.tprintf("Log_Body(%d)", field.detail)
 	case .Hexadecimal_Sixteen_Digits:
 		return "hexadecimal of 16 digits"
 	case .Hash_Head:

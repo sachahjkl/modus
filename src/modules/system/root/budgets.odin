@@ -49,6 +49,11 @@ PROCESS_SLOTS :: op.PROCESS_SLOTS_OF_THE_MACHINE - 1
 // LOG_RECORDS_OF_A_PROCESS, so the sum above holds.
 LOG_RECORDS_OF_LIMITS :: 40 // Its burst of 100 reaches the limit.
 #assert(LOG_RECORDS_OF_LIMITS <= LOG_RECORDS_OF_A_PROCESS)
+// The test of the record output log: the log of the kernel refuses each line
+// of log_flood, whatever the speed of the machine, and its wired log holds
+// each one (src/md/features/log_facts.md, "The record output `log`").
+LOG_RECORDS_OF_LOG_FLOOD :: 0
+#assert(LOG_RECORDS_OF_LOG_FLOOD <= LOG_RECORDS_OF_A_PROCESS)
 
 // An exception of this table: one process of the boot image that gets
 // another largest budget, or another limit of processor time. A part that
@@ -83,6 +88,7 @@ Log_Records_Exception :: struct {
 @(rodata)
 log_records_exceptions := [?]Log_Records_Exception {
 	{"limits", LOG_RECORDS_OF_LIMITS},
+	{"log_flood", LOG_RECORDS_OF_LOG_FLOOD},
 }
 
 // budget_exception_of gives the exception of a process of the boot image,

@@ -190,6 +190,11 @@ write_field_type :: proc "contextless" (writer: ^Writer, file: []u8, item: modul
 		write_part(writer, u64(item.detail))
 		write_part(writer, ")")
 		return
+	case .Log_Body:
+		write_part(writer, "Log_Body(")
+		write_part(writer, u64(item.detail))
+		write_part(writer, ")")
+		return
 	case .Hexadecimal_Sixteen_Digits:
 		write_part(writer, "Hexadecimal_Sixteen_Digits")
 		return
