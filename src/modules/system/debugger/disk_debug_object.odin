@@ -19,6 +19,7 @@ package debugger
 // when the hash that it names is the hash of the module record.
 
 import debug_object "modus:contract/debug_object"
+import "modus:contract/storage_status"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -303,7 +304,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 // store_call sends one call to the storage service and waits for its
 // answer until the time `limit`. done is false when no answer came in that
 // time; a call that the client cannot send is done, with its status.
-store_call :: proc "contextless" (client: ^storage.Client, export: string, arguments: []isolated.Argument, limit: u64) -> (result_value: i64, text: []u8, status: storage.Status, done: bool) {
+store_call :: proc "contextless" (client: ^storage.Client, export: string, arguments: []isolated.Argument, limit: u64) -> (result_value: i64, text: []u8, status: storage_status.Status, done: bool) {
 	sent: storage.Sent_Call
 	if sent, status = storage.call_send(client, export, arguments); status != .Ok {
 		return 0, nil, status, true

@@ -2,9 +2,11 @@ package machine
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:time"
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modustool:build"
 import "modustool:foundation"
 
@@ -144,6 +146,7 @@ record_fact_sentences :: proc(machine: ^Machine, from: i64) -> (sentences: map[i
 	if i64(rows) >= table.total {
 		read_through = max(i64)
 	}
+	read_rows := make([dynamic]Fact_Record_Row, context.temp_allocator)
 	for row in 0 ..< rows {
 		number, number_ok := strconv.parse_i64(table_value(&table, row, "number"))
 		if !number_ok {
@@ -173,19 +176,108 @@ record_fact_sentences :: proc(machine: ^Machine, from: i64) -> (sentences: map[i
 		for index in 0 ..< 8 {
 			key |= u64(key_bytes[index]) << (8 * u64(index))
 		}
-		// The whole hash names the module: two modules that share the 8
-		// bytes of a serial line are refused in the catalog, and a row of
-		// fact_records holds all 32 bytes.
-		file := build.fact_catalog_file_of_hash(machine.fact_catalog, hash)
-		if file == nil {
+		part, part_ok := strconv.parse_int(table_value(&table, row, "part"))
+		part_count, part_count_ok := strconv.parse_int(table_value(&table, row, "part_count"))
+		if !part_ok || !part_count_ok {
+			fmt.eprintfln("modustool: the log fact %d has no part that the tool reads: it has no sentence", number)
 			continue
 		}
-		if sentence, rendered := build.fact_values_render(file, key, values[:value_count]); rendered {
-			sentences[number] = sentence
-		}
+		append(&read_rows, Fact_Record_Row{number = number, hash = hash, key = key, part = part, part_count = part_count, values = slice.clone(values[:value_count], context.temp_allocator)})
+	}
+	// An answer that did not reach the last record of the scope stopped at
+	// its page: a fact open at its end goes on in the next answer, which
+	// starts at its first record.
+	if open_first, open := fact_record_rows_sentences(machine.fact_catalog, read_rows[:], read_through != max(i64), &sentences); open {
+		read_through = min(read_through, open_first - 1)
 	}
 	return sentences, read_through
 }
+
+// One row of log.fact_records, as the tool read it.
+Fact_Record_Row :: struct {
+	number:           i64,
+	hash:             [module.HASH_SIZE]u8,
+	key:              u64,
+	part, part_count: int,
+	values:           []u8,
+}
+
+// fact_record_rows_sentences writes the sentence of each fact of the rows
+// of one read, in the order of their numbers, into sentences. The records
+// of a fact of several records join (src/md/features/log_facts.md, "A fact
+// of several records"): a record before the last has no sentence of its
+// own, "", since the sentence is in the place of the last record and the
+// text of the records joins; a record of a fact that does not join is its
+// raw part after the mark. A fact still open at the end of a read that did
+// not stop at its page lost its next record: its records are raw after the
+// mark too. A fact whose module the catalog does not hold has no sentence.
+// A fact still open at the end of a read that stopped at its page has no
+// entry: open_first is the number of its first record, where the next read
+// starts.
+//
+// A row of fact_records names no process: the writer is 0 for each. The
+// records of one fact have numbers that follow each other in one
+// numbering, which the kernel writes under one lock, so a number with no
+// gap says that no record of another process came between them.
+fact_record_rows_sentences :: proc(catalog: ^build.Fact_Catalog, rows: []Fact_Record_Row, stopped_at_page: bool, sentences: ^map[i64]string) -> (open_first: i64, open: bool) {
+	join := new(op.Log_Fact_Join, context.temp_allocator)
+	open_rows := make([dynamic]Fact_Record_Row, context.temp_allocator)
+	broken :: proc(sentences: ^map[i64]string, open_rows: []Fact_Record_Row) {
+		for item in open_rows {
+			sentences^[item.number] = fact_broken_text(item.hash, item.key, item.part, item.part_count, item.values)
+		}
+	}
+	for row in rows {
+		was_open := join.open
+		whole, fault := op.log_fact_join_take(join, {number = u64(max(row.number, 0)), module_hash = row.hash, key = row.key, part = row.part, part_count = row.part_count, values = row.values})
+		if fault != .None && was_open {
+			broken(sentences, open_rows[:])
+		}
+		if fault != .None || whole || join.open && row.part == 0 {
+			clear(&open_rows)
+		}
+		switch {
+		case whole:
+			// The whole hash names the module: two modules that share the
+			// 8 bytes of a serial line are refused in the catalog, and a
+			// row of fact_records holds all 32 bytes.
+			if file := build.fact_catalog_file_of_hash(catalog, row.hash); file != nil {
+				if sentence, rendered := build.fact_values_render(file, row.key, join.values[:join.value_count]); rendered {
+					sentences^[row.number] = sentence
+				}
+			}
+		case join.open:
+			sentences^[row.number] = ""
+			append(&open_rows, row)
+		case:
+			sentences^[row.number] = fact_broken_text(row.hash, row.key, row.part, row.part_count, row.values)
+		}
+	}
+	if op.log_fact_join_end(join, stopped_at_page) != .None {
+		broken(sentences, open_rows[:])
+	}
+	// A fact open at the page goes on in the next read, which must start
+	// at its first record: a read that starts at a later part of it has no
+	// first part and would show it raw.
+	if join.open && len(open_rows) > 0 {
+		for item in open_rows {
+			delete_key(sentences, item.number)
+		}
+		return open_rows[0].number, true
+	}
+	return 0, false
+}
+
+// fact_broken_text gives the text of a record of a fact that does not
+// join: the mark, then the raw line of its part.
+fact_broken_text :: proc(hash: [module.HASH_SIZE]u8, key: u64, part, part_count: int, values: []u8) -> string {
+	fact := op.Log_Fact{module_hash = hash, key = key, value_count = u16(min(len(values), op.LOG_FACT_VALUE_CAPACITY)), part = u8(clamp(part, 0, 255)), part_count = u8(clamp(part_count, 0, 255))}
+	copy(fact.values[:], values)
+	line: [op.LOG_FACT_LINE_BYTES_MOST]u8
+	count := op.log_fact_line(&fact, &line)
+	return fmt.tprintf("%s%s", op.LOG_FACT_JOIN_BROKEN_MARK, string(line[:count]))
+}
+
 
 // log_file_rendered gives the text of the log file of a machine that
 // stopped, with the line of each fact rendered by the module files of the

@@ -1,5 +1,6 @@
 package build
 
+import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "core:fmt"
@@ -18,11 +19,18 @@ import "modustool:foundation"
 // call in the sources that the compiler read for the module, describes the
 // record type of each one, checks it, and writes the table Facts. It has
 // no type checker: the value of a call is a composite literal of a named
-// type, or the tool refuses the call.
+// type, or a conversion to a named type (`Type(expression)`), or the tool
+// refuses the call.
+//
+// A fact type is a record type, `Type :: struct {...}`, or a distinct type
+// of a record type of the package or of a package of the library, `Type ::
+// distinct errors.Error_Record_Fact_Fields`: a shape that several modules
+// share, each with its own fact type and template. A record type with no
+// field is a fact type of 0 bytes, whose sentence is its template.
 //
 // The refusals, each with its reason:
-//   - the value of a call is not a composite literal of a named type: the
-//     tool cannot find the type of a variable;
+//   - the value of a call is not a composite literal of a named type, nor
+//     a conversion to one: the tool cannot find the type of a variable;
 //   - the named type has no attribute log_fact: a reader would have no
 //     template;
 //   - the attribute is on a declaration that is not a record type of the
@@ -139,6 +147,11 @@ file_facts_read :: proc(extraction: ^Fact_Extraction, item: Fact_Source) -> bool
 				is_struct := false
 				if len(found.values) == 1 {
 					_, is_struct = found.values[0].derived.(^ast.Struct_Type)
+					// A distinct type of a record type: fact_type_describe
+					// finds the record that it names, or refuses it.
+					if _, is_distinct := found.values[0].derived.(^ast.Distinct_Type); is_distinct {
+						is_struct = true
+					}
 				}
 				if !is_struct || found.is_mutable {
 					walk_state.failed = !fact_fail(walk_state.file.fullpath, found.pos.line, "the attribute %s is on a declaration that is not a record type: a fact is the values of a record", foundation.LOG_FACT_ATTRIBUTE_NAME)
@@ -210,15 +223,39 @@ fact_call_read :: proc(extraction: ^Fact_Extraction, file: ^ast.File, state: ^De
 		return true
 	}
 	path, line := file.fullpath, call.pos.line
-	if len(call.args) != 2 {
-		return fact_fail(path, line, "system.%s takes two arguments: a level and a composite literal of a fact type, as system.%s(.Warning, Bad_Block{{block = number}})", LOG_FACT_PROCEDURE_NAME, LOG_FACT_PROCEDURE_NAME)
+	if len(call.args) < 2 {
+		return fact_fail(path, line, "system.%s takes a level, a composite literal of a fact type, and one text for each text view of the type, as system.%s(.Warning, Bad_Block{{block = number}})", LOG_FACT_PROCEDURE_NAME, LOG_FACT_PROCEDURE_NAME)
 	}
-	literal, is_literal := call.args[1].derived.(^ast.Comp_Lit)
-	if !is_literal || literal.type == nil {
-		return fact_fail(path, line, "the value of system.%s is not a composite literal of a named type: the tool has no type checker and reads the fact type from the literal; write Type{{...}} at the call", LOG_FACT_PROCEDURE_NAME)
+	// The texts of the text views: one value each, in their order. A
+	// spread of a slice, or a named argument, hides their count from a
+	// tool that has no type checker.
+	spread := call.ellipsis.kind == .Ellipsis
+	for argument in call.args[2:] {
+		#partial switch _ in argument.derived {
+		case ^ast.Field_Value, ^ast.Ellipsis:
+			spread = true
+		}
+	}
+	if spread {
+		return fact_fail(path, line, "system.%s takes the text of each text view as one value, in the order of the views: no name and no spread", LOG_FACT_PROCEDURE_NAME)
+	}
+	text_count := len(call.args) - 2
+	// The named type of the value: the type of a composite literal, or the
+	// type of a conversion of one value, as Type(errors.error_record_fact_fields(record)).
+	named_type: ^ast.Expr
+	#partial switch value in call.args[1].derived {
+	case ^ast.Comp_Lit:
+		named_type = value.type
+	case ^ast.Call_Expr:
+		if len(value.args) == 1 {
+			named_type = value.expr
+		}
+	}
+	if named_type == nil {
+		return fact_fail(path, line, "the value of system.%s is not a composite literal of a named type, nor a conversion to one: the tool has no type checker and reads the fact type from the literal; write Type{{...}} or Type(value) at the call", LOG_FACT_PROCEDURE_NAME)
 	}
 	folder, type_name: string
-	#partial switch named in literal.type.derived {
+	#partial switch named in named_type.derived {
 	case ^ast.Ident:
 		folder, type_name = filepath.dir(path), named.name
 	case ^ast.Selector_Expr:
@@ -234,12 +271,33 @@ fact_call_read :: proc(extraction: ^Fact_Extraction, file: ^ast.File, state: ^De
 	package_read := fact_package(extraction, folder) or_return
 	for known in extraction.facts {
 		if known.type_name == type_name && known.package_name == package_read.name {
-			return true
+			return fact_text_count_check(known, text_count, path, line)
 		}
 	}
 	fact := fact_type_describe(package_read, folder, type_name, path, line) or_return
+	fact_text_count_check(fact, text_count, path, line) or_return
 	append(&extraction.facts, fact)
 	return true
+}
+
+// fact_text_count_check refuses a call that gives another count of texts
+// than the fact type has text views: each view takes the text of its place.
+@(private = "file")
+fact_text_count_check :: proc(fact: Fact_Description, text_count: int, path: string, line: int) -> bool {
+	views := fact_text_view_count(fact.record)
+	if views != text_count {
+		return fact_fail(path, line, "system.%s writes %s.%s, which has %d text views, with %d texts: give one text for each view, in their order", LOG_FACT_PROCEDURE_NAME, fact.package_name, fact.type_name, views, text_count)
+	}
+	return true
+}
+
+// fact_text_view_count gives the fields of the kind Text_View of a record.
+fact_text_view_count :: proc(record: Record_Description) -> int {
+	count := 0
+	for item in record.fields {
+		count += int(item.kind == .Text_View)
+	}
+	return count
 }
 
 // fact_package gives the package of a folder, read one time: the sources
@@ -316,7 +374,22 @@ fact_type_describe :: proc(package_read: ^Fact_Package, folder, type_name, call_
 	if len(declaration.values) != 1 {
 		return {}, fact_fail(path, line, "the attribute %s is on %s, which is not a record type", foundation.LOG_FACT_ATTRIBUTE_NAME, type_name)
 	}
-	if _, is_struct := declaration.values[0].derived.(^ast.Struct_Type); !is_struct {
+	// The key of the record in the state of the package: the type itself,
+	// or the record type that a distinct type names.
+	record_key := type_name
+	shape_of_error_record := false
+	#partial switch value in declaration.values[0].derived {
+	case ^ast.Struct_Type:
+	case ^ast.Distinct_Type:
+		if value.type == nil {
+			return {}, fact_fail(path, line, "the fact type %s is a distinct type of nothing", type_name)
+		}
+		record_key = struct_key_of_type(&package_read.state, value.type)
+		if record_key == "" {
+			return {}, fact_fail(path, line, "the fact type %s is a distinct type of %s, which is no record type of the package or of a package of the library that the tool can read", type_name, package_read_text(declaration_file, value.type))
+		}
+		shape_of_error_record = is_contract_type(&package_read.state, value.type, "errors", "Error_Record_Fact_Fields")
+	case:
 		return {}, fact_fail(path, line, "the attribute %s is on %s, which is not a record type: a fact is the values of a record", foundation.LOG_FACT_ATTRIBUTE_NAME, type_name)
 	}
 	literal: ^ast.Basic_Lit
@@ -330,8 +403,14 @@ fact_type_describe :: proc(package_read: ^Fact_Package, folder, type_name, call_
 	if !unquoted {
 		return {}, fact_fail(path, line, "the template of %s is not a literal that the tool can read", type_name)
 	}
-	// A record that struct_record_named refuses printed its refusal.
-	number, is_record, record_ok := struct_record_named(&package_read.state, type_name, type_name, false)
+	// Each fact of an error record reads the same after the words of its
+	// module, so a reader learns one form.
+	if shape_of_error_record && !strings.has_suffix(template, errors.ERROR_RECORD_FACT_TEMPLATE_END) {
+		return {}, fact_fail(path, line, "the template of %s, a fact of an error record, does not end with \"%s\", the words of each such fact", type_name, errors.ERROR_RECORD_FACT_TEMPLATE_END)
+	}
+	// A record that struct_record_named refuses printed its refusal. A
+	// fact type can have no field: its sentence is its template.
+	number, is_record, record_ok := struct_record_named(&package_read.state, record_key, type_name, false, no_field_taken = true)
 	if !is_record {
 		return {}, fact_fail(path, line, "the record %s has no description", type_name)
 	}
@@ -355,11 +434,25 @@ fact_type_describe :: proc(package_read: ^Fact_Package, folder, type_name, call_
 	return fact, true
 }
 
+// package_read_text gives the text of an expression of a parsed file.
+@(private = "file")
+package_read_text :: proc(file: ^ast.File, expression: ^ast.Expr) -> string {
+	return file.src[expression.pos.offset:expression.end.offset]
+}
+
 // fact_type_problem gives why a described fact type is refused, or "":
 // the kinds of its fields, its padding, its size and its template.
 fact_type_problem :: proc(fact: Fact_Description) -> string {
 	names := make([dynamic]string, context.temp_allocator)
+	in_views := false
 	for item in fact.record.fields {
+		// The views are the last fields: the write finds them at the end
+		// of the record, by their count.
+		if item.kind == .Text_View {
+			in_views = true
+		} else if in_views {
+			return fmt.tprintf("the field %s comes after a text view: the text views are the last fields of a fact type", item.name)
+		}
 		switch item.type {
 		case .Integer, .Text, .Bytes:
 		case .Handle:

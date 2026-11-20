@@ -3,6 +3,7 @@ package console_results
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:support/sentence"
 
@@ -50,6 +51,23 @@ part_value_kind :: proc "contextless" (part: Part) -> value_kinds.Value_Kind {
 	case .Plain, .Label, .Note, .Failure:
 	}
 	return .None
+}
+
+// value_kind_part gives the part of a value of a value kind that the
+// contract wrote (module.field_kind_text): the kinds of a field only.
+@(private = "file")
+value_kind_part :: proc "contextless" (kind: value_kinds.Value_Kind) -> Part {
+	switch kind {
+	case .Time:
+		return .Time
+	case .Version:
+		return .Version
+	case .Status:
+		return .Status
+	case .None, .Number, .Size, .Handle, .Value, .Grant, .Type, .Operation, .Command, .Module, .File, .Guide, .Term, .Yes, .No, .Procedure, .Constant, .Variable:
+		// field_kind_text gives a number for each other kind of a field.
+	}
+	return .Number
 }
 
 // Where a drawer writes. The caller gives the two procedures. A drawer
@@ -125,7 +143,7 @@ field_at_the_right :: proc "contextless" (item: module.Field) -> bool {
 	}
 	switch type {
 	case .Integer:
-		return kind == .Plain || kind == .Hexadecimal
+		return kind == .Plain || kind == .Hexadecimal || kind == .Hexadecimal_Sixteen_Digits || kind == .Hundredths || kind == .Nanoseconds_As_Microseconds || kind == .Tenths || kind == .Hexadecimal_No_Leading_Zero || kind == .Time_Of_Day
 	case .Handle:
 		return true
 	case .None, .Text, .Record, .Table, .Bytes:
@@ -172,6 +190,11 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 	if !type_ok || !kind_ok {
 		return {}
 	}
+	// The kinds whose form the kind alone decides: the text that the
+	// sentence of a fact writes, from the one writer of the contract.
+	if text, value_kind, by_kind := module.field_kind_text(buffer, row, item); by_kind {
+		return {text = text, number = type == .Integer, part = value_kind_part(value_kind)}
+	}
 	switch type {
 	case .None, .Record, .Table:
 		// A record holds no such field (module.field_size): an empty cell.
@@ -193,8 +216,24 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 				last -= 1
 			}
 			return {text = hash_text(buffer, bytes[:last]), part = .Number}
-		case .Plain, .Hexadecimal, .Status, .Module_Name:
+		case .Text_View:
+			// A text of more than 12 bytes whose out-of-line bytes the row
+			// does not carry: its first bytes, then its length, and never
+			// a text that looks whole.
+			if len(bytes) != value_kinds.TEXT_VIEW_BYTES {
+				return {}
+			}
+			length := u64(bytes[0]) | u64(bytes[1]) << 8 | u64(bytes[2]) << 16 | u64(bytes[3]) << 24
+			// Bytes of the writer that nobody checked: the rule of the
+			// filter of the kernel, in a copy.
+			prefix: [value_kinds.TEXT_VIEW_PREFIX_BYTES]u8
+			copy(prefix[:], bytes[4:])
+			text_encoding.invalid_sequences_replace(prefix[:])
+			return {text = sentence.format(buffer, string(prefix[:]), "… (", length, " bytes)"), part = .Plain}
+		case .Plain, .Hexadecimal, .Status, .Module_Name, .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
 			// module.field_kind_valid refuses these kinds on Bytes.
+		case .Hash_Head:
+			// module.field_kind_text wrote it above.
 		}
 		return {}
 	case .Integer:
@@ -204,14 +243,17 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 			return {text = hexadecimal_text(buffer, u64(value), module.field_size(item)), number = true, part = .Number}
 		case .Status:
 			which, which_ok := module.field_contract_enum(item)
-			if name, named := op.contract_enum_member_name(which, u64(value)); which_ok && named {
+			if name, named := module.contract_enum_member_name(which, u64(value)); which_ok && named {
 				return {text = name, part = .Status}
 			}
 			// A word that names no member: its number, never the name of
 			// another member.
 			return {text = sentence.format(buffer, u64(value)), part = .Number}
-		case .Plain, .Module_Name, .Hash, .Fact_Values:
-			// module.field_kind_valid refuses the three last on an Integer.
+		case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View:
+			// module.field_kind_valid refuses each of them but Plain on an
+			// Integer.
+		case .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
+			// module.field_kind_text wrote them above.
 		}
 		part, unit := integer_part(item)
 		if item.unsigned && module.field_size(item) == 8 {
@@ -634,52 +676,6 @@ draw_bytes :: proc "contextless" (sink: ^Sink, bytes: []u8, byte_limit: int, fir
 	sink.end_line(sink)
 }
 
-// The name of each error kind, as the contract names it.
-@(rodata)
-ERROR_KIND_NAMES := [errors.Kind]string {
-	.None              = "None",
-	.Empty             = "Empty",
-	.Too_Long          = "Too_Long",
-	.Too_Small         = "Too_Small",
-	.Bad_Value         = "Bad_Value",
-	.Bad_Flags         = "Bad_Flags",
-	.Bad_Byte          = "Bad_Byte",
-	.Bad_Address       = "Bad_Address",
-	.Handle_Absent     = "Handle_Absent",
-	.Handle_Ended      = "Handle_Ended",
-	.Handle_Kind       = "Handle_Kind",
-	.Handle_Rights     = "Handle_Rights",
-	.Budget            = "Budget",
-	.Budget_Hidden     = "Budget_Hidden",
-	.Over_Limit        = "Over_Limit",
-	.Full              = "Full",
-	.State             = "State",
-	.Absent            = "Absent",
-	.Damaged           = "Damaged",
-	.Device            = "Device",
-	.No_Grant          = "No_Grant",
-	.Malformed         = "Malformed",
-	.No_Target         = "No_Target",
-	.Overlap           = "Overlap",
-	.Unknown_Operation = "Unknown_Operation",
-	.Refused           = "Refused",
-	.No_Answer         = "No_Answer",
-	.Unsupported       = "Unsupported",
-	.Link_Down         = "Link_Down",
-	.Busy              = "Busy",
-	.Out_Of_Range      = "Out_Of_Range",
-	.Reserved          = "Reserved",
-	.Not_Payer         = "Not_Payer",
-	.Object_Shared     = "Object_Shared",
-	.Object_Marked     = "Object_Marked",
-	.Whole_Only        = "Whole_Only",
-	.Not_Multiple      = "Not_Multiple",
-	.Not_Authentic     = "Not_Authentic",
-	.Seed_Too_Weak     = "Seed_Too_Weak",
-	.Exists            = "Exists",
-	.Starter_Module    = "Starter_Module",
-}
-
 // What a line that failed gives: the sentence of the failure, and the error
 // record when a call gave one.
 Failure :: struct {
@@ -729,7 +725,7 @@ draw_failure :: proc "contextless" (sink: ^Sink, failure: Failure) {
 	sink.continuation = COLUMN_GAP + FAILURE_LABEL_WIDTH + COLUMN_GAP
 	failure_label(sink, "kind")
 	if kind, kind_ok := errors.kind_of_word(record.kind); kind_ok {
-		sink.write(sink, ERROR_KIND_NAMES[kind], .Status)
+		sink.write(sink, errors.KIND_NAMES[kind], .Status)
 	} else {
 		sink.write(sink, "an unknown kind, ", .Note)
 		sink.write(sink, sentence.format(number[:], record.kind), .Number)

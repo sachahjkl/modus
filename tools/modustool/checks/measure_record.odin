@@ -182,6 +182,24 @@ measure_record_number_from_log :: proc(number: ^Measure_Record_Number, measure: 
 	return true
 }
 
+// measure_log_rendered gives the text of a log with the line of each fact
+// rendered by the module files of the build. QEMU writes the raw line of a
+// fact, and a measured line that became a fact keeps its sentence as the
+// identity of its measure (src/md/features/log_facts.md, "The machine
+// tests"): the record keeps the sentence, which the history reads as
+// before. A log with no fact line stays as it is, and reads no module file.
+measure_log_rendered :: proc(content: string) -> (rendered: string, problem: string) {
+	if !strings.contains(content, build.FACT_LINE_MARK) {
+		return content, ""
+	}
+	catalog, catalog_problem := build.fact_catalog_of_build(context.temp_allocator)
+	if catalog_problem != "" {
+		return content, catalog_problem
+	}
+	rendered, _ = build.fact_lines_render(&catalog, content)
+	return rendered, ""
+}
+
 // measure_record_number_read reads one number from the logs of the run. A
 // log that is older than the start of the run is of another run: it is not
 // read.

@@ -44,6 +44,7 @@
 package edit
 
 import "modus:contract/errors"
+import "modus:contract/storage_status"
 import "modus:private/edit/text_model"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -182,7 +183,7 @@ store_open :: proc "contextless" (ctx: ^system.Context) {
 
 // log_storage_failure writes one line with the error record of a call, or
 // the status when the service gave no record.
-log_storage_failure :: proc "contextless" (before: string, call_status: storage.Status, error: ^errors.Error_Record, after: string) {
+log_storage_failure :: proc "contextless" (before: string, call_status: storage_status.Status, error: ^errors.Error_Record, after: string) {
 	buffer: [256]u8
 	writer := system.Writer {
 		buffer = buffer[:],

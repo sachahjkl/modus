@@ -266,9 +266,11 @@ Operation :: enum u32 {
 	// - `log`: the log handle, with **Write**. Each process has it in its context at `CONTEXT_LOG`.
 	// - `address`, `length`: the bytes of the record, in memory that the process can read. For the form `Text`,
 	//   the text, at most `LOG_TEXT_BYTES_MOST` bytes. A text longer than `LOG_TEXT_CAPACITY` continues in the
-	//   next records (`Log_Record`, `more`). For the form `Fact`, a `Log_Fact` up to the end of its values:
-	//   from `LOG_FACT_HEAD_BYTES` to `size_of(Log_Fact)` bytes. The kernel writes `value_count` from the
-	//   length, and reads no other field of it.
+	//   next records (`Log_Record`, `more`). For the form `Fact`, a `Log_Fact_Call` up to the end of its
+	//   values: from `LOG_FACT_HEAD_BYTES` to `LOG_FACT_CALL_BYTES_MOST` bytes. The kernel cuts the values in
+	//   parts of `LOG_FACT_VALUE_CAPACITY` bytes and writes one record of each part, in a row, each with the
+	//   module hash and the key, and `more` but on the last; it writes `value_count`, `part` and `part_count`
+	//   of each, and reads no other field.
 	// - `level`: a `Log_Level`, from `Info` (0) to `Error` (3).
 	// - `runs`: the count of the value runs of the text, at most `LOG_CALL_RUN_LIMIT`; 0 is a plain text. The
 	//   runs (`value_kinds.Value_Run_In_Call`) follow the `length` bytes of the text at `address`. A run says
@@ -283,13 +285,13 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Handle`, `No_Right`: `log` is not a log handle with **Write**.
 	// - `Bad_Address`: `length` is above `LOG_TEXT_BYTES_MOST`, or the process cannot read the text and its runs.
-	//   For a fact: `length` is below `LOG_FACT_HEAD_BYTES` or above `size_of(Log_Fact)`, or the process cannot
-	//   read the bytes.
+	//   For a fact: `length` is below `LOG_FACT_HEAD_BYTES` or above `LOG_FACT_CALL_BYTES_MOST`, or the
+	//   process cannot read the bytes.
 	// - `Bad_Operation`: `level` is above `Error`, `runs` is above `LOG_CALL_RUN_LIMIT`, `form` names no
 	//   `Log_Record_Form`, or a fact has runs.
 	// - `No_Budget`: the budget of the process accepted all the records of its amount in this second
 	//   (`Budget_Amounts`, `log_records`). No other budget counts the record, so the refusal says nothing of
-	//   what other processes wrote. A fact counts one record.
+	//   what other processes wrote. A fact counts one record for each of its parts.
 	Memory_Create  = 2, // (budget, pages, flags: Memory_Flags) -> memory handle.
 	// Makes a memory object of `pages` pages of 4096 bytes, and gives a handle to it with each right of
 	// memory: **Give**, **Read**, **Write** and **Execute**. The memory is zero. The budget pays now, so an
@@ -3387,13 +3389,27 @@ Log_Record :: struct {
 // (src/md/features/log_facts.md, "The record").
 Log_Record_Form :: enum u8 {
 	Text = 0, // The value runs and the text. A zero record is a text record.
-	Fact = 1, // A log fact: one `Log_Fact`, in one record (`more` is 0).
+	Fact = 1, // A part of a log fact: one `Log_Fact`. A fact of more values than one record holds is several records, each with `more` but the last (`log_fact_join_take`).
 }
 
-// The bytes of the values of one log fact: the fields of its record type,
-// with no padding. A fact is one record, so its values fit in it beside the
-// module hash and the fact key.
+// The bytes of the values of one record of a log fact: the fields of its
+// record type, with no padding, beside the module hash and the fact key.
 LOG_FACT_VALUE_CAPACITY :: 144
+
+// The bytes of the out-of-line area of one log fact, at most: the texts of
+// its text views that do not fit in their 16 bytes (a path, a line of the
+// console, the target of a link), after its fixed record, which the records
+// after the first carry (src/md/features/log_facts.md, "Text views"). A
+// writer cuts a text that does not fit, on a whole character, with the cut
+// mark; the kernel refuses a longer fact.
+LOG_FACT_TEXT_AREA_BYTES_MOST :: 1024
+// The bytes of the values of one log fact, at most: its fixed record, which
+// one record holds, and its out-of-line area.
+LOG_FACT_VALUES_MOST :: LOG_FACT_VALUE_CAPACITY + LOG_FACT_TEXT_AREA_BYTES_MOST
+// The records of one log fact, at most: its value bytes cut in parts of
+// one record each, which follow each other in the log of its process (src/md/features/log_facts.md, "A fact of several records").
+LOG_FACT_RECORDS_MOST :: (LOG_FACT_VALUES_MOST + LOG_FACT_VALUE_CAPACITY - 1) / LOG_FACT_VALUE_CAPACITY
+#assert(LOG_FACT_RECORDS_MOST == 9)
 
 // The bytes of a log record after the name of the process, for the form
 // Fact: the module hash, the fact key, the count of the value bytes, and
@@ -3407,13 +3423,33 @@ LOG_FACT_VALUE_CAPACITY :: 144
 Log_Fact :: struct {
 	module_hash: [32]u8, // The hash of the module that holds the description of the fact: its own-hash place. Zero: no module.
 	key:         u64, // The fact key: the typeid of the record type. Never 0 from `system.log_fact`.
-	value_count: u16, // The bytes of `values` in use, at most `LOG_FACT_VALUE_CAPACITY`: the kernel writes it.
-	reserved:    [6]u8, // 0: the kernel writes it.
-	values:      [LOG_FACT_VALUE_CAPACITY]u8, // The bytes of the record of the fact type, in the order of its fields.
+	value_count: u16, // The bytes of `values` in use in this record, at most `LOG_FACT_VALUE_CAPACITY`: the kernel writes it.
+	part:        u8, // The place of this record among the records of its fact, from 0: the kernel writes it.
+	part_count:  u8, // The records of its fact, 1 to `LOG_FACT_RECORDS_MOST`: the kernel writes it.
+	reserved:    [4]u8, // 0: the kernel writes it.
+	values:      [LOG_FACT_VALUE_CAPACITY]u8, // The bytes of the record of the fact type from the place part * LOG_FACT_VALUE_CAPACITY, in the order of its fields.
 }
 // The bytes of a fact before its values: the least `length` of a fact.
 LOG_FACT_HEAD_BYTES :: 48
 #assert(offset_of(Log_Fact, values) == LOG_FACT_HEAD_BYTES)
+
+// The bytes that a writer gives to `Log` of the form Fact: the head of a
+// fact, then each value byte of its fact type, up to `LOG_FACT_VALUES_MOST`.
+// The writer fills the module hash, the key and the values; the kernel
+// writes the count, the part and the count of the parts of each record.
+Log_Fact_Call :: struct {
+	module_hash: [32]u8,
+	key:         u64,
+	value_count: u16,
+	part:        u8,
+	part_count:  u8,
+	reserved:    [4]u8,
+	values:      [LOG_FACT_VALUES_MOST]u8,
+}
+#assert(offset_of(Log_Fact_Call, values) == LOG_FACT_HEAD_BYTES)
+#assert(offset_of(Log_Fact_Call, key) == offset_of(Log_Fact, key))
+// The most bytes of `Log` of the form Fact.
+LOG_FACT_CALL_BYTES_MOST :: LOG_FACT_HEAD_BYTES + LOG_FACT_VALUES_MOST
 // A fact fills the bytes of a record after the name of the process, which
 // end at the offset 64.
 #assert(size_of(Log_Fact) + 64 == size_of(Log_Record))

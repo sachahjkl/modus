@@ -2,6 +2,7 @@ package system
 
 import "base:intrinsics"
 import info "modus:contract/boot_info"
+import "modus:contract/call_status"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -37,25 +38,6 @@ Call_Connection :: struct {
 	tag:           u32, // The tag of the last call: each call takes the next one, and its completion must have it.
 }
 
-// What an isolated call gives besides its integer result.
-Call_Status :: enum u32 {
-	Ok           = 0, // The export ran and did not fail: the integer result is not negative.
-	Lend_Failed  = 1, // A handle of the arguments could not be lent: `lend` says why.
-	No_Room      = 2, // The arguments do not fit in the call region: isolated.room_missing says which table.
-	Ring_Full    = 3, // The call ring had no room for the command.
-	Stopped      = 4, // The other process stopped during the call.
-	Refused      = 5, // The other process gave a status that is not Ok: Bad_Export, Bad_Arguments, Bad_Handle. The error record has its refusal.
-	Wrong_Answer = 6, // The other process gave a count of a table that is smaller than the count on entry. The error record names the parameter.
-	Failed       = 7, // The export failed: its integer result is negative, and the error record is filled.
-	Not_Done     = 8, // call_direct does not do this description: a result that is not an Integer, a record of a table that is not valid. The error record says which.
-	// The export failed, and the error record is its own; but its table of
-	// error details came back wrong (a count smaller than on entry, or a
-	// table outside the call region): the table of the caller keeps its
-	// count from before the call. The reason of the failure stays in the
-	// record; the status says that the details are missing.
-	Failed_With_Wrong_Details = 9,
-}
-
 // call_direct calls an export of a module that is in this process, with
 // the call form: an Integer and a Handle in a register, a Text as the
 // address of its slice, a Record as its address, a Table or Bytes as the
@@ -68,9 +50,9 @@ Call_Status :: enum u32 {
 // export reads its buffer. It checks the
 // description as the receiver of an isolated call does (record_size), and
 // the record of each table.
-call_direct :: proc "contextless" (file: []u8, address: uintptr, function: module.Function, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: Call_Status) {
+call_direct :: proc "contextless" (file: []u8, address: uintptr, function: module.Function, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: call_status.Call_Status) {
 	function := function
-	not_done :: proc "contextless" (error: ^errors.Error_Record, argument: int, value: u64) -> (i64, Call_Status) {
+	not_done :: proc "contextless" (error: ^errors.Error_Record, argument: int, value: u64) -> (i64, call_status.Call_Status) {
 		if error != nil {
 			error^ = errors.error_make(.Bad_Value, .None, i64(argument), i64(value))
 		}
@@ -152,7 +134,7 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 // `rows`: the memory of the caller for the records of a Table result. The
 // result is then the count of the records that were copied there: the
 // records that the export gave, at most those that `rows` holds.
-call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil) -> (result: i64, status: Call_Status) {
+call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil) -> (result: i64, status: call_status.Call_Status) {
 	function, described := module.function(file, export)
 	if !described {
 		return 0, .Refused

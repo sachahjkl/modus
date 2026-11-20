@@ -245,6 +245,21 @@ imported_structs :: proc(name: string, state: ^Describe_State) -> bool {
 			return false
 		}
 		structs_add(file, strings.concatenate({name, "."}), state)
+		// The imports of the package, under "package.name": a type of a
+		// field of its structs names a package by the name that its own
+		// files use (contract_type_name).
+		for item in file.imports {
+			full := strings.trim(item.fullpath, "\"")
+			imported_folder, in_source_library := foundation.source_library_package_folder(full, context.allocator)
+			if !in_source_library {
+				continue
+			}
+			alias := item.name.text
+			if alias == "" {
+				alias = imported_folder[strings.last_index_byte(imported_folder, '/') + 1:]
+			}
+			state.imports[strings.concatenate({name, ".", alias})] = imported_folder
+		}
 	}
 	return true
 }
@@ -263,6 +278,31 @@ struct_name :: proc(state: ^Describe_State, type: ^ast.Expr) -> (key: string, na
 		}
 	}
 	return "", ""
+}
+
+// imported_package_read reads the structs of a package that the parsed
+// files import by a name, one time: their keys are "name.Struct". false
+// for a name that the files do not import.
+imported_package_read :: proc(state: ^Describe_State, name: string) -> bool {
+	return imported_structs(name, state)
+}
+
+// is_contract_type says if a type is the type `name` of the contract
+// package package_name, through an import of that package under any name.
+is_contract_type :: proc(state: ^Describe_State, type: ^ast.Expr, package_name, name: string) -> bool {
+	return contract_type_name(state, type, package_name) == name
+}
+
+// struct_key_of_type gives the key of a struct in state (struct_record_named)
+// from a type name: "Name" for a struct of the package, "package.Name" for
+// a struct of an imported package of the library, read at its first use.
+// "" when the type names no struct that the tool can read.
+struct_key_of_type :: proc(state: ^Describe_State, type: ^ast.Expr) -> string {
+	key, _ := struct_name(state, type)
+	if _, known := state.structs[key]; !known {
+		return ""
+	}
+	return key
 }
 
 // lent_rights reads a type Lent({.Read, .Write}): the rights that the
@@ -332,8 +372,20 @@ integer_unit_of_parameter :: proc(state: ^Describe_State, type: ^ast.Expr) -> (i
 // through an import of that package under any name. "" for another type: a
 // type of the same name in another package is not the type of the
 // contract.
+//
+// prefix is the prefix of the struct whose field has the type ("errors."
+// for a struct of an imported package, "" for a struct of the package): a
+// struct of the contract package itself names its types with no package,
+// as the shape errors.Error_Record_Fact_Fields names Kind_Word.
 @(private = "file")
-contract_type_name :: proc(state: ^Describe_State, type: ^ast.Expr, package_name: string) -> string {
+contract_type_name :: proc(state: ^Describe_State, type: ^ast.Expr, package_name: string, prefix := "") -> string {
+	contract_folder := strings.concatenate({foundation.SOURCE_FOLDER_CONTRACT, "/", package_name}, context.temp_allocator)
+	if identifier, is_identifier := type.derived.(^ast.Ident); is_identifier && strings.has_suffix(prefix, ".") {
+		if folder, imported := state.imports[prefix[:len(prefix) - 1]]; imported && folder == contract_folder {
+			return identifier.name
+		}
+		return ""
+	}
 	selector, is_selector := type.derived.(^ast.Selector_Expr)
 	if !is_selector {
 		return ""
@@ -342,8 +394,14 @@ contract_type_name :: proc(state: ^Describe_State, type: ^ast.Expr, package_name
 	if !is_name {
 		return ""
 	}
-	folder, imported := state.imports[library.name]
-	if !imported || folder != strings.concatenate({foundation.SOURCE_FOLDER_CONTRACT, "/", package_name}, context.temp_allocator) {
+	// A struct of an imported package names a package by the name of the
+	// imports of its own files; a struct of the package by the names of
+	// the files of the module.
+	folder, imported := state.imports[strings.concatenate({prefix, library.name}, context.temp_allocator)]
+	if !imported && prefix == "" {
+		folder, imported = state.imports[library.name]
+	}
+	if !imported || folder != contract_folder {
 		return ""
 	}
 	return selector.field.name
@@ -351,22 +409,26 @@ contract_type_name :: proc(state: ^Describe_State, type: ^ast.Expr, package_name
 
 // field_kind_field reads the type of a field of a record that states a
 // field kind: a type of value_kinds.FIELD_KIND_TYPES, or a contract enum of
-// value_kinds.CONTRACT_ENUM_TYPES (a Status). It gives the field with its
-// type, its kind and its detail, and its size and its alignment.
-// is_kind is false for another type.
+// value_kinds.CONTRACT_ENUM_TYPES (a Status), by its name or by the name of
+// its word type. It gives the field with its type, its kind and its
+// detail, and its size and its alignment. is_kind is false for another
+// type. prefix is the prefix of the struct of the field (contract_type_name).
 @(private = "file")
-field_kind_field :: proc(state: ^Describe_State, type: ^ast.Expr) -> (item: Field_Description, size, alignment: u32, is_kind: bool) {
-	if row, found := value_kinds.field_kind_of_type_name(contract_type_name(state, type, "value_kinds")); found {
+field_kind_field :: proc(state: ^Describe_State, type: ^ast.Expr, prefix := "") -> (item: Field_Description, size, alignment: u32, is_kind: bool) {
+	if row, found := value_kinds.field_kind_of_type_name(contract_type_name(state, type, "value_kinds", prefix)); found {
+		// 8 bytes keep the detail 0 of the Integer fields before the sizes.
+		integer_detail := row.size == 8 ? 0 : row.size
 		switch row.kind {
-		case .Hexadecimal:
-			// 8 bytes keep the detail 0 of the fields before the sizes.
-			return {type = .Integer, detail = row.size == 8 ? 0 : row.size, unsigned = true, kind = .Hexadecimal}, row.size, row.size, true
+		case .Hexadecimal, .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
+			return {type = .Integer, detail = integer_detail, unsigned = row.unsigned, kind = row.kind}, row.size, row.size, true
 		case .Module_Name:
 			return {type = .Text, detail = row.size, kind = .Module_Name}, row.size, 1, true
-		case .Hash:
-			return {type = .Bytes, detail = row.size, kind = .Hash}, row.size, 1, true
-		case .Fact_Values:
-			return {type = .Bytes, detail = row.size, kind = .Fact_Values}, row.size, 1, true
+		case .Hash, .Hash_Head, .Fact_Values:
+			return {type = .Bytes, detail = row.size, kind = row.kind}, row.size, 1, true
+		case .Text_View:
+			// value_kinds.Text_View starts with its length, a u32: the
+			// compiler places it on 4 bytes, and so does the tool.
+			return {type = .Bytes, detail = row.size, kind = .Text_View}, row.size, 4, true
 		case .Plain, .Status:
 			// No type of the table has these kinds: a test of value_kinds
 			// checks it.
@@ -378,11 +440,21 @@ field_kind_field :: proc(state: ^Describe_State, type: ^ast.Expr) -> (item: Fiel
 			continue
 		}
 		row := value_kinds.CONTRACT_ENUM_TYPES[which]
-		if contract_type_name(state, type, row.package_name) != row.name {
+		name := contract_type_name(state, type, row.package_name, prefix)
+		enum_field_size: u32
+		switch {
+		case name == "":
+			continue
+		case name == row.name:
+			enum_field_size = module.CONTRACT_ENUM_SIZES[which]
+		case row.word_name != "" && name == row.word_name:
+			// The word type holds the word whole, at its own size: a
+			// status of 8 bytes beside fields of 8 bytes leaves no padding.
+			enum_field_size = module.CONTRACT_ENUM_WORD_SIZES[which]
+		case:
 			continue
 		}
-		enum_size := op.CONTRACT_ENUM_SIZES[which]
-		return {type = .Integer, detail = enum_size == 8 ? 0 : enum_size, unsigned = true, kind = .Status, contract_enum = which}, enum_size, enum_size, true
+		return {type = .Integer, detail = enum_field_size == 8 ? 0 : enum_field_size, unsigned = true, kind = .Status, contract_enum = which}, enum_field_size, enum_field_size, true
 	}
 	return {}, 0, 0, false
 }
@@ -509,20 +581,31 @@ struct_record :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> 
 // struct_record_named gives the number of the description of the struct
 // that state names by key ("Name", or "package.Name"), with the name
 // record_name. 0 and is_record false: the key names no struct that the
-// tool knows. The extraction of a fact type reads its record so.
-struct_record_named :: proc(state: ^Describe_State, key, record_name: string, result: bool) -> (number: u32, is_record, ok: bool) {
+// tool knows. The extraction of a fact type reads its record so, with
+// no_field_taken: a fact type with no field is a record of 0 bytes, whose
+// sentence is its template. Another record has a field: a call carries
+// values.
+struct_record_named :: proc(state: ^Describe_State, key, record_name: string, result: bool, no_field_taken := false) -> (number: u32, is_record, ok: bool) {
 	found, has_struct := state.structs[key]
 	if key == "" || !has_struct {
 		return 0, false, false
 	}
 	declared := found.type
-	if declared.is_packed || declared.is_raw_union || declared.align != nil || declared.poly_params != nil || declared.fields == nil || len(declared.fields.list) == 0 {
-		return 0, true, describe_fail(found.path, declared, "the record %s must have fields, and the layout of the C language: no #packed, no #align, no parameter", record_name)
+	if declared.is_packed || declared.is_raw_union || declared.align != nil || declared.poly_params != nil {
+		return 0, true, describe_fail(found.path, declared, "the record %s must have the layout of the C language: no #packed, no #align, no parameter", record_name)
+	}
+	has_no_field := declared.fields == nil || len(declared.fields.list) == 0
+	if has_no_field && !no_field_taken {
+		return 0, true, describe_fail(found.path, declared, "the record %s must have fields: a parameter or a result of a call carries values; only a log fact can have none", record_name)
 	}
 	fields := make([dynamic]Field_Description, context.temp_allocator)
 	size, alignment: u32 = 0, 1
 	has_handle := false
-	for field in declared.fields.list {
+	field_list: []^ast.Field
+	if !has_no_field {
+		field_list = declared.fields.list
+	}
+	for field in field_list {
 		if field.type == nil || .Using in field.flags {
 			return 0, true, describe_fail(found.path, field, "the record %s: each field has a type, and no `using`", record_name)
 		}
@@ -533,7 +616,7 @@ struct_record_named :: proc(state: ^Describe_State, key, record_name: string, re
 				return 0, true, describe_fail(found.path, field, "the record %s: write the rights of a handle as Lent({{.Read, .Write}})", record_name)
 			}
 			item, field_size, field_alignment, has_handle = {type = .Handle, detail = transmute(u32)rights}, 4, 4, true
-		} else if kind_item, kind_size, kind_alignment, is_kind := field_kind_field(state, field.type); is_kind {
+		} else if kind_item, kind_size, kind_alignment, is_kind := field_kind_field(state, field.type, found.prefix); is_kind {
 			// A type of the contract that states how a reader writes the
 			// value: a hexadecimal Integer, a status, a module name, a hash.
 			item, field_size, field_alignment = kind_item, kind_size, kind_alignment
@@ -551,7 +634,7 @@ struct_record_named :: proc(state: ^Describe_State, key, record_name: string, re
 			}
 			item, field_size, field_alignment = {type = .Text, detail = count}, count, 1
 		} else {
-			return 0, true, describe_fail(found.path, field, "the record %s: the type %s has no description. A field is an integer (i64, u64, i32, u32, i16, u16, i8, u8, or an enum of one of them), an integer with a unit (value_kinds.Size_In_Pages and the other types of value_kinds), a field with a kind (value_kinds.Hexadecimal_32, value_kinds.Module_Name_Field, value_kinds.Hash_Field and the other types of value_kinds.FIELD_KIND_TYPES, or a contract enum such as operation.Log_Level), a Lent({{...}}) (Handle) or a [N]u8 (Text)", record_name, type_text(found.source, field.type))
+			return 0, true, describe_fail(found.path, field, "the record %s: the type %s has no description. A field is an integer (i64, u64, i32, u32, i16, u16, i8, u8, or an enum of one of them), an integer with a unit (value_kinds.Size_In_Pages and the other types of value_kinds), a field with a kind (value_kinds.Hexadecimal_32, value_kinds.Module_Name_Field, value_kinds.Hash_Field and the other types of value_kinds.FIELD_KIND_TYPES, or a contract enum such as operation.Log_Level or its word type such as operation.Status_Word), a Lent({{...}}) (Handle) or a [N]u8 (Text)", record_name, type_text(found.source, field.type))
 		}
 		alignment = max(alignment, field_alignment)
 		for expression in field.names {
@@ -1125,7 +1208,9 @@ about_of :: proc(documentation: string, name: string) -> string {
 // a hexadecimal Integer after "0x" with two digits for each byte, a status
 // by the name of its member (its number when it names none), a hash in
 // hexadecimal, the values of a fact in hexadecimal up to their last byte
-// that is not zero, as the raw form of a fact.
+// that is not zero, as the raw form of a fact; 16 digits, the head of a
+// hash, hundredths and nanoseconds as microseconds as a sentence writes
+// them.
 field_value :: proc(record: []u8, item: module.Field) -> string {
 	// A byte that names no type or no kind has no value: "?", as a field
 	// of no value.
@@ -1133,6 +1218,12 @@ field_value :: proc(record: []u8, item: module.Field) -> string {
 	kind, kind_ok := module.field_kind(item)
 	if !type_ok || !kind_ok {
 		return "?"
+	}
+	// The kinds whose form the kind alone decides: the text of the sentence
+	// of a fact, from the one writer of the contract.
+	written: [module.FACT_SENTENCE_BYTES_MOST]u8
+	if text, _, by_kind := module.field_kind_text(written[:], record, item); by_kind {
+		return strings.clone(text, context.temp_allocator)
 	}
 	switch type {
 	case .None, .Record, .Table:
@@ -1168,12 +1259,14 @@ field_value :: proc(record: []u8, item: module.Field) -> string {
 				return strings.to_string(digits)
 			case .Status:
 				which, which_ok := module.field_contract_enum(item)
-				if name, named := op.contract_enum_member_name(which, u64(value)); which_ok && named {
+				if name, named := module.contract_enum_member_name(which, u64(value)); which_ok && named {
 					return name
 				}
-			case .Plain, .Module_Name, .Hash, .Fact_Values:
-				// A decimal number: record_type refuses the three last on
-				// an Integer.
+			case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View:
+				// A decimal number: record_type refuses each of them but
+				// Plain on an Integer.
+			case .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:
+				// module.field_kind_text wrote them above.
 			}
 			return fmt.tprintf("%d", value)
 		}
