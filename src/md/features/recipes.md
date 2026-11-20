@@ -1,6 +1,6 @@
 # Recipes, builders and the cache
 
-A recipe names how an output is made: a builder, its inputs and its arguments, each by hash or as a typed record. The root service realises a recipe in a sandbox, or a machine takes its realisation from a cache: a signed record that says which output the recipe gave. One rule, the substitution policy, chooses between the two, with no hidden configuration.
+A recipe names how an output is made: a builder, its inputs and its arguments, each by hash or as a typed record. The root service realises a recipe in a sandbox, or a machine takes its realisation from a cache: a signed record that says which output the recipe gave. One rule, the substitution policy, chooses between the two, with no hidden configuration. The service `recipes` gives the commands, `recipes.build` and `recipes.provenance` ([declarations.md](declarations.md), "The services of the declarations").
 
 The terms Recipe, Realisation, Builder, Guest builder, Fetcher, Substitution policy and Object cache are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Tree hash is in [`docs/glossary/storage.md`](../../../docs/glossary/storage.md). The declarations that name the recipes are in [declarations.md](declarations.md).
 
@@ -110,7 +110,7 @@ The modes:
 The policy has one place, never a global file:
 
 - The plan of each principal holds its `Substitution`. The plan of principal 0 holds the policy of the system plan.
-- A named argument of `build` changes it for one build: `build(kernel, substitution = { mode = .Verify })` ([declarations.md](declarations.md), "A record literal is typed by its use").
+- A named argument of `recipes.build` changes it for one build: `recipes.build(kernel, substitution = { mode = .Verify })` ([declarations.md](declarations.md), "A record literal is typed by its use").
 - The plan records, for each realisation that it uses, its source and its signer, so an audit reads where each output came from.
 - A key that a principal trusts is valid for that principal only. The system plan trusts the publisher of the system alone.
 
@@ -171,10 +171,10 @@ The ideas taken from Nix are the closure, the content address and the substituti
 
 | Task | Expression |
 |---|---|
-| Build an output | `build(kernel)` |
-| Build with no cache | `build(kernel, substitution = { mode = .Build_Only })` |
-| Check a cache against a local build | `build(kernel, substitution = { mode = .Verify })` |
-| See where each output of the system came from | `provenance(system)` |
+| Build an output | `recipes.build(kernel)` |
+| Build with no cache | `recipes.build(kernel, substitution = { mode = .Build_Only })` |
+| Check a cache against a local build | `recipes.build(kernel, substitution = { mode = .Verify })` |
+| See where each output of the system came from | `recipes.provenance(system)` |
 | Fetch a git repository at one commit | `git_fetch("https://…", commit = "…", tree = blake3:…)` |
 | Name the output of a guest build | `catalog.linux_build({ inputs = { source = here() }, run = ["cargo", "build", "--release", "--offline"] })` |
 | Name one entry of an output | `recipe(…).server` |

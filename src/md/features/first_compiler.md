@@ -71,9 +71,9 @@ For Odin, Rust and every other compiler that is not native, the guest builder of
 
 | Task | Expression |
 |---|---|
-| Assemble a module | `build(catalog.assemble({ source = here() }))` |
-| Compile a C program | `build(catalog.c_build({ source = here() }))` |
-| Check that the C compiler builds itself to the same bytes | `build(catalog.c_build_self_check)` |
+| Assemble a module | `recipes.build(catalog.assemble({ source = here() }))` |
+| Compile a C program | `recipes.build(catalog.c_build({ source = here() }))` |
+| Check that the C compiler builds itself to the same bytes | `recipes.build(catalog.c_build_self_check)` |
 
 ## The refused forms
 
