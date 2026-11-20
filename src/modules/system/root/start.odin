@@ -79,6 +79,14 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 		refusal     = refusal,
 	}
 	defer start_handles_close(&work)
+	// The handles of the start, its rows included, are free before any is
+	// made: the table of prepared modules gives back its parts used least
+	// recently (own_tables.odin).
+	rows := 0
+	if wiring_work != nil {
+		rows = int(wiring_work.list.row_count)
+	}
+	handles_room_make(start_handles_needed(rows))
 	if status := start_prepare(&work); status != .Ok {
 		// A device service that start_prepare started before its refusal
 		// stops: else its device stays held until the machine restarts.

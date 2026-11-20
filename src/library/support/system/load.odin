@@ -128,15 +128,23 @@ Prepared :: struct {
 	first:   u64, // The offset in the module of the first page of the memory object.
 	memory:  Handle, // 0: the place is free.
 	pages:   u64, // The pages of the memory object.
+	// The value of Prepared_Modules.uses at its last find: the order of use
+	// that prepared_yield reads. A count of the finds, no time.
+	last_use: u64,
 }
 
 // The prepared modules of a process that starts processes. The zero value is
 // an empty table. The budget of the process that owns the table pays for
 // each prepared module. A prepared module stays while a process maps it:
-// each start closes the ones that no process maps.
+// each start closes the ones that no process maps. The table is a cache:
+// each part holds one handle of its owner, and prepared_yield closes the
+// parts used least recently when the owner needs the room of its handle
+// table. A process that maps a part keeps its mapping; the next start of
+// that module prepares the part again.
 Prepared_Modules :: struct {
 	lock:    Lock, // The threads of the owner that start processes take it.
 	modules: [PREPARED_CAPACITY]Prepared,
+	uses:    u64, // The finds of the table: the last one stamps the part that it gives.
 }
 
 // The load source: where a loader finds the imports of a module. Nothing
@@ -519,7 +527,7 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 		prepared_sweep(space.prepared)
 		code, fixed: ^Prepared
 		if code, status = prepared_find(space.prepared, item.file, item.hash, .Code, 0, {}, nil, error); status == .Ok {
-			if fixed, status = prepared_find(space.prepared, item.file, item.hash, .Fixed, item.base, binding_of(space, item), imports, error); status == .Ok {
+			if fixed, status = prepared_find(space.prepared, item.file, item.hash, .Fixed, item.base, binding_of(space, item), imports, error, keep = code); status == .Ok {
 				status = segments_map(item.file, item.hash, code, fixed, space.process, item.base, space.budget, imports, error)
 			}
 		}
@@ -727,12 +735,16 @@ prepared_sweep :: proc "contextless" (table: ^Prepared_Modules) {
 // table, and prepares it if the table does not have it. The part Code is
 // for each base and each binding; the part Fixed is for one base and one
 // binding of its slots. The caller checked the hash of the file. A part
-// with no segment has no memory object.
+// with no segment has no memory object. A table with no free place closes
+// its part used least recently, but never keep, the part that the caller
+// still holds.
 @(private)
-prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash: [32]u8, part: Module_Part, base: u64, binding: [32]u8, imports: []module.Bound_Import, error: ^module.Load_Error) -> (found: ^Prepared, status: Status) {
+prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash: [32]u8, part: Module_Part, base: u64, binding: [32]u8, imports: []module.Bound_Import, error: ^module.Load_Error, keep: ^Prepared = nil) -> (found: ^Prepared, status: Status) {
 	free: ^Prepared
+	table.uses += 1
 	for &item in table.modules {
 		if item.memory != 0 && item.hash == hash && item.part == part && item.base == base && item.binding == binding {
+			item.last_use = table.uses
 			return &item, .Ok
 		}
 		if item.memory == 0 && free == nil {
@@ -740,8 +752,20 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 		}
 	}
 	if free == nil {
-		error.stage = .Room
-		return nil, .No_Slot
+		// A full table is a cache too: it closes the part used least
+		// recently, never the part that this load already holds (keep).
+		uses: [PREPARED_CAPACITY]Prepared_Use
+		for item, place in table.modules {
+			uses[place] = {held = item.memory != 0, last_use = item.last_use, in_use = &table.modules[place] == keep}
+		}
+		chosen: [1]int
+		if prepared_drop_choose(uses[:], 1, chosen[:]) == 0 {
+			error.stage = .Room
+			return nil, .No_Slot
+		}
+		free = &table.modules[chosen[0]]
+		close(free.memory)
+		free^ = {}
 	}
 	written := module_prepare(file, hash, part, base, 0, imports, error) or_return
 	if written.memory == 0 {
@@ -753,7 +777,15 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 	// handle without Write, and closes the one that wrote.
 	free^ = written
 	free.hash, free.binding = hash, binding
-	free.memory = give(0, written.memory, {.Read, .Execute}) or_return
+	free.last_use = table.uses
+	// A refused copy leaves the place free: the place must never name the
+	// handle that the defer above closes.
+	given, given_status := give(0, written.memory, {.Read, .Execute})
+	if given_status != .Ok {
+		free^ = {}
+		return nil, given_status
+	}
+	free.memory = given
 	return free, .Ok
 }
 

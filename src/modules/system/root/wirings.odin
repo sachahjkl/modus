@@ -258,6 +258,9 @@ list_page_give :: proc "contextless" (asker: ^Started, values: ^[7]u64) -> syste
 	}
 	error: errors.Error_Record
 	made_page, made_ring: bool
+	// The list page and the wiring ring are handles of this service: the
+	// table of prepared modules gives back the room first (own_tables.odin).
+	handles_room_make(LIST_PAGE_HANDLES)
 	if asker.list_memory == 0 {
 		holders := 0
 		for &item in started {
@@ -1222,6 +1225,9 @@ wire :: proc "contextless" (asker: ^Started, record: ring.Record, values: ^[7]u6
 		status = wiring_list_resolve(work)
 	}
 	if status == .Ok {
+		// The rings of the rows are handles of this service: the table of
+		// prepared modules gives back the room first (own_tables.odin).
+		handles_room_make(int(work.list.row_count) * WIRING_ROW_HANDLES_MOST + WIRING_PAGE_HANDLES)
 		status = wiring_list_make(work)
 	}
 	if status != .Ok {

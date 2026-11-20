@@ -3108,6 +3108,10 @@ Process_Mapping :: struct {
 #assert(size_of(Process_Mapping) == 64)
 
 MAPPING_REPORT_CAPACITY :: 128 // MAPPING_CAPACITY of the kernel: the mappings of one process. `Memory_Map` gives `No_Slot` for one more.
+// HANDLE_CAPACITY of the kernel: the places of the handle table of one process. The place 0 holds no handle,
+// so a process holds `HANDLE_TABLE_CAPACITY - 1` handles at most, and one more gives `No_Slot` with the
+// record `Full` of the unit `Handles`.
+HANDLE_TABLE_CAPACITY :: 128
 
 // The mappings of one process, in the order of their addresses. `Inspect`
 // with the kind `Process_Mappings` writes it; the developer tools show the
