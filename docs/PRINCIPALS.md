@@ -340,6 +340,8 @@ remote: the grants of 4 connections to services ended (a revocation, or a lock o
 
 `remote` frees the slots of the connections of an ended grant at each pass, also when no client of the key is connected.
 
+The lines of `remote` about a client key are log facts, with the key as a Text field: a refused key is `remote_service.Client_Key_Refused` and the three fact types of its other causes, with the whole key in the field `client_key`; a key that the handshake took is `remote_service.Client_Key_Proved`, and the end of its grant `Client_Key_Grant_Ended`, with the head of the key in the field `client_key_head` and the address of the host. So `log.records(0) |> facts(remote_service.Client_Key_Refused)` gives each key that no principal allowed (`docs/TOOLS.md`, "The log").
+
 **Across a restart.** Each key allowed for `Calls` is also a client key of the disk grant table of its principal, and comes back with `Calls` alone; a key allowed for the view alone goes into no table. Each such key is a client key of the disk grant table of its principal, under the tag of that table (`MODULE_CONTRACT.md`, "The grants of a disk process"). The table keeps 4 keys at most. So a key lasts as the other grants of its principal do: across a restart for a named principal, and for principal 0 with a machine passphrase or a machine key sealed by the TPM; until the machine stops for principal 0 with neither, and when the global setting of the table is to forget (`disk_persistence("", "forget")`). The end of the line of an allow says which. After the read of the table, at the first unlock of a named principal or when principal 0 gets its machine key, each key holds again with a new serial:
 
 ```

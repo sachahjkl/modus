@@ -520,6 +520,9 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "net"},
 	{kind = .Wait, text = "root: started frame for the device at the place 18 of the bus"},
+	// The device found, by its hardware address: the step reads the field,
+	// the wait the sentence.
+	{kind = .Fact, process = "frame", fact = "frame_service.Device_Ready_Link_Up", condition = "hardware_address = \"52:54:00:12:34:56\"", any_order = true},
 	{kind = .Wait, text = "frame: ok, the hardware address 52:54:00:12:34:56, the link is up", any_order = true},
 	{kind = .Wait, text = "root: started network"},
 	{kind = .Wait, text = "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up", any_order = true},
@@ -587,6 +590,8 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "net: a datagram to 10.0.2.2 port 7 after a key: refused, the endpoint has no grant now: datagram.Send: the argument address, 10.0.2.2 port 7, is refused: the grant names no remote"},
 	{kind = .Close, text = "net"},
 	{kind = .Wait, text = "root: net stopped: a holder"},
+	// The end of the endpoint, by the process that owned it.
+	{kind = .Fact, process = "network", fact = "network_service.Endpoint_Ended", condition = "owner = \"net\"", any_order = true},
 	{kind = .Wait, text = "network: the endpoint of net ended: "},
 	// The passes of the network service over the bytes of the datagrams of
 	// `net`: a measure, then the structural count: one copy on receive, on
@@ -632,6 +637,8 @@ scenario_network := [?]Step {
 	// An Integer, with the measure of a small call.
 	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4", repeat = 1000},
 	{kind = .Wait, text = "root: connected remote to the service monitor, acting for principal 0, for the client key ", any_order = true},
+	// The connection of remote to a service, by the service.
+	{kind = .Fact, process = "remote", fact = "remote_service.Service_Connected", condition = "service = \"monitor\"", any_order = true},
 	{kind = .Wait, text = "remote: connected to the service monitor, for principal 0"},
 	{kind = .Wait, text = "remote: the window drew one picture in ", any_order = true},
 	// A Table: the row of the remote service is there, and the count of the
