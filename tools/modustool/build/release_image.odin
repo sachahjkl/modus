@@ -819,11 +819,7 @@ release_repository_public_key_read :: proc() -> (public_key: [RELEASE_KEY_SIZE]u
 // `changelog notes <release number>` of this tool prints, so the section of
 // a release has one writer.
 release_notes_text :: proc(release_number: string) -> (text: string, ok: bool) {
-	tool_path, path_error := os.get_executable_path(context.temp_allocator)
-	if path_error != nil {
-		fmt.eprintfln("modustool: cannot find the file of the tool: %v", path_error)
-		return
-	}
+	tool_path := foundation.tool_executable_path() or_return
 	command := [?]string{tool_path, "changelog", "notes", release_number}
 	state, standard_output, standard_error, start_error := os.process_exec({command = command[:]}, context.temp_allocator)
 	if start_error != nil || !state.exited || !state.success || len(standard_output) == 0 {

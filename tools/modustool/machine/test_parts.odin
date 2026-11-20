@@ -28,6 +28,11 @@ Test_Part :: struct {
 	procedures:        []string,
 	volumes:           []string, // The paths of the boot volumes that its machines boot: `test <part>` builds these only.
 	self_test_volumes: bool, // The volumes of the self tests of the kernel too, one for each row of self_tests.
+	// The files of the build that its procedures read past its boot volumes
+	// and past those that the engine of a machine reads
+	// (MACHINE_ENGINE_READS): the test inputs must hold them
+	// (test_derivations.odin).
+	reads:             Build_File_Kinds,
 }
 
 // What one run of a part keeps across its machines. Two parts that run at
@@ -109,7 +114,9 @@ test_parts := [?]Test_Part {
 	// No machine starts: the part needs the built modules, which the build
 	// of a volume gives.
 	{name = "outside_module", does = "No machine: the build of the examples of a module outside the sources, as a developer types it", run = outside_module_tests_run, procedures = {"outside_module_tests_run", "outside_module_examples_check"}, volumes = {build.BOOT_VOLUME}},
-	{name = "host_modules", does = "No machine: the loader, the descriptions of the exports and the debug objects of the build, on the host", run = host_modules_tests_run, procedures = {"host_modules_tests_run", "test_modules", "test_descriptions", "test_debug_objects"}, volumes = {build.BOOT_VOLUME}},
+	// The debug objects are checked against the linked files, which only a
+	// build holds: `check` runs that test after its build.
+	{name = "host_modules", does = "No machine: the loader and the descriptions of the exports of the build, on the host", run = host_modules_tests_run, procedures = {"host_modules_tests_run", "test_modules", "test_descriptions", "module_facts", "module_facts_of_sources"}, volumes = {build.BOOT_VOLUME}, reads = {.Module_File, .Module_Source_List, .Reached_Fact_List}},
 	{
 		name = "iommu_amd",
 		does = "The machine with the IOMMU of AMD with interrupt remapping (`amd-iommu,dma-remap=on,intremap=on`, `kernel-irqchip=split`), with the disk of the measures and an entropy device behind a conventional bridge (`i82801b11-bridge`) at the place 28 of bus 0: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, which also holds the registers of the entropy device, so the kernel gives both one domain of the requester of the bridge; its message interrupt arrives through the interrupt table of that requester, and its device does not reach a page that it did not declare, with the line of the DMA fault from the event log; QEMU records no event for a refused message, so no line of a refused interrupt is waited for; without the registers of the entropy device, its declaration is refused, with the line of the kernel, and a read of the disk into a page that it declared before does not end: the tool stops the machine (which ends each read that QEMU took), gives the disk a new size with `block_resize` and starts it again, and the service then finds its page as it was and no interrupt of the device, the configuration interrupt of the new size too; then `net` through a device window",
@@ -167,21 +174,34 @@ test_part_names :: proc() -> string {
 	return strings.join(names, ", ", context.temp_allocator)
 }
 
+// The word of `test <part> from <folder>`: one part on the test inputs of a
+// folder, with no build (test_derivations.odin).
+TEST_FROM_WORD :: "from"
+
 // test_arguments_problem gives the refusal of the arguments of `test`, or
-// "" when they name the whole test or one part. A word that is not a part
-// is refused: the whole test in its place takes minutes and passes, and the
-// reader believes that the part passed.
+// "" when they name the whole test, one part, or one part on the test
+// inputs of a folder. A word that is not a part is refused: the whole test
+// in its place takes minutes and passes, and the reader believes that the
+// part passed.
 test_arguments_problem :: proc(args: []string) -> string {
 	if len(args) == 0 {
 		return ""
 	}
-	if len(args) == 1 {
-		if _, found := test_part_find(args[0]); found {
-			return ""
-		}
+	_, found := test_part_find(args[0])
+	if found && (len(args) == 1 || (len(args) == 3 && args[1] == TEST_FROM_WORD && args[2] != "")) {
+		return ""
 	}
 	given := strings.join(args, " ", context.temp_allocator)
-	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test", given, test_part_names())
+	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test; `test <part> %s <folder>`: one part on the test inputs of a folder, with no build", given, test_part_names(), TEST_FROM_WORD)
+}
+
+// test_arguments_give_inputs says if arguments that test_arguments_problem
+// accepted name a folder of test inputs, and gives it.
+test_arguments_give_inputs :: proc(args: []string) -> (folder: string, given: bool) {
+	if len(args) == 3 {
+		return args[2], true
+	}
+	return "", false
 }
 
 // test_part_volumes_of gives the paths of the boot volumes of one part, in
@@ -416,5 +436,5 @@ outside_module_tests_run :: proc(_: ^Test_Part_Run) -> bool {
 }
 
 host_modules_tests_run :: proc(_: ^Test_Part_Run) -> bool {
-	return build.test_modules() && build.test_descriptions() && test_debug_objects()
+	return build.test_modules() && build.test_descriptions()
 }

@@ -390,13 +390,9 @@ OUTSIDE_MODULE_EXAMPLES :: [?]Outside_Module_Example {
 }
 
 outside_module_examples_check :: proc() -> bool {
-	// The file of this process, not the wrapper of the shell, which builds
+	// The binary of this process, not the wrapper of the shell, which builds
 	// the tool again.
-	tool_path, path_error := os.get_executable_path(context.temp_allocator)
-	if path_error != nil {
-		fmt.eprintfln("modustool: test failed: cannot find the file of the tool: %v", path_error)
-		return false
-	}
+	tool_path := foundation.tool_executable_path() or_return
 	system_folder, folder_error := os.get_working_directory(context.temp_allocator)
 	if folder_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot read the folder of the system: %v", folder_error)
@@ -563,11 +559,7 @@ OUTSIDE_FAULT_MODULE :: "outsider_fault"
 // OUTSIDE_FAULT_MODULE from the same folder. The folder is written again
 // at each build: the bytes that a build gave are read before the next one.
 outside_module_for_a_disk :: proc(faults := false) -> (file: []u8, debug_file: []u8, ok: bool) {
-	tool_path, path_error := os.get_executable_path(context.temp_allocator)
-	if path_error != nil {
-		fmt.eprintfln("modustool: test failed: cannot find the file of the tool: %v", path_error)
-		return nil, nil, false
-	}
+	tool_path := foundation.tool_executable_path() or_return
 	system_folder, folder_error := os.get_working_directory(context.temp_allocator)
 	if folder_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot read the folder of the system: %v", folder_error)

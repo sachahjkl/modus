@@ -127,11 +127,12 @@ whole_test_procedures := [?]string{"run_test"}
 
 // The procedures that name a volume and start no machine from it by that
 // name: the table of the volumes, the volumes of a part, the build of the
-// main volume for the checks of two builds, the refusal of a volume that is
+// main volume for the checks of two builds, in the build and in `check
+// without_machines`, the refusal of a volume that is
 // not ready, the comparison of the machine test, and the release volume,
 // which only the release command builds and no machine starts.
 @(private = "file")
-procedures_that_start_no_machine := [?]string{"boot_volumes", "test_part_volumes_of", "main_boot_volume_build", "machine_command", "machine_test", "release_boot_volume"}
+procedures_that_start_no_machine := [?]string{"boot_volumes", "test_part_volumes_of", "main_boot_volume_build", "machine_command", "machine_test", "release_boot_volume", "run_check"}
 
 // One volume constant in the body of one procedure of the tool.
 @(private = "file")

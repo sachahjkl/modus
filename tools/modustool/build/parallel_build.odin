@@ -152,14 +152,12 @@ build_modules_in_parallel :: proc() -> bool {
 	if host_processes <= 0 {
 		host_processes = os.get_processor_core_count()
 	}
-	// The file of this process, not its first argument: the compiler that
+	// The binary of this process, not its first argument: the compiler that
 	// runs the tool gives only the name of the file there, and that name
-	// finds the wrapper of the shell, which builds the tool again.
-	tool_path, path_error := os.get_executable_path(context.temp_allocator)
-	if path_error != nil {
-		fmt.eprintfln("modustool: cannot find the file of the tool: %v", path_error)
-		return false
-	}
+	// finds the wrapper of the shell, which builds the tool again. Not the
+	// path of its file either: a new build of the tool can replace that
+	// file while this command runs (foundation, tool_executable_linux.odin).
+	tool_path := foundation.tool_executable_path() or_return
 	// The folder that every module process writes under exists before the
 	// first process starts.
 	foundation.make_folder(foundation.module_build_folder) or_return

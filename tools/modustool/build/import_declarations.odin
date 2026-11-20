@@ -628,19 +628,16 @@ import_declarations_check :: proc(build: foundation.Module_Build, imports: []Imp
 			append(&exports, Importable_Export{module_name = item.name, name = module_export_name(item.file, export_index), form = form})
 		}
 	}
-	source_files, _, listed := dependency_list_read(module_dependency_file(build.name))
+	// The list holds the sources of the repository only: the sources of the
+	// compiler itself declare no import of a module.
+	source_files, listed := module_source_list_read(build.name)
 	if !listed {
-		fmt.eprintfln("modustool: convert %s: the list of the sources of the compiler cannot be read: the declarations of its imports are not checked", build.name)
+		fmt.eprintfln("modustool: convert %s: the list of its sources cannot be read: the declarations of its imports are not checked", build.name)
 		return false
 	}
 	agree := true
 	compared_names := make([dynamic]string, context.temp_allocator)
-	for listed_path in source_files {
-		// The sources of the compiler itself declare no import of a module.
-		path, of_the_repository := source_of_the_repository(listed_path)
-		if !of_the_repository || !strings.has_suffix(path, ".odin") {
-			continue
-		}
+	for path in source_files {
 		source := foundation.read_file(path) or_return
 		if !strings.contains(string(source), "foreign") {
 			continue
