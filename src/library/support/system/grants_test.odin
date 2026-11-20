@@ -17,7 +17,7 @@ import "core:testing"
 grant_put_refuses_a_slot_that_is_taken :: proc(t: ^testing.T) {
 	first := Grant{handle = 1, rights = {.Read}}
 	second := Grant{handle = 2, rights = {.Read, .Write}}
-	outside := [?]int{-1, op.CONTEXT_HANDLES, op.CONTEXT_HANDLES + 1, max(int), min(int), op.CONTEXT_BUDGET}
+	outside := [?]int{-1, op.CONTEXT_HANDLES, op.CONTEXT_HANDLES + 1, max(int), min(int), op.CONTEXT_BUDGET, op.CONTEXT_WIRING_RING, op.CONTEXT_LOG_OUTPUT, op.CONTEXT_LOG_OUTPUT_END}
 	empty: Context_Grants
 	for slot in outside {
 		context_grants: Context_Grants
@@ -66,6 +66,12 @@ grant_put_refuses_a_slot_that_is_taken :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, both.grants[GRANT_STORAGE_RING].handle, Handle(3))
 	testing.expect(t, !both.refusal.refused)
+	// The slot after those of a wiring list, which no role takes yet, and
+	// the last slot below the budget: a starter writes each of them.
+	edges: Context_Grants
+	for slot in ([?]int{op.CONTEXT_LOG_OUTPUT_END + 1, op.CONTEXT_BUDGET - 1}) {
+		testing.expectf(t, op.CONTEXT_LOG_OUTPUT_END + 1 < op.CONTEXT_HANDLES && grant_put(&edges, slot, first), "the slot %d is refused", slot)
+	}
 }
 
 // An index of the values takes one value. The edges come first: -1, one

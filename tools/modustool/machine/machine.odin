@@ -2826,6 +2826,16 @@ scenario := [?]Step {
 	{kind = .Wait, text = "output_reader: watched: the joined record and one probe, then this reader stops: as it must", fails_on = "output_reader: WRONG", any_order = true},
 	{kind = .Wait, text = "output_writer: watched: the ring ended with the end word Reader_Stopped: as it must", fails_on = "output_writer: WRONG", any_order = true},
 	{kind = .Wait, text = "output_wiring: the writer that stopped and the reader that stopped: as it must", fails_on = "output_wiring: WRONG"},
+	// The record output log (src/md/features/log_facts.md, "The record
+	// output `log`"): log_flood has a log budget of 0, so the kernel
+	// refuses each of its calls, and its wired log holds each record. The
+	// log of the kernel must hold no line of log_flood: its first line
+	// before the line of output_wiring fails the step. A WRONG line of
+	// output_wiring ends this wait at the hang bound. No step waits for a
+	// line of log_flood.
+	{kind = .Wait, text = "root: wired the record output log of log_flood to its asker output_wiring, wiring ", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = "output_wiring: the log of log_flood kept its 605 records in order while the kernel refused its 602 calls; then this asker closed its end, and log_flood, which its log held, stopped with Done: as it must", fails_on = "log_flood: "},
+	{kind = .Wait, text = "root: log_flood stopped: itself, done", any_order = true},
 	{kind = .Wait, text = "output_writer: large: 8 rings, each ended with the end word Revoked: as it must", fails_on = "output_writer: WRONG"},
 	{kind = .Wait, text = "output_wiring: 8 wirings, one past them refused with Wire and with a Start, each with its status and its error record and the budget unchanged, then the revocation of the grant wirings: as it must", fails_on = "output_wiring: WRONG"},
 	// A side that writes its own words in its wiring ring: the root
@@ -2842,6 +2852,16 @@ scenario := [?]Step {
 	{kind = .Wait, text = "output_wiring: the wiring of this asker gave the joined record of 0 and the probe 0, after ", fails_on = "output_wiring: WRONG"},
 	{kind = .Wait, text = "output_wiring: ok"},
 	{kind = .Wait, text = "output_writer: asked: the ring ended with the end word Asker_Stopped: as it must", fails_on = "output_writer: WRONG"},
+	// log.follow (src/md/features/log_facts.md, "The frequent tasks"): a
+	// follower that falls behind reads one gap record of the records that
+	// the kernel wrote over, where they were. The follower writes the
+	// records that the kernel writes over itself, paced by the seconds of
+	// its log budget, and writes its last line in a new second: the wait
+	// for it never follows more lines than its budget of one second.
+	{kind = .Type, text = "start(\"log_follower\")"},
+	{kind = .Wait, text = "root: wired the record output 1 of log to its asker log_follower, wiring "},
+	{kind = .Wait, text = "log_follower: log.follow gave ", fails_on = "log_follower: WRONG"},
+	{kind = .Wait, text = "root: log_follower stopped: itself, done"},
 	// The streams of the console (src/md/features/module_outputs.md, "The
 	// console form"): the console starts output_counter and reads its
 	// record output by its typed name. The refusals first, none of which

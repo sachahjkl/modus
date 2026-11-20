@@ -664,9 +664,9 @@ Do not use: frame header, envelope, place word, slot word.
 
 ### Gap record
 
-A gap record is the compartment of an output ring that says how many records the writer refused there because the ring was full.
+A gap record is the compartment of an output ring that says how many records are missing there: records that the ring refused because it was full, or records that the writer lost before it wrote them.
 
-A writer that does not wait gets `Full` and counts each refused record, and a ring of the pace `Never_Holds_Writer` refuses for its reader alone. When the ring has room again, the library writes one gap record with the count before the next record. So the reader knows where records are missing and how many, and the console draws it as one dim row.
+A writer that does not wait gets `Full` and counts each refused record, and a ring of the pace `Never_Holds_Writer` refuses for its reader alone. When the ring has room again, the library writes one gap record with the count before the next record. A writer that lost records of its source says it with `system.output_gap`: the log service does so for the records that the kernel wrote over before `log.follow` read them. So the reader knows where records are missing and how many, and the console draws it as one dim row.
 
 The design: `src/md/features/module_outputs.md`, "Fan-out and flow control".
 
@@ -771,6 +771,22 @@ With the mark `Paired`, it has one ring for each wiring of that record input, of
 The design: `src/md/features/module_outputs.md`, "Generic record inputs and the utility modules".
 
 Do not use: untyped output, passthrough type.
+
+### Record output log
+
+The record output log is the one record output that each process has with no declaration: a copy of each log record that the process writes, which loses none.
+
+Only the starter wires it, in the wiring list of the `Start` of the process, to one reader, so the reader has each record from the first one. Each record is an `output.Log_Output_Record`, and the writer waits while the ring of its reader is full; the kernel log below it stays lossy, and its budget of each second still refuses what it refuses. Its end comes in the handles 17 and 18 of the context. It is what an audit of the log of a process reads. Example: a row `{writer_end = Child, writer_stream = Log, reader_end = Asker}` in the list of a `Start`. The design: `src/md/features/log_facts.md`, "The record output `log`".
+
+Do not use: audit log, log stream, log pipe, lossless log.
+
+### Log follow
+
+Log follow is the record output `follow` of the log service: one row for each record of the whole log, from the moment a reader wires it, written as the records come.
+
+Only a reader that acts for the principal wires it, with the end `Connected`. The service never waits for a follower: a full ring holds the rows of its follower only, and where the kernel wrote over records before the service wrote them, the follower reads one gap record of their count. Example: `log.follow |> where(level = Warning)`. The design: `src/md/features/log_facts.md`, "The frequent tasks".
+
+Do not use: tail, log subscription, live log.
 
 ### Wiring list
 

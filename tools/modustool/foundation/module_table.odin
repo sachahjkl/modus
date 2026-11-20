@@ -146,6 +146,8 @@ module_builds := [?]Module_Build {
 	{name = "arena", source = TEST_MODULE_SOURCES + "arena", entry = true, image = true},
 	{name = "output_wiring", source = TEST_MODULE_SOURCES + "output_wiring", entry = true, image = true},
 	{name = "output_writer", source = TEST_MODULE_SOURCES + "output_writer", entry = true, image = true},
+	{name = "log_flood", source = TEST_MODULE_SOURCES + "log_flood", entry = true, image = true},
+	{name = "log_follower", source = TEST_MODULE_SOURCES + "log_follower", entry = true, image = true},
 	{name = "output_reader", source = TEST_MODULE_SOURCES + "output_reader", entry = true, image = true},
 	{name = "output_side", source = TEST_MODULE_SOURCES + "output_side", entry = true, image = true},
 	{name = "output_counter", source = TEST_MODULE_SOURCES + "output_counter", entry = true, image = true},

@@ -423,7 +423,7 @@ field_kind_field :: proc(state: ^Describe_State, type: ^ast.Expr, prefix := "") 
 			return {type = .Integer, detail = integer_detail, unsigned = row.unsigned, kind = row.kind}, row.size, row.size, true
 		case .Module_Name:
 			return {type = .Text, detail = row.size, kind = .Module_Name}, row.size, 1, true
-		case .Hash, .Hash_Head, .Fact_Values:
+		case .Hash, .Hash_Head, .Fact_Values, .Log_Body:
 			return {type = .Bytes, detail = row.size, kind = row.kind}, row.size, 1, true
 		case .Text_View:
 			// value_kinds.Text_View starts with its length, a u32: the
@@ -1233,7 +1233,7 @@ field_value :: proc(record: []u8, item: module.Field) -> string {
 		if bytes == nil {
 			return "?"
 		}
-		if kind == .Fact_Values {
+		if kind == .Fact_Values || kind == .Log_Body {
 			for len(bytes) > 0 && bytes[len(bytes) - 1] == 0 {
 				bytes = bytes[:len(bytes) - 1]
 			}
@@ -1262,7 +1262,7 @@ field_value :: proc(record: []u8, item: module.Field) -> string {
 				if name, named := module.contract_enum_member_name(which, u64(value)); which_ok && named {
 					return name
 				}
-			case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View:
+			case .Plain, .Module_Name, .Hash, .Fact_Values, .Hash_Head, .Text_View, .Log_Body:
 				// A decimal number: record_type refuses each of them but
 				// Plain on an Integer.
 			case .Hexadecimal_Sixteen_Digits, .Hundredths, .Nanoseconds_As_Microseconds, .Tenths, .Hexadecimal_No_Leading_Zero, .Time_Of_Day:

@@ -318,6 +318,7 @@ each_field_kind_has_its_value_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, field_kind_value_kind(.Module_Name), Value_Kind.Module)
 	testing.expect_value(t, field_kind_value_kind(.Hash), Value_Kind.Version)
 	testing.expect_value(t, field_kind_value_kind(.Fact_Values), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Log_Body), Value_Kind.Number)
 	testing.expect_value(t, field_kind_value_kind(.Hexadecimal_Sixteen_Digits), Value_Kind.Number)
 	testing.expect_value(t, field_kind_value_kind(.Hash_Head), Value_Kind.Version)
 	testing.expect_value(t, field_kind_value_kind(.Hundredths), Value_Kind.Number)
@@ -430,6 +431,7 @@ each_field_kind_type_has_its_size :: proc(t: ^testing.T) {
 		{"Hexadecimal_No_Leading_Zero", size_of(Hexadecimal_No_Leading_Zero), intrinsics.type_is_unsigned(Hexadecimal_No_Leading_Zero)},
 		{"Time_Of_Day", size_of(Time_Of_Day), intrinsics.type_is_unsigned(Time_Of_Day)},
 		{"Text_View", size_of(Text_View), false},
+		{"Log_Body_Field", size_of(Log_Body_Field), false},
 	}
 	testing.expect_value(t, len(FIELD_KIND_TYPES), len(sizes))
 	for item, index in FIELD_KIND_TYPES {
@@ -457,6 +459,9 @@ each_field_kind_type_has_its_size :: proc(t: ^testing.T) {
 	// it in a fixed buffer of two digits for each byte.
 	testing.expect_value(t, size_of(Hash_Field), HASH_FIELD_BYTES)
 	testing.expect_value(t, size_of(Fact_Values_Field), FACT_VALUES_FIELD_BYTES)
+	// The body of a log record holds the value runs and the text, or one
+	// part of a fact: the contract record of the record output log has it.
+	testing.expect_value(t, size_of(Log_Body_Field), LOG_BODY_FIELD_BYTES)
 	// The head of a hash is written from a whole hash: the field holds
 	// each byte, and the head is a part of it.
 	testing.expect_value(t, size_of(Hash_Head_Field), HASH_FIELD_BYTES)

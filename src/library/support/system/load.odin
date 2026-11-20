@@ -918,12 +918,14 @@ source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[
 //             the budget of this process.
 //   wiring:   not nil: the wiring ring of the process and the ends that it
 //             takes before its first instruction, and the handles that the
-//             starter keeps (Start_Wiring). Its handle slot
-//             CONTEXT_WIRING_RING must be 0. On a failure its outputs are 0.
+//             starter keeps (Start_Wiring), with the end of the record
+//             output log. Its handle slots CONTEXT_WIRING_RING,
+//             CONTEXT_LOG_OUTPUT and CONTEXT_LOG_OUTPUT_END must be 0: only
+//             a wiring fills them. On a failure its outputs are 0.
 // The module is at PROCESS_BASE, its imports after it.
 // The process stops when the last handle to it closes.
 process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0, wiring: ^Start_Wiring = nil) -> (process: Handle, status: Status) {
-	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 || grants[op.CONTEXT_WIRING_RING].handle != 0 {
+	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 || grants[op.CONTEXT_WIRING_RING].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT_END].handle != 0 {
 		return 0, .Bad_Operation
 	}
 	// Each process has a random seed from its starter (docs/RANDOMNESS.md):

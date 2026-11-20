@@ -121,6 +121,8 @@ a_ring_past_its_gap_closes_alone :: proc(t: ^testing.T) {
 			gap = after
 		case .Past_The_Count:
 			past += 1
+		case .Not_Contiguous:
+			testing.fail_now(t, "a refused record gave Not_Contiguous")
 		}
 	}
 	testing.expect_value(t, past, 1)
