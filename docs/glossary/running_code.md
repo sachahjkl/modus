@@ -186,7 +186,7 @@ Do not use: phase, progress.
 
 The start policy is the one process that the root service starts to start the machine: it decides which processes start, in which order, and when the machine is usable.
 
-The root service keeps the mechanism: the checks of trust, the seed, the parts of the system that only it holds, and the start of one start policy with the start grant `Start_Policy`. That grant gives a root ring for `Start`, `Stop` and `Machine_Usable`, and the machine parts page, and nothing else. The default start policy is the module `start_policy`, which reads a start list in its order; principal 0 can choose a chosen start policy from the disk in its place. A start policy that fails gives way to the rescue start policy.
+The root service keeps the mechanism: the checks of trust, the seed, the parts of the system that only it holds, and the start of one start policy with the start grant `Start_Policy`. That grant gives a root ring for `Start`, `Stop`, `Machine_Usable` and `Wire`, and the machine parts page, and nothing else. The default start policy is the module `start_policy`, which reads a start list in its order; principal 0 can choose a chosen start policy from the disk in its place. A start policy that fails gives way to the rescue start policy.
 
 The design: `src/md/features/start_policy.md`.
 
@@ -194,9 +194,9 @@ Do not use: init, init system, service manager, boot script, startup sequence.
 
 ### Start list
 
-A start list is a resource of the boot image that the default start policy reads: a header, then start rows of a fixed size, in the order of the start.
+A start list is a resource of the boot image that the default start policy reads: a header, start rows of a fixed size in the order of the start, then wiring rows.
 
-The list is data, signed and measured with the system as each module is. The tool writes it from its table, reads it back through the border of the contract `start_list`, and refuses at each build a list that the border refuses or that names no module of the image. It has no graph and no dependency: its order is the order of the start. Each boot image holds two lists: `start_list` and `rescue_list`.
+The list is data, signed and measured with the system as each module is. The tool writes it from its table, reads it back through the border of the contract `start_list`, and refuses at each build a list that the border refuses, that names no module of the image, or whose wiring rows the module files refuse. It has no graph and no dependency: its order is the order of the start. Each boot image holds two lists: `start_list` and `rescue_list`.
 
 Do not use: unit file, target, runlevel, boot order (for this).
 
@@ -207,6 +207,16 @@ A start row is one row of a start list: the name of a module, the parts of the m
 An absent part gives no start with one line, or a start anyway. A row with the mark `Needed` must run, or be left out for an absent part, before the start policy sends `Machine_Usable`. The restarts count for the whole run of the machine, not for a period of time. The border of the contract refuses a word of a row that names no member.
 
 Do not use: unit, service entry, job.
+
+### Wiring row
+
+A wiring row is one row of a start list that joins a record output of a start row to a record input of an earlier start row.
+
+The start policy applies it at the start of the writer row, before the first instruction of the writer, so the reader reads the joined record of 0. The start policy is the asker of the wiring, and pays it from a fixed reserve of its budget. A writer whose reader does not run does not start. The tool refuses a row that its module files or the border refuse, a reader after its writer among them. Example: the default start list wires `wired_writer.numbers` to `wired_reader.numbers`.
+
+The design: `src/md/features/module_outputs.md`, "The wiring rows of a start list".
+
+Do not use: link, binding, pipe (for this).
 
 ### Rescue start policy
 

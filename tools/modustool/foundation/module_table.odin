@@ -239,6 +239,12 @@ module_builds := [?]Module_Build {
 	// utility modules").
 	{name = "merge", source = LIBRARY_MODULE_SOURCES + "merge", entry = true, image = true},
 	{name = "filter", source = LIBRARY_MODULE_SOURCES + "filter", entry = true, image = true},
+	// The demonstration pair of the start list: the default start list
+	// starts the reader, then the writer, whose start carries the wiring
+	// row between them (src/md/features/module_outputs.md, "The wiring rows
+	// of a start list").
+	{name = "wired_reader", source = DEMONSTRATION_MODULE_SOURCES + "wired_reader", entry = true, image = true},
+	{name = "wired_writer", source = DEMONSTRATION_MODULE_SOURCES + "wired_writer", entry = true, image = true},
 	{name = "vector_glyphs", source = DEMONSTRATION_MODULE_SOURCES + "vector_glyphs", entry = true, image = true},
 	{name = "interface_font", source = DEMONSTRATION_MODULE_SOURCES + "interface_font", entry = true, image = true},
 	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", entry = true, image = true},

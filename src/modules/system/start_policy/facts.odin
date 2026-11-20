@@ -3,21 +3,10 @@ package start_policy
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
-// The log facts of the start policy (src/md/features/log_facts.md): the
-// start list that it reads, the rows that it does not start, the stops of
-// its rows and their restarts, and the completions that it refuses, as
-// records of fields. Each fact template is the sentence that the line
-// wrote before it was a fact, so a wait of a machine test on that sentence
-// reads it as before. A line whose sentence differs by its case is one
-// fact type for each case: the template has no condition. No field has
-// the name of a column of the head of facts(): number, time, process,
-// level.
-//
-// The stop of a row has the fields of the stop of the root service: its
-// cause, and its outcome when it stopped itself, so where(outcome = Done)
-// reads both. The process of a row is the Text field row_process. A Text
-// field is the last field, and is [N]u8 with N written out, as the tool
-// reads it.
+// The log facts of the start policy (src/md/features/log_facts.md). A
+// sentence that differs by its case is one fact type for each case. The
+// stop of a row has the fields of the stop of the root service. A Text
+// field is the last field, [N]u8 with N written out, as the tool reads it.
 
 // The bytes of the Text field of the fault of a start list: the longest,
 // "a row has a mark that is neither needed nor not needed", has 54 bytes,
@@ -144,6 +133,22 @@ Machine_Usable :: struct {}
 // The root service refused the start of a row.
 @(log_fact = "start_policy: cannot start {row_process}: status {status}")
 Row_Start_Refused :: struct {
+	status:      op.Status,
+	row_process: value_kinds.Module_Name_Field,
+}
+
+// A writer row does not start: a reader of its wiring rows does not run.
+@(log_fact = "start_policy: {row_process} does not start: its reader, the row {reader_row} of the list, does not run")
+Row_Reader_Not_Running :: struct {
+	reader_row:  u32,
+	row_process: value_kinds.Module_Name_Field,
+}
+
+// A writer row does not start: the list page, the lend of a reader row or
+// the list after the lends failed.
+@(log_fact = "start_policy: {row_process} does not start: its wiring list gave the status {status}, at the reader row {reader_row}; the row 0 is the list page or the list")
+Row_Wiring_Refused :: struct {
+	reader_row:  u32,
 	status:      op.Status,
 	row_process: value_kinds.Module_Name_Field,
 }

@@ -122,6 +122,7 @@ import "modus:support/disk_process"
 import "modus:contract/settings"
 import "modus:contract/palette_table"
 import "modus:contract/start_grant"
+import "modus:contract/start_list"
 import "modus:contract/value_kinds"
 
 // What a process receives, by name: a start grant. The list and the name of
@@ -519,7 +520,7 @@ part_place_fill :: proc "contextless" (slot: ^Started, name: string, process: sy
 }
 
 // The process that runs the operation sequences (src/md/infrastructure/kernel_fuzzing.md).
-OPERATION_FUZZING_NAME :: "operation_fuzzing"
+OPERATION_FUZZING_NAME :: start_list.OPERATION_FUZZING_NAME
 // Its budget: its mailbox, the shared code of its runners, and the budget
 // of each sequence, which it creates and ends for each one.
 OPERATION_FUZZING_PAGES :: 8192

@@ -1048,6 +1048,18 @@ scenario := [?]Step {
 	{kind = .Wait, text = "kernel: boot: kernel: first processor, timer: ", any_order = true},
 	{kind = .Wait, text = "kernel: boot: kernel: other processors: ", any_order = true},
 	{kind = .Wait, text = "kernel: boot: kernel: root service: ", any_order = true},
+	// The demonstration pair of the default start list: the start policy
+	// starts wired_reader, then wired_writer with the wiring row between
+	// them (src/md/features/module_outputs.md, "The wiring rows of a start
+	// list"). The writer has its reader at its first instruction, and the
+	// reader reads every number from the joined record of 0. The pair runs
+	// beside the rest of the start, so its lines have no fixed place.
+	{kind = .Wait, text = "wired_writer: wrote 16 numbers to 1 reader, and ended numbers", any_order = true, fails_on = "wired_writer: wrote 16 numbers to 0 reader"},
+	// A reader with no writer stops with Done and a plain fact, as on a
+	// machine of a principal: the test fails on that fact, then on a
+	// record that breaks the order. Each step names one failure.
+	{kind = .Wait, text = "wired_reader: read the joined record of 0, the 16 numbers of wired_writer in order, and a clean end", any_order = true, fails_on = "wired_reader: no writer came"},
+	{kind = .Wait, text = "wired_reader: read the joined record of 0, the 16 numbers of wired_writer in order, and a clean end", any_order = true, fails_on = "wired_reader: WRONG"},
 	{kind = .Wait, text = "root: ok"},
 	// The kernel refuses a stop code past one byte, and the machine runs on.
 	{kind = .Wait, text = "root: Machine_Stop refused the codes 256 and 18446744073709551615 with Bad_Operation and the record Bad_Value of the code, limit 255, and the machine runs on: as it must"},

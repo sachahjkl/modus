@@ -1,55 +1,43 @@
-// The default start policy: it reads a start list in its order, and asks
-// the root service for each start (src/md/features/start_policy.md).
-//
-// **What it is for.** The root service keeps the mechanism of the start
-// and holds no order: it starts this one process, which holds the policy.
-// The same module is the rescue start policy, with the rescue list: the
-// code of the rescue then runs at each start and in each machine test.
-//
-// **What it does.** It reads the machine parts page, then the list, each
-// through its border in modus:contract/start_list, which refuses a word
-// that names no member. It starts each row in its order, and waits for the
-// completion of each Start before the next one. A row whose part is absent
-// starts or not by its rule, with one line when it does not. When each row
-// with the mark Needed runs, or did not start because its part is absent,
-// it sends Machine_Usable. Then it stays, and starts a row again at its
-// stop, within the count of its restarts for the whole run of the machine,
-// unless the row stopped itself with Done or Refused.
-//
-// **What it cannot do.** It holds no graph and no logic of its own: the
-// tool refuses its source past 400 lines, and an import past base:, the
-// root ring, the ring, the start list and the support package system. Its
-// one grant is Start_Policy: a root ring for Start, Stop and Machine_Usable,
-// and the machine parts page, read-only. It has no window, no store and no
-// right of the machine.
-//
-// **What a reader sees.** No window. The log gets
-// `start_policy: the start list has N rows: each starts in its order`, one
-// line for each row that does not start, with its cause, then
-// `start_policy: each needed row runs: the machine is usable`.
+// The default start policy, and the rescue start policy with the rescue
+// list (src/md/features/start_policy.md). It reads the machine parts page
+// and the list through their borders, starts each row in its order, sends
+// Machine_Usable when each row with the mark Needed runs, then starts a
+// row again at its stop within its restarts. The start of a writer row
+// carries the wiring list that modus:private/start_policy/wiring_rows
+// decides. Its one grant is Start_Policy: a root ring for Start, Stop,
+// Machine_Usable and Wire, and the machine parts page. The tool refuses its
+// source past 400 lines and an import past its set: it holds no logic of
+// its own. No window; one line for each row that does not start.
 package start_policy
 
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
+import "modus:private/start_policy/wiring_rows"
 import "modus:support/system"
 
-// One thread and the rows on its stack, which the tool counts; the working
-// memory pays what the process maps at its start: its root ring and its
-// region, the machine parts page and the start list, with their page tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
+// 32 pages for what it maps at its start, with their page tables, and the
+// reserve of its wirings, which the tool checks against each list.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 96, processes = 1, threads = 1}
+#assert(MODULE_BUDGET.working_memory_pages == 32 + start_list.WIRING_PAGES_RESERVE)
 
 // The state of one row while the machine runs.
 Row_State :: struct {
 	row:           start_list.Start_Row,
-	process:       system.Handle, // The process of the row, with the right Read. 0: it does not run.
+	process:       system.Handle, // The process of the row, with the rights Read and Give. 0: it does not run.
 	restarts_left: u32,
 }
 
-// The root ring, and the tag of the next command.
+// The root ring, its memory for the lends, and the tag of the next command.
 requests: ring.Ring
+requests_memory: system.Handle
 next_tag: u32 = 1
+
+// The list, its rows, and the list page, which the first writer asks for.
+list: start_list.List
+states: [start_list.ROW_CAPACITY]Row_State
+list_page: []u8
 
 // Each stop before Machine_Usable writes its line first, and the root
 // service then starts the rescue start policy. A list that is absent or
@@ -57,7 +45,8 @@ next_tag: u32 = 1
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_status: system.Status
-	requests, ring_status = system.ring_open(ctx.handles[system.GRANT_ROOT])
+	requests_memory = ctx.handles[system.GRANT_ROOT]
+	requests, ring_status = system.ring_open(requests_memory)
 	if ring_status != .Ok {
 		system.log_fact(.Error, Root_Ring_Refused{status = ring_status})
 		system.stop(.Failed)
@@ -74,31 +63,30 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Error, Machine_Parts_Page_Refused{})
 		system.stop(.Failed)
 	}
-	rows: [start_list.ROW_CAPACITY]start_list.Start_Row
 	list_start := ([^]u8)(uintptr(start_list.START_LIST_ADDRESS))
 	bytes := list_start[:list_size]
-	count, problem, place := start_list.list_read(bytes, &rows)
+	problem, place, _ := start_list.list_read(bytes, &list)
 	if problem != .None {
 		system.log_fact(.Error, Start_List_Refused{row = u64(place), list_problem = value_kinds.text_field(start_list.LIST_PROBLEM_TEXTS[problem], LIST_PROBLEM_FIELD_BYTES)})
 		system.stop(.Refused)
 	}
-	states: [start_list.ROW_CAPACITY]Row_State
+	count := list.row_count
 	for index in 0 ..< count {
-		states[index] = {row = rows[index], restarts_left = rows[index].restart_count}
+		states[index] = {row = list.rows[index], restarts_left = list.rows[index].restart_count}
 	}
 	system.log_fact(.Info, Start_List_Read{rows = u64(count)})
-	for &state in states[:count] {
+	for &state, index in states[:count] {
 		name := start_list.row_name(&state.row)
 		if missing := state.row.needs - parts; missing != {} && state.row.absent_rule == .Not_Started {
-			system.log_fact(.Info, Row_Not_Started{row_process = value_kinds.module_name_field(name), missing_part = value_kinds.text_field(start_list.PART_NAMES[first_part(missing)], PART_FIELD_BYTES)})
+			system.log_fact(.Info, Row_Not_Started{row_process = value_kinds.module_name_field(name), missing_part = value_kinds.text_field(start_list.PART_NAMES[start_list.first_part(missing)], PART_FIELD_BYTES)})
 			continue
 		}
-		if !row_start(&state) && state.row.usable_mark == .Needed {
+		if !row_start(index) && state.row.usable_mark == .Needed {
 			system.log_fact(.Error, Machine_Not_Usable_Without{row_process = value_kinds.module_name_field(name)})
 			system.stop(.Failed)
 		}
 	}
-	if status, _ := command_call(.Machine_Usable, ""); status != .Ok {
+	if status, _ := command_call(.Machine_Usable, {}); status != .Ok {
 		system.log_fact(.Error, Machine_Usable_Refused{status = status})
 		system.stop(.Failed)
 	}
@@ -106,50 +94,80 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		wait := system.wait_begin()
 		started := false
-		for &state in states[:count] {
-			started |= row_watch(&state)
+		for index in 0 ..< count {
+			started |= row_watch(index)
 		}
-		// A start waits for its completion, and that inner wait can take
-		// the event of the stop of the process that it started: a process
-		// that fails at once stops before this wait. So after a start the
-		// rows are read again before any wait.
+		// The wait of a start can take the event of the stop of the process
+		// that it started, so the rows are read again before any wait.
 		if started {
 			continue
 		}
-		// The stop of a process that this process holds is an event of its
-		// thread: the wait ends with it.
-		system.wait_end(&wait)
+		system.wait_end(&wait) // The stop of a process that it holds ends the wait.
 	}
 }
 
-// first_part gives the first part of a set that is not empty.
-first_part :: proc "contextless" (parts: start_list.Machine_Parts) -> start_list.Machine_Part {
-	for part in start_list.Machine_Part {
-		if part in parts {
-			return part
+// row_start asks for the start of the row index, with the wiring list that
+// wiring_rows decides. false: it did not start, with one line.
+row_start :: proc "contextless" (index: int) -> bool {
+	state := &states[index]
+	row_process := value_kinds.module_name_field(start_list.row_name(&state.row))
+	running: [start_list.ROW_CAPACITY]bool
+	for &other, other_index in states[:list.row_count] {
+		if other.process != 0 {
+			other_state, _, _ := system.process_state(other.process)
+			running[other_index] = other_state != .Stopped
 		}
 	}
-	return .Screen
-}
-
-// row_start asks the root service for the start of one row, and keeps the
-// handle of its process. false: the root service refused it, with one line.
-row_start :: proc "contextless" (state: ^Row_State) -> bool {
-	name := start_list.row_name(&state.row)
-	status, values := command_call(.Start, name)
+	if list_page == nil && wiring_rows.row_has_wirings(&list, index) {
+		// A refusal holds its error record in the values: only an answer
+		// Ok names the page.
+		status, values := command_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
+		address: rawptr
+		if status == .Ok {
+			address, status = system.memory_map(system.Handle(values[0]))
+		}
+		if status != .Ok {
+			system.log_fact(.Warning, Row_Wiring_Refused{status = status, row_process = row_process})
+			return false
+		}
+		list_page = ([^]u8)(address)[:wiring_rows.PAGE_BYTES]
+		system.close(system.Handle(values[1])) // The root service gives a start policy no end to read: its wiring ring stays empty.
+	}
+	prepared := wiring_rows.row_list_prepare(&list, index, running[:list.row_count], list_page, reader_lend)
+	if prepared.give_back {
+		command_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply)})
+	}
+	switch prepared.outcome {
+	case .Reader_Not_Running:
+		system.log_fact(.Warning, Row_Reader_Not_Running{reader_row = prepared.reader_row, row_process = row_process})
+		return false
+	case .Lend_Refused, .List_Not_Written:
+		system.log_fact(.Warning, Row_Wiring_Refused{reader_row = prepared.reader_row, status = prepared.status, row_process = row_process})
+		return false
+	case .No_List, .Listed:
+	}
+	wiring := prepared.outcome == .Listed ? root_ring.Start_Wiring_List.In_The_List_Page : .None
+	packed := system.name_pack(start_list.row_name(&state.row))
+	status, values := command_call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(wiring), 0, 0})
 	if status != .Ok {
-		system.log_fact(.Warning, Row_Start_Refused{status = status, row_process = value_kinds.module_name_field(name)})
+		system.log_fact(.Warning, Row_Start_Refused{status = status, row_process = row_process})
 		return false
 	}
 	state.process = system.Handle(values[0])
 	return true
 }
 
-// row_watch reads whether the process of a row stopped, and starts it again
-// while the row has restarts left, unless it stopped itself with Done or
-// Refused. A row with no restart writes no line: the root service already
-// wrote the stop. started says that it asked for a start again.
-row_watch :: proc "contextless" (state: ^Row_State) -> (started: bool) {
+// reader_lend lends the process of a reader row through the root ring.
+reader_lend :: proc "contextless" (reader_row: int) -> (u32, system.Status) {
+	given, status := system.give(requests_memory, states[reader_row].process, {.Read})
+	return u32(given), status
+}
+
+// row_watch starts a stopped row again within its restarts, unless it
+// stopped itself with Done or Refused. A row with no restart writes no
+// line: the root service wrote the stop. started: it asked for a start.
+row_watch :: proc "contextless" (index: int) -> (started: bool) {
+	state := &states[index]
 	if state.process == 0 {
 		return false
 	}
@@ -190,20 +208,17 @@ row_watch :: proc "contextless" (state: ^Row_State) -> (started: bool) {
 	} else {
 		system.log_fact(.Info, Row_Restarted_Without_Outcome{restarts_left = state.restarts_left, cause = cause, row_process = row_process})
 	}
-	row_start(state)
+	row_start(index)
 	return true
 }
 
-// command_call sends one command of the root ring with a name, and waits
-// for its completion. The root service answers each command, and this
-// process has one command in flight, so the ring always has room for it.
-// A completion of another tag is a fault of the root service: one line,
-// and the wait goes on for the tag of the command.
-command_call :: proc "contextless" (command: root_ring.Root_Command, name: string) -> (status: system.Status, values: [7]u64) {
-	packed := system.name_pack(name)
+// command_call sends one command of the root ring and waits for its
+// completion: with one command in flight, the ring has room for it. A
+// completion of another tag is a fault of the root service: one line.
+command_call :: proc "contextless" (command: root_ring.Root_Command, arguments: [7]u64) -> (status: system.Status, values: [7]u64) {
 	tag := next_tag
 	next_tag += 1
-	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = {packed[0], packed[1], packed[2], packed[3], 0, 0, 0}}) {
+	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = arguments}) {
 		return .No_Slot, {}
 	}
 	for {

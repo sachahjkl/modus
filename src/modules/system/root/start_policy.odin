@@ -11,6 +11,7 @@ package root
 
 import info "modus:contract/boot_info"
 import op "modus:contract/operation"
+import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
 import "modus:private/root/start_policy_rules"
@@ -461,57 +462,84 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 
 // start_policy_start runs a Start from the start policy that runs. A part
 // of the system starts by its own procedure, which only this service holds
-// the handles of; each other name starts with the grants of its role. The
-// completion has a handle of the process with the right Read, so its stop
-// ends a wait of the start policy.
+// the handles of; each other name starts with the grants of its role, and
+// with the wiring list of the wiring rows of its start list
+// (src/md/features/module_outputs.md, "The wiring rows of a start list").
+// The completion has a handle of the process with the rights Read and
+// Give: its stop ends a wait of the start policy, and the start policy
+// lends it as the reader of a later wiring row.
 // written: the procedure wrote the error record of its refusal, and the
 // dispatch must not write over it.
-start_policy_start :: proc "contextless" (sender: ^Started, name: string, values: ^[7]u64, written: ^bool) -> system.Status {
-	// The two processes of a test machine take the budget or the memory of
-	// the machine, and the stop of shortage stops the machine: they start
-	// only from the image of their test (start_policy_rules.start_refusal).
-	// The error record of a refusal is start_policy_rules.start_record,
-	// which root_command_answer writes.
+start_policy_start :: proc "contextless" (sender: ^Started, name: string, list: root_ring.Start_Wiring_List, values: ^[7]u64, written: ^bool) -> system.Status {
+	// The checks before any start (start_policy_rules.start_step, with its
+	// host tests): a list for a part of the system, whose procedure takes
+	// none; a start policy, a name that runs, and a process of a test
+	// machine that its image does not hold, which takes the machine; and
+	// the bound of a start row on the restarts of a start policy from the
+	// disk. Each refusal of a Start with a list closes its lent numbers.
+	listed := list == .In_The_List_Page
 	facts := start_policy_facts(sender, name)
-	if refusal := start_policy_rules.start_refusal(facts); refusal != .Ok {
-		values^ = start_policy_rules.start_record(refusal, facts)
+	step := start_policy_rules.start_step(listed, facts, &start_policy_name_counts, start_policy_from_disk, name)
+	if step.status != .Ok {
+		if step.lent_close {
+			lent_handles_close(sender)
+		}
+		values^ = step.refusal
 		written^ = true
-		return refusal
-	}
-	// A start policy from the disk has the bound of a start row on the
-	// restarts of each name that it asks for: no loop of starts.
-	restart_status, restart_record, counted := start_policy_rules.restart_check(&start_policy_name_counts, start_policy_from_disk, name)
-	if restart_status != .Ok {
-		values^ = restart_record
-		written^ = true
-		system.log_fact(.Warning, Start_Policy_Restart_Refused{restart_limit = u64(start_list.RESTART_LIMIT), counted_names = u64(start_policy_rules.RESTARTED_NAME_CAPACITY), refused_process = module_name_field(name)})
-		return restart_status
+		if step.status == .No_Budget {
+			system.log_fact(.Warning, Start_Policy_Restart_Refused{restart_limit = u64(start_list.RESTART_LIMIT), counted_names = u64(start_policy_rules.RESTARTED_NAME_CAPACITY), refused_process = module_name_field(name)})
+		}
+		return step.status
 	}
 	status: system.Status
-	switch name {
-	case "input":
+	started_place: ^Started
+	refusal: [7]u64
+	switch start_list.root_procedure_of(name) {
+	case .Input:
 		status = input_start()
-	case "compositor":
+	case .Compositor:
 		status = compositor_start()
-	case "shortage":
+	case .Shortage:
 		status = shortage_start()
-	case OPERATION_FUZZING_NAME:
+	case .Operation_Fuzzing:
 		status = operation_fuzzing_start()
-	case "settings":
+	case .Settings:
 		status = settings_boot_pass_start()
-	case "unlock":
+	case .Unlock:
 		status = unlock_start(.Unlock, "")
-	case:
-		// start refuses a part of the system with Bad_Operation.
-		status = start(name, principals.MACHINE)
+	case .None:
+		// One path with a list and without: the asker is the start policy,
+		// and a refusal that names its cause has its record. A list is
+		// whole or refused, as the list of each asker: its take closes each
+		// lent number.
+		work: ^Wiring_Work
+		if listed {
+			work = &wire_work
+			work^ = {asker = sender, command = .Start, form = .Start}
+			status = wiring_list_take(work)
+		}
+		if status == .Ok {
+			// start refuses a part of the system with Bad_Operation.
+			status = start(name, principals.MACHINE, sender, work, &started_place, &refusal)
+		}
+		if work != nil && work.refusal != ([7]u64{}) {
+			refusal = work.refusal
+		}
+		if status != .Ok && refusal != ([7]u64{}) {
+			values^ = refusal
+			written^ = true
+		}
 	}
 	if status != .Ok {
 		return status
 	}
-	if counted != nil {
-		counted.starts += 1
+	if step.counted != nil {
+		step.counted.starts += 1
 	}
-	slot := find_running(name)
+	slot := started_place
+	if slot == nil {
+		slot = find_running(name)
+	}
 	if slot == nil {
 		slot = find(name)
 	}
@@ -520,9 +548,9 @@ start_policy_start :: proc "contextless" (sender: ^Started, name: string, values
 		return .Ok
 	}
 	slot.asked_by_start_policy = true
-	given, give_status := system.give(sender.requests_memory, slot.process, {.Read})
+	given, give_status := start_process_handle_give(sender, slot)
 	if give_status == .Ok {
-		values[0] = u64(given)
+		values[0] = given
 	}
 	return .Ok
 }
@@ -534,7 +562,7 @@ start_policy_facts :: proc "contextless" (sender: ^Started, name: string) -> sta
 		sender_runs               = sender == start_policy_process,
 		name_runs                 = find_running(name) != nil,
 		name_is_a_start_policy    = .Start_Policy in role_of(name).grants,
-		name_is_of_a_test_machine = name == "shortage" || name == OPERATION_FUZZING_NAME,
+		name_is_of_a_test_machine = start_list.root_procedure_of(name) == .Shortage || start_list.root_procedure_of(name) == .Operation_Fuzzing,
 		name_in_image             = len(system.image_find(image, name)) != 0,
 	}
 }

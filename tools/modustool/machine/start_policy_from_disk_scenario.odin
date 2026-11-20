@@ -204,6 +204,10 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_wait(&machine, fmt.aprintf("disk_start_policy: the context holds the log, the budget and the root ring, no other handle and no start list: as it must"), any_order = true)
 	machine_wait(&machine, fmt.aprintf("disk_start_policy: a start of the start policy of the boot image is refused with the status "), any_order = true)
 	machine_wait(&machine, fmt.aprintf("disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with No_Right: as it must"), any_order = true, fails_on = "disk_start_policy: the command ")
+	// The root service holds the wiring of a start policy from the disk,
+	// which writes its own lists (src/md/features/module_outputs.md, "The
+	// decisions of the wiring rows").
+	machine_wait(&machine, fmt.aprintf("disk_start_policy: its list page, and a Start with a list of input, of the console that runs and of wired_reader: refused, each with its status and its error record, twice, and nothing started: as it must"), any_order = true, fails_on = "disk_start_policy: WRONG")
 	machine_wait(&machine, fmt.aprintf("disk_start_policy: the console runs: the machine is usable"), any_order = true, fails_on = "the rescue start policy starts")
 	machine_wait(&machine, fmt.aprintf("root: the machine is usable, by the start policy "), any_order = true)
 	machine_wait(&machine, fmt.aprintf(" chosen by principal 0, from the disk: the budget of this service holds "))
@@ -246,7 +250,7 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	pcr_12_check(self_test_file(TEST_OUTPUT_START_POLICY_FROM_DISK, 3), broken_words, after_broken) or_return
 	// The rescue is the module start_policy of the boot image, the same
 	// bytes as broken, with the rescue list.
-	rescue_list, problem := build.start_list_bytes(build.DEFAULT_RESCUE_LIST[:])
+	rescue_list, _, problem := build.start_list_bytes(build.DEFAULT_RESCUE_LIST[:])
 	if problem != "" {
 		fmt.eprintfln("modustool: test failed: the rescue list has no bytes: %s", problem)
 		return false

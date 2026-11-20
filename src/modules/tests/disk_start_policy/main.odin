@@ -13,8 +13,10 @@
 // the store `module_files` of principal 0. The modus tool writes it on the
 // disk of the test part `start_policy`. No line of the console starts it.
 //
-// **Grants**: the start grant Start_Policy: a root ring for Start, Stop and
-// Machine_Usable, and the machine parts page, read-only. It has no row in
+// **Grants**: the start grant Start_Policy: a root ring for Start, Stop,
+// Machine_Usable and Wire, and the machine parts page, read-only. It asks
+// for the wiring that the root service refuses to a start policy from the
+// disk (wiring_refusals.odin). It has no row in
 // `process_roles`.
 //
 // **What a reader sees.** No window. The log has "disk_start_policy: ok",
@@ -78,7 +80,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else {
 		system.log_fact(.Info, Wrong_Start_Policy_Start_Taken{})
 	}
-	// Its root ring sends Start, Stop and Machine_Usable only: each command
+	// Its root ring sends Start, Stop, Machine_Usable and Wire only: each command
 	// of the console is refused with No_Right, before it runs.
 	refused := [4]root_ring.Root_Command{.Start_Policy_Choice, .Start_From_Disk, .Disk_Grant, .Connect}
 	taken := 0
@@ -107,6 +109,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		system.log_fact(.Info, Started{started_process = value_kinds.module_name_field(name)})
 	}
+	// The root service holds the wiring of a start policy, whatever it
+	// sends: this one asks for what a start policy from the disk must not
+	// get.
+	if wiring_refusals() == 0 {
+		system.log_fact(.Info, Wiring_Refused{})
+	}
 	if status, _ := command_call(.Machine_Usable, ""); status != .Ok {
 		system.log_fact(.Info, Machine_Usable_Refused{status = status})
 		system.stop(.Failed)
@@ -118,12 +126,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 }
 
 // command_call sends one command of the root ring with a name, and waits
-// for its completion. One command is in flight, so the ring has room.
+// for its completion.
 command_call :: proc "contextless" (command: root_ring.Root_Command, name: string) -> (status: system.Status, values: [7]u64) {
 	packed := system.name_pack(name)
+	return call(command, {packed[0], packed[1], packed[2], packed[3], 0, 0, 0})
+}
+
+// call sends one command of the root ring with its values, and waits for
+// its completion. One command is in flight, so the ring has room.
+call :: proc "contextless" (command: root_ring.Root_Command, arguments: [7]u64) -> (status: system.Status, values: [7]u64) {
 	tag := next_tag
 	next_tag += 1
-	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = {packed[0], packed[1], packed[2], packed[3], 0, 0, 0}}) {
+	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = arguments}) {
 		return .No_Slot, {}
 	}
 	for {

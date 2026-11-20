@@ -9,6 +9,14 @@
 // place where a word of a row becomes its member: it refuses the whole list
 // at the first word that names no member.
 //
+// **The wiring rows** follow the start rows: each one joins a record output
+// of a start row to a record input of an earlier start row, and the start
+// policy applies it at the start of its writer row
+// (src/md/features/module_outputs.md, "The wiring rows of a start list").
+// A row is an output.Wiring that names its reader by its start row in place
+// of a lent handle: the same record that the start policy gives the root
+// service, and the same border, output.wiring_row_check.
+//
 // **The machine parts page** is one page that the root service writes once,
 // before the start policy starts, and maps read-only in it: which parts of
 // the machine are present. A part that the root service did not check is
@@ -24,8 +32,11 @@ package start_list
 
 import "base:intrinsics"
 import "modus:contract/enum_word"
+import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
+import "modus:contract/output"
+import "modus:contract/ring"
 
 // The names of the two lists in the resource table of the boot image.
 START_LIST_RESOURCE :: "start_list"
@@ -43,10 +54,61 @@ VALUE_LIST_SIZE :: 0
 
 // The bytes "STARTLST" and the version of the format of a list.
 LIST_MAGIC :: u64(0x54534C5452415453)
-LIST_VERSION :: 1
+LIST_VERSION :: 2
 // The rows of one list at most: a list is read into a table of this size,
 // on the stack of the start policy.
 ROW_CAPACITY :: 32
+// The wiring rows of one list at most: the start policy is the asker of
+// each, and holds each wiring until both of its sides end.
+WIRING_ROW_CAPACITY :: output.WIRINGS_OF_AN_ASKER_MOST
+// The pages of its budget that the start policy states for its wirings:
+// the tool refuses a list whose wiring rows need more
+// (wiring_pages_of_list). One reserve for every list keeps one module for
+// every image and for the rescue.
+WIRING_PAGES_RESERVE :: 64
+
+// The module of the machine of the operation sequences, which the root
+// service starts by its own procedure.
+OPERATION_FUZZING_NAME :: "operation_fuzzing"
+
+// A procedure by which the root service starts a name of its own, with no
+// wiring list: the root service switches on it, refuses a Start with a
+// list of such a name, and the tool refuses a wiring row whose writer row
+// names one. One table names them for the three.
+Root_Procedure :: enum u8 {
+	None              = 0, // The name starts with the grants of its role, and takes a list.
+	Input             = 1,
+	Compositor        = 2,
+	Settings          = 3,
+	Unlock            = 4,
+	Shortage          = 5,
+	Operation_Fuzzing = 6,
+}
+
+@(rodata)
+ROOT_PROCEDURE_NAMES := [Root_Procedure]string {
+	.None              = "",
+	.Input             = "input",
+	.Compositor        = "compositor",
+	.Settings          = "settings",
+	.Unlock            = "unlock",
+	.Shortage          = "shortage",
+	.Operation_Fuzzing = OPERATION_FUZZING_NAME,
+}
+
+// root_procedure_of gives the procedure of the root service that starts a
+// name, or None.
+root_procedure_of :: proc "contextless" (name: string) -> Root_Procedure {
+	if name == "" {
+		return .None
+	}
+	for procedure in Root_Procedure {
+		if ROOT_PROCEDURE_NAMES[procedure] == name {
+			return procedure
+		}
+	}
+	return .None
+}
 // The bytes of the name of a module in a row, with zero bytes after it: the
 // size of the name of an entry of the boot image.
 MODULE_NAME_SIZE :: 32
@@ -88,6 +150,18 @@ Machine_Part :: enum u8 {
 }
 Machine_Parts :: bit_set[Machine_Part;u64]
 
+// first_part gives the first part of a set, in the order of the members,
+// for the line of a row that a missing part leaves out; Screen for an
+// empty set, which names no missing part.
+first_part :: proc "contextless" (parts: Machine_Parts) -> Machine_Part {
+	for part in Machine_Part {
+		if part in parts {
+			return part
+		}
+	}
+	return .Screen
+}
+
 // The words of the parts in a sentence of the log.
 @(rodata)
 PART_NAMES := [Machine_Part]string {
@@ -115,13 +189,43 @@ Usable_Mark :: enum u32 {
 	Needed     = 1, // The start policy sends Machine_Usable only when this row runs, or did not start because its part is absent.
 }
 
-// The header of a list, then row_count records of Row_Record.
+// The header of a list, then row_count records of Row_Record, then
+// wiring_count records of Wiring_Row_Record.
 List_Header :: struct {
-	magic:     u64,
-	version:   u32,
-	row_count: u32,
+	magic:        u64,
+	version:      u32,
+	row_count:    u32,
+	wiring_count: u32,
+	reserved:     u32, // 0.
 }
-#assert(size_of(List_Header) == 16)
+#assert(size_of(List_Header) == 24)
+
+// One wiring row as the list holds it. The writer is the start row
+// writer_row, the end Child of the Start that applies the row; the reader
+// is the end Started, and wiring.reader_handle names its start row from 1,
+// which comes before writer_row. A start list lends no memory, so the row
+// has no terms and no condition.
+Wiring_Row_Record :: struct {
+	writer_row: u32, // The start row of the writer, from 1.
+	reserved:   u32, // 0.
+	wiring:     output.Wiring,
+}
+#assert(size_of(Wiring_Row_Record) == 72)
+
+// One wiring row after the border.
+Wiring_Row :: struct {
+	writer_row: int, // The index of the start row of the writer, from 0.
+	reader_row: int, // The index of the start row of the reader, from 0: before writer_row.
+	wiring:     output.Wiring, // As the list holds it: reader_handle is reader_row + 1.
+}
+
+// A list after its border: its start rows, then its wiring rows.
+List :: struct {
+	rows:         [ROW_CAPACITY]Start_Row,
+	row_count:    int,
+	wirings:      [WIRING_ROW_CAPACITY]Wiring_Row,
+	wiring_count: int,
+}
 
 // One row as the list holds it: each field a word, which list_read reads.
 Row_Record :: struct {
@@ -166,6 +270,15 @@ List_Problem :: enum u8 {
 	Reserved_Not_Zero   = 11,
 	Restarts_Past_Limit = 12,
 	Name_Twice          = 13, // Two rows of one module: one start of each name.
+	// The wiring rows: place is the wiring row from 0.
+	Too_Many_Wirings     = 14, // Past WIRING_ROW_CAPACITY.
+	Wiring_Row_Unknown   = 15, // A writer row of 0 or past the start rows.
+	Wiring_Refused       = 16, // output.wiring_row_check refuses the wiring: its error record says the field.
+	End_Not_Held         = 17, // A writer that is not Child, or a reader that is not Started: an end that the grant Start_Policy does not give.
+	Wiring_Loops         = 18, // The reader row is the writer row: one process at both ends.
+	Writer_Before_Reader = 19, // The reader row comes after the writer row: the writer would run before its reader.
+	Log_Wired_Twice      = 20, // Two wiring rows wire the record output log of one writer row.
+	Writer_Restarts      = 21, // The writer row of a wiring row has restarts: a restart applies its rows again, which a reader of one wiring refuses or not by its speed.
 }
 
 @(rodata)
@@ -181,9 +294,17 @@ LIST_PROBLEM_TEXTS := [List_Problem]string {
 	.Unknown_Part        = "a row needs a part that names no part of the machine",
 	.Unknown_Rule        = "a row has a rule for an absent part that names no rule",
 	.Unknown_Mark        = "a row has a mark that is neither needed nor not needed",
-	.Reserved_Not_Zero   = "a row has a reserved word that is not 0",
+	.Reserved_Not_Zero   = "a reserved word is not 0",
 	.Restarts_Past_Limit = "a row has more restarts than a row holds",
 	.Name_Twice          = "two rows name one module",
+	.Too_Many_Wirings     = "it has more wiring rows than a list holds",
+	.Wiring_Row_Unknown   = "a wiring row names no start row as its writer",
+	.Wiring_Refused       = "a wiring row is refused by its border",
+	.End_Not_Held         = "a wiring row names an end that no start policy holds",
+	.Wiring_Loops         = "a wiring row has one start row at both ends",
+	.Writer_Before_Reader = "a wiring row has its writer before its reader",
+	.Log_Wired_Twice      = "two wiring rows wire the log of one row",
+	.Writer_Restarts      = "a wiring row has a writer row with restarts",
 }
 
 // parts_of_word is the border of a word of Machine_Parts: a bit that names
@@ -250,57 +371,131 @@ row_of_record :: proc "contextless" (record: ^Row_Record) -> (row: Start_Row, pr
 }
 
 // list_read is the border of a list: it copies each record out of bytes
-// before it reads it, and gives the rows, or the problem and the place of
-// the first row that it refuses. A refused list gives no row: a start
-// policy never starts half of a list.
-list_read :: proc "contextless" (bytes: []u8, rows: ^[ROW_CAPACITY]Start_Row) -> (count: int, problem: List_Problem, place: int) {
+// before it reads it, and gives the start rows and the wiring rows, or the
+// problem and the place of the first row that it refuses: a start row for
+// the problems of a start row, a wiring row for those of a wiring row. A
+// wiring row that output.wiring_row_check refuses gives its error record
+// too. A refused list gives no row: a start policy never starts half of a
+// list.
+list_read :: proc "contextless" (bytes: []u8, list: ^List) -> (problem: List_Problem, place: int, refusal: errors.Error_Record) {
+	list^ = {}
+	problem, place, refusal = list_read_rows(bytes, list)
+	if problem != .None {
+		list^ = {}
+	}
+	return
+}
+
+@(private = "file")
+list_read_rows :: proc "contextless" (bytes: []u8, list: ^List) -> (problem: List_Problem, place: int, refusal: errors.Error_Record) {
 	if len(bytes) < size_of(List_Header) {
-		return 0, .Too_Short, 0
+		return .Too_Short, 0, {}
 	}
 	header: List_Header
 	intrinsics.mem_copy_non_overlapping(&header, raw_data(bytes), size_of(List_Header))
-	if header.magic != LIST_MAGIC {
-		return 0, .Wrong_Magic, 0
-	}
-	if header.version != LIST_VERSION {
-		return 0, .Wrong_Version, 0
-	}
-	if header.row_count == 0 {
-		return 0, .No_Row, 0
-	}
-	if header.row_count > ROW_CAPACITY {
-		return 0, .Too_Many_Rows, 0
+	switch {
+	case header.magic != LIST_MAGIC:
+		return .Wrong_Magic, 0, {}
+	case header.version != LIST_VERSION:
+		return .Wrong_Version, 0, {}
+	case header.reserved != 0:
+		return .Reserved_Not_Zero, 0, {}
+	case header.row_count == 0:
+		return .No_Row, 0, {}
+	case header.row_count > ROW_CAPACITY:
+		return .Too_Many_Rows, 0, {}
+	case header.wiring_count > WIRING_ROW_CAPACITY:
+		return .Too_Many_Wirings, 0, {}
 	}
 	row_count := int(header.row_count)
-	whole := size_of(List_Header) + row_count * size_of(Row_Record)
+	wiring_count := int(header.wiring_count)
+	whole := list_size(row_count, wiring_count)
 	if len(bytes) < whole {
-		return 0, .Too_Short, 0
+		return .Too_Short, 0, {}
 	}
 	if len(bytes) > whole {
-		return 0, .Bytes_After_Rows, 0
+		return .Bytes_After_Rows, 0, {}
 	}
 	for index in 0 ..< row_count {
 		record: Row_Record
 		intrinsics.mem_copy_non_overlapping(&record, raw_data(bytes[size_of(List_Header) + index * size_of(Row_Record):]), size_of(Row_Record))
 		row, row_problem := row_of_record(&record)
 		if row_problem != .None {
-			rows^ = {}
-			return 0, row_problem, index
+			return row_problem, index, {}
 		}
 		for earlier in 0 ..< index {
-			if row_name(&rows[earlier]) == row_name(&row) {
-				rows^ = {}
-				return 0, .Name_Twice, index
+			if row_name(&list.rows[earlier]) == row_name(&row) {
+				return .Name_Twice, index, {}
 			}
 		}
-		rows[index] = row
+		list.rows[index] = row
 	}
-	return row_count, .None, 0
+	list.row_count = row_count
+	wirings_start := size_of(List_Header) + row_count * size_of(Row_Record)
+	for index in 0 ..< wiring_count {
+		record: Wiring_Row_Record
+		intrinsics.mem_copy_non_overlapping(&record, raw_data(bytes[wirings_start + index * size_of(Wiring_Row_Record):]), size_of(Wiring_Row_Record))
+		wiring_row, wiring_problem, wiring_refusal := wiring_row_of_record(&record, index, row_count)
+		if wiring_problem != .None {
+			return wiring_problem, index, wiring_refusal
+		}
+		// One wiring list names the log of its child once: the wiring rows
+		// of one writer row are the list of its start.
+		for earlier in 0 ..< index {
+			before := &list.wirings[earlier]
+			if before.writer_row == wiring_row.writer_row && before.wiring.writer_stream == u32(output.Writer_Stream.Log) && wiring_row.wiring.writer_stream == u32(output.Writer_Stream.Log) {
+				return .Log_Wired_Twice, index, {}
+			}
+		}
+		// A restart of the writer applies its rows again while the ring
+		// before it may still hold its reader: a record input of one
+		// wiring is then refused or not by the speed of that reader.
+		if list.rows[wiring_row.writer_row].restart_count > 0 {
+			return .Writer_Restarts, index, {}
+		}
+		list.wirings[index] = wiring_row
+	}
+	list.wiring_count = wiring_count
+	return .None, 0, {}
 }
 
-// list_size gives the bytes of a list of row_count rows.
-list_size :: proc "contextless" (row_count: int) -> int {
-	return size_of(List_Header) + row_count * size_of(Row_Record)
+// wiring_row_of_record is the border of one wiring row, index from 0, in a
+// list of row_count start rows. It refuses, in this order: a reserved word
+// that is not 0; a writer row of 0 or past the start rows; what
+// output.wiring_row_check refuses, with its error record, the start rows
+// as the lent handles and no byte for terms or a condition; an end that the
+// grant Start_Policy does not give; a reader row that is the writer row;
+// and a reader row after the writer row.
+@(private = "file")
+wiring_row_of_record :: proc "contextless" (record: ^Wiring_Row_Record, index: int, row_count: int) -> (row: Wiring_Row, problem: List_Problem, refusal: errors.Error_Record) {
+	if record.reserved != 0 {
+		return {}, .Reserved_Not_Zero, {}
+	}
+	if record.writer_row == 0 || int(record.writer_row) > row_count {
+		return {}, .Wiring_Row_Unknown, {}
+	}
+	// A list of 0 bytes: terms and a condition need bytes that a start list
+	// does not lend, so the border refuses both.
+	checked, row_refusal, checked_ok := output.wiring_row_check(record.wiring, u32(index + 1), .Start, u32(row_count), 0, 0)
+	if !checked_ok {
+		return {}, .Wiring_Refused, row_refusal
+	}
+	if checked.writer_end != .Child || checked.reader_end != .Started {
+		return {}, .End_Not_Held, {}
+	}
+	if checked.reader_handle == record.writer_row {
+		return {}, .Wiring_Loops, {}
+	}
+	if checked.reader_handle > record.writer_row {
+		return {}, .Writer_Before_Reader, {}
+	}
+	return {writer_row = int(record.writer_row) - 1, reader_row = int(checked.reader_handle) - 1, wiring = record.wiring}, .None, {}
+}
+
+// list_size gives the bytes of a list of row_count start rows and
+// wiring_count wiring rows.
+list_size :: proc "contextless" (row_count: int, wiring_count: int = 0) -> int {
+	return size_of(List_Header) + row_count * size_of(Row_Record) + wiring_count * size_of(Wiring_Row_Record)
 }
 
 // row_make gives the row of a module, for a writer of a list. ok is false
@@ -318,15 +513,16 @@ row_make :: proc "contextless" (name: string, needs: Machine_Parts, absent_rule:
 	return row, true
 }
 
-// list_write writes the records of rows into output, which holds
-// list_size(len(rows)) bytes or more. ok is false when it does not, or for
-// more rows than a list holds. It writes the words; list_read is the check.
-list_write :: proc "contextless" (rows: []Start_Row, output: []u8) -> (size: int, ok: bool) {
-	if len(rows) > ROW_CAPACITY || len(output) < list_size(len(rows)) {
+// list_write writes the records of rows and of wirings into bytes, which
+// holds list_size(len(rows), len(wirings)) bytes or more. ok is false when
+// it does not, or for more rows than a list holds. It writes the words;
+// list_read is the check.
+list_write :: proc "contextless" (rows: []Start_Row, wirings: []Wiring_Row_Record, bytes: []u8) -> (size: int, ok: bool) {
+	if len(rows) > ROW_CAPACITY || len(wirings) > WIRING_ROW_CAPACITY || len(bytes) < list_size(len(rows), len(wirings)) {
 		return 0, false
 	}
-	header := List_Header{magic = LIST_MAGIC, version = LIST_VERSION, row_count = u32(len(rows))}
-	intrinsics.mem_copy_non_overlapping(raw_data(output), &header, size_of(List_Header))
+	header := List_Header{magic = LIST_MAGIC, version = LIST_VERSION, row_count = u32(len(rows)), wiring_count = u32(len(wirings))}
+	intrinsics.mem_copy_non_overlapping(raw_data(bytes), &header, size_of(List_Header))
 	for &row, index in rows {
 		record := Row_Record {
 			module_name   = row.module_name,
@@ -335,9 +531,60 @@ list_write :: proc "contextless" (rows: []Start_Row, output: []u8) -> (size: int
 			usable_mark   = u32(row.usable_mark),
 			restart_count = row.restart_count,
 		}
-		intrinsics.mem_copy_non_overlapping(raw_data(output[size_of(List_Header) + index * size_of(Row_Record):]), &record, size_of(Row_Record))
+		intrinsics.mem_copy_non_overlapping(raw_data(bytes[size_of(List_Header) + index * size_of(Row_Record):]), &record, size_of(Row_Record))
 	}
-	return list_size(len(rows)), true
+	wirings_start := size_of(List_Header) + len(rows) * size_of(Row_Record)
+	for &record, index in wirings {
+		intrinsics.mem_copy_non_overlapping(raw_data(bytes[wirings_start + index * size_of(Wiring_Row_Record):]), &record, size_of(Wiring_Row_Record))
+	}
+	return list_size(len(rows), len(wirings)), true
+}
+
+// The page tables that the start policy makes when it maps its list page:
+// a table of each of the three levels under the first one, at most. The
+// sides of a wiring map its ring, and their budgets pay those tables; the
+// start policy maps no ring.
+LIST_PAGE_TABLE_PAGES :: 3
+
+// The pages that each list with a wiring row costs the budget of its start
+// policy, whatever its rows: the list page and its page tables, the wiring
+// ring that the root service gives the start policy with it, and one
+// wiring page.
+WIRING_PAGES_OF_THE_ASKER :: output.WIRING_LIST_PAGES_MOST + LIST_PAGE_TABLE_PAGES + output.WIRING_RING_PAGES + 1
+
+// wiring_pages_of_row gives the pages of one wiring row: its ring of
+// capacity compartments (0: the default) for a record of record_size
+// bytes, its end page, and its description file at its largest. 0: no
+// ring has this record size.
+wiring_pages_of_row :: proc "contextless" (capacity: u32, record_size: u32) -> u64 {
+	compartment := output.compartment_size(record_size)
+	if compartment == 0 {
+		return 0
+	}
+	ring_capacity := capacity == 0 ? output.WIRING_CAPACITY_DEFAULT : capacity
+	return ring.compartment_pages(ring_capacity, compartment) + 1 + output.DESCRIPTION_FILE_BYTES_MOST / ring.PAGE_SIZE
+}
+
+// wiring_pages_of_list gives the pages of the wirings of a list: 0 with no
+// row, else the pages of the asker and the pages of each row, whose record
+// sizes are record_sizes in the order of the wiring rows. ok is false when
+// the counts differ, or a row has a size that no ring takes.
+wiring_pages_of_list :: proc "contextless" (list: ^List, record_sizes: []u32) -> (pages: u64, ok: bool) {
+	if len(record_sizes) != list.wiring_count {
+		return 0, false
+	}
+	if list.wiring_count == 0 {
+		return 0, true
+	}
+	pages = WIRING_PAGES_OF_THE_ASKER
+	for &wiring_row, index in list.wirings[:list.wiring_count] {
+		row_pages := wiring_pages_of_row(wiring_row.wiring.capacity, record_sizes[index])
+		if row_pages == 0 {
+			return 0, false
+		}
+		pages += row_pages
+	}
+	return pages, true
 }
 
 // list_has_usable_row says if a list has a row with the mark Needed: with

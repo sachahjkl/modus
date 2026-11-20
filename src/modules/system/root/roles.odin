@@ -389,6 +389,10 @@ process_roles := [?]Process_Role_Row {
 	// wiring rings, and they need no grant.
 	{name = "merge"},
 	{name = "filter"},
+	// The demonstration pair of the start list: the start policy wires
+	// them, and they need no grant.
+	{name = "wired_reader"},
+	{name = "wired_writer"},
 	// The asker of the test of the generic record inputs: Start, Wire and
 	// Stop are commands of the root ring. Its writer needs no grant.
 	{name = "generic_wiring", grants = {.Root_Ring}},

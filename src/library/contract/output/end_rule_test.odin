@@ -58,6 +58,39 @@ an_end_that_names_nothing_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, !wiring_end_allowed(Wiring_End(u32(max(Wiring_End)) + 1), every_fact))
 }
 
+// The rows of a start policy. Refused first, with the end that the rule
+// names: the two scenarios of a start policy from the disk that reads a
+// stream (the log of its child to the Asker in a Start; a lent child as
+// the writer and the Asker in a Wire), each other pair of ends of a Start,
+// and each pair of a Wire, the one row of the start list among them. The
+// row of a start list in a Start is taken last.
+@(test)
+a_start_policy_names_only_the_ends_of_a_start_list :: proc(t: ^testing.T) {
+	expect :: proc(t: ^testing.T, form: Wiring_List_Form, writer, reader: Wiring_End, field: Wiring_Field, loc := #caller_location) {
+		refused, allowed := start_policy_row_allowed(form, writer, reader)
+		testing.expect(t, !allowed, "the row is taken", loc = loc)
+		testing.expect_value(t, refused, field, loc = loc)
+	}
+	expect(t, .Start, .Child, .Asker, .Reader_End)
+	expect(t, .Wire, .Started, .Asker, .Writer_End)
+	for writer in Wiring_End {
+		for reader in Wiring_End {
+			if writer == .Child && reader == .Started {
+				continue
+			}
+			expect(t, .Start, writer, reader, writer == .Child ? .Reader_End : .Writer_End)
+		}
+	}
+	for writer in Wiring_End {
+		for reader in Wiring_End {
+			expect(t, .Wire, writer, reader, .Writer_End)
+		}
+	}
+	field, allowed := start_policy_row_allowed(.Start, .Child, .Started)
+	testing.expect(t, allowed, "the row of a start list is refused")
+	testing.expect_value(t, field, Wiring_Field.Whole)
+}
+
 // The ends that the rule takes, last: the child and the asker with no
 // fact; a Started end that the asker started; a Started end that the start
 // policy asked for, named by the start policy; a Connected end with its
