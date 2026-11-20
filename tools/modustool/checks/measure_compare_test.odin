@@ -10,7 +10,7 @@ import "core:testing"
 @(test)
 measure_compare_reads_two_records :: proc(t: ^testing.T) {
 	records_line :: proc(count: string) -> string {
-		return strings.concatenate({"modustool: measure: the records of the log of build/test_output.txt: 412 up to \"kernel: ok\", ", count, " up to \"the machine is usable\""}, context.temp_allocator)
+		return strings.concatenate({"modustool: measure: the records of the log of build/test_output.txt: 412 up to \"kernel: ok\", ", count, " up to \"root: the machine is usable\""}, context.temp_allocator)
 	}
 	before := Measure_Record {
 		time    = "2026-11-20 01:42 UTC",

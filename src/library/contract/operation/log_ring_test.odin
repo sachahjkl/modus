@@ -235,6 +235,11 @@ the_line_of_a_fact :: proc(t: ^testing.T) {
 		count = log_fact_line(&runs, &line)
 		testing.expectf(t, count == len(ZERO_HEAD) + len(item.text) && string(line[:len(ZERO_HEAD)]) == ZERO_HEAD && string(line[len(ZERO_HEAD):count]) == item.text, "a run of %d zero bytes gives %q", item.zeros, string(line[:count]))
 	}
+	// Zero and non-zero bytes in turn: each zero byte alone is one letter.
+	alternating := Log_Fact{value_count = 8}
+	alternating.values[0], alternating.values[2], alternating.values[4], alternating.values[6] = 0x01, 0x02, 0xFE, 0xFF
+	count = log_fact_line(&alternating, &line)
+	testing.expect_value(t, string(line[:count]), ZERO_HEAD + " 01g02gfegff")
 	// A run at the start, before the last byte of the record.
 	starts := Log_Fact{value_count = LOG_FACT_VALUE_CAPACITY}
 	starts.values[LOG_FACT_VALUE_CAPACITY - 1] = 0x7F

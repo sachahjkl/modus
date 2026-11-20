@@ -178,9 +178,11 @@ log_fact_line :: proc "contextless" (fact: ^Log_Fact, line: ^[LOG_FACT_LINE_BYTE
 			place += 1
 			continue
 		}
-		// The run ends before `used`: the byte at used - 1 is not zero.
+		// The bound is in the loop itself: a fact in memory that another
+		// thread writes can turn the byte at used - 1 to zero after the
+		// loop above read it.
 		run := 0
-		for fact.values[place] == 0 {
+		for place < used && fact.values[place] == 0 {
 			run += 1
 			place += 1
 		}

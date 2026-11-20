@@ -78,6 +78,30 @@ fact_catalog_of_build :: proc(allocator: runtime.Allocator) -> (catalog: Fact_Ca
 	return catalog, ""
 }
 
+// fact_catalog_add_modules adds modules from outside the build to a
+// catalog, as the outside modules of a test disk, which run beside the
+// modules of the build. problem: the module tag of one of them is the tag
+// of another module, so a line of a fact of one would render as a fact of
+// the other.
+fact_catalog_add_modules :: proc(catalog: ^Fact_Catalog, modules: []Fact_Catalog_Module) -> (problem: string) {
+	for item in modules {
+		if problem = fact_catalog_add(catalog, item.hash, item.path, item.file); problem != "" {
+			return problem
+		}
+	}
+	return ""
+}
+
+// outside_module_tags_check refuses outside modules whose module tag is
+// the tag of a module of the build or of another of them.
+outside_module_tags_check :: proc(modules: []Fact_Catalog_Module) -> (problem: string) {
+	catalog, catalog_problem := fact_catalog_of_build(context.temp_allocator)
+	if catalog_problem != "" {
+		return catalog_problem
+	}
+	return fact_catalog_add_modules(&catalog, modules)
+}
+
 // fact_catalog_file gives the module file whose hash has the module tag
 // `tag`, read one time. nil: no module of the catalog has it.
 fact_catalog_file :: proc(catalog: ^Fact_Catalog, tag: [FACT_LINE_MODULE_TAG_BYTES]u8) -> []u8 {

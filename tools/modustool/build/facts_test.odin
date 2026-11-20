@@ -334,6 +334,11 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 		HEAD + " 2a0",
 		HEAD + " 2a{",
 		HEAD + " 2aA0",
+		HEAD + " 2az",
+		HEAD + " 2azz",
+		HEAD + " 2a  ",
+		HEAD + " 2a\r",
+		HEAD + " 2a\r\n",
 		"#0102030:fa0adf 2a",
 		"#01020304:fa0ad 2a",
 		"#01020304fa0adf0 2a",
@@ -355,6 +360,19 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	testing.expect(t, full_runs_parsed && full_runs.value_count == op.LOG_FACT_VALUE_CAPACITY && full_runs.values[op.LOG_FACT_VALUE_CAPACITY - 1] == 0x7f && full_runs.values[0] == 0)
 	_, past_runs_parsed := fact_line_parse(HEAD + " zzzzzzzj7f")
 	testing.expect(t, !past_runs_parsed)
+	// Runs of two letters between two bytes: "zz" is 40 zero bytes, "zzg"
+	// 41, and the line of the kernel for each is that text.
+	Run_Read :: struct {
+		text:  string,
+		zeros: int,
+	}
+	for item in ([?]Run_Read{{HEAD + " 01z02", 20}, {HEAD + " 01zz02", 40}, {HEAD + " 01zzg02", 41}}) {
+		read, read_ok := fact_line_parse(item.text)
+		expected: [op.LOG_FACT_VALUE_CAPACITY]u8
+		expected[0], expected[item.zeros + 1] = 0x01, 0x02
+		testing.expectf(t, read_ok && read.value_count == item.zeros + 2 && read.values == expected, "%q does not read back as %d zero bytes between two bytes", item.text, item.zeros)
+		testing.expect_value(t, fact_render_line(hash, FACT_RENDER_KEY, expected[:item.zeros + 2]), item.text)
+	}
 
 	// Each line that the kernel writes reads back to its bytes: each byte
 	// value alone and after each run, and a Text field of its whole size.
@@ -395,6 +413,23 @@ the_line_of_a_fact_is_rendered_on_the_host :: proc(t: ^testing.T) {
 	neighbour_catalog := Fact_Catalog{allocator = context.temp_allocator}
 	testing.expect_value(t, fact_catalog_add(&neighbour_catalog, hash, "", file), "")
 	testing.expect_value(t, fact_catalog_add(&neighbour_catalog, neighbour, "", file), "")
+	// The outside modules of a test disk join the catalog of the build: an
+	// outside module with the tag of a module of the build is refused, and
+	// so is a second outside module with the tag of the first; modules with
+	// other tags are taken, and the module of the build keeps its lines.
+	outside_twin := [?]Fact_Catalog_Module{{hash = twin, file = file}}
+	outside_catalog := Fact_Catalog{allocator = context.temp_allocator}
+	testing.expect_value(t, fact_catalog_add(&outside_catalog, hash, "", file), "")
+	testing.expect(t, fact_catalog_add_modules(&outside_catalog, outside_twin[:]) != "")
+	other_outside := hash
+	other_outside[0] = 0xEE
+	twin_of_other := other_outside
+	twin_of_other[module.HASH_SIZE - 1] = 0xEE
+	outside_pair := [?]Fact_Catalog_Module{{hash = other_outside, file = file}, {hash = twin_of_other, file = file}}
+	testing.expect(t, fact_catalog_add_modules(&outside_catalog, outside_pair[:]) != "")
+	outside_taken := [?]Fact_Catalog_Module{{hash = neighbour, file = file}}
+	testing.expect_value(t, fact_catalog_add_modules(&outside_catalog, outside_taken[:]), "")
+	testing.expect(t, fact_catalog_file_of_hash(&outside_catalog, hash) != nil && fact_catalog_file_of_hash(&outside_catalog, twin) == nil)
 	// A whole hash names its module only: the twin, which starts with the
 	// same module tag, and the hash of zeros name none.
 	testing.expect(t, fact_catalog_file_of_hash(&catalog, twin) == nil)

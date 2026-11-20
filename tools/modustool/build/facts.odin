@@ -425,8 +425,10 @@ field_description_size :: proc(item: Field_Description) -> u32 {
 // facts_merge adds the fact types of a module to its description: the
 // record of each one in the records, where an equal description takes the
 // same index, and the facts sorted by key. It refuses a key of 0, two fact
-// types with one key, and a record of a fact type whose name an export
-// uses with another description.
+// types with one key, two fact types with one key tag (the first bytes of
+// the key, which the serial line of a fact writes: op.log_fact_key_tag),
+// and a record of a fact type whose name an export uses with another
+// description.
 facts_merge :: proc(description: ^Module_Description, facts: []Fact_Description) -> bool {
 	records := make([dynamic]Record_Description, context.temp_allocator)
 	append(&records, ..description.records)
