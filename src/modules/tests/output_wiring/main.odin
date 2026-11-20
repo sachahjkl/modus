@@ -289,6 +289,12 @@ grant_wirings_revoke :: proc "contextless" (wanted: int) {
 	status, revoked := root_call(.Revoke, {packed[0], packed[1], packed[2], packed[3], u64(system.Root_Grant.Wirings), 0, 0})
 	if wanted == 0 {
 		refused("the revocation of the grant wirings with no wiring held", before, status, revoked, .Bad_State, fail(.Revoke, .Absent, .Grants, 2))
+		// The refusal changed no grant: wirings is neither granted nor
+		// marked revoked, so this process can still ask for wirings.
+		granted, revoked_grants := grants_read()
+		if .Wirings in granted || .Wirings in revoked_grants {
+			wrong("a refused revocation of the grant wirings left it granted or revoked; the grants", transmute(u64)granted)
+		}
 		return
 	}
 	if status != .Ok {
@@ -296,6 +302,42 @@ grant_wirings_revoke :: proc "contextless" (wanted: int) {
 	}
 	if revoked[0] != u64(wanted) {
 		wrong("the revocation of the grant wirings ended this count of wirings:", revoked[0])
+	}
+	for index in 1 ..< len(revoked) {
+		if revoked[index] != 0 {
+			wrong("the revocation of the grant wirings gave a value past its count:", revoked[index])
+		}
+	}
+}
+
+// grants_read gives the grants of this process that the root service
+// records: those that it holds, and those that a revocation ended.
+@(private = "file")
+grants_read :: proc "contextless" () -> (granted, revoked: system.Root_Grants) {
+	packed := system.name_pack("output_wiring")
+	status, answer := root_call(.Grants, {packed[0], packed[1], packed[2], packed[3], 0, 0, 0})
+	if status != .Ok {
+		wrong_refused("the Grants of this process gave the status", status, answer)
+	}
+	return transmute(system.Root_Grants)answer[0], transmute(system.Root_Grants)answer[1]
+}
+
+// grant_wirings_gone_wait waits until the root service records no grant
+// wirings for this process, within the hang bound: the root service reads
+// the answers of a process after its commands in one pass, but serves each
+// command that comes during that pass first, so the end of a wiring by a
+// word Closed can come after the answer of a command.
+@(private = "file")
+grant_wirings_gone_wait :: proc "contextless" (what: string) {
+	deadline := hang_deadline()
+	for {
+		granted, _ := grants_read()
+		if .Wirings not_in granted {
+			return
+		}
+		if system.time() >= deadline {
+			wrong(what, transmute(u64)granted)
+		}
 	}
 }
 
@@ -600,6 +642,10 @@ limit_case :: proc "contextless" () {
 			wrong_refused("a wiring up to the limit gave the status", status, answer)
 		}
 		number = u32(answer[0])
+		// The root service records the grant before it answers the Wire.
+		if granted, _ := grants_read(); .Wirings not_in granted {
+			wrong("a wiring is held and the grant wirings is not granted; the grants", transmute(u64)granted)
+		}
 	}
 	before := budget_pages()
 	handles := [1]u32{lend(writer)}
@@ -642,6 +688,11 @@ side_case :: proc "contextless" () {
 	if refused_status != .Ended || refused_end.end_word != .Refused {
 		wrong("the end that output_side refused did not end with Refused; the status", u64(refused_status))
 	}
+	// That wiring was the only one of this process: limit_case revoked
+	// its own, and the wirings of the cases before ended with their
+	// processes. The root service writes the end word and ends the grant
+	// in one call, so the grant is gone when the word is read.
+	grant_wirings_revoke(0)
 
 	numbers: [output.WIRINGS_OF_AN_ASKER_MOST]u32
 	held := 0
@@ -667,17 +718,12 @@ side_case :: proc "contextless" () {
 	if side_closed_status != .Ended || side_closed.end_word != .Side_Closed {
 		wrong("the wiring that output_side closed did not end with Side_Closed; the end word", u64(side_closed.end_word))
 	}
-	// This reader said Closed in turn, and the wiring ends with it. The
-	// root service reads the answers of this process after its command in
-	// one pass: after this call, the wiring no longer counts for its asker.
-	// The answer of this call is written before that pass reads the
-	// answers, so it can still show the grant wirings: only its status is
-	// checked.
-	asker_name := system.name_pack("output_wiring")
-	grants_status, grants := root_call(.Grants, {asker_name[0], asker_name[1], asker_name[2], asker_name[3], 0, 0, 0})
-	if grants_status != .Ok {
-		wrong_refused("the Grants of this process gave the status", grants_status, grants)
-	}
+	// This reader said Closed in turn, before asker_read gave Side_Closed,
+	// and the wiring ends with the two Closed words. It was the only wiring
+	// of this process, so the grant ends with it: the wait reads the grants
+	// until the root service read the word, then the revocation is refused.
+	grant_wirings_gone_wait("the grant wirings stayed after the two sides of the only wiring of this process closed; the grants")
+	grant_wirings_revoke(0)
 	for _ in 0 ..< SIDE_RING_CAPACITY {
 		if held == len(numbers) {
 			grant_wirings_revoke(held)
