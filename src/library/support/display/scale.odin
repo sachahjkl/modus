@@ -385,6 +385,26 @@ rescale_offer_send :: proc "contextless" (window: ^Window) {
 	}
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Rescale), values = {0 = u64(granted), 1 = u64(screen_width), 2 = u64(screen_height), 3 = u64(scale), 4 = window.rescale.serial}})
 	surface_take(window, memory, address, screen_width, screen_height)
+	rescale_first_picture(window)
+}
+
+// rescale_first_picture presents the offered surface at once, filled with
+// the background: the compositor takes the offer and shows this picture,
+// in the order of the ring, so a change of the scale ends for each window
+// whose process reads its events, also one that draws only when its own
+// state changes, or never. The process draws its content after it; the
+// picture stays owed to it (picture_owed), since this Present is no
+// drawing of the process. A full ring skips it: the next Present of the
+// process shows the surface.
+@(private)
+rescale_first_picture :: proc "contextless" (window: ^Window) {
+	if ring.count(&window.ring.commands) == ring.capacity(&window.ring.commands) {
+		return
+	}
+	graphics.fill(window.canvas, 0, 0, window.canvas.width, window.canvas.height, graphics.colors.background)
+	drawn_serial := window.presented_serial
+	_ = present_rectangle(window, 0, 0, 0, 0)
+	window.presented_serial = drawn_serial
 }
 
 @(private)
