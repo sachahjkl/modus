@@ -311,5 +311,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.draw_unsigned(table, after, line + 60, made_free - sum_free, graphics.colors.failed)
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window, now + FRAME_TIME)
+		// The window reads its events at each turn: a record left in its
+		// ring ends each later wait at once, so the loop would draw with
+		// no pause, and a change of the scale reaches the window only
+		// through them (src/md/features/window_resize.md).
+		interface.window_events(&window_memory.drawing, &window)
 	}
 }
