@@ -298,7 +298,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case outcome == .Needs_Reset:
 		system.log(.Info, "iommu_device: a read into a page that was not declared: the device needs a reset, and the page keeps its 4096 bytes: as it must")
 	case outcome == .Used:
-		system.log(.Info, "iommu_device: a read into a page that was not declared: the device gave the request back with the status ", u64(status^), ", and the page keeps its 4096 bytes: as it must")
+		system.log_fact(.Info, Undeclared_Read_Given_Back{device_status = u64(status^)})
 	case:
 		system.log(.Info, "iommu_device: a read into a page that was not declared: the device did not end the request before the hang bound")
 	}

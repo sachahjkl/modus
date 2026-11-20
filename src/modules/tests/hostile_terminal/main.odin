@@ -30,6 +30,7 @@ package hostile_terminal
 
 import "base:intrinsics"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 import terminal "modus:support/terminal"
 
@@ -69,9 +70,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.sleep(system.time() + 1)
 	}
 	if i32(intrinsics.atomic_load_explicit(&counters.read, .Relaxed) - written) >= 0 {
-		system.log(.Info, "hostile_terminal: the terminal read the kind words ", u64(refused_kind_words[0]), ", ", u64(refused_kind_words[1]), " and ", u64(refused_kind_words[2]), ", and the line after them: as it must")
+		system.log_fact(.Info, Kind_Words_Read{first_word = u64(refused_kind_words[0]), second_word = u64(refused_kind_words[1]), third_word = u64(refused_kind_words[2])})
 	} else {
-		system.log(.Info, "hostile_terminal: WRONG: the terminal did not read its records in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
+		system.log_fact(.Info, Wrong_Records_Not_Read{bound = value_kinds.Time_In_Milliseconds(system.TEST_HANG_BOUND_MILLISECONDS)})
 		system.stop(.Failed)
 	}
 	system.stop(.Done)

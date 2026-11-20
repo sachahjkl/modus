@@ -73,7 +73,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	kept := arena
 	held, _ := system.budget_read()
 	refusal_is_of_the_budget := refused == .No_Budget && (record.kind == i64(errors.Kind.Budget) || record.kind == i64(errors.Kind.Budget_Hidden))
-	system.log(.Info, "arena: grew to ", arena.committed_pages, " pages in ", arena.commit_count, " commits, in a reservation of ", reservation, " pages, and gave ", pushes, " pushes of one page; the budget held ", before.pages, " pages before, and ", held.pages, " after the refusal")
+	system.log_fact(.Info, Arena_Grew{committed_pages = arena.committed_pages, commits = arena.commit_count, reservation_pages = reservation, pushes = pushes, budget_pages_before = before.pages, budget_pages_after = held.pages})
 
 	// A second refused push: the process still runs, and nothing changed.
 	_, again := system.arena_push(&arena, system.PAGE_SIZE, system.PAGE_SIZE)
@@ -102,7 +102,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case !refusal_is_of_the_budget:
 		system.log(.Info, "arena: WRONG: the growth stopped with ", refused, " and the error kind ", record.kind, ", not with No_Budget")
 	case pushes == 0 || nonzero != 0:
-		system.log(.Info, "arena: WRONG: ", pushes, " pushes, and ", nonzero, " pages that did not read zero before their first write")
+		system.log_fact(.Info, Wrong_Pushes{pushes = pushes, nonzero_pages = nonzero})
 	case held.pages != 0 || !unchanged:
 		system.log(.Info, "arena: WRONG: after the refusal the budget held ", held.pages, " pages, and a second push gave ", again, " or changed the arena")
 	case !reused:

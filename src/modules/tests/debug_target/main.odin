@@ -137,7 +137,7 @@ run_rounds :: proc "contextless" () -> ! {
 			if wrong_totals == 0 {
 				system.log(.Info, "debug_target: 64 more rounds ran, so the process is not held: as it must")
 			} else {
-				system.log(.Info, "debug_target: 64 more rounds ran, and ", wrong_totals, " rounds gave a wrong total: WRONG")
+				system.log_fact(.Info, Wrong_Totals{wrong_totals = wrong_totals})
 			}
 		}
 		system.sleep(system.time() + 1)

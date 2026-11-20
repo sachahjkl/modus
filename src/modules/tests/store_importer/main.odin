@@ -50,7 +50,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if result == 42 {
 		system.log(.Info, "store_importer: triple(14) of the module store_library of the store module_files gives 42: as it must")
 	} else {
-		system.log(.Info, "store_importer: triple(14) gives ", u64(result), ", and 42 is the answer: WRONG")
+		system.log_fact(.Info, Wrong_Result{result = u64(result)})
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, TITLE_ASKED)
 	if !ok {

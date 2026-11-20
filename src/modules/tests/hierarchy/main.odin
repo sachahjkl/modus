@@ -20,6 +20,7 @@ package hierarchy
 
 import "modus:contract/errors"
 import format "modus:contract/store"
+import "modus:contract/value_kinds"
 import "modus:support/storage"
 import "modus:support/system"
 
@@ -200,7 +201,7 @@ first_run :: proc "contextless" () {
 		commits += 1
 		storage.close_tree(&client, top_place)
 		if (top + 1) % 10 == 0 {
-			system.log(.Info, "hierarchy: ", i64((top + 1) * PARTS * OBJECTS_IN_PART), " objects made in ", commits, " commits, in ", system.time() - start, " ms")
+			system.log_fact(.Info, Objects_Made{objects = i64((top + 1) * PARTS * OBJECTS_IN_PART), commits = commits, elapsed = value_kinds.Time_In_Milliseconds(system.time() - start)})
 		}
 	}
 	counts, _ := storage.usage(&client)
@@ -505,10 +506,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log(.Info, "hierarchy: a new store: the first run")
 		first_run()
 	} else {
-		system.log(.Info, "hierarchy: a store with ", counts.objects, " objects: the run after the remount")
+		system.log_fact(.Info, Store_Remounted{objects = counts.objects})
 		second_run(counts)
 	}
-	system.log(.Info, "hierarchy: done, ", u64(wrong_cases), " wrong")
+	system.log_fact(.Info, Run_Done{wrong_cases = u64(wrong_cases)})
 	if wrong_cases != 0 {
 		system.stop(.Failed)
 	}

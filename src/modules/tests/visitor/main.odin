@@ -76,7 +76,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log(.Info, "visitor: the context holds the log, a window and the budget, and no handle of a grant: as it must")
 		}
 	} else {
-		system.log(.Info, "visitor: the context holds ", u64(granted), " handles of a grant: WRONG")
+		system.log_fact(.Info, Wrong_Grant_Handles{grant_handles = u64(granted)})
 	}
 	_, status := system.ring_open(ctx.handles[system.GRANT_ROOT])
 	if ctx.handles[system.GRANT_ROOT] == 0 && status == .Bad_Handle {
@@ -120,7 +120,7 @@ visits_count :: proc "contextless" (client: ^storage.Client) {
 	before: u64
 	if found {
 		if len(bytes) != 8 {
-			system.log(.Info, "visitor: the count in the store has ", u64(len(bytes)), " bytes, not 8: WRONG")
+			system.log_fact(.Info, Wrong_Count_Size{count_bytes = u64(len(bytes))})
 			return
 		}
 		before = transmute(u64)[8]u8{bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]}
@@ -140,7 +140,7 @@ visits_count :: proc "contextless" (client: ^storage.Client) {
 		system.log(.Info, "visitor: the count read again is not the count written: WRONG")
 		return
 	}
-	system.log(.Info, "visitor: the store of its nickname holds the visit ", now, ", read again: as it must")
+	system.log_fact(.Info, Visit_Read_Again{visit = now})
 }
 
 // The depth that each procedure of the fault writes after its call: no

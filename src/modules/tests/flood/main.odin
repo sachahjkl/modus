@@ -89,7 +89,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					if paused {
 						terminal.status(&output, "lines written", number % ROUND, ROUND, {tone = u8(terminal.Tone.Warning)})
 						terminal.edit(&output, "the lines wait: the key Space continues", style = {tone = u8(terminal.Tone.Warning)})
-						system.log(.Info, "flood: Space: no more lines after ", number - 1)
+						system.log_fact(.Info, Lines_Paused{last_line = number - 1})
 					} else {
 						terminal.edit(&output, "")
 						system.log(.Info, "flood: Space: the lines continue")

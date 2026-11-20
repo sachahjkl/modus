@@ -28,6 +28,7 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // One thread; the working memory pays its root ring, the machine parts
@@ -64,7 +65,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if other == 0 && ctx.values[start_list.VALUE_LIST_SIZE] == 0 {
 		system.log(.Info, "disk_start_policy: the context holds the log, the budget and the root ring, no other handle and no start list: as it must")
 	} else {
-		system.log(.Info, "disk_start_policy: the context holds ", u64(other), " other handles and a list of ", ctx.values[start_list.VALUE_LIST_SIZE], " bytes: WRONG")
+		system.log_fact(.Info, Wrong_Context{other_handles = u64(other), list_bytes = ctx.values[start_list.VALUE_LIST_SIZE]})
 	}
 	parts, _, _, page_read := start_list.parts_page_read(rawptr(uintptr(start_list.MACHINE_PARTS_PAGE_ADDRESS)))
 	if !page_read {
@@ -93,7 +94,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	order := ORDER
 	for name in order {
 		if name != "console" && .Screen not_in parts {
-			system.log(.Info, "disk_start_policy: ", name, " is not started: the machine has no screen")
+			system.log_fact(.Info, Not_Started_Without_Screen{started_process = value_kinds.module_name_field(name)})
 			continue
 		}
 		status, _ := command_call(.Start, name)
@@ -104,7 +105,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			continue
 		}
-		system.log(.Info, "disk_start_policy: started ", name)
+		system.log_fact(.Info, Started{started_process = value_kinds.module_name_field(name)})
 	}
 	if status, _ := command_call(.Machine_Usable, ""); status != .Ok {
 		system.log(.Info, "disk_start_policy: the root service refused Machine_Usable: status ", status)

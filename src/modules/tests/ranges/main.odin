@@ -24,6 +24,7 @@ package ranges
 
 import "modus:contract/errors"
 import format "modus:contract/store"
+import "modus:contract/value_kinds"
 import "modus:support/storage"
 import "modus:support/system"
 
@@ -161,8 +162,14 @@ small_writes_read :: proc "contextless" () -> bool {
 	return true
 }
 
-measure_log :: proc "contextless" (what: string, measure: storage.Commit_Measure) {
-	system.log(.Info, "ranges: ", what, u64(measure.changed), " blocks changed of ", u64(measure.object_blocks), ", ", u64(measure.hashed_blocks), " blocks and ", u64(measure.hashed_nodes), " object nodes hashed, ", u64(measure.written), " blocks written, in ", u64(measure.milliseconds), " ms")
+measure_log :: proc "contextless" (commit: Measured_Commit, measure: storage.Commit_Measure) {
+	elapsed := value_kinds.Time_In_Milliseconds(measure.milliseconds)
+	switch commit {
+	case .Sparse_Object:
+		system.log_fact(.Info, Sparse_Object_Committed{changed = u64(measure.changed), object_blocks = u64(measure.object_blocks), hashed_blocks = u64(measure.hashed_blocks), hashed_nodes = u64(measure.hashed_nodes), written = u64(measure.written), elapsed = elapsed})
+	case .Scrambled_Writes:
+		system.log_fact(.Info, Scrambled_Writes_Committed{changed = u64(measure.changed), object_blocks = u64(measure.object_blocks), hashed_blocks = u64(measure.hashed_blocks), hashed_nodes = u64(measure.hashed_nodes), written = u64(measure.written), elapsed = elapsed})
+	}
 }
 
 first_run :: proc "contextless" () {
@@ -179,7 +186,7 @@ first_run :: proc "contextless" () {
 	size, size_status := storage.size(&client, storage.ROOT, "sparse")
 	outcome(statuses && size_status == .Ok && u64(size) == SPARSE_SIZE, "three range writes are pending, and the size of the object is ", u64(size), " bytes")
 	measure, status := storage.commit(&client, storage.ROOT, "sparse")
-	measure_log("the commit of the sparse object: ", measure)
+	measure_log(.Sparse_Object, measure)
 	// The root, and for each block its object nodes of levels 3, 2 and 1
 	// (the three blocks share no node under the root), and the block.
 	outcome(status == .Ok && measure.object_blocks == i64(SPARSE_BLOCKS) && measure.held_blocks == 1 + 3 * 3 + 3, "a sparse object of 8 GiB from 3 writes and one commit holds ", u64(measure.held_blocks), " blocks")
@@ -202,9 +209,9 @@ first_run :: proc "contextless" () {
 		_, write_status := storage.write_range(&client, storage.ROOT, "sparse", offset, bytes[:])
 		writes_good &&= write_status == .Ok
 	}
-	system.log(.Info, "ranges: 1000 range writes at scrambled offsets are pending, in ", system.time() - writes_start, " ms")
+	system.log_fact(.Info, Range_Writes_Pending{elapsed = value_kinds.Time_In_Milliseconds(system.time() - writes_start)})
 	measure, status = storage.commit(&client, storage.ROOT, "sparse")
-	measure_log("1000 writes at scrambled offsets, then one commit: ", measure)
+	measure_log(.Scrambled_Writes, measure)
 	// The bound of the cost: each changed block, the last block of the hash,
 	// and at most one object node of each level for each changed block.
 	levels: i64 = 4
@@ -224,7 +231,7 @@ first_run :: proc "contextless" () {
 	refusals()
 	conflict_case()
 	twin_case()
-	system.log(.Info, "ranges: the cases took ", system.time() - start, " ms")
+	system.log_fact(.Info, Cases_Done{elapsed = value_kinds.Time_In_Milliseconds(system.time() - start)})
 	loop()
 }
 
@@ -432,7 +439,7 @@ loop :: proc "contextless" () {
 		_, status := storage.commit(&client, storage.ROOT, "loop")
 		good &&= status == .Ok
 		if (commit_number + 1) % 50 == 0 {
-			system.log(.Info, "ranges: loop, ", u64(commit_number + 1), " commits of 4 range writes, in ", system.time() - start, " ms")
+			system.log_fact(.Info, Loop_Commits_Made{commits = u64(commit_number + 1), elapsed = value_kinds.Time_In_Milliseconds(system.time() - start)})
 		}
 	}
 	outcome(good, "the loop made ", u64(LOOP_COMMITS), " commits of range writes")
@@ -486,10 +493,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log(.Info, "ranges: a new store: the first run")
 		first_run()
 	} else {
-		system.log(.Info, "ranges: a store with ", counts.objects, " objects: the run after the remount")
+		system.log_fact(.Info, Store_Remounted{objects = counts.objects})
 		second_run()
 	}
-	system.log(.Info, "ranges: done, ", u64(wrong_cases), " wrong")
+	system.log_fact(.Info, Run_Done{wrong_cases = u64(wrong_cases)})
 	if wrong_cases != 0 {
 		system.stop(.Failed)
 	}
