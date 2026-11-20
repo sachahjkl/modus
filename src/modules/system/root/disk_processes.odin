@@ -23,6 +23,7 @@ package root
 // nickname to its next file.
 
 import "modus:contract/blake3"
+import "modus:contract/storage_status"
 import "modus:contract/enum_word"
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/errors"
@@ -278,7 +279,7 @@ disk_load_ask :: proc "contextless" (export: string, offset: u64, with_offset: b
 		load.arguments[2].integer = offset
 		load.argument_count = 3
 	}
-	status: storage.Status
+	status: storage_status.Status
 	load.sent, status = storage.call_send(&load.client, export, load.arguments[:load.argument_count])
 	return status == .Ok
 }

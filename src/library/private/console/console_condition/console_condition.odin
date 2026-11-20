@@ -12,7 +12,6 @@
 package console_condition
 
 import module "modus:contract/module"
-import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:private/console/console_language"
 import "modus:support/line_editor"
@@ -177,7 +176,12 @@ field_check :: proc "contextless" (item: module.Field, comparison: Comparison) -
 		return equality ? .None : .No_Order
 	case .Handle:
 		return .None
-	case .Bytes, .None, .Record, .Table:
+	case .Bytes:
+		// A text view is a text: compared whole, with no order.
+		if kind == .Text_View {
+			return equality ? .None : .No_Order
+		}
+	case .None, .Record, .Table:
 	}
 	return .Not_Comparable
 }
@@ -208,7 +212,7 @@ member_read :: proc "contextless" (text: string, place: int, which: value_kinds.
 		return 0, member, token.end, .Member_Is_A_Name
 	}
 	named: bool
-	if word, named = op.contract_enum_member_of_name(which, member); !named {
+	if word, named = module.contract_enum_member_of_name(which, member); !named {
 		return 0, member, token.end, .Unknown_Member
 	}
 	return word, member, token.end, .None
@@ -239,7 +243,11 @@ value_check :: proc "contextless" (item: module.Field, kind: module.Type, value:
 			return .Wrong_Kind
 		}
 		return value >= 0 && value <= i64(max(u32)) ? .None : .Out_Of_Field
-	case .Bytes, .None, .Record, .Table:
+	case .Bytes:
+		if field_kind, field_kind_ok := module.field_kind(item); field_kind_ok && field_kind == .Text_View {
+			return kind == .Text ? .None : .Wrong_Kind
+		}
+	case .None, .Record, .Table:
 	}
 	return .Not_Comparable
 }
@@ -255,10 +263,16 @@ Field_Value :: struct {
 }
 
 // field_value_of gives the value of one field of a row: an Integer or a
-// handle with its sign, or a Text. ok is false for a field with no value
-// that the console compares.
-field_value_of :: proc "contextless" (row: []u8, item: module.Field) -> (value: Field_Value, ok: bool) {
+// handle with its sign, or a Text, a text view too, whose long text is in
+// area, the out-of-line area of its fact. ok is false for a field with no
+// value that the console compares, and for a view that
+// value_kinds.text_view_read refuses.
+field_value_of :: proc "contextless" (row: []u8, item: module.Field, area: []u8 = nil) -> (value: Field_Value, ok: bool) {
 	type := module.field_type(item) or_return
+	if kind, kind_ok := module.field_kind(item); kind_ok && kind == .Text_View && type == .Bytes {
+		text := value_kinds.text_view_read(module.field_bytes(row, item), area) or_return
+		return {is_text = true, text = string(text)}, true
+	}
 	switch type {
 	case .Integer:
 		return {integer = module.field_integer(row, item), unsigned = item.unsigned}, true
@@ -325,6 +339,42 @@ condition_holds :: proc "contextless" (value: Field_Value, condition: Condition)
 		return order >= 0
 	}
 	return false
+}
+
+// text_view_condition_holds says if a text view passes a condition of
+// equality, from its 16 bytes first: another length or another prefix
+// decides with no read of the out-of-line area, and a short text is
+// decided whole. Only a long text with the length and the prefix of the
+// condition reads area. read_area says that it did, so a reader counts
+// the reads that the head did not spare (a measure, never a condition).
+// decided is false for a view that needs its area when area is nil, and
+// for a view that value_kinds.text_view_read refuses.
+text_view_condition_holds :: proc "contextless" (row: []u8, item: module.Field, area: []u8, condition: Condition) -> (holds, read_area, decided: bool) {
+	equal: bool
+	switch value_kinds.text_view_compare_head(module.field_bytes(row, item), condition.text) {
+	case .Different:
+		equal = false
+	case .Equal:
+		equal = true
+	case .Read_Area:
+		if area == nil {
+			return false, false, false
+		}
+		text, readable := value_kinds.text_view_read(module.field_bytes(row, item), area)
+		if !readable {
+			return false, true, false
+		}
+		equal, read_area = string(text) == condition.text, true
+	}
+	switch condition.comparison {
+	case .Equal:
+		return equal, read_area, true
+	case .Not_Equal:
+		return !equal, read_area, true
+	case .Less, .Less_Or_Equal, .Greater, .Greater_Or_Equal:
+		// field_check refuses an order on a text.
+	}
+	return false, read_area, false
 }
 
 // ---- The conditions of a line.
@@ -399,8 +449,8 @@ field_names_write :: proc "contextless" (writer: ^sentence.Writer, file: []u8, r
 // separated by ", ".
 members_write :: proc "contextless" (writer: ^sentence.Writer, which: value_kinds.Contract_Enum) {
 	written := 0
-	for word in 0 ..< op.contract_enum_member_count(which) {
-		if name, named := op.contract_enum_member_name(which, word); named {
+	for word in 0 ..< module.contract_enum_member_count(which) {
+		if name, named := module.contract_enum_member_name(which, word); named {
 			sentence.write_part(writer, written > 0 ? ", " : "")
 			sentence.write_part(writer, name)
 			written += 1
