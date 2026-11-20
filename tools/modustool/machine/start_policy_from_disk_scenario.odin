@@ -105,9 +105,10 @@ start_policy_machine_run :: proc(part: ^Test_Part_Run, machine: ^Start_Policy_Ma
 // writes it. The last such line counts.
 @(private = "file")
 pcr_12_check :: proc(output: string, what: string, expected: [32]u8) -> bool {
-	text, readable := foundation.read_text_file(output)
+	// The line of the measure is a log fact: its sentence is in the
+	// rendered log, not in the raw serial file.
+	text, readable := log_file_rendered(output)
 	if !readable {
-		fmt.eprintfln("modustool: test failed: cannot read %s", output)
 		return false
 	}
 	marker := strings.concatenate({what, MEASURED_WORDS}, context.temp_allocator)
