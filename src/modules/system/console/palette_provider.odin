@@ -271,8 +271,10 @@ PALETTE_GETTERS_LIMIT :: 1000 // Milliseconds.
 // One refresh of the marks: its end, and the sandboxes and services that
 // missed a getter in it, which it asks nothing more.
 Palette_Getters :: struct {
-	limit:  u64,
-	missed: bit_set[0 ..< SANDBOX_CAPACITY],
+	limit:          u64,
+	missed:         bit_set[0 ..< SANDBOX_CAPACITY],
+	sent:           u64, // The getters sent to a service or an isolated process.
+	in_the_console: u64, // The getters of modules in the process of the console: not called.
 }
 
 // palette_getter_value calls the getter of an Enum parameter of a command:
@@ -294,7 +296,11 @@ palette_getter_value :: proc "contextless" (refresh: ^Palette_Getters, item: ^Co
 			found = &command
 		}
 	}
-	if found == nil || found.address != 0 || found.sandbox == 0 || int(found.sandbox) > SANDBOX_CAPACITY {
+	if found != nil && found.address != 0 {
+		refresh.in_the_console += 1
+		return 0, false
+	}
+	if found == nil || found.sandbox == 0 || int(found.sandbox) > SANDBOX_CAPACITY {
 		return 0, false
 	}
 	place := int(found.sandbox - 1)
@@ -315,6 +321,7 @@ palette_getter_value :: proc "contextless" (refresh: ^Palette_Getters, item: ^Co
 	if !system.send(&sandbox.ring.commands, ring.Record{kind = getter, tag = sandbox.calls, values = {0 = offset, 1 = size}}) {
 		return 0, false
 	}
+	refresh.sent += 1
 	for {
 		wait := system.wait_begin()
 		for _ in 0 ..< ring.CAPACITY {
@@ -347,8 +354,9 @@ palette_getter_value :: proc "contextless" (refresh: ^Palette_Getters, item: ^Co
 // palette_row_in_use gives the member in use of the row of an act name:
 // from its getter in a refresh, which it keeps, or else the value that the
 // getter gave last. A getter that gives no member removes the value that
-// the row kept, so the row shows no old mark.
-palette_row_in_use :: proc "contextless" (act: string, item: ^Command, getter: u32, enum_type: module.Enum_Type, refresh: ^Palette_Getters) -> (value: i64, known: bool) {
+// the row kept, so the row shows no old mark. moved: a getter gave another
+// member than the row kept, or the row kept none.
+palette_row_in_use :: proc "contextless" (act: string, item: ^Command, getter: u32, enum_type: module.Enum_Type, refresh: ^Palette_Getters) -> (value: i64, known: bool, moved: bool) {
 	kept_place := -1
 	for &row, place in palette_rows_in_use[:palette_rows_in_use_count] {
 		if string(row.act[:row.act_length]) == act {
@@ -357,9 +365,9 @@ palette_row_in_use :: proc "contextless" (act: string, item: ^Command, getter: u
 	}
 	if refresh == nil {
 		if kept_place < 0 {
-			return 0, false
+			return 0, false, false
 		}
-		return palette_rows_in_use[kept_place].value, true
+		return palette_rows_in_use[kept_place].value, true, false
 	}
 	if getter != 0 {
 		value, known = palette_getter_value(refresh, item, getter, enum_type)
@@ -369,12 +377,13 @@ palette_row_in_use :: proc "contextless" (act: string, item: ^Command, getter: u
 			palette_rows_in_use_count -= 1
 			palette_rows_in_use[kept_place] = palette_rows_in_use[palette_rows_in_use_count]
 		}
-		return 0, false
+		return 0, false, false
 	}
 	kept: ^Palette_Row_In_Use
 	if kept_place >= 0 {
 		kept = &palette_rows_in_use[kept_place]
 	}
+	moved = kept == nil || kept.value != value
 	if kept == nil && palette_rows_in_use_count < PALETTE_ROW_CAPACITY {
 		kept = &palette_rows_in_use[palette_rows_in_use_count]
 		palette_rows_in_use_count += 1
@@ -383,7 +392,24 @@ palette_row_in_use :: proc "contextless" (act: string, item: ^Command, getter: u
 	if kept != nil {
 		kept.value = value
 	}
-	return value, true
+	return value, true, moved
+}
+
+// A mark that a refresh moved: the console logs it once the table that
+// holds it is written. The names point into the command table, which no
+// refresh changes.
+Palette_Moved_Mark :: struct {
+	member, command, parameter: string,
+}
+palette_marks_moved: [PALETTE_ROW_CAPACITY]Palette_Moved_Mark
+palette_marks_moved_count: int
+
+// palette_marks_log logs each mark that the table written last moved.
+palette_marks_log :: proc "contextless" () {
+	for mark in palette_marks_moved[:palette_marks_moved_count] {
+		system.log_fact(.Info, Palette_Mark_Moved{member = value_kinds.text_field(mark.member, MARK_MEMBER_FIELD_BYTES), command = value_kinds.text_field(mark.command, MARK_COMMAND_FIELD_BYTES), parameter = value_kinds.text_field(mark.parameter, MARK_PARAMETER_FIELD_BYTES)})
+	}
+	palette_marks_moved_count = 0
 }
 
 // palette_line_name_valid says if the name of a command is names of Lex
@@ -436,7 +462,15 @@ palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Get
 				continue
 			}
 			act := string(act_buffer[:act_writer.count])
-			in_use, in_use_known := palette_row_in_use(act, item, getter, described, refresh)
+			in_use, in_use_known, moved := palette_row_in_use(act, item, getter, described, refresh)
+			// A row whose name the table cannot hold has no entry: its mark
+			// is not logged either.
+			if moved && palette_marks_moved_count < PALETTE_ROW_CAPACITY && len(parameter_name) <= palette_table.SETTING_NAME_CAPACITY {
+				if member_name, named := module.enum_name_of_value(item.file, described, in_use); named {
+					palette_marks_moved[palette_marks_moved_count] = {member = member_name, command = item.name, parameter = parameter_name}
+					palette_marks_moved_count += 1
+				}
+			}
 			for member_number in 0 ..< described.member_count {
 				if count == palette_table.ENTRY_CAPACITY {
 					return count
@@ -540,6 +574,14 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 		return
 	}
 	refresh := Palette_Getters{limit = system.time() + PALETTE_GETTERS_LIMIT}
+	// After the table is written and its lock let go: a test that reads
+	// the fact then finds the mark in the table.
+	defer {
+		palette_marks_log()
+		if call_getters {
+			system.log_fact(.Info, Palette_Marks_Refreshed{sent = refresh.sent, in_the_console = refresh.in_the_console})
+		}
+	}
 	count := 0
 	for number in 0 ..< command_count {
 		if count == palette_table.ENTRY_CAPACITY {

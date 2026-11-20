@@ -365,22 +365,25 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 		services_check()
 		run_line(string(work.text[:work.count]))
 		// The palette: the answer to its choice, then the table of the
-		// commands of now (palette_provider.odin). A choice of the palette
-		// can set a member of a row: its getters say the new member in use,
-		// in a refresh after the line ends, so the keys never wait for
-		// them.
-		if palette_tag != 0 {
-			intrinsics.atomic_store(&work.refresh, 1)
-		}
+		// commands of now (palette_provider.odin).
+		chosen_by_palette := palette_tag != 0
 		palette_line_ended()
 		palette_table_write()
 		// The line ends when its result is drawn: the keys that waited
-		// act now. The save of the line history comes after, and holds no
-		// key: it is a commit of the storage service, which takes
-		// milliseconds. This thread runs the next line after the save, so
-		// the commits keep the order of the lines.
+		// act now.
 		intrinsics.atomic_store(&work.finished, done)
 		change()
+		// A choice of the palette can set a member of a row: its getters
+		// say the new member in use, after the end of the line, so the
+		// keys never wait for them, and before the save of the history, so
+		// the mark does not wait for a commit of the storage service.
+		if chosen_by_palette {
+			palette_table_write(call_getters = true)
+		}
+		// The save of the line history holds no key: it is a commit of the
+		// storage service, which takes milliseconds. This thread runs the
+		// next line after the save, so the commits keep the order of the
+		// lines.
 		history_save()
 	}
 }

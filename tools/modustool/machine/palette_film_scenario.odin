@@ -198,6 +198,8 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "console: the palette runs settings.set(font = .spleen)"},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: settings.set font to spleen"},
+	// The getter of the row said the new member: the table marks it.
+	{kind = .Wait, text = "console: the palette marks .spleen for settings.set font", any_order = true},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
 	{kind = .Key, text = "left"},
 	{kind = .Wait, text = "compositor: the palette chooses the value vector of font"},
@@ -206,6 +208,7 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "console: the palette runs settings.set(font = .vector)"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: settings.set font to vector"},
+	{kind = .Wait, text = "console: the palette marks .vector for settings.set font", any_order = true},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},

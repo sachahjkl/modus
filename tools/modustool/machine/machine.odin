@@ -1446,6 +1446,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "settings: font spleen, ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: settings.set font to spleen"},
+	// The getter of the row said the new member, and the table marks it:
+	// the picture shows the mark on spleen.
+	{kind = .Wait, text = "console: the palette marks .spleen for settings.set font", any_order = true},
 	{kind = .Shot, text = "palette_setting_row"},
 	{kind = .Key, text = "left"},
 	{kind = .Wait, text = "compositor: the palette chooses the value vector of font"},
@@ -1454,6 +1457,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "settings: font vector, ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: settings.set font to vector"},
+	{kind = .Wait, text = "console: the palette marks .vector for settings.set font", any_order = true},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	// Go to: the window of settings names what the row of the grid fit
@@ -1690,7 +1694,7 @@ scenario := [?]Step {
 	// which no service holds.
 	{kind = .Type, text = "isolate(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module     hostile_exports"},
-	{kind = .Wait, text = "[console]   commands   4"},
+	{kind = .Wait, text = "[console]   commands   6"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	{kind = .Type, text = "r = Rectangle(1, 2, 30, 4)"},
 	{kind = .Type, text = "area(r)"},
@@ -1799,7 +1803,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   memory    its sandboxed process stopped"},
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module    hostile_exports"},
-	{kind = .Wait, text = "[console]   commands  4"},
+	{kind = .Wait, text = "[console]   commands  6"},
 	// The first program of modus that writes a program
 	// (src/md/features/assembler.md): the module assemble, in a call host,
 	// writes a module file into a memory object of the console; the console
@@ -1879,8 +1883,22 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   call       direct"},
 	{kind = .Type, text = "load(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module     hostile_exports"},
-	{kind = .Wait, text = "[console]   commands   4"},
+	{kind = .Wait, text = "[console]   commands   6"},
 	{kind = .Wait, text = "[console]   call       direct"},
+	// A getter of a module in the process of the console is never called:
+	// a direct call has no bound. The panel opens with the row of mode_set,
+	// and its refresh ends with that getter not called; a call of it logs
+	// a fact, which fails the step.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	// The two processes log in an order that the system does not fix; no
+	// refresh before the load had a getter in the console.
+	{kind = .Wait, text = "getters sent, 1 getters in the process of the console not called", any_order = true, fails_on = "hostile_exports: the getter mode ran"},
+	{kind = .Keys, text = ":mode"},
+	{kind = .Wait, text = "mode (setting)", fails_on = "hostile_exports: the getter mode ran"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "g = grow(r, 5)"},
 	{kind = .Type, text = "g.width * g.height + keep(b) + kept()"},
 	{kind = .Wait, text = "[console] 12848"},
@@ -1901,7 +1919,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   memory    left the console"},
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module    hostile_exports"},
-	{kind = .Wait, text = "[console]   commands  4"},
+	{kind = .Wait, text = "[console]   commands  6"},
 	{kind = .Wait, text = "[console]   memory    left the console"},
 	{kind = .Type, text = "release(b)"},
 	// The key of the client of the peer, for the calls of the host below
@@ -3688,7 +3706,7 @@ scenario := [?]Step {
 	// the console.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "settings.set(font = .comic)"},
-	{kind = .Wait, text = "[console] error: settings.set: Font has no member .comic; its members are .vector, .spleen"},
+	{kind = .Wait, text = "[console] error: settings.set: Font has no member .comic; its members are .vector, .spleen", fails_on = "settings: font "},
 	{kind = .Front, text = "settings"},
 	{kind = .Call, text = "settings.set(font = .vector)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; ", any_order = true},

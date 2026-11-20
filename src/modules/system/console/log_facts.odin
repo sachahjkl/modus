@@ -267,6 +267,33 @@ Line_Ended_With_Lost_Keys :: struct {
 	lost_keys: u64,
 }
 
+// The getter of a row of buttons gave another member than the one that the
+// row marked: the table that the console wrote marks the new one. A test
+// waits for it before a picture of the mark.
+@(log_fact = "console: the palette marks .{member} for {command} {parameter}")
+Palette_Mark_Moved :: struct {
+	member:    [32]u8,
+	command:   [72]u8,
+	parameter: [32]u8,
+}
+#assert(size_of(Palette_Mark_Moved{}.member) == MARK_MEMBER_FIELD_BYTES && size_of(Palette_Mark_Moved{}.command) == MARK_COMMAND_FIELD_BYTES && size_of(Palette_Mark_Moved{}.parameter) == MARK_PARAMETER_FIELD_BYTES)
+
+// The bytes of the Text fields of a moved mark: the longest name of a
+// member (31), of a command of a row (64) and of a row (24), and a zero
+// byte, on 8 bytes.
+MARK_MEMBER_FIELD_BYTES :: 32
+MARK_COMMAND_FIELD_BYTES :: 72
+MARK_PARAMETER_FIELD_BYTES :: 32
+
+// A refresh of the marks of the palette ended: the getters that it sent to
+// a service or an isolated process, and the getters of modules in the
+// process of the console, which no refresh calls.
+@(log_fact = "console: the palette refreshed its marks: {sent} getters sent, {in_the_console} getters in the process of the console not called")
+Palette_Marks_Refreshed :: struct {
+	sent:           u64,
+	in_the_console: u64,
+}
+
 // The console wrote the table of the palette.
 @(log_fact = "console: the palette table has {entries} entries, generation {table_generation}")
 Palette_Table_Written :: struct {
