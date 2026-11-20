@@ -224,9 +224,23 @@ fact_call_read :: proc(extraction: ^Fact_Extraction, file: ^ast.File, state: ^De
 		return true
 	}
 	path, line := file.fullpath, call.pos.line
-	if len(call.args) != 2 {
-		return fact_fail(path, line, "system.%s takes two arguments: a level and a composite literal of a fact type, as system.%s(.Warning, Bad_Block{{block = number}})", LOG_FACT_PROCEDURE_NAME, LOG_FACT_PROCEDURE_NAME)
+	if len(call.args) < 2 {
+		return fact_fail(path, line, "system.%s takes a level, a composite literal of a fact type, and one text for each text view of the type, as system.%s(.Warning, Bad_Block{{block = number}})", LOG_FACT_PROCEDURE_NAME, LOG_FACT_PROCEDURE_NAME)
 	}
+	// The texts of the text views: one value each, in their order. A
+	// spread of a slice, or a named argument, hides their count from a
+	// tool that has no type checker.
+	spread := call.ellipsis.kind == .Ellipsis
+	for argument in call.args[2:] {
+		#partial switch _ in argument.derived {
+		case ^ast.Field_Value, ^ast.Ellipsis:
+			spread = true
+		}
+	}
+	if spread {
+		return fact_fail(path, line, "system.%s takes the text of each text view as one value, in the order of the views: no name and no spread", LOG_FACT_PROCEDURE_NAME)
+	}
+	text_count := len(call.args) - 2
 	// The named type of the value: the type of a composite literal, or the
 	// type of a conversion of one value, as Type(errors.error_record_fact_fields(record)).
 	named_type: ^ast.Expr
@@ -258,12 +272,33 @@ fact_call_read :: proc(extraction: ^Fact_Extraction, file: ^ast.File, state: ^De
 	package_read := fact_package(extraction, folder) or_return
 	for known in extraction.facts {
 		if known.type_name == type_name && known.package_name == package_read.name {
-			return true
+			return fact_text_count_check(known, text_count, path, line)
 		}
 	}
 	fact := fact_type_describe(package_read, folder, type_name, path, line) or_return
+	fact_text_count_check(fact, text_count, path, line) or_return
 	append(&extraction.facts, fact)
 	return true
+}
+
+// fact_text_count_check refuses a call that gives another count of texts
+// than the fact type has text views: each view takes the text of its place.
+@(private = "file")
+fact_text_count_check :: proc(fact: Fact_Description, text_count: int, path: string, line: int) -> bool {
+	views := fact_text_view_count(fact.record)
+	if views != text_count {
+		return fact_fail(path, line, "system.%s writes %s.%s, which has %d text views, with %d texts: give one text for each view, in their order", LOG_FACT_PROCEDURE_NAME, fact.package_name, fact.type_name, views, text_count)
+	}
+	return true
+}
+
+// fact_text_view_count gives the fields of the kind Text_View of a record.
+fact_text_view_count :: proc(record: Record_Description) -> int {
+	count := 0
+	for item in record.fields {
+		count += int(item.kind == .Text_View)
+	}
+	return count
 }
 
 // fact_package gives the package of a folder, read one time: the sources
@@ -411,7 +446,15 @@ package_read_text :: proc(file: ^ast.File, expression: ^ast.Expr) -> string {
 fact_type_problem :: proc(fact: Fact_Description) -> string {
 	end: u32 = 0
 	names := make([dynamic]string, context.temp_allocator)
+	in_views := false
 	for item in fact.record.fields {
+		// The views are the last fields: the write finds them at the end
+		// of the record, by their count.
+		if item.kind == .Text_View {
+			in_views = true
+		} else if in_views {
+			return fmt.tprintf("the field %s comes after a text view: the text views are the last fields of a fact type", item.name)
+		}
 		switch item.type {
 		case .Integer, .Text, .Bytes:
 		case .Handle:

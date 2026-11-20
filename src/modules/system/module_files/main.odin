@@ -42,6 +42,7 @@
 package module_files
 
 import "modus:contract/blake3"
+import "modus:contract/storage_status"
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -349,7 +350,7 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 
 // store_failure writes the line of a refusal of the storage service, and
 // gives the result of the export. subject says what was refused.
-store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^errors.Error_Record, status: storage.Status, subject: ..system.Part) -> i64 {
+store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^errors.Error_Record, status: storage_status.Status, subject: ..system.Part) -> i64 {
 	subject_buffer: [96]u8
 	sentence: [240]u8
 	writer := system.Writer{buffer = sentence[:]}

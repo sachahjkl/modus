@@ -917,8 +917,8 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 		if record_form, record_form_known := enum_word.member_of_word(op.Log_Record_Form, v[5]); record_form_known && record_form == .Fact {
 			if v[2] < op.LOG_FACT_HEAD_BYTES {
 				record_set(record, .Too_Small, .Bytes, 3, v[2], op.LOG_FACT_HEAD_BYTES, 0)
-			} else if v[2] > size_of(op.Log_Fact) {
-				record_set(record, .Too_Long, .Bytes, 3, v[2], size_of(op.Log_Fact), 0)
+			} else if v[2] > op.LOG_FACT_CALL_BYTES_MOST {
+				record_set(record, .Too_Long, .Bytes, 3, v[2], op.LOG_FACT_CALL_BYTES_MOST, 0)
 			} else if !read_range(process, v[1], v[2]) {
 				record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2], 0)
 			} else {

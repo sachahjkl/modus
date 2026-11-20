@@ -683,22 +683,32 @@ serial_line_put :: proc "contextless" (bytes: []u8) {
 // line of the serial port.
 @(private = "file")
 serial_record_line :: proc "contextless" (record: ^op.Log_Record) {
+	form, form_known := op.log_record_form(record)
+	serial_line_count, serial_line_written = 0, 0
+	serial_line_time = max(record.time, 1)
+	// A part of a fact after the first continues the line of the part
+	// before it. A first part, while a line is open, starts its own line:
+	// the end of the line before it was lost.
+	continues_fact := form_known && form == .Fact && serial_line_open && op.log_record_fact(record).part > 0
+	if form_known && form == .Fact && serial_line_open && !continues_fact {
+		serial_line_put({'\r', '\n'})
+		serial_line_open = false
+	}
 	head: [op.LOG_LINE_HEAD_CAPACITY]u8
 	head_count := op.log_line_head(record, serial_line_open, &head)
 	text_count := min(int(record.text_count), op.LOG_TEXT_CAPACITY)
-	serial_line_count, serial_line_written = 0, 0
-	serial_line_time = max(record.time, 1)
 	serial_line_put(head[:head_count])
 	// The kernel wrote each record, so its form is known; a form that
 	// names no member would write the head only.
-	if form, form_known := op.log_record_form(record); form_known {
+	if form_known {
 		switch form {
 		case .Text:
 			serial_line_put(record.text[:text_count])
 		case .Fact:
-			// The head is at most LOG_LINE_HEAD_CAPACITY bytes, so the
-			// line of the fact fits after it (LOG_SERIAL_LINE_BYTES_MOST).
-			serial_line_count += op.log_fact_line(op.log_record_fact(record), (^[op.LOG_FACT_LINE_BYTES_MOST]u8)(&serial_line[serial_line_count]))
+			// The head is at most LOG_LINE_HEAD_CAPACITY bytes, and the
+			// two bytes of a line end at most, so the line of the fact
+			// fits after them (LOG_SERIAL_LINE_BYTES_MOST).
+			serial_line_count += op.log_fact_line(op.log_record_fact(record), (^[op.LOG_FACT_LINE_BYTES_MOST]u8)(&serial_line[serial_line_count]), continuation = continues_fact)
 		}
 	}
 	serial_line_open = record.more != 0
@@ -1075,41 +1085,64 @@ log_record_close :: proc "contextless" (record: ^op.Log_Record, owner: ^Process,
 	intrinsics.atomic_store(&log_head.written, written + 1)
 }
 
+// log_fact_part_write writes the head of a fact and the values of one of
+// its parts into the bytes of a fact: the module hash and the key that the
+// process gave, the part, the count of the parts and the count of the value
+// bytes of this part, which the kernel writes. values holds each value byte
+// of the fact; the part takes LOG_FACT_VALUE_CAPACITY of them.
+log_fact_part_write :: proc "contextless" (fact: ^op.Log_Fact, body: []u8, part, part_count: int) {
+	values := body[op.LOG_FACT_HEAD_BYTES:]
+	start := min(part * op.LOG_FACT_VALUE_CAPACITY, len(values))
+	end := min(start + op.LOG_FACT_VALUE_CAPACITY, len(values))
+	fact^ = {}
+	copy(([^]u8)(fact)[:op.LOG_FACT_HEAD_BYTES], body[:op.LOG_FACT_HEAD_BYTES])
+	copy(fact.values[:], values[start:end])
+	fact.value_count = u16(end - start)
+	fact.part, fact.part_count = u8(part), u8(part_count)
+	fact.reserved = {}
+}
+
 // log_fact_record adds one log fact to the memory of the log: one record
-// of the form Fact, with the bytes that the process gave as they are, and
-// the count of its value bytes from their length. The kernel reads no field
-// of the fact: the module hash and the key are claims of the writer
-// (src/md/features/log_facts.md, "Which reader sees which fields"). The
-// caller holds the log lock, and body has at least the head of a fact.
+// of the form Fact for each part of LOG_FACT_VALUE_CAPACITY value bytes, in
+// a row under the log lock, so no record of another process comes between
+// them, each with `more` but the last (src/md/features/log_facts.md, "A
+// fact of several records"). The kernel copies the bytes that the process
+// gave as they are, and reads no field of the fact: the module hash and the
+// key are claims of the writer (src/md/features/log_facts.md, "Which reader
+// sees which fields"). The caller holds the log lock, and body has the head
+// of a fact and at most LOG_FACT_VALUES_MOST value bytes.
 log_fact_record :: proc "contextless" (process: u32, process_serial: u32, owner: ^Process, thread: u32, name: []u8, level: op.Log_Level, body: []u8) {
 	if log_head == nil || log_serial_only {
 		return
 	}
-	record, written, own_count := log_record_open(process, process_serial, owner, thread, name, level, false)
-	record.form = u8(op.Log_Record_Form.Fact)
-	fact := op.log_record_fact(record)
-	copy(([^]u8)(fact)[:size_of(op.Log_Fact)], body)
-	fact.value_count = u16(min(max(len(body), op.LOG_FACT_HEAD_BYTES), size_of(op.Log_Fact)) - op.LOG_FACT_HEAD_BYTES)
-	fact.reserved = {}
-	log_record_close(record, owner, own_count, written)
+	part_count := op.log_fact_part_count(len(body) - op.LOG_FACT_HEAD_BYTES)
+	for part in 0 ..< part_count {
+		record, written, own_count := log_record_open(process, process_serial, owner, thread, name, level, part + 1 < part_count)
+		record.form = u8(op.Log_Record_Form.Fact)
+		log_fact_part_write(op.log_record_fact(record), body, part, part_count)
+		log_record_close(record, owner, own_count, written)
+	}
 	word_wake(physical_of(&log_head.written), max(u64))
 }
 
-// The buffer of the copy of a Log holds a fact, then the line of that fact,
-// when the log has no memory: its first bytes are a Log_Fact, which has
-// words of 8 bytes.
+// The buffer of the copy of a Log holds a fact, then the record of one of
+// its parts, then the line of that part, when the log has no memory: the
+// part is a Log_Fact, which has words of 8 bytes.
 #assert(offset_of(Processor, log_text) % 8 == 0)
-#assert(size_of(op.Log_Fact) + op.LOG_FACT_LINE_BYTES_MOST <= op.LOG_TEXT_BYTES_MOST)
+#assert(op.LOG_FACT_CALL_BYTES_MOST % 8 == 0)
+#assert(op.LOG_FACT_CALL_BYTES_MOST + size_of(op.Log_Fact) + op.LOG_FACT_LINE_BYTES_MOST <= op.LOG_TEXT_BYTES_MOST)
 
 // log_fact_operation is `Log` of the form Fact: the bytes of one fact, in
-// one record, with no UTF-8 filter, because they are not text. The caller
-// checked the handle and the form. The line on the serial port is the raw
-// line of the fact (op.log_fact_line), which the tool renders on the host.
+// one record for each part of LOG_FACT_VALUE_CAPACITY value bytes, with no
+// UTF-8 filter, because they are not text. The caller checked the handle
+// and the form. The line on the serial port is the raw line of the fact
+// (op.log_fact_line), one line for all its parts, which the tool renders on
+// the host.
 log_fact_operation :: proc "contextless" (process_index: u32, thread_index: u32, process: ^Process, v: [7]u64) -> Operation_Outcome {
 	if v[4] != 0 {
 		return .Bad_Operation
 	}
-	if v[2] < op.LOG_FACT_HEAD_BYTES || v[2] > size_of(op.Log_Fact) || !user_range(process, v[1], v[2], false) {
+	if v[2] < op.LOG_FACT_HEAD_BYTES || v[2] > op.LOG_FACT_CALL_BYTES_MOST || !user_range(process, v[1], v[2], false) {
 		return .Bad_Address
 	}
 	level, level_known := enum_word.member_of_word(op.Log_Level, v[3])
@@ -1121,7 +1154,8 @@ log_fact_operation :: proc "contextless" (process_index: u32, thread_index: u32,
 	log_text := &processor_self().log_text
 	user_copy(log_text, rawptr(uintptr(v[1])), v[2])
 	body := log_text[:v[2]]
-	if !budget_log(process.budget, 1) {
+	part_count := op.log_fact_part_count(int(v[2]) - op.LOG_FACT_HEAD_BYTES)
+	if !budget_log(process.budget, u64(part_count)) {
 		process.log_lines_refused += 1
 		return .No_Budget
 	}
@@ -1134,22 +1168,19 @@ log_fact_operation :: proc "contextless" (process_index: u32, thread_index: u32,
 		serial_drain_before_the_tick()
 		return .Ok
 	}
-	// No memory of the log: the serial port only. The fact is the first
-	// bytes of the copy, with zeros after its length, its count and no
-	// reserved byte, as in a record; its line goes after it in the same
-	// buffer, so the kernel stack holds no copy.
-	for &byte_value in log_text[v[2]:size_of(op.Log_Fact)] {
-		byte_value = 0
-	}
-	fact := (^op.Log_Fact)(&log_text[0])
-	fact.value_count = u16(v[2] - op.LOG_FACT_HEAD_BYTES)
-	fact.reserved = {}
-	line := (^[op.LOG_FACT_LINE_BYTES_MOST]u8)(&log_text[size_of(op.Log_Fact)])
-	line_count := op.log_fact_line(fact, line)
+	// No memory of the log: the serial port only. Each part is written as
+	// its record would be, after the copy of the fact in the same buffer,
+	// and its line after it, so the kernel stack holds no copy; the parts
+	// make one line, as the drain writes them from the records.
+	fact := (^op.Log_Fact)(&log_text[op.LOG_FACT_CALL_BYTES_MOST])
+	line := (^[op.LOG_FACT_LINE_BYTES_MOST]u8)(&log_text[op.LOG_FACT_CALL_BYTES_MOST + size_of(op.Log_Fact)])
 	log_bytes({'['})
 	log_bytes(name)
 	log_bytes({']', ' '})
-	log_bytes(line[:line_count])
+	for part in 0 ..< part_count {
+		log_fact_part_write(fact, body, part, part_count)
+		log_bytes(line[:op.log_fact_line(fact, line, continuation = part > 0)])
+	}
 	log_bytes({'\r', '\n'})
 	log_free(taken)
 	return .Ok
