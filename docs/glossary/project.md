@@ -930,7 +930,7 @@ Do not use: test job, check shard.
 
 A full check is `nix flake check` and `modustool screenshots`, both passed.
 
-`nix flake check` runs the hooks and the check `boot-test` in the sandbox of Nix: the host tests, the checks of the sources and the second build in one derivation, and each test part in a part derivation of its own. `modustool screenshots` takes the pictures and the logs of that check from the store, with no second run of the machine test, runs the measure runs on the host, and writes the measure record. A full check runs once at the end of a batch of features, before the release and the publication of the site.
+`nix flake check` runs the hooks and the check `boot-test` in the sandbox of Nix: the host tests and the checks of the sources in one derivation, and each test part in a part derivation of its own. `modustool screenshots` takes the pictures and the logs of that check from the store, runs the measure runs on the host, and writes the measure record. A full check runs once at the end of a batch of features, before the release and the publication of the site.
 
 The design: `src/md/infrastructure/full_check.md`; `docs/TOOLS.md`, "What each tool reads".
 
