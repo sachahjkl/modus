@@ -2,6 +2,7 @@ package compositor
 
 import "modus:private/compositor/quality"
 import "modus:contract/text_encoding"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/system"
 
@@ -36,7 +37,7 @@ frame_started_at: u64
 // system drives no GPU, so it is the processor profile.
 quality_profile_log :: proc "contextless" () {
 	profile, reason := quality.profile_of(false)
-	system.log(.Info, "compositor: the quality profile is ", quality.profile_sentences[profile], ": ", quality.reason_sentences[reason])
+	system.log_fact(.Info, Quality_Profile_Chosen{profile = value_kinds.text_field(quality.profile_sentences[profile], PROFILE_FIELD_BYTES), profile_reason = value_kinds.text_field(quality.reason_sentences[reason], PROFILE_REASON_FIELD_BYTES)})
 }
 
 // quality_turn_start forgets the read of the turn before.
@@ -91,7 +92,7 @@ quality_present :: proc "contextless" (window: int, client: ^Client, first_pictu
 
 // quality_start_log writes the line of the start of a window.
 quality_start_log :: proc "contextless" (client: ^Client, span: u64) {
-	system.log(.Info, "compositor: measure: the start of the window ", system.name_of(client.title[:]), ", from Process_Start to its first frame: ", span / 1000, ".", span / 100 % 10, " us")
+	system.log_fact(.Info, Window_Start_Measured{start_time = value_kinds.Nanoseconds_As_Microseconds(span), window = window_field(client.title[:])})
 }
 
 // quality_window_started takes the record Client_Started: the time of the
@@ -121,7 +122,7 @@ quality_window_gone :: proc "contextless" (window: int) {
 quality_frame_line :: proc "contextless" () {
 	frames_since_line = 0
 	least, median, count := quality.samples_least_and_median(&frame_samples)
-	system.log(.Info, "compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least ", least / 1000, ".", least / 100 % 10, " us, median ", median / 1000, ".", median / 100 % 10, " us, over ", u64(count), " frames")
+	system.log_fact(.Info, Frame_Time_Measured{least = value_kinds.Nanoseconds_As_Microseconds(least), median = value_kinds.Nanoseconds_As_Microseconds(median), frames = u64(count)})
 }
 
 // quality_frame_flipped ends the measures at the flip of a frame: the
@@ -139,7 +140,7 @@ quality_frame_flipped :: proc "contextless" () {
 		keys_since_line = 0
 		quality_frame_line()
 		least, median, count := quality.samples_least_and_median(&key_samples)
-		system.log(.Info, "compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least ", least / 1000, ".", least / 100 % 10, " us, median ", median / 1000, ".", median / 100 % 10, " us, over ", u64(count), " keys")
+		system.log_fact(.Info, Key_Time_Measured{least = value_kinds.Nanoseconds_As_Microseconds(least), median = value_kinds.Nanoseconds_As_Microseconds(median), keys = u64(count)})
 		quality.samples_clear(&key_samples)
 		// The measures that the table lost, and the serials that a window
 		// named past its keys, when they changed.

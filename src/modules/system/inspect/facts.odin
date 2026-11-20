@@ -4,7 +4,7 @@ import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The log facts of inspect (src/md/features/log_facts.md, "The
-// migration"): each line that has a value, as a record of fields. Each fact
+// migration"): each line, as a record of fields. Each fact
 // template is the sentence that the line wrote before it was a fact, so a
 // wait of a machine test on that sentence reads it as before. The name of a
 // process is a Module_Name_Field, the last field: the serial line of a fact
@@ -77,6 +77,16 @@ Interface_Measured :: struct {
 	build_time:        value_kinds.Time_In_Microseconds,
 	difference_time:   value_kinds.Time_In_Microseconds,
 	draw_time:         value_kinds.Time_In_Microseconds,
+}
+
+// The tab key shows the bytes of the memory of inspect itself.
+@(log_fact = "inspect: the bytes of the memory of inspect")
+Own_Memory_Shown :: struct {}
+
+// The tab key shows the reports of the chosen process again.
+@(log_fact = "inspect: the reports of {sampled_process}")
+Reports_Shown :: struct {
+	sampled_process: value_kinds.Module_Name_Field,
 }
 
 // The Text field of the words of the state of the sample: "frozen" or

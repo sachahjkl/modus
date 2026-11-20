@@ -96,7 +96,7 @@ pointer_theme_open :: proc "contextless" (ctx: ^system.Context) {
 	}
 	pointer_theme_choose(.Of_The_Owner)
 	if pointer_theme == nil {
-		system.log(.Warning, "compositor: no pointer theme: the arrow of squares")
+		system.log_fact(.Warning, No_Pointer_Theme{})
 		pointer_update(0)
 		return
 	}

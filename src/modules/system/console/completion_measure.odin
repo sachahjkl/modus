@@ -12,6 +12,7 @@ package console
 // batch that an interrupt or another process cut is longer, and the least
 // one is the time of the work.
 
+import "modus:contract/value_kinds"
 import "modus:support/line_editor"
 import "modus:support/system"
 import terminal "modus:support/terminal"
@@ -158,7 +159,7 @@ colors_write :: proc "contextless" (kept: int) {
 // completion_measure_log writes one line of the measure on the log, in
 // microseconds with one decimal: the machine tests read the measure there.
 completion_measure_log :: proc "contextless" (what: string, least: Key_Time, name_count: int) {
-	system.log(.Info, "console: one key with the completion list: the collect ", least.collect / 1000, ".", least.collect / 100 % 10, " us, the rank ", least.rank / 1000, ".", least.rank / 100 % 10, " us, the rows ", least.rows / 1000, ".", least.rows / 100 % 10, " us, the colors ", least.colors / 1000, ".", least.colors / 100 % 10, " us, over ", u64(name_count), " names (", what, ", the least of ", u64(COMPLETION_MEASURE_BATCHES), " batches of ", u64(COMPLETION_MEASURE_KEYS), ")")
+	system.log_fact(.Info, Completion_Key_Measured{collect = value_kinds.Nanoseconds_As_Microseconds(least.collect), rank = value_kinds.Nanoseconds_As_Microseconds(least.rank), rows_time = value_kinds.Nanoseconds_As_Microseconds(least.rows), colors = value_kinds.Nanoseconds_As_Microseconds(least.colors), names = u64(name_count), batches = u64(COMPLETION_MEASURE_BATCHES), keys = u64(COMPLETION_MEASURE_KEYS), name_set = value_kinds.text_field(what, NAME_SET_FIELD_BYTES)})
 }
 
 // completion_measure_row adds the measure as one row of the result, in

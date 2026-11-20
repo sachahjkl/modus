@@ -1,20 +1,21 @@
 package log
 
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // The log facts of the window log (src/md/features/log_facts.md, "The
-// migration"): each line that has a value, as a record of fields. Each fact
+// migration"): each line, as a record of fields. Each fact
 // template is the sentence that the line wrote before it was a fact, so a
 // wait of a machine test on that sentence reads it as before. No field has
 // the name of a column of the head of facts(): number, time, process,
 // level.
 
 // The grant of the log records gives no memory that this process can read:
-// the window stops. The status is the word of the kernel, written as its
-// number, as the line wrote it.
-@(log_fact = "log: cannot read the records of the log: status {status_word}")
+// the window stops. The status is the word of the kernel, which a reader
+// writes by the name of its member.
+@(log_fact = "log: cannot read the records of the log: status {status}")
 Records_Not_Readable :: struct {
-	status_word: u64,
+	status: op.Status_Word,
 }
 
 // The memory of the log at the start of the window: the records that it

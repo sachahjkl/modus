@@ -590,7 +590,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	reader, status := system.log_open(ctx.handles[system.GRANT_LOG_RECORDS])
 	if status != .Ok {
-		system.log_fact(.Error, Records_Not_Readable{status_word = u64(status)})
+		system.log_fact(.Error, Records_Not_Readable{status = op.Status_Word(status)})
 		system.stop(.Failed)
 	}
 	// The service reads the same memory object: exports.odin. Its handle

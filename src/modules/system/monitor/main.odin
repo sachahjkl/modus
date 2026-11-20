@@ -230,7 +230,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if status != .Ok {
 			interface.draw_text(table, 10, 10, "no grant to inspect the machine", graphics.colors.text)
 			if !lost {
-				system.log(.Info, "monitor: no grant to inspect the machine")
+				system.log_fact(.Info, No_Inspect_Grant{})
 				lost = true
 			}
 		} else {
@@ -368,7 +368,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		pictures += 1
 		if !logged {
-			system.log(.Info, "monitor: ok")
+			system.log_fact(.Info, Window_Ready{})
 			logged = true
 		}
 		for _ in display.next_event(&window) {}

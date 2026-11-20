@@ -1,5 +1,6 @@
 package build
 
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:support/sentence"
 import "core:strings"
@@ -96,7 +97,6 @@ the_facts_of_log_write_the_lines_of_before :: proc(t: ^testing.T) {
 	}
 	for count in COUNTS {
 		other := max(u64) - count
-		facts_expect_line(t, fact_test_render(t, file, "log", "Records_Not_Readable", {{"status_word", count}}), line_of_before("log: cannot read the records of the log: status ", count))
 		facts_expect_line(t, fact_test_render(t, file, "log", "Window_Ready", {{"records", count}, {"gone_before_start", other}, {"lost", count}, {"processes", other}}), line_of_before("log: ok, ", count, " records, ", other, " gone before its start, ", count, " lost since, ", other, " processes"))
 		for memory in UNIT_VALUES {
 			facts_expect_line(t, fact_test_render(t, file, "log", "Log_Memory", {{"capacity", count}, {"memory", memory}}), line_of_before("log: the memory of the log: ", count, " records in ", sentence.Size{memory, .Kibibytes}))
@@ -140,9 +140,8 @@ the_facts_of_settings_write_the_lines_of_before :: proc(t: ^testing.T) {
 	}
 	for count in COUNTS {
 		facts_expect_line(t, render(t, file, "Records_Repeated", {{"records", count}}), line_of_before("settings: kept ", count, " records, one commit each"))
-		facts_expect_line(t, render(t, file, "No_Settings_Page", {{"status_word", count}}), line_of_before("settings: no settings page: status ", count))
 	}
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"font", 6}, {"subpixel_order", 6}, {"pointer_theme", 6}, {"grid_fit", 6}, {"keyboard_layout", 6}, {"appearance", 6}, {"store", u32(len(stores[1]))}, {"zone", 6}))
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"font", 6}, {"subpixel_order", 6}, {"pointer_theme", 6}, {"grid_fit", 6}, {"keyboard_layout", 6}, {"appearance", 6}, {"store", u32(len(stores[1]))}, {"zone", 6}, {"in_force", 5}, {"setting_value", 5}, {"local_time", 5}))
 }
 
 // The facts of inspect: the counts at their edges, the longest process
@@ -218,7 +217,7 @@ the_facts_of_debugger_window_write_the_lines_of_before :: proc(t: ^testing.T) {
 		}
 		facts_expect_line(t, render(t, file, "Window_Ready", {{"exports", count}}), line_of_before("debugger_window: ok, connected to the service debugger; ", count, " exports, each record with the size of its description"))
 	}
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"debugged_process", value_kinds.MODULE_NAME_FIELD_BYTES - 1}, {"act", u32(len(acts[4]))}, {"pending", u32(len(pendings[1]))}, {"procedure", 79}, {"card", 13}))
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"debugged_process", value_kinds.MODULE_NAME_FIELD_BYTES - 1}, {"act", u32(len(acts[4]))}, {"pending", u32(len(pendings[1]))}, {"procedure", 79}, {"card", 13}, {"problem", u32(len("a record of the service debugger has another size than in this window"))}))
 }
 
 // The facts of manual: the counts and the times at their edges, each words
@@ -354,7 +353,7 @@ the_facts_of_the_terminal_write_the_lines_of_before :: proc(t: ^testing.T) {
 	for count in COUNTS {
 		facts_expect_line(t, render(t, file, "Paste_Without_Process", {{"characters", count}}), line_of_before("terminal: a paste of ", count, " characters, and no process to type them"))
 	}
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"shown_process", value_kinds.MODULE_NAME_FIELD_BYTES - 1}, {"scroll_part", u32(len(parts[3]))}, {"scroll_act", u32(len(scroll_acts[0]))}, {"fallback_font", u32(len(fonts[3]))}))
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"shown_process", value_kinds.MODULE_NAME_FIELD_BYTES - 1}, {"scroll_part", u32(len(parts[3]))}, {"scroll_act", u32(len(scroll_acts[0]))}, {"fallback_font", u32(len(fonts[3]))}, {"failure", u32(len("no memory for the lines"))}))
 }
 
 // The facts of the console: the counts and the times at their edges, the
@@ -406,7 +405,7 @@ the_facts_of_the_console_write_the_lines_of_before :: proc(t: ^testing.T) {
 	for kind in kinds[:2] {
 		facts_expect_line(t, render(t, file, "Palette_Result_In_Console", {{"result_kind", kind}}), line_of_before("console: the result of the palette choice is in the console: ", kind))
 	}
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"search", 64}, {"history_problem", u32(len(problems[0]))}, {"entry_name", 64}, {"result_kind", u32(len("an Integer"))}, {"module_name", value_kinds.MODULE_NAME_FIELD_BYTES - 1}))
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"search", 64}, {"history_problem", u32(len(problems[0]))}, {"entry_name", 64}, {"result_kind", u32(len("an Integer"))}, {"module_name", value_kinds.MODULE_NAME_FIELD_BYTES - 1}, {"refusal", u32(len(CHOICE_REFUSAL_LONGEST))}, {"name_set", u32(len("the names of this console"))}))
 }
 
 // The facts of the compositor past the lines of its windows: the counts
@@ -574,5 +573,373 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	most["limits_problem"] = u32(len("a least size is below the least size of a resizable surface"))
 	most["local_time"] = 19
 	most["zone"] = 6
+	for setting_field in ([7]string{"font", "subpixel_order", "pointer_theme", "grid_fit", "keyboard_layout", "appearance", "in_force"}) {
+		most[setting_field] = 6
+	}
+	most["candidate"] = 31
+	most["typed"] = 64
+	most["profile"] = u32(len("the processor profile"))
+	most["profile_reason"] = u32(len("the system drives no GPU device"))
 	facts_expect_text_fields_last(t, file, most)
+}
+
+// The longest sentence of a refusal of a choice of the palette by the
+// console.
+@(private = "file")
+CHOICE_REFUSAL_LONGEST :: "a line of the console holds no quote and no invalid sequence of UTF-8 in a text"
+
+// The words of a word of a contract enum, as a reader writes them: the
+// name of its member, or its number for a word that names none.
+@(private = "file")
+contract_enum_words :: proc(which: value_kinds.Contract_Enum, word: u64) -> string {
+	if words, named := op.contract_enum_member_words(which, word); named {
+		return words
+	}
+	return line_of_before(word)
+}
+
+// The words of the status of a line: each member of op.Status, and a word
+// that names no member.
+@(private = "file")
+status_words :: proc() -> []u64 {
+	words := make([dynamic]u64, context.temp_allocator)
+	for status in op.Status {
+		append(&words, u64(status))
+	}
+	append(&words, max(u64))
+	return words[:]
+}
+
+// One error record at the edges of its fields: a kind and a unit that
+// name members and words that name none, the least and the largest i64.
+@(private = "file")
+Error_Record_Case :: struct {
+	kind, unit:                               u64,
+	operation, argument, value, limit, found: i64,
+}
+
+@(private = "file")
+error_record_cases :: proc() -> []Error_Record_Case {
+	cases := make([dynamic]Error_Record_Case, context.temp_allocator)
+	append(&cases, Error_Record_Case{kind = 0, unit = 0})
+	append(&cases, Error_Record_Case{kind = 1, unit = 1, operation = 3, argument = 2, value = 300, limit = 255, found = 0})
+	append(&cases, Error_Record_Case{kind = max(u64), unit = max(u64), operation = min(i64), argument = max(i64), value = -1, limit = min(i64), found = max(i64)})
+	return cases[:]
+}
+
+// The fields and the words of one error record, after the words of a
+// module.
+@(private = "file")
+error_record_fields :: proc(record: Error_Record_Case) -> []Fact_Test_Field {
+	fields := make([]Fact_Test_Field, 7, context.temp_allocator)
+	fields[0] = {"kind", record.kind}
+	fields[1] = {"unit", record.unit}
+	fields[2] = {"operation", signed_bits(record.operation)}
+	fields[3] = {"argument", signed_bits(record.argument)}
+	fields[4] = {"value", signed_bits(record.value)}
+	fields[5] = {"limit", signed_bits(record.limit)}
+	fields[6] = {"found", signed_bits(record.found)}
+	return fields
+}
+
+@(private = "file")
+error_record_words :: proc(record: Error_Record_Case) -> string {
+	return line_of_before("kind ", contract_enum_words(.Error_Kind, record.kind), ", unit ", contract_enum_words(.Error_Unit, record.unit), ", operation ", record.operation, ", argument ", record.argument, ", value ", record.value, ", limit ", record.limit, ", found ", record.found)
+}
+
+// The edges of a time in nanoseconds that a line wrote in microseconds
+// with one decimal, cut: 0, under one tenth, 812 499 ns, the largest.
+@(private = "file")
+NANOSECOND_VALUES := [4]u64{0, 99, 812_499, max(u64)}
+
+// The old form of such a time: n / 1000, a dot, n / 100 % 10, " us".
+@(private = "file")
+microseconds_of :: proc(nanoseconds: u64) -> string {
+	return line_of_before(nanoseconds / 1000, ".", nanoseconds / 100 % 10, " us")
+}
+
+// A fact type with no field writes its template.
+@(private = "file")
+expect_no_field_fact :: proc(t: ^testing.T, file: []u8, package_name, type_name, sentence_of_before: string, loc := #caller_location) {
+	facts_expect_line(t, fact_test_render(t, file, package_name, type_name, {}), sentence_of_before, loc)
+}
+
+// A status that a line wrote as its number is written by the name of its
+// member: the sentence changes, as the design of the log facts decided. A
+// word that names no member stays its number.
+@(test)
+a_status_of_the_windows_is_written_by_its_member :: proc(t: ^testing.T) {
+	log_file, log_ok := window_facts_file(t, "log")
+	settings_file, settings_ok := window_facts_file(t, "settings")
+	if !log_ok || !settings_ok {
+		return
+	}
+	for word in status_words() {
+		words := contract_enum_words(.Status, word)
+		facts_expect_line(t, fact_test_render(t, log_file, "log", "Records_Not_Readable", {{"status", word}}), line_of_before("log: cannot read the records of the log: status ", words))
+		facts_expect_line(t, fact_test_render(t, settings_file, "settings_process", "No_Settings_Page", {{"status", word}}), line_of_before("settings: no settings page: status ", words))
+	}
+	testing.expect_value(t, contract_enum_words(.Status, u64(op.Status.Ok)), "Ok")
+}
+
+// Each error record of the windows is written in the fields form, after
+// the words of its module.
+@(test)
+the_error_records_of_the_windows_are_written_as_fields :: proc(t: ^testing.T) {
+	Error_Fact :: struct {
+		folder, package_name, type_name, before: string,
+	}
+	facts := [?]Error_Fact {
+		{"settings", "settings_process", "Store_Refused", "settings: the store did not keep the settings: "},
+		{"console", "console", "History_Root_Refused", "console: the line history stays in memory: the root service refused: "},
+		{"console", "console", "History_Read_Refused", "console: the line history cannot be read, and the history starts empty: "},
+		{"console", "console", "History_Save_Refused", "console: the line history is not kept: "},
+		{"edit", "edit", "Text_Read_Refused", "edit: the text cannot be read, and it is not kept: "},
+		{"edit", "edit", "Text_Write_Refused", "edit: the storage service refused the text, and the changes after it are not kept: "},
+		{"edit", "edit", "Versions_List_Refused", "edit: the versions cannot be listed: "},
+		{"edit", "edit", "Version_Read_Refused", "edit: the version cannot be read: "},
+		{"edit", "edit", "Version_Restore_Refused", "edit: the version cannot be restored: "},
+	}
+	for fact in facts {
+		file, ok := window_facts_file(t, fact.folder)
+		if !ok {
+			continue
+		}
+		for record in error_record_cases() {
+			facts_expect_line(t, fact_test_render(t, file, fact.package_name, fact.type_name, error_record_fields(record)), line_of_before(fact.before, error_record_words(record)))
+		}
+	}
+}
+
+// Each line of the windows with no value is a fact type with no field
+// whose sentence is the line of before.
+@(test)
+the_lines_of_the_windows_with_no_value_write_the_lines_of_before :: proc(t: ^testing.T) {
+	No_Field_Fact :: struct {
+		folder, package_name, type_name, line: string,
+	}
+	facts := [?]No_Field_Fact {
+		{"monitor", "monitor", "No_Inspect_Grant", "monitor: no grant to inspect the machine"},
+		{"monitor", "monitor", "Window_Ready", "monitor: ok"},
+		{"settings", "settings_process", "Page_Refused", "settings: the settings page holds a value that its setting does not have, or was never stable: the defaults"},
+		{"inspect", "inspect", "Own_Memory_Shown", "inspect: the bytes of the memory of inspect"},
+		{"manual", "manual", "No_Page_Before", "manual: back: no page before"},
+		{"manual", "manual", "Back_To_Page_Before", "manual: back to the page before"},
+		{"manual", "manual", "No_Link_That_Opens", "manual: the page has no link that opens"},
+		{"manual", "manual", "No_Link_Pages", "manual: the boot image has no link pages"},
+		{"manual", "manual", "Link_Pages_Hash_Wrong", "manual: the link pages do not have the hash of their entry: not read"},
+		{"manual", "manual", "Markdown_Check_Passed", "manual: the Markdown of its page: bold, italics, code, list items and links that open a page; no mark is left and no row passes the window: as it must"},
+		{"edit", "edit", "No_Store", "edit: no store: the text is not kept"},
+		{"edit", "edit", "Stored_Text_Damaged", "edit: the text in the store is damaged: the editor starts empty, and the next change writes a new text"},
+		{"edit", "edit", "New_Store", "edit: a new store: an empty text"},
+		{"edit", "edit", "Nothing_Selected", "edit: nothing is selected"},
+		{"edit", "edit", "Undo_Without_Version", "edit: undo: the text is not kept: it has no version"},
+		{"edit", "edit", "Redo_Without_Version", "edit: redo: the text is not kept: it has no version"},
+		{"edit", "edit", "Window_Ready", "edit: ok, the first picture is presented"},
+		{"edit", "edit", "Text_Read_Unanswered", "edit: the text cannot be read: the storage service did not answer the call: the text is not kept"},
+		{"edit", "edit", "Text_Write_Unanswered", "edit: the storage service refused the text: the storage service did not answer the call: the changes after it are not kept"},
+		{"edit", "edit", "Versions_List_Unanswered", "edit: the versions cannot be listed: the storage service did not answer the call"},
+		{"edit", "edit", "Version_Read_Unanswered", "edit: the version cannot be read: the storage service did not answer the call"},
+		{"edit", "edit", "Version_Restore_Unanswered", "edit: the version cannot be restored: the storage service did not answer the call"},
+		{"terminal", "terminal_process", "Draw_Table_Full", "terminal: the draw table is full: records are missing"},
+		{"console", "console", "History_Root_Silent", "console: the line history stays in memory: the root service did not answer"},
+		{"console", "console", "History_Storage_File_Missing", "console: the line history stays in memory: the boot image has no valid file of the storage service"},
+		{"console", "console", "History_Region_Not_Mapped", "console: the line history stays in memory: the call ring or the call region does not map"},
+		{"console", "console", "History_Damaged", "console: the line history is damaged in its store: the history starts empty"},
+		{"console", "console", "History_Read_Unanswered", "console: the line history cannot be read: the storage service did not answer the read: the history starts empty"},
+		{"console", "console", "No_History_Kept", "console: no line history kept: the history starts empty"},
+		{"console", "console", "History_Store_Unreachable", "console: the line history is not kept: the store of the history is not reachable"},
+		{"console", "console", "No_Random_Seed", "console: no random seed in the context"},
+		{"console", "console", "No_Terminal", "console: no terminal"},
+		{"console", "console", "Thread_Not_Started", "console: cannot start a thread"},
+		{"console", "console", "Ready", "console: ready"},
+		{"console", "console", "Line_Empty_After_Paste", "console: the line is empty again after a paste"},
+		{"console", "console", "Provider_Refused", "console: the console is not the palette provider: the root service refused"},
+		{"console", "console", "Provider_Without_Table", "console: the console is not the palette provider: no entry table"},
+		{"console", "console", "Provider_Table_Not_Mapped", "console: the console is not the palette provider: the entry table cannot be mapped"},
+		{"console", "console", "Provider_Without_Ring", "console: the console is not the palette provider: no ring"},
+		{"console", "console", "Manual_Page_Shown", "console: the manual shows the page that the palette asked for"},
+		{"console", "console", "Provider_Ended", "console: the console is no more the palette provider"},
+		{"compositor", "compositor", "First_Viewer_Key", "compositor: the first key of a viewer of the remote display goes along the path of the keys"},
+		{"compositor", "compositor", "Copy_Key_Without_Window", "compositor: the copy key with no window in front"},
+		{"compositor", "compositor", "Paste_Key_Without_Window", "compositor: the paste key with no window in front"},
+		{"compositor", "compositor", "Bar_In_Cell_Font", "compositor: the bar is in the font of the cells"},
+		{"compositor", "compositor", "No_Memory", "compositor: no memory"},
+		{"compositor", "compositor", "Two_Screen_Pages", "compositor: two screen pages: each frame reaches the screen whole, by a page flip"},
+		{"compositor", "compositor", "One_Screen_Page", "compositor: one screen page: each frame is written into the screen page that the display shows"},
+		{"compositor", "compositor", "No_Framebuffer", "compositor: no framebuffer"},
+		{"compositor", "compositor", "No_Input_Or_Control_Ring", "compositor: no input ring or no control ring"},
+		{"compositor", "compositor", "First_Frame", "compositor: first frame"},
+		{"compositor", "compositor", "Start_Menu_Open", "compositor: the start menu is open"},
+		{"compositor", "compositor", "Screen_Draw_Table_Full", "compositor: the draw table of the screen is full: records are missing"},
+		{"compositor", "compositor", "Ranking_Thread_Not_Started", "compositor: cannot start the ranking thread: the palette lists nothing"},
+		{"compositor", "compositor", "Palette_Entries_Changed", "compositor: the palette goes back to the search: the entries changed"},
+		{"compositor", "compositor", "Chosen_Entry_Left", "compositor: the chosen entry of the palette left the list: the first entry is chosen, and Enter waits for a frame"},
+		{"compositor", "compositor", "Palette_Provider_Refused", "compositor: the palette provider is refused: its ring or its table cannot be mapped"},
+		{"compositor", "compositor", "Palette_Provider_Present", "compositor: the palette has a provider"},
+		{"compositor", "compositor", "Palette_Provider_Absent", "compositor: the palette has no provider"},
+		{"compositor", "compositor", "Palette_Manual_Shown", "compositor: the manual shows the page"},
+		{"compositor", "compositor", "Palette_Result_In_Console", "compositor: the result of the palette is in the console"},
+		{"compositor", "compositor", "Palette_Entry_Opened_In_Console", "compositor: the palette opened the entry in the console"},
+		{"compositor", "compositor", "Palette_Shows_Error", "compositor: the palette shows an error"},
+		{"compositor", "compositor", "Palette_Shows_Refusal", "compositor: the palette shows a refusal"},
+		{"compositor", "compositor", "Palette_Shows_No_Result", "compositor: the palette shows no result"},
+		{"compositor", "compositor", "Palette_Enter_Dropped", "compositor: the palette drops Enter: the choice changed and no frame showed it yet"},
+		{"compositor", "compositor", "Palette_Open", "compositor: the palette is open"},
+		{"compositor", "compositor", "Palette_No_Entry_To_Run", "compositor: the palette has no entry to run"},
+		{"compositor", "compositor", "Palette_Back_To_Arguments", "compositor: the palette goes back to the arguments"},
+		{"compositor", "compositor", "Palette_Back_To_Search", "compositor: the palette goes back to the search"},
+		{"compositor", "compositor", "Palette_Tab_Waits", "compositor: Tab waits for the candidates of the field"},
+		{"compositor", "compositor", "Palette_Draw_Table_Full", "compositor: the draw table of the palette is full: records are missing"},
+		{"compositor", "compositor", "No_Pointer_Theme", "compositor: no pointer theme: the arrow of squares"},
+		{"compositor", "compositor", "Palette_Listed_More", "compositor: the palette lists more rows than the log names"},
+	}
+	for fact in facts {
+		file, ok := window_facts_file(t, fact.folder)
+		if ok {
+			expect_no_field_fact(t, file, fact.package_name, fact.type_name, fact.line)
+		}
+	}
+}
+
+// The other new facts of the windows against the lines of before, at the
+// edges of their fields: the appearance of settings, the boot pass, the
+// times with one decimal, the lists that a loop wrote, the closed sets of
+// words.
+@(test)
+the_other_lines_of_the_windows_write_the_lines_of_before :: proc(t: ^testing.T) {
+	settings_file, settings_ok := window_facts_file(t, "settings")
+	if settings_ok {
+		render :: proc(t: ^testing.T, file: []u8, type_name: string, values: []Fact_Test_Field) -> string {
+			return fact_test_render(t, file, "settings_process", type_name, values)
+		}
+		appearances := [2]string{"dark", "light"}
+		for in_force in appearances {
+			for setting_value in appearances {
+				facts_expect_line(t, render(t, settings_file, "Appearance_By_Setting", {{"in_force", in_force}, {"setting_value", setting_value}}), line_of_before("settings: the appearance in force is ", in_force, ": the setting ", setting_value))
+			}
+			facts_expect_line(t, render(t, settings_file, "Appearance_Without_Date", {{"in_force", in_force}}), line_of_before("settings: the appearance in force is ", in_force, ": auto, and the system has no date"))
+			seconds := [3]i64{min(i64), 0, max(i64)}
+			for second in seconds {
+				facts_expect_line(t, render(t, settings_file, "Appearance_By_Rule", {{"zone_offset", signed_bits(-second)}, {"date", signed_bits(second)}, {"in_force", in_force}, {"local_time", "01:04"}}), line_of_before("settings: the appearance in force is ", in_force, ": auto, light from 07:00 to 19:00 of the local time; the local time is ", "01:04", " with a zone of ", -second, " s, at ", second, " s since 1970"))
+			}
+		}
+		Boot_Case :: struct {
+			type_name, what: string,
+		}
+		boot_cases := [?]Boot_Case {
+			{"Boot_Pass_Nothing_Kept", "no settings kept: the defaults"},
+			{"Boot_Pass_Read_Refused", "the store gives no record (status not Ok): the defaults"},
+			{"Boot_Pass_Kept", "the settings kept in the store"},
+			{"Boot_Pass_Record_Refused_Defaults_Kept", "the record of the store is refused (another version, or a value that its setting does not have): the defaults, kept in its place"},
+			{"Boot_Pass_Record_Refused_Defaults_Not_Kept", "the record of the store is refused (another version, or a value that its setting does not have): the defaults, NOT kept: the store refused"},
+			{"Boot_Pass_No_Store", "no private store: the defaults"},
+		}
+		for boot in boot_cases {
+			for elapsed in UNIT_VALUES {
+				facts_expect_line(t, render(t, settings_file, boot.type_name, {{"elapsed", elapsed}, {"font", "spleen"}, {"subpixel_order", "none"}, {"pointer_theme", "system"}, {"grid_fit", "off"}, {"keyboard_layout", "french"}, {"appearance", "light"}}), line_of_before("settings: the boot pass: ", boot.what, ": font spleen, subpixel order none, pointer theme system, grid fit off, keyboard layout french, appearance light; in ", elapsed, " us"))
+			}
+		}
+		facts_expect_line(t, render(t, settings_file, "Boot_Pass_Nothing_Kept", {{"elapsed", u64(12)}, {"font", "vector"}, {"subpixel_order", "rgb"}, {"pointer_theme", "owner"}, {"grid_fit", "on"}, {"keyboard_layout", "us"}, {"appearance", "auto"}}), "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; in 12 us")
+	}
+
+	inspect_file, inspect_ok := window_facts_file(t, "inspect")
+	if inspect_ok {
+		names := [2]string{name_longest(), NAME_SHORT}
+		for name in names {
+			facts_expect_line(t, fact_test_render(t, inspect_file, "inspect", "Reports_Shown", {{"sampled_process", name}}), line_of_before("inspect: the reports of ", name))
+		}
+	}
+
+	debugger_file, debugger_ok := window_facts_file(t, "debugger_window")
+	if debugger_ok {
+		problems := [3]string{"the boot image has no module debugger", "a record of the service debugger has another size than in this window", "the root service gave no connection to the service debugger"}
+		for problem in problems {
+			facts_expect_line(t, fact_test_render(t, debugger_file, "debugger_window", "Service_Not_Reached", {{"problem", problem}}), line_of_before("debugger_window: ", problem))
+		}
+	}
+
+	terminal_file, terminal_ok := window_facts_file(t, "terminal")
+	if terminal_ok {
+		failures := [4]string{"no surface", "no memory for the lines", "no text region", "no thread"}
+		for failure in failures {
+			facts_expect_line(t, fact_test_render(t, terminal_file, "terminal_process", "Start_Failed", {{"failure", failure}}), line_of_before("terminal: ", failure))
+		}
+		names := [2]string{name_longest(), "flood"}
+		for name in names {
+			for outcome in op.Stop_Outcome {
+				for count in COUNTS {
+					facts_expect_line(t, fact_test_render(t, terminal_file, "terminal_process", "Stopped_Itself", {{"lines", count}, {"records", max(u64) - count}, {"cause", u64(op.Stop_Cause.Itself)}, {"outcome", u64(outcome)}, {"shown_process", name}}), line_of_before("terminal: ", name, " stopped: ", op.STOP_CAUSE_TEXTS[.Itself], ", ", op.STOP_OUTCOME_TEXTS[outcome], ", after ", count, " lines and ", max(u64) - count, " records"))
+				}
+			}
+		}
+	}
+
+	console_file, console_ok := window_facts_file(t, "console")
+	if console_ok {
+		refusals := [4]string{"the commands changed: choose again", CHOICE_REFUSAL_LONGEST, "the arguments do not fit the command: type the line in the console", "the name of the module is no name"}
+		for refusal in refusals {
+			facts_expect_line(t, fact_test_render(t, console_file, "console", "Palette_Choice_Refused", {{"refusal", refusal}}), line_of_before("console: the palette choice is refused: ", refusal))
+		}
+		entries := [2]string{entry_longest(), "memory"}
+		for entry in entries {
+			facts_expect_line(t, fact_test_render(t, console_file, "console", "Palette_Opens_In_Edit_Line", {{"entry_name", entry}}), line_of_before("console: the palette opens ", entry, "()", " in the edit line"))
+		}
+		name_sets := [2]string{"the names of this console", "512 names of 128 bytes"}
+		for nanoseconds in NANOSECOND_VALUES {
+			for name_set in name_sets {
+				facts_expect_line(t, fact_test_render(t, console_file, "console", "Completion_Key_Measured", {{"collect", nanoseconds}, {"rank", u64(0)}, {"rows_time", nanoseconds}, {"colors", u64(812_499)}, {"names", max(u64)}, {"batches", u64(8)}, {"keys", u64(64)}, {"name_set", name_set}}), line_of_before("console: one key with the completion list: the collect ", microseconds_of(nanoseconds), ", the rank ", microseconds_of(0), ", the rows ", microseconds_of(nanoseconds), ", the colors ", microseconds_of(812_499), ", over ", max(u64), " names (", name_set, ", the least of ", u64(8), " batches of ", u64(64), ")"))
+			}
+		}
+	}
+
+	compositor_file, compositor_ok := window_facts_file(t, "compositor")
+	if compositor_ok {
+		render :: proc(t: ^testing.T, file: []u8, type_name: string, values: []Fact_Test_Field) -> string {
+			return fact_test_render(t, file, "compositor", type_name, values)
+		}
+		windows := [2]string{name_longest(), "console"}
+		for nanoseconds in NANOSECOND_VALUES {
+			other := NANOSECOND_VALUES[3] - nanoseconds
+			facts_expect_line(t, render(t, compositor_file, "Bar_Measured_Without_Interface_Font", {{"cells_font_time", nanoseconds}}), line_of_before("compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells ", microseconds_of(nanoseconds), "; no interface font"))
+			facts_expect_line(t, render(t, compositor_file, "Bar_Measured", {{"cells_font_time", nanoseconds}, {"interface_font_time", other}}), line_of_before("compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells ", microseconds_of(nanoseconds), ", the interface font ", microseconds_of(other)))
+			facts_expect_line(t, render(t, compositor_file, "Title_Bar_Measured", {{"width", u64(1920)}, {"one_color_time", nanoseconds}, {"mix_time", other}, {"row_copy_time", u64(0)}}), line_of_before("compositor: a title bar of ", u64(1920), " pixels: one color ", microseconds_of(nanoseconds), ", a mix for each pixel ", microseconds_of(other), ", one row of colors then copies ", microseconds_of(0)))
+			facts_expect_line(t, render(t, compositor_file, "Palette_Open_Measured", {{"frames", max(u64)}, {"frame_time", nanoseconds}, {"longest_list_time", other}, {"adopted_lists", u64(0)}, {"same_lists", u64(1)}}), line_of_before("compositor: the palette was open for ", max(u64), " frames, ", microseconds_of(nanoseconds), " per frame; the longest list of the ranking thread ", microseconds_of(other), "; ", u64(0), " lists adopted, ", u64(1), " of them the same"))
+			facts_expect_line(t, render(t, compositor_file, "Frame_Time_Measured", {{"least", nanoseconds}, {"median", other}, {"frames", u64(64)}}), line_of_before("compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least ", microseconds_of(nanoseconds), ", median ", microseconds_of(other), ", over ", u64(64), " frames"))
+			facts_expect_line(t, render(t, compositor_file, "Key_Time_Measured", {{"least", nanoseconds}, {"median", other}, {"keys", u64(16)}}), line_of_before("compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least ", microseconds_of(nanoseconds), ", median ", microseconds_of(other), ", over ", u64(16), " keys"))
+			for window in windows {
+				facts_expect_line(t, render(t, compositor_file, "Window_Start_Measured", {{"start_time", nanoseconds}, {"window", window}}), line_of_before("compositor: measure: the start of the window ", window, ", from Process_Start to its first frame: ", microseconds_of(nanoseconds)))
+			}
+		}
+		for count in COUNTS {
+			other := max(u64) - count
+			for window in windows {
+				facts_expect_line(t, render(t, compositor_file, "Window_Listed", {{"place", count}, {"windows", other}, {"window", window}}), line_of_before("compositor: windows: ", window, ", the window ", count, " of ", other))
+			}
+			for elapsed in UNIT_VALUES {
+				facts_expect_line(t, render(t, compositor_file, "Full_Frame_Measured", {{"width", count}, {"height", other}, {"windows", count}, {"elapsed", elapsed}}), line_of_before("compositor: a full frame of ", count, "x", other, " with ", count, " windows in ", elapsed, " us"))
+			}
+			facts_expect_line(t, render(t, compositor_file, "Settings_Changed", {{"windows", count}, {"font", "spleen"}, {"subpixel_order", "rgb"}, {"pointer_theme", "system"}, {"grid_fit", "off"}, {"keyboard_layout", "french"}, {"appearance", "auto"}, {"in_force", "light"}, {"zone", "+05:45"}}), line_of_before("compositor: the settings changed: font spleen, subpixel order rgb, pointer theme system, grid fit off, keyboard layout french, appearance auto; the appearance in force light; the time zone +05:45; ", count, " windows draw again"))
+			candidates := [2]string{strings.repeat("c", 31, context.temp_allocator), "round_robin"}
+			for candidate in candidates {
+				facts_expect_line(t, render(t, compositor_file, "Palette_Takes_Candidate", {{"candidate", candidate}}), line_of_before("compositor: the palette takes the candidate ", candidate))
+				facts_expect_line(t, render(t, compositor_file, "Palette_Button_Pressed", {{"field", count}, {"candidate", candidate}}), line_of_before("compositor: a press takes the button ", candidate, " of the field ", count))
+			}
+			typed := [3]string{"", "mon", strings.repeat("m", 64, context.temp_allocator)}
+			for text in typed {
+				facts_expect_line(t, render(t, compositor_file, "Palette_Listed", {{"matched", count}, {"entries", other}, {"typed", text}}), line_of_before("compositor: the palette lists ", count, " of ", other, " for \"", text, "\""))
+			}
+			facts_expect_line(t, render(t, compositor_file, "Palette_Listed_Row", {{"row", count}, {"entry", entry_longest()}, {"kind_words", "close a window"}}), line_of_before("compositor: the palette lists the row ", count, ": ", entry_longest(), " (", "close a window", ")"))
+		}
+		profiles := [2]string{"the processor profile", "the GPU profile"}
+		reasons := [2]string{"the system drives no GPU device", "the system drives a GPU device"}
+		for profile in profiles {
+			for reason in reasons {
+				facts_expect_line(t, render(t, compositor_file, "Quality_Profile_Chosen", {{"profile", profile}, {"profile_reason", reason}}), line_of_before("compositor: the quality profile is ", profile, ": ", reason))
+			}
+		}
+		// The line that quality_lines_check reads, whole.
+		facts_expect_line(t, render(t, compositor_file, "Quality_Profile_Chosen", {{"profile", "the processor profile"}, {"profile_reason", "the system drives no GPU device"}}), "compositor: the quality profile is the processor profile: the system drives no GPU device")
+		facts_expect_line(t, render(t, compositor_file, "Full_Frame_Measured", {{"width", u64(1920)}, {"height", u64(1080)}, {"windows", u64(17)}, {"elapsed", u64(2272)}}), "compositor: a full frame of 1920x1080 with 17 windows in 2272 us")
+	}
 }

@@ -4268,26 +4268,51 @@ machine_fact_catalog :: proc() -> ^build.Fact_Catalog {
 }
 
 // windows_line gives the line of the last window with a title in the menu
-// of the windows. The compositor writes the lines when the menu opens:
-// "compositor: windows: console, life, monitor". from: the bytes of the
-// log before the menu opened.
+// of the windows. The compositor writes one fact for each window when the
+// menu opens, in the order of the menu: "compositor: windows: console, the
+// window 1 of 3". from: the bytes of the log before the menu opened. The
+// list is whole at the line whose place is the count of the windows.
 windows_line :: proc(machine: ^Machine, title: string, from: int) -> (line: int, ok: bool) {
 	MARK :: "compositor: windows: "
+	PLACE :: ", the window "
 	for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 		text := log_read(machine)
-		at := len(text) > from ? strings.index(text[from:], MARK) : -1
-		if at < 0 {
-			log_change_wait(machine)
-			continue
-		}
-		text = text[from + at + len(MARK):]
-		titles := strings.split(strings.trim_right(text[:strings.index_byte(text, '\n')], "\r"), ", ", context.temp_allocator)
-		#reverse for name, index in titles {
-			if name == title {
-				return index, true
+		rest := len(text) > from ? text[from:] : ""
+		found := false
+		place_of_title := 0
+		for {
+			at := strings.index(rest, MARK)
+			if at < 0 {
+				break
+			}
+			rest = rest[at + len(MARK):]
+			end := strings.index_byte(rest, '\n')
+			if end < 0 {
+				break // The line is not whole yet.
+			}
+			entry := strings.trim_right(rest[:end], "\r")
+			rest = rest[end:]
+			cut := strings.last_index(entry, PLACE)
+			if cut < 0 {
+				continue
+			}
+			numbers := strings.split(entry[cut + len(PLACE):], " of ", context.temp_allocator)
+			if len(numbers) != 2 {
+				continue
+			}
+			place, place_ok := strconv.parse_int(numbers[0], 10)
+			windows, windows_ok := strconv.parse_int(numbers[1], 10)
+			if !place_ok || !windows_ok {
+				continue
+			}
+			if entry[:cut] == title {
+				found, place_of_title = true, place
+			}
+			if place == windows {
+				return max(place_of_title - 1, 0), found
 			}
 		}
-		return 0, false
+		log_change_wait(machine)
 	}
 	return 0, false
 }

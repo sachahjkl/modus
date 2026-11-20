@@ -132,10 +132,10 @@ navigation_leave :: proc "contextless" () {
 page_back :: proc "contextless" () {
 	place, ok := manual_navigation.history_back(&history)
 	if !ok {
-		system.log(.Info, "manual: back: no page before")
+		system.log_fact(.Info, No_Page_Before{})
 		return
 	}
-	system.log(.Info, "manual: back to the page before")
+	system.log_fact(.Info, Back_To_Page_Before{})
 	switch place.kind {
 	case .Module:
 		select(int(place.index))

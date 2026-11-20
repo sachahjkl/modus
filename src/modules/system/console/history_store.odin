@@ -52,12 +52,11 @@ history_copy: line_editor.History
 history_store_open :: proc "contextless" () -> (opened: bool) {
 	completion, answered := request_record(.Connect_History, "storage", 0, HISTORY_CONNECT_TIME)
 	if !answered {
-		system.log(.Info, "console: the line history stays in memory: the root service did not answer")
+		system.log_fact(.Info, History_Root_Silent{})
 		return false
 	}
 	if system.Status(completion.kind) != .Ok {
-		text: [240]u8
-		system.log(.Info, "console: the line history stays in memory: ", root_refusal_text(text[:], completion))
+		system.log_fact(.Info, History_Root_Refused(errors.error_record_fact_fields(errors.completion_record(completion.values))))
 		return false
 	}
 	client := storage.Client {
@@ -72,7 +71,7 @@ history_store_open :: proc "contextless" () -> (opened: bool) {
 		file = image[entry.offset:][:entry.size]
 	}
 	if file == nil || blake3.hash(file) != hash || module.validate(file) != .None {
-		system.log(.Info, "console: the line history stays in memory: the boot image has no valid file of the storage service")
+		system.log_fact(.Info, History_Storage_File_Missing{})
 		history_store_close(&client)
 		return false
 	}
@@ -84,7 +83,7 @@ history_store_open :: proc "contextless" () -> (opened: bool) {
 	region_pages: u64
 	region_pages, size_status = system.memory_size(client.region_memory)
 	if ring_status != .Ok || region_status != .Ok || size_status != .Ok {
-		system.log(.Info, "console: the line history stays in memory: the call ring or the call region does not map")
+		system.log_fact(.Info, History_Region_Not_Mapped{})
 		history_store_close(&client)
 		return false
 	}
@@ -116,20 +115,15 @@ history_load :: proc "contextless" () {
 	bytes, found, status := storage.read(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, buffer[:], &error)
 	switch {
 	case status == .Damaged:
-		system.log(.Info, "console: the line history is damaged in its store: the history starts empty")
+		system.log_fact(.Info, History_Damaged{})
 	case status != .Ok:
-		text: [240]u8
-		writer := system.Writer {
-			buffer = text[:],
-		}
 		if status == .Failed {
-			storage.error_text(&writer, &history_client, &error)
+			system.log_fact(.Info, History_Read_Refused(errors.error_record_fact_fields(error)))
 		} else {
-			system.write_part(&writer, "the storage service did not answer the read")
+			system.log_fact(.Info, History_Read_Unanswered{})
 		}
-		system.log(.Info, "console: the line history cannot be read: ", system.written(&writer), ": the history starts empty")
 	case !found:
-		system.log(.Info, "console: no line history kept: the history starts empty")
+		system.log_fact(.Info, No_History_Kept{})
 	case len(bytes) > line_editor.HISTORY_FILE_SIZE_LIMIT:
 		system.log_fact(.Info, History_Too_Long{limit = value_kinds.Size_In_Bytes(line_editor.HISTORY_FILE_SIZE_LIMIT)})
 	case:
@@ -171,16 +165,11 @@ history_save :: proc "contextless" () {
 	}
 	if !history_save_failure_logged {
 		history_save_failure_logged = true
-		text: [240]u8
-		writer := system.Writer {
-			buffer = text[:],
-		}
 		if status == .Failed {
-			storage.error_text(&writer, &history_client, &error)
+			system.log_fact(.Info, History_Save_Refused(errors.error_record_fact_fields(error)))
 		} else {
-			system.write_part(&writer, "the store of the history is not reachable")
+			system.log_fact(.Info, History_Store_Unreachable{})
 		}
-		system.log(.Info, "console: the line history is not kept: ", system.written(&writer))
 	}
 }
 

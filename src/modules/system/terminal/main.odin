@@ -1234,7 +1234,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	bar_result = interface.action_bar(&frame, bar_area, items[:], &bar, {alignment = .Right})
 	interface.window_frame_end(&drawing, &frame, window)
 	if table.full {
-		system.log(.Info, "terminal: the draw table is full: records are missing")
+		system.log_fact(.Info, Draw_Table_Full{})
 	}
 }
 
@@ -1295,7 +1295,7 @@ status_bar_length :: proc "contextless" (value, total: u64, length: int) -> int 
 }
 
 fail :: proc "contextless" (text: string) -> ! {
-	system.log(.Info, "terminal: ", text)
+	system.log_fact(.Info, Start_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }
 
@@ -1539,10 +1539,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if state, cause, outcome := system.process_state(process); state == .Stopped {
 				request.stopped, request.cause, request.outcome = true, cause, outcome
 				view_take()
-				stop_buffer: [64]u8
-				stop_text := system.Writer{buffer = stop_buffer[:]}
-				system.stop_write(&stop_text, cause, outcome)
-				system.log(.Info, "terminal: ", process_name, " stopped: ", system.written(&stop_text), ", after ", view.count - 1, " lines and ", view.records, " records")
+				if cause == .Itself {
+					system.log_fact(.Info, Stopped_Itself{lines = view.count - 1, records = view.records, cause = cause, outcome = outcome, shown_process = shown_process_field()})
+				} else {
+					// A stop for another cause has no outcome: its fact
+					// needs an 8-byte word of the cause after the counts.
+					stop_buffer: [64]u8
+					stop_text := system.Writer{buffer = stop_buffer[:]}
+					system.stop_write(&stop_text, cause, outcome)
+					system.log(.Info, "terminal: ", process_name, " stopped: ", system.written(&stop_text), ", after ", view.count - 1, " lines and ", view.records, " records")
+				}
 				if lost, ended := key_path.loss_end(&keys_loss); ended {
 					system.log_fact(.Info, Stopped_With_Lost_Keys{lost_keys = lost, shown_process = shown_process_field()})
 				}

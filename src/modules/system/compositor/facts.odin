@@ -177,10 +177,10 @@ window_field :: proc "contextless" (title: []u8) -> value_kinds.Module_Name_Fiel
 // The other lines of the compositor that have a value. A Text field that
 // is not a title holds words of a closed set, a palette entry name or a
 // name of the pointer theme: each has a bound, and its field holds the
-// longest one and a zero byte. A line that holds a time with one decimal,
-// a list of the windows, a sentence of a refusal of another writer, the
-// text of a field of the palette, or a measure that the measure record or
-// quality_lines_check reads from the raw log stays text.
+// longest one and a zero byte. A line that holds the text of a field of
+// the palette (up to line_editor.LINE_CAPACITY bytes), the measures of the
+// copies of bytes in tenths of a nanosecond, or the sentence of a problem
+// of a pointer theme stays text: see the design of the log facts.
 
 // The bytes of the Text field of a palette entry name: palette.NAME_CAPACITY,
 // a zero byte, and the bytes that end the record on 8 bytes.
@@ -699,6 +699,302 @@ Bar_Local_Time :: struct {
 LOCAL_TIME_FIELD_BYTES :: 24
 ZONE_FIELD_BYTES :: 8
 #assert(ZONE_FIELD_BYTES > settings.ZONE_TEXT_SIZE)
+
+// The lines of the compositor with no value: each is a fact type with no
+// field, whose sentence is its template.
+
+// The first key of a viewer of the remote display reached the path of the
+// keys.
+@(log_fact = "compositor: the first key of a viewer of the remote display goes along the path of the keys")
+First_Viewer_Key :: struct {}
+
+// The copy key came with no window in front.
+@(log_fact = "compositor: the copy key with no window in front")
+Copy_Key_Without_Window :: struct {}
+
+// The paste key came with no window in front.
+@(log_fact = "compositor: the paste key with no window in front")
+Paste_Key_Without_Window :: struct {}
+
+// The bar is drawn in the font of the cells.
+@(log_fact = "compositor: the bar is in the font of the cells")
+Bar_In_Cell_Font :: struct {}
+
+// The compositor has no memory for its frame.
+@(log_fact = "compositor: no memory")
+No_Memory :: struct {}
+
+// The display has two screen pages: each frame reaches the screen whole.
+@(log_fact = "compositor: two screen pages: each frame reaches the screen whole, by a page flip")
+Two_Screen_Pages :: struct {}
+
+// The display has one screen page: each frame is written into the page
+// that it shows.
+@(log_fact = "compositor: one screen page: each frame is written into the screen page that the display shows")
+One_Screen_Page :: struct {}
+
+// The context gives no framebuffer.
+@(log_fact = "compositor: no framebuffer")
+No_Framebuffer :: struct {}
+
+// The context gives no input ring or no control ring.
+@(log_fact = "compositor: no input ring or no control ring")
+No_Input_Or_Control_Ring :: struct {}
+
+// The first frame reached the screen.
+@(log_fact = "compositor: first frame")
+First_Frame :: struct {}
+
+// The start menu is open.
+@(log_fact = "compositor: the start menu is open")
+Start_Menu_Open :: struct {}
+
+// The draw table of the screen is full: records are missing.
+@(log_fact = "compositor: the draw table of the screen is full: records are missing")
+Screen_Draw_Table_Full :: struct {}
+
+// The ranking thread of the palette does not start: the palette lists
+// nothing.
+@(log_fact = "compositor: cannot start the ranking thread: the palette lists nothing")
+Ranking_Thread_Not_Started :: struct {}
+
+// The entries changed while the form was open: the palette goes back to
+// the search.
+@(log_fact = "compositor: the palette goes back to the search: the entries changed")
+Palette_Entries_Changed :: struct {}
+
+// The chosen entry left the list: the first entry is chosen.
+@(log_fact = "compositor: the chosen entry of the palette left the list: the first entry is chosen, and Enter waits for a frame")
+Chosen_Entry_Left :: struct {}
+
+// The palette provider is refused: its ring or its table cannot be mapped.
+@(log_fact = "compositor: the palette provider is refused: its ring or its table cannot be mapped")
+Palette_Provider_Refused :: struct {}
+
+// The palette has a provider.
+@(log_fact = "compositor: the palette has a provider")
+Palette_Provider_Present :: struct {}
+
+// The palette has no provider.
+@(log_fact = "compositor: the palette has no provider")
+Palette_Provider_Absent :: struct {}
+
+// The manual shows the page that the palette asked for.
+@(log_fact = "compositor: the manual shows the page")
+Palette_Manual_Shown :: struct {}
+
+// The result of a choice of the palette is in the window of the console.
+@(log_fact = "compositor: the result of the palette is in the console")
+Palette_Result_In_Console :: struct {}
+
+// The palette opened an entry in the edit line of the console.
+@(log_fact = "compositor: the palette opened the entry in the console")
+Palette_Entry_Opened_In_Console :: struct {}
+
+// The palette shows an error.
+@(log_fact = "compositor: the palette shows an error")
+Palette_Shows_Error :: struct {}
+
+// The palette shows a refusal.
+@(log_fact = "compositor: the palette shows a refusal")
+Palette_Shows_Refusal :: struct {}
+
+// The palette shows no result.
+@(log_fact = "compositor: the palette shows no result")
+Palette_Shows_No_Result :: struct {}
+
+// The palette drops Enter: the choice changed and no frame showed it.
+@(log_fact = "compositor: the palette drops Enter: the choice changed and no frame showed it yet")
+Palette_Enter_Dropped :: struct {}
+
+// The palette is open.
+@(log_fact = "compositor: the palette is open")
+Palette_Open :: struct {}
+
+// Enter with no entry in the list.
+@(log_fact = "compositor: the palette has no entry to run")
+Palette_No_Entry_To_Run :: struct {}
+
+// The palette goes back from the confirm to the arguments.
+@(log_fact = "compositor: the palette goes back to the arguments")
+Palette_Back_To_Arguments :: struct {}
+
+// The palette goes back to the search.
+@(log_fact = "compositor: the palette goes back to the search")
+Palette_Back_To_Search :: struct {}
+
+// Tab waits for the candidates of the field.
+@(log_fact = "compositor: Tab waits for the candidates of the field")
+Palette_Tab_Waits :: struct {}
+
+// The draw table of the palette is full: records are missing.
+@(log_fact = "compositor: the draw table of the palette is full: records are missing")
+Palette_Draw_Table_Full :: struct {}
+
+// The boot image has no pointer theme: the arrow of squares.
+@(log_fact = "compositor: no pointer theme: the arrow of squares")
+No_Pointer_Theme :: struct {}
+
+// The measures of the bar and of the start menu, built and drawn, the
+// least of 20 rounds: in the font of the cells only, with no interface
+// font; and in both fonts.
+@(log_fact = "compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells {cells_font_time}; no interface font")
+Bar_Measured_Without_Interface_Font :: struct {
+	cells_font_time: value_kinds.Nanoseconds_As_Microseconds,
+}
+
+@(log_fact = "compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells {cells_font_time}, the interface font {interface_font_time}")
+Bar_Measured :: struct {
+	cells_font_time:     value_kinds.Nanoseconds_As_Microseconds,
+	interface_font_time: value_kinds.Nanoseconds_As_Microseconds,
+}
+
+// One window of the menu of the windows, in its order: one fact for each
+// window, from the first.
+@(log_fact = "compositor: windows: {window}, the window {place} of {windows}")
+Window_Listed :: struct {
+	place:   u64,
+	windows: u64,
+	window:  value_kinds.Module_Name_Field,
+}
+
+// The settings changed: the values, the appearance in force, the time zone,
+// and the windows that draw again.
+@(log_fact = "compositor: the settings changed: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}; the appearance in force {in_force}; the time zone {zone}; {windows} windows draw again")
+Settings_Changed :: struct {
+	windows:         u64,
+	font:            [8]u8,
+	subpixel_order:  [8]u8,
+	pointer_theme:   [8]u8,
+	grid_fit:        [8]u8,
+	keyboard_layout: [8]u8,
+	appearance:      [8]u8,
+	in_force:        [8]u8,
+	zone:            [8]u8,
+}
+
+// The bytes of the Text field of the name of a value of a setting, and of
+// an appearance in force: the longest name and a zero byte.
+SETTING_VALUE_FIELD_BYTES :: 8
+
+// A frame that redrew the whole screen: its size, its windows, its time.
+// The measure record reads it.
+@(log_fact = "compositor: a full frame of {width}x{height} with {windows} windows in {elapsed}")
+Full_Frame_Measured :: struct {
+	width:   u64,
+	height:  u64,
+	windows: u64,
+	elapsed: value_kinds.Time_In_Microseconds,
+}
+
+// Three forms of the title bar of the widest window, each in microseconds
+// with one decimal.
+@(log_fact = "compositor: a title bar of {width} pixels: one color {one_color_time}, a mix for each pixel {mix_time}, one row of colors then copies {row_copy_time}")
+Title_Bar_Measured :: struct {
+	width:          u64,
+	one_color_time: value_kinds.Nanoseconds_As_Microseconds,
+	mix_time:       value_kinds.Nanoseconds_As_Microseconds,
+	row_copy_time:  value_kinds.Nanoseconds_As_Microseconds,
+}
+
+// The palette took the candidate of a field: the text of the field.
+@(log_fact = "compositor: the palette takes the candidate {candidate}")
+Palette_Takes_Candidate :: struct {
+	candidate: [40]u8,
+}
+
+// A press took a button of a row of candidates.
+@(log_fact = "compositor: a press takes the button {candidate} of the field {field}")
+Palette_Button_Pressed :: struct {
+	field:     u64,
+	candidate: [40]u8,
+}
+
+// The bytes of the Text field of a candidate: palette_table.
+// CANDIDATE_NAME_CAPACITY and a zero byte, on 8 bytes.
+CANDIDATE_FIELD_BYTES :: 40
+#assert(CANDIDATE_FIELD_BYTES > palette_table.CANDIDATE_NAME_CAPACITY)
+
+// The list of the palette: the entries that match what is typed. One fact
+// for the count, then one for each of the first rows, and one when more
+// rows are left out.
+@(log_fact = "compositor: the palette lists {matched} of {entries} for \"{typed}\"")
+Palette_Listed :: struct {
+	matched: u64,
+	entries: u64,
+	typed:   [72]u8,
+}
+
+@(log_fact = "compositor: the palette lists the row {row}: {entry} ({kind_words})")
+Palette_Listed_Row :: struct {
+	row:        u64,
+	entry:      [72]u8,
+	kind_words: [16]u8,
+}
+
+@(log_fact = "compositor: the palette lists more rows than the log names")
+Palette_Listed_More :: struct {}
+
+// The bytes of the Text field of what is typed in the palette:
+// palette.TYPED_CAPACITY, a zero byte, on 8 bytes.
+TYPED_FIELD_BYTES :: 72
+#assert(TYPED_FIELD_BYTES > palette.TYPED_CAPACITY)
+
+// The palette was open: its frames, their mean time, the longest list of
+// the ranking thread, and the lists that it adopted.
+@(log_fact = "compositor: the palette was open for {frames} frames, {frame_time} per frame; the longest list of the ranking thread {longest_list_time}; {adopted_lists} lists adopted, {same_lists} of them the same")
+Palette_Open_Measured :: struct {
+	frames:            u64,
+	frame_time:        value_kinds.Nanoseconds_As_Microseconds,
+	longest_list_time: value_kinds.Nanoseconds_As_Microseconds,
+	adopted_lists:     u64,
+	same_lists:        u64,
+}
+
+// The quality profile that the compositor chose, and why.
+@(log_fact = "compositor: the quality profile is {profile}: {profile_reason}")
+Quality_Profile_Chosen :: struct {
+	profile:        [24]u8,
+	profile_reason: [32]u8,
+}
+
+// The bytes of the Text fields of a profile and of its reason: the longest
+// of quality.profile_sentences and of quality.reason_sentences, and a zero
+// byte.
+PROFILE_FIELD_BYTES :: 24
+PROFILE_REASON_FIELD_BYTES :: 32
+
+// The start of a window, from Process_Start to its first frame.
+@(log_fact = "compositor: measure: the start of the window {window}, from Process_Start to its first frame: {start_time}")
+Window_Start_Measured :: struct {
+	start_time: value_kinds.Nanoseconds_As_Microseconds,
+	window:     value_kinds.Module_Name_Field,
+}
+
+// The time of a frame, from the first record that the compositor reads to
+// the flip: the least and the median of the last frames.
+@(log_fact = "compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least {least}, median {median}, over {frames} frames")
+Frame_Time_Measured :: struct {
+	least:  value_kinds.Nanoseconds_As_Microseconds,
+	median: value_kinds.Nanoseconds_As_Microseconds,
+	frames: u64,
+}
+
+// The time of a key to the screen: the least and the median of the keys of
+// a line.
+@(log_fact = "compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least {least}, median {median}, over {keys} keys")
+Key_Time_Measured :: struct {
+	least:  value_kinds.Nanoseconds_As_Microseconds,
+	median: value_kinds.Nanoseconds_As_Microseconds,
+	keys:   u64,
+}
+
+// setting_value_field gives the Text field of the name of the value of one
+// setting of a choice.
+setting_value_field :: proc "contextless" (choice: settings.Choice, setting: settings.Setting) -> [SETTING_VALUE_FIELD_BYTES]u8 {
+	values := settings.values_of(choice)
+	return value_kinds.text_field(settings.descriptions[setting].value_names[values[setting]], SETTING_VALUE_FIELD_BYTES)
+}
 
 // entry_field gives the Text field of a palette entry name.
 entry_field :: proc "contextless" (name: string) -> [ENTRY_NAME_FIELD_BYTES]u8 {

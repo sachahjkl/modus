@@ -1,9 +1,88 @@
 package edit
 
+import "modus:contract/errors"
 import "modus:contract/value_kinds"
 
+// The context gives no private store: the text is not kept.
+@(log_fact = "edit: no store: the text is not kept")
+No_Store :: struct {}
+
+// The text in the store is damaged: the next change writes a new one.
+@(log_fact = "edit: the text in the store is damaged: the editor starts empty, and the next change writes a new text")
+Stored_Text_Damaged :: struct {}
+
+// The store holds no text yet.
+@(log_fact = "edit: a new store: an empty text")
+New_Store :: struct {}
+
+// A move that extends the selection left it empty.
+@(log_fact = "edit: nothing is selected")
+Nothing_Selected :: struct {}
+
+// An undo with a text that is not kept: it has no version.
+@(log_fact = "edit: undo: the text is not kept: it has no version")
+Undo_Without_Version :: struct {}
+
+// A redo with a text that is not kept: it has no version.
+@(log_fact = "edit: redo: the text is not kept: it has no version")
+Redo_Without_Version :: struct {}
+
+// The first picture of the editor is presented.
+@(log_fact = "edit: ok, the first picture is presented")
+Window_Ready :: struct {}
+
+// The call of the storage service that failed: each one is a fact type of
+// its own, with the error record of the service or with no answer.
+Storage_Step :: enum {
+	Read_Text,
+	Write_Text,
+	List_Versions,
+	Read_Version,
+	Restore_Version,
+}
+
+// The storage service refused the read of the text: the text is not kept.
+@(log_fact = "edit: the text cannot be read, and it is not kept: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Text_Read_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The storage service refused the text: the changes after it are not kept.
+@(log_fact = "edit: the storage service refused the text, and the changes after it are not kept: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Text_Write_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The storage service refused the list of the versions.
+@(log_fact = "edit: the versions cannot be listed: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Versions_List_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The storage service refused the read of a version.
+@(log_fact = "edit: the version cannot be read: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Version_Read_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The storage service refused the restore of a version.
+@(log_fact = "edit: the version cannot be restored: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Version_Restore_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The storage service did not answer the read of the text.
+@(log_fact = "edit: the text cannot be read: the storage service did not answer the call: the text is not kept")
+Text_Read_Unanswered :: struct {}
+
+// The storage service did not answer the write of the text.
+@(log_fact = "edit: the storage service refused the text: the storage service did not answer the call: the changes after it are not kept")
+Text_Write_Unanswered :: struct {}
+
+// The storage service did not answer the list of the versions.
+@(log_fact = "edit: the versions cannot be listed: the storage service did not answer the call")
+Versions_List_Unanswered :: struct {}
+
+// The storage service did not answer the read of a version.
+@(log_fact = "edit: the version cannot be read: the storage service did not answer the call")
+Version_Read_Unanswered :: struct {}
+
+// The storage service did not answer the restore of a version.
+@(log_fact = "edit: the version cannot be restored: the storage service did not answer the call")
+Version_Restore_Unanswered :: struct {}
+
 // The log facts of the editor (src/md/features/log_facts.md, "The
-// migration"): each line that has a value, as a record of fields. Each fact
+// migration"): each line, as a record of fields. Each fact
 // template is the sentence that the line wrote before it was a fact, so a
 // wait of a machine test on that sentence reads it as before. A Text field
 // comes last and holds its longest text and a zero byte: the serial line of

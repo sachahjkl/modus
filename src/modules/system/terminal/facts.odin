@@ -1,9 +1,10 @@
 package terminal_process
 
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // The log facts of the terminal (src/md/features/log_facts.md, "The
-// migration"): each line that has a value, as a record of fields. Each fact
+// migration"): each line, as a record of fields. Each fact
 // template is the sentence that the line wrote before it was a fact, so a
 // wait of a machine test on that sentence reads it as before.
 //
@@ -237,6 +238,31 @@ Paste_Sent :: struct {
 	characters:    u64,
 	shown_process: value_kinds.Module_Name_Field,
 }
+
+// The process stopped itself: the words of its cause and of its outcome,
+// and the lines and the records that the terminal took from it.
+@(log_fact = "terminal: {shown_process} stopped: {cause}, {outcome}, after {lines} lines and {records} records")
+Stopped_Itself :: struct {
+	lines:         u64,
+	records:       u64,
+	cause:         op.Stop_Cause,
+	outcome:       op.Stop_Outcome,
+	shown_process: value_kinds.Module_Name_Field,
+}
+
+// The draw table of the terminal is full: records are missing.
+@(log_fact = "terminal: the draw table is full: records are missing")
+Draw_Table_Full :: struct {}
+
+// The terminal cannot start: what it lacks, one of the closed set of fail.
+@(log_fact = "terminal: {failure}")
+Start_Failed :: struct {
+	failure: [24]u8,
+}
+
+// The bytes of the Text field of a failure at the start: the longest, "no
+// memory for the lines", and a zero byte.
+FAILURE_FIELD_BYTES :: 24
 
 // shown_process_field gives the field of the name of the process that the
 // terminal shows.

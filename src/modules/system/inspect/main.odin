@@ -358,7 +358,11 @@ key :: proc "contextless" (event: display.Event) {
 		choose(min(position_of_selected() + 1, shown_count - 1))
 	case event.code == KEY_TAB:
 		hex_view = !hex_view
-		system.log(.Info, "inspect: ", hex_view ? "the bytes of the memory of inspect" : "the reports of ", hex_view ? "" : system.name_of(current.process.name[:]))
+		if hex_view {
+			system.log_fact(.Info, Own_Memory_Shown{})
+		} else {
+			system.log_fact(.Info, Reports_Shown{sampled_process = process_field(current.process.name[:])})
+		}
 	case event.character == ' ':
 		frozen = !frozen
 		system.log_fact(.Info, Sample_State_Changed{sample_state = value_kinds.text_field(frozen ? "frozen" : "live", SAMPLE_STATE_FIELD_BYTES)})

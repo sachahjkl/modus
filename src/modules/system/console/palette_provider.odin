@@ -70,25 +70,25 @@ palette_provider_start :: proc "contextless" () {
 	// passes: the bound only ends a hang.
 	completion, answered := request_record(.Palette_Provide, "console", 0, 60_000)
 	if !answered || system.Status(completion.kind) != .Ok {
-		system.log(.Info, "console: the console is not the palette provider: the root service refused")
+		system.log_fact(.Info, Provider_Refused{})
 		return
 	}
 	palette_table_handle, palette_ring_handle = system.Handle(completion.values[0]), system.Handle(completion.values[1])
 	table_kind, _, _ := system.handle_state(palette_table_handle)
 	table_pages, table_status := system.memory_size(palette_table_handle)
 	if table_kind != .Memory || table_status != .Ok || table_pages < palette_table.TABLE_PAGES {
-		system.log(.Info, "console: the console is not the palette provider: no entry table")
+		system.log_fact(.Info, Provider_Without_Table{})
 		return
 	}
 	address, status := system.memory_map(palette_table_handle)
 	if status != .Ok {
-		system.log(.Info, "console: the console is not the palette provider: the entry table cannot be mapped")
+		system.log_fact(.Info, Provider_Table_Not_Mapped{})
 		return
 	}
 	opened, ring_status := system.ring_open(palette_ring_handle)
 	if ring_status != .Ok {
 		system.memory_unmap(address)
-		system.log(.Info, "console: the console is not the palette provider: no ring")
+		system.log_fact(.Info, Provider_Without_Ring{})
 		return
 	}
 	palette_commands_add()
@@ -392,7 +392,7 @@ palette_refuse :: proc "contextless" (tag: u32, sentence: string) {
 	writer := palette_table.Result_Writer{buffer = area[:], fits = true}
 	palette_table.result_run(&writer, .Failure, sentence)
 	palette_table.result_line_end(&writer)
-	system.log(.Info, "console: the palette choice is refused: ", sentence)
+	system.log_fact(.Info, Palette_Choice_Refused{refusal = value_kinds.text_field(sentence, CHOICE_REFUSAL_FIELD_BYTES)})
 	palette_answer(tag, .Refused, .None, palette_result_write(area[:writer.count]))
 }
 
@@ -611,7 +611,8 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		history_place = 0
 		line_editor.line_set(&line, string(text[:writer.count]))
 		line_editor.line_key(&line, .Left)
-		system.log(.Info, "console: the palette opens ", string(text[:writer.count]), " in the edit line")
+		// The line is the name and the parentheses: the template writes them.
+		system.log_fact(.Info, Palette_Opens_In_Edit_Line{entry_name = value_kinds.text_field(name, ENTRY_NAME_FIELD_BYTES)})
 		palette_answer(record.tag, .Edit_Opened, .None, 0)
 		return
 	}
@@ -925,7 +926,7 @@ palette_line_ended :: proc "contextless" () {
 	if manual && !failed {
 		// The window of the manual shows the page: the panel has nothing
 		// to draw.
-		system.log(.Info, "console: the manual shows the page that the palette asked for")
+		system.log_fact(.Info, Manual_Page_Shown{})
 		palette_answer(tag, .Manual_Opened, .Integer, 0)
 		return
 	}
@@ -1007,5 +1008,5 @@ palette_stop_before_revoke :: proc "contextless" () {
 		system.word_wait(&palette_stopped, 0, limit)
 	}
 	intrinsics.atomic_store(&palette_provided, 0)
-	system.log(.Info, "console: the console is no more the palette provider")
+	system.log_fact(.Info, Provider_Ended{})
 }

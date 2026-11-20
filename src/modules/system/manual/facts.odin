@@ -4,7 +4,7 @@ import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The log facts of the manual (src/md/features/log_facts.md, "The
-// migration"): each line that has a value, as a record of fields. Each fact
+// migration"): each line, as a record of fields. Each fact
 // template is the sentence that the line wrote before it was a fact, so a
 // wait of a machine test on that sentence reads it as before.
 //
@@ -85,6 +85,31 @@ Markdown_Check_Failed :: struct {
 	widest:          u64,
 	text_width:      u64,
 }
+
+// The key back has no page before the page of now.
+@(log_fact = "manual: back: no page before")
+No_Page_Before :: struct {}
+
+// The key back shows the page before.
+@(log_fact = "manual: back to the page before")
+Back_To_Page_Before :: struct {}
+
+// The page has no link that opens: the focus moves nowhere.
+@(log_fact = "manual: the page has no link that opens")
+No_Link_That_Opens :: struct {}
+
+// The boot image has no resource of the link pages.
+@(log_fact = "manual: the boot image has no link pages")
+No_Link_Pages :: struct {}
+
+// The link pages do not have the hash that their entry names: they are not
+// read.
+@(log_fact = "manual: the link pages do not have the hash of their entry: not read")
+Link_Pages_Hash_Wrong :: struct {}
+
+// The check of the Markdown of the page of the manual passed.
+@(log_fact = "manual: the Markdown of its page: bold, italics, code, list items and links that open a page; no mark is left and no row passes the window: as it must")
+Markdown_Check_Passed :: struct {}
 
 // The bytes of the Text field of the words of the entry of a module: the
 // longest, "a module with an entry", and a zero byte.

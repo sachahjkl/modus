@@ -4,7 +4,7 @@ import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // The log facts of the window of the debugger (src/md/features/log_facts.md,
-// "The migration"): each line that has a value, as a record of fields. Each
+// "The migration"): each line, as a record of fields. Each
 // fact template is the sentence that the line wrote before it was a fact,
 // so a wait of a machine test on that sentence reads it as before. A Text
 // field comes last and holds its longest text and a zero byte: the serial
@@ -92,6 +92,18 @@ Variables_Card_Shown :: struct {
 Window_Ready :: struct {
 	exports: u64,
 }
+
+// The window did not reach the service debugger: the sentence of the step
+// that failed, one of the closed set of service_reach.
+@(log_fact = "debugger_window: {problem}")
+Service_Not_Reached :: struct {
+	problem: [72]u8,
+}
+
+// The bytes of the Text field of a problem of service_reach: the longest,
+// "a record of the service debugger has another size than in this
+// window", 70 bytes, and a zero byte, on 8 bytes.
+SERVICE_PROBLEM_FIELD_BYTES :: 72
 
 // process_field gives the field of the name of a process in a row of the
 // service: its text before the first zero byte.

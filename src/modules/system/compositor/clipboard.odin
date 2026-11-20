@@ -82,7 +82,7 @@ clipboard_lend_end :: proc "contextless" () {
 clipboard_copy_key :: proc "contextless" () {
 	clipboard_lend_end()
 	if order_count == 0 {
-		system.log(.Info, "compositor: the copy key with no window in front")
+		system.log_fact(.Info, Copy_Key_Without_Window{})
 		return
 	}
 	client := &clients[order[order_count - 1]]
@@ -110,7 +110,7 @@ clipboard_paste_key :: proc "contextless" () {
 	switch refusal {
 	case .None:
 	case .No_Window:
-		system.log(.Info, "compositor: the paste key with no window in front")
+		system.log_fact(.Info, Paste_Key_Without_Window{})
 		return
 	case .No_Content:
 		system.log_fact(.Info, Paste_Of_Empty_Clipboard{window = window_field(client.title[:])})

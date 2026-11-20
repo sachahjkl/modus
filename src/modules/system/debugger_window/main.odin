@@ -1237,7 +1237,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if problem := service_reach(ctx); problem != "" {
 		status_set(true, problem)
-		system.log(.Info, "debugger_window: ", problem)
+		system.log_fact(.Info, Service_Not_Reached{problem = value_kinds.text_field(problem, SERVICE_PROBLEM_FIELD_BYTES)})
 	} else {
 		ready = true
 		system.log_fact(.Info, Window_Ready{exports = u64(len(Export))})

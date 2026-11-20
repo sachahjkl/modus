@@ -1,10 +1,11 @@
 package console
 
+import "modus:contract/errors"
 import "modus:contract/palette_table"
 import "modus:contract/value_kinds"
 
 // The log facts that the console writes (src/md/features/log_facts.md,
-// "The migration"): each line that has a value, as a record of fields. The
+// "The migration"): each line, as a record of fields. The
 // facts that the console reads are in facts.odin. Each fact template is
 // the sentence that the line wrote before it was a fact, so a wait of a
 // machine test on that sentence reads it as before. A Text field comes
@@ -30,6 +31,129 @@ ENTRY_NAME_FIELD_BYTES :: 72
 // The bytes of the Text field of the kind of a result of the palette: the
 // longest name of kind_names, or "an error", and a zero byte.
 RESULT_KIND_FIELD_BYTES :: 16
+
+// The root service did not answer the request of the store of the history.
+@(log_fact = "console: the line history stays in memory: the root service did not answer")
+History_Root_Silent :: struct {}
+
+// The root service refused the store of the history: its error record.
+@(log_fact = "console: the line history stays in memory: the root service refused: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+History_Root_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The boot image has no valid file of the storage service for the store of
+// the history.
+@(log_fact = "console: the line history stays in memory: the boot image has no valid file of the storage service")
+History_Storage_File_Missing :: struct {}
+
+// The call ring or the call region of the store of the history does not
+// map.
+@(log_fact = "console: the line history stays in memory: the call ring or the call region does not map")
+History_Region_Not_Mapped :: struct {}
+
+// The history in its store is damaged: the history starts empty.
+@(log_fact = "console: the line history is damaged in its store: the history starts empty")
+History_Damaged :: struct {}
+
+// The storage service refused the read of the history: its error record.
+@(log_fact = "console: the line history cannot be read, and the history starts empty: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+History_Read_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The storage service did not answer the read of the history.
+@(log_fact = "console: the line history cannot be read: the storage service did not answer the read: the history starts empty")
+History_Read_Unanswered :: struct {}
+
+// The store holds no history yet.
+@(log_fact = "console: no line history kept: the history starts empty")
+No_History_Kept :: struct {}
+
+// The storage service refused the save of the history: its error record.
+// The line comes one time in a run.
+@(log_fact = "console: the line history is not kept: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+History_Save_Refused :: distinct errors.Error_Record_Fact_Fields
+
+// The store of the history did not answer the save.
+@(log_fact = "console: the line history is not kept: the store of the history is not reachable")
+History_Store_Unreachable :: struct {}
+
+// The context of the console gives no random seed.
+@(log_fact = "console: no random seed in the context")
+No_Random_Seed :: struct {}
+
+// The context of the console gives no terminal.
+@(log_fact = "console: no terminal")
+No_Terminal :: struct {}
+
+// The second thread of the console does not start.
+@(log_fact = "console: cannot start a thread")
+Thread_Not_Started :: struct {}
+
+// The console is ready for its first line.
+@(log_fact = "console: ready")
+Ready :: struct {}
+
+// The edit line is empty again after a paste.
+@(log_fact = "console: the line is empty again after a paste")
+Line_Empty_After_Paste :: struct {}
+
+// The root service refused the console as the palette provider.
+@(log_fact = "console: the console is not the palette provider: the root service refused")
+Provider_Refused :: struct {}
+
+// The context gives no entry table of the palette.
+@(log_fact = "console: the console is not the palette provider: no entry table")
+Provider_Without_Table :: struct {}
+
+// The entry table of the palette cannot be mapped.
+@(log_fact = "console: the console is not the palette provider: the entry table cannot be mapped")
+Provider_Table_Not_Mapped :: struct {}
+
+// The context gives no ring of the palette.
+@(log_fact = "console: the console is not the palette provider: no ring")
+Provider_Without_Ring :: struct {}
+
+// The manual shows the page that the palette asked for.
+@(log_fact = "console: the manual shows the page that the palette asked for")
+Manual_Page_Shown :: struct {}
+
+// The console stopped being the palette provider.
+@(log_fact = "console: the console is no more the palette provider")
+Provider_Ended :: struct {}
+
+// The console refused a choice of the palette: the sentence that the panel
+// shows, one of the closed set of the callers of palette_refuse.
+@(log_fact = "console: the palette choice is refused: {refusal}")
+Palette_Choice_Refused :: struct {
+	refusal: [88]u8,
+}
+
+// The palette opened a command in the edit line, with the caret between
+// its parentheses.
+@(log_fact = "console: the palette opens {entry_name}() in the edit line")
+Palette_Opens_In_Edit_Line :: struct {
+	entry_name: [72]u8,
+}
+
+// The bytes of the Text field of a refusal of a choice of the palette: the
+// longest sentence, 81 bytes, and a zero byte, on 8 bytes.
+CHOICE_REFUSAL_FIELD_BYTES :: 88
+
+// The least time of one key with the completion list, by its parts, over
+// the names of a set that the measure names.
+@(log_fact = "console: one key with the completion list: the collect {collect}, the rank {rank}, the rows {rows_time}, the colors {colors}, over {names} names ({name_set}, the least of {batches} batches of {keys})")
+Completion_Key_Measured :: struct {
+	collect:   value_kinds.Nanoseconds_As_Microseconds,
+	rank:      value_kinds.Nanoseconds_As_Microseconds,
+	rows_time: value_kinds.Nanoseconds_As_Microseconds,
+	colors:    value_kinds.Nanoseconds_As_Microseconds,
+	names:     u64,
+	batches:   u64,
+	keys:      u64,
+	name_set:  [32]u8,
+}
+
+// The bytes of the Text field of the set of names of the measure: the
+// longest, "the names of this console", and a zero byte, on 8 bytes.
+NAME_SET_FIELD_BYTES :: 32
 
 // A module record of a process whose writer word names no writer: the
 // cell of its writer stays empty.

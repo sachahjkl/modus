@@ -60,6 +60,7 @@ package settings_process
 import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import op "modus:contract/operation"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
 import "modus:support/appearance"
@@ -100,20 +101,6 @@ ERROR_NAME :: -2
 ERROR_VALUE :: -3
 ERROR_STORE :: -4
 
-// values_text writes the values of a choice: "font vector, subpixel order
-// rgb, pointer theme owner, grid fit on".
-values_text :: proc "contextless" (writer: ^system.Writer, choice: settings.Choice) -> string {
-	values := settings.values_of(choice)
-	for setting in settings.Setting {
-		description := settings.descriptions[setting]
-		system.write_part(writer, setting == .Font ? "" : ", ")
-		system.write_part(writer, description.title)
-		system.write_part(writer, " ")
-		system.write_part(writer, description.value_names[values[setting]])
-	}
-	return system.written(writer)
-}
-
 // with_value gives a choice with one setting at the value of a button or of
 // a name: its index in the names of the values of the setting. ok false: the
 // setting has no value of that index.
@@ -141,10 +128,7 @@ keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -
 	error: errors.Error_Record
 	_, status := storage.write(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, ([^]u8)(&kept)[:size_of(kept)], &error)
 	if status != .Ok {
-		buffer: [256]u8
-		writer := system.Writer{buffer = buffer[:]}
-		storage.error_text(&writer, &store, &error)
-		system.log(.Warning, "settings: the store did not keep the settings: ", system.written(&writer))
+		system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
 		return false
 	}
 	return true
@@ -152,14 +136,14 @@ keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -
 
 // in_force_now gives the appearance in force of the values at this moment:
 // the setting `appearance`, with `auto` by the rule of the day over the
-// date page (src/md/features/appearance.md). It writes the sentence of the
-// rule in buffer. The zone is the one of the date page: the root service
-// writes the appearance of a new zone after the process `date` copies it,
-// so the page never holds the appearance of a zone that the date page does
-// not have yet.
-in_force_now :: proc "contextless" (choice: settings.Choice, buffer: []u8) -> (settings.Appearance_In_Force, string) {
+// date page (src/md/features/appearance.md), and the moment that the rule
+// read, for the fact of the appearance. The zone is the one of the date
+// page: the root service writes the appearance of a new zone after the
+// process `date` copies it, so the page never holds the appearance of a
+// zone that the date page does not have yet.
+in_force_now :: proc "contextless" (choice: settings.Choice) -> (settings.Appearance_In_Force, appearance.Moment) {
 	moment := appearance.moment_of(date_page, system.time())
-	return appearance.in_force_of(choice.appearance, moment), appearance.sentence_write(buffer, choice.appearance, moment)
+	return appearance.in_force_of(choice.appearance, moment), moment
 }
 
 // page_write writes the values and their appearance in force on the page in
@@ -169,10 +153,9 @@ in_force_now :: proc "contextless" (choice: settings.Choice, buffer: []u8) -> (s
 // has it before the line of the compositor that the write causes.
 page_write :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32, always := false) {
 	before, before_ok := settings.read(page)
-	sentence_buffer: [192]u8
-	in_force, sentence := in_force_now(choice, sentence_buffer[:])
+	in_force, moment := in_force_now(choice)
 	if always || !before_ok || before.appearance != choice.appearance || before.appearance_in_force != in_force {
-		system.log(.Info, "settings: ", sentence)
+		appearance_log(choice.appearance, moment)
 	}
 	settings.write(page, choice, zone_offset_minutes, in_force)
 	system.word_wake(&page.change_count, 64)
@@ -184,7 +167,7 @@ page_write :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: 
 page_choice :: proc "contextless" () -> (choice: settings.Choice, ok: bool) {
 	choice, ok = settings.read(page)
 	if !ok && choice.change_count & 1 == 0 {
-		system.log(.Warning, "settings: the settings page holds a value that its setting does not have, or was never stable: the defaults")
+		system.log_fact(.Warning, Page_Refused{})
 	}
 	return choice, ok
 }
@@ -394,7 +377,7 @@ boot_pass :: proc "contextless" () -> ! {
 	buffer: [64]u8
 	choice: settings.Choice
 	zone_offset_minutes: i32
-	what := "no settings kept: the defaults"
+	source := Boot_Pass_Source.Nothing_Kept
 	// A store that fails a read or refuses the write of the defaults: the
 	// page still holds the defaults, and the stop says that the pass failed.
 	store_refused := false
@@ -402,7 +385,7 @@ boot_pass :: proc "contextless" () -> ! {
 		bytes, found, status := storage.read(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, buffer[:])
 		switch {
 		case status != .Ok:
-			what = "the store gives no record (status not Ok): the defaults"
+			source = .Read_Refused
 			store_refused = true
 		case !found:
 		case:
@@ -410,7 +393,7 @@ boot_pass :: proc "contextless" () -> ! {
 			if valid {
 				choice = read
 				zone_offset_minutes = read_zone
-				what = "the settings kept in the store"
+				source = .Kept
 			} else {
 				// A record of another version (a disk of an older system),
 				// or a record with a value that its setting does not have:
@@ -418,20 +401,34 @@ boot_pass :: proc "contextless" () -> ! {
 				// reads a valid record and the defaults hold once, not at
 				// each boot until the next change of a setting.
 				if keep(choice, zone_offset_minutes) {
-					what = "the record of the store is refused (another version, or a value that its setting does not have): the defaults, kept in its place"
+					source = .Record_Refused_Defaults_Kept
 				} else {
-					what = "the record of the store is refused (another version, or a value that its setting does not have): the defaults, NOT kept: the store refused"
+					source = .Record_Refused_Defaults_Not_Kept
 					store_refused = true
 				}
 			}
 		}
 	} else {
-		what = "no private store: the defaults"
+		source = .No_Store
 	}
 	page_write(choice, zone_offset_minutes, always = true)
-	text: [256]u8
-	writer := system.Writer{buffer = text[:]}
-	system.log(.Info, "settings: the boot pass: ", what, ": ", values_text(&writer, choice), "; in ", (system.nanoseconds() - start) / 1000, " us")
+	elapsed := value_kinds.Time_In_Microseconds((system.nanoseconds() - start) / 1000)
+	font, subpixel_order, pointer_theme := value_field(choice, .Font), value_field(choice, .Subpixel_Order), value_field(choice, .Pointer_Theme)
+	grid_fit, keyboard_layout, appearance_value := value_field(choice, .Grid_Fit), value_field(choice, .Keyboard_Layout), value_field(choice, .Appearance)
+	switch source {
+	case .Nothing_Kept:
+		system.log_fact(.Info, Boot_Pass_Nothing_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+	case .Read_Refused:
+		system.log_fact(.Info, Boot_Pass_Read_Refused{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+	case .Kept:
+		system.log_fact(.Info, Boot_Pass_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+	case .Record_Refused_Defaults_Kept:
+		system.log_fact(.Info, Boot_Pass_Record_Refused_Defaults_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+	case .Record_Refused_Defaults_Not_Kept:
+		system.log_fact(.Info, Boot_Pass_Record_Refused_Defaults_Not_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+	case .No_Store:
+		system.log_fact(.Info, Boot_Pass_No_Store{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value})
+	}
 	if store_refused {
 		system.stop(.Failed)
 	}
@@ -599,7 +596,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	page_handle := ctx.handles[settings.GRANT_PAGE]
 	address, status := system.memory_map(page_handle)
 	if status != .Ok {
-		system.log_fact(.Info, No_Settings_Page{status_word = u64(status)})
+		system.log_fact(.Info, No_Settings_Page{status = op.Status_Word(status)})
 		system.stop(system.stop_outcome_of_grant(page_handle, status))
 	}
 	page = (^settings.Page)(address)

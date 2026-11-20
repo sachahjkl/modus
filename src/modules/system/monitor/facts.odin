@@ -4,7 +4,7 @@ import "modus:contract/value_kinds"
 import process_page "modus:contract/disk_process_page"
 
 // The log facts of the monitor (src/md/features/log_facts.md, "The
-// migration"): each line that has a value, as a record of fields. Each fact
+// migration"): each line, as a record of fields. Each fact
 // template is the sentence that the line wrote before it was a fact, so a
 // wait of a machine test on that sentence reads it as before. A Text field
 // is the last field and holds its longest text and a zero byte: the serial
@@ -28,3 +28,11 @@ Disk_Process_Shown :: struct {
 	nickname:    [24]u8,
 }
 #assert(size_of(Disk_Process_Shown) == value_kinds.HASH_FIELD_BYTES + HASH_PREFIX_FIELD_BYTES + NICKNAME_FIELD_BYTES)
+
+// The monitor has no grant to inspect the machine: it shows nothing of it.
+@(log_fact = "monitor: no grant to inspect the machine")
+No_Inspect_Grant :: struct {}
+
+// The first picture of the monitor is drawn.
+@(log_fact = "monitor: ok")
+Window_Ready :: struct {}

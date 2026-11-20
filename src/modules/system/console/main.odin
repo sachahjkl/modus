@@ -127,8 +127,6 @@ import "base:intrinsics"
 // Itself and four sandboxes, each a call host with its thread.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7583, processes = 5, threads = 6}
 
-CONSOLE_MARK :: "console: ready"
-
 LINE_CAPACITY :: line_editor.LINE_CAPACITY
 PROMPT :: "> "
 PENDING_CAPACITY :: 128
@@ -223,24 +221,24 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	// The random generator of this process, from the seed that its starter
 	// gave: it gives the seed of each process that this one starts.
 	if !random.generator_from_context(&process_generator, start_context) {
-		system.log(.Info, "console: no random seed in the context")
+		system.log_fact(.Info, No_Random_Seed{})
 		system.stop(.Refused)
 	}
 	ctx = start_context
 	ok: bool
 	if output, ok = terminal.open(ctx); !ok {
-		system.log(.Info, "console: no terminal")
+		system.log_fact(.Info, No_Terminal{})
 		system.stop(.Refused)
 	}
 	commands_start()
 	palette_provider_start() // palette_provider.odin
 	if _, status := system.thread_start(run_lines, nil); status != .Ok {
-		system.log(.Info, "console: cannot start a thread")
+		system.log_fact(.Info, Thread_Not_Started{})
 		system.stop(.Failed)
 	}
 	print("kernel console. A command is a typed function: try help()\n")
 	edit_show()
-	system.log(.Info, CONSOLE_MARK)
+	system.log_fact(.Info, Ready{})
 	// The line history of the run before. The second thread runs no line
 	// yet: the history has one user. The keys that come meanwhile wait in
 	// the terminal ring.
@@ -531,7 +529,7 @@ edit_show :: proc "contextless" () {
 			system.log(.Info, "console: the line shows \"", line_editor.line_text(&line), "\" after a paste")
 		} else if !running && paste_shown && len(line_editor.line_text(&line)) == 0 {
 			paste_shown = false
-			system.log(.Info, "console: the line is empty again after a paste")
+			system.log_fact(.Info, Line_Empty_After_Paste{})
 		}
 	}
 	completion_show()

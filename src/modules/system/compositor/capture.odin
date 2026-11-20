@@ -131,7 +131,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		}
 		capture.remote_keys += 1
 		if capture.remote_keys == 1 {
-			system.log(.Info, "compositor: the first key of a viewer of the remote display goes along the path of the keys")
+			system.log_fact(.Info, First_Viewer_Key{})
 		}
 		character := display.key_character_of(character_word)
 		// The path of a key of the input service: the palette, the
