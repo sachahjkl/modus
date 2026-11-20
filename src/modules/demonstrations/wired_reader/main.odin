@@ -1,0 +1,68 @@
+// The reader of the demonstration pair of the start list
+// (src/md/features/module_outputs.md, "The wiring rows of a start list").
+// The default start list starts this module before `wired_writer`, whose
+// start carries the wiring row of `wired_writer.numbers` to `numbers`.
+//
+// It waits for its writer, then reads the joined record of 0, the
+// NUMBERS_WRITTEN numbers in order, each with its square, and a clean end
+// record, and stops itself with Done. A joined record past 0 says that the
+// writer ran before its reader: the start list wired the pair in the wrong
+// order.
+//
+// **Start**: by the default start policy. **What a reader sees**: no
+// window; one line "wired_reader: read the joined record of 0, the 16
+// numbers of wired_writer in order, and a clean end: ...", or a line
+// "wired_reader: WRONG: ..." and the stop Failed.
+package wired_reader
+
+import "modus:support/system"
+
+// One number and its square, as wired_writer describes it.
+Wired_Number :: struct {
+	number: u64,
+	square: u64,
+}
+
+// The numbers that wired_writer writes.
+NUMBERS_WRITTEN :: 16
+
+// The numbers of wired_writer.
+numbers: system.Record_Input(Wired_Number)
+
+@(private = "file")
+wrong :: proc "contextless" (text: string, value: u64) -> ! {
+	system.log(.Error, "wired_reader: WRONG: ", text, " ", value)
+	system.stop(.Failed)
+}
+
+@(export, link_name = "entry")
+entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// The writer starts after this process: its end comes in the wiring
+	// ring, and the state is read again after each wait. The start policy
+	// starts the writer right after this process, and the writer writes its
+	// numbers at once, so each wait ends within the hang bound.
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for !system.input_has_writer(&numbers) {
+		if system.time() >= deadline {
+			wrong("no writer came within the hang bound, in milliseconds:", system.TEST_HANG_BOUND_MILLISECONDS)
+		}
+		system.wiring_wait(deadline)
+	}
+	number: Wired_Number
+	item, status := system.input_read(&numbers, &number, deadline)
+	if status != .Ok || item.kind != .Joined || item.serial != 0 {
+		wrong("the first compartment is not the joined record of 0; its serial", u64(item.serial))
+	}
+	for serial in u32(0) ..< NUMBERS_WRITTEN {
+		item, status = system.input_read(&numbers, &number, deadline)
+		if status != .Ok || item.kind != .Record || item.serial != serial || number.number != u64(serial) || number.square != u64(serial) * u64(serial) {
+			wrong("a number is not the next one; the serial", u64(serial))
+		}
+	}
+	item, status = system.input_read(&numbers, &number, deadline)
+	if status != .Ended || item.kind != .End || item.error.kind != 0 || item.serial != NUMBERS_WRITTEN {
+		wrong("numbers did not end with a clean end record; the status", u64(status))
+	}
+	system.log(.Info, "wired_reader: read the joined record of 0, the ", u64(NUMBERS_WRITTEN), " numbers of wired_writer in order, and a clean end: the start list wired them before the first instruction of the writer")
+	system.stop(.Done)
+}

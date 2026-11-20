@@ -25,6 +25,26 @@ End_Facts :: struct {
 	asker_holds_a_connection:  bool,
 }
 
+// start_policy_row_allowed gives whether a holder of the grant
+// Start_Policy can ask for a row (src/md/features/module_outputs.md, "The
+// decisions of the wiring rows"): only the row of a start list, a writer
+// that is the child of its Start and a reader that it started. So a start
+// policy reads no stream, as the Asker, and wires no stream of a process
+// that runs, as the writer of a Wire: its handle of each process that it
+// starts has Give, and a start policy from the disk writes its own list
+// page. A Wire of a start policy is then only the list of no row that
+// gives back its lent numbers, which the border refuses before this rule.
+// field: the end that the rule refuses, Writer_End or Reader_End.
+start_policy_row_allowed :: proc "contextless" (form: Wiring_List_Form, writer_end: Wiring_End, reader_end: Wiring_End) -> (field: Wiring_Field, allowed: bool) {
+	if form != .Start || writer_end != .Child {
+		return .Writer_End, false
+	}
+	if reader_end != .Started {
+		return .Reader_End, false
+	}
+	return .Whole, true
+}
+
 // wiring_end_allowed gives whether an asker can name a process as one end:
 // the child of its start and the asker itself always; a Started end a
 // process whose start it asked for, or one that the start policy asked for

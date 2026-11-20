@@ -2,7 +2,182 @@ package build
 
 import "core:strings"
 import "core:testing"
+import "modus:contract/module"
+import "modus:contract/module_file_writer"
+import "modus:contract/output"
+import "modus:contract/start_list"
 import "modustool:foundation"
+
+// stream_module_file gives a module file with one data segment, these
+// records, and these record outputs and record inputs, each sorted by name.
+@(private = "file")
+stream_module_file :: proc(records: []module_file_writer.Record_Description, outputs: []module_file_writer.Record_Output_Part, inputs: []module_file_writer.Record_Input_Part) -> []u8 {
+	segments := make([]module_file_writer.Segment_Part, 1, context.temp_allocator)
+	segments[0] = {memory_offset = 0, memory_size = module.PAGE_SIZE, flags = {.Read, .Write}}
+	parts := module_file_writer.Module_Parts {
+		segments       = segments,
+		records        = records,
+		record_outputs = outputs,
+		record_inputs  = inputs,
+	}
+	bytes := make([]u8, 64 * 1024, context.temp_allocator)
+	size, refusal := module_file_writer.write(parts, bytes)
+	assert(refusal.refusal == .None, "the module file of the test is refused")
+	return bytes[:size]
+}
+
+// The module files of the test of the wiring rows: a writer of numbers, of
+// another record and of a generic record output, which also reads numbers
+// back; and a reader of numbers with one wiring, of numbers with many, of
+// numbers with terms, and of any record.
+@(private = "file")
+wired_files :: proc() -> Module_Files {
+	number_fields := make([]module_file_writer.Field_Description, 2, context.temp_allocator)
+	number_fields[0] = {name = "number", offset = 0, type = .Integer, unsigned = true}
+	number_fields[1] = {name = "square", offset = 8, type = .Integer, unsigned = true}
+	other_fields := make([]module_file_writer.Field_Description, 1, context.temp_allocator)
+	other_fields[0] = {name = "value", offset = 0, type = .Integer, unsigned = true}
+	records := make([]module_file_writer.Record_Description, 2, context.temp_allocator)
+	records[0] = {name = "Wired_Number", size = 16, fields = number_fields}
+	records[1] = {name = "Other", size = 8, fields = other_fields}
+	writer_outputs := make([]module_file_writer.Record_Output_Part, 4, context.temp_allocator)
+	writer_outputs[0] = {name = "anything", record_index = 0}
+	writer_outputs[1] = {name = "numbers", record_index = 1}
+	writer_outputs[2] = {name = "others", record_index = 2}
+	writer_outputs[3] = {name = "paired", record_index = 0, pairing = .Paired}
+	writer_inputs := make([]module_file_writer.Record_Input_Part, 2, context.temp_allocator)
+	writer_inputs[0] = {name = "loopback", record_index = 1, wirings = .One}
+	writer_inputs[1] = {name = "sources", record_index = 0, wirings = .Many}
+	reader_inputs := make([]module_file_writer.Record_Input_Part, 4, context.temp_allocator)
+	reader_inputs[0] = {name = "any", record_index = 0, wirings = .Many}
+	reader_inputs[1] = {name = "many", record_index = 1, wirings = .Many}
+	reader_inputs[2] = {name = "numbers", record_index = 1, wirings = .One}
+	reader_inputs[3] = {name = "with_terms", record_index = 1, terms_index = 2, wirings = .One}
+	files := make(Module_Files, context.temp_allocator)
+	files["writer"] = stream_module_file(records, writer_outputs, writer_inputs)
+	files["reader"] = stream_module_file(records, nil, reader_inputs)
+	files["input"] = files["writer"]
+	return files
+}
+
+// The module of the machine of the operation sequences has one name in the
+// table of the tool and among the procedures of the root service, which
+// starts it by its own procedure.
+@(test)
+the_module_of_the_operation_sequences_has_one_name :: proc(t: ^testing.T) {
+	testing.expect_value(t, foundation.OPERATION_FUZZING_MODULE, start_list.OPERATION_FUZZING_NAME)
+	testing.expect_value(t, start_list.root_procedure_of(foundation.OPERATION_FUZZING_MODULE), start_list.Root_Procedure.Operation_Fuzzing)
+}
+
+// The check of the wiring rows of a list against the module files. Each
+// fault comes first, alone in its list, with its one problem and no record
+// for it:
+//
+// - a record output that the writer does not declare, an output that no
+//   module has;
+// - a record input that the reader does not declare;
+// - a writer that is no row of the list, and a module with no file;
+// - a writer that the root service starts in its own way;
+// - a generic record output; two records that differ; an input that takes
+//   terms; a second row to an input of one wiring;
+// - from the border: a row that loops, and a pair in the wrong order;
+// - rows past the reserve of pages of the start policy.
+//
+// Then the list of two rows, numbers and the log, passes, with the
+// records that the start policy reads; and the default start list passes
+// against module files that declare its pair.
+@(test)
+a_wiring_row_that_the_module_files_refuse_is_refused :: proc(t: ^testing.T) {
+	files := wired_files()
+	rows := []Start_List_Row{{name = "input", absent_rule = .Not_Started}, {name = "reader", absent_rule = .Not_Started}, {name = "writer", absent_rule = .Not_Started}}
+	modules := []string{"input", "reader", "writer"}
+	cases := []struct {
+		wirings: []Start_List_Wiring,
+		problem: string,
+	} {
+		{{{writer = "writer", record_output = "absent", reader = "reader", record_input = "numbers"}}, "names a record output that the module writer does not declare"},
+		{{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "absent"}}, "names a record input that the module reader does not declare"},
+		{{{writer = "missing", record_output = "numbers", reader = "reader", record_input = "numbers"}}, "names a module that is no row of the list"},
+		{{{writer = "input", record_output = "numbers", reader = "reader", record_input = "numbers"}}, "has a writer that the root service starts in its own way"},
+		{{{writer = "writer", record_output = "anything", reader = "reader", record_input = "numbers"}}, "names a generic record output"},
+		{{{writer = "writer", record_output = "paired", reader = "reader", record_input = "numbers"}}, "names a record output Paired"},
+		{{{writer = "writer", record_output = WIRING_OUTPUT_LOG, reader = "reader", record_input = "any", pace = .Never_Holds_Writer}}, "wires the log with the pace Never_Holds_Writer"},
+		{{{writer = "writer", record_output = "others", reader = "reader", record_input = "numbers"}}, "joins two records that differ"},
+		{{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "with_terms"}}, "names a record input that takes terms"},
+		{{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "numbers"}, {writer = "writer", record_output = "numbers", reader = "reader", record_input = "numbers"}}, "is a second row to a record input that takes one wiring"},
+		{{{writer = "writer", record_output = "numbers", reader = "writer", record_input = "loopback"}}, start_list.LIST_PROBLEM_TEXTS[.Wiring_Loops]},
+	}
+	for case_of, number in cases {
+		records, sizes, wiring_problems := start_list_wiring_records(rows, case_of.wirings, files)
+		problems := start_list_problems(rows, modules, false, case_of.wirings, files)
+		testing.expectf(t, len(problems) == 1, "case %d: the problems %v", number, problems)
+		if len(problems) == 1 {
+			testing.expectf(t, strings.contains(problems[0], case_of.problem), "case %d: the problem %q does not say %q", number, problems[0], case_of.problem)
+		}
+		// A row with a fault gives no record; the border faults come
+		// after the records.
+		if len(wiring_problems) > 0 {
+			testing.expectf(t, len(records) == len(case_of.wirings) - len(wiring_problems) && len(sizes) == len(records), "case %d: a refused row gave a record", number)
+		}
+	}
+	// A module with no file names no record stream.
+	no_file := make(Module_Files, context.temp_allocator)
+	no_file["writer"] = files["writer"]
+	no_file_problems := start_list_problems(rows, modules, false, []Start_List_Wiring{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "numbers"}}, no_file)
+	testing.expectf(t, len(no_file_problems) == 1 && strings.contains(no_file_problems[0], "names a module with no module file"), "the problems %v", no_file_problems)
+
+	// A pair in the wrong order: a writer whose reader starts after it.
+	ordered := []Start_List_Row{{name = "writer", absent_rule = .Not_Started}, {name = "reader", absent_rule = .Not_Started}}
+	wrong_order := start_list_problems(ordered, modules, false, []Start_List_Wiring{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "numbers"}}, files)
+	testing.expectf(t, len(wrong_order) == 1 && strings.contains(wrong_order[0], start_list.LIST_PROBLEM_TEXTS[.Writer_Before_Reader]), "the problems %v", wrong_order)
+
+	// A writer row with a restart: a restart would apply its rows again.
+	restarting := []Start_List_Row{{name = "input", absent_rule = .Not_Started}, {name = "reader", absent_rule = .Not_Started}, {name = "writer", absent_rule = .Not_Started, restart_count = 1}}
+	restart_problems := start_list_problems(restarting, modules, false, []Start_List_Wiring{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "numbers"}}, files)
+	testing.expectf(t, len(restart_problems) == 1 && strings.contains(restart_problems[0], start_list.LIST_PROBLEM_TEXTS[.Writer_Restarts]), "the problems %v", restart_problems)
+
+	// Eight rows of the largest rings, which the reserve of the start
+	// policy does not pay.
+	large := make([]Start_List_Wiring, start_list.WIRING_ROW_CAPACITY, context.temp_allocator)
+	for &wiring in large {
+		wiring = {writer = "writer", record_output = "numbers", reader = "reader", record_input = "many", capacity = output.WIRING_CAPACITY_MOST}
+	}
+	past_reserve := start_list_problems(rows, modules, false, large, files)
+	testing.expectf(t, len(past_reserve) == 1 && strings.contains(past_reserve[0], "past its reserve"), "the problems %v", past_reserve)
+	nine := make([]Start_List_Wiring, start_list.WIRING_ROW_CAPACITY + 1, context.temp_allocator)
+	for &wiring in nine {
+		wiring = {writer = "writer", record_output = "numbers", reader = "reader", record_input = "many"}
+	}
+	testing.expect_value(t, len(start_list_problems(rows, modules, false, nine, files)), 1)
+
+	// The success: numbers, and the log into a generic record input.
+	wirings := []Start_List_Wiring{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "numbers"}, {writer = "writer", record_output = WIRING_OUTPUT_LOG, reader = "reader", record_input = "any", pace = .Always_Holds_Writer}}
+	testing.expect_value(t, len(start_list_problems(rows, modules, false, wirings, files)), 0)
+	records, sizes, problems := start_list_wiring_records(rows, wirings, files)
+	testing.expect_value(t, len(problems), 0)
+	testing.expect_value(t, len(records), 2)
+	if len(records) == 2 {
+		testing.expect_value(t, records[0].writer_row, 3)
+		testing.expect_value(t, records[0].wiring.reader_handle, 2)
+		testing.expect_value(t, records[0].wiring.writer_index, 2)
+		testing.expect_value(t, records[0].wiring.reader_index, 3)
+		testing.expect_value(t, records[0].wiring.writer_stream, u32(output.Writer_Stream.Record_Output))
+		testing.expect_value(t, records[1].wiring.writer_stream, u32(output.Writer_Stream.Log))
+		testing.expect_value(t, records[1].wiring.writer_index, 0)
+		testing.expect_value(t, records[1].wiring.reader_index, 1)
+		testing.expect_value(t, records[1].wiring.pace, u32(output.Wiring_Pace.Always_Holds_Writer))
+		testing.expect_value(t, sizes[0], 16)
+		testing.expect_value(t, sizes[1], size_of(output.Log_Output_Record))
+	}
+
+	// The default start list, with module files that declare its pair as
+	// the two modules of the pair declare it.
+	pair := make(Module_Files, context.temp_allocator)
+	pair["wired_writer"] = files["writer"]
+	pair["wired_reader"] = files["reader"]
+	default_problems := start_list_problems(DEFAULT_START_LIST[:], image_modules_with_an_entry(BOOT_IMAGE, ""), false, DEFAULT_START_WIRINGS[:], pair)
+	testing.expectf(t, len(default_problems) == 0, "the default start list is refused: %v", default_problems)
+}
 
 // The check of a start list against the modules of an image. Each list
 // that it must refuse comes first: a row of no module, a row of a module

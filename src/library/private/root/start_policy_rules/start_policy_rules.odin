@@ -139,6 +139,34 @@ restart_check :: proc "contextless" (counts: ^Name_Counts, from_disk: bool, name
 	return .Ok, {}, place
 }
 
+// What the root service does with a Start of a start policy before any
+// start: its refusal, and whether it closes the numbers that its list lent.
+Start_Step :: struct {
+	status:     op.Status, // Ok: the start goes on.
+	refusal:    [7]u64, // The error record of a refusal.
+	lent_close: bool, // A refused Start with a list: each number that the list lent is closed, as on each refusal of a list.
+	counted:    ^Name_Count, // Ok: the count of the name, which the caller adds one start to after a start that ran; nil for a start policy of the image.
+}
+
+// start_step decides a Start of a start policy before any start, in this
+// order: a list for a name that the root service starts by a procedure of
+// its own (Unsupported of the unit Wiring_Rows, argument 2: the word of the
+// list), start_refusal, then restart_check. A refusal changes no count.
+start_step :: proc "contextless" (listed: bool, facts: Start_Facts, counts: ^Name_Counts, from_disk: bool, name: string) -> Start_Step {
+	kind := u32(root_ring.Root_Command.Start)
+	if listed && start_list.root_procedure_of(name) != .None {
+		return {status = .Bad_Operation, refusal = errors.ring_fail(kind, .Unsupported, .Wiring_Rows, 2), lent_close = true}
+	}
+	if status := start_refusal(facts); status != .Ok {
+		return {status = status, refusal = start_record(status, facts), lent_close = listed}
+	}
+	status, refusal, place := restart_check(counts, from_disk, name)
+	if status != .Ok {
+		return {status = status, refusal = refusal, lent_close = listed}
+	}
+	return {status = .Ok, counted = place}
+}
+
 // restart_record is the error record of a Start that restart_refusal
 // refused: Over_Limit with the restarts asked and the bound, or Full of the
 // table of the counts.

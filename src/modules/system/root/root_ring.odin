@@ -198,8 +198,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 // start_command runs Start: the border of values[4..6], the start with its
 // wiring list, and the answer that values[5] asks for. The start policy
 // starts the parts of the system too, and gets a handle of each process
-// (start_policy.odin); its start list wires no row before the step that
-// builds it, so its Start with a list is refused with Unsupported.
+// (start_policy.odin), with the wiring list of the wiring rows of its
+// start list.
 start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64, written: ^bool) -> system.Status {
 	command := root_ring.Root_Command.Start
 	list, list_ok := root_ring.start_wiring_list_of_word(record.values[4])
@@ -212,10 +212,6 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		refusal = root_ring.word_refusal(command, 3, record.values[5], u64(max(root_ring.Start_Answer)))
 	case record.values[6] != 0:
 		refusal = root_ring.word_refusal(command, 4, record.values[6], 0)
-	case .Start_Policy in item.role.grants && list != .None:
-		// The start list of a start policy wires no row before the step
-		// that builds it.
-		refusal = errors.ring_fail(u32(command), .Unsupported, .Wiring_Rows, 2)
 	}
 	if refusal != ([7]u64{}) {
 		// A refused Start keeps none of the handles that its list lent.
@@ -225,7 +221,7 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		return .Bad_Operation
 	}
 	if .Start_Policy in item.role.grants {
-		return start_policy_start(item, name, values, written)
+		return start_policy_start(item, name, list, values, written)
 	}
 	// A process that a process starts belongs to the session of the
 	// process that asks, and the asker of its start is that process.

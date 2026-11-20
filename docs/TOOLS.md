@@ -796,11 +796,16 @@ Each boot image holds two resources that the start policy reads: `start_list` an
 
 - a list that the border refuses: a name that is not a module name, more rows than a list holds, two rows of one module;
 - a row that names no module with an entry in that image;
-- a rescue list with no row with the mark `Needed`.
+- a rescue list with no row with the mark `Needed`;
+- a wiring row that the module files of its two rows refuse: a record output that the writer does not declare, a generic record output, a record input that the reader does not declare or that takes terms, two records that differ, a second row to a record input of one wiring, and a writer that the root service starts by its own procedure;
+- a wiring row that the border refuses: a reader row after its writer row, one row at both ends, an end other than the writer and an earlier start row, more than 8 wiring rows;
+- wiring rows that need more pages than the reserve of the start policy, `start_list.WIRING_PAGES_RESERVE`.
+
+The wiring rows of a list are a second table of the tool, beside its start rows: each names the writer row, its record output by its name (or `log`), the reader row and its record input. The default list wires `wired_writer.numbers` to `wired_reader.numbers`. The tool reads the module files of the two rows, which the build wrote before the image, and writes the indexes of the two streams into the row.
 
 The list of the image `missing_console` has a row of the console that names a module that does not exist, for the test of the rescue: the build checks that the check refuses it for that row alone, then writes it into that image only. The rescue list of that image adds two rows with 2 restarts each, for the test of the restarts: `stops_refused` stops with the stop outcome `Refused` and the start policy writes that it does not start again, and `stops_failed` stops with `Failed` and starts again with 1, then 0 restarts left, then stays stopped. Only that image holds the two test modules.
 
-**The source of the start policy.** Before the first image is written, the tool reads the sources of `src/modules/system/start_policy`, the tests left out, and refuses more than 400 lines in all, and an import that is not `base:`, `modus:contract/start_list`, `modus:contract/root_ring`, `modus:contract/ring`, `modus:contract/operation`, `modus:contract/value_kinds` or `modus:support/system`: the start policy reads a list in its order and holds no logic of its own. The contracts `operation` and `value_kinds` give the types of the fields of its log facts. The host tests `a_start_list_that_is_not_valid_is_refused` and `a_start_policy_past_its_bound_is_refused` give each fault to the two checks.
+**The source of the start policy.** Before the first image is written, the tool reads the sources of `src/modules/system/start_policy`, the tests left out, and refuses more than 400 lines in all, and an import that is not `base:`, `modus:contract/start_list`, `modus:contract/root_ring`, `modus:contract/ring`, `modus:contract/operation`, `modus:contract/value_kinds`, `modus:private/start_policy/wiring_rows` or `modus:support/system`: the start policy reads a list in its order and holds no logic of its own. The contracts `operation` and `value_kinds` give the types of the fields of its log facts. The host tests `a_start_list_that_is_not_valid_is_refused`, `a_wiring_row_that_the_module_files_refuse_is_refused` and `a_start_policy_past_its_bound_is_refused` give each fault to the checks.
 
 ## The rules that a check holds
 

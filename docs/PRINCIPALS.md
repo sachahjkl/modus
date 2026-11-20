@@ -537,7 +537,7 @@ Principal 0 chooses the start policy that the machine runs at its next start: a 
 root: refused a choice of a start policy: the machine key opens with the machine passphrase, and the root service reads the choice before a passphrase can be typed
 ```
 
-**The next start.** The root service starts `unlock` with no window, which has the TPM release the machine key and stops; the root service reads the table, loads the module file of the row, checks the hash of its bytes, and starts it with the start grant `Start_Policy` only: its root ring for `Start`, `Stop` and `Machine_Usable`, and the machine parts page. Its row cannot hold the grant `store`, and its name gives it nothing. The root service refuses past 16 restarts of one name that it asks for. Before it runs, the TPM measures it into PCR 12 (`TRUSTED_BOOT.md`, "6. The measure"):
+**The next start.** The root service starts `unlock` with no window, which has the TPM release the machine key and stops; the root service reads the table, loads the module file of the row, checks the hash of its bytes, and starts it with the start grant `Start_Policy` only: its root ring for `Start`, `Stop`, `Machine_Usable` and `Wire`, and the machine parts page. The root service takes from it only the wiring rows of a start list: a writer that it starts, to a reader that it started. Its row cannot hold the grant `store`, and its name gives it nothing. The root service refuses past 16 restarts of one name that it asks for. Before it runs, the TPM measures it into PCR 12 (`TRUSTED_BOOT.md`, "6. The measure"):
 
 ```
 root: reads the chosen start policy "tiny", the file 5f0c…, from the store module_files of principal 0

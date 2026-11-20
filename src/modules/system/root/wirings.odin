@@ -500,6 +500,13 @@ wiring_row_resolve :: proc "contextless" (work: ^Wiring_Work, number: u32, first
 	plan := &work.plans[number - 1]
 	row := plan.row
 	found := i64(number)
+	// A start policy reads no stream and wires no process that runs: the
+	// root service holds it, whatever list the start policy writes.
+	if .Start_Policy in work.asker.role.grants {
+		if field, allowed := output.start_policy_row_allowed(work.form, row.writer_end, row.reader_end); !allowed {
+			return wiring_refuse(work, .No_Right, .No_Grant, .Wirings, i64(field), 0, 0, found)
+		}
+	}
 	plan.writer = end_process(work, row.writer_end, row.writer_handle)
 	plan.reader = end_process(work, row.reader_end, row.reader_handle)
 	// A connection number names a connection of the asker, not a lent

@@ -1,0 +1,3 @@
+type: Added
+
+**Record outputs and record inputs of a module**: a start list holds, after its start rows, wiring rows that join a record output of a row to a record input of an earlier row, and the default start policy gives them with the start of the writer, so the reader reads every record from the serial 0. The tool refuses at the build a row whose reader starts after its writer, a row that loops, an end that a start policy does not hold, a writer row with restarts, and a stream that the module files of the two rows do not declare or whose records differ; the root service takes from a start policy no other row, so a start policy from the disk reads no stream of its children. The default start list wires the demonstration pair `wired_writer` and `wired_reader`.
