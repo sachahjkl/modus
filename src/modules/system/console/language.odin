@@ -5,30 +5,28 @@ import module "modus:contract/module"
 import "modus:private/console/console_condition"
 import "modus:private/console/console_language"
 import "modus:private/console/console_stream"
+import "modus:private/console/lex_evaluator"
+import "modus:private/console/lex_parser"
 import "modus:support/sentence"
 import "modus:support/system"
 
-// The language of the console.
+// The console as the evaluation host of Lex in mode `console`.
 //
-//   line       = name "=" pipeline | pipeline
-//   pipeline   = expression { "|>" stage }
-//   stage      = name | name "(" arguments ")"
-//   expression = term { ("+" | "-") term }
-//   term       = factor { ("*" | "/" | "%") factor }
-//   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" pipeline ")"
-//   arguments  = argument { "," argument }
-//   argument   = pipeline | condition | name
-//   condition  = name ("=" | "!=" | "<" | "<=" | ">" | ">=") (pipeline | name)
-//
-// The form of each parameter of a command (Parameter_Form) says which
-// argument the parser reads there: a pipeline, a condition on a field of
-// the table of the first argument (`where(t, block = 12)`), or the name of
-// a fact type (`facts(t, storage.Bad_Block)`). In a condition, a name is a
-// field and, after the operator of a status field, a member of its enum:
-// never a variable.
+// The parser of Lex (src/library/private/console/lex_parser) gives the
+// syntax tree of a line, and the evaluator
+// (src/library/private/console/lex_evaluator) forces it whole, from the
+// left: the calls before a fault run, then the line fails. This file gives
+// the evaluator the names, the commands and the runs of the calls, and
+// writes the sentence of each refusal. The form of each parameter of a
+// command (Parameter_Form) says which argument the parser reads there: an
+// expression, a condition on a field of the table of the first argument
+// (`where(t, block = 12)`), the name of a fact type
+// (`facts(t, storage.Bad_Block)`), or the names of fields
+// (`columns(t, name, slot)`). In a condition, a name is a field and, after
+// the operator of a status field, a member of its enum: never a variable.
 //
 // The pipe operator has the lowest priority: `a |> f(b)` is `f(a, b)`, and
-// `a |> f` is `f(a)`. The parser below reads no "|>": before any call,
+// `a |> f` is `f(a)`. The parser reads no "|>": before any call,
 // pipe_nested_line writes the line with calls in calls
 // (src/library/private/console/console_language/pipe.odin), so a line with
 // "|>" checks and runs as that line.
@@ -50,46 +48,20 @@ import "modus:support/system"
 // command writes to the terminal: the console draws the result of the line
 // by its kind (results.odin).
 
-// The values are those of module.Type: the kind of a parameter is its type.
-// Stream is a kind of the console only: no export takes or gives one.
-Kind :: enum u8 {
-	None    = 0,
-	Integer = 1,
-	Text    = 2,
-	Record  = 3,
-	Handle  = 4,
-	Table   = 5,
-	Bytes   = 6, // A parameter: a Text value is its argument. A value: bytes with no description, which the console draws.
-	Stream  = 7, // A record output of a process, read while the line runs (streams.odin). No variable keeps one.
-	Record_Input = 8, // A record input of a process, by its typed name: wire names it. No variable keeps one.
-}
-
-// A parameter of a command of the console with the kind None takes a value
-// of any kind: the command checks it.
-Value :: struct {
-	kind:      Kind,
-	integer:   i64, // An Integer. A Handle: the handle. A Stream: its place in line_streams.
-	text:      string,
-	record:    []u8, // A Record: its bytes. A Table: the bytes of its records.
-	file:      []u8, // A Record, a Table or a Stream: the module that has the description of the record.
-	detail:    u32, // A Record, a Table or a Stream: the index of the description of the record in the module.
-	condition: ^Condition, // The argument of a parameter of the form Condition, in line_conditions: the parser read it, not an expression.
-}
+// The kinds and the values of Lex are those of the evaluator. A value of a
+// condition points into line_conditions, and a Stream names its place in
+// line_streams.
+Kind :: lex_evaluator.Kind
+Value :: lex_evaluator.Value
 
 // The conditions of the line that runs. A value names one by its address,
 // so that a value stays small: a call keeps 12 of them on the stack.
 line_conditions: console_condition.Condition_List
 
-// What the parser reads for a parameter of a command. Most parameters take
-// an expression; a few take a name that the console checks against a
-// description, never a variable (src/md/features/log_facts.md, "Filters
-// of a reader: one form").
-Parameter_Form :: enum u8 {
-	Expression = 0, // An expression, whose value has the kind of the parameter.
-	Fact_Name  = 1, // The name of a fact type, "package.Type": a Text value with the name.
-	Condition  = 2, // A field of the table of the first argument, an operator and a value.
-	Field_Names = 3, // The last parameter: one name of a field of the table of the first argument or more, separated by commas: a Text value with the names.
-}
+// What the parser reads for a parameter of a command: an expression, the
+// name of a fact type (a Text value with the name), a condition, or the
+// names of fields (a Text value with the names).
+Parameter_Form :: lex_parser.Parameter_Form
 
 // A condition on one field of the rows of a table: `block = 12`,
 // `level = Warning`, `name != "console"`. The package console_condition
@@ -269,16 +241,35 @@ variables: [VARIABLE_CAPACITY]Variable
 scratch: [4096]u8
 scratch_count: int
 
-source: string
-position: int
 failed: bool
 
 // The nested form of the line that runs, and the stages of its "|>". A
-// Text value of the line is a part of its source, so the nested form lives
-// until the next line.
+// Text value of the line is a part of its nested form, so the nested form
+// lives until the next line.
 NESTED_LINE_SIZE :: 1024 // A nested form is never longer than its line: a line of the history has 256 bytes at most.
 nested_line: [NESTED_LINE_SIZE]u8
 line_stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
+
+// The syntax tree of the nested form of the line that runs. Its names and
+// its texts are parts of the nested form.
+line_tree: lex_parser.Syntax_Tree
+
+// The evaluation of the tree of the line that runs: its thunks keep values
+// whose texts are parts of the nested form and of scratch, for one line.
+line_evaluation: lex_evaluator.Evaluation
+
+// console_host gives the console as the evaluation host. Each procedure
+// that fails the line gives ok false, and the evaluator stops.
+console_host :: proc "contextless" () -> lex_evaluator.Evaluation_Host {
+	return {
+		name_value = host_name_value,
+		command_find = host_command_find,
+		call_run = host_call_run,
+		condition_value = host_condition_value,
+		fact_name_value = host_fact_name_value,
+		values_add = host_values_add,
+	}
+}
 
 scratch_text :: proc "contextless" (parts: ..system.Part) -> string {
 	text := system.format(scratch[scratch_count:], ..parts)
@@ -286,30 +277,15 @@ scratch_text :: proc "contextless" (parts: ..system.Part) -> string {
 	return text
 }
 
-// The parser reads its tokens with the scanner of src/library/private/console/console_language,
-// the one that colors the lines: the two agree on each token.
-skip_spaces :: proc "contextless" () {
-	position = console_language.space_end(source, position)
-}
-
-peek :: proc "contextless" () -> u8 {
-	skip_spaces()
-	return position < len(source) ? source[position] : 0
-}
-
-accept :: proc "contextless" (character: u8) -> bool {
-	if peek() == character {
-		position += 1
-		return true
+// parameter_form_of gives the parser the form of a parameter of a command:
+// the forms of the command that a call of the name runs, as the call reads
+// them when the line runs.
+parameter_form_of :: proc "contextless" (data: rawptr, command_name: string, index: int) -> lex_parser.Parameter_Form {
+	found := command_find(command_name)
+	if found == nil || index < 0 || index >= len(found.parameter_forms) {
+		return .Expression
 	}
-	return false
-}
-
-read_name :: proc "contextless" () -> string {
-	skip_spaces()
-	start := position
-	position = console_language.name_end(source, start)
-	return source[start:position]
+	return found.parameter_forms[index]
 }
 
 // run_line runs one line: it evaluates the expression, shows the log
@@ -317,26 +293,20 @@ read_name :: proc "contextless" () -> string {
 // its failure, or the value of an expression. A line that keeps its value
 // in a variable draws nothing.
 run_line :: proc "contextless" (text: string) {
-	source, position, failed, scratch_count, table_used, line_conditions.count, line_stream_count = text, 0, false, 0, 0, 0, 0
+	failed, scratch_count, table_used, line_conditions.count, line_stream_count = false, 0, 0, 0, 0
 	failure_reset()
 	line_records_start()
 
 	// A fault of "|>" fails the line here, before any call runs.
-	source = pipe_nested_line(text)
+	nested := pipe_nested_line(text)
 	name: string
 	assigned := false
 	value: Value
 	if !failed {
-		// An assignment starts with a name and "=".
-		name = read_name()
-		assigned = len(name) > 0 && accept('=')
-		if !assigned {
-			position = 0
-		}
-		value = expression()
-		if !failed && peek() != 0 {
-			fail("unexpected \"", source[position:], "\"")
-		}
+		lex_parser.parse(nested, {form_of = parameter_form_of}, &line_tree)
+		name = line_tree.assigned_name
+		assigned = len(name) > 0
+		value = line_evaluate()
 	}
 	line_records_show()
 	if !failed && assigned {
@@ -426,168 +396,162 @@ assign :: proc "contextless" (name: string, value: Value) {
 	}
 }
 
-expression :: proc "contextless" () -> Value {
-	left := term()
-	for !failed {
-		operator := peek()
-		if operator != '+' && operator != '-' {
-			break
-		}
-		position += 1
-		right := term()
-		if failed {
-			break
-		}
-		switch {
-		case left.kind == .Integer && right.kind == .Integer:
-			result: i64
-			fits: bool
-			if operator == '+' {
-				result, fits = console_language.integer_add(left.integer, right.integer)
-			} else {
-				result, fits = console_language.integer_subtract(left.integer, right.integer)
-			}
-			if !fits {
-				return fail_overflow(operator == '+' ? "+" : "-", left.integer, right.integer)
-			}
-			left.integer = result
-		case left.kind == .Text && right.kind == .Text && operator == '+':
-			left.text = scratch_text(left.text, right.text)
-		case left.kind == .Table && right.kind == .Table && operator == '+':
-			// The rows of both, of one record description: a general
-			// operation of tables (src/md/features/module_outputs.md, "The
-			// wiring list of a start").
-			left = table_sum_value(left, right)
-		case:
-			return fail("\"", string([]u8{operator}), "\" does not take ", kind_names[left.kind], " and ", kind_names[right.kind])
-		}
+// line_evaluate forces the tree of the line whole, in mode `console`, then
+// writes the sentence of the refusal of the evaluator, if any. A refusal of
+// the host has written its own.
+line_evaluate :: proc "contextless" () -> Value {
+	lex_evaluator.evaluation_start(&line_evaluation, &line_tree, .Console, console_host())
+	value, ok := lex_evaluator.line_force(&line_evaluation)
+	if !ok {
+		evaluation_refusal_fail(line_evaluation.refusal)
+		return {}
 	}
-	return left
+	return value
 }
 
-term :: proc "contextless" () -> Value {
-	left := factor()
-	for !failed {
-		operator := peek()
-		if operator != '*' && operator != '/' && operator != '%' {
-			break
+// evaluation_refusal_fail fails the line with the sentence of a refusal of
+// the evaluator.
+evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
+	operator := lex_parser.OPERATOR_TEXTS[record.operator]
+	switch record.refusal {
+	case .None, .Host_Refused:
+		// The host wrote the failure of the line.
+	case .Text:
+		text_refusal_fail(record)
+	case .Operator_Kinds:
+		fail("\"", operator, "\" does not take ", kind_names[record.left_kind], " and ", kind_names[record.right_kind])
+	case .Negate_Kind:
+		fail("\"-\" does not take ", kind_names[record.left_kind])
+	case .Overflow:
+		fail_overflow(operator, record.left, record.right)
+	case .Division_By_Zero:
+		fail("division by zero")
+	case .Budget_Exceeded:
+		already := failed
+		fail("the line needs more than ", i64(record.steps), " steps of the evaluator: it stopped at column ", i64(record.place.column))
+		if !already {
+			failure_record_set(errors.error_make(.Over_Limit, .None, 0, i64(record.steps) + 1, i64(record.steps)), "the evaluation", nil)
 		}
-		position += 1
-		right := factor()
-		if failed {
-			break
-		}
-		if left.kind != .Integer || right.kind != .Integer {
-			return fail("\"", string([]u8{operator}), "\" does not take ", kind_names[left.kind], " and ", kind_names[right.kind])
-		}
-		switch operator {
-		case '*':
-			product, fits := console_language.integer_multiply(left.integer, right.integer)
-			if !fits {
-				return fail_overflow("*", left.integer, right.integer)
-			}
-			left.integer = product
-		case '/', '%':
-			if right.integer == 0 {
-				return fail("division by zero")
-			}
-			quotient, rest, fits := console_language.integer_divide(left.integer, right.integer)
-			if !fits {
-				return fail_overflow("/", left.integer, right.integer)
-			}
-			left.integer = operator == '/' ? quotient : rest
-		}
+	case .Effect_Refused:
+		fail(record.command, " has an effect, and an evaluation in mode declaration runs none")
 	}
-	return left
 }
 
-factor :: proc "contextless" () -> Value {
-	c := peek()
-	switch {
-	case c == '-':
-		position += 1
-		value := factor()
-		if failed {
-			return {}
-		}
-		if value.kind != .Integer {
-			return fail("\"-\" does not take ", kind_names[value.kind])
-		}
-		opposite, fits := console_language.integer_negate(value.integer)
-		if !fits {
-			return fail_overflow("-", 0, value.integer)
-		}
-		value.integer = opposite
-		return value
-	case c == '(':
-		position += 1
-		value := expression()
-		if !failed && !accept(')') {
-			return fail("\")\" is missing")
-		}
-		return value
-	case console_language.digit(c):
-		start := position
-		end := console_language.number_end(source, start)
-		position = end
-		value, fits := console_language.number_value(source, start, end)
-		if !fits {
-			// The record: the limit is the largest Integer; the sentence
-			// has the digits, which no Integer holds.
-			result := fail("the number ", source[start:end], " does not fit in an Integer: the largest is ", i64(console_language.INTEGER_MOST))
+// text_refusal_fail fails the line with the sentence of a refusal of the
+// parser, which the evaluator met in its place.
+text_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
+	rest := line_tree.text[min(int(record.place.offset), len(line_tree.text)):]
+	switch record.text_refusal {
+	case .Line_Ends_Too_Soon:
+		fail("the line ends too soon")
+	case .Number_Too_Large:
+		// The record: the limit is the largest Integer; the sentence has
+		// the digits, which no Integer holds.
+		already := failed
+		fail("the number ", lex_parser.node_text(&line_tree, record.node), " does not fit in an Integer: the largest is ", i64(console_language.INTEGER_MOST))
+		if !already {
 			failure_record_set(errors.error_make(.Over_Limit, .None, 0, 0, console_language.INTEGER_MOST), "a number", nil)
-			return result
 		}
-		return {kind = .Integer, integer = value}
-	case c == '"':
-		start := position + 1
-		end, finished := console_language.text_end(source, position)
-		if !finished {
-			position = end
-			return fail("the text has no end quote")
+	case .Text_Without_End_Quote:
+		fail("the text has no end quote")
+	case .Close_Parenthesis_Missing:
+		fail("\")\" is missing")
+	case .Comma_Or_Close_Missing:
+		fail("\",\" or \")\" is missing")
+	case .Too_Many_Arguments:
+		fail("too many arguments")
+	case .Text_Too_Long:
+		fail("the line has more than ", i64(lex_parser.TEXT_BYTES_MOST), " bytes")
+	case .Nodes_Full:
+		fail("the line has more parts than the console reads: ", i64(lex_parser.NODE_CAPACITY))
+	case .Field_Name_Missing:
+		fail(record.command, ": the name of a field comes here, as ", record.command, "(t, name, slot)")
+	case .Unexpected, .None, .Fact_Name_Missing, .Condition_Head_Refused:
+		// A Fact_Name or a Condition node holds the last two, and the
+		// console reads them itself.
+		fail("unexpected \"", rest, "\"")
+	}
+}
+
+// ---- The procedures of the evaluation host.
+
+host_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: Value, ok: bool) {
+	value = name_evaluate(name)
+	return value, !failed
+}
+
+// host_command_find fails the line for a name that no command has, before
+// the arguments of the call. Each command of the console has an effect: the
+// names of the evaluation, which have none, are not built.
+host_command_find :: proc "contextless" (data: rawptr, name: string) -> (has_effect: bool, found: bool) {
+	if command_find(name) == nil {
+		fail("no command has the name ", name, "; try help()")
+		return false, false
+	}
+	return true, true
+}
+
+host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Value) -> (value: Value, ok: bool) {
+	value = call_run(name, arguments)
+	return value, !failed
+}
+
+host_condition_value :: proc "contextless" (data: rawptr, evaluation: ^lex_evaluator.Evaluation, command_name: string, before: []Value, node: lex_parser.Node_Index) -> (value: Value, ok: bool) {
+	value = condition_evaluate(command_name, before, node)
+	return value, !failed && !lex_evaluator.refused(evaluation)
+}
+
+host_fact_name_value :: proc "contextless" (data: rawptr, evaluation: ^lex_evaluator.Evaluation, command_name: string, node: lex_parser.Node_Index) -> (value: Value, ok: bool) {
+	value = fact_name_evaluate(command_name, node)
+	return value, !failed
+}
+
+// host_values_add gives "+" of two values of one kind that the evaluator
+// leaves to the console: two Texts join, and two Tables of one record
+// description give the rows of both, a general operation of tables
+// (src/md/features/module_outputs.md, "The wiring list of a start").
+host_values_add :: proc "contextless" (data: rawptr, left, right: Value) -> (sum: Value, ok: bool) {
+	if left.kind == .Table {
+		sum = table_sum_value(left, right)
+		return sum, !failed
+	}
+	return {kind = .Text, text = scratch_text(left.text, right.text)}, true
+}
+
+// name_evaluate gives the value of a name alone: a variable, or one field
+// of a Record variable.
+name_evaluate :: proc "contextless" (name: string) -> Value {
+	for &variable in variables {
+		if string(variable.name[:variable.name_count]) == name {
+			return variable.value
 		}
-		position = end
-		return {kind = .Text, text = source[start:end - 1]}
-	case console_language.name_first(c):
-		name := read_name()
-		if accept('(') {
-			return call(name)
+	}
+	for &command in commands[:command_count] {
+		if command.name == name {
+			return fail(name, " is a command: write ", name, "(...)")
+		}
+	}
+	// variable.field: one field of a Record.
+	for split := len(name) - 1; split > 0; split -= 1 {
+		if name[split] != '.' {
+			continue
 		}
 		for &variable in variables {
-			if string(variable.name[:variable.name_count]) == name {
-				return variable.value
-			}
-		}
-		for &command in commands[:command_count] {
-			if command.name == name {
-				return fail(name, " is a command: write ", name, "(...)")
-			}
-		}
-		// variable.field: one field of a Record.
-		for split := len(name) - 1; split > 0; split -= 1 {
-			if name[split] != '.' {
-				continue
-			}
-			for &variable in variables {
-				if string(variable.name[:variable.name_count]) == name[:split] && variable.value.kind == .Record {
-					if value, found := field_value(variable.value, name[split + 1:]); found {
-						return value
-					}
-					return fail(type_text(variable.value.file, .Record, variable.value.detail), " has no field ", name[split + 1:])
+			if string(variable.name[:variable.name_count]) == name[:split] && variable.value.kind == .Record {
+				if value, found := field_value(variable.value, name[split + 1:]); found {
+					return value
 				}
+				return fail(type_text(variable.value.file, .Record, variable.value.detail), " has no field ", name[split + 1:])
 			}
-			break
 		}
-		// owner.stream: a record output of a process that the console
-		// started or of a service that it connected.
-		if value, named := stream_value_of_name(name); named {
-			return value
-		}
-		return fail("no variable has the name ", name)
-	case c == 0:
-		return fail("the line ends too soon")
+		break
 	}
-	return fail("unexpected \"", source[position:], "\"")
+	// owner.stream: a record output of a process that the console started
+	// or of a service that it connected.
+	if value, named := stream_value_of_name(name); named {
+		return value
+	}
+	return fail("no variable has the name ", name)
 }
 
 // command_find gives the command that a call of a name runs: of two
@@ -605,8 +569,9 @@ command_find :: proc "contextless" (name: string) -> (found: ^Command) {
 // the check of a call before it runs, and of the value on the left of a
 // "|>" when the console knows it before the run.
 argument_accepted :: proc "contextless" (found: ^Command, index: int, argument: Value) -> bool {
-	// A fact name and a condition are read by the parser, which checked
-	// them against the image and against the table: no value comes there.
+	// A fact name and a condition are read by the parser, and their
+	// evaluation checked them against the image and against the table: no
+	// value comes there.
 	if found.parameter_forms[index] != .Expression {
 		return true
 	}
@@ -655,68 +620,16 @@ argument_refusal :: proc "contextless" (name: string, found: ^Command, index: in
 	return fail(name, ": argument ", i64(index + 1), " is ", parameter_text(found, index), ", not ", type_text(argument.file, argument.kind, argument.detail))
 }
 
-// field_names_read reads the argument of a parameter of the form
-// Field_Names: one name or more, separated by commas, up to the ")" of the
-// call. Each one is a name of a field, never a variable: the command
-// checks it against the record of its table. It gives a Text value with
-// the names as the line has them.
-field_names_read :: proc "contextless" (command_name: string) -> Value {
-	skip_spaces()
-	start := position
-	for {
-		name := read_name()
-		if name == "" {
-			return fail(command_name, ": the name of a field comes here, as ", command_name, "(t, name, slot)")
-		}
-		if peek() != ',' {
-			break
-		}
-		position += 1
-	}
-	return {kind = .Text, text = source[start:position]}
-}
-
-// call reads the arguments of a command, checks their types against the
-// parameters, and calls the function.
-call :: proc "contextless" (name: string) -> Value {
+// call_run checks the arguments of a call, which the evaluator forced from
+// the left, against the parameters of its command, and calls the function.
+// The parser read the names of a parameter of the form Field_Names as one
+// argument, a Text.
+call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 	found := command_find(name)
 	if found == nil {
 		return fail("no command has the name ", name, "; try help()")
 	}
-	arguments: [ARGUMENT_CAPACITY]Value
-	count := 0
-	if !accept(')') {
-		for {
-			if count == ARGUMENT_CAPACITY {
-				return fail("too many arguments")
-			}
-			// A fact name and a condition are names that the console
-			// checks, never an expression: `block` is a field, not a
-			// variable.
-			value: Value
-			switch found.parameter_forms[count] {
-			case .Expression:
-				value = expression()
-			case .Fact_Name:
-				value = fact_name_read(name)
-			case .Condition:
-				value = condition_read(name, arguments[:count])
-			case .Field_Names:
-				value = field_names_read(name)
-			}
-			if failed {
-				return {}
-			}
-			arguments[count] = value
-			count += 1
-			if accept(')') {
-				break
-			}
-			if !accept(',') {
-				return fail("\",\" or \")\" is missing")
-			}
-		}
-	}
+	count := len(arguments)
 	// A command whose last parameter may be left out takes one argument
 	// less: start(name) and start(name, list).
 	if count != found.parameter_count && !(found.optional_last && count == found.parameter_count - 1) {
@@ -819,8 +732,8 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 // that the parser reads as names: a fact name against the fact names of
 // the image, and the field of a condition against the record on the left
 // of the stage when the console knows it (pipe_left_record). A form that
-// it does not read, it leaves to the parser, which fails on it when the
-// line runs.
+// it does not read, it leaves to the parser and to the evaluation, which
+// fail on it when the line runs.
 pipe_stage_names_check :: proc "contextless" (text: string, stages: []console_language.Pipe_Stage, index: int, found: ^Command, left: Value, knowledge: Left_Knowledge) -> bool {
 	stage := stages[index]
 	name := text[stage.name_start:stage.name_end]
@@ -870,7 +783,7 @@ pipe_stage_names_check :: proc "contextless" (text: string, stages: []console_la
 		if !record_ok {
 			return true
 		}
-		// The same checks as condition_read, with the same sentences.
+		// The same checks as condition_evaluate, with the same sentences.
 		details := console_condition.Refusal_Details {
 			command = name,
 			file    = file,
@@ -917,7 +830,7 @@ pipe_stage_names_check :: proc "contextless" (text: string, stages: []console_la
 // literal_of reads a value that is one literal and nothing after it, at a
 // byte place of an argument: a number, a number after "-", or a text.
 // literal is false for any other expression, and for a number that does
-// not fit in an Integer: the parser reads those when the line runs.
+// not fit in an Integer: the evaluation checks those when the line runs.
 literal_of :: proc "contextless" (text: string, place: int) -> (type: module.Type, value: i64, literal: bool) {
 	token := console_language.token_next(text, place)
 	negative := false

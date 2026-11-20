@@ -586,7 +586,7 @@ The run passes: OpenSSL takes the Retry, completes the handshake with the raw pu
 
 ## 7. `remote` over QUIC (built)
 
-`remote` is the door of the host into the machine: `modustool call` sends one call of the language of the console, and `remote` makes it as an isolated call and sends the answer back. QUIC protects each call on the path and proves to the host which machine answers.
+`remote` is the door of the host into the machine: `modustool call` sends one call of Lex, the language of the console, and `remote` makes it as an isolated call and sends the answer back. QUIC protects each call on the path and proves to the host which machine answers.
 
 **What it is.** The service `remote` is a QUIC server, as `quic_echo`, and its own transport of datagrams is gone. The host calls an export of a service through it (`docs/MODULE_CONTRACT.md`, "A call from the host"); each call is one call stream, and acts for the principal that allowed the key of the client ("Who may call").
 

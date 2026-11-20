@@ -8,7 +8,7 @@ What the panel looks like and what each key does is in [`docs/DESIGN.md`](../../
 
 Before the palette, two processes held every operation. The compositor held the windows and the start of a process. The console held all the rest: the root ring, the calls of the services, the settings, the principals, the grants, the debugger, the shutdown. "Every operation from one panel" asks for a panel that reaches both sets.
 
-The language of the console is not a set of operations. `where` and `columns` have no meaning alone, and a form with one field for each parameter cannot give a Table. So "every operation" is each act, and one step to the console for a composed line.
+Lex, the language of the console, is not a set of operations. `where` and `columns` have no meaning alone, and a form with one field for each parameter cannot give a Table. So "every operation" is each act, and one step to the console for a composed line.
 
 ## The constraints
 

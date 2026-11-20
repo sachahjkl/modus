@@ -5,6 +5,7 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:private/console/console_results"
+import "modus:private/console/lex_parser"
 import "modus:support/system"
 import terminal "modus:support/terminal"
 
@@ -240,12 +241,12 @@ fact_name_fail :: proc "contextless" (command_name, name: string) -> Value {
 	return fail(command_name, ": no fact type has the name ", name, "; the fact types are ", close)
 }
 
-// fact_name_read reads the argument of a parameter of the form Fact_Name:
-// a name with one dot, checked against the fact names of the boot image
-// before any call.
-fact_name_read :: proc "contextless" (command_name: string) -> Value {
-	name := read_name()
-	if name == "" {
+// fact_name_evaluate evaluates a Fact_Name node, the argument of a
+// parameter of the form Fact_Name: a name with one dot, checked against the
+// fact names of the boot image before the command runs.
+fact_name_evaluate :: proc "contextless" (command_name: string, fact_name_node: lex_parser.Node_Index) -> Value {
+	name := lex_parser.node_text(&line_tree, fact_name_node)
+	if lex_parser.node_at(&line_tree, fact_name_node).refusal == .Fact_Name_Missing {
 		return fail(command_name, " takes the name of a fact type, as ", command_name, "(t, storage.Bad_Block), not a value")
 	}
 	if !fact_name_known(name) {

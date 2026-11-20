@@ -344,7 +344,7 @@ condition_terms_fail :: proc "contextless" (condition: Condition, refusal: outpu
 }
 
 // stream_where adds a condition to a Stream, and gives the same Stream: no
-// record is read yet. condition_read checked the field and the value
+// record is read yet. condition_evaluate checked the field and the value
 // against the description of the Stream. The condition becomes the terms
 // of a wiring here, through the border of the root service, so a condition
 // that the writer does not filter fails the line before any wiring.

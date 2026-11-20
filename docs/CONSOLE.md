@@ -1,6 +1,6 @@
 # The line of the console
 
-This guide describes the line that is typed at the console: the language that the line is written in, the result that a line gives and how the console draws it, the log records that show under a line while it runs, the keys that edit the line, the completion list that opens while it is typed, the line history that survives a stop, and the colors of its code.
+This guide describes the line that is typed at the console: Lex, the language that the line is written in, the result that a line gives and how the console draws it, the log records that show under a line while it runs, the keys that edit the line, the completion list that opens while it is typed, the line history that survives a stop, and the colors of its code.
 
 ## About this guide
 
@@ -14,7 +14,7 @@ This guide describes the line that is typed at the console: the language that th
 
 | Section | What it says |
 |---|---|
-| "The language of the console" | What a line can say: values and their kinds, calls, variables, records, tables as values, how a line composes, the pipe operator, and its errors |
+| "Lex" | What a line can say: values and their kinds, calls, variables, records, tables as values, how a line composes, the pipe operator, and its errors |
 | "Results and their drawers" | The one result of a line, the drawer of each kind of result, and the result of each built-in command |
 | "The log records of a line" | Which log records show under a line while it runs, and how the console reads them |
 | "The built-in commands and the services" | Which built-in commands are exports of a service, and which stay in the console |
@@ -37,11 +37,11 @@ This guide describes the line that is typed at the console: the language that th
 
 The console owns the line that the input edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The terminal holds a surface, the two memory objects that it shares with its process (the terminal ring and the text region), and a handle that reads the state of the process. A line is UTF-8: a key of the layout of France types é in its two bytes, and each key moves the caret over a whole character, or removes a whole character (`docs/glossary/text.md`, "Text encoding"). The procedures that change the line are in `src/library/support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`src/library/support/line_editor/line_editor_test.odin`). The console uses them in `src/modules/system/console/main.odin` and `src/modules/system/console/completion.odin`.
 
-## The language of the console
+## Lex
 
-A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No process receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between processes").
+A line of the console is one expression of Lex, the language of the console, or a variable that takes the value of one. The console evaluates a line once, from the left, and runs its commands. The evaluator of Lex is lazy and has two evaluation modes, with the same meaning for a line: the console runs it in mode `console`, which forces each line whole, and mode `declaration` will read a declaration with no effect (`src/md/features/declarations.md`). Each part of a line is computed at most once, and an evaluation takes at most 1048576 steps, one for each part computed; a line of the console takes a few hundred at most. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No process receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between processes").
 
-The code is `src/modules/system/console/language.odin` (the parser and the values), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line), `src/modules/system/console/facts.odin` (the log facts), `src/library/private/console/console_results` (the drawers), `src/library/private/console/console_condition` (the conditions of `where`), `src/modules/system/console/streams.odin` and `src/library/private/console/console_stream` (the streams).
+The code is `src/library/private/console/lex_parser` (the parser: the syntax tree of a line), `src/library/private/console/lex_evaluator` (the evaluator: the values, the thunks, the operators and the budget), `src/modules/system/console/language.odin` (the console as the host of the evaluator: the names, the calls and the sentences), `src/modules/system/console/commands.odin` (the commands and the calls), `src/modules/system/console/tables.odin` (the commands of tables), `src/modules/system/console/results.odin` (the result of a line and its drawing), `src/modules/system/console/line_records.odin` (the log records of a line), `src/modules/system/console/facts.odin` (the log facts), `src/library/private/console/console_results` (the drawers), `src/library/private/console/console_condition` (the conditions of `where`), `src/modules/system/console/streams.odin` and `src/library/private/console/console_stream` (the streams).
 
 ### The form of a line
 
@@ -58,7 +58,7 @@ arguments  = pipeline { "," pipeline }
 - **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each.
 - **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/private/console/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. A text has no escape, so it cannot hold a quote.
-- **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them; `+` on two tables of equal record descriptions gives the rows of the left one, then the rows of the right one, and refuses two tables of different records. A division by zero is an error. So is the one division whose result does not fit: the least integer by `-1`. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
+- **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them; `+` on two tables of equal record descriptions gives the rows of the left one, then the rows of the right one, and refuses two tables of different records. A division by zero is an error. So is the one division whose result does not fit: the least integer `/` `-1`. Its remainder fits: the least integer `%` `-1` is 0. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
 
 Examples:
 
@@ -324,9 +324,9 @@ They are `where(processes(), name = "server")`, `columns(where(processes(), name
 
 **What is refused before any call.** A line with a fault of the operator runs nothing: the console finds the fault in the text and in the command table, before the first call. These faults are the form of the operator; a name on the right that no command has; a command on the right that takes no argument, or 12 arguments already, or another count; and a first parameter that does not take the value on the left, when the console knows that value before the run. It knows the value of a literal, of a variable, and the result of an export, whose description gives its record. A built-in command makes the description of its table when it runs: the check of the call then refuses the value, after the left part ran, with the sentence of the same line with calls in calls.
 
-`|` alone is no operator of the language: a line with it fails before any call, and says so.
+`|` alone is no operator of Lex: a line with it fails before any call, and says so.
 
-**Why `|>`, and not `|`.** `|>` has no other meaning in the language, so a reader and the parser never take it for another operator, and `|` stays free for a union of sets. The arrow reads as "goes to". Elixir, Gleam and R give the same sign this meaning: the value on the left is the first argument of the call on the right. F#, where the sign comes from, gives the value to a function of one argument, so `x |> f a` there is `f a x`, with the value last.
+**Why `|>`, and not `|`.** `|>` has no other meaning in Lex, so a reader and the parser never take it for another operator, and `|` stays free for a union of sets. The arrow reads as "goes to". Elixir, Gleam and R give the same sign this meaning: the value on the left is the first argument of the call on the right. F#, where the sign comes from, gives the value to a function of one argument, so `x |> f a` there is `f a x`, with the value last.
 
 ### Errors
 
@@ -356,10 +356,11 @@ A line that fails has one result: its error. The first error ends the line: the 
 | An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8), then the values of the record |
 | The root service refuses | `error: root.Stop: the argument name names a process of the system: ...`: the sentence of the error record of the root ring, then its values |
 | A call in an isolated process that faults | `error: the process agenda stopped: a fault, invalid instruction`, then the instruction and the frames of its stop report, each after `error: ` |
+| A line past the evaluation budget, which no line of the console reaches | `error: the line needs more than 1048576 steps of the evaluator: it stopped at column 12`, with an error record `Over_Limit` |
 
 An overflow has an error record of the kind `Over_Limit`: `value` is the left value, `found` the right value, and `limit` the largest integer.
 
-A call that runs before the error keeps its effect: in `length(start("life"))`, `start` runs, then `length` refuses its argument. The line draws only its error.
+A call that runs before the error keeps its effect: in `length(start("life"))`, `start` runs, then `length` refuses its argument. The line draws only its error. The calls run in the order of the data: the arguments of a call from the left, before the call, so `f(g(), h())` runs `g`, then `h`, then `f`.
 
 ## Results and their drawers
 
@@ -706,7 +707,7 @@ The main machine and `modustool measure` (the machine with only the desktop and 
 
 The console knows the names; the terminal owns the cells and the keys. The console sends the rows to show (`terminal.List_Row`: the name, what it is, the places that matched, and what kind of thing the name is, a `terminal.List_Icon`) and then the list (`terminal.List`: the count of rows, the chosen row, the place of the first row in all the names and their count, and the byte of the edit line where the name starts). The terminal lays it out: under the edit line and its hint line when the rows below hold it, above the edit line if not, at the column of the start of the name, as wide as the longest row and cut to the terminal. It has at most 8 rows, and a scroll bar at the right when there are more names (`DESIGN.md`, "The scroll bar"): it takes the last two cells of each row, shows the place of the rows in all the names, and takes the pointer. The console owns the list, so the terminal sends it the first row that the pointer asks for (`terminal.Input.List_First`); the console moves its view there, moves the chosen row to the nearest row of the new view, and sends the rows. The record means nothing while a line runs, when no list is open. Each row starts with the kind icon of its name (`glossary/desktop.md`, "Kind icon"), in three cells before the name: a command, an export, a command that makes a record, a module (a service and a process too), a variable, or a line of the history. The terminal chooses the form and the color, the same as a row of the palette has for the same kind; on the chosen row the icon is white, as the text. A list whose rows name no kind keeps no room for an icon.
 
-So no record has a place on the screen, and the terminal stays a process with no knowledge of the language of the console. The rows go through the text region of the console and its terminal: no third process reads it, and the terminal already shows each name that `help()` gives.
+So no record has a place on the screen, and the terminal stays a process with no knowledge of Lex. The rows go through the text region of the console and its terminal: no third process reads it, and the terminal already shows each name that `help()` gives.
 
 The look follows `docs/DESIGN.md`: the cells of the list have the card color, the chosen row the chosen blue `colors.chosen` with its text in white, the matched characters the accent (on the chosen row: the chosen blue on a white cell), what a name is at the right of its row, in the colors of its code (section 7); a border of one pixel in the color of the kernel, as the menus of the bar; no shadow, no round corner. A cell of the text grid has a fill color for this (`interface.Text_Grid_Cell.filled` and `background`, draw record version 5): a cell is 12 bytes in place of 8, and the damage by difference redraws only the rows of the list that change. The border is four records after all the others, so the records before keep their places when the list opens or closes.
 
@@ -746,7 +747,7 @@ Why after each line and not at most one write in a second: a generation counts t
 
 The console colors each part of a line by what it is: a function name, a type, a number or a text. The console decides the kind of each part; the terminal decides its color, so one table sets the colors of every terminal.
 
-The edit line, the line that the console writes back when Enter is pressed, and the rows of the completion list are colored by what each part is in the language of the console. One scanner reads them: `src/library/private/console/console_language`. The parser of the console reads its names, numbers and texts with the same procedures (`space_end`, `name_end`, `number_end`, `text_end`), so the colors and the parser agree on where a token starts and ends. The scanner calls no allocator, keeps no state, and never stops at a fault: a byte that the language does not take is one token of the kind Unknown.
+The edit line, the line that the console writes back when Enter is pressed, and the rows of the completion list are colored by what each part is in Lex. One scanner reads them: `src/library/private/console/console_language`. The parser of Lex (`src/library/private/console/lex_parser`) reads its names, numbers and texts with the same procedures (`space_end`, `name_end`, `number_end`, `text_end`), so the colors and the parser agree on where a token starts and ends. The scanner calls no allocator, keeps no state, and never stops at a fault: a byte that the language does not take is one token of the kind Unknown.
 
 **The kinds.** The console sends kinds, not colors (`terminal.Code_Kind`). The terminal maps each kind to a class of the colors of code (`terminal.code_kind_classes`), and each class to a color of the design rules (`src/library/support/graphics/code_colors.odin`, the table that the site reads too: `docs/DESIGN.md`, section 4). One table changes the colors of every terminal.
 
@@ -760,7 +761,7 @@ The edit line, the line that the console writes back when Enter is pressed, and 
 | Number, Text, Text_Unfinished | A number; a text in quotes; a text with no end quote yet | Literal | `0x38C0B0` | 8.47 | 7.22 |
 | Operator, Arrow | `+ - * / % = ( ) , : . { } < > !`, `\|>`, and `->` | Punctuation | `0xB0B8C1` | 9.51 | 8.10 |
 | Words | The words of a row that are not code: "export of", "command", "3 lines ago" | Comment | `0x9CA6B2` | 7.73 | 6.58 |
-| Unknown | A name that is no command, module or variable; a byte that the language does not take | Comment | `0x9CA6B2` | 7.73 | 6.58 |
+| Unknown | A name that is no command, module or variable; a byte that Lex does not take | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 
 A part with no class has the color of the text around it: the tone of the line, or the text color `0xDCE4EC` in a row of the list (14.84 and 12.64). A host test computes each contrast on the background and on both colors of the card; the bound is 4.5 (`src/library/support/terminal/code_runs_test.odin`).
 

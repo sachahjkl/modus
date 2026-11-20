@@ -5,6 +5,8 @@ import "modus:contract/value_kinds"
 import "modus:private/console/console_condition"
 import "modus:private/console/console_results"
 import "modus:private/console/console_stream"
+import "modus:private/console/lex_evaluator"
+import "modus:private/console/lex_parser"
 import "modus:support/sentence"
 
 // Tables: a value that holds records of one record description, one after
@@ -362,10 +364,10 @@ table_sum_value :: proc "contextless" (left, right: Value) -> Value {
 }
 
 // table_where gives the rows of a table whose field passes the condition
-// that the parser read (condition_read).
+// that the parser read and condition_evaluate checked.
 table_where :: proc "contextless" (arguments: []Value) -> Value {
-	// The parser gives each argument of the form Condition one; a value of
-	// another source has none.
+	// The evaluation of a Condition node gives one; a value of another
+	// source has none.
 	if arguments[1].condition == nil {
 		return fail("where takes a condition: a field, an operator and a value, as where(t, block = 12)")
 	}
@@ -432,13 +434,13 @@ condition_fail :: proc "contextless" (refusal: console_condition.Refusal, detail
 	return fail(text)
 }
 
-// condition_read reads the argument of a parameter of the form Condition:
-// a field of the table of the first argument, an operator, and a value
-// (console_condition). A status field takes the name of a member, which
-// becomes its word there, at one place; another field takes an expression
-// of its kind, in the range of the field. Each fault fails the line before
-// the command runs.
-condition_read :: proc "contextless" (command_name: string, before: []Value) -> Value {
+// condition_evaluate evaluates a Condition node, the argument of a
+// parameter of the form Condition: a field of the table of the first
+// argument, an operator, and a value (console_condition). A status field
+// takes the name of a member, which becomes its word there, at one place;
+// another field takes an expression of its kind, in the range of the field.
+// Each fault fails the line before the command runs.
+condition_evaluate :: proc "contextless" (command_name: string, before: []Value, condition_node: lex_parser.Node_Index) -> Value {
 	if len(before) == 0 {
 		return fail(command_name, ": a condition comes after a table: ", command_name, "(t, block = 12)")
 	}
@@ -459,12 +461,12 @@ condition_read :: proc "contextless" (command_name: string, before: []Value) -> 
 		file    = table.file,
 		record  = table.record,
 	}
-	head, refusal := console_condition.head_read(source, position)
+	node := lex_parser.node_at(&line_tree, condition_node)
+	head, refusal := node.condition_head, node.condition_refusal
 	details.field, details.comparison = head.field, head.comparison
 	if refusal != .None {
 		return condition_fail(refusal, details)
 	}
-	position = head.value_start
 	found: bool
 	if details.item, found = console_condition.field_find(table.file, table.record, head.field); !found {
 		return condition_fail(.Unknown_Field, details)
@@ -473,18 +475,19 @@ condition_read :: proc "contextless" (command_name: string, before: []Value) -> 
 		return condition_fail(refusal, details)
 	}
 	condition := Condition{field = head.field, comparison = head.comparison}
-	if which, status := console_condition.field_is_status(details.item); status {
+	which, status := console_condition.field_is_status(details.item)
+	if status {
 		word: u64
-		end: int
-		word, details.member, end, refusal = console_condition.member_read(source, position, which)
+		word, details.member, _, refusal = console_condition.member_read(line_tree.text, head.value_start, which)
 		if refusal != .None {
 			return condition_fail(refusal, details)
 		}
-		position = end
 		condition.compared = i64(word)
 	} else {
-		value := expression()
-		if failed {
+		// The value is a thunk of the evaluation: its refusal stops the
+		// evaluation, which writes the sentence.
+		value, forced := lex_evaluator.force(&line_evaluation, node.first_child)
+		if !forced || failed {
 			return {}
 		}
 		details.value_type = type_of_kind(value.kind)
@@ -496,6 +499,11 @@ condition_read :: proc "contextless" (command_name: string, before: []Value) -> 
 	kept: ^Condition
 	if kept, refusal = console_condition.condition_keep(&line_conditions, condition); refusal != .None {
 		return condition_fail(refusal, details)
+	}
+	// After the name of a member, the argument ends: a status reads one
+	// name, never an expression.
+	if status && !node.member_alone {
+		return fail("\",\" or \")\" is missing")
 	}
 	return {condition = kept}
 }
