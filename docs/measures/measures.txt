@@ -1,141 +1,141 @@
 measure record 1
-time 2026-11-20 02:22 UTC
+time 2026-11-20 03:39 UTC
 release 0.96.0
-commit cc12ba2c9e3c8b30b88f397338d6708a90ce1a9f
+commit 1cdb3e47ff22a561d5c32f78f0cc3328c90c4cc7
 tree clean
 host AMD Ryzen 7 5800X 8-Core Processor, 16 logical processors; QEMU with KVM
-checks 4046
+checks 4063
 number Kernel entries in one second, with 1, 2 and 4 processes that each take the locks of their own objects
 log build/test_output_measure.txt
 line 125
 matching 1
 machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
-text [locks] locks: kernel entries in one second, each locker on its own objects: 1 locker 6958293, 2 lockers 12805546, 4 lockers 24823466
+text [locks] locks: kernel entries in one second, each locker on its own objects: 1 locker 7118293, 2 lockers 12864853, 4 lockers 21216000
 number Reads of the time in one second from the time page, with no kernel entry
 log build/test_output_measure_clock.txt
 line 126
 matching 1
 machine The machine of `modustool measure clock`: a measure run, only the desktop and the process `clock` run
-text [clock] clock: the time page: 1228521664 reads in one second, 0 kernel entries for one million reads
+text [clock] clock: the time page: 1329436938 reads in one second, 0 kernel entries for one million reads
 number Wakes in one second of two threads that wake each other on a busy machine, under the strategy EEVDF
 log build/test_output_scheduler_1.txt
-line 153
+line 152
 matching 1
 machine The machine of `modustool measure scheduler`: a measure run, only the desktop and the process `scheduler` run
-text [scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 202890 wakes in one second (81031 turns ended on the processor of the waker, 76 by an interrupt, 416 moves); a thread that sleeps 2 ms among 8 spinners: late by 799 us in the middle, 830 us at worst; 8 spinners of one weight: shares 11.9 % to 13.0 %, work 16009 million in one second; 12 spinners, weights 1 2 4: a spinner of each weight 5.4 %, 9.8 %, 9.7 %; 92052 turns ended by a wake, 588 moves, one pick 76 ns, one preemption by an interrupt 2264 ns in the kernel
+text [scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 217279 wakes in one second (86709 turns ended on the processor of the waker, 81 by an interrupt, 425 moves); a thread that sleeps 2 ms among 8 spinners: late by 77 us in the middle, 2072 us at worst; 8 spinners of one weight: shares 12.4 % to 12.5 %, work 16782 million in one second; 12 spinners, weights 1 2 4: a spinner of each weight 4.2 %, 7.9 %, 12.7 %; 94726 turns ended by a wake, 574 moves, one pick 84 ns, one preemption by an interrupt 2197 ns in the kernel
 number One glyph of the vector font, from its outline and from the glyph cache
 log build/test_output.txt
-line 8087
+line 8137
 matching 1
 machine The main machine of `modustool test`, while the other processes of the test run
-text [vector_glyphs] vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 3431 ns, scale 2 8932 ns, scale 3 17691 ns; from the private glyph cache: 249 ns; Spleen 8x16: 27 ns
+text [vector_glyphs] vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 3162 ns, scale 2 8884 ns, scale 3 17602 ns; from the private glyph cache: 247 ns; Spleen 8x16: 26 ns
 number A full frame of the compositor at 1920 x 1080, with the windows of the main test
 log build/test_output.txt
-line 8225
+line 8273
 matching 24
 machine The main machine of `modustool test`, while the other processes of the test run
-text [compositor] compositor: a full frame of 1920x1080 with 17 windows in 3185 us
+text [compositor] compositor: a full frame of 1920x1080 with 17 windows in 2884 us
 number A clear and a present of a frame of 1920 x 1080 on the processor
 log build/test_output_measure.txt
 line 171
 matching 1
 machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
-text [processor_frame] processor_frame: measure: a clear and a present of 1920x1080: least 270.5 us, median 285.0 us, 3508 frames in one second at the median, over 21 frames
+text [processor_frame] processor_frame: measure: a clear and a present of 1920x1080: least 254.2 us, median 269.6 us, 3708 frames in one second at the median, over 21 frames
 number A full frame of the compositor at 1920 x 1080 with 4 windows, on the processor
 log build/test_output_measure.txt
 line 172
 matching 1
 machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
-text [processor_frame] processor_frame: measure: a full frame of the compositor at 1920x1080 with 4 windows: least 968.3 us, median 1027.4 us, 973 frames in one second at the median, over 21 frames
+text [processor_frame] processor_frame: measure: a full frame of the compositor at 1920x1080 with 4 windows: least 941.4 us, median 1037.4 us, 963 frames in one second at the median, over 21 frames
 number A frame of the compositor at 1920 x 1080 in its damage, on the processor
 log build/test_output_measure.txt
 line 173
 matching 1
 machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
-text [processor_frame] processor_frame: measure: a frame of the compositor at 1920x1080 with 4 windows in its damage of 2 rectangles, 122432 pixels: least 87.3 us, median 106.9 us, 9350 frames in one second at the median, over 21 frames
+text [processor_frame] processor_frame: measure: a frame of the compositor at 1920x1080 with 4 windows in its damage of 2 rectangles, 122432 pixels: least 84.0 us, median 95.9 us, 10420 frames in one second at the median, over 21 frames
 number The execution of a draw table of a desktop at 1920 x 1080, on the processor
 log build/test_output_measure.txt
 line 174
 matching 1
 machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
-text [processor_frame] processor_frame: measure: the execution of a draw table of 1920x1080 with 339 records: 38 opaque rectangles and gradients, 120 texts in the font of the cells, 144 in the interface font, 12 opaque pictures, 25 rectangles and pictures with alpha: least 2245.0 us, median 2276.9 us, 439 frames in one second at the median, over 21 frames
+text [processor_frame] processor_frame: measure: the execution of a draw table of 1920x1080 with 339 records: 38 opaque rectangles and gradients, 120 texts in the font of the cells, 144 in the interface font, 12 opaque pictures, 25 rectangles and pictures with alpha: least 2114.9 us, median 2180.8 us, 458 frames in one second at the median, over 21 frames
 number The time of a frame of the compositor, from the first record that it reads to the flip
 log build/test_output_measure.txt
-line 166
+line 168
 matching 2
 machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
-text [compositor] compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least 57.9 us, median 161.5 us, over 57 frames
+text [compositor] compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least 49.9 us, median 98.3 us, over 58 frames
 number The time of a key to the screen, through the console
 log build/test_output_measure.txt
-line 167
+line 169
 matching 2
 machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
-text [compositor] compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least 2905.9 us, median 10638.2 us, over 18 keys
+text [compositor] compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least 7662.2 us, median 14004.4 us, over 17 keys
 number The start of a window, from Process_Start to its first frame
 log build/test_output_measure.txt
 line 123
 matching 1
 machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
-text [compositor] compositor: measure: the start of the window locks, from Process_Start to its first frame: 11577.6 us
+text [compositor] compositor: measure: the start of the window locks, from Process_Start to its first frame: 20338.7 us
 number Blocks read in one second from a virtio disk, through the block service in user space
 log build/test_output_measure_disk.txt
 line 129
 matching 1
 machine The machine of `modustool measure disk`: a measure run, only the desktop and the process `disk` run
-text [disk] disk: read, 1 block in each request, 32 in flight: 383901 blocks in one second, kernel entries for 100 requests: 9 of this process, 16 of the block service, 0 errors
+text [disk] disk: read, 1 block in each request, 32 in flight: 374651 blocks in one second, kernel entries for 100 requests: 9 of this process, 16 of the block service, 0 errors
 number 1000 commits of a process to its private store, one commit for each step
 log build/test_output_persist_1.txt
 line 139
 matching 1
 machine The first machine of the test of persistence of `modustool test`, on a new data disk
-text [notes] notes: count 1000, stopped: 1000 commits in 4385 ms
+text [notes] notes: count 1000, stopped: 1000 commits in 4171 ms
 number The header and the checksum of one UDP datagram, in the process that sends it
 log build/test_output_network.txt
 line 157
 matching 1
 machine The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host
-text [net] net: the header and the checksum of a datagram of 1472 bytes: 403 ns, in this process (no offload)
+text [net] net: the header and the checksum of a datagram of 1472 bytes: 625 ns, in this process (no offload)
 number The round trip of one UDP datagram
 log build/test_output_network.txt
 line 158
 matching 1
 machine The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host
-text [net] net: the round trip of one datagram of 64 bytes: 55 us at least, 121 us in the middle, over 1000
+text [net] net: the round trip of one datagram of 64 bytes: 47 us at least, 118 us in the middle, over 1000
 number UDP datagrams in one second, with 64 in flight
 log build/test_output_network.txt
 line 160
 matching 1
 machine The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host
-text [net] net: a burst with 64 datagrams in flight: 89554 datagrams in one second, sent and answered, 0 lost
+text [net] net: a burst with 64 datagrams in flight: 89092 datagrams in one second, sent and answered, 0 lost
 number TCP: 1 MiB that the process `fetch` receives from a server of the host
 log build/test_output_tcp_real.txt
 line 160
 matching 1
 machine The machine of `modustool test` with QEMU user networking: the remote is the TCP of the host, through libslirp
-text [fetch] fetch: GET /large: 1048576 bytes, fnv1a64 e7867887f2822325 as expected, 84.7 MB/s
+text [fetch] fetch: GET /large: 1048576 bytes, fnv1a64 e7867887f2822325 as expected, 81.8 MB/s
 number TCP: 1 MiB that the process `fetch` sends to a server of the host
 log build/test_output_tcp_real.txt
 line 161
 matching 1
 machine The machine of `modustool test` with QEMU user networking: the remote is the TCP of the host, through libslirp
-text [fetch] fetch: POST /sink, 1 MiB: the remote got the same hash, 20.2 MB/s
+text [fetch] fetch: POST /sink, 1 MiB: the remote got the same hash, 19.4 MB/s
 number ChaCha20-Poly1305: the seal of one QUIC datagram of 1200 bytes, through the module `cryptography`
 log build/test_output_cryptography.txt
 line 135
 matching 1
 machine The machine of `modustool test crypto`
-text [cryptography_vectors] cryptography_vectors: seal ChaCha20-Poly1305: 2907 ns for 1200 bytes, 412 MB/s
+text [cryptography_vectors] cryptography_vectors: seal ChaCha20-Poly1305: 2885 ns for 1200 bytes, 415 MB/s
 number The same bytes after a second build
 log build/reproducible_build.txt
 line 1
 matching 1
 machine Written by `modustool check`, after it built every module and the boot program a second time and compared the bytes
-text 115 modules, their LLVM IR, their objects and their debug objects, 1 pointer theme files, and the boot program and its object are the same bytes after a second build
-boot kernel: boot: firmware: 976047 us
-boot kernel: boot: boot program: load the kernel, the boot image: 86933 us
-boot kernel: boot: boot program: page tables, memory map, jump: 103330 us
-boot kernel: boot: kernel: page frames, kernel page table: 850 us
-boot kernel: boot: kernel: first processor, timer: 22258 us
-boot kernel: boot: kernel: other processors: 35201 us
-boot kernel: boot: kernel: root service: 1371 us
+text 116 modules, their LLVM IR, their objects and their debug objects, 1 pointer theme files, and the boot program and its object are the same bytes after a second build
+boot kernel: boot: firmware: 956078 us
+boot kernel: boot: boot program: load the kernel, the boot image: 76177 us
+boot kernel: boot: boot program: page tables, memory map, jump: 108573 us
+boot kernel: boot: kernel: page frames, kernel page table: 1301 us
+boot kernel: boot: kernel: first processor, timer: 24161 us
+boot kernel: boot: kernel: other processors: 35574 us
+boot kernel: boot: kernel: root service: 1342 us
 end
