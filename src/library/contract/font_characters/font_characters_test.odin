@@ -1,24 +1,25 @@
 #+build !freestanding
-package glyph_cache
+package font_characters
 
 import "core:testing"
 
-// The character index has no hole and covers the two ranges: each index
-// gives a character whose index is that index, and the characters at the
-// borders of the two ranges are in or out as the contract says.
+// The character index has no hole and covers the two ranges and the added
+// characters: each index gives a character whose index is that index. The
+// edges are refused: the index -1 and CHARACTER_COUNT, and the characters
+// on each side of each range and of the euro sign.
 @(test)
 the_character_index_covers_two_ranges :: proc(t: ^testing.T) {
-	for index in 0 ..< CHARACTER_COUNT {
-		character, found := character_of_index(index)
-		testing.expect(t, found)
-		back, in_cache := character_index(character)
-		testing.expect(t, in_cache)
-		testing.expect_value(t, back, index)
-	}
-	_, past := character_of_index(CHARACTER_COUNT)
-	testing.expect(t, !past)
 	_, before := character_of_index(-1)
 	testing.expect(t, !before)
+	_, past := character_of_index(CHARACTER_COUNT)
+	testing.expect(t, !past)
+	_, largest := character_of_index(max(int))
+	testing.expect(t, !largest)
+	outside := [?]rune{0, ASCII_FIRST - 1, ASCII_LAST + 1, LATIN_FIRST - 1, LATIN_LAST + 1, EURO_SIGN - 1, EURO_SIGN + 1, 0xFFFD, max(rune), -1}
+	for character in outside {
+		_, found := character_index(character)
+		testing.expectf(t, !found, "%v has no character index", character)
+	}
 	first_latin, _ := character_index(LATIN_FIRST)
 	testing.expect_value(t, first_latin, ASCII_COUNT)
 	e_acute, _ := character_index('é')
@@ -27,10 +28,12 @@ the_character_index_covers_two_ranges :: proc(t: ^testing.T) {
 	testing.expect(t, euro_found)
 	testing.expect_value(t, euro, ADDED_FIRST_INDEX)
 	testing.expect_value(t, CHARACTER_COUNT, ADDED_FIRST_INDEX + len(added_characters))
-	outside := [?]rune{0, ASCII_FIRST - 1, ASCII_LAST + 1, LATIN_FIRST - 1, LATIN_LAST + 1, EURO_SIGN - 1, EURO_SIGN + 1, 0xFFFD, -1}
-	for character in outside {
-		_, found := character_index(character)
-		testing.expectf(t, !found, "%v is not a character of a cache", character)
+	for index in 0 ..< CHARACTER_COUNT {
+		character, found := character_of_index(index)
+		testing.expect(t, found)
+		back, in_font := character_index(character)
+		testing.expect(t, in_font)
+		testing.expect_value(t, back, index)
 	}
 }
 

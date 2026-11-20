@@ -2,7 +2,7 @@
 package vector_font
 
 import "core:fmt"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "core:testing"
 
 @(private = "file")
@@ -181,116 +181,78 @@ filters_measured :: proc(t: ^testing.T) {
 	}
 }
 
-// The glyph cache of one fixed font, JetBrains Mono (a candidate, not the
-// default: a test of the renderer must not change when the default
-// changes): its words at each scale have a known hash, so that a change of the renderer is seen. A
-// change that is wanted gives new hashes here and a new RENDERER_VERSION.
-@(test)
-golden_glyph_cache :: proc(t: ^testing.T) {
-	bytes := #load("../../../../resources/fonts/jetbrains_mono.ttf")
+// golden_hashes_of draws the characters of ASCII of a font into cells
+// with glyph_render at the scales 1, 2 and 3, with the grid fit, and gives
+// the hash of each scale: for each character in the order of its character
+// index, its first row with ink and its count of rows with ink, then the
+// words of those rows. A glyph with no ink is the row 0 and no row. A
+// hook can change one word of the cells before the hash.
+@(private = "file")
+golden_hashes_of :: proc(t: ^testing.T, bytes: []u8, change: proc(scale: int, character: rune, pixels: []u32) = nil) -> (hashes: [3]u64) {
 	font, problem := font_open(bytes)
 	testing.expect_value(t, problem, Font_Problem.None)
 	memory := new(Render_Memory)
 	defer free(memory)
-	out := make([]u64, GLYPH_CACHE_LIMIT / 8)
-	defer delete(out)
-	file := ([^]u8)(raw_data(out))[:GLYPH_CACHE_LIMIT]
-	size: int
-	size, problem = glyph_cache_build(&font, bytes, "jetbrains_mono", true, memory, file)
+	measures: Font_Measures
+	measures, problem = font_measures(&font, memory)
 	testing.expect_value(t, problem, Font_Problem.None)
-	cache, refused := glyph_cache.validate(file[:size])
-	testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
-	hashes: [3]u64
-	for size_entry, index in cache.sizes {
+	pixels: [CELL_WIDTH_LIMIT * CELL_HEIGHT_LIMIT]u32
+	for scale in 1 ..= 3 {
+		style := glyph_style_of(measures, 8 * scale, 16 * scale, true)
 		hash: u64 = 0xCBF2_9CE4_8422_2325
-		for glyph, character_index in cache.glyphs[size_entry.first_glyph:][:cache.header.character_count] {
-			testing.expect(t, glyph.left == 0 && glyph.width == size_entry.cell_width) // A monospace cache: each glyph is its cell.
-			// The hash holds the glyphs of ASCII: the renderer draws them
-			// as before the Latin-1 Supplement came into the cache.
-			if character_index >= glyph_cache.ASCII_COUNT {
-				continue
+		for index in 0 ..< font_characters.ASCII_COUNT {
+			character, _ := font_characters.character_of_index(index)
+			testing.expect_value(t, glyph_render(&font, measures, style, character, memory, pixels[:]), Font_Problem.None)
+			if change != nil {
+				change(scale, character, pixels[:style.cell_width * style.cell_height])
 			}
-			words := cache.words[glyph.word_offset:][:int(glyph.row_count) * int(glyph.width)]
-			hash = (hash ~ u64(glyph.first_row) << 16 ~ u64(glyph.row_count)) * 0x0000_0100_0000_01B3
-			for word in words {
+			first, last := style.cell_height, -1
+			for row in 0 ..< style.cell_height {
+				for word in pixels[row * style.cell_width:][:style.cell_width] {
+					if word != 0 {
+						first = min(first, row)
+						last = max(last, row)
+					}
+				}
+			}
+			first_row, row_count := 0, 0
+			if last >= first {
+				first_row, row_count = first, last - first + 1
+			}
+			hash = (hash ~ u64(first_row) << 16 ~ u64(row_count)) * 0x0000_0100_0000_01B3
+			for word in pixels[first_row * style.cell_width:][:row_count * style.cell_width] {
 				hash = (hash ~ u64(word)) * 0x0000_0100_0000_01B3
 			}
 		}
-		hashes[index] = hash
+		hashes[scale - 1] = hash
 	}
-	fmt.printfln("vector_font: the glyph cache of jetbrains_mono: %v bytes, the hashes of its scales %16x %16x %16x", size, hashes[0], hashes[1], hashes[2])
-	testing.expect_value(t, hashes, GOLDEN_HASHES)
-	// The same font gives the same file: the build does not change it.
-	again := make([]u64, GLYPH_CACHE_LIMIT / 8)
-	defer delete(again)
-	second := ([^]u8)(raw_data(again))[:GLYPH_CACHE_LIMIT]
-	second_size, _ := glyph_cache_build(&font, bytes, "jetbrains_mono", true, memory, second)
-	testing.expect(t, second_size == size && string(second[:size]) == string(file[:size]))
+	return hashes
 }
 
-// The hashes of the words of the three scales of the glyph cache of
-// JetBrains Mono, renderer version 1.
-GOLDEN_HASHES :: [3]u64{0xae38c0ced203328f, 0xc47346a333a5063b, 0x8eb7b6620568c018}
-
-// A glyph cache with a damaged field is refused, with the field named; no
-// damage makes a fault.
+// The cells of one fixed font, JetBrains Mono (a candidate, not the
+// default: a test of the renderer must not change when the default
+// changes): its words at each scale have a known hash, so that a change of
+// the renderer is seen. A change that is wanted gives new hashes here and a
+// new RENDERER_VERSION. A change of one word of one glyph changes the hash
+// of its scale only; the same font drawn again gives the same hashes.
 @(test)
-damaged_glyph_cache :: proc(t: ^testing.T) {
+golden_cells_of_a_candidate :: proc(t: ^testing.T) {
 	bytes := #load("../../../../resources/fonts/jetbrains_mono.ttf")
-	font, _ := font_open(bytes)
-	memory := new(Render_Memory)
-	defer free(memory)
-	out := make([]u64, GLYPH_CACHE_LIMIT / 8)
-	defer delete(out)
-	file := ([^]u8)(raw_data(out))[:GLYPH_CACHE_LIMIT]
-	size, _ := glyph_cache_build(&font, bytes, "jetbrains_mono", true, memory, file)
-	good := make([]u8, size)
-	defer delete(good)
-	copy(good, file[:size])
-	Damage :: struct {
-		offset: int,
-		value:  u8,
-		kind:   glyph_cache.Problem_Kind,
-	}
-	damages := [?]Damage {
-		{0, 0x00, .Bad_Magic},
-		{8, 9, .Bad_Version},
-		{16, 1, .Bad_Size},
-		{int(offset_of(glyph_cache.Header, character_count)), glyph_cache.CHARACTER_COUNT - 1, .Bad_Count}, // one character fewer than the contract fixes
-		{int(offset_of(glyph_cache.Header, reserved_first)), 32, .Bad_Count}, // the first character of an older version
-		{32, 4, .Bad_Count}, // size_count
-		{40, 8, .Bad_Words}, // word_offset
-		{glyph_cache.HEADER_SIZE, 9, .Bad_Cell}, // the width of scale 1
-		{glyph_cache.HEADER_SIZE + 4, 0, .Bad_Cell}, // a baseline of 0
-		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 2, 200, .Bad_Glyph}, // the rows of a glyph
-		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 7, 0x7F, .Bad_Glyph}, // the words of a glyph
-		// A monospace cache keeps each glyph in its cell, from its left side:
-		// the damage of a grid of text cells depends on it.
-		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 8, 1, .Bad_Glyph}, // a left side of 1
-		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 8, 0xFF, .Bad_Glyph}, // a left side of 255
-		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 10, 9, .Bad_Glyph}, // a width of 9 in a cell of 8
-		{glyph_cache.HEADER_SIZE + 6, 3, .Bad_Count}, // three positions
-		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 3 * glyph_cache.CHARACTER_COUNT * glyph_cache.GLYPH_ENTRY_SIZE, 0x01, .Bad_Advance}, // an advance of 513 in a cell of 8
-		{120, 1, .Bad_Count}, // a pair
-		// The flags and the name.
-		{36, 0x04, .Bad_Flags}, // a flag that no reader knows
-		{37, 3, .Bad_Flags}, // a filter past the three
-		{88, 0x01, .Bad_Name}, // a control byte
-		{88 + 31, 'a', .Bad_Name}, // no end
-	}
-	for damage in damages {
-		copy(file[:size], good)
-		file[damage.offset] = damage.value
-		_, problem := glyph_cache.validate(file[:size])
-		testing.expectf(t, problem.kind == damage.kind, "a damage at %v: %v, expected %v", damage.offset, problem.kind, damage.kind)
-	}
-	// Cut at any length: refused, no fault.
-	for length := 0; length < size; length += 977 {
-		copy(file[:size], good)
-		_, problem := glyph_cache.validate(file[:length])
-		testing.expect(t, problem.kind != .None)
-	}
+	changed := golden_hashes_of(t, bytes, proc(scale: int, character: rune, pixels: []u32) {
+		if scale == 2 && character == 'g' {
+			pixels[len(pixels) / 2] ~= 1
+		}
+	})
+	testing.expect(t, changed[0] == GOLDEN_HASHES[0] && changed[1] != GOLDEN_HASHES[1] && changed[2] == GOLDEN_HASHES[2], "one word of g at scale 2 changes the hash of the scale 2 only")
+	hashes := golden_hashes_of(t, bytes)
+	fmt.printfln("vector_font: the cells of jetbrains_mono, the hashes of its scales %16x %16x %16x", hashes[0], hashes[1], hashes[2])
+	testing.expect_value(t, hashes, GOLDEN_HASHES)
+	testing.expect_value(t, golden_hashes_of(t, bytes), hashes)
 }
+
+// The hashes of the words of the three scales of the cells of JetBrains
+// Mono, renderer version 1: the hashes that its glyph cache had.
+GOLDEN_HASHES :: [3]u64{0xae38c0ced203328f, 0xc47346a333a5063b, 0x8eb7b6620568c018}
 
 // A vertical segment on the last column, and a coverage of width 1, write
 // nothing outside their rows: the cell after the accumulation stays 0. The
@@ -310,42 +272,4 @@ segments_at_the_edges_stay_in_their_rows :: proc(t: ^testing.T) {
 	coverage: [3]u8
 	coverage_finish(&narrow, coverage[:])
 	testing.expect_value(t, narrow_cells[(1 + 1) * 3], 0)
-}
-
-// A cache at an address states its own size in its header: validate_at
-// bounds that size by the span of the range and by the header before it
-// reads the whole. A size over the span, or under the header, is refused
-// after a read of the header only. A size larger than the mapping under a
-// span that holds it cannot be tested on the host: the read faults, as it
-// does in a process whose starter states a range that it did not map.
-@(test)
-a_cache_at_an_address_states_its_size :: proc(t: ^testing.T) {
-	bytes := #load("../../../../resources/fonts/jetbrains_mono.ttf")
-	font, _ := font_open(bytes)
-	memory := new(Render_Memory)
-	defer free(memory)
-	out := make([]u64, GLYPH_CACHE_LIMIT / 8)
-	defer delete(out)
-	file := ([^]u8)(raw_data(out))[:GLYPH_CACHE_LIMIT]
-	size, problem := glyph_cache_build(&font, bytes, "jetbrains_mono", true, memory, file)
-	testing.expect_value(t, problem, Font_Problem.None)
-	address := uintptr(raw_data(file))
-	cache, refused := glyph_cache.validate_at(address, u64(GLYPH_CACHE_LIMIT))
-	testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
-	testing.expect_value(t, len(cache.words), int(cache.header.word_count))
-	// The span of the range is smaller than the size that the header states.
-	_, over := glyph_cache.validate_at(address, u64(size) - 1)
-	testing.expect_value(t, over.kind, glyph_cache.Problem_Kind.Bad_Size)
-	testing.expect_value(t, over.value, u64(size))
-	// A header that states a size under itself, and one over the span.
-	header := (^glyph_cache.Header)(address)
-	header.file_size = glyph_cache.HEADER_SIZE - 1
-	_, short := glyph_cache.validate_at(address, u64(GLYPH_CACHE_LIMIT))
-	testing.expect_value(t, short.kind, glyph_cache.Problem_Kind.Bad_Size)
-	header.file_size = u64(GLYPH_CACHE_LIMIT) + 8
-	_, past := glyph_cache.validate_at(address, u64(GLYPH_CACHE_LIMIT))
-	testing.expect_value(t, past.kind, glyph_cache.Problem_Kind.Bad_Size)
-	// An address of no cache.
-	_, nowhere := glyph_cache.validate_at(0, u64(GLYPH_CACHE_LIMIT))
-	testing.expect_value(t, nowhere.kind, glyph_cache.Problem_Kind.Too_Short)
 }

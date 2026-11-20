@@ -296,7 +296,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PRIVATE + "/edit/text_model",
 	foundation.SOURCE_FOLDER_PRIVATE + "/monitor/sample_history",
 	foundation.SOURCE_FOLDER_CONTRACT + "/ring",
-	foundation.SOURCE_FOLDER_CONTRACT + "/glyph_cache",
+	foundation.SOURCE_FOLDER_CONTRACT + "/font_characters",
 	foundation.SOURCE_FOLDER_CONTRACT + "/datagram",
 	foundation.SOURCE_FOLDER_CONTRACT + "/byte_order",
 	foundation.SOURCE_FOLDER_CONTRACT + "/timed_stream",

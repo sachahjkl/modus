@@ -272,9 +272,15 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 				row.version = strings.concatenate({fetcher.owner, "/", fetcher.repository, " ", fetcher.commit[:min(12, len(fetcher.commit))], ", ", source.file, " ", source.hash}, context.temp_allocator)
 			}
 		}
-		// The glyph caches of the boot image are made from the default font
-		// and from its emphasis (vector_fonts.odin).
-		row.in_boot_image = candidate.name == resources.DEFAULT_VECTOR_FONT || candidate.name == resources.EMPHASIS_VECTOR_FONT ? "yes, as a glyph cache" : "no"
+		// The font outlines of the boot image hold the fonts of the faces
+		// (vector_fonts.odin, FONT_OUTLINES_FONTS).
+		row.in_boot_image = "no"
+		outline_fonts := resources.FONT_OUTLINES_FONTS
+		for name in outline_fonts {
+			if candidate.name == name {
+				row.in_boot_image = "yes, in the font outlines"
+			}
+		}
 		append(&system_rows, row)
 	}
 

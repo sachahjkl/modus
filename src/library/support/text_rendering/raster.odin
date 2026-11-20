@@ -7,8 +7,10 @@ import "modus:support/vector_font"
 // five taps and its words 0xGGRRGGBB, with the frame of the face at the
 // size.
 //
-// Two changes from the rasterizer of the glyph caches, and neither changes
-// a word:
+// Two changes from the rasterizer of a placed glyph of vector_font
+// (glyph_render_placed), which drew the glyph caches that left the
+// system, and neither changes a word: the golden hashes of the tests hold
+// the words.
 //
 // - The work row is as wide as the glyph. The points of the outline give
 //   the columns that the ink can touch (a quadratic curve stays inside its
@@ -18,17 +20,16 @@ import "modus:support/vector_font"
 //   outline, moved up by whole rows, and keeps the pieces in its rows, so
 //   the memory has a bound at any size.
 //
-// The outline keeps the placement of the rasterizer of the glyph caches,
-// and each move is added to the ends of each segment, after the points of
+// The outline keeps the placement of glyph_render_placed, and each move is added to the ends of each segment, after the points of
 // the outline and of its curves are computed (vector_font.Accumulation,
 // move_x and move_y). A move of the placement itself changes words: the
 // point between two points off the curve is a division by two that rounds
 // toward zero, so a coordinate that becomes negative rounds the other way.
 // A move of the segments by whole pixels moves each cut of the area by
-// whole pixels, so each word is the word of the glyph caches.
+// whole pixels, so each word is the word of glyph_render_placed.
 //
-// The ink of a glyph is cut to the rows of its line, as in a glyph cache:
-// the box of a text record is its line.
+// The ink of a glyph is cut to the rows of its line: the box of a text
+// record is its line.
 
 BAND_ROWS :: 8 // The rows of one band of the accumulation.
 // The widest work row, in pixels: the widest glyph of a line of
@@ -203,24 +204,30 @@ placement_at :: proc "contextless" (measures: vector_font.Font_Measures, baselin
 // face, and places it at a size and a position across a pixel. The caller
 // has checked the face, the size and the position.
 raster_begin :: proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> (job: Raster_Job, problem: Raster_Problem) {
+	return raster_begin_in(&state.font_set, face, font, glyph_index, size, position)
+}
+
+// raster_begin_in is raster_begin over a set of fonts.
+raster_begin_in :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_Font, glyph_index, size, position: int) -> (job: Raster_Job, problem: Raster_Problem) {
 	job.outline = outline_of(&outline_memory)
-	if vector_font.glyph_outline(&state.fonts[font].file, glyph_index, &job.outline) != .None {
+	if vector_font.glyph_outline(&set.fonts[font].file, glyph_index, &job.outline) != .None {
 		return {}, .Refused
 	}
-	return raster_place(face, font, size, position, job.outline)
+	return raster_place(set, face, font, size, position, job.outline)
 }
 
 // raster_place places an outline that the outline memory holds, of a font
-// of the chain of a face, at a size and a position across a pixel. The
-// box of the points is computed in 64 bits from the placement, before any
-// cut to 32 bits, and a point past PLACE_LIMIT refuses the glyph.
-raster_place :: proc "contextless" (face: Face, font: Outline_Font, size, position: int, outline: vector_font.Outline) -> (job: Raster_Job, problem: Raster_Problem) {
+// of the chain of a face in a set of fonts, at a size and a position
+// across a pixel. The box of the points is computed in 64 bits from the
+// placement, before any cut to 32 bits, and a point past PLACE_LIMIT
+// refuses the glyph.
+raster_place :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_Font, size, position: int, outline: vector_font.Outline) -> (job: Raster_Job, problem: Raster_Problem) {
 	form := face_forms[face]
 	job.outline = outline
-	first := &state.fonts[form.primary]
+	first := &set.fonts[form.primary]
 	frame := form.proportional ? first.stated : first.own
 	job.baseline = baseline_of(frame, size)
-	job.placement = placement_at(measures_in_frame(face, font), job.baseline, size, form.grid_fit)
+	job.placement = placement_at(measures_in_frame_of(set, face, font), job.baseline, size, form.grid_fit)
 	job.proportional = form.proportional
 	job.filter = .Five_Taps
 	rows := line_rows(size)
@@ -288,7 +295,7 @@ place_within :: #force_inline proc "contextless" (place: i64) -> bool {
 // each side, and the column of the whole pixel of the origin in it. fits
 // is false for a row wider than WORK_COLUMN_LIMIT, and for a row whose
 // columns pass an i16 from the origin: the left side of a glyph entry and
-// the left side of a band are i16 (glyph_cache.Glyph_Entry). Each column
+// the left side of a band are i16 (Glyph_Entry). Each column
 // of the row is between left_pixel and right_pixel from the origin.
 work_columns :: proc "contextless" (low_x, high_x, shift: i64) -> (columns, origin_column: int, fits: bool) {
 	left_third := floor_divide(low_x + shift, SUBUNITS) - FILTER_SPREAD_THIRDS
@@ -421,14 +428,26 @@ job_raster :: proc "contextless" (job: ^Raster_Job) -> (box: Raster_Box, problem
 // pixel of the origin, until a band has no rows. ok is false when glyph
 // gives no glyph for the same arguments.
 glyph_bands :: proc "contextless" (face: Face, character: rune, size, position: int) -> (job: Raster_Job, ok: bool) {
+	return glyph_bands_in(&state.font_set, face, character, size, position)
+}
+
+// glyph_bands_in is glyph_bands over a set of fonts that the caller
+// opened (font_file_open): the candidate fonts of the demonstration
+// vector_glyphs and of the picture of the tool draw through it, with the
+// rasterizer and the frame of each face, and no private glyph cache, whose
+// key does not name the set. ok is false for a face that the set cannot
+// draw, for a size that size_check refuses, a position out of the face, a
+// character that no font of the chain of the set has, and an outline that
+// the rasterizer refuses.
+glyph_bands_in :: proc "contextless" (set: ^Font_Set, face: Face, character: rune, size, position: int) -> (job: Raster_Job, ok: bool) {
 	if face == .None || size_check(size) != .None || position < 0 || position >= positions_of(face) {
 		return {}, false
 	}
-	font, glyph_index := font_glyph_of(face, character)
+	font, glyph_index := font_glyph_in(set, face, character)
 	if font == .None {
 		return {}, false
 	}
 	problem: Raster_Problem
-	job, problem = raster_begin(face, font, glyph_index, size, position)
+	job, problem = raster_begin_in(set, face, font, glyph_index, size, position)
 	return job, problem == .None
 }

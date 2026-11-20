@@ -48,7 +48,7 @@ The package `fallback_glyphs` is compiled into each process that draws text, and
 - the private glyph cache: 65 536 words of coverage (256 KiB) and 1 024 entries;
 - the render memory of `vector_font`.
 
-An entry is keyed by the fallback face, the scale, the position and the code point. It holds one glyph in the form of a glyph cache (`glyph_cache.Glyph_Entry`) and the place of its words. The words are held in blocks of 32 to 4 096 words that split and join by halves (a buddy allocator), so a glyph takes one run of words and the draw reads it as a glyph of a glyph cache.
+An entry is keyed by the fallback face, the scale, the position and the code point. It holds one glyph in the form of a glyph cache (`text_rendering.Glyph_Entry` today) and the place of its words. The words are held in blocks of 32 to 4 096 words that split and join by halves (a buddy allocator), so a glyph takes one run of words and the draw reads it as a glyph of a glyph cache.
 
 A process evicts by the order of last use, counted in frames. Each frame of the process (`fallback_glyphs.frame_begin`) gets a new number. A glyph used in a frame moves to the newest end of the order once in that frame. A new glyph that finds no room evicts the oldest glyphs until a block of its size is free. The eviction is inside the process, so it sees only the glyphs of that process.
 

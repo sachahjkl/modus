@@ -2,14 +2,15 @@
 // lines of the system in each candidate font and in Spleen 8x16, one word of
 // each enlarged, and the measures of the text path.
 //
-// The module carries the six subsets of resources/fonts (ASCII only), and
-// its process builds a glyph cache of each one in its own memory: the time of that
-// build is the measure of a cache made by each process at run time (the
-// first of the three places of docs/FONTS.md, "Where it lives: three places
-// weighed"). It draws the lines of each candidate from that cache.
-// The text of the window itself is the text of the system: the glyphs that
-// the process draws from the font outlines into its private glyph cache,
-// or Spleen, as the setting says.
+// The module carries the subsets of the candidates of resources/fonts, and
+// its process opens each one as the font of the cells of a font set of its
+// own (text_rendering.font_file_open). It draws the lines of each
+// candidate through the face of the cells of that set, with the rasterizer
+// and the blend of the text of the system (graphics.character_of_set): a
+// candidate is drawn as it would be drawn if it were the font of the
+// system. The text of the window itself is the text of the system: the
+// glyphs that the process draws from the font outlines into its private
+// glyph cache, or Spleen, as the setting says.
 //
 // **What it is for.** It is the record of a choice: a reader sees the same
 // lines in each candidate font at the sizes of the system, and the cost of
@@ -26,27 +27,28 @@
 //   at the scales 1, 2 and 3, from the private glyph cache of the process,
 //   and from Spleen; each time is the least of 50 short batches, so that a
 //   batch that the host stopped does not count;
-// - one line for each candidate: the time to build its cache of 95
-//   characters at 3 scales, and its bytes;
+// - one line for each candidate: the time to open its font file;
 // - "vector_glyphs: ok, 6 candidates beside Spleen 8x16".
 //
 // **What it does not prove**: the times are measures of this host, not
 // bounds.
 package vector_glyphs
 
-import "modus:contract/glyph_cache"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
+import "modus:support/text_rendering"
 import "modus:support/vector_font"
 
-// The glyph caches that it builds: 1362 pages. And the glyph memory of its
-// two copies of the text rendering, its own, which draws the measure of
-// one glyph of the system, and the one of the drawing module, which draws
-// its labels: each reserves its memory at its first glyph, 2 x 354 pages
-// (display.TEXT_MEMORY_PAGES) = 708 pages. 1362 + 708 = 2070.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2070, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// Its own memory: 1023 pages, with no glyph of a candidate kept: each is
+// drawn band by band at each draw. And the glyph memory of its two
+// copies of the text rendering, its own, which draws the measure of one
+// glyph of the system and the candidates, and the one of the drawing
+// module, which draws its labels: each reserves its memory at its first
+// glyph, 2 x 354 pages (display.TEXT_MEMORY_PAGES) = 708 pages.
+// 1023 + 708 = 1731.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1731, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 1008
 HEIGHT :: 704
@@ -72,54 +74,46 @@ SAMPLE :: "compositor  12.4 ms  2 418 pages {fill} [rings] gi Rb 0O 1lI"
 ENLARGED_WORD :: "Rag{0}%"
 ENLARGED :: 4
 
-// The glyph cache of one candidate, built here; 8-byte words.
-cache_memory: [vector_font.GLYPH_CACHE_LIMIT / 8 + 1]u64
 render_memory: vector_font.Render_Memory
-build_times: [len(candidates)]u64
-cache_sizes: [len(candidates)]int
-// The cache of the candidate that draws now, validated (with_font).
-candidate_cache: glyph_cache.Cache
+open_times: [len(candidates)]u64
+// The font set of the candidate that draws now: the candidate as the font
+// of the cells (with_font), and the memory of one outline for its open.
+candidate_set: text_rendering.Font_Set
+candidate_outline: text_rendering.Outline_Memory
 
 window_memory: interface.Window_Memory(256, 8192)
 
-// with_font builds the cache of one candidate and makes it the cache that
-// candidate_text draws from.
+// with_font opens the font file of one candidate as the font of the cells
+// of candidate_set, which candidate_text draws from.
 with_font :: proc "contextless" (index: int) -> (ok: bool) {
-	font, problem := vector_font.font_open(candidates[index].bytes)
-	out := ([^]u8)(raw_data(cache_memory[:]))[:vector_font.GLYPH_CACHE_LIMIT]
+	outline := text_rendering.outline_of(&candidate_outline)
 	start := system.nanoseconds()
-	size := 0
-	if problem == .None {
-		size, problem = vector_font.glyph_cache_build(&font, candidates[index].bytes, candidates[index].name, true, &render_memory, out)
-	}
+	problem := text_rendering.font_file_open(&candidate_set, .Paper_Mono, candidates[index].bytes, &outline)
 	if problem != .None {
 		system.log(.Info, "vector_glyphs: the font ", candidates[index].name, " is refused: ", vector_font.font_problem_names[problem])
 		return false
 	}
-	build_times[index] = system.nanoseconds() - start
-	cache_sizes[index] = size
-	refused: glyph_cache.Problem
-	candidate_cache, refused = glyph_cache.validate(out[:size])
-	if refused.kind != .None {
-		system.log(.Info, "vector_glyphs: the cache of ", candidates[index].name, " is refused: ", glyph_cache.problem_sentences[refused.kind])
-		return false
-	}
+	open_times[index] = system.nanoseconds() - start
 	return true
 }
 
-// candidate_text draws a text of ASCII from the cache of the candidate, one
-// cell of 8 x 16 pixels times the scale for each character, in the order
-// of the stripes of the setting.
+// candidate_text draws a text of ASCII in the face of the cells of the
+// candidate, one cell of 8 x 16 pixels times the scale for each character,
+// in the order of the stripes of the setting. A character that the
+// candidate lacks draws the replacement glyph.
 candidate_text :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int) {
-	state := &graphics.text_state
+	size := text_rendering.size_of_scale(scale)
 	for index in 0 ..< len(text) {
-		graphics.character_vector_with(&candidate_cache, &state.square_root, &state.blend_tables, state.order, canvas, x + index * graphics.CELL_WIDTH * scale, y, rune(text[index]), color, scale)
+		at := x + index * graphics.CELL_WIDTH * scale
+		if !graphics.character_of_set(&candidate_set, .Cells, canvas, at, y, rune(text[index]), color, size) {
+			graphics.character_replacement(canvas, at, y, color, scale)
+		}
 	}
 }
 
 // enlarged draws a word at scale 1 into a small canvas, then each pixel as a
-// square: the coverage of each stripe shows. candidate: from the cache of
-// the candidate; else Spleen.
+// square: the coverage of each stripe shows. candidate: in the face of the
+// candidate; else Spleen.
 enlarged :: proc "contextless" (canvas: graphics.Canvas, x, y: int, candidate: bool) {
 	small: [8 * len(ENLARGED_WORD) * 16]graphics.Color
 	view := graphics.Canvas{pixels = raw_data(small[:]), width = 8 * len(ENLARGED_WORD), height = 16, stride = 8 * len(ENLARGED_WORD)}
@@ -156,11 +150,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_text(frame.table, content.x, y, name, graphics.colors.dim)
 		if index > 0 {
 			builder: interface.Text_Builder
-			interface.text_put(&builder, "cache built in ")
-			interface.text_put_number(&builder, build_times[index - 1] / 1000)
-			interface.text_put(&builder, " us, ")
-			interface.text_put_number(&builder, u64(cache_sizes[index - 1]))
-			interface.text_put(&builder, " bytes")
+			interface.text_put(&builder, "opened in ")
+			interface.text_put_number(&builder, open_times[index - 1] / 1000)
+			interface.text_put(&builder, " us")
 			interface.draw_text_right(frame.table, content.x + content.width, y, interface.text_of(&builder), graphics.colors.dim)
 		}
 	}
@@ -265,8 +257,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log(.Info, "vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 ", outline_times[0], " ns, scale 2 ", outline_times[1], " ns, scale 3 ", outline_times[2], " ns; from the private glyph cache: ", cache_time, " ns; Spleen 8x16: ", spleen_time, " ns")
 
 	draw(&window)
-	for size, index in cache_sizes {
-		system.log(.Info, "vector_glyphs: the cache of ", candidates[index].name, ": 95 characters at 3 scales built in ", build_times[index] / 1000, " us, ", u64(size), " bytes")
+	for open_time, index in open_times {
+		system.log(.Info, "vector_glyphs: the font ", candidates[index].name, " opened in ", open_time / 1000, " us")
 	}
 	system.log(.Info, "vector_glyphs: ok, ", u64(len(candidates)), " candidates beside Spleen 8x16")
 	for {

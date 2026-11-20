@@ -1,0 +1,3 @@
+type: Removed
+
+**The glyph cache file out of the system.** The format of a glyph cache, its builder `vector_font.glyph_cache_build`, its fuzz target `glyph_cache` and the tests that took a cache as their reference are gone: the character index is now the contract `font_characters`, the candidate fonts of `vector_glyphs` and of `build/fonts/candidates.png` draw through the face of the cells of a font set of their own (`text_rendering.font_file_open`, `graphics.character_of_set`), and the tests take their glyphs from a face, whose golden hashes prove the pixels. A face is the one way to a glyph.

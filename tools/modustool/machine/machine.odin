@@ -3377,7 +3377,8 @@ scenario := [?]Step {
 	{kind = .Close, text = "interface_elements"},
 	{kind = .Wait, text = "root: interface_elements stopped"},
 	// The vector font of the system (docs/FONTS.md): the seven candidates,
-	// each from a glyph cache that the process builds, beside Spleen 8x16.
+	// each drawn through the face of the cells of a font set of the
+	// process, beside Spleen 8x16.
 	{kind = .Launch, text = "vector_glyphs"},
 	{kind = .Wait, text = "vector_glyphs: one glyph from its outline, in fixed point"},
 	{kind = .Wait, text = "vector_glyphs: ok, "},

@@ -1,7 +1,5 @@
 package vector_font
 
-import "modus:contract/glyph_cache"
-
 // A glyph of a proportional font (docs/FONTS.md, section 12.4): not in a
 // cell of the grid, but at its origin, at one of the subpixel positions of
 // a pixel, and kept as the box of its ink. The size on the grid comes from
@@ -13,10 +11,15 @@ import "modus:contract/glyph_cache"
 PROPORTIONAL_CAP_HEIGHT_ROWS :: 10
 // The work row of one glyph: its origin at the column PLACED_ORIGIN_COLUMN,
 // room on its left for ink before the origin and for the spread of the
-// filter, room on its right for the widest glyph at scale 3.
-PLACED_WIDTH_LIMIT :: glyph_cache.GLYPH_WIDTH_LIMIT
+// filter, room on its right for the widest glyph at scale 3. The text
+// rendering keeps this origin column for its placement, so that each word
+// that it draws is the word of this row (src/library/support/text_rendering,
+// raster.odin).
+PLACED_WIDTH_LIMIT :: 64 // Pixels.
 PLACED_ORIGIN_COLUMN :: 4
-#assert(PLACED_ORIGIN_COLUMN <= glyph_cache.LEFT_LIMIT)
+// The positions of a glyph inside one pixel: 0, 1/3 and 2/3 of a pixel at
+// most, the step of the color stripes.
+PLACED_POSITION_LIMIT :: 3
 
 // Placed_Box: the box of the ink of one glyph in the work row, in pixels.
 // left is from the column of the origin; a glyph with no ink has a box of 0.
@@ -74,10 +77,12 @@ stated_heights :: proc "contextless" (font: ^Font_File) -> (x_height, cap_height
 // each row of the line), and gives the box of its ink. The words of the
 // box are row first_row + r, columns first_column ..< first_column + width.
 // A glyph whose ink reaches a side of the work row is refused: it does not
-// fit in the limits of the cache.
+// fit in the row. The measure of the private glyphs draws with it
+// (private_glyph_measure_test.odin); the text rendering has its own row,
+// as wide as the glyph.
 glyph_render_placed :: proc "contextless" (font: ^Font_File, measures: Font_Measures, style: Glyph_Style, character: rune, position, position_count: int, memory: ^Render_Memory) -> (box: Placed_Box, problem: Font_Problem) {
 	width, height := PLACED_WIDTH_LIMIT, style.cell_height
-	if height < 1 || height > CELL_HEIGHT_LIMIT || position_count < 1 || position_count > glyph_cache.POSITION_LIMIT || position < 0 || position >= position_count {
+	if height < 1 || height > CELL_HEIGHT_LIMIT || position_count < 1 || position_count > PLACED_POSITION_LIMIT || position < 0 || position >= position_count {
 		return {}, .Too_Many_Points
 	}
 	pixels := memory.placed[:width * height]
@@ -124,15 +129,4 @@ glyph_render_placed :: proc "contextless" (font: ^Font_File, measures: Font_Meas
 		return {}, .Unknown_Format
 	}
 	return {left = first_column - PLACED_ORIGIN_COLUMN, width = last_column - first_column + 1, first_row = first_row, row_count = last_row - first_row + 1, first_column = first_column}, .None
-}
-
-// units_to_subpixels gives a length of the font in 1/64 of a pixel at one
-// scale: units * 8 * scale / units_per_cell pixels, rounded to the nearest
-// integer, a half up, toward plus infinity (divide_rounded): -42.5 gives
-// -42, 42.5 gives 43. A negative pair adjustment is rounded by the same
-// rule as a positive one, not toward 0: -42.67 gives -43. The glyphs past
-// the glyph cache (src/library/support/text_rendering) take their advance
-// from it too, so their advance is the advance that a build would give.
-units_to_subpixels :: proc "contextless" (units, scale, units_per_cell: int) -> i32 {
-	return i32(divide_rounded(i64(units) * i64(8 * scale * glyph_cache.SUBPIXEL), i64(units_per_cell)))
 }

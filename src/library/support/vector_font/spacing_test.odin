@@ -2,7 +2,7 @@
 package vector_font
 
 import "core:testing"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 
 // The subsets of B612 that "modustool vector_fonts" writes. The values
 // below were read by hand in the files of B612 1.008 (the commit of
@@ -58,7 +58,7 @@ the_advances_and_the_pairs_of_b612 :: proc(t: ^testing.T) {
 		for index in 0 ..< table.count {
 			left := read_u16(table.pairs, index * KERN_PAIR_SIZE + KERN_PAIR_LEFT_PLACE) or_else -1
 			right := read_u16(table.pairs, index * KERN_PAIR_SIZE + KERN_PAIR_RIGHT_PLACE) or_else -1
-			if left >= 1 && left <= glyph_cache.ASCII_COUNT && right >= 1 && right <= glyph_cache.ASCII_COUNT {
+			if left >= 1 && left <= font_characters.ASCII_COUNT && right >= 1 && right <= font_characters.ASCII_COUNT {
 				ascii_pairs += 1
 			}
 		}

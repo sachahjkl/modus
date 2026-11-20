@@ -2,7 +2,7 @@
 package text_rendering
 
 import "core:testing"
-import "modus:contract/glyph_cache"
+import "modus:contract/font_characters"
 import "modus:contract/text_encoding"
 import "modus:support/vector_font"
 
@@ -88,72 +88,76 @@ a_pair_changes_the_advance_by_the_value_of_the_file :: proc(t: ^testing.T) {
 	testing.expect_value(t, placed[0].advance, 512)
 }
 
-// The measure from the font files is the measure of the glyph caches of
-// the boot image: at the three sizes of the caches, each advance of the
-// 192 characters and each pair of two of them, in B612 and B612 Bold, has
-// the number of the cache that the build draws from the same font file. So
-// no place of a text of today moves.
+// grid_length gives a length of the font in 1/64 of a pixel at a scale of
+// the grid, by the arithmetic of the grid and not by that of a text size:
+// units * 8 * scale * 64 / units_per_cell, rounded to the nearest integer,
+// a half toward plus infinity. It is the arithmetic that drew the advances
+// and the pairs of the glyph caches that left the system.
+@(private = "file")
+grid_length :: proc(units, scale, units_per_cell: int) -> i32 {
+	return i32(vector_font.divide_rounded(i64(units) * i64(8 * scale * SUBPIXEL), i64(units_per_cell)))
+}
+
+// The measure from the font files is the measure of the grid of the
+// scales: at the sizes of the scales 1, 2 and 3, each advance of the 192
+// characters and each pair of two of them, in B612 and B612 Bold, is the
+// length that the arithmetic of the grid gives from the units of the font
+// file (grid_length), the numbers of the glyph caches that left the
+// system. So no place of a text moves. A pair that the file lacks is 0.
 @(test)
-the_measure_of_the_font_file_is_the_measure_of_the_cache :: proc(t: ^testing.T) {
+the_measure_of_the_font_file_is_the_measure_of_the_grid :: proc(t: ^testing.T) {
 	test_state_take()
 	state = {}
 	_, memory := test_spacing(t)
 	defer delete(memory)
 	b612_bold := #load("../../../../resources/fonts/b612_bold.ttf")
 	Weight :: struct {
-		face:      Face,
-		bytes:     []u8,
-		name:      string,
-		positions: []int,
+		face:  Face,
+		bytes: []u8,
+		name:  string,
 	}
-	regular_positions := [3]int{3, 1, 1}
-	bold_positions := [1]int{3}
-	weights := [2]Weight{{.Interface, b612_regular, "b612", regular_positions[:]}, {.Interface_Bold, b612_bold, "b612_bold", bold_positions[:]}}
+	weights := [2]Weight{{.Interface, b612_regular, "b612"}, {.Interface_Bold, b612_bold, "b612_bold"}}
 	render := new(vector_font.Render_Memory)
 	defer free(render)
-	cache_memory := make([]u64, vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT / 8)
-	defer delete(cache_memory)
-	out := ([^]u8)(raw_data(cache_memory))[:vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT]
 	for weight in weights {
 		file, problem := vector_font.font_open(weight.bytes)
 		testing.expect_value(t, problem, vector_font.Font_Problem.None)
-		size: int
-		size, problem = vector_font.glyph_cache_build_proportional(&file, weight.bytes, weight.name, true, render, out, weight.positions)
+		own, stated: vector_font.Font_Measures
+		own, problem = vector_font.font_measures(&file, render)
 		testing.expect_value(t, problem, vector_font.Font_Problem.None)
-		cache, refused := glyph_cache.validate(out[:size])
-		testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
-		for scale in 1 ..= len(weight.positions) {
+		stated, problem = vector_font.proportional_measures(&file, own)
+		testing.expect_value(t, problem, vector_font.Font_Problem.None)
+		testing.expect_value(t, stated.advance, 1200) // The units of one cell: docs/FONTS.md, section 12.2.
+		table, table_problem := vector_font.pair_table_open(&file)
+		testing.expect_value(t, table_problem, vector_font.Font_Problem.None)
+		for scale in 1 ..= 3 {
 			spacing, ok := spacing_of(weight.face, size_of_scale(scale))
 			testing.expect(t, ok)
-			advances := glyph_cache.advances_of(&cache, scale)
+			advances: [CHARACTER_COUNT]i32
 			for index in 0 ..< CHARACTER_COUNT {
-				character, _ := glyph_cache.character_of_index(index)
+				character, _ := font_characters.character_of_index(index)
+				advances[index] = grid_length(vector_font.character_advance(&file, character), scale, stated.advance)
 				value, found := advance(weight.face, character, size_of_scale(scale))
-				testing.expectf(t, found && value == advances[index], "%s at scale %d: %c has the advance %d, the cache %d", weight.name, scale, character, value, advances[index])
+				testing.expectf(t, found && value == advances[index], "%s at scale %d: %c has the advance %d, the grid %d", weight.name, scale, character, value, advances[index])
 			}
-			// Each pair of the cache, in its order, and 0 for each pair that
-			// the cache lacks.
-			pairs := glyph_cache.pairs_of(&cache, scale)
-			next_pair := 0
+			pair_count := 0
 			for left in 0 ..< CHARACTER_COUNT {
 				for right in 0 ..< CHARACTER_COUNT {
-					left_character, _ := glyph_cache.character_of_index(left)
-					right_character, _ := glyph_cache.character_of_index(right)
+					left_character, _ := font_characters.character_of_index(left)
+					right_character, _ := font_characters.character_of_index(right)
 					text: [2 * text_encoding.CHARACTER_BYTES_LIMIT]u8
 					length := text_encoding.character_encode(left_character, text[:])
 					length += text_encoding.character_encode(right_character, text[length:])
 					placed: [2]Placed_Glyph
 					shape(&spacing, text[:length], placed[:])
 					adjustment := placed[0].advance - advances[left]
-					expected := i32(0)
-					if next_pair < len(pairs) && int(pairs[next_pair].left) == left && int(pairs[next_pair].right) == right {
-						expected = pairs[next_pair].adjustment
-						next_pair += 1
-					}
-					testing.expectf(t, adjustment == expected, "%s at scale %d: the pair %d %d is %d, the cache %d", weight.name, scale, left, right, adjustment, expected)
+					units := vector_font.character_pair_adjustment(&file, &table, left_character, right_character)
+					expected := grid_length(units, scale, stated.advance)
+					pair_count += int(units != 0)
+					testing.expectf(t, adjustment == expected, "%s at scale %d: the pair %d %d is %d, the grid %d", weight.name, scale, left, right, adjustment, expected)
 				}
 			}
-			testing.expect_value(t, next_pair, len(pairs))
+			testing.expectf(t, pair_count > 0, "%s: the font file has pairs", weight.name)
 		}
 	}
 }
@@ -183,8 +187,8 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	// The first character past the Latin-1 Supplement (Ā, U+0100) is
 	// outside the cache: two bytes and one replacement glyph, so the glyph
 	// after it starts at byte 3.
-	OUTSIDE_THE_CACHE :: rune(glyph_cache.LATIN_LAST + 1)
-	_, in_cache := glyph_cache.character_index(OUTSIDE_THE_CACHE)
+	OUTSIDE_THE_CACHE :: rune(font_characters.LATIN_LAST + 1)
+	_, in_cache := font_characters.character_index(OUTSIDE_THE_CACHE)
 	testing.expect(t, !in_cache)
 	text: [2 + text_encoding.CHARACTER_BYTES_LIMIT]u8
 	text[0] = 'T'
@@ -193,12 +197,12 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	count, width, ok = shape(&spacing, text[:2 + length], placed[:])
 	testing.expect(t, ok && count == 3)
 	testing.expect_value(t, placed[1].glyph, REPLACEMENT_GLYPH)
-	testing.expect_value(t, placed[2].glyph, u32('T' - glyph_cache.ASCII_FIRST))
+	testing.expect_value(t, placed[2].glyph, u32('T' - font_characters.ASCII_FIRST))
 	testing.expect_value(t, placed[2].cluster, u32(1 + length))
 	testing.expect_value(t, placed[0].advance, advance_at('T')) // No pair with the replacement glyph.
 	testing.expect_value(t, width, 2 * i64(advance_at('T')) + i64(zero))
 	// "é" is in the cache: two bytes and its own glyph.
-	e_acute, _ := glyph_cache.character_index('é')
+	e_acute, _ := font_characters.character_index('é')
 	count, _, ok = shape(&spacing, transmute([]u8)string("TéT"), placed[:])
 	testing.expect(t, ok && count == 3)
 	testing.expect_value(t, placed[1].glyph, u32(e_acute))
@@ -207,9 +211,9 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	// "€", an added character, is in the cache: three bytes.
 	count, _, ok = shape(&spacing, transmute([]u8)string("5 €"), placed[:])
 	testing.expect(t, ok && count == 3)
-	testing.expect_value(t, placed[2].glyph, u32(glyph_cache.ADDED_FIRST_INDEX))
+	testing.expect_value(t, placed[2].glyph, u32(font_characters.ADDED_FIRST_INDEX))
 	testing.expect_value(t, placed[2].cluster, u32(2))
-	testing.expect_value(t, placed[2].advance, advance_at(glyph_cache.EURO_SIGN))
+	testing.expect_value(t, placed[2].advance, advance_at(font_characters.EURO_SIGN))
 	// A text over the limit writes nothing.
 	long := make([]u8, TEXT_LIMIT + 1)
 	defer delete(long)
@@ -327,7 +331,7 @@ the_bounds_of_the_shaper_at_each_size :: proc(t: ^testing.T) {
 			spacing, ok := spacing_of(face, size)
 			testing.expect(t, ok)
 			for index in 0 ..< CHARACTER_COUNT {
-				character, _ := glyph_cache.character_of_index(index)
+				character, _ := font_characters.character_of_index(index)
 				value, _ := advance(face, character, size)
 				testing.expectf(t, value >= 0 && i64(value) <= advance_limit_of_size(size), "%v at %v: %c has %v", face, size, character, value)
 			}

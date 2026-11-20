@@ -251,16 +251,6 @@ fuzz_target_table := [?]Fuzz_Target {
 		check_executions = 5_000,
 	},
 	{
-		name = "glyph_cache",
-		kind = .Raw,
-		about = "contract/glyph_cache: a cache that validate accepts gives each glyph with its rows in its line and its words in the file",
-		packages = {foundation.SOURCE_FOLDER_CONTRACT + "/glyph_cache"},
-		input_limit = 64 << 10,
-		execute = fuzz_glyph_cache_execute,
-		seeds = fuzz_glyph_cache_seeds,
-		regions = fuzz_glyph_cache_regions,
-	},
-	{
 		name = "font_outlines",
 		kind = .Raw,
 		about = "contract/font_outlines: a resource that validate accepts gives its font files, and its fonts write again to a resource with the same fonts",

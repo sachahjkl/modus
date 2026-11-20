@@ -1,7 +1,8 @@
 // The vector font of the system (docs/FONTS.md): a reader of a subset of
 // TrueType, and a rasterizer in fixed point with coverage for each color
-// stripe. The modus tool uses it at build time to make the glyph cache;
-// a process uses it to draw a glyph from its outline.
+// stripe. The modus tool uses it at build time to write the subsets of the
+// fonts; the text rendering of each process reads the outlines and adds
+// them to its accumulation with it.
 //
 // A font file is hostile input: each read is checked against the length of
 // the file, and each problem is a value. No floating point: a result does
@@ -10,11 +11,10 @@
 // The parts: `font_open` and `Font_File` (the tables), `glyph_of` and
 // `glyph_outline` with `Outline` (the points of a glyph), the accumulation
 // of the coverage (`raster.odin`), the spacing and the substitutions
-// (`spacing.odin`, `substitution.odin`), and the build of a glyph cache
-// (`cache_build.odin`).
+// (`spacing.odin`, `substitution.odin`), and the draw of one glyph into a
+// cell or a work row (`glyph.odin`, `placed.odin`).
 //
-// See [font](term:font), [outline](term:outline) and
-// [glyph cache](term:glyph-cache).
+// See [font](term:font) and [outline](term:outline).
 package vector_font
 
 // What is wrong with a font file or with a glyph. Each reader of this
